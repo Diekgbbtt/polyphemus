@@ -656,5 +656,6 @@ def test_public_api_smoke_trajectory_calls_the_fixture_for_both_turns():
     assert trajectory["provider"]["by_turn"].get("rate", 0) >= 1
     assert trajectory["stats"]["rate_limit"]["version"] == "rate-profile/v2"
     source = Path(__file__).read_text(encoding="utf-8")
-    for forbidden in ("_ScriptedOrchestrator", "fake_run_job"):
+    # Assembled from fragments so this guard does not match its own token list.
+    for forbidden in ("_Scripted" + "Orchestrator", "fake_run" + "_job"):
         assert forbidden not in source

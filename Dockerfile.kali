@@ -159,11 +159,15 @@ HEALTHCHECK --interval=15s --timeout=10s --retries=5 --start-period=40s \
 # Build-time smoke: prove BOTH halves coexist in ONE image - mitmdump is
 # executable AND Vegeta is still the pinned module AND the wordlist still has
 # the declared cardinality the readiness gate verifies.
-RUN test -x /opt/mitmproxy-env/bin/mitmdump \
-    && /opt/mitmproxy-env/bin/mitmdump --version >/dev/null 2>&1 \
-    && go version -m "$(command -v vegeta)" \
-       | grep 'github.com/tsenart/vegeta/v12' | grep -q 'v12.13.0' \
-    && test "$(sed '/^[[:space:]]*$/d' /usr/share/seclists/Discovery/Web-Content/common.txt | wc -l)" = "4750" \
-    && echo "[smoke] capture runtime + vegeta + wordlist OK"
+RUN set -eux; \
+    test -x /opt/mitmproxy-env/bin/mitmdump; \
+    /opt/mitmproxy-env/bin/mitmdump --version >/dev/null; \
+    go version -m "$(command -v vegeta)" | grep 'github.com/tsenart/vegeta/v12' | grep -q 'v12.13.0'; \
+    cd /opt && /opt/venv/bin/python -c \
+      "from kali.http_history.capabilities import FFUF_WORDLIST_PATH, wordlist_cardinality; \
+       count = wordlist_cardinality(FFUF_WORDLIST_PATH); \
+       assert count == 4750, f'wordlist cardinality {count} != 4750'; \
+       print('[smoke] wordlist cardinality', count)"; \
+    echo "[smoke] capture runtime + vegeta + wordlist OK"
 
 ENTRYPOINT ["/opt/kali/entrypoint.sh"]

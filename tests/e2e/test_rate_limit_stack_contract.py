@@ -30,7 +30,20 @@ E2E_KALI_SERVICES = ("kali", "kali-failing-governor", "kali-capture-off")
 
 
 def _overlay() -> dict:
-    return yaml.safe_load(OVERLAY.read_text(encoding="utf-8"))
+    """Parse the overlay, tolerating Compose's `!override`/`!reset` tags."""
+
+    class _ComposeLoader(yaml.SafeLoader):
+        pass
+
+    def _compose_tag(loader, _tag_suffix, node):
+        if isinstance(node, yaml.SequenceNode):
+            return loader.construct_sequence(node)
+        if isinstance(node, yaml.MappingNode):
+            return loader.construct_mapping(node)
+        return loader.construct_scalar(node)
+
+    _ComposeLoader.add_multi_constructor("!", _compose_tag)
+    return yaml.load(OVERLAY.read_text(encoding="utf-8"), Loader=_ComposeLoader)
 
 
 def test_e2e_overlay_configures_every_boot_required_llm_role():
@@ -67,3 +80,14 @@ def test_issue238_overlay_never_uses_shared_latest_tags():
     assert services["agent"]["image"] == "polymerhus-agent:issue-238-e2e"
     for name in E2E_KALI_SERVICES:
         assert services[name]["image"] == "polymerhus-kali:issue-238-e2e", name
+
+
+def test_e2e_overlay_sets_the_admission_gates():
+    """Both admission gates are fixture-scale operator knobs and must be
+    committed (never ad-hoc) so the live matrix is reproducible."""
+    env = _overlay()["services"]["agent"]["environment"]
+    assert float(str(env["RATE_LIMIT_INTENSIVE_MIN_SAFE_RATE_PER_S"]).split(":-")[-1]
+                 .rstrip("}")) == 2.0
+    ceiling = str(env["RATE_LIMIT_INTENSIVE_MAX_PROJECTED_DURATION_S"])
+    assert "RATE_LIMIT_INTENSIVE_MAX_PROJECTED_DURATION_S:-" in ceiling
+    assert float(ceiling.split(":-")[-1].rstrip("}")) > 4750 / 16.0

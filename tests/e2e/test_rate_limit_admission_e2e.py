@@ -66,6 +66,13 @@ class Scenario:
     #: The seed the run aims at. Defaults to the posture's own Compose service;
     #: the stage-error row aims at the alias the deterministic provider fails on.
     target_alias: str | None = None
+    #: The expected `bypass_outcome`, asserted only when set (the named rows).
+    expected_bypass: str | None = None
+    #: Whether the target was actually reachable, so `target_observed` must
+    #: appear. The stage-error row aims at an alias that never resolves: the
+    #: trajectory must then be ABSENT of `target_observed` (a target that never
+    #: answered was never observed).
+    target_reachable: bool = True
 
 
 SCENARIOS = (
@@ -78,14 +85,19 @@ SCENARIOS = (
              "a low safe rate prunes the intensive runners"),
     Scenario("false_bypass", "false_bypass", "mapped", False,
              {"ffuf": "below_min_safe_rate"},
-             "an unconfirmed bypass changes nothing"),
+             "an unconfirmed bypass changes nothing",
+             expected_bypass="no_bypass"),
     Scenario("burst_inconclusive", "burst_inconclusive", "inconclusive", False,
              {"ffuf": "profile_inconclusive"},
              "an inconclusive posture stays conservative"),
     Scenario("rate_stage_error", "no_limiter", "failed", False,
-             {"ffuf": "profile_failed"},
+             # The unreachable seed also means the bounded jobs consume nothing,
+             # so an intensive job may be pruned for `no_inputs` BEFORE the
+             # posture gate is reached; the row asserts the WARNING below.
+             {},
              "the actor's own failure path, no production fault flag",
-             target_alias=provider.RATE_STAGE_ERROR_TARGET),
+             target_alias=provider.RATE_STAGE_ERROR_TARGET,
+             target_reachable=False),
 )
 
 
@@ -121,15 +133,20 @@ def assert_no_secrets(serialized: str, *extra_sentinels: str) -> None:
 
 
 def assert_all_evidence_refs_relative_and_hashed(rate_limit: dict) -> None:
-    refs = rate_limit.get("artifact_refs") or []
-    assert refs, "a measured profile publishes at least one artifact reference"
-    for ref in refs:
-        assert _ARTIFACT_REF_RE.match(ref["ref"]), (
-            f"an artifact reference must be RELATIVE, got {ref['ref']!r}")
-        assert not str(ref["ref"]).startswith("/"), ref
-        assert _SHA256_RE.match(ref["sha256"]), (
+    # #238 A2: the typed evidence lives under `rate_limit["evidence"]`
+    # (`{ref, sha256, experiment_id, count}`); `artifact_refs` is the legacy
+    # `list[str]` coordinate list.
+    evidence = rate_limit.get("evidence") or []
+    for item in evidence:
+        assert _ARTIFACT_REF_RE.match(item["ref"]), (
+            f"an artifact reference must be RELATIVE, got {item['ref']!r}")
+        assert not str(item["ref"]).startswith("/"), item
+        assert _SHA256_RE.match(item["sha256"]), (
             f"an artifact reference must be pinned by a lowercase sha256, got "
-            f"{ref['sha256']!r}")
+            f"{item['sha256']!r}")
+    for ref in rate_limit.get("artifact_refs") or []:
+        # The legacy coordinate list is plain strings, never objects.
+        assert isinstance(ref, str), ref
 
 
 def _materialized(stats: dict) -> set[str]:
@@ -142,7 +159,7 @@ def _materialized(stats: dict) -> set[str]:
 
 def _decisions(stats: dict, decision: str) -> dict[str, str]:
     return {
-        row["job_name"]: row["reason_code"]
+        row["job"]: row["reason_code"]
         for row in stats["traffic_admission"]["decisions"]
         if row["decision"] == decision
     }
@@ -150,10 +167,42 @@ def _decisions(stats: dict, decision: str) -> dict[str, str]:
 
 def _invoked_runners(per_job: list[dict]) -> set[str]:
     return {
-        row["job_name"]
+        row["job"]
         for row in per_job
         if row.get("status") in ("success", "degraded", "failed")
     }
+
+
+#: The routes the BOUNDED jobs (`httpx`, `katana`) touch on the fixture: the
+#: index and the canonical link/form target. Any OTHER route is ffuf's wordlist
+#: fuzzing (`ffuf -u <base>/FUZZ -w common.txt`).
+_BOUNDED_ROUTES = frozenset({"/", "/canonical", "/canonical/"})
+
+
+def _intensive_target_traffic(counters: dict) -> dict[str, int]:
+    """Attribute the fixture's own request events to the intensive jobs.
+
+    * ffuf fuzzes `<base>/FUZZ` over the 4,750-line wordlist, so it is the only
+      job that produces MANY DISTINCT routes outside the bounded surface (a
+      single `/robots.txt` from katana is not ffuf);
+    * arjun probes the BaseURL with its own parameter names, so a root request
+      carrying a query key OTHER than katana's `seed` is arjun.
+
+    Deliberately conservative: it never claims traffic when the evidence is not
+    attributable.
+    """
+    attributed: dict[str, int] = {}
+    routes = counters.get("routes") or {}
+    fuzz_routes = [route for route in routes if route not in _BOUNDED_ROUTES]
+    if len(fuzz_routes) >= 20:
+        attributed["ffuf"] = len(fuzz_routes)
+    root_queries = (counters.get("query_names") or {}).get("/") or {}
+    arjun_hits = sum(
+        count for name, count in root_queries.items() if name != "seed"
+    )
+    if arjun_hits:
+        attributed["arjun"] = arjun_hits
+    return attributed
 
 
 # --- the scenario driver ---------------------------------------------------------
@@ -163,10 +212,9 @@ def _run_scenario(scenario: Scenario) -> dict:
     """One real run against the scenario's isolated target instance."""
     generation = driver.reset_target(scenario.posture)
     project_id = driver.create_project(f"e2e-admission-{scenario.name}")
-    driver.configure_project(project_id, {
-        "target_seed": scenario.target_alias
-        or driver.TARGET_SERVICES[scenario.posture],
-    })
+    driver.configure_project(project_id, driver.e2e_recon_settings(
+        scenario.target_alias or driver.TARGET_SEEDS[scenario.posture],
+    ))
     driver.store_auth(project_id,
                       overview=driver.SMOKE_OVERVIEW,
                       accounts=driver.SMOKE_ACCOUNTS)
@@ -194,7 +242,19 @@ def test_rate_aware_admission_over_the_posture_matrix(scenario):
     # 1. the run reached its terminal state through the whole trajectory
     assert observed["status"] == "complete", (
         f"{scenario.name}: the run did not complete ({observed['status']})")
-    assert_event_order(stats, TRAJECTORY)
+    if scenario.target_reachable:
+        assert_event_order(stats, TRAJECTORY)
+    else:
+        # The target never answered: every other step happened, but
+        # `target_observed` must NOT be claimed.
+        assert_event_order(
+            stats,
+            ["auth", "rate_mapping", "rate_profile_persisted",
+             "admission_persisted", "run_finalized"],
+        )
+        assert "target_observed" not in stats["traffic_admission"]["event_order"], (
+            f"{scenario.name}: the trajectory claimed the unreachable target was "
+            "observed")
 
     # 2. the posture was measured and the policy is the v2 contract
     rate_limit = stats["rate_limit"]
@@ -204,6 +264,9 @@ def test_rate_aware_admission_over_the_posture_matrix(scenario):
         f"{scenario.expected_outcome}")
     policy = rate_limit["traffic_policy"]
     assert policy["version"] == "traffic-policy/v2"
+    if scenario.expected_bypass is not None:
+        assert rate_limit["bypass_outcome"] == scenario.expected_bypass, (
+            f"{scenario.name}: bypass outcome {rate_limit['bypass_outcome']!r}")
 
     # 3. the admission envelope is present and internally consistent
     admission = stats["traffic_admission"]
@@ -232,11 +295,9 @@ def test_rate_aware_admission_over_the_posture_matrix(scenario):
                     f"{scenario.name}: {job} pruned for {reasons[job]!r}")
 
     # 6. the target saw what the phase list implies
-    counters = observed["target"]["counters"]
-    intensive_traffic = {
-        route: count for route, count in (counters.get("per_route") or {}).items()
-        if any(tool in route for tool in INTENSIVE)
-    }
+    # `read_target_counters` returns the fixture's `/counters` snapshot itself.
+    counters = observed["target"]
+    intensive_traffic = _intensive_target_traffic(observed["target"])
     if scenario.intensive_materialized:
         assert intensive_traffic, (
             f"{scenario.name}: the intensive runners were admitted but no "
@@ -248,8 +309,20 @@ def test_rate_aware_admission_over_the_posture_matrix(scenario):
 
     # 7/8. persistence and secret safety
     assert_all_evidence_refs_relative_and_hashed(rate_limit)
+    if scenario.expected_outcome in ("mapped", "no_limiter"):
+        assert rate_limit.get("evidence"), (
+            f"{scenario.name}: a measured profile must publish at least one "
+            "evidence reference")
     assert_no_secrets(json.dumps(stats))
     assert_no_secrets(json.dumps(observed["target"]))
+
+    # 9. every conservative posture persists a structured warning
+    if scenario.expected_outcome in ("failed", "inconclusive"):
+        warnings = stats["traffic_admission"].get("warnings") or []
+        assert any(
+            w.startswith(f"rate_profile_{scenario.expected_outcome}:")
+            for w in warnings
+        ), f"{scenario.name}: no structured warning on a conservative path: {warnings}"
 
 
 def test_the_functional_module_never_scripts_the_production_seams():

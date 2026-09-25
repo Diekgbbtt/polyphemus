@@ -261,6 +261,29 @@ def test_a_partially_transported_probe_keeps_the_real_statuses(tmp_path):
     assert result["status_counts"] == {"200": 1, "429": 1}
 
 
+def test_the_proxy_gateway_status_is_not_counted_as_target_evidence(tmp_path):
+    """A transparent-proxy 502/504 means the upstream answered nothing: it is
+    transport loss, never a target status (a proxy fault must not read as an
+    accepted bound). 503 stays a real limiter refusal."""
+    store = RateLimitArtifactStore(tmp_path)
+    hits = [
+        {"attack": "GET https://target.example/", "seq": 0, "code": 502,
+         "timestamp": "", "latency": 1_000_000, "bytes_out": 0, "bytes_in": 0,
+         "error": "", "body": "", "headers": {}},
+        {"attack": "GET https://target.example/", "seq": 1, "code": 200,
+         "timestamp": "", "latency": 1_000_000, "bytes_out": 0, "bytes_in": 0,
+         "error": "", "body": "", "headers": {}},
+    ]
+    run = _FakeRun(jsonl="\n".join(json.dumps(hit) for hit in hits))
+    result = runner_module.run_experiment(
+        _spec(duration_s=1.0, requests=2, concurrency=1), run=run, store=store
+    )
+
+    assert result["outcome"] == "measured"
+    assert result["transport_errors"] == 1
+    assert result["status_counts"] == {"200": 1}
+
+
 def test_runner_publishes_metrics_but_never_raw_bodies(tmp_path):
     store = RateLimitArtifactStore(tmp_path)
     run = _FakeRun()

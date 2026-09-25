@@ -151,8 +151,12 @@ API_BASE = os.environ.get("POLYPHEMUS_API_BASE", "http://localhost:8080").rstrip
 
 #: The #238 E2E stack: base + the E2E overlay (which routes the agent's two
 #: model roles at the deterministic fixture).
+#: The PROJECT name is pinned (#238 E2E harness discipline): a bare
+#: `docker compose ps` would otherwise address the default project derived from
+#: the directory name, not the stack the gate brought up.
+E2E_PROJECT = os.environ.get("POLYPHEMUS_E2E_PROJECT", "polyphemus-238-e2e")
 E2E_COMPOSE = [
-    "docker", "compose",
+    "docker", "compose", "-p", E2E_PROJECT,
     "-f", "docker-compose.yml",
     "-f", "docker-compose.e2e.yml",
 ]
@@ -171,6 +175,19 @@ TARGET_SERVICES = {
     "low_limit": "rate-matrix-low-limit",
     "false_bypass": "rate-matrix-false-bypass",
     "burst_inconclusive": "rate-matrix-burst-inconclusive",
+}
+
+#: The DOTTED network alias each posture advertises (see the overlay). The
+#: run's `target_seed` uses the FQDN, never the single-label Compose service
+#: name: httpx (the production probe the pod invokes) mis-parses a single-label
+#: host with `unsupported protocol scheme ""`, so a real-shaped name is what the
+#: pods must probe.
+TARGET_SEEDS = {
+    "no_limiter": "no-limiter.e2e.local",
+    "high_limit": "high-limit.e2e.local",
+    "low_limit": "low-limit.e2e.local",
+    "false_bypass": "false-bypass.e2e.local",
+    "burst_inconclusive": "burst-inconclusive.e2e.local",
 }
 
 
@@ -427,7 +444,10 @@ def _target_service(posture: str) -> str:
 #: `store_auth` wrapper already adds that key).
 SMOKE_OVERVIEW = {
     "http-client-replayability": True,
-    "required_headers": ["X-E2E-Correlation"],
+    # A `Name: value` required header (the projection splits on the FIRST colon)
+    # so every replayed request carries a disposable correlation the target can
+    # record - never a credential.
+    "required_headers": ["X-E2E-Correlation: issue-238-smoke"],
     "notes": "Disposable issue 238 fixture.",
 }
 SMOKE_ACCOUNTS = {
@@ -447,6 +467,18 @@ SMOKE_ACCOUNTS = {
 E2E_TARGET_SCHEME = "http"
 
 
+def e2e_recon_settings(target_seed: str, **extra: Any) -> dict:
+    """The recon settings every #238 E2E project declares.
+
+    #238 B5: `target_scheme=http` is EXPLICIT - the fixtures speak plain HTTP on
+    # port 80, and a DNS-name target must not be coerced onto HTTPS by
+    # inference.
+    """
+    settings = {"target_seed": target_seed, "target_scheme": E2E_TARGET_SCHEME}
+    settings.update(extra)
+    return settings
+
+
 def smoke_rate_trajectory(*, posture: str = "no_limiter") -> dict:
     """Launch ONE real run through the public API and return its evidence.
 
@@ -457,10 +489,8 @@ def smoke_rate_trajectory(*, posture: str = "no_limiter") -> dict:
     stay empty and the caller fails.
     """
     project_id = create_project(f"e2e-smoke-{posture}")
-    configure_project(project_id, {
-        "target_seed": _target_service(posture),
-        "settings": {"scan_mode": "safe"},
-    })
+    configure_project(project_id, e2e_recon_settings(
+        TARGET_SEEDS[posture], settings={"scan_mode": "safe"}))
     store_auth(project_id, overview=SMOKE_OVERVIEW, accounts=SMOKE_ACCOUNTS)
     before = provider_counters()
     run_id = start_recon(project_id, ["subfinder"])

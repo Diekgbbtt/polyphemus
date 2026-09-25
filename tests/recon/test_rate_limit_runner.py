@@ -605,6 +605,33 @@ def test_a_partially_transported_probe_keeps_its_http_statuses():
     assert evidence.transport_errors == 2
 
 
+def test_proxy_gateway_errors_are_transport_loss_not_target_evidence():
+    """A 502/504 from the transparent proxy means the UPSTREAM produced no
+    usable response: it is not target evidence, so a probe made only of them is
+    a typed failure and a mixed one is degraded."""
+    spec = ExperimentSpec(
+        experiment_id="burst-0",
+        phase="burst",
+        url="https://target.example/",
+        rate_per_s=20.0,
+        duration_s=1.0,
+        requests=4,
+    )
+    only_gateway = evidence_from_kali_result(
+        spec, {"outcome": "measured", "count": 4, "status_counts": {"502": 4}}
+    )
+    assert only_gateway.outcome == "failed"
+    assert only_gateway.transport_errors == 4
+    assert only_gateway.status_counts == {}
+
+    mixed = evidence_from_kali_result(
+        spec, {"outcome": "measured", "count": 4, "status_counts": {"502": 1, "200": 3}}
+    )
+    assert mixed.outcome == "measured"
+    assert mixed.transport_errors == 1
+    assert mixed.status_counts == {"200": 3}
+
+
 def test_kali_spec_payload_carries_the_controller_owned_traffic_shape():
     spec = ExperimentSpec(
         experiment_id="steady-1",

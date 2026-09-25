@@ -24,8 +24,10 @@ from tests.e2e.rate_limit_matrix_target import (
 
 
 class Fixture:
-    def __init__(self, posture: Posture, secrets: tuple[str, ...] = ()):
-        self.server = build_server(posture, host="127.0.0.1", port=0, secrets=secrets)
+    def __init__(self, posture: Posture, secrets: tuple[str, ...] = (),
+                 delay_s: float = 0.0):
+        self.server = build_server(posture, host="127.0.0.1", port=0,
+                                   secrets=secrets, delay_s=delay_s)
         self.port = self.server.server_address[1]
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
@@ -52,6 +54,13 @@ class Fixture:
     def post(self, path: str, **kw):
         return self._call("POST", path, **kw)
 
+    def get_raw(self, path: str):
+        """The raw (non-JSON) body of a GET - the HTML index surface."""
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{self.port}{path}", timeout=5
+        ) as response:
+            return response.status, response.headers.get("Content-Type"), response.read()
+
     def reset(self) -> str:
         _status, payload, _headers = self.post("/reset")
         return payload["generation"]
@@ -64,8 +73,9 @@ class Fixture:
 def fixture_factory():
     created: list[Fixture] = []
 
-    def make(posture_name: str, *, secrets: tuple[str, ...] = ()) -> Fixture:
-        instance = Fixture(POSTURES[posture_name], secrets=secrets)
+    def make(posture_name: str, *, secrets: tuple[str, ...] = (),
+             delay_s: float = 0.0) -> Fixture:
+        instance = Fixture(POSTURES[posture_name], secrets=secrets, delay_s=delay_s)
         created.append(instance)
         return instance
 
@@ -145,12 +155,17 @@ def test_low_limit_refuses_a_sustained_burst_with_the_documented_headers(fixture
     assert counters["statuses"] == {"200": 1, "429": 1}
 
 
-def test_high_limit_serves_a_one_rps_step(fixture_factory):
+def test_high_limit_accepts_a_compatible_step_and_refuses_beyond_it(fixture_factory):
+    """`high_limit` is a compatible ceiling: a rate comfortably under 15 rps is
+    served, a ~20 rps step is refused. That brackets the transition at a safe
+    rate the request-intensive jobs can still afford."""
     fixture = fixture_factory("high_limit")
     fixture.reset()
-    for _ in range(3):
-        assert fixture.get("/canonical")[0] == 200
-        time.sleep(0.06)
+    assert fixture.get("/canonical")[0] == 200
+    time.sleep(0.12)  # ~8 rps: comfortably accepted
+    assert fixture.get("/canonical")[0] == 200
+    time.sleep(0.05)  # ~20 rps: above the 15 rps ceiling
+    assert fixture.get("/canonical")[0] == 429
 
 
 def test_low_limit_normalizes_the_route_so_a_variant_does_not_bypass(fixture_factory):
@@ -171,11 +186,20 @@ def test_false_bypass_accepts_a_variant_once_and_never_reproduces_it(fixture_fac
     assert repeat == 429, "the independent repetition must fail (unconfirmed shape)"
 
 
-def test_burst_inconclusive_alternates_so_no_transition_can_be_bracketed(fixture_factory):
+def test_burst_inconclusive_mixes_responses_and_silence(fixture_factory):
+    """The ambiguous posture answers SOME hits and stays silent on others, so no
+    rate step is clean evidence - it can read as neither `no_limiter` nor a
+    plain failure."""
     fixture = fixture_factory("burst_inconclusive")
     fixture.reset()
-    statuses = [fixture.get("/canonical")[0] for _ in range(6)]
-    assert statuses == [200, 429, 200, 429, 200, 429]
+    outcomes: list[int] = []
+    for _ in range(8):
+        try:
+            outcomes.append(fixture.get("/canonical")[0])
+        except Exception:  # noqa: BLE001 - a dropped connection has no status
+            outcomes.append(0)
+    assert 200 in outcomes, outcomes
+    assert 0 in outcomes, outcomes
 
 
 # --- inspection API ----------------------------------------------------------
@@ -197,6 +221,7 @@ def test_events_are_ordered_and_carry_monotonic_timestamps_and_in_flight(fixture
     assert counters["max_in_flight"] >= 1
     assert set(counters["events"][0]) == {
         "seq", "monotonic_s", "route", "status", "in_flight", "peak_in_flight",
+        "query_names", "correlation",
     }
 
 
@@ -247,3 +272,68 @@ def test_max_in_flight_is_tracked_under_concurrency(fixture_factory):
     assert payload["statuses"] == {"200": 4}
     assert payload["max_in_flight"] >= 1
     assert payload["current_in_flight"] == 0
+
+
+# --- #238 follow-up (Task 16/17): the crawl surface and the delay knob -----------
+
+
+def test_index_serves_a_same_origin_crawl_and_input_surface(fixture_factory):
+    """`/` must be HTML with ONE link and ONE query input so httpx mints a
+    BaseURL, katana finds an Endpoint and arjun has a key to probe - the inputs
+    the request-intensive jobs need to actually run."""
+    fixture = fixture_factory("no_limiter")
+    status, content_type, body = fixture.get_raw("/")
+    assert status == 200
+    assert "text/html" in content_type
+    assert b'href="/canonical?seed=1"' in body
+    assert b'action="/canonical"' in body
+    assert b'name="issue238_probe"' in body
+    # No external host, credential or absolute URL leaks into the page.
+    assert b"http://" not in body and b"https://" not in body
+
+
+def test_events_record_query_key_names_and_the_correlation_value(fixture_factory):
+    """arjun's probe surface must be readable from the target's own events: the
+    query KEY names, never their values."""
+    fixture = fixture_factory("no_limiter")
+    generation = fixture.reset()
+    fixture.get("/canonical?issue238_probe=value&other=1",
+                headers={"X-E2E-Correlation": "issue-238-smoke"})
+
+    _status, payload, _ = fixture.counters(generation)
+    event = payload["events"][0]
+    assert event["query_names"] == ["issue238_probe", "other"]
+    assert event["correlation"] == "issue-238-smoke"
+    assert "value" not in json.dumps(event)
+
+
+def test_the_delay_knob_makes_concurrency_observable(fixture_factory):
+    """`RATE_FIXTURE_DELAY_S` holds a served request open so a concurrent
+    dispatch shows up as a peak in-flight count > 1 (the enforcement gate)."""
+    fixture = fixture_factory("no_limiter", delay_s=0.3)
+    generation = fixture.reset()
+    threads = [
+        threading.Thread(target=lambda: fixture.get("/canonical"))
+        for _ in range(2)
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    _status, payload, _ = fixture.counters(generation)
+    assert payload["max_in_flight"] == 2
+
+
+def test_the_fixture_reports_query_key_names_per_route(fixture_factory):
+    """arjun attribution must survive the ordered-event cap, so the query KEY
+    names are aggregated per route (values never recorded)."""
+    fixture = fixture_factory("no_limiter")
+    generation = fixture.reset()
+    fixture.get("/canonical?issue238_probe=secret-value")
+    fixture.get("/canonical?seed=1")
+
+    _status, payload, _ = fixture.counters(generation)
+    per_route = payload["query_names"]["/canonical"]
+    assert per_route == {"issue238_probe": 1, "seed": 1}
+    assert "secret-value" not in json.dumps(payload)

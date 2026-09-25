@@ -36,6 +36,18 @@ from urllib.parse import parse_qs, urlsplit
 LIMITED_PATH = "/canonical"
 MAX_EVENTS = 5000
 
+#: The SAME-ORIGIN crawl/input surface every posture serves at `/` (#238
+#: follow-up, Task 16): an ordinary HTML page with ONE link and ONE GET form, so
+#: httpx mints a BaseURL, katana finds an Endpoint, and arjun has a query key to
+#: probe. Deliberately no hostname, credential or external URL.
+INDEX_HTML = (
+    b"<!doctype html><html><body>\n"
+    b'<a href="/canonical?seed=1">canonical</a>\n'
+    b'<form method="get" action="/canonical">\n'
+    b'<input name="issue238_probe"><button type="submit">probe</button>\n'
+    b"</form></body></html>"
+)
+
 SENSITIVE_HEADERS = frozenset(
     {"authorization", "proxy-authorization", "cookie", "set-cookie", "x-api-key"}
 )
@@ -61,18 +73,31 @@ class Posture:
     #: When True, the limited route alternates accept/refuse deterministically,
     #: so no stable transition can be bracketed (`inconclusive`).
     alternate: bool = False
+    #: When > 0, every Nth target-route request gets NO upstream response (the
+    #: connection is closed). Used by the ambiguous posture: the target answers
+    #: SOME hits and goes silent on others, the transparent proxy reports its own
+    #: 502 for the silent ones, and the runner treats a proxy gateway error as
+    #: transport loss - so no rate step is clean accepted evidence and no
+    #: transition can be bracketed (`inconclusive`), while a plain `no_limiter`
+    #: or a `failed` reading is impossible.
+    drop_every_nth: int = 0
 
 
 POSTURES: dict[str, Posture] = {
     "no_limiter": Posture("no_limiter", limit=False),
-    "high_limit": Posture("high_limit", limit=True, rate_per_s=20.0),
+    # A COMPATIBLE limiter: the 10 rps ladder step is clean, the 20 rps step is
+    # refused (jitter 0 => a strict 1/15s spacing), so the boundary maps to a
+    # safe rate the request-intensive jobs can still afford.
+    "high_limit": Posture("high_limit", limit=True, rate_per_s=15.0, jitter_s=0.0),
     "low_limit": Posture("low_limit", limit=True, rate_per_s=1.0),
     "false_bypass": Posture(
         "false_bypass", limit=True, rate_per_s=1.0,
         limiter_key="raw", first_variant_free=True,
     ),
+    # Ambiguous/bursty: it answers some hits and silently drops others, so every
+    # rate step carries transport loss - no clean accepted bound, no refusal.
     "burst_inconclusive": Posture(
-        "burst_inconclusive", limit=True, rate_per_s=1.0, alternate=True,
+        "burst_inconclusive", limit=False, drop_every_nth=4,
     ),
 }
 
@@ -125,6 +150,10 @@ class Counters:
             self.requests = 0
             self.statuses: dict[str, int] = {}
             self.routes: dict[str, int] = {}
+            # route -> {query KEY name: count}, NOT capped by MAX_EVENTS, so
+            # arjun's late-phase probe surface stays attributable even after the
+            # ordered event list reached its cap.
+            self.query_names: dict[str, dict[str, int]] = {}
             self.headers: dict[str, str] = {}
             self.events: list[dict] = []
             self.in_flight = 0
@@ -142,11 +171,17 @@ class Counters:
         with self.lock:
             self.in_flight = max(0, self.in_flight - 1)
 
-    def record(self, path: str, status: int, headers: dict[str, str]) -> None:
+    def record(self, path: str, status: int, headers: dict[str, str], *,
+               query_names: list[str] | None = None,
+               correlation: str | None = None) -> None:
         with self.lock:
             self.requests += 1
             self.statuses[str(status)] = self.statuses.get(str(status), 0) + 1
             self.routes[path] = self.routes.get(path, 0) + 1
+            if query_names:
+                bucket = self.query_names.setdefault(path, {})
+                for name in query_names:
+                    bucket[name] = bucket.get(name, 0) + 1
             # `headers` already carries the redaction decision: sensitive names
             # map to `<redacted>`, every other value has configured secrets
             # scrubbed out of it.
@@ -160,6 +195,11 @@ class Counters:
                     "status": status,
                     "in_flight": self.in_flight,
                     "peak_in_flight": self.peak_in_flight,
+                    # #238 follow-up (Task 16): the request's query KEY names
+                    # (arjun's probe surface) and the disposable correlation
+                    # value (never a credential). Values are NOT recorded.
+                    "query_names": list(query_names or []),
+                    "correlation": correlation,
                 })
 
     def snapshot(self) -> dict:
@@ -169,6 +209,7 @@ class Counters:
                 "requests": self.requests,
                 "statuses": dict(self.statuses),
                 "routes": dict(self.routes),
+                "query_names": {k: dict(v) for k, v in self.query_names.items()},
                 "headers": dict(self.headers),
                 "current_in_flight": self.in_flight,
                 "max_in_flight": self.peak_in_flight,
@@ -198,12 +239,17 @@ def redacted_headers(headers, secrets: tuple[str, ...] = ()) -> dict[str, str]:
 class Target:
     """One posture instance: shared route logic, posture-driven limiting."""
 
-    def __init__(self, posture: Posture, *, secrets: tuple[str, ...] = ()):
+    def __init__(self, posture: Posture, *, secrets: tuple[str, ...] = (),
+                 delay_s: float = 0.0):
         self.posture = posture
         self.secrets = secrets
+        # #238 follow-up (Task 17): hold a served request open for this long so a
+        # concurrent dispatch is observable in the target's peak in-flight count.
+        self.delay_s = max(0.0, float(delay_s))
         self.counters = Counters()
         self._buckets: dict[str, LeakyBucket] = {}
         self._variant_seen: dict[str, int] = {}
+        self._route_requests = 0
         self._lock = threading.Lock()
 
     def reset(self) -> str:
@@ -211,7 +257,21 @@ class Target:
         with self._lock:
             self._buckets.clear()
             self._variant_seen.clear()
+            self._route_requests = 0
         return self.counters.generation
+
+    def next_request_index(self) -> int:
+        """The 1-based index of the next TARGET-ROUTE request this instance sees."""
+        with self._lock:
+            self._route_requests += 1
+            return self._route_requests
+
+    def should_drop(self, index: int) -> bool:
+        """Whether this request gets no upstream response (the ambiguous
+        posture)."""
+        return bool(self.posture.drop_every_nth) and (
+            index % self.posture.drop_every_nth == 0
+        )
 
     def _key(self, path: str) -> str:
         if self.posture.limiter_key == "normalized":
@@ -280,9 +340,17 @@ def _make_handler(target: Target):
 
             target.counters.enter()
             try:
+                index = target.next_request_index()
+                if target.should_drop(index):
+                    # The ambiguous posture: answer NOTHING for this hit. The
+                    # transparent proxy then reports its own 502, which the
+                    # runner classifies as transport loss (never a status).
+                    self._record(path, 0, query)
+                    self.close_connection = True
+                    return
                 served = target.admit(path)
                 status = 200 if served else 429
-                self._record(path, status)
+                self._record(path, status, query)
                 if not served:
                     self._send(
                         429, {"error": "rate limited"},
@@ -292,6 +360,13 @@ def _make_handler(target: Target):
                             "X-RateLimit-Remaining": "0",
                         },
                     )
+                    return
+                if target.delay_s:
+                    time.sleep(target.delay_s)
+                if normalized_resource(path) == "/":
+                    # The crawl/input surface (#238 Task 16): an HTML index so
+                    # httpx/katana/arjun have real same-origin inputs.
+                    self._send_html(200, INDEX_HTML)
                     return
                 self._send(
                     200, {"route": path, "resource": normalized_resource(path)},
@@ -319,9 +394,20 @@ def _make_handler(target: Target):
             else:
                 self._send(200, snapshot)
 
-        def _record(self, path: str, status: int) -> None:
+        def _record(self, path: str, status: int, query: dict) -> None:
             headers = redacted_headers(dict(self.headers.items()), target.secrets)
-            target.counters.record(path, status, headers)
+            target.counters.record(
+                path, status, headers,
+                query_names=sorted(query),
+                correlation=headers.get("x-e2e-correlation"),
+            )
+
+        def _send_html(self, status: int, body: bytes) -> None:
+            self.send_response(status)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
 
         def _send(self, status: int, payload: dict, *,
                   extra_headers: dict | None = None) -> None:
@@ -341,10 +427,13 @@ def _make_handler(target: Target):
 
 
 def build_server(posture: Posture, *, host: str = "0.0.0.0", port: int = 80,
-                 secrets: tuple[str, ...] = ()) -> ThreadingHTTPServer:
+                 secrets: tuple[str, ...] = (),
+                 delay_s: float = 0.0) -> ThreadingHTTPServer:
     """A ready-to-serve instance. The unit tier passes port 0 and reads
     `server.server_address[1]`; Compose passes the posture env and port 80."""
-    return ThreadingHTTPServer((host, port), _make_handler(Target(posture, secrets=secrets)))
+    return ThreadingHTTPServer(
+        (host, port), _make_handler(Target(posture, secrets=secrets, delay_s=delay_s))
+    )
 
 
 def main() -> None:
@@ -353,7 +442,10 @@ def main() -> None:
         value for value in os.environ.get("RATE_FIXTURE_SECRETS", "").split(",") if value
     )
     server = build_server(
-        posture, port=int(os.environ.get("PORT", "80")), secrets=secrets
+        posture, port=int(os.environ.get("PORT", "80")), secrets=secrets,
+        # #238 follow-up (Task 17): a committed per-service delay knob so the
+        # concurrency enforcement gate can observe a real peak in-flight count.
+        delay_s=float(os.environ.get("RATE_FIXTURE_DELAY_S", "0") or 0),
     )
     server.serve_forever()
 

@@ -160,10 +160,11 @@ def evidence_from_kali_result(spec: ExperimentSpec, payload: Mapping) -> Experim
         str(key): int(value)
         for key, value in (payload.get("status_counts") or {}).items()
     }
+    transport_loss = {0, 502, 504}
     valid_status_counts = {
         key: value
         for key, value in raw_status_counts.items()
-        if key.isdigit() and 100 <= int(key) <= 599
+        if key.isdigit() and 100 <= int(key) <= 599 and int(key) not in transport_loss
     }
     transport_errors = int(payload.get("transport_errors") or 0)
     if transport_errors <= 0:
@@ -172,7 +173,11 @@ def evidence_from_kali_result(spec: ExperimentSpec, payload: Mapping) -> Experim
         transport_errors = sum(
             value
             for key, value in raw_status_counts.items()
-            if not (key.isdigit() and 100 <= int(key) <= 599)
+            if not (
+                key.isdigit()
+                and 100 <= int(key) <= 599
+                and int(key) not in transport_loss
+            )
         )
     producer_failed = str(payload.get("outcome") or "measured") == "failed"
     failed = producer_failed or not valid_status_counts

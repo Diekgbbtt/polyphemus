@@ -775,6 +775,14 @@ async def run_pipeline(
         admission_refusals: list = []
         if capability_warning:
             admission_warnings.append(capability_warning)
+        if rate_profile.outcome in ("failed", "inconclusive"):
+            # Spec 16.9: EVERY conservative path carries a structured warning, so
+            # an operator reading the envelope knows WHY target-facing work was
+            # pruned instead of having to reconstruct it from the decisions.
+            admission_warnings.append(
+                f"rate_profile_{rate_profile.outcome}: "
+                f"{getattr(rate_profile, 'reason', '') or 'conservative fallback'}"
+            )
 
         async def _record_trajectory() -> None:
             """Re-persist the envelope after a trajectory event was appended.

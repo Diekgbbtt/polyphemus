@@ -60,6 +60,10 @@ _SENSITIVE_HEADERS = frozenset(
 _VERSION_RE = re.compile(r"\b(\d+\.\d+\.\d+)\b")
 _STDERR_TAIL = 400
 
+_TRANSPORT_LOSS_STATUSES = frozenset({502, 504})
+"""Gateway statuses that mean the transparent proxy could not obtain an
+upstream response. They are NOT target evidence."""
+
 
 @dataclass(frozen=True)
 class RunOutcome:
@@ -215,7 +219,7 @@ def _metrics(hits: Sequence[Mapping]) -> dict:
     transport_errors = 0
     for hit in hits:
         code = int(hit.get("code", 0) or 0)
-        if 100 <= code <= 599:
+        if 100 <= code <= 599 and code not in _TRANSPORT_LOSS_STATUSES:
             key = str(code)
             status_counts[key] = status_counts.get(key, 0) + 1
         else:
@@ -223,6 +227,10 @@ def _metrics(hits: Sequence[Mapping]) -> dict:
             # (DNS/TLS/connect/timeout). Code 0 is NOT a status and must never
             # be counted as one: a probe with only transport errors answered
             # nothing, so it can never be accepted evidence (#238 P0).
+            # 502/504 are the transparent proxy's OWN gateway errors: the
+            # upstream produced no usable response, so they are transport loss
+            # too (a proxy fault must never read as a target acceptance), while
+            # 503 stays a real limiter refusal.
             transport_errors += 1
     rejected = sum(1 for hit in hits if _is_rejection(hit))
     latencies = [float(hit.get("latency_ms") or 0.0) for hit in hits]

@@ -15,7 +15,10 @@ def _as_mapping(result: object) -> dict:
     """
     artifact = getattr(result, "artifact", None)
     if isinstance(artifact, dict):
-        return artifact
+        # The langchain-mcp adapter wraps a structured tool result under
+        # `structured_content` (observed live against the Kali MCP surface).
+        inner = artifact.get("structured_content")
+        return inner if isinstance(inner, dict) else artifact
     content = getattr(result, "content", result)
     if isinstance(content, dict):
         return content
