@@ -196,6 +196,44 @@ real actor loop and the real pipeline with reproducible model output. Only
 inference is replaced; the actor, tools, pipeline, pods, MCP/Kali proxy and the
 target are production code.
 
+### Running the gate
+
+`scripts/issue_238_e2e_stack.sh` owns the stack lifecycle. Every command is
+pinned to the `polyphemus-238-e2e` Compose project and to the base + E2E overlay
+files, so it can never address (or disturb) another stack:
+
+```sh
+sh scripts/issue_238_e2e_stack.sh config          # compose validity
+sh scripts/issue_238_e2e_stack.sh build           # agent + self-contained Kali
+sh scripts/issue_238_e2e_stack.sh up              # + health + assert-clean
+sh scripts/issue_238_e2e_stack.sh gate-once run-a # provider + posture matrix
+sh scripts/issue_238_e2e_stack.sh gate-stale      # short-TTL stale row
+sh scripts/issue_238_e2e_stack.sh gate-twice artifacts/issue-238-final
+```
+
+The gate's service set and its two scale knobs are committed in the overlay:
+the profile TTL (`RATE_LIMIT_PROFILE_TTL_S`, long by default so the later-phase
+intensives stay fresh; `up-stale`/`gate-stale` set it to `1`) and the admission
+ceiling (`RATE_LIMIT_INTENSIVE_MAX_PROJECTED_DURATION_S`, `900` so the fixture's
+mapped safe rate can afford ffuf's 4,750-request cost). Neither is a test-side
+switch and neither changes the admission MECHANISM, whose boundaries stay
+inclusive.
+
+Two operational details the live tier depends on:
+
+* the fixtures advertise a **dotted** network alias (`high-limit.e2e.local`, …).
+  `httpx` - the production probe the pod invokes - mis-parses a single-label
+  Compose service name (`unsupported protocol scheme ""`), so the run's
+  `target_seed` is the FQDN, exactly as a real target would be;
+* the E2E tier runs on its OWN bridge network (`polyphemus-238-e2e-net`,
+  `172.29.0.0/16`) and publishes the API on `18080`, so the operator's default
+  `polymerhus-net` subnet and port `8080` are never required to be free.
+
+The fixture's **ambiguous** posture answers some hits and stays silent on
+others; the transparent proxy reports its own 502 for a silent hit, and the
+runner classifies that gateway error as transport loss (never target evidence),
+so the mapping cannot bracket a transition and stays `inconclusive`.
+
 ## 8. What to do when a run refuses everything
 
 1. Read `stats.traffic_admission.decisions` — every pruning has a code.
