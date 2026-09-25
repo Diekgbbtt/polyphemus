@@ -52,6 +52,7 @@ from polymerhus.recon.control.rate_limit_mapper import (
     derive_policy,
     derive_scope,
     judge_bypass,
+    ladder_exhausted,
     next_experiment,
 )
 from polymerhus.recon.control.request_mutation import (
@@ -149,29 +150,52 @@ def evidence_from_kali_result(spec: ExperimentSpec, payload: Mapping) -> Experim
     Aggregates, fingerprints and references only: the raw hit stream stays on
     the Kali data root, addressed by `artifact_ref` and pinned by
     `manifest_sha256`.
+
+    #238 P0: the controller NEVER trusts a producer's `outcome` claim about a
+    probe that answered no HTTP status. A payload that reports only transport
+    failures (code 0) or no status counts at all is a TYPED failure with no
+    artifact - "the probe reached nothing" is not "the target has no limiter".
     """
-    failed = str(payload.get("outcome") or "measured") == "failed"
+    raw_status_counts = {
+        str(key): int(value)
+        for key, value in (payload.get("status_counts") or {}).items()
+    }
+    valid_status_counts = {
+        key: value
+        for key, value in raw_status_counts.items()
+        if key.isdigit() and 100 <= int(key) <= 599
+    }
+    transport_errors = int(payload.get("transport_errors") or 0)
+    if transport_errors <= 0:
+        # Recompute locally: a producer that forgot the field must not be able
+        # to smuggle a code-0 bucket through as if it were a status.
+        transport_errors = sum(
+            value
+            for key, value in raw_status_counts.items()
+            if not (key.isdigit() and 100 <= int(key) <= 599)
+        )
+    producer_failed = str(payload.get("outcome") or "measured") == "failed"
+    failed = producer_failed or not valid_status_counts
     return ExperimentEvidence(
         experiment_id=str(payload.get("experiment_id") or spec.experiment_id),
         phase=spec.phase,
         offered_rate_per_s=float(payload.get("offered_rate_per_s") or spec.rate_per_s),
         requests=int(payload.get("count") or 0),
+        transport_errors=transport_errors,
         concurrent_workers=int(payload.get("concurrent_workers") or spec.concurrency),
         duration_s=float(payload.get("duration_s") or spec.duration_s),
-        status_counts={
-            str(key): int(value)
-            for key, value in (payload.get("status_counts") or {}).items()
-        },
+        status_counts=valid_status_counts,
         rejection_ratio=float(payload.get("rejection_ratio") or 0.0),
         latency_p50_ms=payload.get("latency_p50_ms"),
         latency_p95_ms=payload.get("latency_p95_ms"),
         burst_accepted=payload.get("burst_accepted"),
         header_fingerprint=[str(item) for item in payload.get("header_fingerprint") or []],
         body_fingerprint=[str(item) for item in payload.get("body_fingerprint") or []],
-        artifact_ref=payload.get("artifact_ref") or None,
-        manifest_sha256=payload.get("manifest_sha256") or None,
+        artifact_ref=None if failed else (payload.get("artifact_ref") or None),
+        manifest_sha256=None if failed else (payload.get("manifest_sha256") or None),
         outcome="failed" if failed else "measured",
-        error=payload.get("error") or None,
+        error=(payload.get("error") or None)
+        or ("no valid HTTP response" if failed and not producer_failed else None),
     )
 
 
@@ -424,6 +448,14 @@ class RateLimitHarness:
 
     def _finish(self, state: MappingState) -> MappedControl:
         control = classify_mapping(state.evidence)
+        # #238 B4: `no_limiter` is only honest when the WHOLE rate ladder was
+        # exercised with clean evidence. A ladder truncated by the budget (or
+        # degraded by transport loss) is `inconclusive`, which derives the
+        # conservative fallback and can never authorize intensive traffic.
+        if control.outcome == "no_limiter" and not ladder_exhausted(
+            state.evidence, self.budget
+        ):
+            control = control.model_copy(update={"outcome": "inconclusive"})
         control = control.model_copy(
             update={"scope": derive_scope(state.evidence, state.scope_probes)}
         )

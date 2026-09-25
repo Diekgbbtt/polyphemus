@@ -490,7 +490,15 @@ def classify_mapping(evidence: Sequence[ExperimentEvidence]) -> MappedControl:
         key=lambda e: e.offered_rate_per_s,
     )
     refused = _refused(ladder)
-    accepted = [e for e in ladder if e.rejection_ratio <= _EPSILON]
+    # #238 B4: a probe that lost ANY hit at the transport layer is not clean
+    # accepted evidence - it can never set or lower the accepted bound. Real
+    # HTTP refusals remain evidence (they are in `refused`).
+    accepted = [
+        e
+        for e in ladder
+        if e.rejection_ratio <= _EPSILON and e.transport_errors == 0
+    ]
+    degraded = any(e.transport_errors > 0 for e in measured)
     concurrency_limited = _concurrency_limited(measured)
     tested_max = max((e.offered_rate_per_s for e in measured), default=None)
     # The fingerprint is what the target actually SAID no with - including a
@@ -511,7 +519,7 @@ def classify_mapping(evidence: Sequence[ExperimentEvidence]) -> MappedControl:
         outcome = "inconclusive"
     elif refused or concurrency_limited:
         outcome = "mapped"
-    elif len(distinct_rates) >= 2:
+    elif len(distinct_rates) >= 2 and not degraded:
         outcome = "no_limiter"
     else:
         outcome = "inconclusive"
@@ -565,6 +573,27 @@ def classify_mapping(evidence: Sequence[ExperimentEvidence]) -> MappedControl:
         signals=signals,
         traffic_policy=None,
     )
+
+
+def ladder_exhausted(
+    evidence: Sequence[ExperimentEvidence], budget: RateLimitSafetyBudget
+) -> bool:
+    """Whether the WHOLE permitted rate ladder was exercised with clean evidence.
+
+    `no_limiter` means "no transition within the tested bounds", never "no
+    limiter exists". The claim is only honest when every ladder step produced a
+    real HTTP response with no transport loss: a ladder truncated by the budget
+    or degraded by transport errors cannot support it (#238 B4).
+    """
+    clean_accepted = {
+        round(e.offered_rate_per_s, 4)
+        for e in evidence
+        if e.phase == "steady"
+        and e.outcome == "measured"
+        and e.transport_errors == 0
+        and e.rejection_ratio <= _EPSILON
+    }
+    return all(round(rate, 4) in clean_accepted for rate in _ladder(budget))
 
 
 def derive_scope(

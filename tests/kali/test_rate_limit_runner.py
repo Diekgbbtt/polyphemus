@@ -202,6 +202,65 @@ def test_runner_compacts_hits_and_publishes_an_artifact(tmp_path):
     assert records[1]["headers"] == {"Retry-After": ["30"]}
 
 
+def _transport_only_jsonl(count: int = 5) -> str:
+    """Every hit failed before any HTTP response: Vegeta records code 0."""
+    hits = [
+        {
+            "attack": "GET https://target.example/",
+            "seq": index,
+            "code": 0,
+            "timestamp": "2025-01-01T00:00:00.000000000Z",
+            "latency": 1_000_000,
+            "bytes_out": 0,
+            "bytes_in": 0,
+            "error": "dial tcp: lookup target.example: no such host",
+            "body": "",
+            "headers": {},
+        }
+        for index in range(count)
+    ]
+    return "\n".join(json.dumps(hit) for hit in hits)
+
+
+def test_transport_only_probe_publishes_nothing_and_fails(tmp_path):
+    """#238 P0: zero valid HTTP responses is a TYPED failure, not a measurement.
+
+    The old runner claimed `outcome="measured"` with `status_counts={"0": 5}`
+    and published an artifact; the controller read that as a valid probe and
+    could conclude `no_limiter` from a target it never reached.
+    """
+    store = RateLimitArtifactStore(tmp_path)
+    run = _FakeRun(jsonl=_transport_only_jsonl(5))
+
+    result = runner_module.run_experiment(
+        _spec(duration_s=1.0, requests=5, concurrency=1), run=run, store=store
+    )
+
+    assert result["outcome"] == "failed"
+    assert result["status_counts"] == {}
+    assert result["transport_errors"] == 5
+    assert result["artifact_ref"] is None
+    assert result["manifest_sha256"] is None
+    assert result["error"]
+    # Nothing was published for a probe that produced no evidence.
+    assert not (tmp_path / "proj-1" / "rate-limit" / "run-1" / "exp-1").exists()
+
+
+def test_a_partially_transported_probe_keeps_the_real_statuses(tmp_path):
+    """A mixed probe keeps its HTTP evidence but records the transport loss."""
+    store = RateLimitArtifactStore(tmp_path)
+    run = _FakeRun(jsonl=_hit_jsonl() + "\n" + _transport_only_jsonl(1))
+
+    result = runner_module.run_experiment(
+        _spec(duration_s=1.0, requests=3, concurrency=1), run=run, store=store
+    )
+
+    assert result["outcome"] == "measured"
+    assert result["transport_errors"] == 1
+    assert "0" not in result["status_counts"]
+    assert result["status_counts"] == {"200": 1, "429": 1}
+
+
 def test_runner_publishes_metrics_but_never_raw_bodies(tmp_path):
     store = RateLimitArtifactStore(tmp_path)
     run = _FakeRun()

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -146,6 +146,103 @@ def test_a_truncated_ladder_is_inconclusive_not_no_limiter():
 
     assert control.outcome == "inconclusive"
     assert control.traffic_policy is None or control.traffic_policy.source == "conservative-fallback"
+
+
+def test_budget_truncated_ladder_downgrades_to_fallback():
+    """Two clean accepted ladder steps are not a complete no-limiter surface.
+
+    `no_limiter` requires the WHOLE 1/2/5/10/20 ladder to have been exercised
+    with clean evidence; a budget that stops after two rates yields
+    `inconclusive` and the conservative policy - never an inferred bound.
+    """
+    executor = RecordingExecutor()
+    harness = _harness(
+        executor,
+        budget=RateLimitSafetyBudget(
+            max_requests=20, max_duration_s=100.0, max_concurrency=1
+        ),
+    )
+
+    control = _run(harness.map())
+
+    assert {round(e.offered_rate_per_s, 4) for e in harness.evidence if e.phase == "steady"} == {
+        1.0,
+        2.0,
+    }
+    assert control.outcome == "inconclusive"
+    assert control.traffic_policy is not None
+    assert control.traffic_policy.source == "conservative-fallback"
+    assert control.traffic_policy.rate_per_s <= 1.0
+
+
+def test_default_budget_still_reaches_an_honest_no_limiter():
+    """The positive control: when the whole ladder IS exercised cleanly, the
+    outcome stays `no_limiter` and the policy is the highest tested rate."""
+    executor = RecordingExecutor()
+    harness = _harness(executor)
+
+    control = _run(harness.map())
+
+    assert control.outcome == "no_limiter"
+    assert control.tested_max_rate_per_s == 20.0
+    assert control.traffic_policy is not None
+    assert control.traffic_policy.rate_per_s == 20.0
+    assert control.traffic_policy.source == "measured-no-limiter"
+
+
+def test_transport_only_measurement_falls_back_and_prunes_intensive_jobs():
+    """The whole offline chain: every probe fails at the transport layer, so the
+    mapping fails closed, the profile carries the conservative (1 req/s, burst
+    1, concurrency 1) policy, publishes NO artifact, and both request-intensive
+    jobs are pruned with a structured reason instead of being admitted (#238
+    A3/B4)."""
+    from polymerhus.recon.config import TRAFFIC_ADMISSION_SETTINGS
+    from polymerhus.recon.control.jobs import JOBS
+    from polymerhus.recon.domain.traffic_admission import (
+        decide_job_admission,
+        AdmissionContext,
+    )
+
+    def transport_only(spec: ExperimentSpec) -> ExperimentEvidence:
+        return ExperimentEvidence(
+            experiment_id=spec.experiment_id,
+            phase=spec.phase,
+            offered_rate_per_s=spec.rate_per_s,
+            requests=spec.requests,
+            concurrent_workers=spec.concurrency,
+            duration_s=spec.duration_s,
+            transport_errors=spec.requests,
+            outcome="failed",
+            error="no valid HTTP response",
+        )
+
+    harness = _harness(RecordingExecutor(transport_only))
+    control = _run(harness.map())
+    assert control.outcome == "failed"
+
+    profile = harness.build_profile(RateLoopVerdict())
+    assert profile.outcome == "failed"
+    assert profile.traffic_policy is not None
+    assert profile.traffic_policy.rate_per_s == 1.0
+    assert profile.traffic_policy.burst == 1
+    assert profile.traffic_policy.max_concurrency == 1
+    assert profile.artifact_refs == []
+    assert list(profile.evidence) == []
+
+    now = datetime.now(timezone.utc)
+    context = AdmissionContext(
+        profile_status=profile.outcome,
+        safe_rate_per_s=profile.safe_rate_per_s,
+        profile_fresh=profile.is_fresh(now),
+        policy_present=True,
+        evaluated_at=now,
+    )
+    for name in ("arjun", "ffuf"):
+        decision = decide_job_admission(
+            0, JOBS[name], 1, context, TRAFFIC_ADMISSION_SETTINGS
+        )
+        assert decision.decision.value == "excluded", name
+        assert decision.reason_code.value == "profile_failed", name
 
 
 def test_a_tool_failure_stops_probing_and_yields_a_failed_control():
@@ -444,6 +541,68 @@ def test_evidence_from_a_failed_kali_result_is_typed_and_unreferenced():
     assert evidence.outcome == "failed"
     assert evidence.error
     assert evidence.artifact_ref is None
+
+
+def test_transport_only_evidence_is_failed_not_measured():
+    """A probe that never reached the target answered no HTTP status.
+
+    A producer that still claims `outcome="measured"` while every hit failed at
+    the transport layer is not evidence of *no* limiter: it is evidence of *no
+    response*. The controller must fail closed regardless of the producer, drop
+    the code-0 bucket, count the transport errors, and publish no artifact.
+    """
+    spec = ExperimentSpec(
+        experiment_id="steady-0",
+        phase="steady",
+        url="https://target.example/login",
+        rate_per_s=1.0,
+        duration_s=3.0,
+        requests=3,
+    )
+    evidence = evidence_from_kali_result(
+        spec,
+        {
+            "outcome": "measured",
+            "count": 5,
+            "status_counts": {"0": 5},
+            "transport_errors": 5,
+            "artifact_ref": "rate-artifact/v1:proj-1/run-1/steady-0",
+            "manifest_sha256": "a" * 64,
+        },
+    )
+
+    assert evidence.outcome == "failed"
+    assert evidence.status_counts == {}
+    assert evidence.transport_errors == 5
+    assert evidence.artifact_ref is None
+    assert evidence.manifest_sha256 is None
+
+
+def test_a_partially_transported_probe_keeps_its_http_statuses():
+    """Some real HTTP responses plus some transport errors stay `measured` -
+    the statuses are genuine evidence - but the transport loss is recorded so
+    the classifier can refuse to treat the probe as a clean accepted bound."""
+    spec = ExperimentSpec(
+        experiment_id="steady-0",
+        phase="steady",
+        url="https://target.example/login",
+        rate_per_s=1.0,
+        duration_s=3.0,
+        requests=3,
+    )
+    evidence = evidence_from_kali_result(
+        spec,
+        {
+            "outcome": "measured",
+            "count": 10,
+            "status_counts": {"0": 2, "200": 8},
+            "transport_errors": 2,
+        },
+    )
+
+    assert evidence.outcome == "measured"
+    assert evidence.status_counts == {"200": 8}
+    assert evidence.transport_errors == 2
 
 
 def test_kali_spec_payload_carries_the_controller_owned_traffic_shape():

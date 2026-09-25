@@ -110,6 +110,12 @@ class KaliExperimentResult(_Closed):
     artifact_ref: str | None = None
     manifest_sha256: str | None = None
     count: int = Field(default=0, ge=0)
+    transport_errors: int = Field(default=0, ge=0)
+    """Hits that produced NO HTTP response at all (DNS/TLS/connect/timeout).
+
+    Vegeta records these with `code=0`. They are never a status and never an
+    accepted bound: a probe whose every hit landed here is a TYPED failure, and
+    a probe with some of them is not clean accepted evidence (#238 P0)."""
     duration_s: float = Field(default=0.0, ge=0)
     offered_rate_per_s: float = Field(default=0.0, ge=0)
     concurrent_workers: int = Field(default=1, ge=1)

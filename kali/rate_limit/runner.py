@@ -212,9 +212,18 @@ def _fingerprints(hits: Sequence[Mapping]) -> tuple[list[str], list[str]]:
 def _metrics(hits: Sequence[Mapping]) -> dict:
     total = len(hits)
     status_counts: dict[str, int] = {}
+    transport_errors = 0
     for hit in hits:
-        key = str(hit.get("code", 0))
-        status_counts[key] = status_counts.get(key, 0) + 1
+        code = int(hit.get("code", 0) or 0)
+        if 100 <= code <= 599:
+            key = str(code)
+            status_counts[key] = status_counts.get(key, 0) + 1
+        else:
+            # Vegeta writes `code=0` when no HTTP response was produced at all
+            # (DNS/TLS/connect/timeout). Code 0 is NOT a status and must never
+            # be counted as one: a probe with only transport errors answered
+            # nothing, so it can never be accepted evidence (#238 P0).
+            transport_errors += 1
     rejected = sum(1 for hit in hits if _is_rejection(hit))
     latencies = [float(hit.get("latency_ms") or 0.0) for hit in hits]
     leading_accepted = 0
@@ -225,6 +234,7 @@ def _metrics(hits: Sequence[Mapping]) -> dict:
     header_fingerprint, body_fingerprint = _fingerprints(hits)
     return {
         "status_counts": dict(sorted(status_counts.items())),
+        "transport_errors": transport_errors,
         "rejection_ratio": (rejected / total) if total else 0.0,
         "latency_p50_ms": _percentile(latencies, 50),
         "latency_p95_ms": _percentile(latencies, 95),
@@ -352,6 +362,24 @@ def run_experiment(
             )
         hits = _parse_hits(encoded.stdout)
         metrics = _metrics(hits)
+
+        if not metrics["status_counts"]:
+            # No HTTP response was produced by ANY hit: the probe never reached
+            # the target. Publish nothing - a probe with no evidence is a typed
+            # failure, never a "measured" result the mapper could read as an
+            # accepted bound (#238 P0).
+            return KaliExperimentResult(
+                experiment_id=parsed.experiment_id,
+                phase=parsed.phase,
+                outcome="failed",
+                offered_rate_per_s=parsed.rate_per_s,
+                concurrent_workers=parsed.concurrency,
+                count=len(hits),
+                transport_errors=metrics["transport_errors"],
+                duration_s=parsed.duration_s,
+                vegeta_version=version,
+                error="no valid HTTP response",
+            ).model_dump(mode="json")
 
         aggregate: dict = {}
         try:

@@ -350,6 +350,12 @@ class ExperimentEvidence(_ClosedContract):
     phase: ExperimentPhase
     offered_rate_per_s: float = Field(ge=0)
     requests: int = Field(default=0, ge=0)
+    transport_errors: int = Field(default=0, ge=0)
+    """Hits that produced no HTTP response (DNS/TLS/connect/timeout).
+
+    A probe whose every hit landed here answered nothing and is a typed
+    failure; a probe with some transport loss keeps its real statuses but is
+    NOT clean accepted evidence (#238 P0 / B4)."""
     concurrent_workers: int = Field(default=1, ge=1)
     duration_s: float = Field(default=0.0, ge=0)
     status_counts: dict[str, int] = Field(default_factory=dict)

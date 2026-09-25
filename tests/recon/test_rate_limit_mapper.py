@@ -51,6 +51,7 @@ def _ev(
     outcome: str = "measured",
     measured_at: datetime | None = None,
     error: str | None = None,
+    transport_errors: int = 0,
 ) -> ExperimentEvidence:
     if codes is None:
         codes = {"429": rejected, "200": requests - rejected} if rejected else {"200": requests}
@@ -74,6 +75,7 @@ def _ev(
         measured_at=measured_at or _T0,
         outcome=outcome,
         error=error,
+        transport_errors=transport_errors,
     )
 
 
@@ -97,6 +99,37 @@ def test_no_transition_through_the_tested_maximum_is_no_limiter():
     assert control.behaviour == "unknown"  # never a claim of absence
     assert control.signals == []  # no refusal fingerprint was observed
     assert set(control.experiment_ids) >= {"steady-0", "steady-4"}
+
+
+def test_partial_transport_never_becomes_an_accepted_bound():
+    """Two probes that each lost some hits at the transport layer answered no
+    clean evidence that the target has no limiter - the outcome is inconclusive,
+    not `no_limiter` (#238 B4)."""
+    control = classify_mapping(
+        [
+            _ev("steady-0", "steady", 1.0, transport_errors=2, codes={"200": 8}),
+            _ev("steady-1", "steady", 2.0, transport_errors=1, codes={"200": 9}),
+        ]
+    )
+
+    assert control.outcome == "inconclusive"
+
+
+def test_real_refusal_uses_only_the_clean_lower_bound():
+    """A real refusal plus one clean lower probe and one partially-transported
+    probe maps only the CLEAN lower bound - the degraded probe is not usable
+    evidence for an accepted rate."""
+    control = classify_mapping(
+        [
+            _ev("steady-0", "steady", 1.0, codes={"200": 10}),
+            _ev("steady-1", "steady", 2.0, transport_errors=1, codes={"200": 9}),
+            _ev("steady-2", "steady", 5.0, rejected=5, codes={"429": 5}),
+        ]
+    )
+
+    assert control.outcome == "mapped"
+    assert control.threshold_low_per_s == 1.0
+    assert control.threshold_high_per_s == 5.0
 
 
 def test_sharp_refusal_plus_cooldown_is_a_window_hypothesis():
