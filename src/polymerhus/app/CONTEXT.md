@@ -9,6 +9,7 @@ It is explicitly not a bounded-context glossary: the meaning of what these modul
 
 - `llm/` - the LLM client layer: the provider table and client construction (`providers.py`), the role registry and the one-shot/session seams (`roles.py`, `session.py`, `actor.py`), capability negotiation (`capability.py`, `negotiation.py`), reasoning replay (`reasoning.py`), context compaction (`compaction.py`), the product-skill loader (`skills.py`), the gateway sync (`sync.py`, `sync_mapping.py`), and the conversation scope (`conversation.py`).
 - `auth/` - the per-project shared auth store and its agent tool (`store.py`, `tool.py`, `records.py`); the operator seed face is a thin adapter over the same seam (`project_management/api.py`).
+- `rate_limit/` - the per-project, per-target rate-limit posture bucket (`store.py`): one closed, advisory YAML envelope per `target_key` under `data/<project_id>/rate-limit/`, written ONLY by the controller (the recon pipeline's projection) and read by every phase; `recon_runs.stats["rate_limit"]` stays the immutable per-run record beside it.
 - `data_root.py` - the one layout owner for the app-owned data root (`<repo>/data/`): every store resolves its bucket through `project_dir`, so no module hand-builds a path.
 - `runtime.py` - the module runtime/registry: run holds and the session lifecycle.
 - `observability/` - Langfuse callbacks and tracing.
