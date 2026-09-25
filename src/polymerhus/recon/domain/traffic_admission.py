@@ -180,6 +180,7 @@ class AdmissionReason(StrEnum):
     COST_MODEL_INVALID = "cost_model_invalid"
     POLICY_MISSING = "policy_missing"
     GOVERNOR_REFUSED = "governor_refused"
+    RUNTIME_CAPABILITY_INCOMPATIBLE = "runtime_capability_incompatible"
 
 
 class AdmissionDisposition(StrEnum):
@@ -206,6 +207,11 @@ class AdmissionContext(BaseModel):
     profile_fresh: bool
     policy_present: bool
     evaluated_at: datetime
+    runtime_incompatible: bool = False
+    """#238 A9: the Kali companion cannot enforce the required runtime (wrong or
+    missing governor switch, policy version, Vegeta version, or wordlist
+    cardinality). Target-facing work is refused; `non_target` work is unaffected.
+    Detailed capability text lives in the admission warning, never here."""
 
 
 class JobAdmissionDecision(BaseModel):
@@ -306,6 +312,18 @@ def decide_job_admission(
         return record(True, AdmissionReason.ADMITTED, estimated=0, duration=0.0)
 
     estimate = _resolve_estimate(cost, input_count, estimated_requests)
+
+    # #238 A9: an incompatible runtime refuses target-facing work BEFORE any
+    # policy arithmetic - the controller must never assume enforcement it cannot
+    # prove. Non-target work already returned above and is unaffected.
+    if context.runtime_incompatible:
+        return record(
+            False,
+            AdmissionReason.RUNTIME_CAPABILITY_INCOMPATIBLE,
+            estimated=estimate,
+            duration=0.0,
+        )
+
     if estimate <= 0:
         return record(
             False, AdmissionReason.COST_MODEL_INVALID, estimated=0, duration=0.0

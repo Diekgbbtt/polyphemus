@@ -34,6 +34,7 @@ exercise this real boundary.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import time
 from datetime import datetime, timezone
@@ -68,6 +69,7 @@ from polymerhus.recon.domain.redaction import (
     redact_command,
     secret_values_from_auth_context,
 )
+from polymerhus.recon.domain.runtime_capabilities import RuntimeCapabilities
 
 logger = logging.getLogger(__name__)
 
@@ -144,6 +146,7 @@ def _rate_request_headers(project_id: str, account_name: str | None, auth_store)
 async def _rate_profile_for_run(
     orchestrator, *, project_id: str, run_id: str, settings: dict | None,
     auth_account: str | None, auth_store, browser_only: bool,
+    capability_error: str | None = None,
 ):
     """Take the #238 rate-limit turn on the run's orchestrator actor.
 
@@ -165,6 +168,18 @@ async def _rate_profile_for_run(
             "no target seed configured: the traffic surface was not measured; "
             "conservative fallback", outcome="inconclusive")
     target_key, url = target
+    if capability_error:
+        # #238 A9: an incompatible Kali runtime cannot enforce the policy, so the
+        # mapping is SKIPPED rather than measured against a companion that would
+        # later refuse the traffic. The conservative failed profile prunes every
+        # target-facing job (the pipeline records the capability warning).
+        logger.error(
+            "run %s: Kali runtime capability incompatible (%s); skipping the "
+            "rate mapping and pruning target-facing work", run_id, capability_error)
+        return RateProfile.conservative(
+            target_key, [target_key], rate_limit_safety_budget(),
+            f"runtime capability incompatible: {capability_error}",
+            outcome="failed")
     turn = getattr(orchestrator, "run_rate_limit", None)
     if turn is None:
         logger.warning(
@@ -219,6 +234,24 @@ async def _persist_rate_profile(registry, run_id: str, profile) -> None:
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+async def _runtime_capabilities(reader=None) -> RuntimeCapabilities:
+    """Read and validate the Kali companion's runtime capabilities (#238 A9).
+
+    `reader` is injectable (a callable returning the `proxy_status` mapping, sync
+    or async); production passes `kali_mcp.proxy_status`. A raising reader is
+    left to the caller, which treats an unreadable capability surface as
+    INCOMPATIBLE (fail-closed).
+    """
+    if reader is None:
+        from polymerhus.app.clients import kali_mcp  # noqa: PLC0415
+
+        reader = kali_mcp.proxy_status
+    payload = reader()
+    if inspect.isawaitable(payload):
+        payload = await payload
+    return RuntimeCapabilities.from_proxy_status(payload)
 
 
 def _pod_observed_target(export) -> bool:
@@ -500,6 +533,7 @@ async def run_pipeline(
     pass_fn=None,
     with_analysis: bool = True,
     prepare_inputs=None,
+    fetch_capabilities=None,
 ) -> None:
     """Drive the full (or subset) phase plan for `project_id` under `run_id`.
 
@@ -523,6 +557,12 @@ async def run_pipeline(
     `auth_store` feeds the per-phase auth projection (the #223 T4 #243 lazy
     feed): tests inject a temp store, production resolves the shared bucket
     lazily inside the feed itself.
+
+    `fetch_capabilities` (#238 A9) is the Kali runtime-capability probe. It is
+    `None` by default so the unit tier needs no Kali host; the PRODUCTION launch
+    (`project_management.api`) passes `kali_mcp.proxy_status`, and an
+    incompatible or unreadable surface then skips the mapping and prunes every
+    target-facing job while non-target work continues.
 
     Best-effort: a job whose pods all fail, or whose `run_job` call raises,
     is marked "degraded" and the pipeline continues - it always reaches a
@@ -674,6 +714,34 @@ async def run_pipeline(
         if gateway_verdict is not None and gateway_verdict.replayability_resolved:
             logger.warning("run %s in-loop replayability resolved to %s (persisted to the overview by the loop)",
                            run_id, gateway_verdict.replayability)
+        # #238 A9: negotiate the Kali runtime capabilities BEFORE measuring and
+        # before any target-facing dispatch. An incompatible OR unreadable
+        # surface fails closed: the mapping is skipped and every target-facing
+        # job is pruned while non-target work continues.
+        capability_error: str | None = None
+        capability_warning: str | None = None
+        if fetch_capabilities is not None:
+            detail = "unreadable"
+            try:
+                capabilities = await _runtime_capabilities(fetch_capabilities)
+                capability_error = capabilities.compatibility_error()
+                detail = capabilities.describe()
+            except Exception as exc:  # noqa: BLE001 - unreadable is incompatible
+                capability_error = f"capability_probe_failed:{type(exc).__name__}"
+                logger.warning(
+                    "run %s could not read Kali runtime capabilities; refusing "
+                    "target-facing traffic (fail-closed)", run_id, exc_info=True)
+            else:
+                if capability_error:
+                    logger.error(
+                        "run %s: Kali runtime capability incompatible (%s); "
+                        "target-facing work will be refused",
+                        run_id, capability_error)
+            if capability_error:
+                capability_warning = (
+                    "runtime_capability_incompatible: "
+                    f"{capability_error} ({detail})"
+                )
         # #238: the SECOND turn on the same actor - measure this target's
         # rate-limit behaviour under the authenticated context the gateway just
         # selected, and persist the public profile, BEFORE phase 0. The
@@ -684,6 +752,7 @@ async def run_pipeline(
             auth_account=auth_account, auth_store=auth_store,
             browser_only=bool(gateway_verdict is not None
                               and gateway_verdict.branch == "browser_only"),
+            capability_error=capability_error,
         )
         await _persist_rate_profile(registry, run_id, rate_profile)
         # A production profile always carries a policy (the conservative fallback
@@ -704,6 +773,8 @@ async def run_pipeline(
         admission_decisions: list = []
         admission_warnings: list[str] = []
         admission_refusals: list = []
+        if capability_warning:
+            admission_warnings.append(capability_warning)
 
         async def _record_trajectory() -> None:
             """Re-persist the envelope after a trajectory event was appended.
@@ -891,6 +962,7 @@ async def run_pipeline(
                 rate_profile,
                 TRAFFIC_ADMISSION_SETTINGS,
                 datetime.now(timezone.utc),
+                runtime_incompatible=capability_error is not None,
             )
             candidate_phases.append(tuple(candidates))
             materialized_phases.append(tuple(materialized))

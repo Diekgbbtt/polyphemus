@@ -109,7 +109,8 @@ class _FakeOrchestrator:
 
 
 def _run(events, orchestrator, *, registry=None, store=None, job_subset=None,
-         settings=None, prepare_inputs=None, pod_exports_for=None):
+         settings=None, prepare_inputs=None, pod_exports_for=None,
+         fetch_capabilities=None):
     """Wire the real `run_pipeline` over a recording orchestrator + registry."""
     registry = registry or _RecordingRegistry(events)
     seen: dict = {}
@@ -143,6 +144,7 @@ def _run(events, orchestrator, *, registry=None, store=None, job_subset=None,
             orchestrator_factory=lambda run_id: orchestrator,
             auth_store=store, feed_mode="queued", with_analysis=False,
             prepare_inputs=prepare_inputs,
+            fetch_capabilities=fetch_capabilities,
         )
 
     asyncio.run(_drive())
@@ -916,3 +918,90 @@ def test_a_runtime_refusal_is_appended_without_rewriting_the_decision():
         d for d in stored["decisions"] if d["job"] == "httpx"
     ]
     assert httpx_decisions and httpx_decisions[0]["decision"] == "included"
+
+
+# --- #238 A9: Kali runtime-capability negotiation --------------------------------
+
+
+def _incompatible_status() -> dict:
+    return {
+        "ok": True,
+        "traffic_governor": {
+            "governor_enabled": False,  # the companion cannot enforce
+            "supported_policy_versions": ["traffic-policy/v1"],
+        },
+        "build": {"revision": "x", "vegeta_version": "v12.12.0"},
+        "wordlists": {},
+    }
+
+
+def test_incompatible_runtime_skips_mapping_and_prunes_target_facing_jobs():
+    """An incompatible Kali runtime refuses target-facing work and continues with
+    `non_target` work - never ungoverned HTTP, never an assumed capability."""
+    events: list = []
+    orchestrator = _orchestrator(events)
+    registry, seen = _run(
+        events,
+        orchestrator,
+        job_subset=["subfinder", "httpx", "katana", "ffuf"],
+        fetch_capabilities=_incompatible_status,
+    )
+
+    # The rate turn is SKIPPED: measuring against an incompatible companion would
+    # be meaningless.
+    assert orchestrator.rate_kwargs is None
+    # Non-target work continued.
+    assert "job:subfinder" in events
+    # Every target-facing candidate was pruned with the runtime reason.
+    reasons = _excluded_reasons(registry)
+    for job in ("httpx", "katana", "ffuf"):
+        assert reasons.get(job) == "runtime_capability_incompatible", (job, reasons)
+        assert f"job:{job}" not in events
+    stored = registry.run_stats["traffic_admission"]
+    assert any(
+        w.startswith("runtime_capability_incompatible:")
+        for w in stored["warnings"]
+    ), stored["warnings"]
+
+
+def test_a_compatible_runtime_proceeds_normally():
+    events: list = []
+    orchestrator = _orchestrator(events)
+    registry, _ = _run(
+        events,
+        orchestrator,
+        job_subset=["subfinder", "httpx", "katana"],
+        fetch_capabilities=lambda: {
+            "traffic_governor": {
+                "governor_enabled": True,
+                "supported_policy_versions": ["traffic-policy/v2"],
+            },
+            "build": {"revision": "x", "vegeta_version": "v12.13.0"},
+            "wordlists": {
+                "/usr/share/seclists/Discovery/Web-Content/common.txt": 4750
+            },
+        },
+    )
+    assert orchestrator.rate_kwargs is not None
+    assert "job:httpx" in events
+    assert registry.run_stats["traffic_admission"]["warnings"] == []
+
+
+def test_an_unreadable_capability_surface_fails_closed():
+    """A probe that RAISES is treated as incompatible: an unprovable runtime must
+    not release target-facing traffic."""
+    events: list = []
+
+    def boom():
+        raise RuntimeError("kali MCP unavailable")
+
+    registry, _ = _run(
+        events,
+        _orchestrator(events),
+        job_subset=["subfinder", "httpx"],
+        fetch_capabilities=boom,
+    )
+    assert "job:subfinder" in events
+    assert "job:httpx" not in events
+    reasons = _excluded_reasons(registry)
+    assert reasons.get("httpx") == "runtime_capability_incompatible"

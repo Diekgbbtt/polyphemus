@@ -87,7 +87,9 @@ def estimate_job_requests(
     return len(prepared_pod_inputs) * per_input
 
 
-def admission_context_for(profile, now: datetime) -> AdmissionContext:
+def admission_context_for(
+    profile, now: datetime, *, runtime_incompatible: bool = False
+) -> AdmissionContext:
     """Build the pure decision's context from the resolved `RateProfile` and an
     injected UTC instant. Freshness is evaluated HERE, at the admission
     chokepoint - a profile fresh during mapping but expired by materialization is
@@ -99,6 +101,7 @@ def admission_context_for(profile, now: datetime) -> AdmissionContext:
         profile_fresh=profile.is_fresh(now),
         policy_present=policy is not None,
         evaluated_at=now,
+        runtime_incompatible=runtime_incompatible,
     )
 
 
@@ -112,6 +115,7 @@ def materialize_admitted_phase(
     *,
     cardinalities: Mapping[str, int] | None = None,
     registry_lookup=None,
+    runtime_incompatible: bool = False,
 ) -> tuple[list[str], tuple[JobAdmissionDecision, ...]]:
     """Decide one phase's candidate jobs and return the MATERIALIZED subset plus
     the decisions.
@@ -126,7 +130,9 @@ def materialize_admitted_phase(
 
         registry_lookup = JOBS
 
-    context = admission_context_for(profile, now)
+    context = admission_context_for(
+        profile, now, runtime_incompatible=runtime_incompatible
+    )
     admitted: list[str] = []
     decisions: list[JobAdmissionDecision] = []
     for name in candidate_names:
