@@ -299,3 +299,37 @@ Aggiornamenti di modello attesi in implementazione (CLAUDE.md: il modello si
 tiene corrente nello stesso cambio): `src/polymerhus/app/CONTEXT.md` per il
 nuovo modulo `app/rate_limit`, e `src/polymerhus/recon/CONTEXT.md` solo se il
 vocabolario della postura persistita cambia.
+
+## 15. Impatto sui prompt e sul workflow dell'orchestrator
+
+**Nessuna modifica al workflow dell'orchestrator di recon.** Verificato:
+
+- il system prompt dell'actor è **uno solo**: `_load_orchestrator_prompt()`
+  (`orchestrator_agent.py`) concatena `prompts/auth-gateway.md` e
+  `prompts/rate-limit-gateway.md`; i due turni condividono sessione e thread, e
+  il turn brief seleziona la disciplina. Restano **due** turni prima della
+  fase 0, come affermano `docs/design/technical-architecture.md` e
+  `src/polymerhus/recon/CONTEXT.md`.
+- la scrittura della postura è un atto deterministico del pipeline (§9), non
+  un turno del modello: non esiste un turno da aggiungere, né un brief, né una
+  sezione di prompt.
+- `prompts/rate-limit-gateway.md` dichiara che la superficie tool di quel turno
+  è **esattamente due** (`map_rate_limit`, `test_rate_limit_variant`). Il tool
+  di lettura della postura **non** va legato all'orchestrator di recon: il suo
+  binding è in hunting (§11). Legarlo qui romperebbe quel contratto.
+
+La persistenza resta quindi invisibile al modello: nessun verdetto cambia, e la
+disciplina "il controllore possiede i numeri e la loro persistenza" non si
+sposta di un millimetro.
+
+Documentazione da allineare nello stesso cambio (CLAUDE.md: il modello si tiene
+corrente mentre si costruisce):
+
+- `docs/design/rate-limit-job-admission-operations.md` (runbook operativo #238):
+  oggi elenca dove si leggono `stats.rate_limit` / `stats.traffic_admission`;
+  va aggiunta la seconda superficie di persistenza
+  `data/<project_id>/rate-limit/<target_key>.yaml` con la sua semantica
+  (postura corrente di progetto, advisory, non enforcement) e la regola di
+  precedenza in caso di divergenza.
+- `src/polymerhus/app/CONTEXT.md`: il nuovo modulo `app/rate_limit` e la sua
+  ownership del bucket.
