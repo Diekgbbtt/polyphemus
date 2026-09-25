@@ -12,8 +12,10 @@ Scope rules (operator rulings): the analysis-domain agents never bind
 authentication capability; since #223 the recon orchestrator (`job_orchestrator`)
 arms the write-capable auth surface (the roster still declares it exempt - no
 catalogue skill bears - so the arming rides `with_write_skill`, never the roster,
-D223-13); the recon job-specific agents deliberately never take the binding
-(D223-5); every other stateful agent (the roster's bound roles) binds the
+D223-13); the recon job-specific agents bind only the read-only surface (the pod
+triager's `auth_capable_binding("triager")`, no `write_skill`; D223-5 forbids the
+authenticate/write capability, not the read-only `auth_store` binding); every
+other stateful agent (the roster's bound roles) binds the
 read-only surface. Project scope is tool-owned (`config.AUTH_STORE`-independent -
 the tools read `config.PROJECT_ID` themselves), so no agent harness threads identity.
 
