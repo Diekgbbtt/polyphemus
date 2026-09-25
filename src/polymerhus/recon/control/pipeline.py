@@ -518,6 +518,17 @@ def _default_orchestrator_factory(run_id: str):
     return ReconOrchestratorActor(run_id=run_id)
 
 
+def _default_write_posture(project_id: str, profile, run_id: str) -> None:
+    """The pipeline's ONE posture write (#238 follow-up).
+
+    A module-level seam so the unit tier can patch one name (the autouse
+    fixture below) instead of every `run_pipeline` call site.
+    """
+    from polymerhus.app.rate_limit.store import RateLimitPostureStore  # noqa: PLC0415
+
+    RateLimitPostureStore().write(project_id, profile, run_id)
+
+
 async def run_pipeline(
     project_id: str,
     *,
@@ -534,6 +545,7 @@ async def run_pipeline(
     with_analysis: bool = True,
     prepare_inputs=None,
     fetch_capabilities=None,
+    write_posture=None,
 ) -> None:
     """Drive the full (or subset) phase plan for `project_id` under `run_id`.
 
@@ -563,6 +575,13 @@ async def run_pipeline(
     (`project_management.api`) passes `kali_mcp.proxy_status`, and an
     incompatible or unreadable surface then skips the mapping and prunes every
     target-facing job while non-target work continues.
+
+    `write_posture` (#238 follow-up) is the ONE projection of the just-validated
+    `RateProfile` into `data/<project_id>/rate-limit/<target_key>.yaml`, run
+    AFTER `stats["rate_limit"]` and BEFORE any phase. It defaults to
+    `_default_write_posture` (a module-level seam the unit tier patches); a
+    raising write fails the run before a single phase runs - the file is part of
+    the run's durable result, not a best-effort extra.
 
     Best-effort: a job whose pods all fail, or whose `run_job` call raises,
     is marked "degraded" and the pipeline continues - it always reaches a
@@ -755,6 +774,23 @@ async def run_pipeline(
             capability_error=capability_error,
         )
         await _persist_rate_profile(registry, run_id, rate_profile)
+        # #238 follow-up: project the SAME validated profile into the
+        # cross-phase project bucket. Postgres first (just above), then the
+        # file: a file naming a run whose stats never carried the profile
+        # would be an unverifiable claim.
+        try:
+            await asyncio.to_thread(
+                write_posture or _default_write_posture,
+                project_id, rate_profile, run_id,
+            )
+        except Exception:
+            logger.error(
+                "run %s could not project the rate posture into the project "
+                "bucket; failing the run before any phase runs", run_id,
+                exc_info=True,
+            )
+            await asyncio.to_thread(registry.set_run_status, run_id, "failed")
+            return
         # A production profile always carries a policy (the conservative fallback
         # IS a policy); this guard keeps the pipeline total for the policy-less
         # shape admission already handles as `policy_missing`.
