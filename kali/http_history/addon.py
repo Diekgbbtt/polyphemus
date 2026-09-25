@@ -20,8 +20,12 @@ read.
 """
 from __future__ import annotations
 
+import json
+import os
 import threading
+import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from urllib.parse import urlsplit
 
 from kali.http_history.governor import (
@@ -33,6 +37,12 @@ from kali.http_history.normalize import DEFAULT_MAX_BODY_BYTES, normalize_flow
 from kali.http_history.store import HttpHistoryStore
 
 UNSCOPED_PROJECT = "unscoped"
+
+#: How often the addon republishes its governor/addon counters. The MCP process
+#: cannot read the governor's memory, so the runtime view crosses the process
+#: boundary through a small file; a once-a-second cadence is enough to observe a
+#: run's peak without writing on every proxied request.
+_STATUS_PUBLISH_INTERVAL_S = 1.0
 
 
 def source_ip_of(flow) -> str | None:
@@ -132,6 +142,7 @@ class HttpHistoryAddon:
         self._store_factory = store_factory or (lambda project: HttpHistoryStore(root, project))
         self._stores: dict[str, HttpHistoryStore] = {}
         self._lock = threading.Lock()
+        self._last_publish = 0.0
         self._status = {
             "recorded": 0,
             "failed": 0,
@@ -159,6 +170,11 @@ class HttpHistoryAddon:
         independent, so `enabled=False` never disarms governance. An UNARMED flow
         (a capture-only or legacy lease) is never delayed.
         """
+        # Publish BEFORE the early returns below: a flow the governor never
+        # governs (an unarmed lease, an unresolvable source) is exactly the case
+        # the #238 diagnosis has to be able to see, and an early `return` would
+        # otherwise leave the snapshot stale or absent.
+        self._publish_runtime_counters()
         if not self.governor_enabled:
             return
         try:
@@ -204,6 +220,7 @@ class HttpHistoryAddon:
         self._capture(flow)
 
     def done(self) -> None:
+        self._publish_runtime_counters(force=True)
         with self._lock:
             for store in self._stores.values():
                 try:
@@ -213,6 +230,47 @@ class HttpHistoryAddon:
             self._stores.clear()
 
     # --- internals ------------------------------------------------------------
+
+    def runtime_counters(self) -> dict:
+        """The live governance counters of THIS proxy process (#238 live fix).
+
+        The MCP service cannot read them across the process boundary, so the
+        addon publishes a snapshot the service re-exposes through
+        `proxy_status()`. The discriminator that separates "the governor never
+        saw the traffic" from "the governor governed it badly" is
+        `governor.peak_inflight` against the fixture's own `max_in_flight`.
+        """
+        governor: dict = {}
+        status = getattr(self.governor, "status", None)
+        if callable(status):
+            try:
+                governor = status()
+            except Exception:  # noqa: BLE001 - diagnostics must never disarm the
+                # hook: an exception raised here would abort `request` and let
+                # the flow egress UNGOVERNED, which is the one outcome this
+                # whole plane exists to prevent.
+                governor = {"error": "status_unavailable"}
+        with self._lock:
+            addon = dict(self._status)
+        return {"addon": addon, "governor": governor}
+
+    def _publish_runtime_counters(self, *, force: bool = False) -> None:
+        now = time.monotonic()
+        if not force and now - self._last_publish < _STATUS_PUBLISH_INTERVAL_S:
+            return
+        self._last_publish = now
+        try:
+            payload = json.dumps(self.runtime_counters(), sort_keys=True)
+            path = Path(self.root) / "governor-status.json"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(".tmp")
+            tmp.write_text(payload, encoding="utf-8")
+            os.replace(tmp, path)
+        except Exception:  # noqa: BLE001 - same reason as above: a diagnostic
+            # failure is DISCLOSED, never raised into the proxy hook.
+            with self._lock:
+                self._status["governor_failed"] += 1
+                self._status["governor_last_error"] = "status_publish_failed"
 
     def _refuse(self, flow, reason_code: str, detail: str) -> None:
         """Disclose and refuse LOCALLY. `detail` must stay secret-safe - it is an

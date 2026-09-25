@@ -512,6 +512,13 @@ class HttpHistoryService:
             "commands_refused": self._refusal_count,
             "last_refusal": self._last_refusal,
         }
+        # #238 live fix (Task 1): the governor lives in the mitmdump process, so
+        # its live counters arrive through the addon's published snapshot. None
+        # when the proxy has not published one (a fresh or non-governing proxy):
+        # absence is reported as absence, never as a zeroed governor.
+        runtime = self._read_governor_status()
+        if runtime is not None:
+            traffic_governor["runtime"] = runtime
         ok = bool(proxy.get("ok") and routing.get("ok") and store.get("ok"))
         return {
             "ok": ok,
@@ -525,6 +532,18 @@ class HttpHistoryService:
             "build": build_provenance(),
             "wordlists": wordlist_capabilities(),
         }
+
+    def _read_governor_status(self) -> dict | None:
+        """The addon's published snapshot, or None when it is absent/unreadable.
+        Absence is not an error: a fresh proxy has not published yet."""
+        from pathlib import Path  # noqa: PLC0415
+        import json  # noqa: PLC0415
+
+        path = Path(self.config.store_root) / "governor-status.json"
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
 
     def _default_proxy_probe(self) -> dict:
         try:
