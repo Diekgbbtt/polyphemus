@@ -12,10 +12,10 @@ CREATE TABLE IF NOT EXISTS settings (
 
 -- Recursive JSONB merge: like the `||` operator but descends into nested
 -- objects instead of replacing them wholesale. Used by save_settings so a
--- partial PUT that touches one nested item (e.g. auth_context.credentials)
--- preserves its independent siblings (e.g. auth_context.cookies). Non-object
--- values (scalars, arrays like the cookies list) are replaced by the incoming
--- side, so setting cookies still overwrites the whole cookie list as expected.
+-- partial PUT that touches one nested item (e.g. scope.mode) preserves its
+-- independent siblings (e.g. scope.exclusions). Non-object values (scalars,
+-- arrays like an exclusions list) are replaced by the incoming side, so
+-- setting a list still overwrites the whole list as expected.
 CREATE OR REPLACE FUNCTION jsonb_deep_merge(a jsonb, b jsonb)
 RETURNS jsonb LANGUAGE sql IMMUTABLE AS $$
     SELECT CASE

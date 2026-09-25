@@ -77,9 +77,18 @@ def save_project_settings(project_id: str, recon: dict) -> None:
     """Persist a partial settings PUT (#223 T4 #243: the settings blob carries
     no auth - the AuthContext value object and its validation are retired
     with the blob footprint, D223-4; auth lives in the shared store, seeded
-    through `seed_project_auth`). Raises ProjectNotFound if unknown."""
+    through `seed_project_auth`). The retired `auth_context` key is refused
+    loudly (nothing lands) so the obsolete settings-blob location can never be
+    written again. Raises ProjectNotFound if unknown, ValueError on the
+    retired key."""
     if not pg.project_exists(project_id):
         raise ProjectNotFound(project_id)
+    if "auth_context" in recon:
+        raise ValueError(
+            "settings.recon.auth_context is retired (#243): the settings blob "
+            "carries no auth. Seed the operator auth state via "
+            f"PUT /projects/{project_id}/auth instead."
+        )
     pg.save_settings(project_id, recon)
 
 
