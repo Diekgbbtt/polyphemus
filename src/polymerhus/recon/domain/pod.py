@@ -588,6 +588,11 @@ def build_pod_graph(*, exec_fn, curate_fn, triage_fn):
             verdict="success",
             assets_merged=assets_merged,
             observations_merged=observations_merged,
+            # #238 A5: the PRE-curation parser output. Anything the target
+            # answered yields a non-empty list here; a pod that reached nothing
+            # leaves both empty, so `target_observed` stays honest even when a
+            # duplicate merges zero assets.
+            target_responses=int(bool(assets or observations)),
             # The curated payload the pipeline pushes into the analysis feed (#74).
             assets=merged_assets,
             observations=merged_observations,

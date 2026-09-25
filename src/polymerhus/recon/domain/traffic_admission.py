@@ -27,7 +27,14 @@ from datetime import datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING, Literal, Mapping
 
-from pydantic import BaseModel, ConfigDict, PositiveInt, field_validator
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    ConfigDict,
+    Field,
+    PositiveInt,
+    field_validator,
+)
 
 from polymerhus.recon.domain.rate_limit import RateOutcome
 
@@ -207,7 +214,10 @@ class JobAdmissionDecision(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     phase: int
-    job_name: str
+    job: str = Field(validation_alias=AliasChoices("job", "job_name"))
+    """The job's tool name. Serialized as `job` so the persisted decisions read
+    the same key the public recon-jobs API uses; the legacy `job_name` is still
+    accepted on input for already-stored envelopes."""
     cost_class: TrafficCostClass
     input_count: int
     estimated_requests: int
@@ -215,6 +225,11 @@ class JobAdmissionDecision(BaseModel):
     projected_duration_s: float
     decision: AdmissionDisposition
     reason_code: AdmissionReason
+
+    @property
+    def job_name(self) -> str:
+        """Backwards-compatible accessor for the legacy field name."""
+        return self.job
 
 
 def _resolve_estimate(
@@ -267,7 +282,7 @@ def decide_job_admission(
     ) -> JobAdmissionDecision:
         return JobAdmissionDecision(
             phase=phase,
-            job_name=job.tool,
+            job=job.tool,
             cost_class=cost.cost_class,
             input_count=input_count,
             estimated_requests=estimated,

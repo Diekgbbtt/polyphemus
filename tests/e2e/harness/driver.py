@@ -421,20 +421,30 @@ def _target_service(posture: str) -> str:
 #: The auth seed the smoke trajectory stores. The gateway turn needs a usable
 #: account AND a declared replayability fact, or the production gate skips the
 #: loop (`no_auth_surface`) or asks the fixture for the generation branch.
+#: #238 A1: the shape is the PUBLIC contract (`validate_overview` /
+#: `validate_account`) - no `target`/`auth-surface` pseudo-fields, and the
+#: account map is the mapping the API expects (never `{"accounts": ...}` - the
+#: `store_auth` wrapper already adds that key).
 SMOKE_OVERVIEW = {
-    "target": "rate-matrix-no-limiter",
     "http-client-replayability": True,
-    "auth-surface": "cookie session on /canonical",
+    "required_headers": ["X-E2E-Correlation"],
+    "notes": "Disposable issue 238 fixture.",
 }
 SMOKE_ACCOUNTS = {
-    "accounts": {
-        "smoke-account": {
-            "username": "smoke-account",
-            "status": "valid",
-            "cookies": {"session": "e2e-smoke-cookie"},
-        }
+    "smoke-account": {
+        "origin": "operator",
+        "status": "valid",
+        "snapshot": {
+            "headers": {"X-E2E-Correlation": "issue-238-smoke"},
+            "cookies": [{"name": "session", "value": "e2e-smoke-cookie"}],
+        },
     }
 }
+
+#: #238 B5: the transport scheme every #238 project declares. The fixtures
+#: listen on plain HTTP/80; the scheme is EXPLICIT (never inferred from a DNS
+#: name) so the mapping replays over the transport the target speaks.
+E2E_TARGET_SCHEME = "http"
 
 
 def smoke_rate_trajectory(*, posture: str = "no_limiter") -> dict:

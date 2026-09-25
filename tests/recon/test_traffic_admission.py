@@ -126,6 +126,26 @@ def test_empty_intensive_consumption_is_recorded_but_not_started():
     )
 
 
+def test_public_issue_238_shapes_use_job_and_typed_evidence():
+    """The persisted JSON uses the SAME key the public recon-jobs API uses.
+
+    #238 A2: the decision serialized as `job_name` while every public job row
+    (the API's `/recon/{run_id}` `per_job`) uses `job`, so a consumer reading
+    the two with one key silently saw nothing. `job` is canonical; the legacy
+    `job_name` is accepted on INPUT so already-stored envelopes still validate.
+    """
+    decision = decide_job_admission(5, ARJUN, 1, fresh_context(50.0), SETTINGS)
+
+    dumped = decision.model_dump(mode="json")
+    assert dumped["job"] == ARJUN.tool
+    assert "job_name" not in dumped
+    # A legacy envelope (serialized as `job_name`) still validates.
+    legacy_payload = {key: value for key, value in dumped.items() if key != "job"}
+    legacy_payload["job_name"] = dumped["job"]
+    legacy = JobAdmissionDecision.model_validate(legacy_payload)
+    assert legacy.job == ARJUN.tool
+
+
 def test_empty_non_target_consumption_is_also_excluded():
     decision = decide_job_admission(0, WHOIS, 0, fresh_context(None, policy_present=False), SETTINGS)
     assert decision.decision is AdmissionDisposition.EXCLUDED

@@ -38,6 +38,7 @@ class _RecordingRegistry:
         self.events = events if events is not None else []
         self.run_stats: dict = {}
         self.statuses: list = []
+        self.job_rows: list = []
 
     def create_run(self, *a, **k):
         self.events.append("create_run")
@@ -46,8 +47,10 @@ class _RecordingRegistry:
         self.statuses.append(a)
         self.events.append("set_run_status")
 
-    def upsert_job(self, *a, **k):
-        pass
+    def upsert_job(self, run_id, phase, job, status, stats=None, error=None):
+        self.job_rows.append(
+            {"run_id": run_id, "phase": phase, "job": job, "status": status}
+        )
 
     def set_run_stats(self, run_id, stats):
         # One event per written key, so the tests can assert the ORDER of the
@@ -249,6 +252,38 @@ def test_rate_turn_receives_the_canonical_target_and_the_resolved_auth(tmp_path)
         "Authorization": "Bearer T", "Cookie": "sid=S"}
     assert orchestrator.rate_kwargs["browser_only"] is False
     assert "PASSWORD" not in repr(orchestrator.rate_kwargs)
+
+
+def test_domain_target_can_explicitly_use_http():
+    """#238 B5: a DNS-name target may legitimately speak HTTP. When the project
+    declares `target_scheme=http`, the mapping replays over HTTP - the scheme is
+    taken from the configured value, not the seed KIND."""
+    events: list = []
+    orchestrator = _orchestrator(events)
+    _run(events, orchestrator,
+         settings={"target_domain": SEED, "target_scheme": "http"})
+
+    assert orchestrator.rate_kwargs["url"] == f"http://{TARGET_KEY}/"
+    assert orchestrator.rate_kwargs["target_key"] == TARGET_KEY
+
+
+def test_legacy_inference_is_unchanged_when_no_scheme_is_configured():
+    """Absent `target_scheme`, a domain still infers HTTPS (the pre-#238
+    behaviour) - only an EXPLICIT setting changes the transport."""
+    events: list = []
+    orchestrator = _orchestrator(events)
+    _run(events, orchestrator, settings={"target_domain": SEED})
+
+    assert orchestrator.rate_kwargs["url"] == f"https://{TARGET_KEY}/"
+
+
+def test_invalid_target_scheme_fails_loudly():
+    """A scheme that is neither http nor https is a configuration error, not a
+    silent fallback to a guessed transport."""
+    events: list = []
+    with pytest.raises(ValueError):
+        _run(events, _orchestrator(events),
+             settings={"target_domain": SEED, "target_scheme": "ftp"})
 
 
 def test_anonymous_verdict_still_measures_anonymously():
@@ -538,7 +573,7 @@ class _NoPolicyProfile:
 def _excluded_reasons(registry) -> dict[str, str]:
     stored = registry.run_stats["traffic_admission"]
     return {
-        d["job_name"]: d["reason_code"]
+        d["job"]: d["reason_code"]
         for d in stored["decisions"]
         if d["decision"] == "excluded"
     }
@@ -572,6 +607,27 @@ def test_low_rate_prunes_intensive_runners_before_materialization():
     assert "job:httpx" in events and "job:katana" in events
 
 
+def test_pruned_jobs_have_decisions_but_no_job_rows():
+    """#238 A4: an excluded candidate has a persisted DECISION but no
+    `recon_jobs` row - no pod, no runner, no traffic. The row was previously
+    created during phase setup, so `arjun`/`ffuf` showed an `in_progress`
+    execution that never happened."""
+    events: list = []
+    registry, _ = _run(
+        events,
+        _orchestrator(events, profile=_profile(rate=1.0)),
+        job_subset=["subfinder", "httpx", "katana", "ffuf", "arjun"],
+    )
+
+    reasons = _excluded_reasons(registry)
+    assert "ffuf" in reasons and "arjun" in reasons
+    rows = {row["job"] for row in registry.job_rows}
+    assert "ffuf" not in rows, "a pruned job must not have a job row"
+    assert "arjun" not in rows, "a pruned job must not have a job row"
+    # The admitted bounded job DOES have its row.
+    assert "httpx" in rows
+
+
 def test_admission_is_persisted_before_the_first_admitted_runner():
     events: list = []
     registry, _ = _run(events, _orchestrator(events))
@@ -599,7 +655,9 @@ def test_the_envelope_records_the_full_run_trajectory():
         # the target, so its export never satisfies `target_observed`.
         if job.traffic_cost.cost_class is TrafficCostClass.NON_TARGET:
             return []
-        return [PodExport(input_asset={"name": "app.t.com"}, verdict="success")]
+        # A target-facing pod that actually observed responses (#238 A5).
+        return [PodExport(input_asset={"name": "app.t.com"}, verdict="success",
+                          target_responses=1)]
 
     registry, _ = _run(events, _orchestrator(events), pod_exports_for=_exports_for)
 
@@ -611,6 +669,58 @@ def test_the_envelope_records_the_full_run_trajectory():
     assert order.index("admission_persisted") < order.index("pod_started")
     assert order.index("pod_started") <= order.index("target_observed")
     assert order[-1] == "run_finalized", order
+
+
+def test_pod_observed_target_predicate_needs_a_response():
+    """The predicate itself: success verdict alone is not enough."""
+    from polymerhus.recon.domain.types import PodExport
+
+    assert pipeline._pod_observed_target(
+        PodExport(input_asset={}, verdict="success")) is False
+    assert pipeline._pod_observed_target(
+        PodExport(input_asset={}, verdict="success", target_responses=1)) is True
+    assert pipeline._pod_observed_target(
+        PodExport(input_asset={}, verdict="failed", target_responses=1)) is False
+
+
+def test_a_target_facing_pod_with_no_response_records_no_target_observed():
+    """#238 A5: a target-facing pod that ran, exited 0 and merged nothing
+    (every connection refused) is NOT an observation of the target. The
+    trajectory must not claim one."""
+    events: list = []
+    from polymerhus.recon.domain.traffic_admission import TrafficCostClass
+    from polymerhus.recon.domain.types import PodExport
+
+    def _exports_for(job, inputs):
+        if job.traffic_cost.cost_class is TrafficCostClass.NON_TARGET:
+            return []
+        # verdict success, but no parser output: nothing reached the target.
+        return [PodExport(input_asset={"name": "app.t.com"}, verdict="success")]
+
+    registry, _ = _run(events, _orchestrator(events), pod_exports_for=_exports_for)
+
+    order = registry.run_stats["traffic_admission"]["event_order"]
+    assert "target_observed" not in order, order
+
+
+def test_an_observed_duplicate_records_target_observed():
+    """A response that was a graph DUPLICATE (merge counts zero) still means the
+    target was observed, so `target_observed` IS emitted (#238 A5)."""
+    events: list = []
+    from polymerhus.recon.domain.traffic_admission import TrafficCostClass
+    from polymerhus.recon.domain.types import PodExport
+
+    def _exports_for(job, inputs):
+        if job.traffic_cost.cost_class is TrafficCostClass.NON_TARGET:
+            return []
+        return [PodExport(input_asset={"name": "app.t.com"}, verdict="success",
+                          assets_merged=0, observations_merged=0,
+                          target_responses=1)]
+
+    registry, _ = _run(events, _orchestrator(events), pod_exports_for=_exports_for)
+
+    order = registry.run_stats["traffic_admission"]["event_order"]
+    assert "target_observed" in order, order
 
 
 def test_a_fully_pruned_run_records_no_pod_start():
@@ -803,6 +913,6 @@ def test_a_runtime_refusal_is_appended_without_rewriting_the_decision():
     assert "traffic_refused" in stored["event_order"]
     # The admitted decision for httpx is unchanged by the refusal.
     httpx_decisions = [
-        d for d in stored["decisions"] if d["job_name"] == "httpx"
+        d for d in stored["decisions"] if d["job"] == "httpx"
     ]
     assert httpx_decisions and httpx_decisions[0]["decision"] == "included"

@@ -248,6 +248,9 @@ def build_crawl_pod(*, run_crawl_fn, parse_fn, triage_fn, curate_fn):
             verdict="success",
             assets_merged=assets_merged,
             observations_merged=observations_merged,
+            # #238 A5: the PRE-curation parser output - a crawl that observed
+            # target responses sets this even when every asset was a duplicate.
+            target_responses=int(bool(assets or observations)),
             # The curated payload the pipeline pushes into the analysis feed (#74).
             assets=merged_assets,
             observations=merged_observations,

@@ -711,6 +711,71 @@ def test_job_stats_include_per_pod_commands(monkeypatch):
     assert captured["subfinder"]["commands"] == ["subfinder -d example.com -all -json -silent"]
 
 
+def test_job_stats_redact_header_and_cookie_values(tmp_path):
+    """#238 A6: the persisted per-job command must NOT carry the authenticated
+    credential. The command is redacted before it reaches `recon_jobs.stats`."""
+    import asyncio
+
+    from polymerhus.app.auth.store import AuthStore
+    from polymerhus.recon.control import pipeline
+    from polymerhus.recon.control.authn_loop import GatewayVerdict
+    from polymerhus.recon.domain.types import PodExport
+
+    # Assembled from fragments: the sentinel never appears literally in source,
+    # and a failure names the surface rather than the value.
+    sentinel = "e2e" + "-persisted-secret"
+
+    store = AuthStore(tmp_path)
+    store.replace_operator_state(
+        "p1",
+        overview={"required_headers": ["X-Api-Key"]},
+        accounts={"alice": {
+            "origin": "operator",
+            "tokens": {"X-Api-Key": {"value": sentinel, "location": "header"}},
+            "snapshot": {"cookies": [{"name": "session", "value": sentinel}]},
+        }},
+    )
+
+    class _Gateway:
+        async def run_gateway(self, **kw):
+            return GatewayVerdict(outcome="authenticated", account="alice",
+                                  branch="request", rationale="t")
+
+        async def stop(self): pass
+
+    captured: dict = {}
+
+    class R(FakeRegistry):
+        def upsert_job(self, run_id, phase, job, status, stats=None, error=None):
+            super().upsert_job(run_id, phase, job, status, stats=stats, error=error)
+            if status != "in_progress" and job == "httpx":
+                captured["stats"] = stats
+
+    async def run_job(job, input_assets, *, run_id, phase, extra, prepared_pod_inputs=None):
+        command = (
+            "httpx -u https://x "
+            f"-H 'X-Api-Key: {sentinel}' "
+            f"-H 'Cookie: session={sentinel}'"
+        )
+        return [PodExport(input_asset={"name": "t.com"}, verdict="success",
+                          stats={"command": command}, target_responses=1)]
+
+    asyncio.run(pipeline.run_pipeline(
+        "p1", run_id="r1", job_subset=["httpx"],
+        run_job=run_job,
+        load_settings=make_load_settings({"target_domain": "*.t.com"}),
+        registry=R(),
+        read_assets=make_read_assets(),
+        orchestrator_factory=lambda run_id: _Gateway(),
+        auth_store=store,
+    ))
+
+    commands = captured["stats"]["commands"]
+    serialized = " ".join(commands)
+    assert sentinel not in serialized, "the credential leaked into job stats"
+    assert "[redacted]" in serialized
+
+
 def test_capture_job_stats_folds_every_pod_fragment():
     """#196: the pod's capture outcome (`sent`/`refs`/`warning`) must survive the
     aggregation into `recon_jobs.stats` - it was silently dropped, so a recon run

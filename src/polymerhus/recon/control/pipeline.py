@@ -64,6 +64,10 @@ from polymerhus.recon.control.scope import (
     resolve_seed,
 )
 from polymerhus.recon.domain.types import AssetDelta
+from polymerhus.recon.domain.redaction import (
+    redact_command,
+    secret_values_from_auth_context,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -88,16 +92,31 @@ def _rate_target(settings: dict | None) -> tuple[str, str] | None:
     """The canonical `(target_key, url)` the rate-mapping turn measures.
 
     `resolve_seed` names the target; `parse_scope` folds it to the exact host to
-    replay (`seed_host` - never the literal `*.`), and the scheme follows the
-    seed KIND: a bare IP is probed over `http`, a domain over `https`. A wrong
-    scheme shows up as a MEASURED failure, never as a silent skip.
+    replay (`seed_host` - never the literal `*.`).
+
+    #238 B5: the transport scheme is taken from an EXPLICIT `target_scheme`
+    setting when present (a DNS-name target may legitimately speak HTTP). Only
+    in its absence does the scheme follow the seed KIND - a bare IP is probed
+    over `http`, a domain over `https` - preserving the legacy inference. A
+    configured value that is neither `http` nor `https` is a loud configuration
+    error, never a silent fallback to a guessed transport; `host` mode denotes a
+    bare-IP scope and cannot be used to coerce an ordinary DNS production target
+    onto HTTP.
     """
     seed = resolve_seed(settings)
     if not seed:
         return None
     scope = parse_scope(seed)
     host = scope["seed_host"]
-    scheme = "http" if scope["mode"] == "host" else "https"
+    configured = (settings or {}).get("target_scheme")
+    if configured is None:
+        scheme = "http" if scope["mode"] == "host" else "https"
+    else:
+        scheme = str(configured).strip().lower()
+        if scheme not in {"http", "https"}:
+            raise ValueError(
+                f"target_scheme must be 'http' or 'https', got {configured!r}"
+            )
     return host, f"{scheme}://{host}/"
 
 
@@ -200,6 +219,19 @@ async def _persist_rate_profile(registry, run_id: str, profile) -> None:
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _pod_observed_target(export) -> bool:
+    """Whether one pod's export is a REAL observation of the target (#238 A5).
+
+    A `success` verdict alone is not enough: a target-facing pod that ran,
+    exited 0 and merged nothing (every connection refused) proves nothing about
+    the target. `target_responses` is set from the pod's pre-curation parser
+    output, so a graph DUPLICATE stays positive while a no-response pod does
+    not. Graph novelty (`assets_merged`/`observations_merged`) is deliberately
+    NOT part of this predicate.
+    """
+    return export.verdict == "success" and getattr(export, "target_responses", 0) > 0
 
 
 def _exec_window(t0: float, started_at: str) -> dict:
@@ -830,9 +862,6 @@ async def run_pipeline(
                     prepared = await asyncio.to_thread(
                         prepare_inputs, input_assets, job, extra, ""
                     )
-                    await asyncio.to_thread(
-                        registry.upsert_job, run_id, phase_idx, name, "in_progress"
-                    )
                 except Exception as exc:  # best-effort: a setup blip degrades
                     # only this job, it must never leave the run stuck non-terminal.
                     logger.warning(
@@ -905,15 +934,23 @@ async def run_pipeline(
 
             async def _run_one(name: str) -> None:
                 job, input_assets, prepared, extra = job_configs[name]
+                # #238 A4: the `recon_jobs` row is created HERE, for a
+                # MATERIALIZED job only - after the admission decision and the
+                # materialized subset are fixed. A pruned candidate therefore
+                # has its persisted DECISION but no row, pod, runner or traffic,
+                # and never an `in_progress` row that looks like a started
+                # execution.
+                await asyncio.to_thread(
+                    registry.upsert_job, run_id, phase_idx, name, "in_progress"
+                )
                 target_facing = (
                     job.traffic_cost.cost_class is not TrafficCostClass.NON_TARGET
                 )
                 # The job's REAL execution window (#34 AST-DEC-09). `recon_jobs.
                 # started_at` cannot serve: `upsert_job` stamps it with now() on
-                # INSERT and leaves it untouched ON CONFLICT, and the phase-setup
-                # loop above already inserted the `in_progress` row for every job in
-                # this phase - so that column measures phase setup, not job start,
-                # and a gap computed from it is meaningless.
+                # INSERT and leaves it untouched ON CONFLICT. The row is now
+                # inserted just above, so that column would measure the insert,
+                # not the execution, and a gap computed from it is meaningless.
                 exec_t0 = time.monotonic()
                 exec_started_at = _utc_now_iso()
                 try:
@@ -935,12 +972,14 @@ async def run_pipeline(
                     return
 
                 total = len(pod_exports)
-                if (pod_exports and target_facing
-                        and "target_observed" not in admission_events):
-                    # The run's first TARGET-FACING pod returned: the trajectory
-                    # now has observed the target's own responses (a non-target
-                    # job like subfinder proves nothing about the target, so it
-                    # never emits this).
+                if (target_facing
+                        and "target_observed" not in admission_events
+                        and any(_pod_observed_target(e) for e in pod_exports)):
+                    # #238 A5: the run's first TARGET-FACING pod that actually
+                    # OBSERVED a response. A non-target job like subfinder proves
+                    # nothing about the target, and a target-facing pod that
+                    # reached nothing (zero responses) does not either - so
+                    # neither emits this.
                     admission_events.append("target_observed")
                     await _record_trajectory()
                 succeeded = sum(1 for e in pod_exports if e.verdict == "success")
@@ -984,7 +1023,16 @@ async def run_pipeline(
                     if e.stats and e.stats.get("command")
                 ]
                 if commands:
-                    job_stats["commands"] = commands
+                    # #238 A6: the command can embed the authenticated header or
+                    # cookie; redact the run's own secret values before it is
+                    # persisted into `recon_jobs.stats` (the store is durable).
+                    secret_values = secret_values_from_auth_context(
+                        (extra or {}).get("auth_context")
+                    )
+                    job_stats["commands"] = [
+                        redact_command(command, secret_values)
+                        for command in commands
+                    ]
                 # #196 capture coverage: the pods already declared whether each
                 # terminal call asked kali for capture and how many artifacts
                 # came back; fold those fragments into the job's own verdict so

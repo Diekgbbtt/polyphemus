@@ -375,6 +375,45 @@ def test_pod_real_parser_to_curator_seam():
     assert any(":Certificate" in cy for cy in captured_cypher)
 
 
+def test_pod_export_records_target_responses_from_parser_output():
+    """#238 A5: a pod whose parser produced output records a real target
+    observation, regardless of how the curator merged it."""
+    def exec_fn(cmd, sid, t):
+        return ExecResult(stdout=FIX_LINE_FULL, stderr="", returncode=0, duration_ms=5)
+
+    g = pod.build_pod_graph(
+        exec_fn=exec_fn,
+        curate_fn=lambda assets, obs, pid: (0, 0, [], []),  # a total duplicate
+        triage_fn=lambda er, assets, job: [],
+    )
+    out = g.invoke({"job": HTTPX_JOB, "input_asset": {"name": "app.example.com"},
+                    "asset_context": "", "extra": {}, "session_id": "run-obs",
+                    "iteration": 0, "project_id": "proj-obs"})
+
+    # The parser answered the target, even though every merge was a duplicate.
+    assert out["export"].verdict == "success"
+    assert out["export"].target_responses == 1
+    assert out["export"].assets_merged == 0 and out["export"].observations_merged == 0
+
+
+def test_pod_export_with_no_parser_output_records_no_target_responses():
+    """A pod that reached nothing (empty output) must NOT claim an observation."""
+    def exec_fn(cmd, sid, t):
+        return ExecResult(stdout="", stderr="", returncode=0, duration_ms=1)
+
+    g = pod.build_pod_graph(
+        exec_fn=exec_fn,
+        curate_fn=lambda assets, obs, pid: (len(assets), len(obs), assets, obs),
+        triage_fn=lambda er, assets, job: [],
+    )
+    out = g.invoke({"job": HTTPX_JOB, "input_asset": {"name": "app.example.com"},
+                    "asset_context": "", "extra": {}, "session_id": "run-noobs",
+                    "iteration": 0, "project_id": "proj-noobs"})
+
+    assert out["export"].verdict == "success"
+    assert out["export"].target_responses == 0
+
+
 TAKEOVER_JSON = (
     '[{"subdomain":"old.example.com","vulnerable":true,'
     '"service":"aws/s3","cname":"dangling-bucket.s3.amazonaws.com"}]'

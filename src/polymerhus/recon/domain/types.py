@@ -172,6 +172,13 @@ class PodExport(BaseModel):
     verdict: Literal["success", "failed"]
     assets_merged: int = 0
     observations_merged: int = 0
+    # #238 follow-up (Task 9): whether the pod's pre-curation parser produced
+    # ANY output - i.e. the target actually answered. For a target-facing pod
+    # this is the honest "we observed the target" fact: a pod that ran, exited 0
+    # and merged nothing (every connection refused) leaves it 0, so the pipeline
+    # never records `target_observed` for a target it never reached. A graph
+    # DUPLICATE still leaves it 1 (the response arrived, it just merged nothing).
+    target_responses: int = Field(default=0, ge=0)
     # #74: the CURATED (post-gate, actually-merged) deltas this pod wrote, so
     # the pipeline can push them into the analysis feed as an `L0Chunk` without
     # a graph re-read. Populated by the pod's curator node; empty for a failed
