@@ -15,6 +15,10 @@
 #     -f docker-compose.e2e.yml up -d postgres neo4j kali agent
 services:
   agent:
+    # #238 B2: a PROJECT-PRIVATE tag. The E2E rebuilds the agent from the
+    # worktree source; using the shared `:latest` would clobber the operator's
+    # image, and being clobbered by it would silently test the wrong code.
+    image: polymerhus-agent:issue-238-e2e
     env_file:
       # Overridable so the overlay is not tied to one machine's absolute path;
       # `required: false` keeps a worktree that has its own `.env` symlink
@@ -24,7 +28,7 @@ services:
         required: false
     # --- #238 (Task 9): the deterministic LOCAL model provider --------------
     # The functional E2E must traverse the real actor loop, so only model
-    # INFERENCE is replaced: both long-horizon recon roles are routed at the
+    # INFERENCE is replaced: EVERY boot-required recon role is routed at the
     # local fixture through the production provider-selection seam
     # (`LLM_GATEWAY_URL` = gateway mode, `openai:<model>` = the role's model).
     # The key is inert by construction - the fixture authenticates nothing.
@@ -33,12 +37,25 @@ services:
     # the agent cannot start a run before the fixture answers its healthcheck.
     environment:
       LLM_GATEWAY_URL: http://rate-limit-llm:8080/v1
+      # #238 A7: the agent refuses to boot without all five roles.
+      LLM_CONFIGURATOR: openai:rate-admission-fixture
+      LLM_CRAWLER: openai:rate-admission-fixture
       LLM_JOB_ORCHESTRATOR: openai:rate-admission-fixture
       LLM_TRIAGER: openai:rate-admission-fixture
+      LLM_ANALYSER: openai:rate-admission-fixture
       API_KEY_OPENAI: e2e-inert-key
+      # The #238 profile freshness knob. The DEFAULT is long so the posture
+      # matrix's request-intensive jobs (later phases) stay fresh; the stale
+      # gate brings the stack up with `RATE_LIMIT_PROFILE_TTL_S=2` - a value
+      # committed in the stack script, never an unversioned manual edit.
+      RATE_LIMIT_PROFILE_TTL_S: ${RATE_LIMIT_PROFILE_TTL_S:-3600}
     depends_on:
       rate-limit-llm:
         condition: service_healthy
+  # #238 B2: the E2E tier builds/tags the Kali image privately, so the
+  # operator's shared `polymerhus-kali:latest` is never rebuilt or recreated.
+  kali:
+    image: polymerhus-kali:issue-238-e2e
   # The deterministic OpenAI-compatible provider (Task 9). One process, no
   # state beyond its request counters; it answers from the conversation state
   # alone and refuses any state it does not implement with a content-free 422.
@@ -238,7 +255,7 @@ services:
   # production addon and injects an exploding governor. Everything else -
   # capture, namespaces, MCP surface - is the shipped code path.
   kali-failing-governor:
-    image: polymerhus-kali:latest
+    image: polymerhus-kali:issue-238-e2e
     entrypoint: ["/opt/kali/entrypoint.sh"]
     environment:
       PYTHONPATH: /opt
@@ -263,7 +280,7 @@ services:
   # entrypoint starts mitmdump when EITHER plane is on, and this service turns
   # capture off while governance stays armed.
   kali-capture-off:
-    image: polymerhus-kali:latest
+    image: polymerhus-kali:issue-238-e2e
     entrypoint: ["/opt/kali/entrypoint.sh"]
     environment:
       PYTHONPATH: /opt

@@ -93,14 +93,15 @@ services:
       start_period: 60s
 
   kali:
-    # Base image built in-repo from Dockerfile.kali (slim recon-tools image,
-    # ~3-5 GB): it replaces the lost prebuilt redamon-kali-sandbox, and the tag
-    # is kept so docs/tests referencing it keep working.
-    # This service layers the #196 capture plane on top of that base
-    # (kali/Dockerfile) and starts the capture entrypoint (mitmdump + MCP).
+    # ONE self-contained image built from Dockerfile.kali (#238 A8): the slim
+    # recon-tools base (it replaces the lost prebuilt redamon-kali-sandbox) PLUS
+    # the #196 capture plane (mitmdump, the addon/governor, the entrypoint). The
+    # old split built two half-images - one with Vegeta but no mitmdump, one
+    # with mitmdump but no Vegeta - so tagging either as `:latest` degraded the
+    # other. This service starts the capture entrypoint (mitmdump + MCP).
     build:
       context: .
-      dockerfile: kali/Dockerfile
+      dockerfile: Dockerfile.kali
       # #238 follow-up (Task 7): stamp the source revision so the image's
       # build provenance (read by `proxy_status()["build"]`) names the commit it
       # was built from. Empty default keeps a clean clone building.

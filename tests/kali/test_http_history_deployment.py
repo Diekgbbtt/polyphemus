@@ -143,6 +143,33 @@ def test_kali_compose_stamps_the_source_revision_build_arg():
         assert "SOURCE_REVISION" in (build.get("args") or {})
 
 
+def test_compose_builds_the_self_contained_kali_image():
+    """#238 A8: ONE reproducible image carries Vegeta, the pinned wordlist AND
+    the capture runtime (mitmdump + addon + governor). The old split assembled
+    two half-images (one with Vegeta but no mitmdump, one with mitmdump but no
+    Vegeta), so tagging either as `:latest` degraded the other plane."""
+    root = Path(__file__).resolve().parents[2]
+    compose = (root / "docker-compose.yml").read_text(encoding="utf-8")
+    dockerfile = (root / "Dockerfile.kali").read_text(encoding="utf-8")
+
+    # The base service builds the self-contained Dockerfile, not the split one.
+    assert "dockerfile: Dockerfile.kali" in compose
+    assert "dockerfile: kali/Dockerfile" not in compose
+    # mitmdump lives in its isolated environment, alongside the tools.
+    assert "mitmproxy==" in dockerfile
+    assert "/opt/mitmproxy-env" in dockerfile
+    assert "COPY kali /opt/kali" in dockerfile
+    assert "entrypoint.sh" in dockerfile
+    # The redamon base (only used to layer mitmdump) is gone from the FROM
+    # lines for good - a historical comment naming it is fine.
+    from_lines = [
+        line.strip() for line in dockerfile.splitlines()
+        if line.strip().upper().startswith("FROM ")
+    ]
+    assert not any("redamon" in line for line in from_lines), from_lines
+    assert not (root / "kali" / "Dockerfile").exists()
+
+
 def test_kali_environment_exposes_the_rate_limit_artifact_knobs():
     """#238 Task 3: the raw Vegeta streams are bounded by the SAME deployment
     discipline as HTTP history - age retention OFF by default, a 256 MiB
