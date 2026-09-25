@@ -425,6 +425,30 @@ def read_target_events(posture: str, generation: str) -> dict:
         f"http://127.0.0.1:80/events?generation={generation}")
 
 
+def kali_governor_runtime() -> dict | None:
+    """The governor/addon counters the PROXY process published (#238 live fix).
+
+    The governor lives in the mitmdump process, so this reads the snapshot the
+    addon writes (`/data/governor-status.json`) - the same payload
+    `proxy_status()["traffic_governor"]["runtime"]` re-exposes to the agent. It
+    is read straight from the container on purpose: the functional tier must
+    never call Kali's MCP surface directly. `None` means the proxy has not
+    published one (a fresh or non-governing proxy) - absence, not a zeroed
+    governor.
+
+    NOTE: these counters are per-PROXY-PROCESS and cumulative, so they must not
+    be attributed to one scenario unless the proxy was restarted for it.
+    """
+    result = _compose(
+        ["exec", "-T", "kali", "cat", "/data/governor-status.json"], timeout=60)
+    if result.returncode != 0:
+        return None
+    try:
+        return json.loads(result.stdout.strip())
+    except (ValueError, TypeError):
+        return None
+
+
 def _target_service(posture: str) -> str:
     try:
         return TARGET_SERVICES[posture]

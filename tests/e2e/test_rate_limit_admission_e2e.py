@@ -220,7 +220,7 @@ def _run_scenario(scenario: Scenario) -> dict:
                       accounts=driver.SMOKE_ACCOUNTS)
     run_id = driver.start_recon(project_id, FUNCTIONAL_JOBS)
     result = driver.wait_for_run(project_id, run_id)
-    return {
+    observed = {
         "scenario": scenario,
         "project_id": project_id,
         "run_id": run_id,
@@ -229,7 +229,46 @@ def _run_scenario(scenario: Scenario) -> dict:
         "stats": result.get("stats") or {},
         "per_job": result.get("per_job") or [],
         "target": driver.read_target_counters(scenario.posture, generation),
+        "governor": driver.kali_governor_runtime(),
     }
+    assert_concurrency_ceiling(observed)
+    return observed
+
+
+def assert_concurrency_ceiling(observed: dict) -> None:
+    """The target never saw more in-flight requests than the armed ceiling.
+
+    This is the ORACLE of the #238 live fix: the persisted policy is the
+    controller's truth, the fixture's `max_in_flight` is what the TARGET
+    actually observed, and the governor's own counters are the third view. The
+    comparison is only meaningful on a posture whose fixture saw traffic, and
+    only for a target-facing policy (`max_concurrency` present) - a posture
+    whose work was pruned must not pass this for vacuity, and an out-of-scope
+    host must never be counted against the policy (each posture is its own
+    fixture instance, so its counters are already per-target).
+    """
+    scenario = observed["scenario"]
+    counters = observed["target"]
+    run_stats = observed["stats"]
+    max_in_flight = int(counters.get("max_in_flight") or 0)
+    policy = (run_stats.get("rate_limit") or {}).get("traffic_policy") or {}
+    ceiling = int(policy.get("max_concurrency") or 0)
+    if not ceiling or not counters.get("requests"):
+        # No armed ceiling to honour, or the fixture saw no traffic at all:
+        # there is nothing to assert, and asserting would be vacuous.
+        return
+    assert max_in_flight <= ceiling, (
+        f"{scenario.posture}: the target observed max_in_flight="
+        f"{max_in_flight} with max_concurrency={ceiling}"
+    )
+    runtime = (observed.get("governor") or {}).get("governor") or {}
+    governor_peak = runtime.get("peak_inflight")
+    if isinstance(governor_peak, int):
+        assert governor_peak <= ceiling or governor_peak <= max_in_flight, (
+            f"{scenario.posture}: governor peak_inflight={governor_peak} "
+            f"exceeds both the ceiling {ceiling} and the target's "
+            f"observed peak {max_in_flight}"
+        )
 
 
 @pytest.mark.parametrize("scenario", SCENARIOS, ids=lambda s: s.name)
