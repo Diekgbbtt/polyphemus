@@ -7,8 +7,11 @@ import pytest
 
 from polymerhus.app.rate_limit.store import (
     POSTURE_VERSION,
+    PostureRecord,
+    PostureUnreadableError,
     PostureWriteError,
     RateLimitPostureStore,
+    host_matches,
 )
 from polymerhus.recon.config import rate_limit_safety_budget
 from polymerhus.recon.domain.rate_limit import RateProfile
@@ -56,3 +59,60 @@ def test_write_keeps_the_newer_measurement(tmp_path):
         )
     )
     assert stored["source_run_id"] == "run-new"
+
+
+def test_read_is_none_only_when_the_file_is_absent(tmp_path):
+    store = RateLimitPostureStore(root=tmp_path)
+    assert store.read("proj-1", "acme.com") is None
+
+
+def test_read_reports_freshness(tmp_path):
+    store = RateLimitPostureStore(root=tmp_path)
+    store.write("proj-1", _profile("acme.com"), "run-1")
+
+    record = store.read("proj-1", "acme.com")
+
+    assert isinstance(record, PostureRecord)
+    assert record.fresh is True
+    assert record.profile.target_key == "acme.com"
+    assert record.source_run_id == "run-1"
+
+
+def test_list_targets_is_empty_without_a_bucket(tmp_path):
+    assert RateLimitPostureStore(root=tmp_path).list_targets("nope") == []
+
+
+def test_list_targets_lists_every_written_target(tmp_path):
+    store = RateLimitPostureStore(root=tmp_path)
+    store.write("proj-1", _profile("acme.com"), "run-1")
+    store.write("proj-1", _profile("api.acme.com"), "run-1")
+
+    assert store.list_targets("proj-1") == ["acme.com", "api.acme.com"]
+
+
+def test_resolve_matches_exact_and_wildcard_hosts():
+    assert host_matches("api.acme.com", ["api.acme.com"]) is True
+    assert host_matches("API.ACME.COM", ["api.acme.com"]) is True
+    assert host_matches("api.acme.com", ["*.acme.com"]) is True
+    assert host_matches("other.example.com", ["acme.com"]) is False
+    assert host_matches(None, ["acme.com"]) is False
+    assert host_matches("anything", []) is True
+
+
+def test_resolve_returns_none_for_an_uncovered_host(tmp_path):
+    store = RateLimitPostureStore(root=tmp_path)
+    store.write("proj-1", _profile("acme.com"), "run-1")
+
+    assert store.resolve("proj-1", "api.acme.com") is None
+    assert store.resolve("proj-1", "acme.com").target_key == "acme.com"
+
+
+def test_a_corrupt_file_is_unreadable_never_absent(tmp_path):
+    store = RateLimitPostureStore(root=tmp_path)
+    store.write("proj-1", _profile("acme.com"), "run-1")
+    (tmp_path / "proj-1" / "rate-limit" / "acme.com.yaml").write_text(
+        "::: not yaml :::", encoding="utf-8"
+    )
+
+    with pytest.raises(PostureUnreadableError):
+        store.read("proj-1", "acme.com")

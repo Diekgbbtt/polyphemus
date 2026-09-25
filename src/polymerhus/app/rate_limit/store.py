@@ -11,11 +11,13 @@ tests (the AuthStore precedent).
 """
 from __future__ import annotations
 
+import fnmatch
 import logging
 import os
 import tempfile
 import threading
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 
 import yaml
@@ -61,6 +63,25 @@ class PostureRecord:
 
 _PROJECT_LOCKS: dict[str, threading.Lock] = {}
 _PROJECT_LOCKS_GUARD = threading.Lock()
+
+
+def host_matches(host: str | None, patterns) -> bool:
+    """Whether a request host is this posture's business.
+
+    MIRRORS `kali.http_history.governor.host_matches` BY VALUE - never imported,
+    because `kali` is not on the agent image's import path. An empty pattern
+    list means "whatever this project sends" (the posture is already
+    per-target); a non-empty list is exact match plus shell-style wildcards,
+    case-insensitive, mirroring the governor exactly (no trailing-dot
+    normalisation beyond the strip the governor performs).
+    """
+    wanted = tuple(str(pattern).lower() for pattern in (patterns or ()))
+    if not wanted:
+        return True
+    if not host:
+        return False
+    value = host.strip().lower()
+    return any(fnmatch.fnmatchcase(value, pattern) for pattern in wanted)
 
 
 def _lock_for(project_id: str) -> threading.Lock:
@@ -139,3 +160,27 @@ class RateLimitPostureStore:
             return PostureEnvelope.model_validate(payload)
         except Exception as exc:  # noqa: BLE001 - any schema failure is unreadable
             raise PostureUnreadableError(f"{path} failed validation: {exc}") from exc
+
+    def read(self, project_id: str, target_key: str) -> PostureRecord | None:
+        envelope = self._read_envelope(self._path(project_id, target_key))
+        if envelope is None:
+            return None
+        return PostureRecord(
+            target_key=envelope.profile.target_key,
+            profile=envelope.profile,
+            source_run_id=envelope.source_run_id,
+            fresh=envelope.profile.is_fresh(datetime.now(timezone.utc)),
+        )
+
+    def list_targets(self, project_id: str) -> list[str]:
+        directory = self._dir(project_id)
+        if not directory.is_dir():
+            return []
+        return sorted(path.stem for path in directory.glob("*.yaml") if path.is_file())
+
+    def resolve(self, project_id: str, host: str) -> PostureRecord | None:
+        for target_key in self.list_targets(project_id):
+            record = self.read(project_id, target_key)
+            if record is not None and host_matches(host, record.profile.host_patterns):
+                return record
+        return None
