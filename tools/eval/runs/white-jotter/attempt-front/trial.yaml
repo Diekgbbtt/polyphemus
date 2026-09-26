@@ -1,0 +1,32 @@
+target: white-jotter
+challenge_id: pb-white-jotter
+attempt: attempt-front
+target_url: http://dj-viscon-workshop-1.vsos.ethz.ch/
+project_id: c7eb42e4-3ade-4e64-aef4-b9cc475ea592
+recon_run: 62f50080-b895-4ce8-892b-5b813900b549
+hunting_run_id: null
+health:
+  recon_status: complete
+  recon_job_counts:
+    httpx: success
+    katana: success
+    jsluice: success
+    httpx_reprofile: success
+    arjun: success
+  hunting_status: not-run
+  analysis_status: drained
+  scaffold: deterministic (24 services, 4 systems, prov_job=scaffold)
+oracle_summary:
+  identified: 0
+  partial: 1
+  missed: 6
+remediations: []
+notes: >
+  First end-to-end harness validation through the nginx front with the bare
+  domain seed: the full five-job recon chain ran to success (the scope-drop
+  defect never triggered - the seed was a bare host, the platform's native
+  domain mode) and the analysis drained. Hunting was NOT run (the e2e test
+  owns the hunting module) - the verdicts are the degraded-trail grades.
+  Discovery gap observed: the SPA shell surface was crawled but no /api/*
+  backend endpoints landed in the graph despite jsluice success - a follow-up
+  for the wired hunting path.
