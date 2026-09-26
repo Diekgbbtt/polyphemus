@@ -218,8 +218,16 @@ def _run_scenario(scenario: Scenario) -> dict:
     driver.store_auth(project_id,
                       overview=driver.SMOKE_OVERVIEW,
                       accounts=driver.SMOKE_ACCOUNTS)
+    # Governor counters are cumulative per PROXY PROCESS: read them around this
+    # scenario so each row's verdict is attributable to it.
+    governor_before = driver.kali_governor_runtime()
     run_id = driver.start_recon(project_id, FUNCTIONAL_JOBS)
-    result = driver.wait_for_run(project_id, run_id)
+    # The wait must OUTLAST the run an ENFORCED policy implies. Before the #238
+    # live fix nothing was governed, so a 4,750-route ffuf finished in ~20 s;
+    # paced at the measured 10 rps with `max_concurrency = 1` the same job is
+    # latency-bound (~4 rps, ~20 min). This is a harness window, never a
+    # weakened assertion: the run must still reach `complete`.
+    result = driver.wait_for_run(project_id, run_id, timeout_s=2400.0)
     observed = {
         "scenario": scenario,
         "project_id": project_id,
@@ -230,6 +238,7 @@ def _run_scenario(scenario: Scenario) -> dict:
         "per_job": result.get("per_job") or [],
         "target": driver.read_target_counters(scenario.posture, generation),
         "governor": driver.kali_governor_runtime(),
+        "governor_before": governor_before,
     }
     assert_concurrency_ceiling(observed)
     return observed
@@ -269,6 +278,34 @@ def assert_concurrency_ceiling(observed: dict) -> None:
             f"exceeds both the ceiling {ceiling} and the target's "
             f"observed peak {max_in_flight}"
         )
+    # An ARMED lease whose flows were left ungoverned is the silent bypass the
+    # live fix removed (#238 a2). The check is TARGET-SCOPED, deliberately: an
+    # armed lease's flows for ANOTHER host (`api.pdtm.sh`, a third-party origin
+    # some tool resolved) are not this policy's business and must never be
+    # counted as a violation (plan Review Focus). What must hold is that the
+    # armed ceiling actually governed this target's traffic - a governor that
+    # governed NOTHING while the fixture saw thousands of requests is exactly
+    # the live defect.
+    governed = _counter_delta(observed, "addon", "governed")
+    skipped = _counter_delta(observed, "addon", "ungoverned_host")
+    last_skipped_host = (
+        ((observed.get("governor") or {}).get("addon") or {})
+        .get("last_ungoverned_host")
+    )
+    assert governed > 0, (
+        f"{scenario.posture}: the armed ceiling governed NONE of the "
+        f"{counters.get('requests')} requests the target saw "
+        f"(ungoverned flows: {skipped}, last host: {last_skipped_host!r})"
+    )
+
+
+def _counter_delta(observed: dict, group: str, key: str) -> int:
+    """How much one cumulative proxy-process counter moved during the scenario."""
+    before = ((observed.get("governor_before") or {}).get(group) or {}).get(key)
+    after = ((observed.get("governor") or {}).get(group) or {}).get(key)
+    if not isinstance(before, int) or not isinstance(after, int):
+        return 0
+    return max(0, after - before)
 
 
 @pytest.mark.parametrize("scenario", SCENARIOS, ids=lambda s: s.name)

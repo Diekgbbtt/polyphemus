@@ -56,17 +56,26 @@ def source_ip_of(flow) -> str | None:
 
 
 def request_host_of(flow) -> str | None:
-    """The hostname of a flow's request, or None when it cannot be named.
+    """The hostname a flow's request is FOR, or None when it cannot be named.
 
-    mitmproxy's own `request.host` is authoritative when present; the URL is the
-    fallback (and the only source the unit-tier fakes carry).
+    `pretty_host` is authoritative: mitmproxy documents `request.host` as
+    possibly INFERRED FROM THE PROXY MODE - in transparent mode it is the
+    connection's IP - while `pretty_host` prefers the request's own
+    `Host`/`:authority`. A `traffic-policy/v2` `host_patterns` names HOSTS, so
+    matching the inferred IP against it made every governed flow look like
+    another policy's business and leave the governor silently (the #238 live
+    defect, `docs/superpowers/notes/2026-09-25-live-concurrency-verdict.md`).
+    `pretty_host` falls back to `host` itself when there is no authority, so
+    this is the named host when one exists and the inferred one otherwise. The
+    URL is the last fallback (and the only source the unit-tier fakes carry).
     """
     request = getattr(flow, "request", None)
     if request is None:
         return None
-    host = getattr(request, "host", None)
-    if isinstance(host, str) and host:
-        return host
+    for attribute in ("pretty_host", "host"):
+        value = getattr(request, attribute, None)
+        if isinstance(value, str) and value:
+            return value
     url = getattr(request, "pretty_url", None) or getattr(request, "url", None)
     if isinstance(url, str) and url:
         return urlsplit(url).hostname
@@ -150,11 +159,13 @@ class HttpHistoryAddon:
             "excluded_websocket": 0,
             "excluded_http3": 0,
             "governed": 0,
+            "ungoverned_host": 0,
             "governor_failed": 0,
             "governor_refusals": 0,
             "last_error": None,
             "governor_last_error": None,
             "last_refusal": None,
+            "last_ungoverned_host": None,
         }
 
     # --- mitmproxy hooks ------------------------------------------------------
@@ -210,6 +221,14 @@ class HttpHistoryAddon:
             self._attach_permit(flow, decision.permit)
             with self._lock:
                 self._status["governed"] += 1
+            return
+        # An ARMED lease whose flow is not this policy's business: before the
+        # #238 live fix this was the ONLY silent outcome of the hook, and it is
+        # how a whole run's traffic egressed ungoverned while every counter read
+        # zero. Disclose it: a skip must be countable and nameable.
+        with self._lock:
+            self._status["ungoverned_host"] += 1
+            self._status["last_ungoverned_host"] = request_host_of(flow)
 
     async def response(self, flow) -> None:
         await self._release_permit(flow)

@@ -73,6 +73,14 @@ services:
       # The minimum safe rate gate (spec default 2.0 req/s), pinned explicitly so
       # the committed gate is reproducible rather than implicitly defaulted.
       RATE_LIMIT_INTENSIVE_MIN_SAFE_RATE_PER_S: ${RATE_LIMIT_INTENSIVE_MIN_SAFE_RATE_PER_S:-2.0}
+      # The pod's per-exec window. Before the #238 live fix NOTHING was
+      # governed, so the `high_limit` fixture's 4,750-request ffuf finished in
+      # ~20 s; paced at the measured rate with `max_concurrency = 1` the same
+      # command is latency-bound (~4 req/s, ~20 min) and would be killed by the
+      # 300 s production default - which is what the gate must exercise, not
+      # avoid. The MECHANISM is what this tier certifies; the window is a
+      # fixture-scale operator knob, kept overridable.
+      EXEC_TIMEOUT_S: ${EXEC_TIMEOUT_S:-1800}
     depends_on:
       rate-limit-llm:
         condition: service_healthy
