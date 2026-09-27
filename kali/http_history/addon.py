@@ -270,7 +270,15 @@ class HttpHistoryAddon:
                 # whole plane exists to prevent.
                 governor = {"error": "status_unavailable"}
         with self._lock:
-            addon = dict(self._status)
+            # The two switches ride with the counters: whether capture and
+            # governance are ON is what makes the counters readable (a
+            # capture-off proxy that governed flows must not look identical to
+            # a capture-on one).
+            addon = {
+                "enabled": self.enabled,
+                "governor_enabled": self.governor_enabled and self.governor is not None,
+                **self._status,
+            }
         return {"addon": addon, "governor": governor}
 
     def _publish_runtime_counters(self, *, force: bool = False) -> None:

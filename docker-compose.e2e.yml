@@ -51,6 +51,12 @@ services:
     # `depends_on` MERGES with the base service's postgres/neo4j dependency, so
     # the agent cannot start a run before the fixture answers its healthcheck.
     environment:
+      # The Kali the agent talks to. Defaults to the production-shaped `kali`
+      # service; the enforcement-property gate re-points it at
+      # `kali-failing-governor` / `kali-capture-off` (both defined below) to
+      # certify the fault paths from the TARGET's point of view. Overridable so
+      # no unversioned hand-edit is needed.
+      KALI_MCP_URL: ${E2E_KALI_MCP_URL:-http://kali:8000/mcp}
       LLM_GATEWAY_URL: http://rate-limit-llm:8080/v1
       # #238 A7: the agent refuses to boot without all five roles.
       LLM_CONFIGURATOR: openai:rate-admission-fixture

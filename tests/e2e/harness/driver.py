@@ -195,12 +195,14 @@ class HarnessError(RuntimeError):
     """A control-plane step failed: the run itself, the API, or the fixture."""
 
 
-def _compose(args: list[str], *, timeout: int = 300) -> subprocess.CompletedProcess:
+def _compose(
+    args: list[str], *, timeout: int = 300, env: dict | None = None
+) -> subprocess.CompletedProcess:
     from pathlib import Path  # noqa: PLC0415
 
     root = Path(__file__).resolve().parents[3]
     return subprocess.run(E2E_COMPOSE + args, cwd=root, capture_output=True,
-                          text=True, timeout=timeout)
+                          text=True, timeout=timeout, env=env)
 
 
 def service_state(service: str) -> str | None:
@@ -425,7 +427,7 @@ def read_target_events(posture: str, generation: str) -> dict:
         f"http://127.0.0.1:80/events?generation={generation}")
 
 
-def kali_governor_runtime() -> dict | None:
+def kali_governor_runtime(service: str = "kali") -> dict | None:
     """The governor/addon counters the PROXY process published (#238 live fix).
 
     The governor lives in the mitmdump process, so this reads the snapshot the
@@ -440,13 +442,60 @@ def kali_governor_runtime() -> dict | None:
     be attributed to one scenario unless the proxy was restarted for it.
     """
     result = _compose(
-        ["exec", "-T", "kali", "cat", "/data/governor-status.json"], timeout=60)
+        ["exec", "-T", service, "cat", "/data/governor-status.json"], timeout=60)
     if result.returncode != 0:
         return None
     try:
         return json.loads(result.stdout.strip())
     except (ValueError, TypeError):
         return None
+
+
+def point_agent_at_kali(url: str | None) -> None:
+    """Re-point the RUNNING agent at another Kali service (or back to the default).
+
+    The enforcement-property gate needs the agent to talk to
+    `kali-failing-governor` / `kali-capture-off`. The swap is an env override
+    (`E2E_KALI_MCP_URL`, read by `docker-compose.e2e.yml`), so it recreates the
+    agent container and waits for the API to answer again. Passing `None`
+    restores the default. The Kali service itself is brought up first when the
+    target is a fault service.
+    """
+    import os  # noqa: PLC0415
+
+    service = "kali"
+    if url:
+        service = url.split("//", 1)[-1].split(":", 1)[0].split(".", 1)[0]
+    env = dict(os.environ)
+    if url:
+        env["E2E_KALI_MCP_URL"] = url
+    else:
+        env.pop("E2E_KALI_MCP_URL", None)
+    result = _compose(["up", "-d", service, "agent"], timeout=600, env=env)
+    if result.returncode != 0:
+        raise HarnessError(
+            f"could not re-point the agent at {url or 'the default kali'}: "
+            f"{(result.stderr or result.stdout).strip()[:400]}")
+    _wait_for_agent_api(env=env)
+
+
+def _wait_for_agent_api(*, env: dict | None = None, timeout_s: float = 240.0) -> None:
+    """Block until the control-plane API answers again after a recreate."""
+    import os  # noqa: PLC0415
+    import time  # noqa: PLC0415
+    import urllib.error  # noqa: PLC0415
+    import urllib.request  # noqa: PLC0415
+
+    deadline = time.monotonic() + timeout_s
+    last = ""
+    while time.monotonic() < deadline:
+        try:
+            urllib.request.urlopen(f"{API_BASE}/health", timeout=5).read()
+            return
+        except (urllib.error.URLError, OSError) as exc:
+            last = str(exc)[:120]
+        time.sleep(2)
+    raise HarnessError(f"the control-plane API at {API_BASE} did not come back: {last}")
 
 
 def _target_service(posture: str) -> str:

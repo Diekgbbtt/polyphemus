@@ -21,6 +21,9 @@ def test_runtime_counters_expose_the_governor_and_the_addon(tmp_path):
     assert counters["governor"]["duplicate_releases"] == 0
     assert "governed" in counters["addon"]
     assert "governor_refusals" in counters["addon"]
+    # The switches ride with the counters, so a capture-off proxy is legible.
+    assert counters["addon"]["enabled"] is True
+    assert counters["addon"]["governor_enabled"] is True
 
 
 def test_publish_writes_one_snapshot_file(tmp_path):

@@ -7,7 +7,8 @@
 # here rather than through an ad-hoc environment override.
 #
 #   config | build | up | up-stale | health | assert-clean | reset-targets
-#   | gate-once <name> | gate-twice <artifact-dir> | gate-stale <name> | down
+#   | gate-once <name> | gate-twice <artifact-dir> | gate-stale <name>
+#   | gate-properties [name] | down
 set -eu
 
 PROJECT="${POLYPHEMUS_E2E_PROJECT:-polyphemus-238-e2e}"
@@ -109,6 +110,42 @@ gate_stale() {
     POLYPHEMUS_API_BASE="$API" "$PY" -m pytest "$ROOT/$E2E_TEST::test_a_stale_profile_never_re_admits_an_intensive_runner" -q -rs -p no:cacheprovider
 }
 
+gate_properties() {
+    # #238 A10: the four enforcement properties, certified from the TARGET's
+    # point of view. Three of them re-point the running agent at another Kali
+    # service (`kali-failing-governor` / `kali-capture-off`, both in the E2E
+    # overlay) and restore it in a `finally` - so this gate owns the stack while
+    # it runs and must not be run concurrently with another gate.
+    name="${1:-enforcement-properties}"
+    echo "[gate:$name] enforcement properties (A10)"
+    # The property gate runs the image the current source built: recreate any
+    # service whose config/image changed (idempotent when nothing did).
+    up
+    health
+    mcp_ready
+    POLYPHEMUS_E2E_STRICT=1 POLYPHEMUS_API_BASE="$API" "$PY" -m pytest \
+        "$ROOT/tests/e2e/test_rate_limit_enforcement_properties_e2e.py" \
+        -q -rs -p no:cacheprovider
+}
+
+mcp_ready() {
+    # The agent must be able to READ kali's capability surface before any run
+    # starts: the run negotiates it first, and a cold MCP (freshly recreated
+    # container) otherwise fails the run closed with
+    # `capability_probe_failed` - which is correct behaviour but a red gate for
+    # the wrong reason. Bounded retries, then fail loudly.
+    attempts=0
+    until compose exec -T agent python -c "import asyncio; from polymerhus.app.clients import kali_mcp; asyncio.run(kali_mcp.proxy_status())" >/dev/null 2>&1; do
+        attempts=$((attempts + 1))
+        if [ "$attempts" -ge 30 ]; then
+            echo "[mcp] the agent cannot read kali proxy_status after ${attempts} attempts"
+            return 1
+        fi
+        sleep 3
+    done
+    echo "[mcp] agent -> kali capability surface ready"
+}
+
 case "${1:-}" in
     config) compose config --quiet ;;
     build) build ;;
@@ -120,6 +157,7 @@ case "${1:-}" in
     gate-once) shift; gate_once "$@" ;;
     gate-twice) shift; gate_twice "$@" ;;
     gate-stale) shift; gate_stale "$@" ;;
+    gate-properties) shift; gate_properties "$@" ;;
     down) compose down --remove-orphans ;;
-    *) echo "usage: $0 {config|build|up|up-stale|health|assert-clean|reset-targets|gate-once NAME|gate-twice DIR|gate-stale NAME|down}" >&2; exit 64 ;;
+    *) echo "usage: $0 {config|build|up|up-stale|health|assert-clean|reset-targets|gate-once NAME|gate-twice DIR|gate-stale NAME|gate-properties [NAME]|down}" >&2; exit 64 ;;
 esac
