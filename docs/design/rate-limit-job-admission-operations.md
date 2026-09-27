@@ -48,6 +48,36 @@ request. There is no "confirmed bypass" path that re-enables `arjun` or `ffuf`.
 | `RATE_LIMIT_PROFILE_TTL_S` | `PROFILE_TTL_DEFAULT_S` | How long a measured profile stays fresh. Admission re-checks freshness at the phase boundary; an expired profile prunes the intensive jobs. |
 | `RATE_LIMIT_AWAIT_TIMEOUT_S` | `1800.0` | The bound on the *wait* for the rate turn's reply (not on the turn's own harness budget). |
 
+### Known limit — the per-exec bound vs a governed intensive job (2026-09-27)
+
+Enforcement changes how long an intensive job takes, and the production default
+of `EXEC_TIMEOUT_S` (**300 s**, `recon/config.py`) does not follow it. The
+measurement: `ffuf` fuzzes a 4,750-line wordlist; paced at a measured 10 req/s
+with `max_concurrency = 1`, the command is **latency**-bound (~4 req/s in the
+E2E's numbers), so it needs ~20 minutes, not the ~8 the rate alone implies.
+
+Two consequences worth carrying into later work:
+
+1. **The admission projection is optimistic for `max_concurrency = 1`.**
+   `projected_duration_s = estimated_requests / safe_rate_per_s` assumes the rate
+   is the binding constraint; with one worker it is the per-request latency. A
+   job can therefore be ADMITTED and then killed by the exec bound mid-flight.
+2. **A killed command degrades visibly.** The runner returns `returncode=124`,
+   the pod retries up to `MAX_POD_ITERS`, then the job is marked degraded - the
+   run still reaches a terminal state, and nothing hangs (the exec seam also
+   fails loud instead of waiting forever, see the 2026-09-27 MCP fix).
+
+**Decision (operator, 2026-09-27): keep the 300 s default.** Trade-off as
+decided: a bounded worst case per command and a healthy namespace pool (8 slots,
+each held for a whole exec) beat the extra coverage of slow-but-admissible
+intensive jobs.
+
+If that trade is revisited, do it in this order: first fix the projection so it
+accounts for the concurrency ceiling (`estimated_requests * latency_per_request
+/ max_concurrency`), then derive the cap from the admitted job's own projection
+(`max(EXEC_TIMEOUT_S, projected_duration_s + margin)`, with a hard ceiling) for
+`request_intensive` jobs only - never raise the bound globally.
+
 ### Boundary semantics (inclusive)
 
 A job is admitted exactly when
