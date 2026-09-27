@@ -14,6 +14,7 @@ only wires function references, it does not invoke them.
 """
 from __future__ import annotations
 
+import asyncio
 import inspect
 import logging
 import shlex
@@ -696,6 +697,43 @@ def _exec_result_from_artifact(artifact, *, content=None, duration_ms: int = 0) 
     )
 
 
+#: `langchain-mcp-adapters` builds its streamable-HTTP client with
+#: `httpx.Timeout(read=300s)` (`DEFAULT_STREAMABLE_HTTP_SSE_READ_TIMEOUT`).
+#: Single-sourced BY VALUE so the derived window can never undercut it.
+_MCP_DEFAULT_SSE_READ_TIMEOUT_S = 300.0
+
+#: Head-room on top of a command's own bound: after the command exits, the MCP
+#: still looks up the capture refs, releases the lease and writes the envelope.
+_MCP_CALL_MARGIN_S = 120.0
+
+
+class _McpCallTimedOut(RuntimeError):
+    """The exec seam never returned. Internal: converted into a failed
+    `ExecResult`, never raised into the pod graph."""
+
+
+def _mcp_sse_read_timeout_s(timeout_s: int) -> float:
+    """How long the MCP stream may wait for an event (#238 live fix, 2026-09-27).
+
+    The default 300 s window is what lost the result of a governed command: a
+    4,750-request fuzz paced at the measured rate produces no event for ~20
+    minutes, so the stream was torn down and the pod waited forever. The window
+    is derived from the command's own bound and never dips below the library
+    default.
+    """
+    return max(_MCP_DEFAULT_SSE_READ_TIMEOUT_S, float(timeout_s) + _MCP_CALL_MARGIN_S)
+
+
+def _mcp_call_timeout_s(timeout_s: int) -> float:
+    """The client-side bound on ONE `execute_command` call.
+
+    The runner already kills the command at `timeout_s`; this bound only has to
+    cover the transport afterwards. Its job is the second half of the fix: a
+    lost stream must become a loud failure instead of an unbounded wait.
+    """
+    return float(timeout_s) + _MCP_CALL_MARGIN_S
+
+
 def default_exec_fn(
     command: str, session_id: str, timeout_s: int, capture_context=None, traffic_policy=None
 ) -> ExecResult:
@@ -726,7 +764,14 @@ def default_exec_fn(
 
     async def _run():
         client = MultiServerMCPClient(
-            {"kali": {"url": config.KALI_MCP_URL, "transport": "streamable_http"}}
+            {
+                "kali": {
+                    "url": config.KALI_MCP_URL,
+                    "transport": "streamable_http",
+                    # The stream must OUTLIVE the command it carries.
+                    "sse_read_timeout": _mcp_sse_read_timeout_s(timeout_s),
+                }
+            }
         )
         tools = await client.get_tools()
         exec_tool = next(t for t in tools if t.name == "execute_command")
@@ -738,18 +783,39 @@ def default_exec_fn(
             args.update(capture_context.as_mcp_args())
         if traffic_policy is not None:
             args["traffic_policy"] = traffic_policy
-        return await exec_tool.ainvoke(
-            {
-                "type": "tool_call",
-                "name": "execute_command",
-                "id": session_id or "exec",
-                "args": args,
-            },
-            config=tool_config,
-        )
+        try:
+            return await asyncio.wait_for(
+                exec_tool.ainvoke(
+                    {
+                        "type": "tool_call",
+                        "name": "execute_command",
+                        "id": session_id or "exec",
+                        "args": args,
+                    },
+                    config=tool_config,
+                ),
+                timeout=_mcp_call_timeout_s(timeout_s),
+            )
+        except (asyncio.TimeoutError, TimeoutError) as exc:  # noqa: UP041
+            raise _McpCallTimedOut(
+                f"mcp call timed out after {_mcp_call_timeout_s(timeout_s):.0f}s "
+                "(the exec result was never delivered)"
+            ) from exc
 
     start = time.monotonic()
-    result = run_coro_blocking(_run())
+    try:
+        result = run_coro_blocking(_run())
+    except _McpCallTimedOut as exc:
+        # FAIL-LOUD, never FAIL-HANG: a lost transport is a failed exec the pod
+        # retries and degrades on - never an unbounded wait that leaves the run
+        # `running` until the reaper collects it.
+        logger.error("kali exec seam timed out for session %s: %s", session_id, exc)
+        return ExecResult(
+            stdout="",
+            stderr=str(exc),
+            returncode=124,
+            duration_ms=int((time.monotonic() - start) * 1000),
+        )
     duration_ms = int((time.monotonic() - start) * 1000)
 
     artifact = getattr(result, "artifact", None)
