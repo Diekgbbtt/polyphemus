@@ -537,6 +537,9 @@ class AlignmentOutcome:
     hold: Hold | None = None
     escalated: bool = False
     no_op: bool = False
+    # M1: True when the decider was actually dispatched. Distinguishes a true
+    # no-op (nothing moved) from a decider-chosen "no action for a real delta".
+    consulted: bool = False
     escalation: str | None = None
 
     @property
@@ -612,11 +615,12 @@ def run(
             target_fp,
             hold=hold,
             escalated=True,
+            consulted=True,
             escalation=decision.escalation,
         )
 
     if not decision.actions:
-        return AlignmentOutcome(target_sha, target_fp, no_op=True)
+        return AlignmentOutcome(target_sha, target_fp, no_op=True, consulted=True)
 
     # C1/D28: a decider-supplied inline command is never an authority. It must
     # be covered by a setup declaration (or it is a hold); the declaration's
@@ -643,6 +647,7 @@ def run(
             target_fp,
             hold=hold,
             escalated=True,
+            consulted=True,
             escalation=refusal,
         )
 
@@ -668,7 +673,7 @@ def run(
 
     if not dry_run and newly_applied:
         state.record_applied(target_sha, target_fp, newly_applied)
-    return AlignmentOutcome(target_sha, target_fp, results=tuple(results))
+    return AlignmentOutcome(target_sha, target_fp, results=tuple(results), consulted=True)
 
 
 def _execute(

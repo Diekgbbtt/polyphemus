@@ -97,7 +97,9 @@ def eval_env(tmp_path: Path) -> EvalEnv:
     dev = tmp_path / "dev"
     git(root, "worktree", "add", "-q", str(dev), "dev")
     eval_wt = tmp_path / "eval"
-    git(root, "worktree", "add", "-q", "-b", "eval", str(eval_wt), "dev")
+    # #269/D29: eval instances run detached so they can share the read-only
+    # `eval` branch; the daemon requires a detached eval worktree (M4).
+    git(root, "worktree", "add", "-q", "--detach", str(eval_wt), "dev")
     return EvalEnv(root=root, dev=dev, evals=(eval_wt,))
 
 
@@ -306,7 +308,7 @@ def test_advance_moves_every_eval_worktree_environment_wide(
     eval_env: EvalEnv, tmp_path: Path
 ) -> None:
     second = tmp_path / "eval2"
-    git(eval_env.root, "worktree", "add", "-q", "-b", "eval-2", str(second), "dev")
+    git(eval_env.root, "worktree", "add", "-q", "--detach", str(second), "dev")
     env = EvalEnv(root=eval_env.root, dev=eval_env.dev, evals=eval_env.evals + (second,))
     dev_sha = env.advance_dev("v1\n")
     d, _records, _recorder, _proxy = make_daemon(env, tmp_path, idle=True)
@@ -354,6 +356,45 @@ def test_detached_non_fast_forward_alerts_and_leaves_both_untouched(
     assert [env.head(worktree) for worktree in env.evals] == before
     assert "merge" not in recorder.subcommands()
     assert_poll_commands_safe(recorder)
+
+
+# --- M4: only a detached eval worktree is advanced ----------------------------
+
+
+def test_a_branch_checked_out_worktree_is_skipped_and_alerted(tmp_path: Path) -> None:
+    env = make_detached_env(tmp_path, n=2)
+    base = env.head(env.evals[1])
+    git(env.root, "branch", "evalb", "dev")
+    git(env.evals[1], "checkout", "-q", "evalb")
+    dev_sha = env.advance_dev("v1\n")
+    d, records, recorder, _proxy = make_daemon(env, tmp_path, idle=True)
+
+    heartbeat = d.poll_once()
+
+    # The detached worktree moved; the branch checkout was skipped untouched.
+    assert env.head(env.evals[0]) == dev_sha
+    assert env.head(env.evals[1]) == base
+    assert "worktree_not_detached" in alert_kinds(records)
+    assert heartbeat["state"] == daemon.STATE_PARTIAL
+    assert "advance_failed" not in alert_kinds(records)
+    assert_poll_commands_safe(recorder)
+
+
+def test_all_branch_worktrees_are_not_reported_as_advanced(tmp_path: Path) -> None:
+    env = make_detached_env(tmp_path, n=2)
+    git(env.root, "branch", "evalb0", "dev")
+    git(env.root, "branch", "evalb1", "dev")
+    git(env.evals[0], "checkout", "-q", "evalb0")
+    git(env.evals[1], "checkout", "-q", "evalb1")
+    before = [env.head(worktree) for worktree in env.evals]
+    env.advance_dev("v1\n")
+    d, records, _recorder, _proxy = make_daemon(env, tmp_path, idle=True)
+
+    heartbeat = d.poll_once()
+
+    assert heartbeat["state"] == daemon.STATE_WORKTREE_NOT_DETACHED
+    assert [env.head(w) for w in env.evals] == before
+    assert "worktree_not_detached" in alert_kinds(records)
 
 
 # --- dirty worktree ----------------------------------------------------------
@@ -432,6 +473,50 @@ def test_non_fast_forward_alerts_and_leaves_the_tree_untouched(
     assert_poll_commands_safe(recorder)
 
 
+# --- M6: a git ancestry error is not a non-fast-forward -----------------------
+
+
+@dataclass
+class AncestryFailingGit:
+    """A git runner whose `merge-base --is-ancestor` fails (a transient error)."""
+
+    calls: list[tuple[Path, list[str]]] = field(default_factory=list)
+
+    def __call__(self, repo: Path, args) -> images.CommandResult:
+        self.calls.append((Path(repo), list(args)))
+        if list(args)[:2] == ["merge-base", "--is-ancestor"]:
+            return images.CommandResult(2, "", "fatal: bad revision")
+        return manifest.default_git_runner(repo, args)
+
+    def subcommands(self) -> list[str]:
+        return [args[0] for _repo, args in self.calls]
+
+
+def test_ancestry_check_failure_is_not_reported_as_non_fast_forward(
+    eval_env: EvalEnv, tmp_path: Path
+) -> None:
+    old = eval_env.head(eval_env.evals[0])
+    eval_env.advance_dev("v1\n")
+    records: list[dict] = []
+    runner = AncestryFailingGit()
+    d = daemon.Daemon(
+        make_config(eval_env, tmp_path),
+        git_runner=runner,
+        idle_proxy=FakeIdle(True),
+        clock=FakeClock(),
+        log=records.append,
+        image_digests=lambda: dict(DIGESTS),
+    )
+
+    heartbeat = d.poll_once()
+
+    assert heartbeat["state"] == daemon.STATE_ERROR
+    assert "ancestry_check_failed" in alert_kinds(records)
+    assert "non_fast_forward" not in alert_kinds(records)
+    assert eval_env.head(eval_env.evals[0]) == old
+    assert "merge" not in runner.subcommands()
+
+
 # --- heartbeat and last-known-good ------------------------------------------
 
 
@@ -440,7 +525,7 @@ def test_partial_advance_reports_each_worktree_actual_head(
 ) -> None:
     """#267: a later worktree's failure must not report the pre-advance SHA."""
     second = tmp_path / "eval2"
-    git(eval_env.root, "worktree", "add", "-q", "-b", "eval-2", str(second), "dev")
+    git(eval_env.root, "worktree", "add", "-q", "--detach", str(second), "dev")
     env = EvalEnv(root=eval_env.root, dev=eval_env.dev, evals=eval_env.evals + (second,))
     base = env.head(env.evals[0])
     dev_sha = env.advance_dev("v1\n")

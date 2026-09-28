@@ -18,7 +18,7 @@ from typing import Callable, TextIO
 
 import yaml
 
-from orchestrator import api, assessment, diagnosis, evidence, instances, routing, store, surfer, trial, verdicts
+from orchestrator import api, assessment, diagnosis, evidence, instances, routing, store, subagents, surfer, trial, verdicts
 from orchestrator import alignment
 from orchestrator.commands import LocalRunner
 from orchestrator.files import FileStore
@@ -63,6 +63,7 @@ _HANDLED = (
     trial.TrialError,
     trial.EscalationError,
     api.ApiError,
+    subagents.CommandTemplateError,
     assessment.AssessmentError,
     diagnosis.DiagnosisError,
     evidence.EvidenceError,
@@ -1170,7 +1171,12 @@ def _run_align(args, setup: EvalSetup, config: OrchestratorConfig, out: TextIO,
         dry_run=args.dry_run,
     )
     if outcome.no_op and not outcome.results and not outcome.escalated:
-        print("alignment: no change; nothing to align", file=out)
+        # M1: a true no-op (nothing moved) and a decider-chosen no-action for a
+        # real delta are different facts and read differently.
+        if outcome.consulted:
+            print("alignment: decided no action; nothing to align", file=out)
+        else:
+            print("alignment: no change; nothing to align", file=out)
     else:
         _print_alignment_outcome(outcome, out)
     return 0 if outcome.ok else 1

@@ -793,6 +793,29 @@ def test_load_decision_parses_actions_and_rejects_unknown_kinds(tmp_path: Path) 
         alignment.load_decision(bad, files=files)
 
 
+def test_a_bad_command_template_is_a_named_error(tmp_path: Path) -> None:
+    """M5: a literal `{...}` placeholder is a handled CommandTemplateError."""
+    from orchestrator import subagents
+    from orchestrator.files import FileStore
+
+    request = alignment.AlignmentRequest(
+        prompt=Path("prompt.md"),
+        input_file=tmp_path / "input.yaml",
+        destination=tmp_path / "decision.yaml",
+        decision_input={"delta": {"changed": []}},
+        impact_map=alignment.IMPACT_MAP,
+        environment={"instances": []},
+    )
+    decider = alignment.SubagentAlignmentDecider(
+        RecordingRunner(),
+        ("python3", "agent.py", "{bogus}"),
+        files=FileStore(),
+    )
+
+    with pytest.raises(subagents.CommandTemplateError, match="bogus"):
+        decider.decide(request)
+
+
 def test_subagent_decider_writes_the_input_dispatches_and_reads_the_decision(
     tmp_path: Path,
 ) -> None:

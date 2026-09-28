@@ -86,6 +86,18 @@ def common_fields(request: object) -> dict[str, str]:
     return values
 
 
+class DispatchRequest(Protocol):
+    """The request shape every agent-decision seam renders into its command."""
+
+    prompt: Path
+    input_file: Path
+    destination: Path
+
+
+class CommandTemplateError(RuntimeError):
+    """An agent command template carries a malformed `{...}` placeholder (M5)."""
+
+
 def render_command(
     argv: "tuple[str, ...] | list[str]",
     fields: Mapping[str, str],
@@ -95,16 +107,15 @@ def render_command(
     description: str,
 ) -> Command:
     """Render an argv template against the request's fields into a `Command`."""
-    rendered = tuple(str(part).format(**fields) for part in argv)
+    try:
+        rendered = tuple(str(part).format(**fields) for part in argv)
+    except (KeyError, IndexError, ValueError) as exc:
+        # M5: a literal `{...}` in an operator command is a handled error, not a
+        # raw `format` traceback.
+        raise CommandTemplateError(
+            f"{description} command template has an invalid placeholder: {exc}"
+        ) from exc
     return Command(argv=rendered, cwd=cwd, env=env, description=description)
-
-
-class DispatchRequest(Protocol):
-    """The request shape every agent-decision seam renders into its command."""
-
-    prompt: Path
-    input_file: Path
-    destination: Path
 
 
 @dataclass

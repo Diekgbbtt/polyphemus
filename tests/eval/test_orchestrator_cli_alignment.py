@@ -104,6 +104,81 @@ def test_align_dry_run_plans_and_constructs_no_runner(tmp_path, capsys) -> None:
     assert "docker restart" in out
 
 
+def test_align_distinguishes_no_change_from_decided_no_action(
+    tmp_path, capsys
+) -> None:
+    """M1: a true no-op and a decider-chosen no-action read differently."""
+    setup_path = _write_setup(tmp_path)
+    decider = _FakeDecider(alignment.AlignmentDecision(actions=()))
+
+    # A real delta the decider judged a no-op.
+    input_path = _write_input(tmp_path, [{"name": "kali", "artifact_class": "exec_plane"}])
+    code = cli.main(
+        [
+            "align",
+            setup_path,
+            "--decision-file",
+            input_path,
+            "--state",
+            str(tmp_path / "alignment.yaml"),
+            "--dry-run",
+        ],
+        runner_factory=_explode,
+        alignment_decider=decider,
+    )
+    decided = capsys.readouterr().out
+
+    # Nothing moved at all.
+    empty_path = _write_input(tmp_path, [])
+    code_empty = cli.main(
+        [
+            "align",
+            setup_path,
+            "--decision-file",
+            empty_path,
+            "--state",
+            str(tmp_path / "alignment.yaml"),
+            "--dry-run",
+        ],
+        runner_factory=_explode,
+        alignment_decider=decider,
+    )
+    unchanged = capsys.readouterr().out
+
+    assert code == 0 and code_empty == 0
+    assert "no change" in unchanged.lower()
+    assert "decided no action" in decided.lower()
+    assert "no change; nothing to align" not in decided.lower()
+
+
+def test_align_reports_a_bad_command_template_as_a_handled_error(
+    tmp_path, capsys, recording_runner
+) -> None:
+    """M5: a literal `{...}` in the operator command is handled, not a traceback."""
+    setup_path = _write_setup(tmp_path)
+    input_path = _write_input(tmp_path, [{"name": "kali", "artifact_class": "exec_plane"}])
+    runner = recording_runner()
+
+    code = cli.main(
+        [
+            "align",
+            setup_path,
+            "--decision-file",
+            input_path,
+            "--state",
+            str(tmp_path / "alignment.yaml"),
+            "--command",
+            "python3 agent.py {bogus}",
+        ],
+        runner_factory=lambda: runner,
+    )
+
+    err = capsys.readouterr().err
+    assert code == 1
+    assert "invalid placeholder" in err
+    assert "Traceback" not in err
+
+
 def test_align_escalation_blocks_trial_until_resolved(tmp_path, capsys, recording_runner) -> None:
     setup_path = _write_setup(tmp_path)
     input_path = _write_input(tmp_path, [{"name": "db", "artifact_class": "schema_data_layout"}])

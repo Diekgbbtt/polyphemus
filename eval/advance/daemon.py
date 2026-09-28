@@ -57,6 +57,7 @@ STATE_POP_CONFLICT = "pop_conflict"
 STATE_IMAGE_DIGESTS_UNKNOWN = "image_digests_unknown"
 STATE_DECISION_UNKNOWN = "decision_unknown"
 STATE_PARTIAL = "partial_advance"
+STATE_WORKTREE_NOT_DETACHED = "worktree_not_detached"
 STATE_ERROR = "error"
 
 
@@ -286,6 +287,21 @@ def git_has_tracked_edits(repo: Path, git_runner: GitRunner) -> bool:
     return bool(result.stdout.strip())
 
 
+def git_is_detached(repo: Path, git_runner: GitRunner) -> bool:
+    """True when HEAD is detached (the eval instance contract, D29/#269).
+
+    `git symbolic-ref -q HEAD` exits 0 when a branch is checked out and 1 when
+    HEAD is detached; any other exit is an error. M4: a worktree still on a
+    branch must never be fast-forwarded, so the daemon skips and alerts it.
+    """
+    result = git_runner(repo, ["symbolic-ref", "-q", "HEAD"])
+    if result.returncode == 0:
+        return False
+    if result.returncode == 1:
+        return True
+    raise GitError(f"git symbolic-ref failed in {repo}: {result.stderr.strip()}")
+
+
 def git_stash_push(repo: Path, message: str, git_runner: GitRunner) -> None:
     result = git_runner(repo, ["stash", "push", "-m", message])
     if result.returncode != 0:
@@ -442,7 +458,16 @@ class Daemon:
                 last_advance_at, None,
             )
 
-        if not self._is_ancestor(eval_sha, dev_sha):
+        ancestor = self._is_ancestor(eval_sha, dev_sha)
+        if ancestor is None:
+            # M6: a git error is not a divergence. It is reported as an error
+            # (and alerted) rather than as a genuine non-fast-forward.
+            return self._finish(
+                now, dev_sha, eval_sha, idle, STATE_ERROR,
+                "ancestry check failed (git error); refusing to move",
+                last_advance_at, None,
+            )
+        if not ancestor:
             self._alerts.emit(
                 "non_fast_forward",
                 "eval is not an ancestor of dev; refusing to move (no reset)",
@@ -561,15 +586,19 @@ class Daemon:
                 return None
         return idle
 
-    def _is_ancestor(self, ancestor: str, descendant: str) -> bool:
-        """An ancestry-check failure is an error, not a fast-forward."""
+    def _is_ancestor(self, ancestor: str, descendant: str) -> bool | None:
+        """`True`/`False` for a real answer, `None` for a git error (M6).
+
+        An ancestry-check failure is an error, not a fast-forward verdict; the
+        caller reports it as an error rather than a false non-fast-forward.
+        """
         try:
             return git_is_ancestor(
                 self.config.eval_worktrees[0], ancestor, descendant, self._git
             )
         except GitError as exc:
             self._alerts.emit("ancestry_check_failed", str(exc), ancestor=ancestor)
-            return False
+            return None
 
     def _collect_digests(self, dev_sha: str, eval_sha: str) -> Mapping[str, str] | None:
         """The running-image digests, or None (alerted) when unobservable.
@@ -642,12 +671,26 @@ class Daemon:
             return STATE_ERROR, f"last-known-good write failed: {exc}", None, last_advance_at
 
         stashed: list[Path] = []
+        skipped: list[Path] = []
         try:
             for worktree in self.config.eval_worktrees:
+                # M4: only a detached worktree may be fast-forwarded. A branch
+                # checkout is alerted and skipped, never moved.
+                if not git_is_detached(worktree, self._git):
+                    skipped.append(worktree)
+                    self._alerts.emit(
+                        "worktree_not_detached",
+                        f"eval worktree {worktree} is on a branch; skipping it "
+                        "(instances must run detached)",
+                        worktree=str(worktree),
+                    )
+                    continue
                 if git_has_tracked_edits(worktree, self._git):
                     git_stash_push(worktree, f"eval-advance {now}", self._git)
                     stashed.append(worktree)
             for worktree in self.config.eval_worktrees:
+                if worktree in skipped:
+                    continue
                 result = git_ff_only(worktree, dev_sha, self._git)
                 if result.returncode != 0:
                     raise GitError(
@@ -667,6 +710,15 @@ class Daemon:
         last_advance_at = now
         if conflict:
             return STATE_POP_CONFLICT, "stash pop conflict", decision, last_advance_at
+        if skipped:
+            # Nothing moved on the skipped worktrees; never report a clean
+            # environment-wide advance (the caller re-reads every actual HEAD).
+            return (
+                STATE_WORKTREE_NOT_DETACHED,
+                "an eval worktree is checked out on a branch; it was not advanced",
+                decision,
+                last_advance_at,
+            )
         self._log(
             {
                 "event": STATE_ADVANCED,
