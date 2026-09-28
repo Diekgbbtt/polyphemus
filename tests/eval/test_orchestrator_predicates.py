@@ -196,6 +196,52 @@ def test_recon_entry_ignores_auth_state_without_a_declared_auth_surface(
     assert not any("/auth" in c.path for c in api_runner.calls)
 
 
+def test_recon_entry_accumulates_every_independent_block() -> None:
+    # Project, seed, and reachability are independent: all three are reported in
+    # the stable order even though the project read fails first.
+    api_runner = FakeApi({"GET /projects": {"projects": []}})
+    state = predicates.PhaseState(project_id=PROJECT, target_seed=None)
+
+    result = predicates.recon_entry(
+        api_runner, FileStore(), state, reachable=lambda: False
+    )
+
+    assert not result.ok
+    assert result.blocks == (
+        f"project not found: {PROJECT}",
+        "settings.target_seed is not set",
+        "target not reachable from kali",
+    )
+    # A missing project skips the scaffold/auth reads (its dependent subtree).
+    assert [c.display() for c in api_runner.calls] == ["GET /projects"]
+
+
+def test_recon_entry_accumulates_the_auth_surface_blocks(tmp_path) -> None:
+    files = FileStore()
+    state = predicates.PhaseState(
+        project_id=PROJECT,
+        target_seed="t.test",
+        auth_surface=True,
+        data_root=tmp_path,
+    )
+
+    result = predicates.recon_entry(
+        _routed(
+            **{"GET /projects/pid/auth": {"overview": None, "accounts": []}}
+        ),
+        files,
+        state,
+        reachable=lambda: True,
+    )
+
+    assert not result.ok
+    # Skill, overview, and credentials are all missing, in that order.
+    assert len(result.blocks) == 3
+    assert "authn" in result.blocks[0]
+    assert "overview" in result.blocks[1]
+    assert "credentials" in result.blocks[2]
+
+
 # --- analysis entry -----------------------------------------------------------
 
 
@@ -277,6 +323,29 @@ def test_analysis_entry_notes_a_single_failed_job_and_continues() -> None:
 
     assert result.ok
     assert any("content" in note and "failed" in note for note in result.notes)
+
+
+def test_analysis_entry_accumulates_every_missing_prerequisite() -> None:
+    state = predicates.PhaseState(project_id=PROJECT, recon_run_id="r1")
+    run = _recon_run(status="running", jobs=[])
+
+    result = predicates.analysis_entry(
+        _routed(
+            **{
+                "GET /projects/pid/recon/r1": run,
+                "GET /projects/pid/graph": _graph(endpoints=0),
+            }
+        ),
+        FileStore(),
+        state,
+    )
+
+    assert not result.ok
+    # Non-terminal, no job rows, and empty L0 all report, in that order.
+    assert len(result.blocks) == 3
+    assert "not terminal" in result.blocks[0]
+    assert "no job rows" in result.blocks[1]
+    assert "L0" in result.blocks[2]
 
 
 # --- hunting entry ------------------------------------------------------------
@@ -370,3 +439,29 @@ def test_hunting_entry_accepts_premined_test_specs_present(tmp_path) -> None:
         _routed(**{"GET /projects/pid/recon/r1": _recon_run()}), FileStore(), state
     )
     assert result.ok
+
+
+def test_hunting_entry_accumulates_the_drain_and_premined_blocks(tmp_path) -> None:
+    state = predicates.PhaseState(
+        project_id=PROJECT,
+        recon_run_id="r1",
+        preloaded_configured=True,
+        data_root=tmp_path,
+    )
+    run = _recon_run(stats={"analysis_drained": False})
+
+    result = predicates.hunting_entry(
+        _routed(
+            **{
+                "GET /projects/pid/recon/r1": run,
+                "GET /projects/pid/graph": _graph(services=0, endpoints=0),
+            }
+        ),
+        FileStore(),
+        state,
+    )
+
+    assert not result.ok
+    assert len(result.blocks) == 2
+    assert "drained" in result.blocks[0] or "L1" in result.blocks[0]
+    assert "pre-mined" in result.blocks[1]

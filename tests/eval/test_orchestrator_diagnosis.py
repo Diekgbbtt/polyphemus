@@ -96,9 +96,11 @@ class FakeBank:
     def __init__(self, hits=()):
         self.hits = tuple(hits)
         self.queries = []
+        self.limits = []
 
-    def search(self, query: str):
+    def search(self, query: str, *, limit: int = 5):
         self.queries.append(query)
+        self.limits.append(limit)
         return self.hits
 
 
@@ -549,6 +551,53 @@ def test_match_issue_records_the_proposal_when_none_exists() -> None:
     )
     assert outcome.closest_issue is None
     assert outcome.proposed_issue is proposal
+
+
+def test_match_issue_takes_the_first_relevance_ordered_hit() -> None:
+    bank = FakeBank(
+        [
+            diagnosis.Issue(repo="o/r", number=11, title="closest"),
+            diagnosis.Issue(repo="o/r", number=22, title="less close"),
+        ]
+    )
+
+    outcome = diagnosis.match_issue(bank, query="q", rationale="r")
+
+    assert outcome.closest_issue is not None
+    assert outcome.closest_issue.number == 11
+    # The default limit is passed through to the bank.
+    assert bank.limits == [5]
+
+
+def test_github_issue_bank_defaults_to_relevance_ordering() -> None:
+    seen: list[str] = []
+
+    def transport(request):
+        seen.append(request.full_url)
+        return b'{"items": []}'
+
+    bank = diagnosis.GitHubIssueBank("token", transport=transport)
+    bank.search("surface gap")
+
+    url = seen[0]
+    # No forced sort: GitHub's default is best-match (relevance), so the first
+    # hit is the closest match (N14).
+    assert "sort=" not in url
+    assert "order=" not in url
+    assert "per_page=5" in url
+
+
+def test_github_issue_bank_honours_an_explicit_sort() -> None:
+    seen: list[str] = []
+
+    def transport(request):
+        seen.append(request.full_url)
+        return b'{"items": []}'
+
+    bank = diagnosis.GitHubIssueBank("token", transport=transport)
+    bank.search("x", sort="updated")
+
+    assert "sort=updated" in seen[0]
 
 
 def test_github_issue_bank_is_get_only_against_a_fake_transport() -> None:

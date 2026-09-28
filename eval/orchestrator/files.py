@@ -113,6 +113,21 @@ class FileStore:
     def exists(self, path: str | Path) -> bool:
         return Path(path).exists()
 
+    def is_file(self, path: str | Path) -> bool:
+        """True only for a regular file; missing is the normal absent case."""
+        return Path(path).is_file()
+
+    def is_dir(self, path: str | Path) -> bool:
+        """True only for a directory; missing is the normal absent case."""
+        return Path(path).is_dir()
+
+    def glob(self, directory: str | Path, pattern: str) -> list[Path]:
+        """Matching paths directly under `directory`, sorted; missing -> []."""
+        base = Path(directory)
+        if not self.is_dir(base):
+            return []
+        return sorted(base.glob(pattern))
+
     def read_text(self, path: str | Path) -> str:
         return Path(path).read_text(encoding="utf-8")
 
@@ -173,23 +188,23 @@ class FileStore:
     def list_files(self, directory: str | Path) -> list[Path]:
         """Regular files directly under `directory`, sorted; missing -> []."""
         base = Path(directory)
-        if not base.is_dir():
+        if not self.is_dir(base):
             return []
-        return sorted(p for p in base.iterdir() if p.is_file())
+        return sorted(p for p in base.iterdir() if self.is_file(p))
 
     def list_dirs(self, directory: str | Path) -> list[Path]:
         """Subdirectories directly under `directory`, sorted; missing -> []."""
         base = Path(directory)
-        if not base.is_dir():
+        if not self.is_dir(base):
             return []
-        return sorted(p for p in base.iterdir() if p.is_dir())
+        return sorted(p for p in base.iterdir() if self.is_dir(p))
 
     def walk_files(self, directory: str | Path) -> list[Path]:
         """Every regular file under `directory` recursively, sorted; missing -> []."""
         base = Path(directory)
-        if not base.is_dir():
+        if not self.is_dir(base):
             return []
-        return sorted(p for p in base.rglob("*") if p.is_file())
+        return sorted(p for p in base.rglob("*") if self.is_file(p))
 
     def count_files(self, directory: str | Path) -> int:
         """The number of regular files directly under `directory`."""

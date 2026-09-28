@@ -700,7 +700,7 @@ trial record - never invented.
 
 | Primitive | Contract |
 |---|---|
-| `PYTHONPATH=eval python3 -m orchestrator trial <setup.yaml> <instance> <target> [--eval-sha S] [--stack-fingerprint F]` | Run one trial; the SHA and fingerprint are stamped into `trial.yaml` (D32/D37), so the assessment can copy them. |
+| `PYTHONPATH=eval python3 -m orchestrator trial <setup.yaml> <instance> <target> [--eval-sha S] [--stack-fingerprint F] [--trace-id T]` | Run one trial; the SHA and fingerprint are stamped into `trial.yaml` (D32/D37), as is the Langfuse trace id when given, so the assessment can copy them and substitute `{trace_id}`. |
 | `PYTHONPATH=eval python3 -m orchestrator assess <setup.yaml> --trial <trial-dir>` | Dispatch the background assessment subagent for one trial (fire-and-forget, D6). `--dry-run` prints the rendered command. |
 | `PYTHONPATH=eval python3 -m orchestrator close-verify <setup.yaml>` | The eval-close phase (D15): check `verdicts.yaml` presence and schema for every trial under the runs root; re-dispatch missing/invalid trials twice, then micro-diagnose - a bounded configuration-layer re-dispatch (D28) or a named escalation. `--dry-run` lists the trials. |
 
@@ -735,15 +735,17 @@ EVAL_DIAGNOSE_COMMAND='opencode run --prompt {prompt} --trial {trial_record} --v
 #### The issue bank is read-only
 
 The diagnoser searches the origin issue bank and records either the closest matching issue (`closest_issue`) or a `proposed_issue` block; it never files.
+The search returns GitHub's best-match (relevance) ordering and the first hit is recorded as the closest match; no `sort`/`order` is forced.
 The two are mutually exclusive and one is mandatory: a row with neither is rejected by the schema, so when no issue matches - or the bank is unavailable - the diagnoser writes a `proposed_issue`.
 This is a work-authority rule (`loop-constraints.md`): only the operator starts work.
 A `proposed_issue` is written into `diagnoses.yaml` for the operator to file manually.
 
-The search primitive is `python3 -m orchestrator issue-search "<query>" [--repo owner/name]`.
+The search primitive is `python3 -m orchestrator issue-search "<query>" [--repo owner/name] [--limit N]`.
 It reads `EVAL_GITHUB_TOKEN` from the environment and issues only GitHub REST `GET` requests against the search API; the implementation exposes no write method of any kind.
+The default `--limit` is 5; the hits are relevance-ordered, so the first is the closest match.
 
 ```
-EVAL_GITHUB_TOKEN=... python3 -m orchestrator issue-search "hunter test exploration" --repo Diekgbbtt/polyphemus
+EVAL_GITHUB_TOKEN=... python3 -m orchestrator issue-search "hunter test exploration" --repo Diekgbbtt/polyphemus --limit 5
 ```
 
 | Primitive | Contract |

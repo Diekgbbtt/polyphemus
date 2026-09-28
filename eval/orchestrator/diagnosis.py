@@ -22,7 +22,8 @@ The issue bank is read-only by construction: `GitHubIssueBank` exposes only a
 `search` method and only ever builds GET requests, so it is structurally
 incapable of filing. `EVAL_GITHUB_TOKEN` is read from the environment.
 
-Stdlib only; import performs no I/O (CODING_STANDARD section 6).
+PyYAML is the one third-party dependency (the repo's existing dependency);
+import performs no I/O (CODING_STANDARD section 6).
 """
 from __future__ import annotations
 
@@ -36,8 +37,8 @@ from urllib.request import Request, urlopen
 
 import yaml
 
-from orchestrator import trial, verdicts
-from orchestrator.commands import Command, CommandRunner, require_ok
+from orchestrator import subagents, trial, verdicts
+from orchestrator.commands import Command
 from orchestrator.files import FileStore
 
 # `eval/orchestrator/diagnosis.py` -> `eval/prompts/diagnoser.md`.
@@ -69,8 +70,9 @@ ROOT_CAUSE_TYPES = (
     "kb_coverage_gap",
     "skill_defect",
 )
-# D20: only a success (`identified`) is exempt from a diagnosis entry.
-DIAGNOSABLE = ("missed", "partial")
+# D20: only a success (`identified`) is exempt from a diagnosis entry. Shared
+# with the verdict vocabulary and the artifact store.
+DIAGNOSABLE = verdicts.DIAGNOSABLE
 
 _ROW_FIELDS = (
     "vuln",
@@ -334,16 +336,10 @@ SubagentDispatcher = Callable[[DiagnosisRequest], None]
 
 
 def _format_fields(request: DiagnosisRequest) -> dict[str, str]:
-    return {
-        "prompt": str(request.prompt),
-        "trial_record": str(request.trial_record),
-        "verdicts": str(request.verdicts),
-        "ground_truth": str(request.ground_truth),
-        "data_root": str(request.data_root),
-        "destination": str(request.destination),
-        "vulns": ",".join(request.vulns),
-        "trace_id": request.trace_id or "",
-    }
+    fields = subagents.common_fields(request)
+    fields["verdicts"] = str(request.verdicts)
+    fields["vulns"] = ",".join(request.vulns)
+    return fields
 
 
 def plan_dispatch(
@@ -358,28 +354,22 @@ def plan_dispatch(
     The template names `{prompt}`, `{trial_record}`, `{verdicts}`,
     `{ground_truth}`, `{data_root}`, `{destination}`, `{vulns}`, and `{trace_id}`.
     """
-    fields = _format_fields(request)
-    rendered = tuple(str(part).format(**fields) for part in argv)
-    return Command(
-        argv=rendered,
+    return subagents.render_command(
+        argv,
+        _format_fields(request),
         cwd=cwd,
         env=env,
         description=f"diagnose {request.trial_record}",
     )
 
 
-@dataclass
-class CommandDispatcher:
+class CommandDispatcher(subagents.CommandDispatcher):
     """The production seam: run the configured agent command line once."""
 
-    runner: CommandRunner
-    argv: tuple[str, ...]
-    cwd: str | None = None
-    env: Mapping[str, str] | None = None
+    error = DiagnosisError
 
-    def __call__(self, request: DiagnosisRequest) -> None:
-        command = plan_dispatch(request, self.argv, cwd=self.cwd, env=self.env)
-        require_ok(self.runner(command), command, error=DiagnosisError)
+    def plan(self, request: DiagnosisRequest) -> Command:
+        return plan_dispatch(request, self.argv, cwd=self.cwd, env=self.env)
 
 
 def dispatch(
@@ -390,82 +380,56 @@ def dispatch(
     now: Callable[[], str] | None = None,
 ) -> trial.DiagnosisRecord:
     """Fire-and-forget dispatch; return the recorded attempt (D6)."""
-    now = now or _utcnow
-    dispatcher(request)
-    attempts = list(prior)
-    attempts.append(
-        trial.DiagnosisAttempt(len(attempts) + 1, "dispatched", None, now())
-    )
-    return trial.DiagnosisRecord(
-        status="dispatched",
-        attempts=attempts,
-        diagnoses_path=str(request.destination),
+    return subagents.dispatch(
+        request,
+        dispatcher=dispatcher,
+        prior=prior,
+        now=now,
+        make_attempt=trial.DiagnosisAttempt,
+        make_record=lambda status, attempts, path: trial.DiagnosisRecord(
+            status, attempts, path
+        ),
     )
 
 
 # --- close verification --------------------------------------------------------
 
 
-@dataclass(frozen=True)
-class DiagnosisFailure:
-    """The micro-diagnosis of a persistent diagnosis-pairing failure."""
-
-    cause: str
-    repair: str | None
-    detail: str
+# The persistent-failure classification (the shared cause/repair/detail shape).
+DiagnosisFailure = subagents.Failure
 
 
 def classify_failure(
     *, diagnosis_state: str, error: BaseException | None
 ) -> DiagnosisFailure:
     """Classify a persistent failure into a bounded re-dispatch or an escalation."""
-    if error is not None:
-        return DiagnosisFailure("dispatcher_process", "rerun", str(error))
-    if diagnosis_state == "missing":
-        return DiagnosisFailure("empty_file", "rerun", "no diagnoses.yaml was produced")
-    if diagnosis_state == "invalid":
-        return DiagnosisFailure(
-            "schema_invalid", "rerun", "diagnoses.yaml failed schema validation"
-        )
-    if diagnosis_state == "unpaired":
-        return DiagnosisFailure(
-            "unpaired", "rerun", "diagnoses.yaml is missing an entry for a missed/partial vuln"
-        )
-    return DiagnosisFailure("unknown", None, "diagnosis did not converge")
+    return subagents.classify_failure(
+        state=diagnosis_state,
+        error=error,
+        label="diagnosis",
+        missing_detail="no diagnoses.yaml was produced",
+        invalid_detail="diagnoses.yaml failed schema validation",
+        unpaired_detail=(
+            "diagnoses.yaml is missing an entry for a missed/partial vuln"
+        ),
+    )
 
 
-class DiagnosisRepair(Protocol):
-    """The bounded, configuration-layer-only repair (D28)."""
-
-    def supports(self, cause: str) -> bool: ...
-
-    def apply(self, cause: str) -> None: ...
+# The bounded, configuration-layer-only repair (D28).
+DiagnosisRepair = subagents.Repair
 
 
-class _NullRepair:
-    def supports(self, cause: str) -> bool:
-        return False
-
-    def apply(self, cause: str) -> None:  # pragma: no cover - never reached
-        raise DiagnosisError(f"no repair supports {cause!r}")
-
-
-@dataclass
-class DiagnoserReDispatchRepair:
+class DiagnoserReDispatchRepair(subagents.ReDispatchRepair):
     """Re-run the configured command once with the corrected paths/flags (D28).
 
     The only bounded repair: it re-invokes the injected dispatcher and never
     touches the codebase.
     """
 
-    dispatcher: SubagentDispatcher
-    request: DiagnosisRequest
-
-    def supports(self, cause: str) -> bool:
-        return cause in REPAIRABLE
-
-    def apply(self, cause: str) -> None:
-        self.dispatcher(self.request)
+    def __init__(
+        self, dispatcher: SubagentDispatcher, request: DiagnosisRequest
+    ) -> None:
+        super().__init__(dispatcher, request, repairable=REPAIRABLE, error=DiagnosisError)
 
 
 def verify_diagnoses(
@@ -479,7 +443,7 @@ def verify_diagnoses(
     now: Callable[[], str] | None = None,
 ) -> trial.DiagnosisRecord:
     """The eval-close pairing check for one trial (presence, re-dispatch, micro-diagnosis)."""
-    now = now or _utcnow
+    now = now or subagents.utcnow
     attempts = list(prior)
 
     def attempt(outcome: str, detail: str | None) -> None:
@@ -519,7 +483,7 @@ def verify_diagnoses(
             return _present(attempts, request, entries)
 
     failure = classify_failure(diagnosis_state=state, error=last_error)
-    kit = repair or _NullRepair()
+    kit = repair or subagents.NullRepair(DiagnosisError)
     if kit.supports(failure.cause):
         try:
             kit.apply(failure.cause)
@@ -542,15 +506,7 @@ def verify_diagnoses(
 
 def load_trial_record(path: str | Path, *, files: FileStore) -> dict:
     """Read a trial record; a missing or non-mapping file is a loud error."""
-    if not files.exists(path):
-        raise DiagnosisError(f"trial record not found: {path}")
-    try:
-        payload = yaml.safe_load(files.read_text(path))
-    except yaml.YAMLError as exc:
-        raise DiagnosisError(f"trial record {path}: invalid YAML: {exc}") from exc
-    if not isinstance(payload, dict):
-        raise DiagnosisError(f"trial record {path}: expected a mapping")
-    return payload
+    return subagents.load_trial_record(path, files=files, error=DiagnosisError)
 
 
 def record_diagnosis(
@@ -588,7 +544,7 @@ class IssueMatch:
 class IssueBank(Protocol):
     """The issue-bank seam: search and nothing else."""
 
-    def search(self, query: str) -> tuple[Issue, ...]: ...
+    def search(self, query: str, *, limit: int = 5) -> tuple[Issue, ...]: ...
 
 
 def match_issue(
@@ -597,14 +553,16 @@ def match_issue(
     query: str,
     rationale: str,
     proposed: ProposedIssue | None = None,
+    limit: int = 5,
 ) -> IssueMatch:
     """Record the closest issue-bank match, else fall back to the proposal (D22).
 
-    Reading is the only interaction the bank permits; whether the caller then
-    records a `closest_issue` reference or a `proposed_issue` block, it never
-    files anything.
+    The bank is relevance-ordered: the provider returns its best match first, so
+    `hits[0]` IS the closest match. Reading is the only interaction the bank
+    permits; whether the caller then records a `closest_issue` reference or a
+    `proposed_issue` block, it never files anything.
     """
-    hits = tuple(bank.search(query))
+    hits = tuple(bank.search(query, limit=limit))
     if hits:
         best = hits[0]
         return IssueMatch(
@@ -653,13 +611,28 @@ class GitHubIssueBank:
             )
         return cls(token, transport=transport)
 
-    def search(self, query: str, *, repo: str | None = None, limit: int = 5) -> tuple[Issue, ...]:
-        """Search issues read-only; returns the first `limit` hits, best first."""
+    def search(
+        self,
+        query: str,
+        *,
+        repo: str | None = None,
+        limit: int = 5,
+        sort: str | None = None,
+    ) -> tuple[Issue, ...]:
+        """Search issues read-only; returns the first `limit` hits, best first.
+
+        GitHub's default ordering for `/search/issues` is best-match
+        (relevance), so no `sort`/`order` is forced: the first hit is the
+        closest matching issue (N14). An explicit `sort` (GitHub's
+        `created|updated|comments`) is honoured when the caller asks for it.
+        """
         scoped = f"{query} repo:{repo}" if repo else query
         url = (
             f"{self._api}/search/issues"
-            f"?q={quote(scoped)}&per_page={int(limit)}&sort=updated&order=desc"
+            f"?q={quote(scoped)}&per_page={int(limit)}"
         )
+        if sort is not None:
+            url += f"&sort={quote(sort)}"
         request = Request(url, method="GET")
         request.add_header("Accept", "application/vnd.github+json")
         request.add_header("Authorization", f"Bearer {self._token}")
@@ -818,12 +791,4 @@ def _present(
 
 
 def _non_empty(raw: object, label: str) -> str:
-    if not isinstance(raw, str) or not raw:
-        raise DiagnosisError(f"{label}: expected a non-empty string")
-    return raw
-
-
-def _utcnow() -> str:
-    from datetime import datetime, timezone
-
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return subagents.non_empty(raw, label, error=DiagnosisError)
