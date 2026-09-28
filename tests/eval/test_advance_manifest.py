@@ -208,3 +208,39 @@ def test_unknown_commit_fails_closed(repo: Path) -> None:
 
     with pytest.raises(manifest.ManifestError, match="deadbeef"):
         manifest.build_manifest(repo, "deadbeef", DIGESTS)
+
+
+# --- S7: unmatched paths are explicit, never silently dropped ----------------
+
+
+def test_every_tracked_path_is_claimed_or_explicitly_ignored() -> None:
+    """S7: no tracked path may fall through the manifest without a decision.
+
+    A new top-level tree forces an entry in `IGNORED_PREFIXES` (or a
+    `PATH_RULES` claim) instead of being dropped silently.
+    """
+    repo = Path(__file__).resolve().parents[2]
+    result = subprocess.run(
+        ["git", "-C", str(repo), "ls-tree", "-r", "--name-only", "-z", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    paths = [path for path in result.stdout.split("\0") if path]
+    assert paths, "expected a non-empty tracked tree"
+
+    unclaimed = [
+        path
+        for path in paths
+        if manifest.classify(path) is None and not manifest.is_ignored(path)
+    ]
+    assert unclaimed == [], f"unmatched and not ignored: {unclaimed}"
+
+
+def test_is_ignored_handles_directories_and_filename_prefixes() -> None:
+    assert manifest.is_ignored("docs/notes.md")
+    assert manifest.is_ignored("tests/eval/test_x.py")
+    assert manifest.is_ignored("PROMPT-something.md")
+    assert not manifest.is_ignored("src/polymerhus/app.py")
+    # The ignore list is documented and non-empty.
+    assert manifest.IGNORED_PREFIXES

@@ -11,11 +11,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
 
-from orchestrator import instances, routing
-from orchestrator.commands import Command, CommandRunner
-from orchestrator.instances import COMPOSE_FILES, InstancePaths
+from orchestrator import front, instances, routing
+from orchestrator.commands import Command, CommandRunner, require_ok
+from orchestrator.instances import COMPOSE_FILES, InstanceError, InstancePaths
 from orchestrator.setup import EvalSetup, Instance, TargetRun
-from orchestrator.targets import TargetStrategy, TargetUpResult, build_strategy
+from orchestrator.targets import TargetError, TargetStrategy, TargetUpResult, build_strategy
 from orchestrator.workitems import require_complete
 
 
@@ -47,6 +47,17 @@ class InstanceResult:
 
     instance_id: str
     targets: tuple[TargetUpResult, ...]
+
+
+@dataclass(frozen=True)
+class TeardownError:
+    """One target's or instance's teardown failure, for per-target reporting."""
+
+    label: str
+    error: str
+
+    def __str__(self) -> str:
+        return f"{self.label}: {self.error}"
 
 
 class Orchestrator:
@@ -84,11 +95,33 @@ class Orchestrator:
             raise OrchestratorError("execution requires a command runner")
         return self._runner
 
+    def _needs_front(self) -> bool:
+        """True when any target is local, so the shared :80 front is required."""
+        return any(
+            run.target_config.lifecycle in ("image", "compose")
+            for instance in self.setup.instances
+            for run in instance.targets
+        )
+
+    def _ensure_front(self, runner: CommandRunner) -> None:
+        """Create the shared front container before the first local target."""
+        command = front.plan_container_up()
+        require_ok(runner(command), command, error=OrchestratorError)
+
+    def _remove_front(self, runner: CommandRunner) -> None:
+        """Remove the shared front container after the last local target."""
+        command = front.plan_container_down()
+        require_ok(runner(command), command, error=OrchestratorError)
+
     # --- planning -------------------------------------------------------------
 
     def plan(self) -> list[PlanStep]:
         """Every instance and target command, in execution order; no runner."""
         steps: list[PlanStep] = []
+        if self._needs_front():
+            steps.append(
+                PlanStep("front container (local targets)", (front.plan_container_up(),))
+            )
         for instance in self.setup.instances:
             paths = self._paths(instance)
             steps.append(
@@ -114,6 +147,8 @@ class Orchestrator:
         """Gate the work items, then bring up every instance and its targets."""
         require_complete(self.setup.work_items)
         runner = self._require_runner()
+        if self._needs_front():
+            self._ensure_front(runner)
         results: list[InstanceResult] = []
         for instance in self.setup.instances:
             paths = self._paths(instance)
@@ -124,14 +159,34 @@ class Orchestrator:
             results.append(InstanceResult(instance.instance_id, target_results))
         return results
 
-    def down(self) -> None:
-        """Tear every target down (reverse order), then every instance stack."""
+    def down(self) -> list[TeardownError]:
+        """Tear every target down (reverse order), then every instance stack.
+
+        Non-aborting for one target's failure (SP3): each failure is recorded and
+        the teardown continues, so one stuck target cannot strand the rest. The
+        returned errors are reported by the CLI; the last local target's down
+        also removes the shared front container.
+        """
         runner = self._require_runner()
+        errors: list[TeardownError] = []
         for instance in reversed(self.setup.instances):
             paths = self._paths(instance)
             for run in reversed(instance.targets):
-                self._strategy(paths, run).down(runner)
-            instances.down(paths, runner)
+                label = f"{instance.instance_id}/{run.target_id}"
+                try:
+                    self._strategy(paths, run).down(runner)
+                except TargetError as exc:
+                    errors.append(TeardownError(label, str(exc)))
+            try:
+                instances.down(paths, runner)
+            except InstanceError as exc:
+                errors.append(TeardownError(instance.instance_id, str(exc)))
+        if self._needs_front():
+            try:
+                self._remove_front(runner)
+            except OrchestratorError as exc:
+                errors.append(TeardownError(front.FRONT_CONTAINER, str(exc)))
+        return errors
 
     def status(self) -> dict:
         """Per-instance stack status, live kali aliases, and per-target status.

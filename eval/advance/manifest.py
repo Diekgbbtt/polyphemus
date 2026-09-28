@@ -21,12 +21,11 @@ from __future__ import annotations
 
 import fnmatch
 import hashlib
-import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Mapping, Sequence
 
-from advance.images import CommandResult
+from advance.effects import CommandResult, run_process
 
 
 @dataclass(frozen=True)
@@ -66,6 +65,32 @@ PATH_RULES: tuple[PathRule, ...] = (
     PathRule("dependency_locks", "platform", ("skills-lock.json",)),
 )
 
+# S7: the tracked top-level paths deliberately excluded from the manifest. Every
+# other tracked path must be claimed by PATH_RULES; `test_advance_manifest.py`
+# asserts this against the real tree, so a new top-level tree forces an explicit
+# decision here instead of being dropped silently. A trailing "-" is a filename
+# prefix (the authoring prompts).
+IGNORED_PREFIXES: tuple[str, ...] = (
+    ".agents",
+    ".gitattributes",
+    ".github",
+    ".gitignore",
+    "CLAUDE.md",
+    "CODING_STANDARD.md",
+    "CONTEXT-MAP.md",
+    "PROMPT-",
+    "README.md",
+    "STATE.md",
+    "data",
+    "docs",
+    "eval",
+    "frontend",
+    "loop-budget.md",
+    "loop-constraints.md",
+    "tests",
+    "tools",
+)
+
 
 class ManifestError(RuntimeError):
     """The git tree for a commit could not be read."""
@@ -95,10 +120,7 @@ GitRunner = Callable[[Path, Sequence[str]], CommandResult]
 
 def default_git_runner(repo: Path, args: Sequence[str]) -> CommandResult:
     """Run `git -C <repo> <args>` and capture its output."""
-    proc = subprocess.run(
-        ["git", "-C", str(repo), *args], capture_output=True, text=True
-    )
-    return CommandResult(proc.returncode, proc.stdout, proc.stderr)
+    return run_process(["git", "-C", str(repo), *args])
 
 
 def build_manifest(
@@ -153,6 +175,21 @@ def _list_tree(
         _mode, _type, object_sha = meta.split(" ", 2)
         objects.append((path, object_sha))
     return objects
+
+
+def classify(path: str) -> PathRule | None:
+    """The artifact class for a tracked path, or `None` when it is unmatched."""
+    return _first_match(path)
+
+
+def is_ignored(path: str) -> bool:
+    """True when a tracked path is deliberately outside the manifest (S7)."""
+    for prefix in IGNORED_PREFIXES:
+        if path == prefix or path.startswith(prefix + "/"):
+            return True
+        if prefix.endswith("-") and path.startswith(prefix):
+            return True
+    return False
 
 
 def _first_match(path: str) -> PathRule | None:

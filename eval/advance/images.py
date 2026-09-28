@@ -15,9 +15,9 @@ must not compute a manifest from a stack it cannot observe.
 from __future__ import annotations
 
 import re
-import subprocess
-from dataclasses import dataclass
-from typing import Callable, Mapping, Sequence
+from typing import Mapping, Sequence
+
+from advance.effects import CommandResult, CommandRunner, run_process
 
 # The documented running components (D39): one digest each in the manifest.
 COMPONENTS: tuple[str, ...] = (
@@ -36,20 +36,9 @@ class ImageDigestError(RuntimeError):
     """A running container's image digest could not be resolved."""
 
 
-@dataclass(frozen=True)
-class CommandResult:
-    returncode: int
-    stdout: str
-    stderr: str = ""
-
-
-CommandRunner = Callable[[Sequence[str]], CommandResult]
-
-
 def default_run(args: Sequence[str]) -> CommandResult:
     """Run `docker <args>` and capture its output."""
-    proc = subprocess.run(["docker", *args], capture_output=True, text=True)
-    return CommandResult(proc.returncode, proc.stdout, proc.stderr)
+    return run_process(["docker", *args])
 
 
 def default_containers(compose_project: str) -> dict[str, str]:

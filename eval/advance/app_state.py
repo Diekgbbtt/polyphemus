@@ -17,13 +17,12 @@ the caller must treat unknown as "do not advance" (fail closed, R9).
 from __future__ import annotations
 
 import json
-import subprocess
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from typing import Callable, Mapping, Sequence, Tuple
 
-from advance.images import CommandResult
+from advance.effects import CommandResult, run_process
 
 # The documented fallback: the same predicate `GET /app-state` applies. Idle
 # iff this returns no rows. Kept verbatim with #265's route docstring and
@@ -94,17 +93,12 @@ def default_dsn_transport(
     not read an error stream as "no rows" (that would be a fail-open idle).
     """
     if run is None:
-        run = _default_run
+        run = run_process
     result = run(psql_command(dsn))
     if result.returncode != 0:
         detail = result.stderr.strip() or result.stdout.strip()
         raise AppStateUnavailable(f"psql fallback failed: {detail}")
     return result.stdout
-
-
-def _default_run(args: Sequence[str]) -> CommandResult:
-    proc = subprocess.run(args, capture_output=True, text=True)
-    return CommandResult(proc.returncode, proc.stdout, proc.stderr)
 
 
 class IdleProxy:

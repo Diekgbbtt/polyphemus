@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 import time
 from pathlib import Path
 from typing import Mapping
@@ -132,20 +133,21 @@ class TargetctlStrategy:
     # --- command builders (shared by plan and execute) ------------------------
 
     def _ssh(self, remote_command: str, *, description: str) -> Command:
-        return Command(
-            argv=("ssh", *routing.SSH_OPTS, self.ssh_host, remote_command),
-            description=description,
-        )
+        return routing.ssh_command(self.ssh_host, remote_command, description=description)
 
     def _checkout_cmd(self) -> Command:
+        # S5: quote interpolated config; remote_dir/repo_url may carry spaces or
+        # shell metacharacters and are operator-supplied.
+        remote_dir = shlex.quote(self.remote_dir)
         remote = (
-            f"test -d {self.remote_dir}/.git || "
-            f"(git clone --depth 1 {self.repo_url} {self.remote_dir})"
+            f"test -d {remote_dir}/.git || "
+            f"(git clone --depth 1 {shlex.quote(self.repo_url)} {remote_dir})"
         )
         return self._ssh(remote, description=f"ensure {self.remote_dir}")
 
     def _targetctl(self, *args: str) -> Command:
-        remote = f"cd {self.remote_dir} && scripts/targetctl {' '.join(args)}"
+        quoted = " ".join(shlex.quote(arg) for arg in args)
+        remote = f"cd {shlex.quote(self.remote_dir)} && scripts/targetctl {quoted}"
         return self._ssh(remote, description=f"targetctl {' '.join(args)}")
 
     def _ip_cmd(self) -> Command:
@@ -205,10 +207,24 @@ class TargetctlStrategy:
         )
 
     def _resolve_ip(self, run: CommandRunner) -> str:
+        """The workshop host's numeric IP, or a loud failure.
+
+        The alias is written into kali's `/etc/hosts`, whose address column has
+        no resolver: a hostname (e.g. `public_host`) would silently point
+        nowhere. If `hostname -I` yields no numeric address the up path aborts
+        here, before any alias command is built.
+        """
         ip_cmd = self._ip_cmd()
         result = run(ip_cmd)
         remote_ip = result.stdout.strip().split()[0] if result.stdout.strip() else ""
-        return remote_ip or self.public_host
+        if not routing.is_numeric_address(remote_ip):
+            detail = result.stderr.strip() or result.stdout.strip()
+            raise TargetctlError(
+                f"target {self.target!r}: no numeric IP for {self.host} from "
+                f"`hostname -I` (got {detail!r}); refusing to write a non-numeric "
+                "alias into kali /etc/hosts"
+            )
+        return remote_ip
 
     def plan_down(self) -> list[Command]:
         return [
@@ -218,19 +234,32 @@ class TargetctlStrategy:
         ]
 
     def down(self, run: CommandRunner) -> None:
-        # The target process is best-effort (it may already be gone); the front
-        # and the alias are always removed so teardown leaves nothing behind.
+        # SP3: the target process and the front are best-effort (either may
+        # already be gone); the alias is ALWAYS cleared so teardown leaves
+        # nothing behind. Failures are aggregated and raised at the end, once
+        # cleanup has run, so the orchestrator can report and continue.
         down_cmd = self._targetctl("down", self.target)
         down_result = run(down_cmd)
         front = routing.plan_front_remove(self.ssh_host, self.front_conf)
-        require_ok(run(front), front, error=TargetctlError)
+        front_result = run(front)
         clear = routing.kali_clear_command(self.paths, self.host)
-        require_ok(run(clear), clear, error=TargetctlError)
+        clear_result = run(clear)
+        errors: list[str] = []
+        if front_result.returncode != 0:
+            errors.append(
+                f"front removal failed: "
+                f"{front_result.stderr.strip() or front_result.stdout.strip()}"
+            )
+        if clear_result.returncode != 0:
+            errors.append(
+                f"alias clear failed: "
+                f"{clear_result.stderr.strip() or clear_result.stdout.strip()}"
+            )
         if down_result.returncode != 0:
             detail = down_result.stderr.strip() or down_result.stdout.strip()
-            raise TargetctlError(
-                f"targetctl down failed ({down_result.returncode}): {detail}"
-            )
+            errors.append(f"targetctl down failed ({down_result.returncode}): {detail}")
+        if errors:
+            raise TargetctlError("; ".join(errors))
 
     def plan_status(self) -> list[Command]:
         return [self._targetctl("ps", self.target)]

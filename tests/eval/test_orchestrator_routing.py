@@ -7,7 +7,10 @@ platform's bare-domain scope gate; the Host header is the discriminator.
 """
 from __future__ import annotations
 
+import pytest
+
 from orchestrator import instances, routing, setup as setup_mod
+from orchestrator.commands import CommandResult
 
 
 def _paths(tmp_path, instance_id="arm-a"):
@@ -107,6 +110,71 @@ def test_kali_hosts_command_reads_the_instance_hosts_file(tmp_path) -> None:
     assert "cat /etc/hosts" in script
     assert paths.compose_project in script
     assert command.cwd == str(paths.worktree)
+
+
+def test_ssh_builder_is_the_shared_shape() -> None:
+    command = routing.ssh_command("ubuntu@workshop", "echo hi", description="d")
+
+    assert command.argv[0] == "ssh"
+    assert all(opt in command.argv for opt in routing.SSH_OPTS)
+    assert "ubuntu@workshop" in command.argv
+    assert command.argv[-1] == "echo hi"
+
+
+def test_is_numeric_address_distinguishes_ips_from_hosts() -> None:
+    assert routing.is_numeric_address("172.17.0.1")
+    assert not routing.is_numeric_address("host.docker.internal")
+    assert not routing.is_numeric_address("")
+    assert not routing.is_numeric_address("t-a.target")
+
+
+def test_kali_alias_command_rejects_a_non_numeric_address(tmp_path) -> None:
+    """SP1: the single write point refuses to put a hostname in /etc/hosts."""
+    paths = _paths(tmp_path)
+
+    with pytest.raises(routing.RoutingError, match="non-numeric"):
+        routing.kali_alias_command(paths, "t-aaaa.target", "host.docker.internal")
+
+
+def test_kali_alias_command_allows_a_plan_placeholder(tmp_path) -> None:
+    paths = _paths(tmp_path)
+
+    command = routing.kali_alias_command(paths, "t-aaaa.target", routing.PLAN_GATEWAY_IP)
+
+    assert routing.PLAN_GATEWAY_IP in " ".join(command.argv)
+
+
+def test_parse_gateway_address_takes_the_first_numeric_token() -> None:
+    text = "fe80::1 host.docker.internal\n172.17.0.1 host.docker.internal\n"
+
+    assert routing.parse_gateway_address(text) == "172.17.0.1"
+
+
+def test_parse_gateway_address_fails_when_no_numeric_address() -> None:
+    with pytest.raises(routing.RoutingError, match="numeric address"):
+        routing.parse_gateway_address("host.docker.internal\n")
+
+
+def test_resolve_gateway_runs_the_getent_command_through_the_runner(tmp_path) -> None:
+    paths = _paths(tmp_path)
+    seen: list = []
+
+    def run(command):
+        seen.append(command)
+        return CommandResult(0, "172.17.0.1 host.docker.internal\n")
+
+    assert routing.resolve_gateway(run, paths) == "172.17.0.1"
+    assert "getent hosts host.docker.internal" in " ".join(seen[0].argv)
+
+
+def test_resolve_gateway_failure_is_fatal(tmp_path) -> None:
+    paths = _paths(tmp_path)
+
+    def run(_command):
+        return CommandResult(1, "", "Name or service not known")
+
+    with pytest.raises(routing.RoutingError, match="host.docker.internal"):
+        routing.resolve_gateway(run, paths)
 
 
 def test_parse_synthetic_aliases_reads_only_synthetic_hosts() -> None:

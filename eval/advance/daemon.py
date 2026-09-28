@@ -31,7 +31,6 @@ import argparse
 import json
 import logging
 import os
-import subprocess
 import sys
 import tempfile
 import time
@@ -41,8 +40,8 @@ from pathlib import Path
 from typing import Callable, Mapping, Sequence
 
 from advance import app_state, decision as decision_input, images, manifest
+from advance.effects import CommandResult, run_process
 from advance.fingerprint import fingerprint
-from advance.images import CommandResult
 
 # --- states ------------------------------------------------------------------
 
@@ -54,6 +53,7 @@ STATE_WORKTREE_SKEW = "worktree_skew"
 STATE_IDLE_UNKNOWN = "idle_unknown"
 STATE_POP_CONFLICT = "pop_conflict"
 STATE_IMAGE_DIGESTS_UNKNOWN = "image_digests_unknown"
+STATE_DECISION_UNKNOWN = "decision_unknown"
 STATE_PARTIAL = "partial_advance"
 STATE_ERROR = "error"
 
@@ -75,6 +75,9 @@ Clock = Callable[[], datetime]
 LogFn = Callable[[dict], None]
 ImageDigests = Callable[[], Mapping[str, str]]
 _LAST_KNOWN_GOOD_FILENAME = "last-known-good.json"
+# SP5: the recorded-good history is bounded. Rewind only targets a recent
+# recorded SHA, so the file keeps a window rather than growing forever.
+MAX_LAST_KNOWN_GOOD = 50
 
 
 @dataclass(frozen=True)
@@ -92,8 +95,11 @@ class DaemonConfig:
     last_known_good_path: Path | None = None
     # The running-stack identity for the manifest's image digests (D39): the
     # compose project names the containers; an explicit map overrides the
-    # derived names when the stack is deployed differently.
-    compose_project: str = "polymerhus"
+    # derived names when the stack is deployed differently. Both may be unset,
+    # but then digest collection fails loudly (SP4): eval instances run as
+    # `ph-<short>`, so a baked-in `polymerhus` default would silently inspect
+    # one wrong project.
+    compose_project: str | None = None
     image_containers: Mapping[str, str] | None = None
 
     @property
@@ -114,8 +120,7 @@ def default_log(record: dict) -> None:
 
 
 def default_shell_runner(args: Sequence[str]) -> CommandResult:
-    proc = subprocess.run(args, capture_output=True, text=True)
-    return CommandResult(proc.returncode, proc.stdout, proc.stderr)
+    return run_process(args)
 
 
 @dataclass
@@ -178,6 +183,10 @@ def record_last_known_good(path: Path, sha: str, recorded_at: str) -> None:
     history = load_last_known_good(path)
     if not history or history[-1].get("sha") != sha:
         history.append({"sha": sha, "recorded_at": recorded_at})
+    # SP5: keep the file bounded. An operator rewind only ever targets a recent
+    # good SHA, so the oldest entries beyond the window are dropped.
+    if len(history) > MAX_LAST_KNOWN_GOOD:
+        history = history[-MAX_LAST_KNOWN_GOOD:]
     _atomic_write_json(path, {"history": history})
 
 
@@ -262,18 +271,23 @@ def default_image_digests(
     """The production digest provider: `docker inspect` each running container.
 
     The container map is the configured one, else derived from the compose
-    project (`<project>-<service>-1`). Raises `ImageDigestError` on an
-    unobservable stack; the caller refuses to advance rather than emitting an
-    empty map (D37's fail-closed default, "unknown is never idle").
+    project (`<project>-<service>-1`). SP4: with neither set the provider fails
+    loudly rather than inspecting a guessed project; the caller then alerts and
+    refuses to advance (D37's fail-closed default, "unknown is never idle").
     """
-    containers = (
-        dict(config.image_containers)
-        if config.image_containers
-        else images.default_containers(config.compose_project)
-    )
+    containers = dict(config.image_containers) if config.image_containers else None
+    project = config.compose_project
 
     def collect() -> Mapping[str, str]:
-        return images.collect_image_digests(containers, run=run)
+        if containers is not None:
+            return images.collect_image_digests(containers, run=run)
+        if not project:
+            raise images.ImageDigestError(
+                "no running-stack identity configured (SP4): set "
+                "EVAL_ADVANCE_COMPOSE_PROJECT=<ph-<short>> or "
+                "EVAL_ADVANCE_IMAGE_CONTAINERS=<component=container,...>"
+            )
+        return images.collect_image_digests(images.default_containers(project), run=run)
 
     return collect
 
@@ -524,6 +538,19 @@ class Daemon:
         digests: Mapping[str, str],
         last_advance_at: str | None,
     ) -> tuple[str, str | None, dict | None, str | None]:
+        # S4: build the alignment decision input BEFORE moving. It is a pure
+        # diff of the two commits, so a failure is caught here and refuses the
+        # advance, symmetric with the digest gate (a missing decision is never
+        # disguised as a clean advance).
+        decision = self._decision(eval_sha, dev_sha, digests)
+        if decision is None:
+            return (
+                STATE_DECISION_UNKNOWN,
+                "alignment decision input unavailable",
+                None,
+                last_advance_at,
+            )
+
         try:
             record_last_known_good(self.config.last_known_good_file, eval_sha, now)
         except OSError as exc:
@@ -553,7 +580,6 @@ class Daemon:
             if not self._pop(worktree, alert=True):
                 conflict = True
 
-        decision = self._decision(eval_sha, dev_sha, digests)
         last_advance_at = now
         if conflict:
             return STATE_POP_CONFLICT, "stash pop conflict", decision, last_advance_at
@@ -599,8 +625,15 @@ class Daemon:
                 "dev": fingerprint(after),
             }
             return payload
-        except Exception as exc:  # noqa: BLE001 - a diff failure must not undo the move
-            self._log({"event": "decision_failed", "error": str(exc)})
+        except Exception as exc:  # noqa: BLE001 - a diff failure must refuse the move
+            # S4: an alert, not only a log line; the caller (with the decision
+            # input built before the move) then refuses to advance.
+            self._alerts.emit(
+                "decision_failed",
+                f"alignment decision input unavailable: {exc}",
+                eval_sha=eval_sha,
+                dev_sha=dev_sha,
+            )
             return None
 
     def _read_previous_heartbeat(self) -> dict:
@@ -625,6 +658,12 @@ class Daemon:
         decision: dict | None,
         worktrees: list[dict] | None = None,
     ) -> dict:
+        # S3: every heartbeat carries each eval worktree's OBSERVED head and
+        # whether it reached dev - including the skew and error states where a
+        # caller passes none. Absent observation is recorded as an error entry,
+        # never silently omitted.
+        if worktrees is None:
+            worktrees = self._worktree_states(dev_sha)
         record = {
             "timestamp": timestamp,
             "dev_sha": dev_sha,
@@ -736,7 +775,7 @@ def load_config_from_env(env: Mapping[str, str] | None = None) -> DaemonConfig:
             if env.get("EVAL_ADVANCE_LAST_KNOWN_GOOD")
             else None
         ),
-        compose_project=env.get("EVAL_ADVANCE_COMPOSE_PROJECT", "polymerhus"),
+        compose_project=env.get("EVAL_ADVANCE_COMPOSE_PROJECT") or None,
         image_containers=image_containers,
     )
 

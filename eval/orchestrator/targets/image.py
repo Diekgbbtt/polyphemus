@@ -1,20 +1,21 @@
 """The `image` strategy: a local pullable container.
 
 The target image is published on the host with docker's default binding (all
-interfaces, `0.0.0.0`), and the instance kali aliases the synthetic Host to the
-Docker host gateway (`host.docker.internal`), NOT `127.0.0.1`: kali is not on
-the host network, so `127.0.0.1` is kali itself. The gateway (the bridge's
-`172.x.0.1`) is a host interface, so the publish must not be loopback-only or
-kali could not reach it. The stack's compose services reach host-published
-ports the same way (`host.docker.internal:host-gateway`). `down` removes
-exactly the container it created.
+interfaces, `0.0.0.0`). It is fronted on `http://<host>/` (port 80) by the
+shared host-level nginx container (`orchestrator/front.py`, SP2), and the
+instance kali aliases the synthetic Host to the Docker host gateway resolved to
+a NUMERIC address (SP1) - never `127.0.0.1`, because kali is not on the host
+network and `127.0.0.1` is kali itself. The gateway (the bridge's `172.x.0.1`)
+is a host interface, so the publish must not be loopback-only or neither kali
+nor the front could reach it. `down` removes exactly the container it created,
+idempotently (an absent container is success), and always clears the alias.
 """
 from __future__ import annotations
 
 import time
 
-from orchestrator import routing
-from orchestrator.commands import Command, CommandRunner, require_ok
+from orchestrator import front, routing
+from orchestrator.commands import Command, CommandRunner, is_absent_container, require_ok
 from orchestrator.ids import short_id
 from orchestrator.targets.base import (
     Sleep,
@@ -26,8 +27,10 @@ from orchestrator.targets.base import (
 )
 
 DEFAULT_INTERNAL_PORT = 80
-LOOPBACK = "127.0.0.1"
-HOST_GATEWAY = "host.docker.internal"
+# Single-sourced routing constants (S2): the host loopback and the Docker host
+# gateway kali reaches host-published ports through.
+LOOPBACK = routing.LOOPBACK
+HOST_GATEWAY = routing.HOST_GATEWAY
 
 
 class ImageError(TargetError):
@@ -103,7 +106,9 @@ class ImageStrategy:
         return [
             self._run_cmd(),
             self._probe_cmd(),
-            routing.kali_alias_command(self.paths, self.host, HOST_GATEWAY),
+            front.plan_conf_apply(self.host, self.port),
+            routing.plan_gateway_resolve(self.paths),
+            routing.kali_alias_command(self.paths, self.host, routing.PLAN_GATEWAY_IP),
         ]
 
     def up(self, run: CommandRunner) -> TargetUpResult:
@@ -115,23 +120,58 @@ class ImageStrategy:
             raise TargetNotReadyError(
                 f"image target {self.image!r} did not answer at {self.front_url}"
             )
-        alias = routing.kali_alias_command(self.paths, self.host, HOST_GATEWAY)
+        conf = front.plan_conf_apply(self.host, self.port)
+        require_ok(run(conf), conf, error=ImageError)
+        alias = routing.kali_alias_command(
+            self.paths, self.host, self._gateway_address(run)
+        )
         require_ok(run(alias), alias, error=ImageError)
         return TargetUpResult(
             host=self.host, front_url=self.front_url, backend=self.backend, ready=True
         )
 
+    def _gateway_address(self, run: CommandRunner) -> str:
+        """Resolve the gateway to a numeric address, failing loudly (SP1)."""
+        try:
+            return routing.resolve_gateway(run, self.paths)
+        except routing.RoutingError as exc:
+            raise ImageError(str(exc)) from exc
+
     def plan_down(self) -> list[Command]:
         return [
             self._remove_cmd(),
+            front.plan_conf_remove(self.host),
             routing.kali_clear_command(self.paths, self.host),
         ]
 
     def down(self, run: CommandRunner) -> None:
+        # SP3: idempotent and always clears the alias. An absent container is
+        # success; a genuine removal failure is reported only after the front
+        # conf and the kali alias have been cleaned up.
         remove = self._remove_cmd()
-        require_ok(run(remove), remove, error=ImageError)
+        remove_result = run(remove)
+        conf = front.plan_conf_remove(self.host)
+        conf_result = run(conf)
         clear = routing.kali_clear_command(self.paths, self.host)
-        require_ok(run(clear), clear, error=ImageError)
+        clear_result = run(clear)
+        errors: list[str] = []
+        if remove_result.returncode != 0 and not is_absent_container(remove_result):
+            errors.append(
+                f"remove container {self.name} failed: "
+                f"{remove_result.stderr.strip() or remove_result.stdout.strip()}"
+            )
+        if conf_result.returncode != 0:
+            errors.append(
+                f"remove front conf for {self.host} failed: "
+                f"{conf_result.stderr.strip() or conf_result.stdout.strip()}"
+            )
+        if clear_result.returncode != 0:
+            errors.append(
+                f"clear alias {self.host} failed: "
+                f"{clear_result.stderr.strip() or clear_result.stdout.strip()}"
+            )
+        if errors:
+            raise ImageError("; ".join(errors))
 
     def plan_status(self) -> list[Command]:
         return [
