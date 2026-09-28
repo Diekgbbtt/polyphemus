@@ -1240,12 +1240,19 @@ def _surfer_log(err: TextIO) -> Callable[[dict], None]:
 
 
 def _surfer_asserter(
-    args, files: FileStore, *, log: Callable[[dict], None] | None = None
+    args, files: FileStore, *, log: Callable[[dict], None] | None = None,
+    api_runner=None,
 ) -> surfer.SurferStateSource:
+    trial_log = surfer.FileTrialLog(args.runs_root, files=files, log=log)
+    # I9: the production evidence reader reads each failed run's error payload
+    # through the REST seam, so credit-exhaustion-like errors are classified
+    # even when the trial record's own text is terse.
+    reader = api_runner if api_runner is not None else api.HttpApiRunner(args.api)
     return surfer.SurferStateSource(
         app_state=_surfer_app_state(args),
-        trial_log=surfer.FileTrialLog(args.runs_root, files=files, log=log),
+        trial_log=trial_log,
         signals=surfer.CreditExhaustionReader(),
+        evidence=surfer.RunErrorEvidence(reader, trial_log, log=log or (lambda record: None)),
         log=log or (lambda record: None),
     )
 

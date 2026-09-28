@@ -260,6 +260,60 @@ def test_surfer_escalation_blocks_trial_until_resolved(
     alignment.AlignmentState(state_path).require_no_holds()  # no longer raises
 
 
+def test_surfer_cli_wires_the_run_error_evidence_reader(
+    tmp_path, capsys, monkeypatch
+) -> None:
+    """I9: the CLI's surfer asserter reads run errors through the REST seam."""
+    monkeypatch.setattr(
+        cli, "_surfer_app_state", lambda args: (lambda: AppState(idle=True, projects=()))
+    )
+    setup_path = _write_setup(tmp_path)
+    trial_dir = tmp_path / "runs" / "jetlinks-1" / "trial-1"
+    trial_dir.mkdir(parents=True)
+    (trial_dir / "trial.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "instance_id": "arm-a",
+                "target_id": "jetlinks-1",
+                "project_id": "pid",
+                "terminal": "complete",
+                "phases": [{"phase": "recon", "status": "complete", "run_id": "r1"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeApi:
+        def __call__(self, call):
+            return {
+                "per_job": [
+                    {"job": "crawl", "status": "failed", "error": "insufficient_quota"}
+                ]
+            }
+
+    monkeypatch.setattr(cli.api, "HttpApiRunner", lambda base: FakeApi())
+
+    code = cli.main(
+        [
+            "surfer",
+            setup_path,
+            "--dry-run",
+            "--state",
+            str(tmp_path / "alignment.yaml"),
+            "--data-root",
+            str(tmp_path / "data"),
+            "--runs-root",
+            str(tmp_path / "runs"),
+        ],
+        runner_factory=_explode,
+    )
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "failure_signal" in out
+    assert "insufficient_quota" in out
+
+
 class _RecordingApi:
     def __init__(self) -> None:
         self.calls: list = []

@@ -327,6 +327,95 @@ def test_a_credit_exhaustion_signal_becomes_a_trigger(tmp_path) -> None:
     assert state.triggers[0].instance_id == "arm-a"
 
 
+def test_run_error_evidence_reads_a_failed_recon_job_error() -> None:
+    """I9: the production reader surfaces the run's own error payload via REST."""
+    record = {
+        "instance_id": "arm-a",
+        "target_id": "t1",
+        "project_id": "pid",
+        "phases": [{"phase": "recon", "status": "complete", "run_id": "r1"}],
+    }
+
+    class FakeApi:
+        def __init__(self) -> None:
+            self.paths: list[str] = []
+
+        def __call__(self, call):
+            self.paths.append(call.path)
+            return {
+                "per_job": [
+                    {"job": "crawl", "status": "failed", "error": "boom"},
+                    {"job": "content", "status": "complete", "error": None},
+                ]
+            }
+
+    api_runner = FakeApi()
+    reader = surfer.RunErrorEvidence(api_runner, StaticTrialLog([record]))
+
+    evidence = reader()
+
+    assert api_runner.paths == ["/projects/pid/recon/r1"]
+    assert len(evidence) == 1
+    assert evidence[0].text == "boom"
+    assert evidence[0].source == "run_error"
+    assert evidence[0].instance_id == "arm-a"
+
+
+def test_a_live_run_error_credit_exhaustion_becomes_a_trigger() -> None:
+    record = {
+        "instance_id": "arm-a",
+        "target_id": "t1",
+        "project_id": "pid",
+        "terminal": "complete",
+        "phases": [{"phase": "recon", "status": "complete", "run_id": "r1"}],
+    }
+
+    class FakeApi:
+        def __call__(self, call):
+            return {
+                "per_job": [
+                    {
+                        "job": "crawl",
+                        "status": "failed",
+                        "error": "litellm: insufficient_quota (billing hard limit)",
+                    }
+                ]
+            }
+
+    trial_log = StaticTrialLog([record])
+    source = surfer.SurferStateSource(
+        app_state=lambda: AppState(idle=True, projects=()),
+        trial_log=trial_log,
+        signals=surfer.CreditExhaustionReader(),
+        evidence=surfer.RunErrorEvidence(FakeApi(), trial_log),
+    )
+
+    state = source.assert_state()
+
+    assert [t.kind for t in state.triggers] == [surfer.FAILURE_SIGNAL]
+    assert state.triggers[0].signal == surfer.CREDIT_EXHAUSTION
+
+
+def test_run_error_evidence_is_fail_soft_on_an_api_error() -> None:
+    record = {
+        "instance_id": "arm-a",
+        "project_id": "pid",
+        "phases": [{"phase": "recon", "status": "complete", "run_id": "r1"}],
+    }
+
+    class ExplodingApi:
+        def __call__(self, call):
+            raise trial.api.ApiError(call, 0, "connection refused")
+
+    logs: list[dict] = []
+    reader = surfer.RunErrorEvidence(
+        ExplodingApi(), StaticTrialLog([record]), log=logs.append
+    )
+
+    assert reader() == ()
+    assert any(r.get("event") == "run_error_evidence_failed" for r in logs)
+
+
 def test_an_unrelated_error_is_not_a_credit_signal() -> None:
     reader = surfer.CreditExhaustionReader()
 

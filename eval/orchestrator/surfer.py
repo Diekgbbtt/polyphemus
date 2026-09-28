@@ -171,6 +171,79 @@ class CreditExhaustionReader:
         return tuple(signals)
 
 
+@dataclass
+class RunErrorEvidence:
+    """The production evidence reader (I9): a failed run's error payloads.
+
+    The trial record carries phase-level failures and notes but not the run's own
+    error text (the recon per-job `error`). This reads each run the trial log
+    names through the injected REST seam, so a credit-exhaustion error is
+    classified even when the record is terse. A read failure is logged and
+    skipped: evidence is advisory, never a reason to crash the loop.
+    """
+
+    api_runner: api.ApiRunner
+    trial_log: TrialLog
+    log: Callable[[dict], None] = lambda record: None
+
+    def __call__(self) -> tuple[FailureEvidence, ...]:
+        evidence: list[FailureEvidence] = []
+        for record in self.trial_log.records():
+            instance_id = str(record.get("instance_id") or "")
+            target_id = record.get("target_id")
+            project_id = record.get("project_id")
+            if not project_id:
+                continue
+            for phase in phase_mappings(record):
+                run_kind = str(phase.get("phase") or "")
+                run_id = phase.get("run_id")
+                if not run_id or run_kind not in ("recon", "analysis", "hunting"):
+                    continue
+                for text in self._read_run(str(project_id), run_kind, str(run_id)):
+                    evidence.append(
+                        FailureEvidence(
+                            instance_id, text, "run_error", target_id, project_id
+                        )
+                    )
+        return tuple(evidence)
+
+    def _read_run(self, project_id: str, run_kind: str, run_id: str) -> tuple[str, ...]:
+        if run_kind == "recon":
+            call = api.recon_status(project_id, run_id)
+        elif run_kind == "analysis":
+            call = api.analysis_status(project_id, run_id)
+        else:
+            call = api.hunting_status(project_id, run_id)
+        try:
+            payload = self.api_runner(call)
+        except Exception as exc:  # noqa: BLE001 - evidence is advisory, never fatal
+            self.log(
+                {
+                    "event": "run_error_evidence_failed",
+                    "run_kind": run_kind,
+                    "run_id": run_id,
+                    "project_id": project_id,
+                    "error": str(exc),
+                }
+            )
+            return ()
+        return _run_error_texts(payload)
+
+
+def _run_error_texts(payload: object) -> tuple[str, ...]:
+    """Every error string a run's status payload carries (top-level + per-job)."""
+    if not isinstance(payload, Mapping):
+        return ()
+    texts: list[str] = []
+    error = payload.get("error")
+    if error:
+        texts.append(str(error))
+    for job in api.per_job_rows(payload):
+        if isinstance(job, Mapping) and job.get("error"):
+            texts.append(str(job["error"]))
+    return tuple(texts)
+
+
 # --- the asserted state -------------------------------------------------------
 
 
