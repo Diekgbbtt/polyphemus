@@ -1246,6 +1246,7 @@ def _surfer_asserter(
         app_state=_surfer_app_state(args),
         trial_log=surfer.FileTrialLog(args.runs_root, files=files, log=log),
         signals=surfer.CreditExhaustionReader(),
+        log=log or (lambda record: None),
     )
 
 

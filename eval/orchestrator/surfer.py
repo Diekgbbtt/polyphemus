@@ -210,7 +210,11 @@ class SurfacedState:
     def to_dict(self) -> dict:
         return {
             "idle": self.idle,
-            "projects": [dict(project) for project in self.projects],
+            # I3: only mapping project entries survive; a non-mapping one is a
+            # malformed app-state payload, not a reason to crash the loop.
+            "projects": [
+                dict(project) for project in self.projects if isinstance(project, Mapping)
+            ],
             "triggers": [trigger.to_dict() for trigger in self.triggers],
         }
 
@@ -285,6 +289,7 @@ class SurferStateSource:
     trial_log: TrialLog
     signals: FailureSignalReader
     evidence: Callable[[], Sequence[FailureEvidence]] = lambda: ()
+    log: Callable[[dict], None] = lambda record: None
 
     def assert_state(self) -> SurfacedState:
         app = self.app_state()
@@ -292,12 +297,20 @@ class SurferStateSource:
         signals: list[Trigger] = []
         failed: list[Trigger] = []
         caps: list[Trigger] = []
+        valid: list[Mapping] = []
         for record in records:
+            error = _record_shape_error(record)
+            if error is not None:
+                # I3: a record the surfer cannot safely walk is skipped and
+                # named, never a crash and never a silent drop.
+                self._log_invalid(record, error)
+                continue
+            valid.append(record)
             caps.extend(cap_triggers(record))
             trigger = failed_run_trigger(record)
             if trigger is not None:
                 failed.append(trigger)
-        evidence = tuple(self.evidence()) + trial_evidence(records)
+        evidence = tuple(self.evidence()) + trial_evidence(valid)
         for signal in self.signals.read(evidence):
             signals.append(
                 Trigger(
@@ -314,6 +327,52 @@ class SurferStateSource:
             triggers=tuple(signals + failed + caps),
             projects=tuple(app.projects),
         )
+
+    def _log_invalid(self, record: object, error: str) -> None:
+        mapping = record if isinstance(record, Mapping) else {}
+        self.log(
+            {
+                "event": "surfer_record_invalid",
+                "instance_id": str(mapping.get("instance_id") or ""),
+                "target_id": mapping.get("target_id"),
+                "project_id": mapping.get("project_id"),
+                "error": error,
+            }
+        )
+
+
+def _record_shape_error(record: object) -> str | None:
+    """A named reason a record's shape is unsafe to read, or None (I3).
+
+    Guards every nesting depth the surfer reads: the record must be a mapping,
+    `phases` a list of mappings, and `notes` a list. Anything else is skipped.
+    """
+    if not isinstance(record, Mapping):
+        return f"record is not a mapping: {type(record).__name__}"
+    phases = record.get("phases")
+    if phases is not None:
+        if not isinstance(phases, list):
+            return f"phases is not a list: {type(phases).__name__}"
+        for index, phase in enumerate(phases):
+            if not isinstance(phase, Mapping):
+                return f"phases[{index}] is not a mapping: {type(phase).__name__}"
+    notes = record.get("notes")
+    if notes is not None and not isinstance(notes, list):
+        return f"notes is not a list: {type(notes).__name__}"
+    return None
+
+
+def phase_mappings(record: Mapping) -> tuple[Mapping, ...]:
+    """The record's phase entries that are mappings; malformed entries ignored.
+
+    Every surfer reader walks phases through this shape guard (I3), so a record
+    reached directly (or a reader outside `assert_state`) cannot crash on a
+    non-mapping entry.
+    """
+    phases = record.get("phases") if isinstance(record, Mapping) else None
+    if not isinstance(phases, list):
+        return ()
+    return tuple(phase for phase in phases if isinstance(phase, Mapping))
 
 
 def cap_triggers(record: Mapping) -> list[Trigger]:
@@ -344,8 +403,7 @@ def cap_triggers(record: Mapping) -> list[Trigger]:
 
 def failed_run_trigger(record: Mapping) -> Trigger | None:
     """A failed/interrupted run trigger from the record's phase terminals."""
-    phases = record.get("phases") or []
-    for phase in phases:
+    for phase in phase_mappings(record):
         name = str(phase.get("phase") or "")
         status = phase.get("status")
         failure = phase.get("failure")
@@ -376,7 +434,7 @@ def resume_phase(record: Mapping) -> str:
     resumes hunting; a failed recon resumes recon; an all-clean record resumes at
     its last phase.
     """
-    phases = record.get("phases") or []
+    phases = phase_mappings(record)
     for phase in phases:
         name = str(phase.get("phase") or "")
         if phase.get("failure"):
@@ -396,7 +454,7 @@ def trial_evidence(records: Sequence[Mapping]) -> tuple[FailureEvidence, ...]:
         instance_id = str(record.get("instance_id") or "")
         target_id = record.get("target_id")
         project_id = record.get("project_id")
-        for phase in record.get("phases") or []:
+        for phase in phase_mappings(record):
             failure = phase.get("failure")
             if failure:
                 evidence.append(
@@ -404,7 +462,10 @@ def trial_evidence(records: Sequence[Mapping]) -> tuple[FailureEvidence, ...]:
                         instance_id, str(failure), "trial_record", target_id, project_id
                     )
                 )
-        for note in record.get("notes") or []:
+        notes = record.get("notes")
+        if not isinstance(notes, list):
+            continue
+        for note in notes:
             evidence.append(
                 FailureEvidence(
                     instance_id, str(note), "trial_record", target_id, project_id
@@ -427,14 +488,14 @@ def _trigger(kind: str, record: Mapping, **fields) -> Trigger:
 
 
 def _recon_run_id(record: Mapping) -> str | None:
-    for phase in record.get("phases") or []:
+    for phase in phase_mappings(record):
         if phase.get("phase") == "recon":
             return phase.get("run_id")
     return record.get("recon_run_id")
 
 
 def _hunting_run_id(record: Mapping) -> str | None:
-    for phase in record.get("phases") or []:
+    for phase in phase_mappings(record):
         if phase.get("phase") == "hunting":
             return phase.get("run_id")
     return record.get("hunting_run_id")

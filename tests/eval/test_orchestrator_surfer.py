@@ -386,6 +386,84 @@ def test_file_trial_log_surfaces_an_invalid_record(tmp_path) -> None:
     assert {Path(rec["path"]).parent.name for rec in invalid} == {"trial-2", "trial-3"}
 
 
+def test_a_non_mapping_phase_entry_is_skipped_and_logged() -> None:
+    """I3: `phases: [oops]` is a named invalid-record event, never a crash."""
+    logs: list[dict] = []
+    record = {
+        "instance_id": "arm-a",
+        "target_id": "t1",
+        "project_id": "pid",
+        "terminal": "failed",
+        "phases": ["oops"],
+    }
+    source = surfer.SurferStateSource(
+        app_state=lambda: AppState(idle=False, projects=()),
+        trial_log=StaticTrialLog([record]),
+        signals=surfer.CreditExhaustionReader(),
+        evidence=lambda: (),
+        log=logs.append,
+    )
+
+    state = source.assert_state()
+
+    assert state.triggers == ()
+    invalid = [r for r in logs if r.get("event") == "surfer_record_invalid"]
+    assert len(invalid) == 1
+    assert "phases[0]" in invalid[0]["error"]
+
+
+def test_a_non_list_phases_value_is_skipped_and_logged() -> None:
+    logs: list[dict] = []
+    record = {"instance_id": "arm-b", "project_id": "pid", "phases": 7}
+    source = surfer.SurferStateSource(
+        app_state=lambda: AppState(idle=True, projects=()),
+        trial_log=StaticTrialLog([record]),
+        signals=surfer.CreditExhaustionReader(),
+        evidence=lambda: (),
+        log=logs.append,
+    )
+
+    assert source.assert_state().triggers == ()
+    assert any(r.get("event") == "surfer_record_invalid" for r in logs)
+
+
+def test_a_malformed_record_does_not_hide_a_valid_one() -> None:
+    good = {
+        "instance_id": "arm-a",
+        "target_id": "t1",
+        "project_id": "pid",
+        "terminal": "stopped",
+        "phases": [{"phase": "hunting", "status": "stopped", "run_id": "h1"}],
+        "cap": 2,
+        "stop_count": 2,
+        "final_count": 3,
+    }
+    bad = {"instance_id": "arm-b", "project_id": "pid", "phases": [{"phase": "recon"}, "oops"]}
+    logs: list[dict] = []
+    source = surfer.SurferStateSource(
+        app_state=lambda: AppState(idle=True, projects=()),
+        trial_log=StaticTrialLog([bad, good]),
+        signals=surfer.CreditExhaustionReader(),
+        evidence=lambda: (),
+        log=logs.append,
+    )
+
+    kinds = [trigger.kind for trigger in source.assert_state().triggers]
+
+    assert kinds == [surfer.CAP_REACHED]
+    assert any(r.get("event") == "surfer_record_invalid" for r in logs)
+
+
+def test_the_phase_readers_tolerate_a_non_mapping_entry() -> None:
+    # Every reader that walks `phases` is shape-guarded, not only the source.
+    record = {"start_phase": "hunting", "phases": ["oops"]}
+
+    assert surfer.failed_run_trigger(record) is None
+    assert surfer.resume_phase(record) == "hunting"
+    assert surfer.cap_triggers(record) == []
+    assert surfer.trial_evidence([record]) == ()
+
+
 def test_terminate_touches_no_command_runner_and_writes_no_hold(
     tmp_path, recording_runner
 ) -> None:
