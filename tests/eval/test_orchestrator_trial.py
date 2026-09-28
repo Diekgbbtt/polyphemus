@@ -657,3 +657,39 @@ def test_command_display_renders_its_env() -> None:
     assert "PYTHONPATH=src" in Command(
         argv=("python3", "x.py"), env={"PYTHONPATH": "src"}
     ).display()
+
+
+# --- the version identity (#271/D32) ------------------------------------------
+
+
+def test_trial_record_stamps_the_version_identity(tmp_path) -> None:
+    api_runner = FakeApi(_full_routes())
+
+    record = _trial(
+        tmp_path, api_runner, eval_sha="eval-sha-1", stack_fingerprint="fp-1"
+    ).run()
+
+    assert record.eval_sha == "eval-sha-1"
+    assert record.stack_fingerprint == "fp-1"
+    written = yaml.safe_load(Path(record.trial_dir, "trial.yaml").read_text())
+    assert written["eval_sha"] == "eval-sha-1"
+    assert written["stack_fingerprint"] == "fp-1"
+
+
+def test_trial_record_defaults_the_version_identity_to_none(tmp_path) -> None:
+    record = trial.TrialRecord(
+        trial_id="t",
+        instance_id="i",
+        target_id="x",
+        project_id="p",
+        start_phase="recon",
+        terminal="complete",
+        phases=[],
+        started_at="a",
+        finished_at="b",
+    )
+
+    assert record.eval_sha is None
+    assert record.stack_fingerprint is None
+    assert record.assessment is None
+    assert record.to_dict()["assessment"] is None

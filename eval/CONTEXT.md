@@ -78,6 +78,14 @@ _Avoid_: backup, archive
 The out-of-band scoring of a completed trial by a background agent, producing `verdicts.yaml`.
 _Avoid_: judging, scoring run
 
+**Close verification**:
+The eval-close phase that checks every trial's `verdicts.yaml` presence and schema, re-dispatches a missing/invalid trial at most twice, then micro-diagnoses a bounded configuration-layer repair or a named escalation (D15/D28).
+_Avoid_: final check, audit
+
+**Assessment attempt**:
+One dispatch or verification step of the assessment subagent, recorded on the trial record with its outcome and, on escalation, a named failure.
+_Avoid_: retry, poll
+
 **Eval branch** (`eval`):
 The read-only branch the eval environment runs; fast-forwarded from `dev` by the sync daemon only when no eval is executing.
 _Avoid_: eval mirror, deploy branch

@@ -12,6 +12,8 @@ Import performs no I/O (CODING_STANDARD section 6).
 """
 from __future__ import annotations
 
+import os
+import tempfile
 from pathlib import Path
 
 # The two hunt-config sides. `consumed` is the cap metric (D8): every file the
@@ -51,6 +53,35 @@ def hunt_configs_dir(data_root: str | Path, project_id: str, side: str) -> Path:
     )
 
 
+def hunter_test_specs_dir(data_root: str | Path, project_id: str) -> Path:
+    """`<data_root>/<project_id>/hunting/hunter/test-specs`: the spec families.
+
+    Each child is a `<fault_key>/` folder holding the produced/consumed
+    `TestImplementationSpec` files (mirrors `hunter_memory.py`, #234).
+    """
+    return project_dir(data_root, project_id) / "hunting" / "hunter" / "test-specs"
+
+
+def pod_dir(data_root: str | Path, project_id: str) -> Path:
+    """`<data_root>/<project_id>/hunting/test-executor-pod`: the pod bucket."""
+    return project_dir(data_root, project_id) / "hunting" / "test-executor-pod"
+
+
+def pod_spec_dir(data_root: str | Path, project_id: str, spec_id: str) -> Path:
+    """`<pod_dir>/<spec_id>`: one spec's variants, experiment logs, and export."""
+    return pod_dir(data_root, project_id) / spec_id
+
+
+def pod_experiment_logs_dir(data_root: str | Path, project_id: str, spec_id: str) -> Path:
+    """`<pod_spec_dir>/experiment-log`: the per-order D6 experiment-log slices."""
+    return pod_spec_dir(data_root, project_id, spec_id) / "experiment-log"
+
+
+def pod_variants_dir(data_root: str | Path, project_id: str, spec_id: str) -> Path:
+    """`<pod_spec_dir>/variants`: the minted `TestImplementationSpec` variants."""
+    return pod_spec_dir(data_root, project_id, spec_id) / "variants"
+
+
 class FileStore:
     """The local filesystem implementation of the trial's file seam.
 
@@ -72,12 +103,41 @@ class FileStore:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(text, encoding="utf-8")
 
+    def write_text_atomic(self, path: str | Path, text: str) -> None:
+        """Write via a sibling temp file + `os.replace` (atomic rename).
+
+        A crash leaves either the old file or the new one, never a truncated
+        `verdicts.yaml` the close-verify reader would misread as invalid.
+        """
+        target = Path(path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(
+            dir=str(target.parent), prefix=f".{target.name}.", suffix=".tmp"
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write(text)
+            os.replace(tmp, target)
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
+
     def list_files(self, directory: str | Path) -> list[Path]:
         """Regular files directly under `directory`, sorted; missing -> []."""
         base = Path(directory)
         if not base.is_dir():
             return []
         return sorted(p for p in base.iterdir() if p.is_file())
+
+    def list_dirs(self, directory: str | Path) -> list[Path]:
+        """Subdirectories directly under `directory`, sorted; missing -> []."""
+        base = Path(directory)
+        if not base.is_dir():
+            return []
+        return sorted(p for p in base.iterdir() if p.is_dir())
 
     def walk_files(self, directory: str | Path) -> list[Path]:
         """Every regular file under `directory` recursively, sorted; missing -> []."""
