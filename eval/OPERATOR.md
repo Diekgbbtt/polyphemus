@@ -58,11 +58,20 @@ All commands run from the polymerhus repo root.
 
 | Primitive | Contract |
 |---|---|
-| `eval/target.sh up <target>` | Bring up a WebExploitBench target on the REMOTE docker host (ssh `ubuntu@dj-viscon-workshop-1.vsos.ethz.ch`), wait for readiness, print `TARGET_URL=<published url>` and `TARGET_IP=<remote public ip>`. |
-| `eval/target.sh down <target>` | Stop the target on the remote host. |
-| `eval/target.sh list` / `ps` | Remote target inventory / running state. |
-| `eval/hosts.sh alias <domain> <ip>` | Alias the target's domain to its public IP inside the kali container's `/etc/hosts` (runtime-only). THE domain stays the project target seed. |
-| `eval/hosts.sh clear <domain>` | Remove the alias from kali. |
+| `PYTHONPATH=eval python3 -m orchestrator plan <setup.yaml>` | Print every instance, target, and routing command for an `EvalSetup` without executing anything (`up --dry-run` is the same). |
+| `PYTHONPATH=eval python3 -m orchestrator up <setup.yaml>` | Gate the eval-wide work items, then bring up each instance stack (worktree off `eval`, `.env` preflight, compose overlay) and its targets (the `targetctl` strategy deploys to the REMOTE workshop host; `image`/`compose` are local). |
+| `PYTHONPATH=eval python3 -m orchestrator down <setup.yaml>` | Tear every target down (front, kali alias, target containers) and then every instance project (`docker compose down -v`, worktree removed). |
+| `PYTHONPATH=eval python3 -m orchestrator status <setup.yaml>` | Per-instance stack status and per-target status. |
+
+The former `eval/target.sh` and `eval/hosts.sh` primitives are replaced by the
+orchestrator's target strategies (`eval/orchestrator/targets/`) and routing
+module (`eval/orchestrator/routing.py`): the `targetctl` strategy is the
+parametrized remote deployment over ssh plus the per-Host nginx front, and the
+routing module writes the unique synthetic Host into the instance kali. See
+section 1.5 for the `EvalSetup` shape.
+
+| Primitive | Contract |
+|---|---|
 | `eval/gt.py <target> [--json]` | The ground truth table: `{vuln_id, location, type, scoring}` per vuln. JUDGE input only. Never leaks into the pipeline. |
 | `eval/OPERATOR.md` (section 3, KB authoring) | The operator-KB authoring prompt (research extensively -> decompose at very small granularity -> map services+systems -> withhold). Follow it VERBATIM at the KB stage. |
 | `eval/ph.py project create <name>` | `project_id` (fresh per trial). |
@@ -77,8 +86,10 @@ All commands run from the polymerhus repo root.
 | `eval/ev.py collect <p> <hunting_run_id> --out <dir> [--recon-run R] [--target-url U] [--challenge C]` | The evidence bundle (graph + hunt store + memories + pod artifacts + statuses + manifest). |
 | `eval/cwes.yaml` | Vulnerability Type -> CWE ids. A HEURISTIC aid, never authoritative. |
 
-Env: `PH_API` (default `http://localhost:8080`), `EVAL_SSH_HOST`, `EVAL_WEB_DIR`
-(default `~/WebExploitBench`).
+Env: `PH_API` (default `http://localhost:8080`); for the orchestrator
+`EVAL_REPO` (canonical checkout), `EVAL_INSTANCES_ROOT`, `EVAL_BRANCH`
+(default `eval`), `EVAL_SSH_HOST`, `EVAL_REMOTE_DIR` (default
+`~/WebExploitBench`), and `EVAL_NGINX_CONF_DIR`.
 
 ### 1.2. The recon configuration contract (VERBATIM - do not improvise)
 
@@ -133,22 +144,24 @@ never inflate a verdict because the surface is known to be incomplete.
 
 #### The seed and the front
 
-The target is fronted by the remote nginx (a system service): `target.sh up`
-writes a server block proxying `http://<domain>/` to the target's actual
-published port, reloads nginx, and prints `TARGET_URL=http://<domain>/`. The
-seed is THE BARE DOMAIN from that URL - never an IP, never a URL with a
-scheme or port: the platform's domain-mode scope is exact on the raw seed
-string and the fleet probes the default web port (80). A scheme/port-bearing
-seed breaks the scope gate (assets dropped, crawl chain skipped) - a dev-side
-defect, tracked separately, NOT worked around here.
+The target is fronted by the remote nginx (a system service): the `targetctl`
+strategy writes one server block per synthetic Host proxying `http://<host>/`
+to the target's actual published port, reloads nginx, and returns
+`front_url=http://<host>/`. The seed is THE BARE SYNTHETIC HOST from that URL
+(`t-<short>.target`) - never an IP, never a URL with a scheme or port: the
+platform's domain-mode scope is exact on the raw seed string and the fleet
+probes the default web port (80). A scheme/port-bearing seed breaks the scope
+gate (assets dropped, crawl chain skipped) - a dev-side defect, tracked
+separately, NOT worked around here.
 
-The kali `/etc/hosts` alias (hosts.sh) maps the domain to its public IP:
-belt-and-braces deterministic resolution for the recon fleet.
+The routing module aliases the synthetic Host to the target's public IP inside
+that instance's kali `/etc/hosts` (runtime-only): belt-and-braces deterministic
+resolution for the recon fleet.
 
 Settings PUT body (`ph.py settings put`):
 
 ```
---target-seed <bare-domain>                  e.g. dj-viscon-workshop-1.vsos.ethz.ch
+--target-seed <synthetic-host>                e.g. t-a20a63a4.target
 --operator-kb eval/kbs/<target>/operator_kb.md
 --toggle streaming_analysis=true
 --toggle async_analysis_consumer=true
@@ -216,7 +229,7 @@ drains, every 60-120s while hunting runs.
 | R5 | Graceful analysis stop | `POST /projects/{id}/analysis/{run_id}/stop` - finish the in-flight chunk, preserve the queue for a resume. |
 | R6 | Hunting stop | `POST /projects/{id}/hunting/{hunting_run_id}/stop` - hard cancel + reap; the append-only trail preserves the partial evidence. Grade the degraded trail and record the stop. |
 | R7 | Module lifecycle | On a 503 launch (F6): read the module state through `POST /projects/{id}/modules/{module}/pause|resume|drain` responses (`module` in recon/analysis/hunting); wait for a paused/draining module to settle, or resume it explicitly. Never leave a module paused silently. |
-| R8 | Target fault | If the target becomes unreachable mid-trial (in-kali probe fails): `hosts.sh clear`, `target.sh down`, then either restart the attempt or record the failure. Never judge an unreachable-target trial as an empty finding. |
+| R8 | Target fault | If the target becomes unreachable mid-trial (in-kali probe fails): tear its synthetic Host down (`python3 -m orchestrator down <setup.yaml>`), then either restart the attempt or record the failure. Never judge an unreachable-target trial as an empty finding. |
 
 #### The decision rule
 
@@ -236,10 +249,12 @@ The trial directory `<runs>/<target>/<attempt>/` (under `eval/runs/`) is
 the bundle directory: create it FIRST, and everything the trial produces -
 operator KB, research notes, evidence, verdicts, trial record - lands there.
 
-1. `target.sh up <target>`; capture `TARGET_URL` and `TARGET_IP`.
-2. `hosts.sh alias <domain> <ip>`: alias the target's domain (the host part of
-   TARGET_URL) to `TARGET_IP` inside the kali container, so the recon fleet can
-   reach the remote target. The domain name is what the pipeline will observe.
+1. Bring the target up through the orchestrator (`python3 -m orchestrator up
+   <setup.yaml>`); capture the `TARGET_URL` (the synthetic Host front URL) and
+   the backend from its output.
+2. The orchestrator aliases the synthetic Host to the target's public IP inside
+   the instance kali, so the recon fleet can reach the remote target. The
+   synthetic Host name is what the pipeline will observe.
 3. `gt.py <target>`; read the ground truth (the JUDGE's private reference, kept
    out of anything the pipeline sees).
 4. **The operator-KB stage**: use the PRECOMPUTED per-target KB VERBATIM:
@@ -275,7 +290,53 @@ operator KB, research notes, evidence, verdicts, trial record - lands there.
     with the run ids.
 12. Run the judgment protocol (section 2.2); write `verdicts.yaml` and
     `trial.yaml` into the trial directory.
-13. `hosts.sh clear <domain>`; `target.sh down <target>`.
+13. Tear the target and its routing down (`python3 -m orchestrator down
+    <setup.yaml>`).
+
+### 1.5. The EvalSetup and the orchestrator
+
+One `EvalSetup` YAML declares the whole evaluation: the instances, each with a
+serial target pipeline, the durable artifact store, and the eval-wide work
+items (D14) that must be complete before any target starts. Each instance runs
+from its own git worktree off the `eval` branch under the configured instances
+root, with its own `.env` validated by `eval/env_preflight.py`; the compose
+project is `ph-<short>`. Every target run gets a unique synthetic Host
+(`t-<short>.target`), written into the target front and aliased in that
+instance's kali.
+
+```yaml
+schema_version: 1
+artifact_store: /srv/eval-artifacts
+work_items:
+  - name: auth-bootstrap
+    status: complete          # complete | pending | incomplete
+  - name: l1-surface
+    status: complete
+instances:
+  - instance_id: arm-a
+    env_file: arm-a/.env       # relative to the instances root; default <worktree>/.env
+    targets:
+      - target_id: jetlinks-1
+        start_phase: recon     # recon | analysis | hunting
+        hunt_config_budget: 10
+        target_config:
+          lifecycle: targetctl # targetctl | image | compose
+          operator_kb: eval/kbs/jetlinks/operator_kb.md
+          params:
+            target: jetlinks   # targetctl params; image/compose take image/port/compose_file
+```
+
+Run it from the repo root:
+
+```
+PYTHONPATH=eval python3 -m orchestrator plan <setup.yaml>     # print, execute nothing
+PYTHONPATH=eval python3 -m orchestrator up   <setup.yaml>
+PYTHONPATH=eval python3 -m orchestrator status <setup.yaml>
+PYTHONPATH=eval python3 -m orchestrator down <setup.yaml>
+```
+
+`plan` and `up --dry-run` print every ssh, docker, compose, preflight, and git
+worktree command without running any of them.
 
 ## 2. Operator procedures
 
@@ -318,12 +379,10 @@ a closer look.
 
 #### The environment state
 
-- `eval/target.sh ps` - which targets are up on the remote host (and
-  their published URLs).
-- `eval/hosts.sh show` - the aliases currently injected into the kali
-  container's `/etc/hosts`.
-- `target.sh down <target>` / `hosts.sh clear <domain>` - the teardown verbs,
-  also part of the agent's workflow.
+- `python3 -m orchestrator status <setup.yaml>` - which instances and targets
+  are up, their front URLs, and the aliases injected into each kali.
+- `python3 -m orchestrator down <setup.yaml>` - the teardown verb, also part
+  of the agent's workflow.
 - `GET /app-state` (optional `?project_id=`) - the idle proxy: per-project
   in-flight recon (`running`), analysis (`draining`), and hunting (`running`)
   runs plus the top-level `idle` flag.
@@ -446,8 +505,8 @@ remediations:
 
 ### 2.5. pass@k
 
-For pass@k, run k attempts per target: fresh target instance (`target.sh up`
-after `down`) and fresh project per attempt. Aggregate Pass@1 / Pass@3 (Avg) /
+For pass@k, run k attempts per target: fresh target instance (orchestrator
+`down` then `up`) and fresh project per attempt. Aggregate Pass@1 / Pass@3 (Avg) /
 Pass@3 (Max) at the end of the evaluation. Report per-vuln-class and per-locus
 breakdowns.
 

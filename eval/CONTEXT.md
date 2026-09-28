@@ -45,6 +45,15 @@ _Avoid_: stage, step
 How a target is brought up on the remote host: `targetctl` (WebExploitBench), `image`, or `compose`.
 _Avoid_: target kind, deployment
 
+**Synthetic Host**:
+The unique per-`TargetRun` hostname (`t-<short>.target`) written into the target front's `server_name` and aliased in that instance's kali `/etc/hosts`; the routing discriminator.
+A port-bearing seed was rejected because it breaks the platform's bare-domain scope gate.
+_Avoid_: alias, virtual host, domain
+
+**Work item**:
+An eval-wide pre-eval data dependency (auth bootstrap, L1 surface, hunting artifacts) recorded at the `EvalSetup` level and gated before any target starts (D14).
+_Avoid_: prerequisite, checklist
+
 **Hunting cap**:
 The per-Target bound on hunting, counted as the number of files in the consumed hunt-configs directory (including mounted/pre-mined files).
 _Avoid_: budget, limit
