@@ -160,9 +160,10 @@ profile: { ...rate-profile/v2... }
   continues. The newer measurement wins.
 * **One writer.** Only the controller writes it — the recon pipeline's
   deterministic projection (`pipeline._default_write_posture`). Agents read it,
-  read-only, through the single `rate_limit_posture` tool bound to the Pod
-  Runner and the Hunter. A failed write fails the run before any phase runs
-  (the same discipline as the admission envelope).
+  read-only, through the single `rate_limit_posture` tool bound INSIDE the
+  test-executor pod — the Runner and the Triager (operator ruling, 2026-09-28;
+  the Hunter does not bind it). A failed write fails the run before any phase
+  runs (the same discipline as the admission envelope).
 * **Unreadable is not absent.** A missing file means "no measurement for this
   target"; a corrupt or non-validating file raises instead of degrading to "no
   known limit", and the tool answers `unreadable`.

@@ -239,7 +239,12 @@ concorrenti l'ordine di scrittura non coincide con l'ordine di misura.
 
 ## 11. Integrazione in hunting
 
-Binding del tool ai soli agenti che eseguono comandi su Kali:
+> **SUPERATO (decisione dell'operatore, 2026-09-28).** Il binding sotto è quello
+> deciso in origine; ora il tool è leggibile **solo dentro il test-executor pod**:
+> **Runner** e **Triager**. L'**Hunter non lo lega più**. Il resto della sezione
+> (il flusso `resolve(host)` e i vincoli D4) resta valido.
+
+Binding originale (storico):
 
 - **Pod Runner** — `attack/hunting/pod/agents.py::runner_react_tools`;
 - **Hunter** — `attack/hunting/hunter_tools.py::build_hunter_tools`.
