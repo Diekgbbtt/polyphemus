@@ -540,6 +540,29 @@ def run(
     if not decision.actions:
         return AlignmentOutcome(target_sha, target_fp, no_op=True)
 
+    # C1/D28: a decider-supplied inline command is never an authority. It must
+    # be covered by a setup declaration (or it is a hold); the declaration's
+    # command is what runs. This is the version freeze: no arbitrary shell.
+    for action in decision.actions:
+        refusal = _undeclared_inline_command(action, environment.declarations)
+        if refusal is None:
+            continue
+        hold = None
+        if not dry_run:
+            hold = state.add_hold(
+                target_sha=target_sha,
+                target_fingerprint=target_fp,
+                rationale=refusal,
+                now=now(),
+            )
+        return AlignmentOutcome(
+            target_sha,
+            target_fp,
+            hold=hold,
+            escalated=True,
+            escalation=refusal,
+        )
+
     applied = state.applied_for(target_sha, target_fp)
     results: list[ActionResult] = []
     newly_applied: list[str] = []
@@ -675,8 +698,13 @@ def _plan_commands(
 def _resolve_declared_command(
     action: DecisionAction, declarations: AlignmentDeclarations
 ) -> tuple[str, ...] | None:
-    if action.command:
-        return tuple(action.command)
+    """The declared migration/rebuild command matching the action, or None.
+
+    The declaration is the only authority (D28): the action's own `command` is
+    never a source here, so the decider can only name a declared recipe. An
+    inline command that does not match a declaration is escalated by
+    `_undeclared_inline_command` before execution is ever planned.
+    """
     if action.kind == MIGRATION and action.artifact_class:
         for migration in declarations.migrations:
             if migration.artifact_class == action.artifact_class:
@@ -691,6 +719,27 @@ def _resolve_declared_command(
             if class_matches or image_matches:
                 return tuple(rebuild.command)
     return None
+
+
+def _undeclared_inline_command(
+    action: DecisionAction, declarations: AlignmentDeclarations
+) -> str | None:
+    """A refusal rationale when an inline command is not covered by a declaration.
+
+    The decider may name a declared migration/rebuild, but a command it supplies
+    itself must exactly match a declaration's; anything else is an escalation,
+    never an execution (D28, the version freeze).
+    """
+    if action.kind not in (MIGRATION, REBUILD) or not action.command:
+        return None
+    declared = _resolve_declared_command(action, declarations)
+    if declared is not None and tuple(action.command) == declared:
+        return None
+    return (
+        f"decider-supplied {action.kind} command {list(action.command)!r} for "
+        f"{action.artifact_class or action.image!r} is not covered by a setup "
+        "declaration; refusing to execute (D28)"
+    )
 
 
 # The preflight report's keyset counts; a changed keyset needs a recreate.

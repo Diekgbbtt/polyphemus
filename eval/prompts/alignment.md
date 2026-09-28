@@ -54,10 +54,12 @@ Or an explicit not-alignable escalation with a rationale:
 escalation: "db/** changed with no declared migration for schema_data_layout; an operator must decide"
 ```
 
-An action may also carry an explicit `command` list when the decision itself
-supplies it; otherwise a `migration`/`rebuild` command is resolved from the
-matching declaration in `environment.declarations`. If no declaration exists,
-escalate - never invent a command.
+An action may also carry an explicit `command` list only when it exactly
+matches the matching declaration's command; the orchestrator refuses to execute
+any command the setup has not declared. Otherwise a `migration`/`rebuild`
+command is resolved from the matching declaration in
+`environment.declarations`. If no declaration exists, escalate - never invent a
+command (D28, the version freeze: the config layer is the only authority).
 
 ## Rules
 

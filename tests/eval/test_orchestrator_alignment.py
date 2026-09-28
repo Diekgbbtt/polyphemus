@@ -295,17 +295,23 @@ def test_config_align_skips_the_recreate_when_the_keyset_is_unchanged(tmp_path: 
     assert "--force-recreate" not in runner.argv_texts[0]
 
 
-def test_an_explicit_decision_command_is_executed_without_a_declaration(tmp_path: Path) -> None:
-    """A command supplied in the decision itself needs no declaration."""
+def test_an_undeclared_inline_command_escalates_and_plans_nothing(tmp_path: Path) -> None:
+    """C1/D28: a decider-supplied command is never executed; it escalates.
+
+    The decider may name a declared migration/rebuild, but it may never smuggle
+    its own shell command past the setup declaration. An inline command with no
+    covering declaration becomes a hold, and no command is ever planned.
+    """
     paths = make_paths(tmp_path)
     runner = RecordingRunner()
+    state = make_state(tmp_path)
     decider = FakeDecider(
         alignment.AlignmentDecision(
             actions=(
                 alignment.DecisionAction(
                     kind="migration",
                     artifact_class="schema_data_layout",
-                    command=("python3", "ad-hoc-migration.py"),
+                    command=("rm", "-rf", "/"),
                 ),
             )
         )
@@ -316,11 +322,52 @@ def test_an_explicit_decision_command_is_executed_without_a_declaration(tmp_path
         decider=decider,
         environment=make_environment(paths),
         runner=runner,
+        state=state,
+    )
+
+    assert outcome.escalated is True
+    assert outcome.hold is not None
+    assert "not covered by a setup declaration" in outcome.hold.rationale
+    assert runner.commands == []
+    assert outcome.results == ()
+    assert len(state.unresolved_holds()) == 1
+
+
+def test_an_inline_command_matching_a_declaration_is_executed(tmp_path: Path) -> None:
+    """A declared command may be echoed back in the decision; it still runs."""
+    paths = make_paths(tmp_path)
+    declared = ("python3", "eval/migrations/0001.py")
+    declarations = AlignmentDeclarations(
+        migrations=(
+            DeclaredMigration(
+                artifact_class="schema_data_layout",
+                command=declared,
+            ),
+        )
+    )
+    runner = RecordingRunner()
+    decider = FakeDecider(
+        alignment.AlignmentDecision(
+            actions=(
+                alignment.DecisionAction(
+                    kind="migration",
+                    artifact_class="schema_data_layout",
+                    command=declared,
+                ),
+            )
+        )
+    )
+
+    outcome = alignment.run(
+        decision_input([art("db", "schema_data_layout")]),
+        decider=decider,
+        environment=make_environment(paths, declarations),
+        runner=runner,
         state=make_state(tmp_path),
     )
 
     assert outcome.results[0].status == "applied"
-    assert runner.argv_texts == ["python3 ad-hoc-migration.py"]
+    assert runner.argv_texts == ["python3 eval/migrations/0001.py"]
 
 
 def test_declared_migration_is_executed(tmp_path: Path) -> None:
