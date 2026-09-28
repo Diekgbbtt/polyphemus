@@ -19,6 +19,9 @@ from pathlib import Path
 # The two hunt-config sides. `consumed` is the cap metric (D8): every file the
 # pipeline's lazy read moved there counts, mounted/pre-mined files included.
 HUNT_CONFIG_SIDES = ("produced", "consumed")
+# The two hunter test-spec sides; mirrors the hunter store's produced/consumed
+# inbox (the mover owns the produced -> consumed rename).
+HUNTER_TEST_SPEC_SIDES = ("produced", "consumed")
 
 
 def project_dir(data_root: str | Path, project_id: str) -> Path:
@@ -60,6 +63,21 @@ def hunter_test_specs_dir(data_root: str | Path, project_id: str) -> Path:
     `TestImplementationSpec` files (mirrors `hunter_memory.py`, #234).
     """
     return project_dir(data_root, project_id) / "hunting" / "hunter" / "test-specs"
+
+
+def hunter_test_specs_fault_dir(
+    data_root: str | Path, project_id: str, fault_key: str, side: str
+) -> Path:
+    """`<hunter_test_specs_dir>/<fault_key>/<side>`: one spec family's one inbox.
+
+    The pipeline's lazy read looks exactly here, so a pre-mined spec lands in
+    the same produced/ inbox the mover drains - never a bespoke path.
+    """
+    if side not in HUNTER_TEST_SPEC_SIDES:
+        raise ValueError(
+            f"hunter test-spec side must be one of {HUNTER_TEST_SPEC_SIDES}, got {side!r}"
+        )
+    return hunter_test_specs_dir(data_root, project_id) / fault_key / side
 
 
 def pod_dir(data_root: str | Path, project_id: str) -> Path:

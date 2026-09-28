@@ -28,7 +28,14 @@ from orchestrator.orchestrator import (
     OrchestratorError,
     PlanStep,
 )
-from orchestrator.setup import EvalSetup, Instance, SetupError, TargetRun, load_eval_setup
+from orchestrator.setup import (
+    EvalSetup,
+    Instance,
+    SetupError,
+    TargetRun,
+    is_path_safe_id,
+    load_eval_setup,
+)
 from orchestrator.targets.base import TargetError
 from orchestrator.workitems import WorkItemGateError
 
@@ -125,6 +132,12 @@ def _parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--poll-s", type=float, default=15.0)
     run_parser.add_argument("--project-id", help="resume an existing project")
     run_parser.add_argument("--recon-run", help="the recon run a later phase drains")
+    run_parser.add_argument(
+        "--target-run-id",
+        default=os.environ.get("EVAL_TARGET_RUN_ID"),
+        help="the target-run identity (artifact store middle level); overrides "
+        "the setup's target_run_id, and defaults to the instance id when unset",
+    )
     run_parser.add_argument(
         "--eval-sha",
         default=os.environ.get("EVAL_SHA"),
@@ -335,7 +348,13 @@ def _trial_config(args, setup: EvalSetup, config: OrchestratorConfig) -> tuple[
     scaffold = None
     if run.start_phase == "recon" and kb:
         scaffold = trial.ScaffoldSpec(cwd=str(paths.worktree), kb=kb)
-    pinned = run.preloaded_hunting_artifacts
+    # #273: the CLI override wins over the setup's target_run_id; the trial
+    # record still defaults to the instance id when both leave it unset.
+    target_run_id = args.target_run_id or run.target_run_id
+    if target_run_id is not None and not is_path_safe_id(target_run_id):
+        raise SetupError(
+            f"target_run_id: expected a path-safe identifier, got {target_run_id!r}"
+        )
     if args.data_root:
         data_root = Path(args.data_root)
     elif args.dry_run:
@@ -351,8 +370,9 @@ def _trial_config(args, setup: EvalSetup, config: OrchestratorConfig) -> tuple[
         operator_kb=kb,
         auth=run.target_config.auth,
         auth_surface=run.target_config.auth is not None,
-        preloaded_hunting_artifacts=Path(pinned) if pinned else None,
+        preloaded_hunting_artifacts=run.preloaded_hunting_artifacts,
         hunt_config_budget=run.hunt_config_budget,
+        target_run_id=target_run_id,
         data_root=data_root,
         runs_root=Path(args.runs_root),
         with_analysis=True,

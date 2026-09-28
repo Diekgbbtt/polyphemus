@@ -168,6 +168,138 @@ def test_parse_error_for_non_mapping_payload() -> None:
         setup_mod.parse_eval_setup(["not", "a", "mapping"])
 
 
+# --- pre-mined hunting artifacts (#270 AC4) -----------------------------------
+
+
+def _target(sample_setup) -> dict:
+    return sample_setup["instances"][0]["targets"][0]
+
+
+def test_preloaded_artifacts_legacy_string_parses_as_configs(sample_setup) -> None:
+    # Backward compatibility: the former single-path form pre-mines configs only.
+    _target(sample_setup)["preloaded_hunting_artifacts"] = "/mnt/premined-configs"
+
+    parsed = setup_mod.parse_eval_setup(sample_setup)
+
+    pre = parsed.instances[0].targets[0].preloaded_hunting_artifacts
+    assert pre.configs == "/mnt/premined-configs"
+    assert pre.test_specs == ()
+
+
+def test_preloaded_artifacts_parses_configs_and_test_specs(sample_setup) -> None:
+    _target(sample_setup)["preloaded_hunting_artifacts"] = {
+        "configs": "/mnt/configs",
+        "test_specs": [
+            {"path": "/mnt/specs/a.yaml", "fault_key": "unit_CWE-89_sqli"},
+            {"path": "/mnt/specs/b.yaml", "fault_key": "svc_CWE-79_xss"},
+        ],
+    }
+
+    parsed = setup_mod.parse_eval_setup(sample_setup)
+
+    pre = parsed.instances[0].targets[0].preloaded_hunting_artifacts
+    assert pre.configs == "/mnt/configs"
+    assert [(s.path, s.fault_key) for s in pre.test_specs] == [
+        ("/mnt/specs/a.yaml", "unit_CWE-89_sqli"),
+        ("/mnt/specs/b.yaml", "svc_CWE-79_xss"),
+    ]
+
+
+def test_preloaded_artifacts_accepts_specs_without_configs(sample_setup) -> None:
+    _target(sample_setup)["preloaded_hunting_artifacts"] = {
+        "test_specs": [{"path": "/mnt/specs/a.yaml", "fault_key": "fault-a"}]
+    }
+
+    parsed = setup_mod.parse_eval_setup(sample_setup)
+
+    pre = parsed.instances[0].targets[0].preloaded_hunting_artifacts
+    assert pre.configs is None
+    assert [s.fault_key for s in pre.test_specs] == ["fault-a"]
+
+
+def test_preloaded_test_spec_without_fault_key_is_named(sample_setup) -> None:
+    _target(sample_setup)["preloaded_hunting_artifacts"] = {
+        "test_specs": [{"path": "/mnt/specs/a.yaml"}]
+    }
+
+    with pytest.raises(setup_mod.SetupError, match="fault_key"):
+        setup_mod.parse_eval_setup(sample_setup)
+
+
+def test_preloaded_test_spec_without_path_is_named(sample_setup) -> None:
+    _target(sample_setup)["preloaded_hunting_artifacts"] = {
+        "test_specs": [{"fault_key": "fault-a"}]
+    }
+
+    with pytest.raises(setup_mod.SetupError, match="path"):
+        setup_mod.parse_eval_setup(sample_setup)
+
+
+def test_preloaded_test_spec_unknown_key_is_named(sample_setup) -> None:
+    _target(sample_setup)["preloaded_hunting_artifacts"] = {
+        "test_specs": [{"path": "/mnt/specs/a.yaml", "fault_key": "f", "extra": 1}]
+    }
+
+    with pytest.raises(setup_mod.SetupError, match="extra"):
+        setup_mod.parse_eval_setup(sample_setup)
+
+
+def test_preloaded_artifacts_unknown_shape_is_named(sample_setup) -> None:
+    _target(sample_setup)["preloaded_hunting_artifacts"] = 42
+
+    with pytest.raises(setup_mod.SetupError, match="preloaded_hunting_artifacts"):
+        setup_mod.parse_eval_setup(sample_setup)
+
+
+def test_preloaded_artifacts_unknown_field_is_named(sample_setup) -> None:
+    _target(sample_setup)["preloaded_hunting_artifacts"] = {"configs": "/mnt", "oops": 1}
+
+    with pytest.raises(setup_mod.SetupError, match="oops"):
+        setup_mod.parse_eval_setup(sample_setup)
+
+
+def test_preloaded_test_spec_path_unsafe_fault_key_is_named(sample_setup) -> None:
+    _target(sample_setup)["preloaded_hunting_artifacts"] = {
+        "test_specs": [{"path": "/mnt/specs/a.yaml", "fault_key": "../escape"}]
+    }
+
+    with pytest.raises(setup_mod.SetupError, match="fault_key"):
+        setup_mod.parse_eval_setup(sample_setup)
+
+
+# --- target-run identity (#273) ------------------------------------------------
+
+
+def test_target_run_id_is_optional(sample_setup) -> None:
+    parsed = setup_mod.parse_eval_setup(sample_setup)
+
+    assert parsed.instances[0].targets[0].target_run_id is None
+
+
+def test_parses_an_explicit_target_run_id(sample_setup) -> None:
+    _target(sample_setup)["target_run_id"] = "jetlinks-1-run1"
+
+    parsed = setup_mod.parse_eval_setup(sample_setup)
+
+    assert parsed.instances[0].targets[0].target_run_id == "jetlinks-1-run1"
+
+
+def test_duplicate_target_run_id_is_named(sample_setup) -> None:
+    targets = sample_setup["instances"][0]["targets"]
+    targets[0]["target_run_id"] = "run-1"
+    targets.append({**targets[0], "target_id": "other-1"})
+
+    with pytest.raises(setup_mod.SetupError, match="target_run_id"):
+        setup_mod.parse_eval_setup(sample_setup)
+
+
+def test_path_unsafe_target_run_id_is_named(sample_setup) -> None:
+    _target(sample_setup)["target_run_id"] = "../escape"
+
+    with pytest.raises(setup_mod.SetupError, match="target_run_id"):
+        setup_mod.parse_eval_setup(sample_setup)
+
+
 def test_missing_file_names_the_path(tmp_path) -> None:
     with pytest.raises(FileNotFoundError, match="nope.yaml"):
         setup_mod.load_eval_setup(tmp_path / "nope.yaml")

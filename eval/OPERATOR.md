@@ -350,12 +350,37 @@ instances:
       - target_id: jetlinks-1
         start_phase: recon     # recon | analysis | hunting
         hunt_config_budget: 10
+        target_run_id: jetlinks-1-run1  # optional; the artifact store middle level (#273)
+        preloaded_hunting_artifacts:    # optional; see below
+          configs: /mnt/premined-configs          # a config file or a directory of them
+          test_specs:                             # each spec names its fault key
+            - path: /mnt/premined-specs/unit_CWE-89_sqli.yaml
+              fault_key: unit_CWE-89_sqli
         target_config:
           lifecycle: targetctl # targetctl | image | compose
           operator_kb: eval/kbs/jetlinks/operator_kb.md
           params:
             target: jetlinks   # targetctl params; image/compose take image/port/compose_file
 ```
+
+**Pre-mined hunting artifacts** (the two ratified lazy-read seams). The
+pipeline consumes hunting artifacts only by reading its own produced/ inboxes,
+so the trial drops the operator's files exactly there before the run; there is
+no import/seed API and the trial never fabricates an artifact through the API.
+
+- `configs`: a host path to one hunt config or to a directory of them. Every
+  file lands in `data/<project_id>/hunting/orchestration/hunt_configs/produced/`.
+- `test_specs`: a list of `{path, fault_key}` entries. Each spec file (or
+  directory of them) lands in
+  `data/<project_id>/hunting/hunter/test-specs/<fault_key>/produced/`, the
+  inbox the hunter's normal mover drains. A missing or path-unsafe `fault_key`
+  fails setup validation loud.
+
+The legacy single-string form is still accepted and means `configs` only:
+`preloaded_hunting_artifacts: /mnt/premined-configs`. Pre-mined files count
+toward the hunting cap exactly like produced ones, and a setup that declares
+`preloaded_hunting_artifacts` does not enter hunting until at least one artifact
+is present on disk.
 
 Run it from the repo root:
 
@@ -391,8 +416,11 @@ The authoritative record is per target / target-run / trial:
 ```
 
 The middle level is the target-run: the evaluation of one target on one instance
-(`eval/CONTEXT.md`). A trial record may carry its own `target_run_id`; when it
-does not, the instance id is used. Because the evidence chain paths are already
+(`eval/CONTEXT.md`). Its identity is resolved in order: the `trial` verb's
+`--target-run-id` override, then the `TargetRun.target_run_id` declared in the
+setup, then - only when both leave it unset - the instance id. An explicit id
+must be path-safe and unique within the setup, so two target-runs of one target
+never merge into one tree. Because the evidence chain paths are already
 data-root-relative, copying the chain under the trial dir lets `verdicts.yaml`
 resolve against the trial dir itself, with no live stack reachable.
 
@@ -707,6 +735,7 @@ EVAL_DIAGNOSE_COMMAND='opencode run --prompt {prompt} --trial {trial_record} --v
 #### The issue bank is read-only
 
 The diagnoser searches the origin issue bank and records either the closest matching issue (`closest_issue`) or a `proposed_issue` block; it never files.
+The two are mutually exclusive and one is mandatory: a row with neither is rejected by the schema, so when no issue matches - or the bank is unavailable - the diagnoser writes a `proposed_issue`.
 This is a work-authority rule (`loop-constraints.md`): only the operator starts work.
 A `proposed_issue` is written into `diagnoses.yaml` for the operator to file manually.
 

@@ -188,6 +188,12 @@ def parse_diagnosis(row: Mapping, *, verdicts_by_id: Mapping[str, str]) -> Diagn
             f"diagnosis row {vuln}: closest_issue and proposed_issue are mutually "
             "exclusive; record one (the issue bank is searched before proposing)"
         )
+    if closest is None and proposed is None:
+        raise DiagnosisError(
+            f"diagnosis row {vuln}: exactly one of closest_issue or proposed_issue "
+            "is required; when no issue matches (or the issue bank is unavailable) "
+            "write a proposed_issue"
+        )
 
     return Diagnosis(
         vuln=vuln,

@@ -72,6 +72,34 @@ class TargetConfig:
 
 
 @dataclass(frozen=True)
+class PreloadedTestSpec:
+    """One pre-mined hunter `TestImplementationSpec` and its fault-key family.
+
+    `path` is a host path (a spec file, or a directory of them); `fault_key` is
+    the `<fault_key>/` directory under `hunting/hunter/test-specs/` whose
+    produced/ inbox the pipeline's lazy read drains.
+    """
+
+    path: str
+    fault_key: str
+
+
+@dataclass(frozen=True)
+class PreloadedArtifacts:
+    """Operator-supplied pre-mined hunting artifacts (#270 AC4).
+
+    `configs` is the former single-path form: a host path to a hunt config or a
+    directory of them, placed into the hunt-config `produced/` inbox. Each
+    `test_specs` entry names one spec and its fault key, placed into that
+    family's `produced/` inbox. Both are the pipeline's own lazy-read locations,
+    so the normal mover consumes them and the cap counts them.
+    """
+
+    configs: str | None = None
+    test_specs: tuple[PreloadedTestSpec, ...] = ()
+
+
+@dataclass(frozen=True)
 class TargetRun:
     """The evaluation of one `Target` on one instance: config, phase, cap, seeds."""
 
@@ -79,7 +107,10 @@ class TargetRun:
     target_config: TargetConfig
     start_phase: str = "recon"
     hunt_config_budget: int | None = None
-    preloaded_hunting_artifacts: str | None = None
+    preloaded_hunting_artifacts: PreloadedArtifacts | None = None
+    # #273: the target-run identity (the artifact store's middle level). Unset
+    # means the trial record defaults it to the instance id.
+    target_run_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -143,6 +174,30 @@ def _optional_str(mapping: Mapping, key: str, where: str) -> str | None:
     return value
 
 
+def is_path_safe_id(value: object) -> bool:
+    """True when `value` is one safe path segment.
+
+    A store/trial directory joins these ids into a path, so a separator or a
+    `.`/`..` segment would escape its level. Shared with the CLI so a
+    `--target-run-id` override enforces the same rule as the setup file.
+    """
+    return (
+        isinstance(value, str)
+        and bool(value)
+        and value not in (".", "..")
+        and "/" not in value
+        and "\\" not in value
+        and "\x00" not in value
+    )
+
+
+def _path_safe(mapping: Mapping, key: str, where: str) -> str | None:
+    value = _optional_str(mapping, key, where)
+    if value is not None and not is_path_safe_id(value):
+        raise SetupError(f"{where}.{key}: expected a path-safe identifier, got {value!r}")
+    return value
+
+
 # --- parsing ------------------------------------------------------------------
 
 
@@ -173,6 +228,16 @@ def parse_eval_setup(payload: object) -> EvalSetup:
     duplicates = sorted({x for x in ids if ids.count(x) > 1})
     if duplicates:
         raise SetupError(f"EvalSetup.instances: duplicate instance_id(s): {', '.join(duplicates)}")
+
+    # #273: an explicit target-run identity is the artifact store's middle
+    # level, so two of them in one setup would merge two target-runs' trees.
+    run_ids = [t.target_run_id for i in instances for t in i.targets if t.target_run_id]
+    run_duplicates = sorted({x for x in run_ids if run_ids.count(x) > 1})
+    if run_duplicates:
+        raise SetupError(
+            "EvalSetup.instances[].targets: duplicate target_run_id(s): "
+            + ", ".join(run_duplicates)
+        )
 
     work_items = tuple(_parse_work_item(item, i) for i, item in enumerate(root.get("work_items", []) or []))
 
@@ -211,7 +276,14 @@ def _parse_target_run(payload: object, where: str) -> TargetRun:
     mapping = _mapping(payload, where)
     _check_keys(
         mapping,
-        ("target_id", "target_config", "start_phase", "hunt_config_budget", "preloaded_hunting_artifacts"),
+        (
+            "target_id",
+            "target_config",
+            "start_phase",
+            "hunt_config_budget",
+            "preloaded_hunting_artifacts",
+            "target_run_id",
+        ),
         where,
     )
     target_id = _str_field(mapping, "target_id", where, required=True)
@@ -232,10 +304,54 @@ def _parse_target_run(payload: object, where: str) -> TargetRun:
         target_config=target_config,
         start_phase=start_phase,
         hunt_config_budget=budget,
-        preloaded_hunting_artifacts=_optional_str(
-            mapping, "preloaded_hunting_artifacts", where
+        preloaded_hunting_artifacts=_parse_preloaded_artifacts(
+            mapping.get("preloaded_hunting_artifacts"),
+            f"{where}.preloaded_hunting_artifacts",
         ),
+        target_run_id=_path_safe(mapping, "target_run_id", where),
     )
+
+
+def _parse_preloaded_artifacts(payload: object, where: str) -> PreloadedArtifacts | None:
+    """Validate the pre-mined artifact configuration (#270 AC4).
+
+    A bare string is the legacy configs-only form. The mapping form carries
+    `configs` and/or `test_specs`; every test-spec entry names its `fault_key`
+    so the spec lands in the right `<fault_key>/produced/` inbox. A missing or
+    unknown field, a missing fault key, or an unsafe fault key fails loud.
+    """
+    if payload is None:
+        return None
+    if isinstance(payload, str):
+        if not payload:
+            raise SetupError(f"{where}: expected a non-empty string")
+        return PreloadedArtifacts(configs=payload)
+
+    mapping = _mapping(payload, where)
+    _check_keys(mapping, ("configs", "test_specs"), where)
+    configs = _optional_str(mapping, "configs", where)
+    raw_specs = mapping.get("test_specs") or []
+    if not isinstance(raw_specs, list):
+        raise SetupError(f"{where}.test_specs: expected a list")
+    test_specs = tuple(
+        _parse_preloaded_test_spec(item, f"{where}.test_specs[{i}]")
+        for i, item in enumerate(raw_specs)
+    )
+    if configs is None and not test_specs:
+        raise SetupError(f"{where}: expected at least one of 'configs' or 'test_specs'")
+    return PreloadedArtifacts(configs=configs, test_specs=test_specs)
+
+
+def _parse_preloaded_test_spec(payload: object, where: str) -> PreloadedTestSpec:
+    mapping = _mapping(payload, where)
+    _check_keys(mapping, ("path", "fault_key"), where)
+    path = _str_field(mapping, "path", where, required=True)
+    fault_key = _str_field(mapping, "fault_key", where, required=True)
+    if not is_path_safe_id(fault_key):
+        raise SetupError(
+            f"{where}.fault_key: expected a path-safe identifier, got {fault_key!r}"
+        )
+    return PreloadedTestSpec(path=path, fault_key=fault_key)
 
 
 def _parse_target_config(payload: object, where: str) -> TargetConfig:

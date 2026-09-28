@@ -12,9 +12,14 @@ from pathlib import Path
 import pytest
 import yaml
 
-from orchestrator import api, routing, trial
+from orchestrator import api, routing, setup, trial
 from orchestrator.commands import Command, CommandResult
-from orchestrator.files import FileStore, authn_skill_path, hunt_configs_dir
+from orchestrator.files import (
+    FileStore,
+    authn_skill_path,
+    hunt_configs_dir,
+    hunter_test_specs_fault_dir,
+)
 from orchestrator.instances import InstanceError
 from orchestrator.workitems import WorkItemGateError
 from orchestrator.targets.base import TargetError
@@ -316,7 +321,7 @@ def test_premined_artifacts_are_placed_in_produced_and_consumed_lazily(
         files=files,
         start_phase="hunting",
         project_id="pid",
-        preloaded_hunting_artifacts=source,
+        preloaded_hunting_artifacts=setup.PreloadedArtifacts(configs=str(source)),
         hunt_config_budget=5,
     ).run()
 
@@ -338,6 +343,64 @@ def test_premined_artifacts_are_placed_in_produced_and_consumed_lazily(
         path.unlink()
     assert files.count_files(consumed) == 2
     assert record.project_id == "pid"
+
+
+def test_premined_test_specs_land_under_their_fault_key(tmp_path) -> None:
+    source = tmp_path / "specs" / "unit_CWE-89_sqli.yaml"
+    source.parent.mkdir()
+    source.write_text("spec: a\n")
+
+    api_runner = FakeApi(
+        {
+            "GET /projects/pid/hunting/h1": {"status": "complete"},
+            "POST /projects/pid/hunting": {"hunting_run_id": "h1"},
+            "GET /projects/pid/graph": GRAPH_L1_L0,
+        }
+    )
+    files = FileStore()
+    preloaded = setup.PreloadedArtifacts(
+        test_specs=(
+            setup.PreloadedTestSpec(path=str(source), fault_key="unit_CWE-89_sqli"),
+        )
+    )
+
+    _trial(
+        tmp_path,
+        api_runner,
+        files=files,
+        start_phase="hunting",
+        project_id="pid",
+        preloaded_hunting_artifacts=preloaded,
+    ).run()
+
+    produced = hunter_test_specs_fault_dir(
+        tmp_path / "data", "pid", "unit_CWE-89_sqli", "produced"
+    )
+    assert [p.name for p in files.list_files(produced)] == ["unit_CWE-89_sqli.yaml"]
+    # No bespoke read path: the spec lands in the pipeline's own fault-key
+    # produced/ inbox, and no API call references the artifact.
+    rendered = " ".join(c.display() for c in api_runner.calls)
+    assert "CWE" not in rendered
+    assert "test-specs" not in rendered
+
+
+def test_premined_plan_lists_both_inboxes_and_issues_no_calls(tmp_path) -> None:
+    preloaded = setup.PreloadedArtifacts(
+        configs="/mnt/configs",
+        test_specs=(setup.PreloadedTestSpec(path="/mnt/a.yaml", fault_key="fault-a"),),
+    )
+
+    plan = trial.Trial(
+        _config(tmp_path, project_id="pid", preloaded_hunting_artifacts=preloaded)
+    ).plan()
+
+    step = next(s for s in plan.steps if s.label == "pre-mined hunting artifacts")
+    assert step.calls == ()
+    assert str(hunt_configs_dir(tmp_path / "data", "pid", "produced")) in step.files
+    assert (
+        str(hunter_test_specs_fault_dir(tmp_path / "data", "pid", "fault-a", "produced"))
+        in step.files
+    )
 
 
 # --- budget -------------------------------------------------------------------

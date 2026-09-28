@@ -15,7 +15,12 @@ from pathlib import Path
 from typing import Callable, Mapping
 
 from orchestrator import api
-from orchestrator.files import FileStore, authn_skill_path, hunt_configs_dir
+from orchestrator.files import (
+    FileStore,
+    authn_skill_path,
+    hunt_configs_dir,
+    hunter_test_specs_dir,
+)
 
 
 @dataclass(frozen=True)
@@ -158,10 +163,16 @@ def hunting_entry(
             return GateResult(
                 False, ("pre-mined hunting artifacts configured but no data root is set",)
             )
+        # Presence counts both artifact families: pre-mined hunt configs and
+        # each fault key's hunter test specs (a setup may pre-mine either).
         present = sum(
             files.count_files(hunt_configs_dir(state.data_root, state.project_id, side))
             for side in ("produced", "consumed")
         )
+        specs_root = hunter_test_specs_dir(state.data_root, state.project_id)
+        for fault_dir in files.list_dirs(specs_root):
+            for side in ("produced", "consumed"):
+                present += files.count_files(fault_dir / side)
         if present == 0:
             return GateResult(
                 False, ("pre-mined hunting artifacts configured but not present",)
