@@ -1,250 +1,183 @@
-# Rate-Aware Job Admission — Operations
+# LLM Rate-Aware Recon Configuration — Operations
 
-Status: built (#238 follow-up). Authority: `docs/superpowers/specs/2026-09-24-rate-limit-job-admission-e2e-design.md`.
+Status: built for the LLM Configurator design. Authority:
+`docs/superpowers/specs/2026-09-28-llm-rate-aware-recon-configurator-design.md`.
 
-This is the operator-facing view of the rate-limit job-admission feature: what
-happens automatically, which knobs exist, what the persisted state means, and
-what to do when a run refuses traffic. The design document is the argument; this
-page is the runbook.
+This is the operator view of the current recon path: what happens
+automatically, what the LLM owns, what the controller still owns, and what the
+persisted evidence means.
 
-## 1. The automatic flow (no human pause)
+## 1. The automatic flow
 
-Every recon run takes the same trajectory with **no operator input at any
-point**:
+Every recon run follows this trajectory without an operator pause:
 
-```
+```text
 run start
-  -> auth gateway turn        (ReconOrchestratorActor, session thread)
-  -> rate-limit mapping turn  (same actor, same thread, second turn)
-  -> rate profile persisted   (stats["rate_limit"], rate-profile/v2)
-  -> phase boundary           (deterministic admission per candidate job)
-  -> admission envelope persisted (stats["traffic_admission"], traffic-admission/v1)
-  -> materialized pods        (only the admitted jobs)
-  -> target traffic           (through Kali's proxy + governor)
-  -> run status complete
+  -> Auth Gateway turn
+  -> GatewayVerdict
+  -> direct Vegeta mapping from the pipeline
+  -> RateProfile
+  -> recon_runs.stats["rate_limit"]
+  -> data/<project_id>/rate-limit/<target_key>.yaml
+  -> per phase:
+       prepare canonical jobs and inputs
+       offer phase inputs to the Configurator
+       Configurator reads rate_limit_posture
+       ConfiguratorDecision
+       technical validation / atomic materialization
+       pods execute configured commands
+       parser -> Triager -> Curator
+  -> run complete
 ```
 
-Two model turns feed it, and neither can change its arithmetic. The
-model-facing verdicts are **closed** contracts (`extra="forbid"`): a
-`GatewayVerdict` or a `RateLoopVerdict` that arrives carrying a rate, a
-concurrency, a budget, an admission decision or a phase list is *refused at
-validation*, not silently ignored. The profile's `safe_rate_per_s` is validated
-to equal its `traffic_policy.rate_per_s`, so the number admission reads is
-always the number the governor enforces.
+There are two model-facing decision points:
 
-**A bypass finding never authorizes more traffic.** A confirmed variant is
-evidence: it is persisted, it is named in the verdict, and it changes neither
-the effective policy nor the materialized phase list nor the pace of any later
-request. There is no "confirmed bypass" path that re-enables `arjun` or `ffuf`.
+1. the Auth Gateway, which closes with `GatewayVerdict`;
+2. the phase Configurator, which closes with `ConfiguratorDecision`.
 
-## 2. The knobs
+There is no controller-owned admission decision and no runtime TrafficPolicy
+forwarded to recon pods.
 
-| Variable | Default | Meaning |
-|---|---|---|
-| `RATE_LIMIT_INTENSIVE_MIN_SAFE_RATE_PER_S` | `2.0` | The minimum measured safe rate at which a `request_intensive` job may run. Must be finite and `> 0` or the process refuses to start. |
-| `RATE_LIMIT_INTENSIVE_MAX_PROJECTED_DURATION_S` | `300.0` | The maximum projected duration (`estimated_requests / safe_rate_per_s`) an intensive job may take. Must be finite and `> 0`. |
-| `RATE_LIMIT_MAX_REQUESTS` / `RATE_LIMIT_MAX_DURATION_S` / `RATE_LIMIT_MAX_RATE` / `RATE_LIMIT_MAX_CONCURRENCY` / `RATE_LIMIT_MAX_BYPASS_VARIANTS` | see `RateLimitSafetyBudget` | The mapping's hard budget: the controller never offers more than this while measuring. |
-| `RATE_LIMIT_ALLOW_IDENTITY_MUTATIONS` | `false` | Arms the `identity-header` mutation family. OFF by default: those mutations change *who the target thinks is asking*. |
-| `RATE_LIMIT_PROFILE_TTL_S` | `PROFILE_TTL_DEFAULT_S` | How long a measured profile stays fresh. Admission re-checks freshness at the phase boundary; an expired profile prunes the intensive jobs. |
-| `RATE_LIMIT_AWAIT_TIMEOUT_S` | `1800.0` | The bound on the *wait* for the rate turn's reply (not on the turn's own harness budget). |
+## 2. Ownership
 
-### Known limit — the per-exec bound vs a governed intensive job (2026-09-27)
+### Controller-owned
 
-Enforcement changes how long an intensive job takes, and the production default
-of `EXEC_TIMEOUT_S` (**300 s**, `recon/config.py`) does not follow it. The
-measurement: `ffuf` fuzzes a 4,750-line wordlist; paced at a measured 10 req/s
-with `max_concurrency = 1`, the command is **latency**-bound (~4 req/s in the
-E2E's numbers), so it needs ~20 minutes, not the ~8 the rate alone implies.
+- Vegeta invocation and its hard safety budget;
+- `RateProfile` construction and classification;
+- `safe_rate_per_s`, measured thresholds, burst and evidence references;
+- persistence of `stats["rate_limit"]`;
+- the per-target advisory YAML;
+- technical validation of Configurator references and command shape.
 
-Two consequences worth carrying into later work:
+### LLM-owned
 
-1. **The admission projection is optimistic for `max_concurrency = 1`.**
-   `projected_duration_s = estimated_requests / safe_rate_per_s` assumes the rate
-   is the binding constraint; with one worker it is the per-request latency. A
-   job can therefore be ADMITTED and then killed by the exec bound mid-flight.
-2. **A killed command degrades visibly.** The runner returns `returncode=124`,
-   the pod retries up to `MAX_POD_ITERS`, then the job is marked degraded - the
-   run still reaches a terminal state, and nothing hangs (the exec seam also
-   fails loud instead of waiting forever, see the 2026-09-27 MCP fix).
+- which offered jobs become pods in the phase;
+- which offered input each pod uses;
+- command parameters such as rate, threads, concurrency, delay and depth;
+- `pods=[]` when the phase has no safe or useful work;
+- the rationale explaining the aggregate plan.
 
-**Decision (operator, 2026-09-27): keep the 300 s default.** Trade-off as
-decided: a bounded worst case per command and a healthy namespace pool (8 slots,
-each held for a whole exec) beat the extra coverage of slow-but-admissible
-intensive jobs.
+### Explicitly not guaranteed
 
-If that trade is revisited, do it in this order: first fix the projection so it
-accounts for the concurrency ceiling (`estimated_requests * latency_per_request
-/ max_concurrency`), then derive the cap from the admitted job's own projection
-(`max(EXEC_TIMEOUT_S, projected_duration_s + margin)`, with a hard ceiling) for
-`request_intensive` jobs only - never raise the bound globally.
+The runtime does not compare the model's rate, thread, concurrency, delay or
+duration choices with the measured posture. The design is **prompt-guided**:
+the system prompt requires prudent choices, but there is no hidden numeric
+checker or controller-side correction.
 
-### Boundary semantics (inclusive)
+## 3. Rate profile and posture file
 
-A job is admitted exactly when
-`profile.outcome == "mapped"` **and** the profile is fresh **and**
-`safe_rate_per_s >= RATE_LIMIT_INTENSIVE_MIN_SAFE_RATE_PER_S` **and**
-`projected_duration_s <= RATE_LIMIT_INTENSIVE_MAX_PROJECTED_DURATION_S`.
-Both comparisons are inclusive: a job at exactly `2.0 req/s` with a projected
-duration of exactly `300 s` is admitted. `arjun` and `ffuf` are the
-`request_intensive` jobs today; every other job is either `bounded_http`
-(admitted under a conservative policy) or `non_target` (never paced).
+`stats["rate_limit"]` is the immutable per-run record:
 
-## 3. Where to read the outcome
-
-`GET /projects/{project_id}/recon/{run_id}` returns `stats`, which carries two
-additive keys:
-
-* **`rate_limit`** (`rate-profile/v2`) — what was *measured*: `outcome`
-(`mapped` / `no_limiter` / `inconclusive` / `failed`), `safe_rate_per_s`,
-`threshold_low_per_s` / `threshold_high_per_s`, `burst_capacity`,
-`recovery_s`, `confidence`, `signals`, `bypass_outcome`, the immutable
-`artifact_refs` (relative `rate-artifact/v1:` coordinates + lowercase sha256),
-`measured_at` / `expires_at`, the operator budget and its consumption, and the
-`traffic_policy` (v2) every later request obeys.
-* **`traffic_admission`** (`traffic-admission/v1`) — what was *decided and
-executed*: `profile_version`, `profile_outcome`, `effective_policy`,
-`candidate_phases`, `materialized_phases`, one `decisions` row per candidate
-(`job_name`, `cost_class`, `input_count`, `estimated_requests`,
-`safe_rate_per_s`, `projected_duration_s`, `decision`, `reason_code`),
-`event_order`, `warnings`, and `refusals`.
-
-`event_order` is the run's trajectory, in order:
-
-```
-auth, rate_mapping, rate_profile_persisted, admission_persisted,
-pod_started, target_observed, run_finalized
+```text
+rate-profile/v2
 ```
 
-`admission_persisted` repeats at every phase boundary; `pod_started` appears
-once, before the first materialized runner; `target_observed` appears once,
-after the first **target-facing** pod returned; `run_finalized` is the terminal
-act. A run whose every candidate was pruned records neither `pod_started` nor
-`target_observed` — the trajectory never claims an execution that did not
-happen.
+It contains the measured bounds, scope, behavioural hypothesis, confidence,
+bypass evidence, the operator budget and its consumption, the advisory
+`traffic_policy`, and relative artifact references with SHA-256 hashes.
 
-`refusals` carries the runtime governor refusals (`reason_code`, `target_key`,
-`policy_version`); the pre-run decision is **never rewritten** by a refusal, so
-"what was decided" and "what the proxy refused" stay separately legible.
+The project's current posture is:
 
-### Second surface of persistence — the posture file
-
-`stats.rate_limit` is the **per-run** record (an event). The project's
-**current** posture is ALSO a file, one per measured target:
-
-```
+```text
 data/<project_id>/rate-limit/<target_key>.yaml
 ```
 
-with a thin closed envelope around the very same profile:
+with:
 
 ```yaml
 version: rate-limit-posture/v1
-source_run_id: <the run that produced the measurement>
+source_run_id: <run that produced the measurement>
 advisory: true
-profile: { ...rate-profile/v2... }
+profile: <rate-profile/v2>
 ```
 
-* **Advisory, never enforced.** The envelope declares `advisory: true`: the
-  limit is **known**, not **imposed**. No lease, proxy or governor reads this
-  file, and hunting traffic stays ungoverned by it (operator decision, D4).
-  A reader must never mistake it for enforcement.
-* **Precedence on divergence.** The file never replaces `recon_runs.stats`;
-  `stats.rate_limit` / `stats.traffic_admission` remain the per-run record and
-  win for anything scoped to a run. The file is only the project's current
-  posture, and it is written AFTER `stats.rate_limit` for the same profile — a
-  file naming a run whose stats never carried the profile would be an
-  unverifiable claim.
-* **Recency guard.** With concurrent runs the write order need not match the
-  measurement order, so a measurement whose `profile.measured_at` is OLDER than
-  the one on disk never overwrites it: the store logs a warning and the run
-  continues. The newer measurement wins.
-* **One writer.** Only the controller writes it — the recon pipeline's
-  deterministic projection (`pipeline._default_write_posture`). Agents read it,
-  read-only, through the single `rate_limit_posture` tool bound INSIDE the
-  test-executor pod — the Runner and the Triager (operator ruling, 2026-09-28;
-  the Hunter does not bind it). A failed write fails the run before any phase
-  runs (the same discipline as the admission envelope).
-* **Unreadable is not absent.** A missing file means "no measurement for this
-  target"; a corrupt or non-validating file raises instead of degrading to "no
-  known limit", and the tool answers `unreadable`.
+Rules:
 
-### Structured reason codes
+- only the controller writes the YAML;
+- Postgres is written before the YAML;
+- a failed YAML write fails the run before any phase;
+- an older measurement never overwrites a newer one;
+- a missing file means "not measured";
+- a corrupt or invalid file is `unreadable`, never a missing posture.
 
-A pruned job always carries exactly one code from the closed vocabulary
-(`AdmissionReason`), never prose:
+## 4. Configurator decision
 
-| Code | What it means |
+The Configurator is one stateful role:
+
+```text
+ConfiguratorSession(run_id)
+thread = run:<run_id>:configurator
+```
+
+The phase is a new turn on the same session, never part of the identity.
+
+Its tool surface is exactly:
+
+```text
+load_skill
+rate_limit_posture
+```
+
+It returns:
+
+```python
+ConfiguratorDecision(
+    phase=...,
+    target_key=...,
+    posture_status=...,
+    pods=[ReconPodProposal(...)],
+    rationale="...",
+)
+```
+
+Each proposal selects one offered `(job_name, input_id)` and one command:
+
+- non-empty string for a shell job;
+- `None` for an agentic job such as `steel_crawl`.
+
+The runtime rejects the entire decision atomically if phase, target, job,
+input, duplicate id or command shape is invalid.
+
+## 5. Where to inspect the outcome
+
+`GET /projects/{project_id}/recon/{run_id}` returns `stats`.
+
+Important keys:
+
+* **`rate_limit`** — what was measured and persisted for this run;
+* **`traffic_admission`** — no longer written by the recon path.
+
+The per-job rows carry `stats.commands`, with authenticated values redacted.
+The commands show the model-selected parameters executed by the pods.
+
+The YAML posture is the project-level current view of the same measured profile.
+
+## 6. Failure semantics
+
+| Event | Behaviour |
 |---|---|
-| `admitted` | The job is in the materialized phase. |
-| `no_inputs` | The upstream phase produced nothing for this job to consume. |
-| `profile_inconclusive` | The mapping could not bracket a limiter (`inconclusive`). |
-| `profile_failed` | The rate turn failed, timed out or degraded. |
-| `profile_stale` | The profile expired before this phase's admission. |
-| `below_min_safe_rate` | `safe_rate_per_s` is under the operator threshold. |
-| `projected_duration_exceeded` | The projected duration exceeds the ceiling. |
-| `cost_model_invalid` | The job's traffic-cost declaration is unusable. |
-| `policy_missing` | No enforceable policy could be derived. |
-| `governor_refused` | The runtime governor refused the flow. |
+| Auth Gateway degraded | existing auth fail-open/anonymous semantics |
+| Target browser-only | conservative inconclusive profile; zero Vegeta experiments |
+| Vegeta mapping fails | conservative profile, visible to the Configurator |
+| YAML write fails | run `failed` before phases |
+| YAML missing | prompt requires conservative fallback |
+| YAML unreadable | prompt requires omitting target-facing pods |
+| LLM decision missing/invalid | run `failed` before that phase's pods |
+| Unknown job/input/reference | entire decision rejected atomically |
+| `pods=[]` | valid; no pods in that phase |
+| Exec tool fails | existing pod retry/degradation semantics |
 
-## 4. Refusals are local, loud and terminal
+## 7. Wire versions and rollback
 
-With a policy **armed**, an enforcement that cannot run must not become traffic:
+- `RateProfile` and `TrafficPolicy` are v2 contracts;
+- a v1 persisted profile is read only through `upgrade_rate_profile_v1`;
+- Kali still advertises the generic governor versions, but the recon path no
+  longer arms a TrafficPolicy on pod exec;
+- rollback is additive because `rate_limit` already lives inside JSONB stats.
 
-* an unenforceable policy, a missing governor, or a governor exception makes the
-  proxy refuse the flow **locally** (HTTP 503 with
-  `X-Polymerhus-Traffic-Refusal`) — zero upstream requests;
-* Kali refuses *before* it runs anything when the namespace, the governor
-  switch or the proxy readiness probe fails: `returncode=78` plus a
-  `traffic_warning`, no runner invocation, nothing egresses;
-* the pipeline records the refusal in the admission envelope and never rewrites
-  the decision that preceded it.
+## 8. Deterministic E2E targets
 
-`KALI_HTTP_CAPTURE_ENABLED=false` disables **storage only**. Governance is a
-separate switch (`KALI_HTTP_GOVERNOR_ENABLED`), the two ride the same mitmdump
-process, and capture-off never disarms an armed policy. The governor's bucket
-key is `(project_id, target_key)` and never includes the source address: how a
-namespace reaches the target cannot buy it a second allowance.
-
-Secrets never appear in any of this: raw hit streams live in the immutable
-artifact store addressed by a relative ref + sha256, and profiles, stats, logs
-and prompts carry neither credentials nor response bodies.
-
-## 5. Versions, migration and rollback
-
-* **Wire versions advance together.** `rate-profile/v2` and
-  `traffic-policy/v2` are the only versions emitted. v2 exists because
-  `max_concurrency` changed from inert data to an enforced semantic — a
-  validator that ignores it would look compliant while bursts exceeded the
-  simultaneous-load limit.
-* **Reading old rows is isolated.** A persisted `rate-profile/v1` row is
-  ingested only through `upgrade_rate_profile_v1`; nothing else reads v1 and
-  nothing writes it.
-* **Kali rejects what it cannot enforce.** An unsupported or unvalidated policy
-  version is refused with `returncode=78` and **zero target calls** — never
-  enforced approximately. `proxy_status()["traffic_governor"]` advertises the
-  versions the image supports, so the controller and Kali negotiate rather than
-  assume.
-* **Rolling back is a two-sided operation.** Controller and Kali must move
-  together: a v1 controller talking to a v2 Kali is refused (loudly, before any
-  traffic) rather than silently ungoverned.
-* **No destructive database migration.** `traffic_admission` is an additive
-  JSONB key inside the existing `recon_runs.stats`, so a rollback leaves the
-  historical rows readable.
-
-## 6. Health and capability negotiation
-
-`proxy_status()` (MCP `proxy_status`, and the `view`/exec surfaces) reports the
-governor and capture switches **separately**, the supported policy versions, the
-refusal counters, the image's build provenance (source revision + the Vegeta
-module version parsed from Go build metadata) and the pinned wordlist
-cardinality. `arjun`'s estimate is a fixed constant; `ffuf`'s is the non-empty
-line count of the pinned SecLists wordlist, and a mismatch between the image's
-wordlist and the declared cardinality **refuses** rather than estimating.
-
-## 7. The deterministic E2E targets
-
-The functional tier never aims at the internet. Five isolated Compose services
-instantiate one fixture application with a different posture each:
+The functional E2E uses the five local posture services:
 
 | Service | Posture |
 |---|---|
@@ -254,71 +187,33 @@ instantiate one fixture application with a different posture each:
 | `rate-matrix-false-bypass` | low limiter with an unconfirmed bypass shape |
 | `rate-matrix-burst-inconclusive` | ambiguous/bursty behaviour |
 
-Each exposes `GET /health`, `POST /reset`, `GET /counters` and `GET /events`.
-`/counters` and `/events` **require the current generation** (`?generation=<id>`,
-minted by `/reset`); a stale or missing generation is a `409`, so a reader can
-never mistake another scenario's counters for its own. The control endpoints
-bypass limiter accounting *and* in-flight accounting, so reading them can never
-look like target traffic. Sensitive header values and configured secrets are
-redacted before they are recorded.
+The E2E provider is deterministic and is not production logic. It calls the
+real `rate_limit_posture` tool and emits a real `ConfiguratorDecision`.
 
-The E2E also routes both long-horizon model roles at a deterministic local
-provider (`tests/e2e/deterministic_llm_provider.py`), so the tier exercises the
-real actor loop and the real pipeline with reproducible model output. Only
-inference is replaced; the actor, tools, pipeline, pods, MCP/Kali proxy and the
-target are production code.
-
-### Running the gate
-
-`scripts/issue_238_e2e_stack.sh` owns the stack lifecycle. Every command is
-pinned to the `polyphemus-238-e2e` Compose project and to the base + E2E overlay
-files, so it can never address (or disturb) another stack:
+Run:
 
 ```sh
-sh scripts/issue_238_e2e_stack.sh config          # compose validity
-sh scripts/issue_238_e2e_stack.sh build           # agent + self-contained Kali
-sh scripts/issue_238_e2e_stack.sh up              # + health + assert-clean
-sh scripts/issue_238_e2e_stack.sh gate-once run-a # provider + posture matrix
-sh scripts/issue_238_e2e_stack.sh gate-stale      # short-TTL stale row
-sh scripts/issue_238_e2e_stack.sh gate-twice artifacts/issue-238-final
+sh scripts/issue_238_e2e_stack.sh config
+sh scripts/issue_238_e2e_stack.sh build
+sh scripts/issue_238_e2e_stack.sh up
+sh scripts/issue_238_e2e_stack.sh health
+sh scripts/issue_238_e2e_stack.sh gate-twice artifacts/issue-238-llm-configurator
+sh scripts/issue_238_e2e_stack.sh down
 ```
 
-The gate's service set and its two scale knobs are committed in the overlay:
-the profile TTL (`RATE_LIMIT_PROFILE_TTL_S`, long by default so the later-phase
-intensives stay fresh; `up-stale`/`gate-stale` set it to `1`) and the admission
-ceiling (`RATE_LIMIT_INTENSIVE_MAX_PROJECTED_DURATION_S`, `900` so the fixture's
-mapped safe rate can afford ffuf's 4,750-request cost). Neither is a test-side
-switch and neither changes the admission MECHANISM, whose boundaries stay
-inclusive.
+The twice-run gate proves:
 
-Two operational details the live tier depends on:
+```text
+auth -> Vegeta -> stats/YAML -> Configurator -> selected pod commands -> Triager
+```
 
-* the fixtures advertise a **dotted** network alias (`high-limit.e2e.local`, …).
-  `httpx` - the production probe the pod invokes - mis-parses a single-label
-  Compose service name (`unsupported protocol scheme ""`), so the run's
-  `target_seed` is the FQDN, exactly as a real target would be;
-* the E2E tier runs on its OWN bridge network (`polyphemus-238-e2e-net`,
-  `172.29.0.0/16`) and publishes the API on `18080`, so the operator's default
-  `polymerhus-net` subnet and port `8080` are never required to be free.
+and that the second run does not reuse the first run's project, session or
+outputs.
 
-The fixture's **ambiguous** posture answers some hits and stays silent on
-others; the transparent proxy reports its own 502 for a silent hit, and the
-runner classifies that gateway error as transport loss (never target evidence),
-so the mapping cannot bracket a transition and stays `inconclusive`.
+## 9. What not to do
 
-## 8. What to do when a run refuses everything
-
-1. Read `stats.traffic_admission.decisions` — every pruning has a code.
-2. `profile_inconclusive` / `profile_failed` / `profile_stale`: check the
-   target's health and the mapping budget; the conservative fallback is
-   deliberate, not a bug.
-3. `below_min_safe_rate` / `projected_duration_exceeded`: the measured safe rate
-   is genuinely below what the intensive jobs need. Raising the threshold
-   variables does not create capacity — it only changes where the line sits.
-4. `policy_missing`: the profile carried no enforceable policy; look for the
-   rate turn's own log line.
-5. `refusals` non-empty: the governor refused at runtime. Check
-   `proxy_status()["traffic_governor"]` inside Kali (namespace pool, switch
-   state, refusal counters, supported versions).
-6. Never "fix" a refusal by disabling the governor. The run's bounded work
-   continues by design; the intensive work waits for a measured posture.
+- Do not raise traffic by disabling a governor: the recon path does not arm one.
+- Do not edit the YAML to "fix" a run: it is advisory and read-only for agents.
+- Do not expect `stats["traffic_admission"]`: it is retired from this path.
+- Do not infer a numeric guarantee from the Configurator prompt; compliance is
+  model behaviour, not a runtime invariant.

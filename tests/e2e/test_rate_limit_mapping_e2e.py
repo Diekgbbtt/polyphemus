@@ -3,8 +3,9 @@
 TIER (read this before citing the file): this is the LIVE **DIRECT-MCP**
 measurement tier, not the functional release gate. It drives the real Kali MCP
 surface directly and publishes the rate profile through a scripted orchestrator
-double, which is exactly what `tests/e2e/test_rate_limit_admission_e2e.py` is
-forbidden to do. It remains valuable - it is the fast, focused check of the
+double, which is exactly what the functional gate
+`tests/e2e/test_llm_rate_aware_recon_configurator_e2e.py` never does (it drives
+the REAL control plane). It remains valuable - it is the fast, focused check of the
 mapping/artefact/governor arithmetic - but it certifies the mapping, never the
 production actor-to-target trajectory.
 
@@ -57,8 +58,8 @@ import pytest
 from fastmcp import Client
 
 from polymerhus.recon.control import pipeline
+from polymerhus.recon.control import configurator as C
 from polymerhus.recon.control.authn_loop import GatewayVerdict
-from polymerhus.recon.control.orchestrator_agent import ReconOrchestratorActor
 from polymerhus.recon.control.rate_limit_mapper import judge_bypass
 from polymerhus.recon.control.rate_limit_runner import (
     RateLimitHarness,
@@ -478,22 +479,15 @@ def test_the_production_variant_probe_never_fakes_a_confirmation(mapped):
 
 
 class _ScriptedOrchestrator:
-    """Drives the REAL pipeline through both turns with the LIVE-measured profile."""
+    """Drives the REAL pipeline through the auth-only gateway turn."""
 
     def __init__(self, *, events: list, profile, verdict: GatewayVerdict):
         self._events = events
-        self._profile = profile
         self._verdict = verdict
-        self.rate_kwargs: dict = {}
 
     async def run_gateway(self, **kwargs):
         self._events.append("gateway")
         return self._verdict
-
-    async def run_rate_limit(self, **kwargs):
-        self._events.append("rate")
-        self.rate_kwargs = dict(kwargs)
-        return self._profile
 
     async def stop(self):
         self._events.append("stop")
@@ -540,6 +534,30 @@ def _drive_pipeline(monkeypatch, *, profile, verdict, job_subset=None):
 
     monkeypatch.setattr(pipeline, "_touch_heartbeat", lambda run_id: None)
 
+    async def fake_map_rate_profile(*args, **kwargs):
+        events.append("map")
+        return profile
+
+    def fake_configure_phase(project_id, run_id, phase, target_key, offers):
+        return C.ConfiguratorDecision(
+            phase=phase,
+            target_key=target_key,
+            posture_status="known_target",
+            pods=[
+                C.ReconPodProposal(
+                    job_name=offer.job_name,
+                    input_id=offer.input_id,
+                    command=(
+                        None if offer.configurator_mode == "agent"
+                        else (offer.command_template or "true")
+                    ),
+                    rationale="mapping-e2e",
+                )
+                for offer in offers.offers
+            ],
+            rationale="mapping-e2e",
+        )
+
     async def scenario():
         await pipeline.run_pipeline(
             "e2e-rate-proj",
@@ -553,6 +571,8 @@ def _drive_pipeline(monkeypatch, *, profile, verdict, job_subset=None):
             registry=registry,
             read_assets=fake_read_assets,
             orchestrator_factory=lambda run_id: orchestrator,
+            map_rate_profile=fake_map_rate_profile,
+            configure_phase=fake_configure_phase,
             feed_mode="queued",
             with_analysis=False,
         )
@@ -579,8 +599,8 @@ def test_the_pipeline_runs_auth_then_mapping_then_phase_zero_with_the_live_profi
     )
 
     events = registry._events
-    order = {name: events.index(name) for name in ("create_run", "gateway", "rate", "set_run_stats")}
-    assert order["create_run"] < order["gateway"] < order["rate"] < order["set_run_stats"]
+    order = {name: events.index(name) for name in ("create_run", "gateway", "map", "set_run_stats")}
+    assert order["create_run"] < order["gateway"] < order["map"] < order["set_run_stats"]
     assert order["set_run_stats"] < min(
         index for index, event in enumerate(events) if event.startswith("job:")
     )
@@ -593,21 +613,26 @@ def test_the_pipeline_runs_auth_then_mapping_then_phase_zero_with_the_live_profi
     # References, never raw evidence: no body and no absolute path.
     assert "/data/" not in json.dumps(stored)
 
-    # The measured policy is what the request job actually carries.
-    assert seen["httpx"]["extra"]["traffic_policy"]["target_key"] == TARGET_HOST
-    assert (
-        seen["httpx"]["extra"]["traffic_policy"]["version"] == "traffic-policy/v2"
-    )
+    # Runtime policy forwarding is retired; the mapper result is persisted only.
+    assert "traffic_policy" not in seen["httpx"]["extra"]
     assert "naabu" in seen, "the non-HTTP job still runs"
     assert "traffic_policy" not in seen["naabu"]["extra"]
 
 
 def test_a_browser_only_target_maps_nothing_and_stays_inconclusive(live_kali):
     _counters(reset=True)
-    actor = ReconOrchestratorActor("e2e-browser-only", project_id="e2e-browser")
-    profile = asyncio.run(
-        actor.run_rate_limit(target_key=TARGET_HOST, url=f"{TARGET_BASE}/", browser_only=True)
-    )
+    async def forbidden_mapper(*args, **kwargs):
+        raise AssertionError("browser-only must not invoke the mapper")
+
+    profile = asyncio.run(pipeline._rate_profile_for_run(
+        project_id="e2e-browser",
+        run_id="e2e-browser-only",
+        settings={"target_seed": TARGET_HOST, "target_scheme": "http"},
+        auth_account=None,
+        auth_store=None,
+        browser_only=True,
+        map_rate_profile=forbidden_mapper,
+    ))
 
     assert profile.outcome == "inconclusive"
     assert profile.bypass_outcome == "inconclusive"

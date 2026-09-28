@@ -419,8 +419,11 @@ def test_the_supported_policy_versions_are_advertised():
 #
 # One test per deliberate one-line regression (plan Task 11 Step 4). Each is
 # named exactly as the gate table names it, so "does the suite kill this
-# mutation?" is answerable by `pytest -k <name>`; the LIVE twins of the timing
-# rows run in `tests/e2e/test_rate_limit_admission_e2e.py`.
+# mutation?" is answerable by `pytest -k <name>`. The recon-armed LIVE twins of
+# the timing rows were retired with the deterministic-admission gate (#238 LLM
+# Configurator): the governor is no longer armed by the recon path, so its
+# contract is certified here and by the direct-MCP mapping tier
+# (`tests/e2e/test_rate_limit_mapping_e2e.py`).
 
 
 def test_same_project_different_source_ips_share_live_bucket():

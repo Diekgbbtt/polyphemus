@@ -2,13 +2,10 @@
 # #238 E2E stack lifecycle (Tasks 15 + 18).
 #
 # Every command is PINNED to one Compose project and one pair of files, so the
-# gate can never address (or disturb) the operator's own stack. `up-stale` and
-# `gate-stale` are the ONLY places the profile TTL is shortened, and they set it
-# here rather than through an ad-hoc environment override.
+# gate can never address (or disturb) the operator's own stack.
 #
-#   config | build | up | up-stale | health | assert-clean | reset-targets
-#   | gate-once <name> | gate-twice <artifact-dir> | gate-stale <name>
-#   | gate-properties [name] | down
+#   config | build | up | health | assert-clean | reset-targets
+#   | gate-once <name> | gate-twice <artifact-dir> | down
 set -eu
 
 PROJECT="${POLYPHEMUS_E2E_PROJECT:-polyphemus-238-e2e}"
@@ -16,7 +13,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 API="${POLYPHEMUS_API_BASE:-http://localhost:18080}"
 PY="${POLYPHEMUS_PY:-$ROOT/.venv/bin/python}"
 SERVICES="postgres neo4j rate-limit-llm rate-matrix-no-limiter rate-matrix-high-limit rate-matrix-low-limit rate-matrix-false-bypass rate-matrix-burst-inconclusive kali agent"
-E2E_TEST="tests/e2e/test_rate_limit_admission_e2e.py"
+E2E_TEST="tests/e2e/test_llm_rate_aware_recon_configurator_e2e.py"
 
 compose() {
     docker compose -p "$PROJECT" -f "$ROOT/docker-compose.yml" -f "$ROOT/docker-compose.e2e.yml" "$@"
@@ -29,12 +26,6 @@ build() {
 up() {
     # shellcheck disable=SC2086
     compose up -d --wait $SERVICES
-}
-
-up_stale() {
-    # The stale gate needs a profile that expires BETWEEN phases. The value lives
-    # here, committed, so the gate is reproducible rather than an operator edit.
-    RATE_LIMIT_PROFILE_TTL_S=1 compose up -d --wait --force-recreate agent
 }
 
 health() {
@@ -104,60 +95,15 @@ gate_twice() {
     done
 }
 
-gate_stale() {
-    up_stale
-    health
-    POLYPHEMUS_API_BASE="$API" "$PY" -m pytest "$ROOT/$E2E_TEST::test_a_stale_profile_never_re_admits_an_intensive_runner" -q -rs -p no:cacheprovider
-}
-
-gate_properties() {
-    # #238 A10: the four enforcement properties, certified from the TARGET's
-    # point of view. Three of them re-point the running agent at another Kali
-    # service (`kali-failing-governor` / `kali-capture-off`, both in the E2E
-    # overlay) and restore it in a `finally` - so this gate owns the stack while
-    # it runs and must not be run concurrently with another gate.
-    name="${1:-enforcement-properties}"
-    echo "[gate:$name] enforcement properties (A10)"
-    # The property gate runs the image the current source built: recreate any
-    # service whose config/image changed (idempotent when nothing did).
-    up
-    health
-    mcp_ready
-    POLYPHEMUS_E2E_STRICT=1 POLYPHEMUS_API_BASE="$API" "$PY" -m pytest \
-        "$ROOT/tests/e2e/test_rate_limit_enforcement_properties_e2e.py" \
-        -q -rs -p no:cacheprovider
-}
-
-mcp_ready() {
-    # The agent must be able to READ kali's capability surface before any run
-    # starts: the run negotiates it first, and a cold MCP (freshly recreated
-    # container) otherwise fails the run closed with
-    # `capability_probe_failed` - which is correct behaviour but a red gate for
-    # the wrong reason. Bounded retries, then fail loudly.
-    attempts=0
-    until compose exec -T agent python -c "import asyncio; from polymerhus.app.clients import kali_mcp; asyncio.run(kali_mcp.proxy_status())" >/dev/null 2>&1; do
-        attempts=$((attempts + 1))
-        if [ "$attempts" -ge 30 ]; then
-            echo "[mcp] the agent cannot read kali proxy_status after ${attempts} attempts"
-            return 1
-        fi
-        sleep 3
-    done
-    echo "[mcp] agent -> kali capability surface ready"
-}
-
 case "${1:-}" in
     config) compose config --quiet ;;
     build) build ;;
     up) up ;;
-    up-stale) up_stale ;;
     health) health ;;
     assert-clean) assert_clean ;;
     reset-targets) reset_targets ;;
     gate-once) shift; gate_once "$@" ;;
     gate-twice) shift; gate_twice "$@" ;;
-    gate-stale) shift; gate_stale "$@" ;;
-    gate-properties) shift; gate_properties "$@" ;;
     down) compose down --remove-orphans ;;
-    *) echo "usage: $0 {config|build|up|up-stale|health|assert-clean|reset-targets|gate-once NAME|gate-twice DIR|gate-stale NAME|gate-properties [NAME]|down}" >&2; exit 64 ;;
+    *) echo "usage: $0 {config|build|up|health|assert-clean|reset-targets|gate-once NAME|gate-twice DIR|down}" >&2; exit 64 ;;
 esac

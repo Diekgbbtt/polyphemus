@@ -19,11 +19,11 @@ and the thread identity (how concurrent instances avoid collision).
 
 | Agent | Execution | Statefulness | Invocation | Thread identity | File:line |
 |---|---|---|---|---|---|
-| `configurator` (pod) | sync leaf | ContextVar + stateful_turn | `_pod_ctx().get()` -> `stateful_turn` or `invoke_role` | `PodSession(run, phase, tool, asset)` via ContextVar | `pod.py:589-597` |
 | `triager` (pod) | sync leaf | ContextVar + stateful_turn | `_pod_ctx().get()` -> `stateful_turn` or `invoke_role` | `PodSession(run, phase, tool, asset)` via ContextVar | `pod.py:647-653` |
+| `configurator` (phase boundary) | sync leaf | checkpointer (`stateful_turn`) | `configure_phase(...)` -> `stateful_turn("configurator", ConfiguratorSession(...), ...)` | `ConfiguratorSession(run_id)` -> `run:<run_id>:configurator`; phase is a turn, never identity | `configurator.py` |
 | `pod_graph` | StateGraph (sync `graph.invoke`) | **StateGraph (no checkpointer)** | `pod_graph.invoke(state)` | N/A (runs in worker thread per pod) | `job_agent.py:187` |
 | `job_agent` | StateGraph (sync `graph.invoke`) | **StateGraph (no checkpointer)** | `job_agent.invoke(state)` | N/A (runs in worker thread per job) | `job_agent.py:187` |
-| `ReconOrchestratorActor` | async actor | checkpointer (create_agent) | `run_session_agent` -> `arun_session_turn` | `OrchestratorSession(run_id)` | `orchestrator_agent.py:202` |
+| `ReconOrchestratorActor` (Auth Gateway) | async actor | checkpointer (create_agent) | one `run_session_agent` gateway turn -> `GatewayVerdict` | `OrchestratorSession(run_id)` | `orchestrator_agent.py` |
 | `decide_routing` (legacy) | sync leaf | invoke_role | `invoke_role("job_orchestrator", ...)` | N/A (one-shot) | `orchestrator_agent.py:110-113` |
 | `crawl_agent` | async (vendored ReAct) | stateless | `_run_agentic_crawl` loop | N/A | `crawl_agentic.py:60` |
 
@@ -140,7 +140,7 @@ resumes from chunk N's reasoning) without the overhead of a persistent actor loo
 | Scenario | Recommended pattern | Example |
 |---|---|---|
 | Agent dispatches subagents and needs cross-turn memory | **async actor** (`run_session_agent` + `AgentInbox`) | `ReconOrchestratorActor`, `HuntOrchestratorActor` |
-| Agent is a leaf with data dependencies, needs session memory | **sync leaf + `stateful_turn`** (`create_agent` with checkpointer) | `assigner`, `mechanism_typist`, `data_modeller`, `triager`, `configurator` |
+| Agent is a leaf with data dependencies, needs session memory | **sync leaf + `stateful_turn`** (`create_agent` with checkpointer) | `assigner`, `mechanism_typist`, `data_modeller`, `triager`, phase-boundary `configurator` |
 | Agent is a leaf, stateless one-shot call | **sync leaf + `invoke_role`** (no checkpointer) | `bootstrapper`, `anatomy`, `curation`, `sweep` |
 | Graph orchestrates multiple nodes with routing logic | **StateGraph without checkpointer** (in-memory; durable archive lives in the spawned agents' pooled checkpointer) | `supervisor` (see #102 for the actor-model conversion) |
 | Graph is a deterministic pipeline, short-lived | **StateGraph without checkpointer** (fault tolerance via node-level fail-open) | `pod_graph`, `job_agent` |
@@ -155,7 +155,8 @@ parameter, never agent-logic changes.
 | Consumer | Seam | Builder |
 |---|---|---|
 | `assigner` / `mechanism_typist` / `data_modeller` (analysis) | `stateful_invoke_fn` builds one middleware per run, passed through `stateful_turn` | `compaction.build_role_compaction_middleware(role_id)` |
-| `configurator` / `triager` (recon pod) | the pod-graph node's ContextVar path passes a process-wide per-role middleware through `stateful_turn` (manager keyed by `thread_id`, so re-witnesses share state) | `compaction.cached_role_compaction_middleware(role_id)` |
+| `configurator` (phase boundary) | `configure_phase` passes the cached role middleware through `stateful_turn` | `compaction.cached_role_compaction_middleware("configurator")` |
+| `triager` (recon pod) | the pod-graph node's ContextVar path passes a process-wide per-role middleware through `stateful_turn` (manager keyed by `thread_id`, so re-witnesses share state) | `compaction.cached_role_compaction_middleware("triager")` |
 | `ReconOrchestratorActor` / `HuntOrchestratorActor` / `HuntingHunterActor` | `_ensure_started` appends the middleware to `run_session_agent` (`compaction=None` auto-wires, `False` disables) | `compaction.build_role_compaction_middleware(role_id)` |
 
 The one-shot `invoke_role` leaves (bootstrapper, anatomy, curation, sweep, the

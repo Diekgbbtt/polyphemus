@@ -28,10 +28,21 @@ def test_stack_script_refuses_unknown_verbs():
     assert "exit 64" in _text()
 
 
-def test_stack_script_owns_the_stale_ttl_and_the_twice_gate():
+def test_stack_script_owns_the_twice_gate_and_drops_the_retired_selectors():
     text = _text()
-    # The stale gate's short TTL is committed HERE (never an ad-hoc override).
-    assert "RATE_LIMIT_PROFILE_TTL_S=1" in text
     # The twice gate hard-resets between runs and asserts a clean state first.
     assert "gate_twice" in text and "run-a" in text and "run-b" in text
     assert text.count("assert_clean") >= 2
+    # The functional gate is the LLM Configurator's live E2E.
+    assert "test_llm_rate_aware_recon_configurator_e2e.py" in text
+    # The deterministic-admission and recon-armed-governor selectors were
+    # retired with the mechanisms they certified; a dangling selector or a
+    # reference to a deleted gate file would be a script that lies about the
+    # tier it runs.
+    for retired in (
+        "up-stale", "gate-stale", "gate-properties",
+        "up_stale", "gate_stale", "gate_properties",
+        "test_rate_limit_admission_e2e.py",
+        "test_rate_limit_enforcement_properties_e2e.py",
+    ):
+        assert retired not in text, retired

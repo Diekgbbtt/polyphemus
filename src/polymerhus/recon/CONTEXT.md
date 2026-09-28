@@ -117,10 +117,14 @@ STATEFUL as of #94: it runs on a per-concurrent-pod session (`PodSession`, `reco
 _Avoid_: analyst, classifier.
 
 **Configurator**:
-The role that resolves a Job's command for a target; a `deterministic` template fill by default, or an `agent` mode (the Steel crawl).
-The per-pod steering-fed throttle turn retired with the mid-run steering machinery (#243, D223-12): the configurator node fills the command deterministically and no `rate_profile` input exists.
-Traffic shaping is NOT the configurator's job any more - since #238 the run's measured `TrafficPolicy` rides `extra["traffic_policy"]` into the exec seam (and a conservative action-pacing adapter for the Steel crawl), and Kali's shared per-target egress governor enforces it; the still-registered `configurator` session role (`LLM_CONFIGURATOR`) stays reserved.
-_Status_: registered `session` (`LLM_CONFIGURATOR`).
+One run-scoped, stateful LLM role (`LLM_CONFIGURATOR`) invoked at every phase
+boundary. It sees only the canonical job/input offers, resolves the target's
+`rate_limit_posture`, chooses which pods to create, and returns a closed
+`ConfiguratorDecision` containing one command per selected pod. Its session is
+`run:<run_id>:configurator`; phase is a turn, never session identity.
+The old deterministic pod node with the same name is only the technical command
+assembler: it expands configured commands and runtime placeholders, never calls
+an LLM and never decides which pods exist.
 _Avoid_: planner; mid-run routing.
 
 **Job orchestrator**:
@@ -129,7 +133,8 @@ Since #223 (T3 #242) it runs as the per-run AUTH GATEWAY
 (`orchestrator_agent.py::ReconOrchestratorActor`): one `run_session_agent` on the
 run's `OrchestratorSession` thread taking exactly ONE gateway turn before phase 0 -
 the authn loop over the armed surface - closing with the structured
-`GatewayVerdict`. `run_pipeline` constructs the actor deterministically on run start
+`GatewayVerdict`. It takes exactly one gateway turn; rate measurement belongs to
+the pipeline. `run_pipeline` constructs the actor deterministically on run start
 (never lazily, never behind a signal gate), awaits the verdict under heartbeat and a
 wall-clock bound, then configures from it: browser-only prunes the plan to the Steel
 crawl, and the selected account's identifier rides the pipeline state (`extra`
@@ -225,46 +230,49 @@ The pre-loop branch directive follows the four-way overview contract (`request` 
 An empty store with no authenticated surface is the expected shape with its own path - loop skipped, pipeline run anonymously, verdict records it; the structural marker is `overview.notes` carrying "no authenticated surface" (D223-17, settled #242); a declared surface with no accounts fail-closes by stopping.
 _Avoid_: a per-job auth loop (the job-specialised agents never authenticate, D223-5); a "coverage exhausted" verdict state (exhaustion is a failed authentication, D223-3); re-adding mid-run auth steering.
 
-## Rate-aware job admission (#238 follow-up)
+## LLM rate-aware pod configuration
 
-The vocabulary the run's traffic decision is made in. Operator runbook:
+The vocabulary the run's pod/traffic configuration is made in. Operator runbook:
 `docs/design/rate-limit-job-admission-operations.md`.
 
-**Traffic cost class** (`TrafficCostClass`, `recon/domain/traffic_admission.py`):
-How ONE canonical job relates to the measured target's traffic - `non_target` (sends nothing to the target), `bounded_http` (sends target HTTP but is tightly bounded, admitted under a conservative policy), `request_intensive` (must clear the posture, minimum-rate and projected-duration gates before it may run at all). `arjun` and `ffuf` are `request_intensive`.
-_Avoid_: a name list beside the job registry (the classification belongs to the canonical definition).
-
-**Job traffic cost** (`JobTrafficCost`):
-The mandatory, frozen cost declaration on every `JobSpec`: `cost_class`, `estimated_requests_per_input` (a controller-owned PositiveInt, never a model-facing number), `estimation_basis` (`fixed` for a measured constant, `wordlist_cardinality` for the pinned wordlist's non-empty-line count) and `cardinality_source` (the image path the count is verified against). A non-target job declares the inert sentinel `1`.
-_Avoid_: an optional or defaulted cost (a job that forgot to declare one would silently escape governance).
-
 **Rate profile** (`RateProfile`, `rate-profile/v2`):
-The stored measurement of one target's limiter: outcome, the tested bounds and threshold interval, burst, recovery, scope, behavioural hypothesis, confidence, the immutable artifact REFERENCES (relative `rate-artifact/v1:` + sha256), the operator budget and its consumption, the bypass outcome and findings, and the conservative `TrafficPolicy`. `safe_rate_per_s` is validated to EQUAL `traffic_policy.rate_per_s`, so the number admission reads is always the number the governor enforces; it is never derived from model prose or bypass status.
-_Avoid_: treating the profile as advice (it is the input every later request obeys).
+The measured limiter record persisted per run and projected into the advisory
+per-target YAML. It includes tested bounds, scope, confidence, evidence
+references, budget usage, bypass evidence, and the advisory `TrafficPolicy`.
+`safe_rate_per_s` equals the policy rate; neither is derived from model prose.
+The recon execution path no longer forwards the policy to pods.
 
-**Freshness** (`is_fresh` / `expires_at`, TTL `RATE_LIMIT_PROFILE_TTL_S`):
-A profile is an estimate at a moment. Admission re-checks freshness at the phase boundary against an INJECTED UTC clock, so a profile that expired mid-run prunes the intensive jobs with `profile_stale` instead of being enforced stale.
-_Avoid_: trusting `measured_at` arithmetic computed at a different seam (the clock is injected so the check is testable and total).
+**Posture store**:
+`data/<project_id>/rate-limit/<target_key>.yaml` under the app data root. The
+pipeline is the only writer. Agents read through the one read-only
+`rate_limit_posture` tool. Missing, stale, unreadable and unavailable are
+distinct states; unreadable is never treated as absent.
 
-**Admission decision** (`JobAdmissionDecision` + the closed `AdmissionReason` vocabulary):
-One candidate job's disposition at a phase boundary: `included` or `excluded`, always with exactly one structured `reason_code` (`admitted`, `no_inputs`, `profile_inconclusive`, `profile_failed`, `profile_stale`, `below_min_safe_rate`, `projected_duration_exceeded`, `cost_model_invalid`, `policy_missing`, `governor_refused`) and the controller-computed inputs that produced it (`cost_class`, `input_count`, `estimated_requests`, `safe_rate_per_s`, `projected_duration_s`). `decide_job_admission` is PURE and TOTAL.
-_Avoid_: free-text reasons (a pruning must be attributable to the closed vocabulary) and any bypass field (a finding cannot reach this type).
+**Configurator offer** (`ConfiguratorOffer` / `PhaseOffers`):
+One prepared `(canonical job, prepared input)` pair presented at a phase
+boundary. The id is stable (`<job_name>:<zero-based-index>`), and the model
+sees metadata/template/input preview but never auth context or source pod input.
 
-**Materialized phase** (`materialize_admitted_phase`):
-The phase the run actually executes: the INTERSECTION of the static candidate list and the admitted decisions, formed before `job_configs`, pods, runners or target traffic exist. An intensive job below the gates is absent from it, so nothing downstream can start it.
-_Avoid_: unioning the candidates with anything (in particular with any model output).
+**Configurator decision** (`ConfiguratorDecision`):
+The Configurator's closed phase plan: phase, target, posture status, zero or
+more `ReconPodProposal` rows, and rationale. A proposal selects one offered
+input and supplies its `configured_command` (`None` only for agentic jobs).
+`pods=[]` is valid.
 
-**Traffic admission envelope** (`TrafficAdmissionEnvelope`, `traffic-admission/v1`):
-The run's persisted record of the executed configuration: `profile_version`, `profile_outcome`, `effective_policy`, `candidate_phases`, `materialized_phases`, the decision rows, `event_order`, `warnings` and `refusals` (typed `TrafficRefusal` rows the GOVERNOR produced at runtime). It is written BEFORE the first runner starts; a failed write fails the run loudly rather than running an unobservable configuration.
-_Avoid_: folding it into `rate_limit` (detected posture and the downstream decision must stay separately legible), and rewriting a decision when a runtime refusal arrives (the refusal is appended; the decision stands).
+**Materialization** (`materialize_configurator_decision`):
+Pure technical validation and copying. It checks phase/target, canonical job,
+offered input, duplicate id and command shape, then attaches
+`configured_command` to copies of the prepared pod inputs. It never compares
+rate, threads, concurrency, delay or duration with the posture.
 
-**Governor permit** (`GovernorPermit` / `TargetGovernor`):
-The token reservation one HTTP flow spends before it egresses: a concurrency slot AND a rate token taken atomically on the ONE bucket keyed `(project_id, target_key)`. `release()` is idempotent and counts duplicates; the source address is lookup transport only and never enters the key. An armed policy with a raising or missing governor is refused LOCALLY (503, zero upstream requests).
-_Avoid_: keying by source IP (two namespaces would each get the whole allowance) and re-enabling `max_concurrency` as inert data (that is why the wire contract is v2).
+**Configured command**:
+The command chosen by the Configurator. The pod expands only runtime
+placeholders (`{target}`, `{domain}`, `{baseurl}`, `{endpoints}`, `{session}`,
+`{auth_flags}`) and executes it. No runtime TrafficPolicy correction follows.
 
 **Bypass finding**:
-The evidence-gated outcome of one bounded variant probe: `confirmed` only when all four gates hold (the canonical request triggers the measured limiter, the variant materially changes limiter state, application semantics stay equivalent, and the differential repeats independently). It is EVIDENCE ONLY - it is persisted and named in the verdict, and it never changes the effective policy, the admission decision or the materialized phase list.
-_Avoid_: "bypass enables/restores a job" (there is no such path, and the verdict's closed contract cannot express one).
+Evidence-only output of a future explicit bypass workflow. It is never bound to
+the baseline auth gateway or Configurator and never changes backend execution.
 
 ## Prompts, skills, and the loader
 
@@ -355,18 +363,30 @@ Every LLM construction (`app/llm/providers.py::build_chat_model`) sends a genero
 The context string threaded end-to-end into every pod for the designed-not-built context-memory scaffold; today always the empty string.
 _Status_: scaffolded, not built.
 
-**Pruning precedes materialization** (#238 follow-up):
-Admission runs AFTER the canonical consumption set is derived and BEFORE `job_configs`, pods, runners or target traffic exist. A pruned intensive job is absent from the materialized phase, has no runner record and produces no target traffic - the property is structural, not a runner-side check.
-_Avoid_: a late gate (a pod that starts and is then "cancelled" has already spent the operator's allowance).
+**Atomic Configurator materialization**:
+A phase runs only after the whole `ConfiguratorDecision` has passed technical
+validation against the offered jobs/inputs. One invalid proposal rejects the
+phase; no valid subset is executed. `pods=[]` is a valid empty phase.
+_Avoid_: partial acceptance or unioning candidates with model output.
 
-**The model has no admission authority** (#238 follow-up):
-`GatewayVerdict` and `RateLoopVerdict` are CLOSED contracts (`extra="forbid"`): a rate, concurrency, budget, admission decision, job name, cost class or phase list cannot be expressed in them, so no prompt injection can enlarge a limit or reintroduce a pruned job. The controller forms the materialized phase from the static registry and the admitted decisions alone.
-_Avoid_: prompt instructions as the boundary (the boundary is the schema).
+**Runtime validates executability, not prudence**:
+The runtime checks canonical references and command shape only. It does not
+compare chosen rate, threads, concurrency, delay or duration with the posture,
+and no TrafficPolicy is forwarded to correct/refuse a configured pod command.
+_Avoid_: a hidden numeric checker presented as prompt guidance.
 
-**Armed governance is fail-closed** (#238 follow-up):
-With a policy armed, an unenforceable policy, a missing governor or a governor exception refuses the flow LOCALLY - a 503 with no upstream request - and Kali refuses before running anything (`returncode=78`) when the namespace, the switch or the proxy readiness probe fails. `KALI_HTTP_CAPTURE_ENABLED=false` disables storage only and never disarms governance.
-_Avoid_: fail-open on the enforcement path (target traffic can exceed an authorized policy exactly when enforcement is unhealthy).
+**Advisory posture**:
+`stats["rate_limit"]` and the per-target YAML are read-only evidence for the
+Configurator and later evaluation. A corrupt file is `unreadable`, never
+equivalent to absence. Only the controller writes the file.
+_Avoid_: treating the posture as runtime-enforced truth.
 
-**A bypass is evidence, never authority** (#238 follow-up):
-A confirmed variant is persisted and named; it changes no limit, no admission decision and no materialized phase. Reintroducing an excluded job requires the measured posture to change, and nothing else.
-_Avoid_: any "confirmed bypass unlocks X" path.
+**Auth Gateway and Configurator are distinct authorities**:
+`ReconOrchestratorActor` ends at `GatewayVerdict`; it owns no Vegeta mapping or
+pod plan. The phase Configurator owns pod selection and command parameters.
+_Avoid_: a second rate turn on the auth actor.
+
+**Bypass is dormant evidence**:
+Baseline mapping performs no bypass probing. Bypass primitives remain catalogue
+knowledge for a future explicit workflow and are bound to no baseline role.
+_Avoid_: interpreting a bypass as permission to increase recon traffic.

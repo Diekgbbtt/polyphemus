@@ -1,4 +1,4 @@
-"""The deterministic local model provider for the functional E2E (#238 Task 9).
+"""The deterministic local model provider for the functional E2E.
 
 The functional tier must traverse the REAL actor loop, so only model inference
 is replaced: this process speaks the OpenAI-compatible surface the production
@@ -52,51 +52,28 @@ this one identifier and refuses everything else loudly."""
 
 AUTH_TOOLS = ("auth_store", "load_skill", "write_skill")
 KALI_EXEC_TOOLS = ("execute_command", "steel_exec")
-RATE_TOOLS = ("map_rate_limit", "test_rate_limit_variant")
-#: The two structured-output tools of the negotiated `GatewayVerdict | RateLoopVerdict`
-#: union (`langchain.agents.structured_output.ToolStrategy` names each variant after
-#: its class), plus the triager's own single-schema tool.
-ORCHESTRATOR_VERDICT_TOOLS = ("GatewayVerdict", "RateLoopVerdict")
+GATEWAY_VERDICT_TOOL = "GatewayVerdict"
+CONFIGURATOR_DECISION_TOOL = "ConfiguratorDecision"
+POSTURE_TOOL = "rate_limit_posture"
 TRIAGER_SCHEMA_TOOL = "_ObservationBatch"
 
-ORCHESTRATOR_TOOLS = frozenset(
-    (*AUTH_TOOLS, *KALI_EXEC_TOOLS, *RATE_TOOLS, *ORCHESTRATOR_VERDICT_TOOLS)
-)
-TRIAGER_TOOLS = frozenset((*AUTH_TOOLS, TRIAGER_SCHEMA_TOOL))
-
-RATE_PROCEDURE = "performing-api-rate-limiting-bypass"
 AUTH_SKILL = "authn"
-
-#: The target alias that makes the rate turn fail at the model boundary. It is a
-#: property of the CONVERSATION (the brief names the target), never a test-side
-#: switch and never a production fault flag: the E2E exercises the production
-#: actor's failure path by aiming a run at this alias, exactly as it would aim
-#: one at any other target.
-RATE_STAGE_ERROR_TARGET = "rate-stage-error"
 
 # --- the turn vocabulary --------------------------------------------------------
 
 TURN_GATEWAY = "gateway"
-TURN_RATE = "rate"
+TURN_CONFIGURATOR = "configurator"
 TURN_TRIAGER = "triager"
 
 _GATEWAY_BRIEF = "Auth gateway for project"
-_RATE_BRIEF = "Rate-limit mapping for project"
+_CONFIGURATOR_BRIEF = "Configure recon phase"
 _CANDIDATE_RE = re.compile(
     r"Candidate account \(most recently updated usable\): (.+?)\.(?=\s|$)")
 _DIRECTIVE_RE = re.compile(r"Branch directive: (\w+)\.")
 
-#: The structured-output tools that TERMINATE their turn (the negotiated union's
-#: two variants and the triager's own batch schema).
-TERMINAL_TOOLS = frozenset((*ORCHESTRATOR_VERDICT_TOOLS, TRIAGER_SCHEMA_TOOL))
-
-#: The one prose the rate turn closes with. Deliberately contains no number: the
-#: controller measured everything, and a model-authored figure is not a fact.
-_RATE_INTERPRETATION = (
-    "The controller mapped the target's limiter and bounded the bypass probes; "
-    "any confirmed variant is recorded as evidence only and never applied to "
-    "this run's traffic."
-)
+TERMINAL_TOOLS = frozenset((
+    GATEWAY_VERDICT_TOOL, CONFIGURATOR_DECISION_TOOL, TRIAGER_SCHEMA_TOOL,
+))
 
 
 class UnknownState(Exception):
@@ -221,12 +198,12 @@ def _last_user_brief(messages: list[dict]) -> str:
 
 
 def classify_session(tool_names: list[str]) -> str | None:
-    """`orchestrator`, `triager`, or None for a tool surface this fixture does
-    not serve. The surface - not the prompt - is the authority: the actor binds
-    the two rate tools, the pod's triager binds its own schema tool."""
+    """The production role whose fixed tool surface this request carries."""
     bound = set(tool_names)
-    if set(RATE_TOOLS) & bound:
-        return "orchestrator"
+    if {POSTURE_TOOL, CONFIGURATOR_DECISION_TOOL} <= bound:
+        return "configurator"
+    if GATEWAY_VERDICT_TOOL in bound and set(AUTH_TOOLS) <= bound:
+        return "gateway"
     if TRIAGER_SCHEMA_TOOL in bound:
         return "triager"
     return None
@@ -238,16 +215,21 @@ def classify_turn(request: dict) -> str:
     messages = request.get("messages") or []
     if session == "triager":
         return TURN_TRIAGER
-    if session == "orchestrator":
+    if session == "configurator":
         brief = _last_user_brief(messages)
-        if _RATE_BRIEF in brief:
-            return TURN_RATE
+        if _CONFIGURATOR_BRIEF in brief:
+            return TURN_CONFIGURATOR
+        raise UnknownState(
+            "configurator request does not carry the phase-offer brief",
+            _diagnostic(request, session="configurator", turn=None),
+        )
+    if session == "gateway":
+        brief = _last_user_brief(messages)
         if _GATEWAY_BRIEF in brief:
             return TURN_GATEWAY
         raise UnknownState(
-            "orchestrator request carries neither the auth-gateway nor the "
-            "rate-limit brief",
-            _diagnostic(request, session="orchestrator", turn=None),
+            "gateway request does not carry the auth-gateway brief",
+            _diagnostic(request, session="gateway", turn=None),
         )
     raise UnknownState(
         "the request binds a tool surface this fixture does not serve",
@@ -366,78 +348,109 @@ def _gateway_envelope(messages: list[dict], brief: str) -> tuple[str, dict]:
     }
 
 
-# --- the rate turn --------------------------------------------------------------
+# --- the Configurator turn -------------------------------------------------------
 
-#: The ONE bounded variant the fixture probes when the mapping reports a limiter.
-#: A route-shape hypothesis whose typed payload is a real, transported mutation.
-_VARIANT_ID = "e2e-endpoint-shape-1"
-_VARIANT_MUTATION = {
-    "variant_id": _VARIANT_ID,
-    "family": "endpoint-shape",
-    "description": "trailing-slash route shape, one canonical resource",
-    "identity_mutation": False,
-    "payload": {"kind": "path", "mutation_id": "e2e-path-1", "suffix": "/"},
+_POSTURE_RE = re.compile(r"Resolve\s+the\s+posture", re.IGNORECASE)
+_OFFERS_RE = re.compile(
+    r"Offered inputs \(JSON\):\s*(\{.*?\})\s*Resolve the posture",
+    re.DOTALL,
+)
+_PACE_FLAG = {
+    "httpx": "-rl",
+    "katana": "-rl",
+    "ffuf": "-rate",
+    "arjun": "--rate-limit",
 }
 
-_SIGNAL_VOCABULARY = frozenset({"waf_protected", "waf_detection", "rate_limited"})
 
-
-def _rate_envelope(messages: list[dict], brief: str) -> tuple[str, dict]:
-    if RATE_STAGE_ERROR_TARGET in brief:
-        # The conversation aims the run at the failing alias: the model
-        # boundary is unavailable for this target, deterministically.
-        raise ServiceUnavailable(
-            "the deterministic provider is unavailable for this target",
-            {"reason": "rate_stage_error_target"},
-        )
-    calls = _calls(messages)
-    if not _has(calls, "load_skill", name=RATE_PROCEDURE):
-        return "load_skill", {"name": RATE_PROCEDURE}
-    if _count(calls, "map_rate_limit") == 0:
-        return "map_rate_limit", {}
-    mapped = _paired_results(messages, "map_rate_limit")[-1]
-    if not isinstance(mapped, dict):
+def _configurator_offer_payload(brief: str) -> dict:
+    match = _OFFERS_RE.search(brief)
+    if not match:
         raise UnknownState(
-            "the mapping tool result is not a structured control object",
-            {"reason": "unstructured_map_result"},
+            "the Configurator brief carries no offered-input JSON",
+            {"reason": "no_offer_payload"},
         )
-    probes = _paired_results(messages, "test_rate_limit_variant")
-    if mapped.get("outcome") == "mapped" and not probes:
-        return "test_rate_limit_variant", {"mutation": dict(_VARIANT_MUTATION)}
+    try:
+        payload = json.loads(match.group(1))
+    except json.JSONDecodeError as exc:
+        raise UnknownState(
+            "the Configurator offer payload is not valid JSON",
+            {"reason": "invalid_offer_payload", "detail": str(exc)},
+        ) from exc
+    if not isinstance(payload, dict):
+        raise UnknownState(
+            "the Configurator offer payload is not an object",
+            {"reason": "invalid_offer_payload"},
+        )
+    return payload
 
-    outcome = mapped.get("outcome")
-    experiment_ids = [e for e in (mapped.get("experiment_ids") or [])
-                      if isinstance(e, str)]
-    signals = [s for s in (mapped.get("signals") or []) if s in _SIGNAL_VOCABULARY]
-    confirmed: list[str] = []
-    bypass_outcome = "inconclusive"
-    if probes and isinstance(probes[-1], dict):
-        finding = probes[-1]
-        experiment_ids.extend(
-            e for e in (finding.get("variant_experiment_ids") or [])
-            if isinstance(e, str))
-        canonical = finding.get("canonical_experiment_id")
-        if isinstance(canonical, str) and canonical not in experiment_ids:
-            experiment_ids.append(canonical)
-        bypass_outcome = finding.get("outcome") or "inconclusive"
-        variant_id = finding.get("variant_id")
-        if bypass_outcome == "confirmed" and isinstance(variant_id, str):
-            confirmed.append(variant_id)
-    elif outcome in ("no_limiter", "failed", None):
-        bypass_outcome = "inconclusive"
-    return "RateLoopVerdict", {
-        "outcome": outcome or "inconclusive",
-        "bypass_outcome": bypass_outcome,
-        "confirmed_variant_ids": confirmed,
-        "evidence_experiment_ids": experiment_ids,
-        "signals": signals,
-        "interpretation": _RATE_INTERPRETATION,
-        "rationale": (
-            "The deterministic controller owns every measurement. The verdict "
-            "restates the mapping outcome and names only the experiment ids and "
-            "variant ids the probes actually returned; no finding was applied "
-            "to the run's traffic."
-        ),
+
+def _configurator_command(offer: dict, safe_rate: float | None) -> str | None:
+    if offer.get("configurator_mode") == "agent":
+        return None
+    template = str(offer.get("command_template") or "")
+    if not template:
+        template = f"echo {offer.get('input_id')}"
+    flag = _PACE_FLAG.get(str(offer.get("tool") or ""))
+    if flag is None:
+        return template
+    rate = 10 if safe_rate is None or safe_rate >= 5 else 1
+    return f"{template} {flag} {rate}"
+
+
+def _configurator_envelope(messages: list[dict], brief: str) -> tuple[str, dict]:
+    payload = _configurator_offer_payload(brief)
+    phase = int(payload.get("phase"))
+    target_key = str(payload.get("target_key") or "")
+    offers = payload.get("offers") or []
+
+    calls = _calls(messages)
+    if not _has(calls, POSTURE_TOOL):
+        return POSTURE_TOOL, {"command": "resolve", "host": target_key}
+    posture_result = _paired_results(messages, POSTURE_TOOL)[-1]
+    if not isinstance(posture_result, dict):
+        raise UnknownState(
+            "the posture tool did not return a structured result",
+            {"reason": "unstructured_posture_result"},
+        )
+    status = str(posture_result.get("status") or "store_unavailable")
+    if status == "unreadable" or status == "store_unavailable":
+        pods = []
+        rationale = "The posture is unreadable; no target-facing pod is safe."
+    else:
+        posture = posture_result.get("posture") or {}
+        safe_rate = posture.get("safe_rate_per_s")
+        try:
+            safe_rate = float(safe_rate) if safe_rate is not None else None
+        except (TypeError, ValueError):
+            safe_rate = None
+        pods = []
+        for offer in offers:
+            if not isinstance(offer, dict):
+                continue
+            if (
+                safe_rate is not None
+                and safe_rate < 5
+                and offer.get("cost_class") == "request_intensive"
+            ):
+                continue
+            pods.append({
+                "job_name": offer.get("job_name"),
+                "input_id": offer.get("input_id"),
+                "command": _configurator_command(offer, safe_rate),
+                "rationale": "chosen from the measured posture",
+            })
+        rate_text = "unknown" if safe_rate is None else f"{safe_rate:g}"
+        rationale = (
+            f"The posture safe rate is {rate_text}; the selected pod aggregate "
+            "uses the command controls documented by the Configurator skill."
+        )
+    return CONFIGURATOR_DECISION_TOOL, {
+        "phase": phase,
+        "target_key": target_key,
+        "posture_status": status,
+        "pods": pods,
+        "rationale": rationale,
     }
 
 
@@ -459,8 +472,8 @@ def _next_envelope(request: dict) -> tuple[str, str, dict]:
     messages = request.get("messages") or []
     if turn == TURN_GATEWAY:
         name, args = _gateway_envelope(messages, _last_user_brief(messages))
-    elif turn == TURN_RATE:
-        name, args = _rate_envelope(messages, _last_user_brief(messages))
+    elif turn == TURN_CONFIGURATOR:
+        name, args = _configurator_envelope(messages, _last_user_brief(messages))
     else:
         name, args = _triager_envelope(messages)
     return turn, name, args
