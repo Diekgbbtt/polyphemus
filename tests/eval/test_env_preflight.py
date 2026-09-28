@@ -8,6 +8,7 @@ keyset drift (added / extra / required-still-missing). These tests cross the
 from __future__ import annotations
 
 import importlib.util
+import re
 import sys
 from pathlib import Path
 
@@ -134,6 +135,40 @@ def test_empty_required_value_counts_as_missing(tmp_path: Path, preflight) -> No
     assert result.exit_code != 0
 
 
+@pytest.mark.parametrize("value", ['""', "''", '"  "', "' '", "   ", "\t"])
+def test_required_blank_values_count_as_missing(
+    tmp_path: Path, preflight, value: str
+) -> None:
+    example = write(tmp_path / ".env.example", "REQ=fillme\n")
+    env = write(tmp_path / ".env", f"REQ={value}\n")
+    overlay = write(
+        tmp_path / "overlay.yml", "services:\n  a:\n    environment:\n      REQ: ${REQ:?REQ is required}\n"
+    )
+
+    result = preflight.run(env, example, overlay)
+
+    # Compose's env reader treats quoted-empty and whitespace-only as empty,
+    # so `${REQ:?}` rejects them exactly like an unset or empty value.
+    assert result.required_missing == ["REQ"]
+    assert result.exit_code != 0
+
+
+@pytest.mark.parametrize("value", ["x", '"x"', "'x'", "  x  "])
+def test_required_nonblank_values_pass(
+    tmp_path: Path, preflight, value: str
+) -> None:
+    example = write(tmp_path / ".env.example", "REQ=fillme\n")
+    env = write(tmp_path / ".env", f"REQ={value}\n")
+    overlay = write(
+        tmp_path / "overlay.yml", "services:\n  a:\n    environment:\n      REQ: ${REQ:?REQ is required}\n"
+    )
+
+    result = preflight.run(env, example, overlay)
+
+    assert result.required_missing == []
+    assert result.exit_code == 0
+
+
 def test_second_run_is_idempotent(tmp_path: Path, preflight) -> None:
     example = write(tmp_path / ".env.example", "AAA=one\nBBB=two\n")
     env = write(tmp_path / ".env", "AAA=mine\n")
@@ -157,10 +192,13 @@ def test_required_set_comes_from_the_overlay_not_a_second_list(
         "services:\n  a:\n    environment:\n"
         "      FOO: ${FOO:?FOO is required}\n"
         "      BAR: ${BAR:-default}\n"
-        "      BAZ: ${BAZ:?custom message}\n",
+        "      BAZ: ${BAZ:?custom message}\n"
+        "      QUX: ${QUX?colon-less required form}\n"
+        "      BAT: ${BAT:=assign-default form}\n"
+        "      LIT: $${ESCAPED:?renders literally, no requirement}\n",
     )
 
-    assert preflight.required_vars(overlay) == ["BAZ", "FOO"]
+    assert preflight.required_vars(overlay) == ["BAZ", "FOO", "QUX"]
 
 
 def test_real_overlay_required_set_matches_the_no_default_contract(
@@ -170,26 +208,26 @@ def test_real_overlay_required_set_matches_the_no_default_contract(
 
     required = preflight.required_vars(overlay)
 
-    # app/llm/providers.py::resolve_role reads each role's LLM_<KEY> with no
-    # fallback; app/config.py hard-reads the five connection vars. Provider
-    # API keys are deliberately absent: they are per-provider and app boot
-    # (validate_llm_config) already names the missing one.
-    assert required == [
-        "KALI_MCP_URL",
-        "LLM_ANALYSER",
-        "LLM_CONFIGURATOR",
-        "LLM_CRAWLER",
-        "LLM_HUNTING_HUNTER",
-        "LLM_HUNTING_ORCHESTRATOR",
-        "LLM_JOB_ORCHESTRATOR",
-        "LLM_POD_RUNNER",
-        "LLM_POD_TRIAGER",
-        "LLM_TRIAGER",
-        "NEO4J_PASSWORD",
+    # Derived from the real contract, not a second literal: the five hard
+    # `os.environ[...]` reads in app/config.py plus one key per distinct
+    # `model_key` across ROLES and HUNTING_ROLES in app/llm/providers.py.
+    # Provider API keys are deliberately absent: they are per-provider and app
+    # boot (validate_llm_config) already names the missing one.
+    config_src = (REPO_ROOT / "src" / "polymerhus" / "app" / "config.py").read_text(
+        encoding="utf-8"
+    )
+    hard_reads = set(re.findall(r'os\.environ\["([A-Za-z_][A-Za-z0-9_]*)"\]', config_src))
+    from polymerhus.app.llm.providers import HUNTING_ROLES, ROLES
+
+    role_keys = {role.model_key for role in ROLES + HUNTING_ROLES}
+    assert hard_reads == {
         "NEO4J_URI",
         "NEO4J_USER",
+        "NEO4J_PASSWORD",
         "POSTGRES_DSN",
-    ]
+        "KALI_MCP_URL",
+    }
+    assert required == sorted(hard_reads | role_keys)
 
 
 def test_real_example_as_key_source(tmp_path: Path, preflight) -> None:
@@ -253,3 +291,49 @@ def test_cli_missing_env_file_is_a_usage_error(
 
     assert rc == 2
     assert "not found" in capsys.readouterr().err
+
+
+def test_cli_missing_overlay_is_a_usage_error(
+    tmp_path: Path, preflight, capsys: pytest.CaptureFixture[str]
+) -> None:
+    example = write(tmp_path / ".env.example", "AAA=one\n")
+    env = write(tmp_path / ".env", "AAA=one\n")
+
+    rc = preflight.main(
+        [str(env), "--example", str(example), "--overlay", str(tmp_path / "nope.yml")]
+    )
+
+    assert rc == 2
+    assert "not found" in capsys.readouterr().err
+
+
+def test_append_preserves_crlf_newlines(tmp_path: Path, preflight) -> None:
+    example = write(tmp_path / ".env.example", "AAA=one\nBBB=two\n")
+    env = tmp_path / ".env"
+    env.write_bytes(b"AAA=mine\r\n")
+    overlay = write(tmp_path / "overlay.yml", "services: {}\n")
+
+    result = preflight.run(env, example, overlay)
+
+    assert result.added == ["BBB"]
+    raw = env.read_bytes()
+    assert b"BBB=two\r\n" in raw
+    assert b"\n" not in raw.replace(b"\r\n", b"")  # no LF/CRLF mixing
+
+
+def test_marker_block_is_not_repeated(tmp_path: Path, preflight) -> None:
+    example = write(tmp_path / ".env.example", "AAA=one\nBBB=two\n")
+    env = write(
+        tmp_path / ".env",
+        f"AAA=mine\n{preflight.MARKER}\nBBB=stale-removed-by-operator\n",
+    )
+    overlay = write(tmp_path / "overlay.yml", "services: {}\n")
+    env.write_text(
+        env.read_text(encoding="utf-8").replace("BBB=stale-removed-by-operator\n", ""),
+        encoding="utf-8",
+    )
+
+    result = preflight.run(env, example, overlay)
+
+    assert result.added == ["BBB"]
+    assert env.read_text(encoding="utf-8").count(preflight.MARKER) == 1

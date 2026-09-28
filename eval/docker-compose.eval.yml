@@ -5,7 +5,7 @@
 # failure. It makes the instance `.env` mandatory (`required: true`) and
 # re-declares every variable the app reads without a fallback with fail-loud
 # required-variable interpolation, so a stale `.env` fails `config`/`up`
-# the variable instead of booting on a fallback.
+# naming the variable instead of booting on a fallback.
 #
 # Required set, from the real contract rather than by guess:
 # - `NEO4J_URI`, `NEO4J_USER`, `NEO4J_PASSWORD`, `POSTGRES_DSN`, `KALI_MCP_URL`:
