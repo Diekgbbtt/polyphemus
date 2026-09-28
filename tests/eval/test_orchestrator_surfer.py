@@ -357,6 +357,31 @@ class StaticTrialLog:
         return self._records
 
 
+def test_file_trial_log_surfaces_an_invalid_record(tmp_path) -> None:
+    # A corrupt record is skipped, never fatal, but it is named on the log seam
+    # so the operator sees it rather than an unexplained missing trigger.
+    good = tmp_path / "runs" / "comfyui" / "trial-1"
+    good.mkdir(parents=True)
+    (good / "trial.yaml").write_text("trial_id: trial-1\n", encoding="utf-8")
+    broken = tmp_path / "runs" / "comfyui" / "trial-2"
+    broken.mkdir(parents=True)
+    (broken / "trial.yaml").write_text("trial_id: [unclosed\n", encoding="utf-8")
+    non_mapping = tmp_path / "runs" / "comfyui" / "trial-3"
+    non_mapping.mkdir(parents=True)
+    (non_mapping / "trial.yaml").write_text("- just\n- a list\n", encoding="utf-8")
+
+    logs: list[dict] = []
+    log = surfer.FileTrialLog(tmp_path / "runs", log=logs.append)
+
+    records = log.records()
+
+    assert [r["trial_id"] for r in records] == ["trial-1"]
+    invalid = [rec for rec in logs if rec.get("event") == "trial_record_invalid"]
+    assert len(invalid) == 2
+    assert {Path(rec["path"]).name for rec in invalid} == {"trial.yaml"}
+    assert {Path(rec["path"]).parent.name for rec in invalid} == {"trial-2", "trial-3"}
+
+
 def test_terminate_touches_no_command_runner_and_writes_no_hold(
     tmp_path, recording_runner
 ) -> None:
@@ -530,6 +555,30 @@ def test_a_code_change_repair_attempt_escalates_and_is_never_applied(tmp_path) -
     assert len(state.unresolved_holds()) == 1
 
 
+def test_an_unsupported_repair_is_handled_once(tmp_path) -> None:
+    # A repair outside the bounded set escalates structurally; that escalation
+    # is recorded so the same trigger is not re-decided on the next cycle.
+    state = alignment.AlignmentState(tmp_path / "alignment.yaml")
+    asserter = StaticAsserter(state_with(failed_trigger()))
+    decider = StaticDecider(
+        surfer.SurferDecision(surfer.FIX, repair="edit_source", reason="patch the bug")
+    )
+    engine = make_surfer(
+        asserter, decider, tmp_path=tmp_path, repair_kit=FakeRepairKit(), state=state
+    )
+
+    first = engine.cycle()
+    second = engine.cycle()
+
+    assert first.escalated is True
+    assert second.no_op is True
+    assert second.hold is None
+    assert len(decider.requests) == 1
+    assert len(state.unresolved_holds()) == 1
+    handled = state.applied_for(surfer.HANDLED_SHA, surfer.HANDLED_FINGERPRINT)
+    assert surfer.trigger_key(asserter.state.triggers[0]) in handled
+
+
 def test_an_unknown_decision_kind_escalates(tmp_path) -> None:
     asserter = StaticAsserter(state_with(failed_trigger()))
     decider = StaticDecider(surfer.SurferDecision("patch_code", reason="rewrite the hunter"))
@@ -541,6 +590,26 @@ def test_an_unknown_decision_kind_escalates(tmp_path) -> None:
     assert outcome.hold is not None
     assert "patch_code" in outcome.hold.rationale
     assert len(state.unresolved_holds()) == 1
+
+
+def test_an_unknown_decision_kind_is_handled_once(tmp_path) -> None:
+    # The structural escalation is recorded like any other decision, so an
+    # unchanged trigger does not re-prompt the decider every cycle.
+    state = alignment.AlignmentState(tmp_path / "alignment.yaml")
+    asserter = StaticAsserter(state_with(failed_trigger()))
+    decider = StaticDecider(surfer.SurferDecision("patch_code", reason="rewrite the hunter"))
+    engine = make_surfer(asserter, decider, tmp_path=tmp_path, state=state)
+
+    first = engine.cycle()
+    second = engine.cycle()
+
+    assert first.escalated is True
+    assert second.no_op is True
+    assert second.hold is None
+    assert len(decider.requests) == 1
+    assert len(state.unresolved_holds()) == 1
+    handled = state.applied_for(surfer.HANDLED_SHA, surfer.HANDLED_FINGERPRINT)
+    assert surfer.trigger_key(asserter.state.triggers[0]) in handled
 
 
 def test_a_supported_repair_the_kit_cannot_apply_escalates(tmp_path) -> None:

@@ -102,8 +102,16 @@ def parse_verdict(
         )
     confidence = _confidence(row["confidence"], vuln_id)
     matched = _matched(row["matched"], vuln_id)
-    _check_identity(row["eval_sha"], eval_sha, "eval_sha")
-    _check_identity(row["stack_fingerprint"], stack_fingerprint, "stack_fingerprint")
+    subagents.check_identity(
+        row["eval_sha"], eval_sha, "eval_sha", error=VerdictError, noun="verdict"
+    )
+    subagents.check_identity(
+        row["stack_fingerprint"],
+        stack_fingerprint,
+        "stack_fingerprint",
+        error=VerdictError,
+        noun="verdict",
+    )
 
     chain: evidence.EvidenceChain | None = None
     raw_chain = row.get("evidence_chain")
@@ -258,20 +266,6 @@ def _confidence(raw: object, vuln_id: str) -> float:
     if not 0.0 <= value <= 1.0:
         raise VerdictError(f"verdict row {vuln_id}: confidence must be within 0.0-1.0")
     return value
-
-
-def _check_identity(actual: object, expected: str | None, label: str) -> None:
-    if not expected:
-        raise VerdictError(
-            f"{label}: the trial record carries no {label}; a verdict must never "
-            "invent it"
-        )
-    if not actual:
-        raise VerdictError(f"{label}: is required on every verdict row")
-    if str(actual) != expected:
-        raise VerdictError(
-            f"{label}: {actual!r} does not match the trial record's {expected!r}"
-        )
 
 
 def _non_empty(raw: object, label: str) -> str:

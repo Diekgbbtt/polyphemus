@@ -80,6 +80,8 @@ def _diagnosis_row(vuln_id: str = "v1") -> dict:
         "evidences": [{"source": "s", "ref": "r", "note": "n"}],
         "closest_issue": None,
         "proposed_issue": {"title": "gap", "body": "b", "labels": []},
+        "eval_sha": EVAL_SHA,
+        "stack_fingerprint": FP,
     }
 
 
@@ -297,6 +299,8 @@ def test_materialize_assembles_the_full_trial_tree(tmp_path) -> None:
                 "evidences": [{"source": "s", "ref": "r", "note": "n"}],
                 "closest_issue": None,
                 "proposed_issue": {"title": "gap", "body": "b", "labels": []},
+                "eval_sha": EVAL_SHA,
+                "stack_fingerprint": FP,
             }
         ],
     )
@@ -484,6 +488,8 @@ def test_materialize_copies_a_present_diagnoses_file(tmp_path) -> None:
                 "evidences": [{"source": "s", "ref": "r", "note": "n"}],
                 "closest_issue": None,
                 "proposed_issue": {"title": "gap", "body": "b", "labels": []},
+                "eval_sha": EVAL_SHA,
+                "stack_fingerprint": FP,
             }
         ],
     )
@@ -586,6 +592,38 @@ def test_materialize_rejects_a_defective_diagnosis_before_the_copy(tmp_path) -> 
     assert excinfo.value.failure == "diagnoses_invalid"
     # It failed before landing anything in the authoritative tree.
     assert not (tmp_path / "store" / "jetlinks-1").exists()
+
+
+def test_materialize_rejects_a_diagnosis_with_an_invented_identity(tmp_path) -> None:
+    # Every diagnosis row must carry the trial record's SHAs, exactly like a
+    # verdict row; an invented or missing one never lands in the store.
+    invented = _diagnosis_row()
+    invented["eval_sha"] = "invented-sha"
+    trial_dir, data_root = _make_trial(
+        tmp_path, rows=[_verdict_row(identified="missed")], diagnoses=[invented]
+    )
+
+    with pytest.raises(store.StoreError) as excinfo:
+        store.materialize(
+            trial_dir, store=tmp_path / "store", data_root=data_root, files=FileStore()
+        )
+
+    assert excinfo.value.failure == "diagnoses_invalid"
+    assert "eval_sha" in str(excinfo.value)
+    assert not (tmp_path / "store" / "jetlinks-1").exists()
+
+    absent = _diagnosis_row()
+    del absent["eval_sha"]
+    (trial_dir / "diagnoses.yaml").write_text(
+        yaml.safe_dump([absent], sort_keys=False), encoding="utf-8"
+    )
+
+    with pytest.raises(store.StoreError) as excinfo:
+        store.materialize(
+            trial_dir, store=tmp_path / "store", data_root=data_root, files=FileStore()
+        )
+
+    assert excinfo.value.failure == "diagnoses_invalid"
 
 
 def test_materialize_rejects_an_unpaired_empty_diagnoses(tmp_path) -> None:

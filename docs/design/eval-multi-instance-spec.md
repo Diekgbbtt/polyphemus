@@ -170,9 +170,12 @@ Decision-rich shapes (from the designs, not from code):
   evidences: [{source, ref, note}]
   closest_issue: {repo, number, title, rationale} | null
   proposed_issue: {title, body, labels} | null
+  eval_sha: string             # copied from the trial record, never invented
+  stack_fingerprint: string     # copied from the trial record, never invented
 ```
 
 More failure modes are expected, particularly in the analysis layer; they are recorded as a future extension once the corpus is large enough to cite them.
+Like a verdict row, every diagnosis row carries the trial record's `eval_sha` and `stack_fingerprint`; a missing or mismatched identity is refused on write.
 
 ### Assessment
 

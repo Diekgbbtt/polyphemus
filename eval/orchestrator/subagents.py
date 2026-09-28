@@ -49,6 +49,33 @@ def non_empty(raw: object, label: str, *, error: type[Exception]) -> str:
     return raw
 
 
+def check_identity(
+    actual: object,
+    expected: str | None,
+    label: str,
+    *,
+    error: type[Exception],
+    noun: str,
+) -> None:
+    """Refuse an absent expected identity or a row value that invents one (D32).
+
+    Shared by the verdict and diagnosis schemas so the two can never drift: a
+    row's `eval_sha`/`stack_fingerprint` must be present, non-empty, and exactly
+    the trial record's value.
+    """
+    if not expected:
+        raise error(
+            f"{label}: the trial record carries no {label}; a {noun} must never "
+            "invent it"
+        )
+    if not actual:
+        raise error(f"{label}: is required on every {noun} row")
+    if str(actual) != expected:
+        raise error(
+            f"{label}: {actual!r} does not match the trial record's {expected!r}"
+        )
+
+
 def common_fields(request: object) -> dict[str, str]:
     """Render the fields both request types carry; a missing value is empty."""
     values: dict[str, str] = {}
