@@ -189,6 +189,8 @@ class RunErrorEvidence:
     def __call__(self) -> tuple[FailureEvidence, ...]:
         evidence: list[FailureEvidence] = []
         for record in self.trial_log.records():
+            if not isinstance(record, Mapping):
+                continue
             instance_id = str(record.get("instance_id") or "")
             target_id = record.get("target_id")
             project_id = record.get("project_id")

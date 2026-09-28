@@ -396,6 +396,16 @@ def test_a_live_run_error_credit_exhaustion_becomes_a_trigger() -> None:
     assert state.triggers[0].signal == surfer.CREDIT_EXHAUSTION
 
 
+def test_run_error_evidence_skips_a_non_mapping_record() -> None:
+    class ExplodingApi:
+        def __call__(self, call):  # pragma: no cover - never reached
+            raise AssertionError("no API call for a malformed record")
+
+    reader = surfer.RunErrorEvidence(ExplodingApi(), StaticTrialLog(["oops"]))
+
+    assert reader() == ()
+
+
 def test_run_error_evidence_is_fail_soft_on_an_api_error() -> None:
     record = {
         "instance_id": "arm-a",
