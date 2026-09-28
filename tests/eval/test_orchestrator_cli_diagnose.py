@@ -41,27 +41,25 @@ def _write_setup(tmp_path, payload) -> str:
     return str(path)
 
 
-def _write_trial(tmp_path, *, verdicts_rows=None) -> str:
+def _write_trial(tmp_path, *, verdicts_rows=None, trace_id=None) -> str:
     trial_dir = tmp_path / "runs" / "comfyui" / "trial-1"
     trial_dir.mkdir(parents=True, exist_ok=True)
-    (trial_dir / "trial.yaml").write_text(
-        yaml.safe_dump(
-            {
-                "trial_id": "trial-1",
-                "instance_id": "arm-a",
-                "target_id": "comfyui",
-                "project_id": "pid",
-                "start_phase": "recon",
-                "terminal": "complete",
-                "phases": [],
-                "started_at": "t",
-                "finished_at": "t",
-                "eval_sha": "eval-sha-1",
-                "stack_fingerprint": "fp-1",
-            }
-        ),
-        encoding="utf-8",
-    )
+    payload = {
+        "trial_id": "trial-1",
+        "instance_id": "arm-a",
+        "target_id": "comfyui",
+        "project_id": "pid",
+        "start_phase": "recon",
+        "terminal": "complete",
+        "phases": [],
+        "started_at": "t",
+        "finished_at": "t",
+        "eval_sha": "eval-sha-1",
+        "stack_fingerprint": "fp-1",
+    }
+    if trace_id is not None:
+        payload["trace_id"] = trace_id
+    (trial_dir / "trial.yaml").write_text(yaml.safe_dump(payload), encoding="utf-8")
     if verdicts_rows is not None:
         (trial_dir / "verdicts.yaml").write_text(
             yaml.safe_dump(verdicts_rows), encoding="utf-8"
@@ -114,9 +112,11 @@ class FakeBank:
     def __init__(self, hits=()):
         self.hits = tuple(hits)
         self.queries = []
+        self.limits = []
 
-    def search(self, query: str):
+    def search(self, query: str, *, limit: int = 5):
         self.queries.append(query)
+        self.limits.append(limit)
         return self.hits
 
 
@@ -182,6 +182,21 @@ def test_diagnose_dispatches_through_the_injected_dispatcher(tmp_path, capsys) -
     assert payload["diagnosis"]["status"] == "dispatched"
 
 
+def test_diagnose_request_carries_the_trial_trace_id(tmp_path) -> None:
+    setup = _write_setup(tmp_path, _setup_payload())
+    trial_dir = _write_trial(tmp_path, verdicts_rows=[_missed_verdict()], trace_id="trace-7")
+    fake = FakeDispatcher()
+
+    code = cli.main(
+        ["diagnose", setup, "--trial", trial_dir, *_diag_common(tmp_path)],
+        runner_factory=_explode,
+        diagnose_dispatch_factory=lambda _argv: fake,
+    )
+
+    assert code == 0
+    assert fake.requests[0].trace_id == "trace-7"
+
+
 def test_diagnose_refuses_a_trial_without_valid_verdicts(tmp_path, capsys) -> None:
     setup = _write_setup(tmp_path, _setup_payload())
     trial_dir = _write_trial(tmp_path)
@@ -226,7 +241,8 @@ def test_close_verify_passes_a_paired_diagnosis(tmp_path, capsys) -> None:
     code = cli.main(
         ["close-verify", setup, *_close_common(tmp_path)],
         runner_factory=_explode,
-        dispatch_factory=lambda _argv: FakeDispatcher(),
+        # A present, valid verdict needs no assessment dispatcher at all.
+        dispatch_factory=_explode,
         diagnose_dispatch_factory=_explode,
     )
 
@@ -236,6 +252,47 @@ def test_close_verify_passes_a_paired_diagnosis(tmp_path, capsys) -> None:
     payload = yaml.safe_load((tmp_path / "runs" / "comfyui" / "trial-1" / "trial.yaml").read_text())
     assert payload["diagnosis"]["status"] == "present"
     assert payload["diagnosis"]["entries_written"] == 1
+
+
+def test_close_verify_continues_past_an_identity_less_record(tmp_path, capsys) -> None:
+    setup = _write_setup(tmp_path, _setup_payload())
+    good_dir = tmp_path / "runs" / "comfyui" / "trial-1"
+    _write_trial(tmp_path, verdicts_rows=[_missed_verdict()])
+    (good_dir / "diagnoses.yaml").write_text(
+        yaml.safe_dump([_diagnosis_row()]), encoding="utf-8"
+    )
+    # A second trial in the same run directory with no version identity.
+    bad_dir = tmp_path / "runs" / "comfyui" / "trial-2"
+    bad_dir.mkdir(parents=True)
+    (bad_dir / "trial.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "trial_id": "trial-2",
+                "instance_id": "arm-a",
+                "target_id": "comfyui",
+                "project_id": "pid",
+                "start_phase": "recon",
+                "terminal": "complete",
+                "phases": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    code = cli.main(
+        ["close-verify", setup, *_close_common(tmp_path)],
+        runner_factory=_explode,
+        dispatch_factory=_explode,
+        diagnose_dispatch_factory=_explode,
+    )
+
+    captured = capsys.readouterr()
+    assert code == 1
+    assert "identity" in captured.err.lower()
+    # The identity-less record is escalated alone; the good trial still verifies.
+    assert "trial-1: present" in captured.out
+    payload = yaml.safe_load((good_dir / "trial.yaml").read_text())
+    assert payload["assessment"]["status"] == "present"
 
 
 def test_issue_search_prints_read_only_matches(tmp_path, capsys) -> None:
@@ -253,3 +310,16 @@ def test_issue_search_prints_read_only_matches(tmp_path, capsys) -> None:
     assert payload["closest_issue"]["number"] == 7
     assert payload["proposed_issue"] is None
     assert bank.queries == ["surface gap repo:o/r"]
+
+
+def test_issue_search_honours_the_limit(tmp_path, capsys) -> None:
+    bank = FakeBank([])
+
+    code = cli.main(
+        ["issue-search", "surface gap", "--repo", "o/r", "--limit", "2"],
+        runner_factory=_explode,
+        issue_bank_factory=lambda: bank,
+    )
+
+    assert code == 0
+    assert bank.limits == [2]

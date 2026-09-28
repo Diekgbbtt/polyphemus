@@ -134,11 +134,17 @@ def resolve_evidence(
     `<fault_key>/` family; the experiment logs are every `*.yaml` slice; the
     pod export is the named `<run_id>.yaml` or the spec's single terminal
     record. A missing or ambiguous element raises `EvidenceError`.
+
+    This is the harness-facing chain resolver (CODING_STANDARD section 12): the
+    orchestrator dispatches the assessment as an external subagent, so no
+    orchestrator code path calls this yet; the live materializer re-validates
+    the copied chain through `verdicts.load_verdicts`. The trace id it accepts
+    is the same one the trial record now carries into the dispatches.
     """
     root = Path(data_root)
     project = target.project_id
 
-    hunt_config = _resolve_hunt_config(root, project, target.hunt_config)
+    hunt_config = _resolve_hunt_config(root, project, target.hunt_config, files)
     spec_dir = hunter_test_specs_dir(root, project) / target.fault_key
     _require_dir(spec_dir, "spec_dir", files)
 
@@ -191,11 +197,13 @@ def validate_evidence(chain: EvidenceChain, data_root: str | Path, *, files: Fil
 # --- internals ----------------------------------------------------------------
 
 
-def _resolve_hunt_config(root: Path, project: str, name: str) -> str:
+def _resolve_hunt_config(
+    root: Path, project: str, name: str, files: FileStore
+) -> str:
     stem = name[:-5] if name.endswith(".yaml") else name
     for side in ("produced", "consumed"):
         directory = hunt_configs_dir(root, project, side)
-        for path in sorted(Path(directory).glob("*.yaml")):
+        for path in files.glob(directory, "*.yaml"):
             if path.name == name or path.stem == stem:
                 return _relative(root, path)
     raise EvidenceError(
@@ -225,7 +233,7 @@ def _resolve_pod_export(
 
 
 def _require_dir(path: Path, label: str, files: FileStore) -> None:
-    if not files.exists(path):
+    if not files.is_dir(path):
         raise EvidenceError(f"{label}: {path.name!r} is not a directory on the data root")
 
 

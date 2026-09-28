@@ -9,6 +9,8 @@ refs stay empty.
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from orchestrator import evidence
@@ -19,6 +21,22 @@ from orchestrator.files import (
     pod_experiment_logs_dir,
     pod_spec_dir,
 )
+
+
+class SeamFileStore(FileStore):
+    """Records the read primitives the resolver must route through the seam."""
+
+    def __init__(self) -> None:
+        self.is_dir_calls: list[Path] = []
+        self.glob_calls: list[tuple[Path, str]] = []
+
+    def is_dir(self, path) -> bool:  # type: ignore[override]
+        self.is_dir_calls.append(Path(path))
+        return super().is_dir(path)
+
+    def glob(self, directory, pattern) -> list[Path]:  # type: ignore[override]
+        self.glob_calls.append((Path(directory), pattern))
+        return super().glob(directory, pattern)
 
 
 def seed_chain(tmp_path, files: FileStore, *, project: str = "pid"):
@@ -110,6 +128,28 @@ def test_missing_spec_dir_is_a_validation_error(tmp_path) -> None:
 
     with pytest.raises(evidence.EvidenceError, match="spec_dir"):
         evidence.resolve_evidence(root, _target(fault_key="unit_CWE-999_nope"), files=files)
+
+
+def test_require_dir_rejects_a_file_where_a_directory_is_required(tmp_path) -> None:
+    files = FileStore()
+    root = seed_chain(tmp_path, files)
+    # A regular file sitting where the fault-key family directory belongs.
+    spec_root = hunter_test_specs_dir(root, "pid")
+    (spec_root / "unit_CWE-1_x").write_text("not a dir\n", encoding="utf-8")
+
+    with pytest.raises(evidence.EvidenceError, match="directory"):
+        evidence.resolve_evidence(root, _target(fault_key="unit_CWE-1_x"), files=files)
+
+
+def test_resolve_evidence_routes_reads_through_the_file_store_seam(tmp_path) -> None:
+    files = SeamFileStore()
+    root = seed_chain(tmp_path, files)
+
+    evidence.resolve_evidence(root, _target(), files=files)
+
+    # The hunt-config lookup and the spec-dir guard both went through the seam.
+    assert files.glob_calls
+    assert files.is_dir_calls
 
 
 def test_missing_experiment_logs_are_a_validation_error(tmp_path) -> None:

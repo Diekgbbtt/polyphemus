@@ -38,27 +38,25 @@ def _write_setup(tmp_path, payload) -> str:
     return str(path)
 
 
-def _write_trial(tmp_path) -> str:
+def _write_trial(tmp_path, *, trace_id=None) -> str:
     trial_dir = tmp_path / "runs" / "comfyui" / "trial-1"
     trial_dir.mkdir(parents=True, exist_ok=True)
-    (trial_dir / "trial.yaml").write_text(
-        yaml.safe_dump(
-            {
-                "trial_id": "trial-1",
-                "instance_id": "arm-a",
-                "target_id": "comfyui",
-                "project_id": "pid",
-                "start_phase": "recon",
-                "terminal": "complete",
-                "phases": [],
-                "started_at": "t",
-                "finished_at": "t",
-                "eval_sha": "eval-sha-1",
-                "stack_fingerprint": "fp-1",
-            }
-        ),
-        encoding="utf-8",
-    )
+    payload = {
+        "trial_id": "trial-1",
+        "instance_id": "arm-a",
+        "target_id": "comfyui",
+        "project_id": "pid",
+        "start_phase": "recon",
+        "terminal": "complete",
+        "phases": [],
+        "started_at": "t",
+        "finished_at": "t",
+        "eval_sha": "eval-sha-1",
+        "stack_fingerprint": "fp-1",
+    }
+    if trace_id is not None:
+        payload["trace_id"] = trace_id
+    (trial_dir / "trial.yaml").write_text(yaml.safe_dump(payload), encoding="utf-8")
     return str(trial_dir)
 
 
@@ -141,6 +139,34 @@ def test_assess_dispatches_through_the_injected_dispatcher(tmp_path, capsys) -> 
     # The dispatch attempt is persisted in the trial record (fire-and-forget).
     payload = yaml.safe_load((tmp_path / "runs" / "comfyui" / "trial-1" / "trial.yaml").read_text())
     assert payload["assessment"]["status"] == "dispatched"
+
+
+def test_assess_request_carries_the_trial_trace_id(tmp_path) -> None:
+    setup = _write_setup(tmp_path, _setup_payload())
+    trial_dir = _write_trial(tmp_path, trace_id="trace-9")
+    fake = FakeDispatcher()
+
+    code = cli.main(
+        [
+            "assess",
+            setup,
+            "--trial",
+            trial_dir,
+            "--ground-truth",
+            str(tmp_path / "gt" / "comfyui"),
+            "--data-root",
+            str(tmp_path / "data"),
+            "--runs-root",
+            str(tmp_path / "runs"),
+            "--command",
+            "agent assess {prompt} {trace_id}",
+        ],
+        runner_factory=_explode,
+        dispatch_factory=lambda _argv: fake,
+    )
+
+    assert code == 0
+    assert fake.requests[0].trace_id == "trace-9"
 
 
 def test_close_verify_dry_run_lists_the_trials_and_executes_nothing(tmp_path, capsys) -> None:

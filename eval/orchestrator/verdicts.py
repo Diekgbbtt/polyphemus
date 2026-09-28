@@ -8,8 +8,9 @@ record - never invented: a row whose identity does not match the record, or a
 record with no identity at all, is refused.
 
 A malformed verdict is rejected loudly on write; the write itself is temp +
-rename so a crash never leaves a half-written file. Stdlib only; import
-performs no I/O (CODING_STANDARD section 6).
+rename so a crash never leaves a half-written file. PyYAML is the one
+third-party dependency (the repo's existing dependency); import performs no I/O
+(CODING_STANDARD section 6).
 """
 from __future__ import annotations
 
@@ -19,7 +20,7 @@ from typing import Mapping, Sequence
 
 import yaml
 
-from orchestrator import evidence
+from orchestrator import evidence, subagents
 from orchestrator.files import FileStore
 
 VERDICTS_FILENAME = "verdicts.yaml"
@@ -27,6 +28,9 @@ VERDICT_VALUES = ("identified", "partial", "missed")
 # A positive (`identified`) and an ambiguous (`partial`) verdict both need an
 # auditable chain; only `missed` may stand without one.
 EVIDENCE_REQUIRED = ("identified", "partial")
+# D20: only a success (`identified`) is exempt from a diagnosis entry. The
+# diagnosis pair and the artifact store share this verdict vocabulary.
+DIAGNOSABLE = ("missed", "partial")
 
 _ROW_FIELDS = (
     "vuln_id",
@@ -271,6 +275,4 @@ def _check_identity(actual: object, expected: str | None, label: str) -> None:
 
 
 def _non_empty(raw: object, label: str) -> str:
-    if not isinstance(raw, str) or not raw:
-        raise VerdictError(f"{label}: expected a non-empty string")
-    return raw
+    return subagents.non_empty(raw, label, error=VerdictError)

@@ -91,12 +91,13 @@ The defect may live in code or in the persisted data layer (D24):
 Search the origin issue bank for the closest matching issue, read-only:
 
 ```
-EVAL_GITHUB_TOKEN=... python3 -m orchestrator issue-search "<query>" --repo Diekgbbtt/polyphemus
+EVAL_GITHUB_TOKEN=... python3 -m orchestrator issue-search "<query>" --repo Diekgbbtt/polyphemus [--limit N]
 ```
 
+The search returns GitHub's best-match (relevance) ordering, so the first hit is the closest matching issue; no `sort` is forced.
 The command only ever issues a GET; you cannot file from it and you must not file by any other means.
 Work authority lives in `loop-constraints.md`: only the operator starts work, so never create an issue.
 
-- When a matching issue exists, record it in `closest_issue` with a `rationale` explaining why it is the closest.
+- When a matching issue exists, record the closest one (the first, best-match hit) in `closest_issue` with a `rationale` explaining why it is the closest.
 - When none exists, **or when the issue bank is unavailable** (the search errors, the token is missing, the network is down), write a `proposed_issue` block for the operator to file.
 - Record exactly one of the two; never both, and never neither. Every row must carry one, so a bank you cannot reach still yields a proposal.

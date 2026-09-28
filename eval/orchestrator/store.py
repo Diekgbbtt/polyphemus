@@ -11,35 +11,38 @@ Two layers, by design (D7/D12):
   `run-manifest.yaml`, so a finished trial is readable without the live stack.
 
 The store is a sink: every write the materializer performs is guarded to stay
-under the store root, and it only ever reads the instance data root. Stdlib
-only; import performs no I/O (CODING_STANDARD section 6).
+under the store root, and it only ever reads the instance data root. PyYAML is
+the one third-party dependency (the repo's existing dependency); import
+performs no I/O (CODING_STANDARD section 6).
 """
 from __future__ import annotations
 
 import textwrap
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Mapping, Sequence
 
 import yaml
 
-from orchestrator import diagnosis, evidence, verdicts
+from orchestrator import diagnosis, evidence, subagents, verdicts
 from orchestrator.files import FileStore
+from orchestrator.setup import EvalSetup
 
 LIVE_DIRNAME = "live"
 SYNC_DIRNAME = "_sync"
 RUN_MANIFEST = "run-manifest.yaml"
 STORE_SCHEMA_VERSION = 1
-# D20: only a success (`identified`) needs no diagnosis entry.
-DIAGNOSABLE = ("missed", "partial")
+# D20: only a success (`identified`) needs no diagnosis entry (the verdict
+# vocabulary shared with the diagnosis pair).
+DIAGNOSABLE = verdicts.DIAGNOSABLE
 
 
 class StoreError(RuntimeError):
     """The store could not be rendered or a trial could not be materialized.
 
     `failure` is the named code the CLI and the operator act on
-    (`chain_unresolved`, `diagnoses_missing`, `verdicts_missing`,
+    (`record_missing`, `record_invalid`, `verdicts_missing`, `verdicts_invalid`,
+    `diagnoses_missing`, `diagnoses_invalid`, `chain_unresolved`,
     `identity_missing`, `escape`, `sync_layout`); the message carries the path
     or verdict that failed.
     """
@@ -185,7 +188,7 @@ class SyncPlan:
 
 
 def plan_sync(
-    setup,
+    setup: EvalSetup,
     *,
     instances_root: str | Path,
     out_dir: str | Path | None = None,
@@ -290,19 +293,36 @@ def materialize(
     rows = _load_rows(verdicts_path, files)
 
     chain_sources = _chain_sources(rows)
-    # Validate every source before writing anything, so a missing chain file
-    # fails cleanly instead of leaving a half-assembled trial tree behind.
+    # Validate everything before writing anything, so a missing chain file or a
+    # defective diagnosis fails cleanly instead of leaving a half-assembled
+    # trial tree behind.
     for relative in chain_sources:
-        _validate_chain_source(data_root, relative)
+        _validate_chain_source(data_root, relative, files)
+
+    diagnoses_path = trial_dir / diagnosis.DIAGNOSES_FILENAME
+    diagnoses_present = files.exists(diagnoses_path)
+    if diagnoses_present:
+        # Validate the diagnosis before the copy: a defective or unpaired file
+        # must fail loudly, never land in the authoritative tree.
+        validated = _validated_verdicts(
+            rows, data_root, files, eval_sha=eval_sha, stack_fingerprint=fingerprint
+        )
+        try:
+            diagnosis.load_diagnoses(diagnoses_path, files=files, verdicts=validated)
+        except (diagnosis.DiagnosisError, OSError) as exc:
+            raise StoreError(str(exc), failure="diagnoses_invalid") from exc
+    elif _has_diagnosable(rows):
+        raise StoreError(
+            "diagnoses.yaml is absent but a verdict is missed/partial",
+            failure="diagnoses_missing",
+        )
+
     for relative in chain_sources:
         _copy_chain(data_root, dest, relative, files, store)
 
     _write_bytes(
         dest / verdicts.VERDICTS_FILENAME, files.read_bytes(verdicts_path), files, store
     )
-
-    diagnoses_path = trial_dir / diagnosis.DIAGNOSES_FILENAME
-    diagnoses_present = files.exists(diagnoses_path)
     if diagnoses_present:
         _write_bytes(
             dest / diagnosis.DIAGNOSES_FILENAME,
@@ -310,16 +330,11 @@ def materialize(
             files,
             store,
         )
-    elif _has_diagnosable(rows):
-        raise StoreError(
-            "diagnoses.yaml is absent but a verdict is missed/partial",
-            failure="diagnoses_missing",
-        )
 
     manifest = build_run_manifest(
         record,
         chain_sources,
-        (now or _utcnow)(),
+        (now or subagents.utcnow)(),
         diagnoses_present=diagnoses_present,
     )
     _write_text(
@@ -370,13 +385,13 @@ def _phase_pointer(phase: Mapping) -> dict:
 
 def _load_record(path: Path, files: FileStore) -> Mapping:
     if not files.exists(path):
-        raise StoreError(f"trial record not found: {path}", failure="verdicts_missing")
+        raise StoreError(f"trial record not found: {path}", failure="record_missing")
     try:
         payload = yaml.safe_load(files.read_text(path))
     except yaml.YAMLError as exc:
-        raise StoreError(f"trial record {path}: invalid YAML: {exc}") from exc
+        raise StoreError(f"trial record {path}: invalid YAML: {exc}", failure="record_invalid") from exc
     if not isinstance(payload, Mapping):
-        raise StoreError(f"trial record {path}: expected a mapping", failure="verdicts_missing")
+        raise StoreError(f"trial record {path}: expected a mapping", failure="record_invalid")
     return payload
 
 
@@ -384,10 +399,31 @@ def _load_rows(path: Path, files: FileStore) -> list:
     try:
         payload = yaml.safe_load(files.read_text(path))
     except yaml.YAMLError as exc:
-        raise StoreError(f"{path}: invalid YAML: {exc}", failure="chain_unresolved") from exc
+        raise StoreError(f"{path}: invalid YAML: {exc}", failure="verdicts_invalid") from exc
     if not isinstance(payload, list):
-        raise StoreError(f"{path}: expected a list of verdict rows", failure="chain_unresolved")
+        raise StoreError(f"{path}: expected a list of verdict rows", failure="verdicts_invalid")
     return payload
+
+
+def _validated_verdicts(
+    rows: Sequence,
+    data_root: Path,
+    files: FileStore,
+    *,
+    eval_sha: str,
+    stack_fingerprint: str,
+) -> tuple[verdicts.Verdict, ...]:
+    """Build the verdict models the diagnosis pairing validates against."""
+    try:
+        return verdicts.validate_verdicts(
+            rows,
+            data_root=data_root,
+            files=files,
+            eval_sha=eval_sha,
+            stack_fingerprint=stack_fingerprint,
+        )
+    except verdicts.VerdictError as exc:
+        raise StoreError(str(exc), failure="verdicts_invalid") from exc
 
 
 def _chain_sources(rows: Sequence) -> list[str]:
@@ -422,13 +458,13 @@ def _has_diagnosable(rows: Sequence) -> bool:
     )
 
 
-def _validate_chain_source(data_root: Path, relative: str) -> None:
+def _validate_chain_source(data_root: Path, relative: str, files: FileStore) -> None:
     source = data_root / relative
     if Path(relative).is_absolute() or not is_within(data_root, source):
         raise StoreError(
             f"chain path {relative!r} escapes the data root", failure="chain_unresolved"
         )
-    if not source.is_file() and not source.is_dir():
+    if not files.is_file(source) and not files.is_dir(source):
         raise StoreError(
             f"chain path {relative!r} does not resolve under the data root",
             failure="chain_unresolved",
@@ -437,7 +473,7 @@ def _validate_chain_source(data_root: Path, relative: str) -> None:
 
 def _copy_chain(data_root: Path, dest: Path, relative: str, files: FileStore, store: Path) -> None:
     source = data_root / relative
-    if source.is_dir():
+    if files.is_dir(source):
         for path in files.walk_files(source):
             sub = path.relative_to(source)
             _write_bytes(dest / relative / sub, files.read_bytes(path), files, store)
@@ -481,7 +517,3 @@ def _guard_within(store: Path, path: Path) -> None:
         raise StoreError(
             f"refusing to write outside the store root: {path}", failure="escape"
         )
-
-
-def _utcnow() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")

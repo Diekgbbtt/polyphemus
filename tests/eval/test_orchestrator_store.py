@@ -114,10 +114,16 @@ def _make_trial(
 
 
 class _RecordingFileStore(FileStore):
-    """A `FileStore` that records every write path, to prove the sink invariant."""
+    """A `FileStore` that records every write path, to prove the sink invariant.
+
+    It also records the read-side primitives so the chain copy's use of the
+    filesystem seam is provable.
+    """
 
     def __init__(self) -> None:
         self.writes: list[Path] = []
+        self.is_file_calls: list[Path] = []
+        self.is_dir_calls: list[Path] = []
 
     def write_text(self, path, text) -> None:  # type: ignore[override]
         self.writes.append(Path(path))
@@ -130,6 +136,14 @@ class _RecordingFileStore(FileStore):
     def write_bytes_atomic(self, path, data) -> None:  # type: ignore[override]
         self.writes.append(Path(path))
         super().write_bytes_atomic(path, data)
+
+    def is_file(self, path) -> bool:  # type: ignore[override]
+        self.is_file_calls.append(Path(path))
+        return super().is_file(path)
+
+    def is_dir(self, path) -> bool:  # type: ignore[override]
+        self.is_dir_calls.append(Path(path))
+        return super().is_dir(path)
 
 
 def _setup(store_dir: Path, *, instance_ids=("arm-a",)) -> object:
@@ -396,6 +410,19 @@ def test_materialize_never_writes_outside_the_store_root(tmp_path) -> None:
         assert store.is_within(store_dir, path), path
 
 
+def test_materialize_chain_copy_routes_through_the_file_store_seam(tmp_path) -> None:
+    trial_dir, data_root = _make_trial(tmp_path)
+    files = _RecordingFileStore()
+
+    store.materialize(
+        trial_dir, store=tmp_path / "store", data_root=data_root, files=files
+    )
+
+    # Validate-then-copy classifies every source through the seam.
+    assert files.is_file_calls
+    assert files.is_dir_calls
+
+
 def test_materialize_accepts_absent_diagnoses_when_nothing_is_diagnosable(tmp_path) -> None:
     trial_dir, data_root = _make_trial(
         tmp_path, rows=[_verdict_row(identified="identified")]
@@ -459,7 +486,7 @@ def test_is_within_rejects_a_path_outside_the_root(tmp_path) -> None:
     assert not store.is_within(root, tmp_path / "elsewhere" / "b")
 
 
-def test_render_lsyncd_config_rejects_a_source_outside_the_data_root(tmp_path) -> None:
+def test_render_lsyncd_config_sources_only_the_data_root(tmp_path) -> None:
     # The config is generated from the data root only; a store path can never
     # be smuggled in as the source.
     spec = store.SyncSpec(
@@ -472,6 +499,90 @@ def test_render_lsyncd_config_rejects_a_source_outside_the_data_root(tmp_path) -
             assert str(tmp_path / "store") in line
         if line.strip().startswith("source ="):
             assert str(tmp_path / "d") in line
+
+
+def test_render_lsyncd_config_refuses_a_store_inside_the_data_root(tmp_path) -> None:
+    spec = store.SyncSpec(
+        instance_id="arm-a",
+        data_root=tmp_path / "data",
+        store=tmp_path / "data" / "store",
+    )
+
+    with pytest.raises(store.StoreError) as excinfo:
+        store.render_lsyncd_config(spec)
+
+    assert excinfo.value.failure == "sync_layout"
+
+
+# --- named failure codes (#273 review) ----------------------------------------
+
+
+def test_materialize_names_a_record_missing_failure(tmp_path) -> None:
+    trial_dir, data_root = _make_trial(tmp_path)
+    (trial_dir / "trial.yaml").unlink()
+
+    with pytest.raises(store.StoreError) as excinfo:
+        store.materialize(
+            trial_dir, store=tmp_path / "store", data_root=data_root, files=FileStore()
+        )
+
+    assert excinfo.value.failure == "record_missing"
+
+
+def test_materialize_names_a_record_invalid_failure(tmp_path) -> None:
+    trial_dir, data_root = _make_trial(tmp_path)
+    (trial_dir / "trial.yaml").write_text("- not\n- a\n- mapping\n", encoding="utf-8")
+
+    with pytest.raises(store.StoreError) as excinfo:
+        store.materialize(
+            trial_dir, store=tmp_path / "store", data_root=data_root, files=FileStore()
+        )
+
+    assert excinfo.value.failure == "record_invalid"
+
+
+def test_materialize_names_a_verdicts_invalid_failure(tmp_path) -> None:
+    trial_dir, data_root = _make_trial(tmp_path)
+    (trial_dir / "verdicts.yaml").write_text("just: a mapping\n", encoding="utf-8")
+
+    with pytest.raises(store.StoreError) as excinfo:
+        store.materialize(
+            trial_dir, store=tmp_path / "store", data_root=data_root, files=FileStore()
+        )
+
+    assert excinfo.value.failure == "verdicts_invalid"
+
+
+def test_materialize_rejects_a_defective_diagnosis_before_the_copy(tmp_path) -> None:
+    trial_dir, data_root = _make_trial(
+        tmp_path,
+        rows=[_verdict_row(identified="missed")],
+        diagnoses=[
+            {
+                "vuln": "v1",
+                "failure_mode": "made_up",
+                "root_cause": {
+                    "type": "implementation_defect",
+                    "combination_of": [],
+                    "extended_description": "d",
+                },
+                "diagnosis_overview": "o",
+                "evidences": [{"source": "s", "ref": "r", "note": "n"}],
+                "closest_issue": None,
+                "proposed_issue": {"title": "gap", "body": "b", "labels": []},
+            }
+        ],
+    )
+
+    with pytest.raises(store.StoreError) as excinfo:
+        store.materialize(
+            trial_dir, store=tmp_path / "store", data_root=data_root, files=FileStore()
+        )
+
+    assert excinfo.value.failure == "diagnoses_invalid"
+    # It failed before landing anything in the authoritative tree.
+    assert not (tmp_path / "store" / "jetlinks-1").exists()
+
 
 
 def test_deploy_readme_documents_the_one_way_install() -> None:

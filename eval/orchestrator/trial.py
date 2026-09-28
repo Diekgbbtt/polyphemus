@@ -14,11 +14,11 @@ from __future__ import annotations
 
 import time
 from dataclasses import asdict, dataclass, field, replace
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Callable, Mapping, Protocol
 
-from orchestrator import api, instances, predicates, routing
+from orchestrator import api, instances, predicates, routing, subagents
 from orchestrator.commands import Command, CommandRunner, require_ok
 from orchestrator.files import (
     FileStore,
@@ -35,6 +35,10 @@ from orchestrator.targets.base import READY_UNREACHABLE
 
 CONFIGURATION = "configuration"
 ESCALATE = "escalate"
+# A phase terminal that names a failure stops the trial; it never chains into
+# the next phase (P8). Recon `failed`, hunting `failed`/`interrupted`, and an
+# analysis consumer that died (`interrupted`) all qualify.
+FAILED_TERMINALS = frozenset({"failed", "interrupted"})
 
 
 class TrialError(RuntimeError):
@@ -195,6 +199,9 @@ class TrialConfig:
     # D32: the version identity stamped into the trial record and the verdicts.
     eval_sha: str | None = None
     stack_fingerprint: str | None = None
+    # The Langfuse trace id this trial ran under, when one was recorded; the
+    # assessment/diagnoser dispatches substitute it into `{trace_id}`.
+    trace_id: str | None = None
 
 
 @dataclass
@@ -207,6 +214,9 @@ class PhaseRecord:
     run_id: str | None = None
     blocks: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    # Why the phase failed (a failed terminal, or a `complete` run whose
+    # liveness check found no job rows / every job failed); None when healthy.
+    failure: str | None = None
 
 
 @dataclass
@@ -310,6 +320,9 @@ class TrialRecord:
     # D32/D37: the version identity the trial ran on, and the assessment state.
     eval_sha: str | None = None
     stack_fingerprint: str | None = None
+    # The trial's Langfuse trace id, when one was recorded; the assessment and
+    # diagnosis requests substitute it into `{trace_id}`.
+    trace_id: str | None = None
     assessment: AssessmentRecord | None = None
     # D19/D20 (#272): the diagnosis state, paired with verdicts after assessment.
     diagnosis: DiagnosisRecord | None = None
@@ -358,7 +371,7 @@ class Trial:
         self._clock = clock or time.monotonic
         self._sleep = sleep or time.sleep
         self._reachable = reachable
-        self._now = now or _utcnow
+        self._now = now or subagents.utcnow
 
     # --- plan mode ------------------------------------------------------------
 
@@ -469,25 +482,31 @@ class Trial:
 
         if cfg.start_phase == "recon":
             phases.append(self._phase_recon(state))
-            if not phases[-1].entered:
+            phase = phases[-1]
+            if not phase.entered:
                 terminal = "blocked"
-            elif phases[-1].status == "timeout":
+            elif phase.status == "timeout":
                 terminal = "timeout"
+            elif _phase_failed(phase):
+                terminal = "failed"
             else:
-                state = replace(state, recon_run_id=phases[-1].run_id)
-                phase, cap = self._phase_hunting(state)
-                phases.append(phase)
-                terminal = _terminal_of(phase, cap)
+                state = replace(state, recon_run_id=phase.run_id)
+                nxt, cap = self._phase_hunting(state)
+                phases.append(nxt)
+                terminal = _terminal_of(nxt, cap)
         elif cfg.start_phase == "analysis":
             phases.append(self._phase_analysis(state))
-            if not phases[-1].entered:
+            phase = phases[-1]
+            if not phase.entered:
                 terminal = "blocked"
-            elif phases[-1].status == "timeout":
+            elif phase.status == "timeout":
                 terminal = "timeout"
+            elif _phase_failed(phase):
+                terminal = "failed"
             else:
-                phase, cap = self._phase_hunting(state)
-                phases.append(phase)
-                terminal = _terminal_of(phase, cap)
+                nxt, cap = self._phase_hunting(state)
+                phases.append(nxt)
+                terminal = _terminal_of(nxt, cap)
         elif cfg.start_phase == "hunting":
             phase, cap = self._phase_hunting(state)
             phases.append(phase)
@@ -495,7 +514,7 @@ class Trial:
         else:  # pragma: no cover - setup validation prevents this
             raise TrialError(f"unknown start phase: {cfg.start_phase!r}")
 
-        return self._finish(started, project_id, state, phases, terminal, cap, [])
+        return self._finish(started, project_id, phases, terminal, cap, [])
 
     # --- bootstrap ------------------------------------------------------------
 
@@ -585,9 +604,30 @@ class Trial:
         status = self._poll(
             api.recon_status(state.project_id, run_id), api.RECON_TERMINAL
         )
+        # P8 liveness: a recon run that reports `complete` with no job rows, or
+        # with every job failed, is a failed run - never chained into hunting.
+        failure = None
+        if status == "complete":
+            failure = self._recon_failure(state.project_id, run_id)
         return PhaseRecord(
-            phase="recon", entered=True, status=status, run_id=run_id, notes=list(gate.notes)
+            phase="recon",
+            entered=True,
+            status=status,
+            run_id=run_id,
+            notes=list(gate.notes),
+            failure=failure,
         )
+
+    def _recon_failure(self, project_id: str, run_id: str) -> str | None:
+        """The liveness failure of a `complete` recon run, or None when healthy."""
+        run = self._call(api.recon_status(project_id, run_id))
+        jobs = api.per_job_rows(run)
+        if not jobs:
+            return "recon reported complete with no job rows (a failed run, P8)"
+        if all((job or {}).get("status") == "failed" for job in jobs):
+            names = ", ".join(str((job or {}).get("job")) for job in jobs)
+            return f"recon reported complete but every job failed ({names})"
+        return None
 
     def _phase_analysis(self, state: predicates.PhaseState) -> PhaseRecord:
         if self._api is None:
@@ -667,14 +707,13 @@ class Trial:
         self,
         started: str,
         project_id: str,
-        state: predicates.PhaseState,
         phases: list[PhaseRecord],
         terminal: str,
         cap: PollResult | None,
         notes: list[str],
     ) -> TrialRecord:
         cfg = self.config
-        trial_id = cfg.trial_id or _default_trial_id(cfg)
+        trial_id = cfg.trial_id or _default_trial_id(cfg, self._now)
         trial_dir = Path(cfg.runs_root) / cfg.target_id / trial_id
         aggregated = list(notes) + [note for phase in phases for note in phase.notes]
         record = TrialRecord(
@@ -696,10 +735,11 @@ class Trial:
             target_run_id=cfg.target_run_id or cfg.instance_id,
             eval_sha=cfg.eval_sha,
             stack_fingerprint=cfg.stack_fingerprint,
+            trace_id=cfg.trace_id,
         )
         import yaml  # lazy: the record is the one place the trial serializes
 
-        self._files.write_text(
+        self._files.write_text_atomic(
             trial_dir / "trial.yaml", yaml.safe_dump(record.to_dict(), sort_keys=False)
         )
         return record
@@ -729,7 +769,7 @@ def _hunting_plan_step(cfg: TrialConfig, project: str) -> TrialPlanStep:
 def _premined_sources(files: FileStore, source: str) -> list[Path]:
     """The files a pre-mined artifact source contributes: itself, or its walk."""
     path = Path(source)
-    return [path] if path.is_file() else files.walk_files(path)
+    return [path] if files.is_file(path) else files.walk_files(path)
 
 
 def _premined_inboxes(cfg: TrialConfig, project: str) -> tuple[str, ...]:
@@ -750,20 +790,27 @@ def _premined_inboxes(cfg: TrialConfig, project: str) -> tuple[str, ...]:
     return tuple(inboxes)
 
 
+def _phase_failed(phase: PhaseRecord) -> bool:
+    """True when a phase's terminal (or its liveness failure) is a failure."""
+    return phase.failure is not None or phase.status in FAILED_TERMINALS
+
+
 def _terminal_of(phase: PhaseRecord, cap: PollResult | None) -> str:
     if not phase.entered:
         return "blocked"
     if phase.status == "timeout":
         return "timeout"
+    if _phase_failed(phase):
+        return "failed"
     if cap is not None and cap.status == "stopped":
         return "stopped"
     return phase.status or "complete"
 
 
-def _default_trial_id(cfg: TrialConfig) -> str:
-    token = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+def _default_trial_id(cfg: TrialConfig, now: Callable[[], str]) -> str:
+    stamp = now()
+    try:
+        token = datetime.fromisoformat(stamp).strftime("%Y%m%dT%H%M%S")
+    except ValueError:  # a non-ISO injected clock is used verbatim
+        token = stamp
     return f"{cfg.target_id}-{token}-{short_id(cfg.instance_id + '/' + cfg.target_id)}"
-
-
-def _utcnow() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")

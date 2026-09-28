@@ -149,6 +149,12 @@ def _parser() -> argparse.ArgumentParser:
         help="the stack fingerprint this trial ran on (stamped into the record, D37)",
     )
     run_parser.add_argument(
+        "--trace-id",
+        default=os.environ.get("EVAL_TRACE_ID"),
+        help="the Langfuse trace id this trial ran under (stamped into the record "
+        "and substituted into the assessment/diagnosis {trace_id})",
+    )
+    run_parser.add_argument(
         "--dry-run", action="store_true", help="print the plan without executing"
     )
 
@@ -187,6 +193,12 @@ def _parser() -> argparse.ArgumentParser:
         "--repo",
         default=os.environ.get("EVAL_ISSUE_REPO"),
         help="scope the search to one repository (owner/name)",
+    )
+    search_parser.add_argument(
+        "--limit",
+        type=int,
+        default=5,
+        help="the maximum number of relevance-ordered hits to return",
     )
 
     # --- the artifact store verbs (#273) --------------------------------------
@@ -383,6 +395,7 @@ def _trial_config(args, setup: EvalSetup, config: OrchestratorConfig) -> tuple[
         recon_run_id=args.recon_run,
         eval_sha=args.eval_sha,
         stack_fingerprint=args.stack_fingerprint,
+        trace_id=args.trace_id,
     )
     return cfg, paths, run
 
@@ -407,6 +420,8 @@ def _run_trial(args, setup: EvalSetup, config: OrchestratorConfig, out: TextIO, 
     for phase in record.phases:
         detail = phase.status or ("blocked" if not phase.entered else "")
         print(f"  {phase.phase}: {detail}", file=out)
+        if phase.failure:
+            print(f"    failed: {phase.failure}", file=err)
         for block in phase.blocks:
             print(f"    blocked: {block}", file=err)
         for note in phase.notes:
@@ -467,14 +482,23 @@ def _plan_request(args, trial_dir: Path) -> assessment.AssessmentRequest:
     )
 
 
-def _assessment_request(args, run: TargetRun, trial_dir: Path) -> assessment.AssessmentRequest:
+def _assessment_request(
+    args, run: TargetRun, trial_dir: Path, *, trace_id: str | None = None
+) -> assessment.AssessmentRequest:
     return assessment.AssessmentRequest(
         prompt=assessment.ASSESSMENT_PROMPT,
         trial_record=trial_dir / "trial.yaml",
         ground_truth=_ground_truth_for(args, run),
         data_root=_assessment_data_root(args),
         destination=trial_dir / verdicts.VERDICTS_FILENAME,
+        trace_id=trace_id,
     )
+
+
+def _trace_id_of(payload: dict) -> str | None:
+    """The trial record's Langfuse trace id, when one was recorded."""
+    value = payload.get("trace_id")
+    return str(value) if value else None
 
 
 def _make_dispatcher(args, runner_factory: RunnerFactory,
@@ -504,7 +528,7 @@ def _run_assess(args, setup: EvalSetup, out: TextIO, err: TextIO,
 
     payload = assessment.load_trial_record(record_path, files=files)
     run = _find_target_run(setup, str(payload.get("target_id") or ""))
-    request = _assessment_request(args, run, trial_dir)
+    request = _assessment_request(args, run, trial_dir, trace_id=_trace_id_of(payload))
     assessment.trial_identity(record_path, files=files)  # refuse a record with no id
     dispatcher = _make_dispatcher(args, runner_factory, dispatch_factory)
     record = assessment.dispatch(
@@ -551,7 +575,14 @@ def _load_verdicts(args, run: TargetRun, trial_dir: Path, files: FileStore,
     )
 
 
-def _diagnosis_request(args, run: TargetRun, trial_dir: Path, vulns) -> diagnosis.DiagnosisRequest:
+def _diagnosis_request(
+    args,
+    run: TargetRun,
+    trial_dir: Path,
+    vulns,
+    *,
+    trace_id: str | None = None,
+) -> diagnosis.DiagnosisRequest:
     return diagnosis.DiagnosisRequest(
         prompt=diagnosis.DIAGNOSER_PROMPT,
         trial_record=trial_dir / "trial.yaml",
@@ -560,6 +591,7 @@ def _diagnosis_request(args, run: TargetRun, trial_dir: Path, vulns) -> diagnosi
         data_root=_assessment_data_root(args),
         destination=trial_dir / diagnosis.DIAGNOSES_FILENAME,
         vulns=tuple(vulns),
+        trace_id=trace_id,
     )
 
 
@@ -594,7 +626,7 @@ def _run_diagnose(args, setup: EvalSetup, out: TextIO, err: TextIO,
     sha, fingerprint = assessment.trial_identity(record_path, files=files)
     verdict_rows = _load_verdicts(args, run, trial_dir, files, sha, fingerprint)
     vulns = diagnosis.required_vulns(verdict_rows)
-    request = _diagnosis_request(args, run, trial_dir, vulns)
+    request = _diagnosis_request(args, run, trial_dir, vulns, trace_id=_trace_id_of(payload))
     if not vulns:
         record = diagnosis.verify_diagnoses(
             request, dispatcher=_noop_dispatcher, files=files, verdicts=verdict_rows,
@@ -620,6 +652,10 @@ def _noop_dispatcher(request) -> None:  # pragma: no cover - only the not_requir
     raise diagnosis.DiagnosisError("no diagnosis entries are required")
 
 
+def _noop_assessment_dispatcher(request) -> None:  # pragma: no cover - short-circuit only
+    raise assessment.AssessmentError("no assessment dispatch was needed")
+
+
 def _plan_required_vulns(args, trial_dir: Path, files: FileStore) -> tuple[str, ...]:
     """Best-effort required vulns for plan mode; no live root resolution."""
     path = trial_dir / verdicts.VERDICTS_FILENAME
@@ -642,14 +678,15 @@ def _close_verify_diagnosis(args, run: TargetRun, trial_dir: Path, files: FileSt
                             runner_factory: RunnerFactory,
                             factory: DiagnoseDispatchFactory | None, *,
                             sha: str, fingerprint: str,
-                            prior: list[trial.DiagnosisAttempt]) -> trial.DiagnosisRecord | None:
+                            prior: list[trial.DiagnosisAttempt],
+                            trace_id: str | None = None) -> trial.DiagnosisRecord | None:
     """The paired `diagnoses.yaml` check for one trial, once verdicts are present."""
     try:
         verdict_rows = _load_verdicts(args, run, trial_dir, files, sha, fingerprint)
     except (verdicts.VerdictError, OSError):
         return None  # the verdict check already owns this failure
     request = _diagnosis_request(
-        args, run, trial_dir, diagnosis.required_vulns(verdict_rows)
+        args, run, trial_dir, diagnosis.required_vulns(verdict_rows), trace_id=trace_id
     )
     if not diagnosis.required_vulns(verdict_rows):
         return diagnosis.verify_diagnoses(
@@ -687,7 +724,9 @@ def _run_close_verify(args, setup: EvalSetup, out: TextIO, err: TextIO,
                       dispatch_factory: DispatchFactory | None,
                       diagnose_dispatch_factory: DiagnoseDispatchFactory | None = None) -> int:
     files = FileStore()
-    argv = _assessment_argv(args)
+    # Only plan mode needs the rendered command; execution constructs the
+    # dispatcher per trial, and only when a re-dispatch is actually needed.
+    argv = _assessment_argv(args) if args.dry_run else ()
     escalated = 0
     checked = 0
     for instance in setup.instances:
@@ -709,17 +748,61 @@ def _run_close_verify(args, setup: EvalSetup, out: TextIO, err: TextIO,
                         planned = diagnosis.plan_dispatch(diag_request, _diagnosis_argv(args))
                         print(f"  {planned.display()}", file=out)
                     continue
-                request = _assessment_request(args, run, trial_dir)
-                payload = assessment.load_trial_record(record_path, files=files)
-                sha, fingerprint = assessment.trial_identity(record_path, files=files)
-                dispatcher = _make_dispatcher(args, runner_factory, dispatch_factory)
+                # The identity is resolved per trial: an identity-less record is
+                # escalated on its own and the pass continues with the rest.
+                try:
+                    payload = assessment.load_trial_record(record_path, files=files)
+                    sha, fingerprint = assessment.trial_identity(record_path, files=files)
+                except assessment.AssessmentError as exc:
+                    escalated += 1
+                    print(
+                        f"close-verify: {run.target_id}/{trial_dir.name}: "
+                        f"identity_missing: {exc}",
+                        file=err,
+                    )
+                    continue
+                request = _assessment_request(
+                    args, run, trial_dir, trace_id=_trace_id_of(payload)
+                )
+                # Mirror the diagnosis path: a present, valid file needs no
+                # dispatcher, so the configured command is never constructed.
+                if (
+                    assessment.check_verdicts(
+                        request,
+                        files=files,
+                        eval_sha=sha,
+                        stack_fingerprint=fingerprint,
+                    )
+                    == "present"
+                ):
+                    dispatcher = _noop_assessment_dispatcher
+                    repair = None
+                else:
+                    try:
+                        dispatcher = _make_dispatcher(args, runner_factory, dispatch_factory)
+                    except assessment.AssessmentError:
+                        record = trial.AssessmentRecord(
+                            "escalated",
+                            list(_prior_attempts(payload)),
+                            str(request.destination),
+                            failure="assessment_no_command",
+                        )
+                        assessment.record_assessment(record_path, record, files=files)
+                        escalated += 1
+                        print(
+                            f"close-verify: {run.target_id}/{trial_dir.name}: "
+                            "assessment_no_command",
+                            file=err,
+                        )
+                        continue
+                    repair = assessment.ReDispatchRepair(dispatcher, request)
                 record = assessment.verify_trial(
                     request,
                     dispatcher=dispatcher,
                     files=files,
                     eval_sha=sha,
                     stack_fingerprint=fingerprint,
-                    repair=assessment.ReDispatchRepair(dispatcher, request),
+                    repair=repair,
                     prior=_prior_attempts(payload),
                 )
                 assessment.record_assessment(record_path, record, files=files)
@@ -737,6 +820,7 @@ def _run_close_verify(args, setup: EvalSetup, out: TextIO, err: TextIO,
                     diagnose_dispatch_factory,
                     sha=sha, fingerprint=fingerprint,
                     prior=_prior_diagnosis_attempts(payload),
+                    trace_id=_trace_id_of(payload),
                 )
                 if diag_record is None:
                     continue
@@ -780,7 +864,7 @@ def _materialize_data_root(args, files: FileStore) -> Path:
     instance_id = str(record.get("instance_id") or "")
     if not instance_id:
         raise store.StoreError(
-            "trial record carries no instance_id", failure="verdicts_missing"
+            "trial record carries no instance_id", failure="record_missing"
         )
     return store.instance_data_root(Path(args.instances_root), instance_id)
 
@@ -816,7 +900,11 @@ def _run_issue_search(args, out: TextIO, bank_factory: IssueBankFactory | None) 
     bank = bank_factory() if bank_factory is not None else diagnosis.GitHubIssueBank.from_env()
     query = f"{args.query} repo:{args.repo}" if args.repo else args.query
     outcome = diagnosis.match_issue(
-        bank, query=query, rationale="read-only search result", proposed=None
+        bank,
+        query=query,
+        rationale="read-only search result",
+        proposed=None,
+        limit=args.limit,
     )
     closest = outcome.closest_issue
     print(

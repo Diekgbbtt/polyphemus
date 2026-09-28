@@ -69,41 +69,53 @@ def recon_entry(
 ) -> GateResult:
     """Recon entry (D13): project, seed, L1 scaffold, reachability, and - when
     the target declares an auth surface - the project `authn` skill and the
-    seeded `AuthContext` (overview AND credentials)."""
+    seeded `AuthContext` (overview AND credentials).
+
+    Every missing prerequisite is accumulated in a stable order (project ->
+    settings -> scaffold -> reachability -> authn skill -> overview ->
+    credentials) so one gate call reports the full work list. The scaffold and
+    auth reads are only issued when the project exists; a missing project
+    already reports the whole dependent subtree.
+    """
+    blocks: list[str] = []
     projects = api_runner(api.list_projects())
-    if state.project_id not in api.project_ids(projects):
-        return GateResult(False, (f"project not found: {state.project_id}",))
+    project_known = state.project_id in api.project_ids(projects)
+    if not project_known:
+        blocks.append(f"project not found: {state.project_id}")
 
     if not state.target_seed:
-        return GateResult(False, ("settings.target_seed is not set",))
+        blocks.append("settings.target_seed is not set")
 
-    graph = api_runner(api.project_graph(state.project_id))
-    if api.graph_counts(graph).services <= 0:
-        return GateResult(False, ("L1 scaffold incomplete: 0 services",))
+    if project_known:
+        graph = api_runner(api.project_graph(state.project_id))
+        if api.graph_counts(graph).services <= 0:
+            blocks.append("L1 scaffold incomplete: 0 services")
 
     if not reachable():
-        return GateResult(False, ("target not reachable from kali",))
+        blocks.append("target not reachable from kali")
 
     if state.auth_surface:
         if state.data_root is None:
-            return GateResult(
-                False, ("auth surface declared but no data root is configured",)
-            )
-        if not files.exists(authn_skill_path(state.data_root, state.project_id)):
-            return GateResult(
-                False,
-                (f"auth surface declared but project 'authn' skill is missing for {state.project_id}",),
-            )
-        auth = api_runner(api.read_auth(state.project_id))
-        if not _seeded(auth.get("overview")):
-            return GateResult(
-                False, ("auth surface declared but AuthContext overview is not seeded",)
-            )
-        if not auth.get("accounts"):
-            return GateResult(
-                False, ("auth surface declared but AuthContext credentials are not seeded",)
-            )
+            blocks.append("auth surface declared but no data root is configured")
+        else:
+            if not files.exists(authn_skill_path(state.data_root, state.project_id)):
+                blocks.append(
+                    "auth surface declared but project 'authn' skill is missing "
+                    f"for {state.project_id}"
+                )
+            if project_known:
+                auth = api_runner(api.read_auth(state.project_id))
+                if not _seeded(auth.get("overview")):
+                    blocks.append(
+                        "auth surface declared but AuthContext overview is not seeded"
+                    )
+                if not auth.get("accounts"):
+                    blocks.append(
+                        "auth surface declared but AuthContext credentials are not seeded"
+                    )
 
+    if blocks:
+        return GateResult(False, tuple(blocks))
     return GateResult(True)
 
 
@@ -114,29 +126,33 @@ def analysis_entry(
 
     A single failed recon job is note-and-continue: the job is recorded, never
     a block. A run with no job rows is a failed run (the liveness gate), not an
-    empty finding, so it blocks.
+    empty finding, so it blocks. Every missing prerequisite is accumulated in
+    the stable order run -> terminal -> rows -> L0.
     """
+    blocks: list[str] = []
     if not state.recon_run_id:
         return GateResult(False, ("analysis entry requires a recon run",))
 
     run = api_runner(api.recon_status(state.project_id, state.recon_run_id))
     status = api.status_of(run)
     if not api.recon_terminal(status):
-        return GateResult(False, (f"recon run not terminal: {status or 'unknown'}",))
+        blocks.append(f"recon run not terminal: {status or 'unknown'}")
 
     jobs = api.per_job_rows(run)
     if not jobs:
-        return GateResult(False, ("recon run has no job rows",))
+        blocks.append("recon run has no job rows")
 
     graph = api_runner(api.project_graph(state.project_id))
     if api.graph_counts(graph).l0 <= 0:
-        return GateResult(False, ("L0 count is zero",))
+        blocks.append("L0 count is zero")
 
     notes = tuple(
         f"recon job {job.get('job')} failed (note-and-continue)"
         for job in jobs
         if job.get("status") == "failed"
     )
+    if blocks:
+        return GateResult(False, tuple(blocks), notes=notes)
     return GateResult(True, notes=notes)
 
 
@@ -144,7 +160,11 @@ def hunting_entry(
     api_runner: api.ApiRunner, files: FileStore, state: PhaseState
 ) -> GateResult:
     """Hunting entry: analysis drained (or L1 present) and, when configured,
-    the pre-mined artifacts are in place."""
+    the pre-mined artifacts are in place.
+
+    The two prerequisites are accumulated in order (drained/L1 -> pre-mined).
+    """
+    blocks: list[str] = []
     graph = api_runner(api.project_graph(state.project_id))
     counts = api.graph_counts(graph)
 
@@ -154,30 +174,27 @@ def hunting_entry(
         drained = bool(((run or {}).get("stats") or {}).get("analysis_drained"))
 
     if not drained and counts.l1 <= 0:
-        return GateResult(
-            False, ("analysis not drained and no L1 surface present",)
-        )
+        blocks.append("analysis not drained and no L1 surface present")
 
     if state.preloaded_configured:
         if state.data_root is None:
-            return GateResult(
-                False, ("pre-mined hunting artifacts configured but no data root is set",)
+            blocks.append("pre-mined hunting artifacts configured but no data root is set")
+        else:
+            # Presence counts both artifact families: pre-mined hunt configs and
+            # each fault key's hunter test specs (a setup may pre-mine either).
+            present = sum(
+                files.count_files(hunt_configs_dir(state.data_root, state.project_id, side))
+                for side in ("produced", "consumed")
             )
-        # Presence counts both artifact families: pre-mined hunt configs and
-        # each fault key's hunter test specs (a setup may pre-mine either).
-        present = sum(
-            files.count_files(hunt_configs_dir(state.data_root, state.project_id, side))
-            for side in ("produced", "consumed")
-        )
-        specs_root = hunter_test_specs_dir(state.data_root, state.project_id)
-        for fault_dir in files.list_dirs(specs_root):
-            for side in ("produced", "consumed"):
-                present += files.count_files(fault_dir / side)
-        if present == 0:
-            return GateResult(
-                False, ("pre-mined hunting artifacts configured but not present",)
-            )
+            specs_root = hunter_test_specs_dir(state.data_root, state.project_id)
+            for fault_dir in files.list_dirs(specs_root):
+                for side in ("produced", "consumed"):
+                    present += files.count_files(fault_dir / side)
+            if present == 0:
+                blocks.append("pre-mined hunting artifacts configured but not present")
 
+    if blocks:
+        return GateResult(False, tuple(blocks))
     return GateResult(True)
 
 

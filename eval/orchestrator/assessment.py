@@ -18,12 +18,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Mapping, Protocol, Sequence
+from typing import Callable, Mapping, Sequence
 
 import yaml
 
-from orchestrator import trial, verdicts
-from orchestrator.commands import Command, CommandRunner, require_ok
+from orchestrator import subagents, trial, verdicts
+from orchestrator.commands import Command
 from orchestrator.files import FileStore
 
 # `eval/orchestrator/assessment.py` -> `eval/prompts/assessment.md`.
@@ -58,14 +58,7 @@ SubagentDispatcher = Callable[[AssessmentRequest], None]
 
 
 def _format_fields(request: AssessmentRequest) -> dict[str, str]:
-    return {
-        "prompt": str(request.prompt),
-        "trial_record": str(request.trial_record),
-        "ground_truth": str(request.ground_truth),
-        "data_root": str(request.data_root),
-        "destination": str(request.destination),
-        "trace_id": request.trace_id or "",
-    }
+    return subagents.common_fields(request)
 
 
 def plan_dispatch(
@@ -80,28 +73,22 @@ def plan_dispatch(
     The template names `{prompt}`, `{trial_record}`, `{ground_truth}`,
     `{data_root}`, `{destination}`, and `{trace_id}`.
     """
-    fields = _format_fields(request)
-    rendered = tuple(str(part).format(**fields) for part in argv)
-    return Command(
-        argv=rendered,
+    return subagents.render_command(
+        argv,
+        _format_fields(request),
         cwd=cwd,
         env=env,
         description=f"assess {request.trial_record}",
     )
 
 
-@dataclass
-class CommandDispatcher:
+class CommandDispatcher(subagents.CommandDispatcher):
     """The production seam: run the configured agent command line once."""
 
-    runner: CommandRunner
-    argv: tuple[str, ...]
-    cwd: str | None = None
-    env: Mapping[str, str] | None = None
+    error = AssessmentError
 
-    def __call__(self, request: AssessmentRequest) -> None:
-        command = plan_dispatch(request, self.argv, cwd=self.cwd, env=self.env)
-        require_ok(self.runner(command), command, error=AssessmentError)
+    def plan(self, request: AssessmentRequest) -> Command:
+        return plan_dispatch(request, self.argv, cwd=self.cwd, env=self.env)
 
 
 def dispatch(
@@ -112,16 +99,15 @@ def dispatch(
     now: Callable[[], str] | None = None,
 ) -> trial.AssessmentRecord:
     """Fire-and-forget dispatch; return the recorded attempt (D6)."""
-    now = now or _utcnow
-    dispatcher(request)
-    attempts = list(prior)
-    attempts.append(
-        trial.AssessmentAttempt(len(attempts) + 1, "dispatched", None, now())
-    )
-    return trial.AssessmentRecord(
-        status="dispatched",
-        attempts=attempts,
-        verdicts_path=str(request.destination),
+    return subagents.dispatch(
+        request,
+        dispatcher=dispatcher,
+        prior=prior,
+        now=now,
+        make_attempt=trial.AssessmentAttempt,
+        make_record=lambda status, attempts, path: trial.AssessmentRecord(
+            status, attempts, path
+        ),
     )
 
 
@@ -148,13 +134,8 @@ def check_verdicts(
     return "present"
 
 
-@dataclass(frozen=True)
-class AssessmentFailure:
-    """The micro-diagnosis of a persistent assessment failure (D15/D28)."""
-
-    cause: str
-    repair: str | None
-    detail: str
+# The persistent-failure classification (the shared cause/repair/detail shape).
+AssessmentFailure = subagents.Failure
 
 
 def classify_failure(*, verdict_state: str, error: BaseException | None) -> AssessmentFailure:
@@ -164,35 +145,20 @@ def classify_failure(*, verdict_state: str, error: BaseException | None) -> Asse
     file is an empty output and a present-but-rejected file is schema-invalid.
     Anything else is unknown and escalates without repair (D28).
     """
-    if error is not None:
-        return AssessmentFailure("dispatcher_process", "rerun", str(error))
-    if verdict_state == "missing":
-        return AssessmentFailure("empty_file", "rerun", "no verdicts.yaml was produced")
-    if verdict_state == "invalid":
-        return AssessmentFailure(
-            "schema_invalid", "rerun", "verdicts.yaml failed schema validation"
-        )
-    return AssessmentFailure("unknown", None, "assessment did not converge")
+    return subagents.classify_failure(
+        state=verdict_state,
+        error=error,
+        label="assessment",
+        missing_detail="no verdicts.yaml was produced",
+        invalid_detail="verdicts.yaml failed schema validation",
+    )
 
 
-class AssessmentRepair(Protocol):
-    """The bounded, configuration-layer-only repair of D28."""
-
-    def supports(self, cause: str) -> bool: ...
-
-    def apply(self, cause: str) -> None: ...
+# The bounded, configuration-layer-only repair of D28 (the shared protocol).
+AssessmentRepair = subagents.Repair
 
 
-class _NullRepair:
-    def supports(self, cause: str) -> bool:
-        return False
-
-    def apply(self, cause: str) -> None:  # pragma: no cover - never reached
-        raise AssessmentError(f"no repair supports {cause!r}")
-
-
-@dataclass
-class ReDispatchRepair:
+class ReDispatchRepair(subagents.ReDispatchRepair):
     """Re-run the configured command once with the corrected paths/flags.
 
     This is the only bounded repair (D28): it re-invokes the injected
@@ -200,14 +166,8 @@ class ReDispatchRepair:
     flags; it never touches the codebase.
     """
 
-    dispatcher: SubagentDispatcher
-    request: AssessmentRequest
-
-    def supports(self, cause: str) -> bool:
-        return cause in REPAIRABLE
-
-    def apply(self, cause: str) -> None:
-        self.dispatcher(self.request)
+    def __init__(self, dispatcher: SubagentDispatcher, request: AssessmentRequest) -> None:
+        super().__init__(dispatcher, request, repairable=REPAIRABLE, error=AssessmentError)
 
 
 def verify_trial(
@@ -222,7 +182,7 @@ def verify_trial(
     now: Callable[[], str] | None = None,
 ) -> trial.AssessmentRecord:
     """The eval-close check for one trial (presence, re-dispatch, micro-diagnosis)."""
-    now = now or _utcnow
+    now = now or subagents.utcnow
     attempts = list(prior)
 
     def attempt(outcome: str, detail: str | None) -> None:
@@ -253,7 +213,7 @@ def verify_trial(
             return trial.AssessmentRecord("present", attempts, str(request.destination), None)
 
     failure = classify_failure(verdict_state=state(), error=last_error)
-    kit = repair or _NullRepair()
+    kit = repair or subagents.NullRepair(AssessmentError)
     if kit.supports(failure.cause):
         try:
             kit.apply(failure.cause)
@@ -274,15 +234,7 @@ def verify_trial(
 
 def load_trial_record(path: str | Path, *, files: FileStore) -> dict:
     """Read a trial record; a missing or non-mapping file is a loud error."""
-    if not files.exists(path):
-        raise AssessmentError(f"trial record not found: {path}")
-    try:
-        payload = yaml.safe_load(files.read_text(path))
-    except yaml.YAMLError as exc:
-        raise AssessmentError(f"trial record {path}: invalid YAML: {exc}") from exc
-    if not isinstance(payload, dict):
-        raise AssessmentError(f"trial record {path}: expected a mapping")
-    return payload
+    return subagents.load_trial_record(path, files=files, error=AssessmentError)
 
 
 def trial_identity(path: str | Path, *, files: FileStore) -> tuple[str, str]:
@@ -320,9 +272,3 @@ def resolve_ground_truth(target: str) -> Path:
         return gt.resolve_challenge_dir(target)
     except SystemExit as exc:
         raise AssessmentError(f"ground truth for {target!r} not found: {exc}") from exc
-
-
-def _utcnow() -> str:
-    from datetime import datetime, timezone
-
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")

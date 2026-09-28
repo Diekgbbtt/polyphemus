@@ -65,6 +65,28 @@ class SeqFileStore(FileStore):
         return self._counts.pop(0) if self._counts else 0
 
 
+class AtomicFileStore(FileStore):
+    """Records the atomic writes, so the trial record's writer is provable."""
+
+    def __init__(self) -> None:
+        self.atomic: list[Path] = []
+
+    def write_text_atomic(self, path, text) -> None:  # type: ignore[override]
+        self.atomic.append(Path(path))
+        super().write_text_atomic(path, text)
+
+
+class SeamFileStore(FileStore):
+    """Records the read primitives the trial must route through the seam."""
+
+    def __init__(self) -> None:
+        self.is_file_calls: list[Path] = []
+
+    def is_file(self, path) -> bool:  # type: ignore[override]
+        self.is_file_calls.append(Path(path))
+        return super().is_file(path)
+
+
 GRAPH_L1_L0 = {
     "nodes": [{"type": "L1Service"}, {"type": "Endpoint"}],
     "links": [],
@@ -770,3 +792,134 @@ def test_trial_record_honours_an_explicit_target_run(tmp_path) -> None:
     ).run()
 
     assert record.target_run_id == "run-1"
+
+
+# --- failed terminals and the P8 liveness gate (#270/P8) ----------------------
+
+
+def test_failed_recon_terminal_stops_the_trial(tmp_path) -> None:
+    api_runner = FakeApi(
+        {
+            "GET /projects/pid/recon/r1": {"status": "failed", "per_job": [], "stats": {}},
+            "POST /projects/pid/recon": {"run_id": "r1"},
+            "GET /projects/pid/graph": GRAPH_L1_L0,
+            "GET /projects": PROJECTS,
+        }
+    )
+
+    record = _trial(tmp_path, api_runner, project_id="pid").run()
+
+    assert record.terminal == "failed"
+    assert [p.phase for p in record.phases] == ["recon"]
+    # It never chains into hunting (the fake has no hunting route at all).
+    assert not any(c.path.endswith("/hunting") for c in api_runner.calls)
+
+
+def test_failed_analysis_terminal_stops_the_trial(tmp_path) -> None:
+    api_runner = FakeApi(
+        {
+            "GET /projects/pid/recon/r0": {
+                "status": "complete",
+                "per_job": [{"job": "crawl", "status": "complete"}],
+                "stats": {},
+            },
+            "POST /projects/pid/analysis": {"analysis_run_id": "a1"},
+            "GET /projects/pid/analysis/r0": {"status": "interrupted"},
+            "GET /projects/pid/graph": GRAPH_L1_L0,
+        }
+    )
+
+    record = _trial(
+        tmp_path,
+        api_runner,
+        start_phase="analysis",
+        project_id="pid",
+        recon_run_id="r0",
+    ).run()
+
+    assert record.terminal == "failed"
+    assert [p.phase for p in record.phases] == ["analysis"]
+    assert not any(c.path.endswith("/hunting") for c in api_runner.calls)
+
+
+def test_recon_complete_with_every_job_failed_is_a_failed_run(tmp_path) -> None:
+    api_runner = FakeApi(
+        {
+            "GET /projects/pid/recon/r1": {
+                "status": "complete",
+                "per_job": [{"job": "crawl", "status": "failed"}],
+                "stats": {},
+            },
+            "POST /projects/pid/recon": {"run_id": "r1"},
+            "GET /projects/pid/graph": GRAPH_L1_L0,
+            "GET /projects": PROJECTS,
+        }
+    )
+
+    record = _trial(tmp_path, api_runner, project_id="pid").run()
+
+    assert record.terminal == "failed"
+    assert [p.phase for p in record.phases] == ["recon"]
+    assert record.phases[0].failure is not None
+    assert "failed" in record.phases[0].failure
+
+
+def test_recon_complete_with_no_job_rows_is_a_failed_run(tmp_path) -> None:
+    api_runner = FakeApi(
+        {
+            "GET /projects/pid/recon/r1": {
+                "status": "complete",
+                "per_job": [],
+                "stats": {},
+            },
+            "POST /projects/pid/recon": {"run_id": "r1"},
+            "GET /projects/pid/graph": GRAPH_L1_L0,
+            "GET /projects": PROJECTS,
+        }
+    )
+
+    record = _trial(tmp_path, api_runner, project_id="pid").run()
+
+    assert record.terminal == "failed"
+    assert "no job rows" in record.phases[0].failure
+
+
+# --- the trace id and the record writer (#271/D6) -----------------------------
+
+
+def test_trial_record_stamps_the_trace_id(tmp_path) -> None:
+    record = _trial(tmp_path, FakeApi(_full_routes()), trace_id="trace-1").run()
+
+    assert record.trace_id == "trace-1"
+    written = yaml.safe_load(Path(record.trial_dir, "trial.yaml").read_text())
+    assert written["trace_id"] == "trace-1"
+
+
+def test_default_trial_id_uses_the_injected_clock(tmp_path) -> None:
+    cfg = _config(tmp_path)
+
+    trial_id = trial._default_trial_id(cfg, lambda: "2026-09-28T12:34:56+00:00")
+
+    assert "20260928T123456" in trial_id
+
+
+def test_trial_record_is_written_atomically(tmp_path) -> None:
+    files = AtomicFileStore()
+
+    record = _trial(tmp_path, FakeApi(_full_routes()), files=files).run()
+
+    written = Path(record.trial_dir, "trial.yaml")
+    assert written in files.atomic
+
+
+def test_premined_source_resolution_uses_the_file_store_seam(tmp_path) -> None:
+    source = tmp_path / "premined"
+    source.mkdir()
+    (source / "unit_CWE-1_x.yaml").write_text("id: a\n")
+    files = SeamFileStore()
+
+    paths = trial._premined_sources(files, str(source))
+
+    assert [path.name for path in paths] == ["unit_CWE-1_x.yaml"]
+    # It asks the seam whether the source is a file before walking it.
+    assert files.is_file_calls[0] == source
