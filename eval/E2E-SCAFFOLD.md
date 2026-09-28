@@ -138,7 +138,7 @@ Needs: B5, B6, B7, B10.
 Expected: `trial <trial_id>: complete (project <id>)`, phases `recon` and `hunting` with statuses; `eval/runs/comfyui-1/<trial_id>/trial.yaml` carries `eval_sha` and `stack_fingerprint` and `target_run_id: eval-server-1`.
 The trial stamps the derived seed `t-1fc05262.target` into the settings PUT, so routing and scope agree.
 Failure paths: a phase `blocked` (predicate unmet), `failed` (a failed run or a `complete` run with no job rows), or `timeout`; the record and stdout report it.
-The trial verb exits 0 even on a non-`complete` terminal: the failure is a recorded trial event, and the surfer loop (`surfer --once`) is what asserts and recovers it.
+The trial verb exits 1 on a `failed` or `timeout` terminal and 0 on `complete`, `blocked`, or `stopped`: the failure is a recorded trial event, and the surfer loop (`surfer --once`) is what asserts and recovers it.
 Never read a failed recon run as an empty finding.
 
 ### Step 3 - assessment
@@ -202,7 +202,7 @@ The verdict and diagnosis schemas refuse a row whose identity is missing or does
 
 ## 4. Failure reporting, never silent patching
 
-- The orchestrator's verbs surface every failure on stderr as `orchestrator: error: <named cause>` and exit non-zero, except `trial`, which records a non-`complete` terminal in `trial.yaml` and stdout (exit 0) for the surfer loop to recover.
+- The orchestrator's verbs surface every failure on stderr as `orchestrator: error: <named cause>` and exit non-zero, except `trial`, which records a non-`complete` terminal in `trial.yaml` and stdout and exits 1 only for `failed`/`timeout` (0 for `blocked`/`stopped`) for the surfer loop to recover.
 - Configuration-layer repairs only: the trial's `chain` retries once after an `env`/`stack` repair; the surfer loop may apply `env` or `replace_artifacts` and resume.
 - An unalignable version jump or an unbound surfer action writes a hold (same mechanism) and blocks `up`/`trial` until an operator resolves it.
 - The artifact store fails loud with a named code rather than copying a partial tree.

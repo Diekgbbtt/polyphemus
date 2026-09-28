@@ -56,7 +56,8 @@ Without `--confirm`, or with a SHA outside the recorded history, the command is 
   A `worktree_skew` heartbeat names the divergent worktrees instead of hiding them.
 - The running-stack identity for image digests has no default: set `EVAL_ADVANCE_COMPOSE_PROJECT` (eval instances run as `ph-<short>`) or `EVAL_ADVANCE_IMAGE_CONTAINERS`.
   With neither, the daemon alerts and refuses to advance (SP4).
-- For N>1 instances (I1/D36), set `EVAL_ADVANCE_INSTANCES` to a JSON/YAML list (one mapping per instance with `instance_id` and `app_state_url`, optionally `compose_project`/`image_containers`).
+- For N>1 instances (I1/D36), set `EVAL_ADVANCE_INSTANCES` to a JSON/YAML list (one mapping per instance with `instance_id` and `app_state_url`, optionally `compose_project`/`dsn`/`image_containers`).
   The advance happens only when every instance is idle; an unknown verdict for any instance refuses it, and the manifest's image digests are keyed `<instance_id>:<component>`.
+  Each instance's `dsn` is its own postgres idle fallback (R-I1); without one it uses the shared `EVAL_ADVANCE_DSN`.
 - The last-known-good history is bounded to the most recent 50 SHAs (SP5), so an operator rewind only targets a recent recorded good SHA.
 - The heartbeat and last-known-good history are the daemon's only writes.

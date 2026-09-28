@@ -869,6 +869,87 @@ def test_two_instance_digests_flow_into_the_manifest_and_fingerprint(
     assert decision["fingerprints"]["dev"] == expected
 
 
+def test_instances_route_their_fallback_reads_to_their_own_dsn() -> None:
+    """R-I1: each instance's postgres fallback reads its own DSN, not a shared one."""
+    seen: list[str] = []
+
+    def http(url):  # the API is unreachable, so the fallback applies
+        raise OSError("app-state down")
+
+    def dsn_transport(dsn):
+        seen.append(dsn)
+        return "recon|r1|pid\n" if dsn == "postgresql://a" else ""
+
+    a = daemon.InstanceConfig("arm-a", "http://a", dsn="postgresql://a")
+    b = daemon.InstanceConfig("arm-b", "http://b", dsn="postgresql://b")
+    proxy_a = daemon.idle_proxy_for(
+        a,
+        shared_dsn="postgresql://shared",
+        http_transport=http,
+        dsn_transport=dsn_transport,
+    )
+    proxy_b = daemon.idle_proxy_for(
+        b,
+        shared_dsn="postgresql://shared",
+        http_transport=http,
+        dsn_transport=dsn_transport,
+    )
+
+    assert proxy_a.is_idle() is False
+    assert proxy_b.is_idle() is True
+    assert seen == ["postgresql://a", "postgresql://b"]
+
+
+def test_an_instance_without_a_dsn_falls_back_to_the_shared_dsn() -> None:
+    seen: list[str] = []
+
+    def http(url):
+        raise OSError("app-state down")
+
+    def dsn_transport(dsn):
+        seen.append(dsn)
+        return ""
+
+    instance = daemon.InstanceConfig("arm-a", "http://a")
+    proxy = daemon.idle_proxy_for(
+        instance,
+        shared_dsn="postgresql://shared",
+        http_transport=http,
+        dsn_transport=dsn_transport,
+    )
+
+    assert proxy.is_idle() is True
+    assert seen == ["postgresql://shared"]
+
+
+def test_daemon_builds_a_proxy_per_instance_with_its_own_dsn(monkeypatch) -> None:
+    captured: list[tuple[str, str | None]] = []
+
+    class FakeProxy:
+        def __init__(self, url, *, dsn=None, **_):
+            captured.append((url, dsn))
+
+    monkeypatch.setattr(daemon.app_state, "IdleProxy", FakeProxy)
+    config = daemon.DaemonConfig(
+        dev_worktree=Path("/dev"),
+        eval_worktrees=(Path("/e1"),),
+        app_state_url="http://shared",
+        heartbeat_path=Path("/hb.json"),
+        dsn="postgresql://shared",
+        instances=(
+            daemon.InstanceConfig("arm-a", "http://a", dsn="postgresql://a"),
+            daemon.InstanceConfig("arm-b", "http://b"),
+        ),
+    )
+
+    daemon.Daemon(config, git_runner=RecordingGit(), image_digests=lambda: dict(DIGESTS))
+
+    assert captured == [
+        ("http://a", "postgresql://a"),
+        ("http://b", "postgresql://shared"),
+    ]
+
+
 def test_heartbeat_write_is_an_atomic_replace(tmp_path: Path, monkeypatch) -> None:
     import os
 
@@ -1022,6 +1103,7 @@ def test_config_parses_a_multi_instance_list(tmp_path: Path) -> None:
                     "instance_id": "arm-a",
                     "app_state_url": "http://a",
                     "compose_project": "ph-a",
+                    "dsn": "postgresql://a",
                     "image_containers": {"kali": "ph-a-kali-1"},
                 },
                 {"instance_id": "arm-b", "app_state_url": "http://b"},
@@ -1033,6 +1115,8 @@ def test_config_parses_a_multi_instance_list(tmp_path: Path) -> None:
 
     assert [i.instance_id for i in config.instances] == ["arm-a", "arm-b"]
     assert config.instances[0].compose_project == "ph-a"
+    assert config.instances[0].dsn == "postgresql://a"
+    assert config.instances[1].dsn is None
     assert config.instances[0].image_containers == {"kali": "ph-a-kali-1"}
     assert config.instances[1].compose_project is None
     assert config.resolved_instances() == config.instances

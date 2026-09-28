@@ -498,6 +498,7 @@ a closer look.
   runs plus the top-level `idle` flag.
   When the API is unreachable, the advancement daemon reads the same rows
   straight from postgres - idle iff this returns no rows: `SELECT 'recon' AS kind, run_id AS id, project_id FROM recon_runs WHERE status = 'running' UNION ALL SELECT 'analysis', analysis_run_id, project_id FROM analysis_runs WHERE status = 'draining' UNION ALL SELECT 'hunting', hunting_run_id, project_id FROM hunting_runs WHERE status = 'running';`.
+  With more than one instance (`EVAL_ADVANCE_INSTANCES`) each instance carries its own fallback `dsn`, so a down API attributes its in-flight rows to that instance's database; an instance without one uses the shared `EVAL_ADVANCE_DSN` (R-I1).
 
 ### 2.2. The judgment protocol (you are the oracle)
 
