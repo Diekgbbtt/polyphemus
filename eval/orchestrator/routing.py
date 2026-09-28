@@ -9,15 +9,30 @@ gate; the HTTP `Host` is the discriminator.
 """
 from __future__ import annotations
 
+import re
 import shlex
 from pathlib import Path
 
-from orchestrator.commands import Command
+from orchestrator.commands import Command, CommandRunner
 from orchestrator.ids import short_id
 from orchestrator.instances import InstancePaths
 
 SYNTHETIC_SUFFIX = ".target"
 SSH_OPTS = ("-o", "BatchMode=yes", "-o", "ConnectTimeout=15")
+
+# Single-sourced (S1/S2): the host loopback the host-side readiness probes use,
+# and the Docker host gateway kali reaches host-published ports through. Kali is
+# not on the host network, so `127.0.0.1` inside kali is kali itself.
+LOOPBACK = "127.0.0.1"
+HOST_GATEWAY = "host.docker.internal"
+# Plan-mode placeholder for the gateway address resolved at run time (SP1).
+PLAN_GATEWAY_IP = "<gateway-ip>"
+
+_IPV4_RE = re.compile(r"^\d{1,3}(?:\.\d{1,3}){3}$")
+
+
+class RoutingError(RuntimeError):
+    """A remote routing command failed or an address could not be resolved."""
 
 
 def synthetic_host(identity: str) -> str:
@@ -25,14 +40,19 @@ def synthetic_host(identity: str) -> str:
     return f"t-{short_id(identity)}{SYNTHETIC_SUFFIX}"
 
 
-def nginx_front_block(host: str, port: int | str) -> str:
-    """The remote nginx server block: `server_name <host>` -> the target port."""
+def nginx_front_block(host: str, port: int | str, *, backend_host: str = LOOPBACK) -> str:
+    """The nginx server block: `server_name <host>` -> `backend_host:port`.
+
+    `backend_host` defaults to loopback (the remote workshop host, where nginx
+    and the target share a network namespace) and is the Docker host gateway
+    for the local front container, which reaches host-published ports that way.
+    """
     return (
         "server {\n"
         f"    server_name {host};\n"
         "    listen 80;\n"
         "    location / {\n"
-        f"        proxy_pass http://127.0.0.1:{port};\n"
+        f"        proxy_pass http://{backend_host}:{port};\n"
         "        proxy_set_header Host $host;\n"
         "        proxy_set_header X-Real-IP $remote_addr;\n"
         "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n"
@@ -47,7 +67,14 @@ def front_conf_path(conf_dir: str | Path, host: str) -> Path:
     return Path(conf_dir) / f"eval-target-{host}.conf"
 
 
-def _ssh(ssh_host: str, remote_command: str, *, stdin: str | None, description: str) -> Command:
+def ssh_command(
+    ssh_host: str,
+    remote_command: str,
+    *,
+    stdin: str | None = None,
+    description: str = "",
+) -> Command:
+    """The one ssh command builder shared by `routing` and `targetctl` (S2)."""
     return Command(
         argv=("ssh", *SSH_OPTS, ssh_host, remote_command),
         stdin=stdin,
@@ -57,21 +84,25 @@ def _ssh(ssh_host: str, remote_command: str, *, stdin: str | None, description: 
 
 def plan_front_apply(ssh_host: str, conf_path: str | Path, host: str, port: int | str) -> Command:
     """Write the per-host front block remotely and reload nginx."""
+    quoted = shlex.quote(str(conf_path))
     remote = (
-        f"sudo tee {conf_path} >/dev/null && sudo nginx -t && sudo systemctl reload nginx"
+        f"sudo tee {quoted} >/dev/null && sudo nginx -t && sudo systemctl reload nginx"
     )
-    return _ssh(
+    return ssh_command(
         ssh_host,
         remote,
         stdin=nginx_front_block(host, port),
-        description=f"front {host} -> 127.0.0.1:{port}",
+        description=f"front {host} -> {LOOPBACK}:{port}",
     )
 
 
 def plan_front_remove(ssh_host: str, conf_path: str | Path) -> Command:
     """Remove the per-host front block remotely and reload nginx."""
-    remote = f"sudo rm -f {conf_path} && sudo nginx -t && sudo systemctl reload nginx"
-    return _ssh(ssh_host, remote, stdin=None, description=f"remove front {conf_path}")
+    quoted = shlex.quote(str(conf_path))
+    remote = f"sudo rm -f {quoted} && sudo nginx -t && sudo systemctl reload nginx"
+    return ssh_command(
+        ssh_host, remote, stdin=None, description=f"remove front {conf_path}"
+    )
 
 
 def _compose_ps_kali(paths: InstancePaths) -> str:
@@ -105,11 +136,53 @@ def _kali_exec_command(
 
 
 def kali_alias_command(paths: InstancePaths, host: str, ip: str) -> Command:
-    """Alias the synthetic Host inside that instance's kali `/etc/hosts`."""
+    """Alias the synthetic Host inside that instance's kali `/etc/hosts`.
+
+    `ip` must be a NUMERIC address (SP1): `/etc/hosts` does not resolve a
+    hostname in its address column, so an unresolved `host.docker.internal`
+    line would silently point nowhere. Local strategies resolve the gateway
+    first with `resolve_gateway`.
+    """
     inner = _rewrite_hosts(host) + f" && echo '{ip} {host}' >> /etc/hosts"
     return _kali_exec_command(
         paths, inner, description=f"alias {host} -> {ip} in {paths.compose_project} kali"
     )
+
+
+def plan_gateway_resolve(paths: InstancePaths) -> Command:
+    """Read the Docker host gateway address as seen INSIDE that instance's kali.
+
+    `host.docker.internal` may be absent in a container that lacks the
+    `host-gateway` mapping, so the resolution is explicit and its failure fatal.
+    """
+    return _kali_exec_command(
+        paths,
+        f"getent hosts {HOST_GATEWAY}",
+        description=f"resolve {HOST_GATEWAY} in {paths.compose_project} kali",
+    )
+
+
+def parse_gateway_address(text: str) -> str:
+    """The first numeric address in `getent hosts` output (SP1)."""
+    for token in text.split():
+        if _IPV4_RE.match(token):
+            return token
+    raise RoutingError(
+        f"no numeric address for {HOST_GATEWAY} in getent output: {text!r}"
+    )
+
+
+def resolve_gateway(run: CommandRunner, paths: InstancePaths) -> str:
+    """Resolve the host gateway inside kali, failing loudly (SP1)."""
+    command = plan_gateway_resolve(paths)
+    result = run(command)
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip()
+        raise RoutingError(
+            f"resolving {HOST_GATEWAY} inside {paths.compose_project} kali failed "
+            f"(exit {result.returncode}): {detail or 'no output'}"
+        )
+    return parse_gateway_address(result.stdout)
 
 
 def kali_clear_command(paths: InstancePaths, host: str) -> Command:

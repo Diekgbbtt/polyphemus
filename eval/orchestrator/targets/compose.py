@@ -1,18 +1,21 @@
 """The `compose` strategy: a local pullable compose stack.
 
 The stack runs under its own compose project (`ph-target-<short>`), distinct
-from the instance projects; the instance kali aliases the synthetic Host to the
-Docker host gateway (`host.docker.internal`), NOT `127.0.0.1`, because kali is
-not on the host network and `127.0.0.1` is kali itself. The gateway is a host
-interface, so the target compose file MUST publish on an interface it can reach
-(all interfaces); a loopback-only (`127.0.0.1:<port>:...`) binding is
-unreachable from kali. `down` removes that project's containers and volumes.
+from the instance projects. It is fronted on `http://<host>/` (port 80) by the
+shared host-level nginx container (`orchestrator/front.py`, SP2), and the
+instance kali aliases the synthetic Host to the Docker host gateway resolved to
+a NUMERIC address (SP1) - never `127.0.0.1`, because kali is not on the host
+network and `127.0.0.1` is kali itself. The gateway is a host interface, so the
+target compose file MUST publish on an interface it can reach (all interfaces);
+a loopback-only (`127.0.0.1:<port>:...`) binding is unreachable from kali and
+the front. `down` removes that project's containers and volumes, idempotently,
+and always clears the alias.
 """
 from __future__ import annotations
 
 import time
 
-from orchestrator import routing
+from orchestrator import front, routing
 from orchestrator.commands import Command, CommandRunner, require_ok
 from orchestrator.ids import short_id
 from orchestrator.targets.base import (
@@ -24,8 +27,9 @@ from orchestrator.targets.base import (
     wait_ready,
 )
 
-LOOPBACK = "127.0.0.1"
-HOST_GATEWAY = "host.docker.internal"
+# Single-sourced routing constants (S2).
+LOOPBACK = routing.LOOPBACK
+HOST_GATEWAY = routing.HOST_GATEWAY
 
 
 class ComposeTargetError(TargetError):
@@ -89,7 +93,9 @@ class ComposeStrategy:
         return [
             self._compose("up", "-d"),
             self._probe_cmd(),
-            routing.kali_alias_command(self.paths, self.host, HOST_GATEWAY),
+            front.plan_conf_apply(self.host, self.port),
+            routing.plan_gateway_resolve(self.paths),
+            routing.kali_alias_command(self.paths, self.host, routing.PLAN_GATEWAY_IP),
         ]
 
     def up(self, run: CommandRunner) -> TargetUpResult:
@@ -101,23 +107,56 @@ class ComposeStrategy:
             raise TargetNotReadyError(
                 f"compose target {self.compose_file!r} did not answer at {self.front_url}"
             )
-        alias = routing.kali_alias_command(self.paths, self.host, HOST_GATEWAY)
+        conf = front.plan_conf_apply(self.host, self.port)
+        require_ok(run(conf), conf, error=ComposeTargetError)
+        alias = routing.kali_alias_command(
+            self.paths, self.host, self._gateway_address(run)
+        )
         require_ok(run(alias), alias, error=ComposeTargetError)
         return TargetUpResult(
             host=self.host, front_url=self.front_url, backend=self.backend, ready=True
         )
 
+    def _gateway_address(self, run: CommandRunner) -> str:
+        try:
+            return routing.resolve_gateway(run, self.paths)
+        except routing.RoutingError as exc:
+            raise ComposeTargetError(str(exc)) from exc
+
     def plan_down(self) -> list[Command]:
         return [
             self._compose("down", "-v", "--remove-orphans"),
+            front.plan_conf_remove(self.host),
             routing.kali_clear_command(self.paths, self.host),
         ]
 
     def down(self, run: CommandRunner) -> None:
+        # SP3: best-effort cleanup; the front conf and kali alias are always
+        # removed, and an aggregate error is raised at the end for reporting.
         down_cmd = self._compose("down", "-v", "--remove-orphans")
-        require_ok(run(down_cmd), down_cmd, error=ComposeTargetError)
+        down_result = run(down_cmd)
+        conf = front.plan_conf_remove(self.host)
+        conf_result = run(conf)
         clear = routing.kali_clear_command(self.paths, self.host)
-        require_ok(run(clear), clear, error=ComposeTargetError)
+        clear_result = run(clear)
+        errors: list[str] = []
+        if down_result.returncode != 0:
+            errors.append(
+                f"compose down failed: "
+                f"{down_result.stderr.strip() or down_result.stdout.strip()}"
+            )
+        if conf_result.returncode != 0:
+            errors.append(
+                f"remove front conf for {self.host} failed: "
+                f"{conf_result.stderr.strip() or conf_result.stdout.strip()}"
+            )
+        if clear_result.returncode != 0:
+            errors.append(
+                f"clear alias {self.host} failed: "
+                f"{clear_result.stderr.strip() or clear_result.stdout.strip()}"
+            )
+        if errors:
+            raise ComposeTargetError("; ".join(errors))
 
     def plan_status(self) -> list[Command]:
         return [self._compose("ps")]

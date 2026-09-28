@@ -118,7 +118,11 @@ def main(
         if args.verb == "up":
             _print_results(orchestrator.up(), out)
         elif args.verb == "down":
-            orchestrator.down()
+            errors = orchestrator.down()
+            for error in errors:
+                print(f"down: error: {error}", file=err)
+            if errors:
+                return 1
             print("down: complete", file=out)
         else:
             for instance_id, report in orchestrator.status().items():

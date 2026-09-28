@@ -68,3 +68,13 @@ def require_ok(result: CommandResult, command: Command, *, error: type[Exception
         detail = result.stderr.strip() or result.stdout.strip()
         raise error(f"command failed ({result.returncode}): {command.display()}: {detail}")
     return result
+
+
+def is_absent_container(result: CommandResult) -> bool:
+    """True when a `docker rm`/`inspect` failure means the container is absent.
+
+    Teardown is idempotent (SP3): a container that was never running is success,
+    not an error to abort the rest of the teardown on.
+    """
+    text = f"{result.stderr}\n{result.stdout}".lower()
+    return "no such container" in text
