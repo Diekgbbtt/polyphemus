@@ -1,7 +1,8 @@
 # Statefulness Pattern Matrix
 
 *Status: RATIFIED 2026-08-10 (feat/async-actor-agents). Living reference for every
-agent's execution model and statefulness mechanism.*
+agent's execution model and statefulness mechanism.
+Refreshed 2026-09-25: the recon pod `configurator` row is corrected to deterministic (the role is dormant), `decide_routing` is marked retired (#223 D223-12), and the recon `File:line` anchors are updated to the current layout.*
 
 ## Matrix
 
@@ -19,13 +20,13 @@ and the thread identity (how concurrent instances avoid collision).
 
 | Agent | Execution | Statefulness | Invocation | Thread identity | File:line |
 |---|---|---|---|---|---|
-| `configurator` (pod) | sync leaf | ContextVar + stateful_turn | `_pod_ctx().get()` -> `stateful_turn` or `invoke_role` | `PodSession(run, phase, tool, asset)` via ContextVar | `pod.py:589-597` |
-| `triager` (pod) | sync leaf | ContextVar + stateful_turn | `_pod_ctx().get()` -> `stateful_turn` or `invoke_role` | `PodSession(run, phase, tool, asset)` via ContextVar | `pod.py:647-653` |
-| `pod_graph` | StateGraph (sync `graph.invoke`) | **StateGraph (no checkpointer)** | `pod_graph.invoke(state)` | N/A (runs in worker thread per pod) | `job_agent.py:187` |
-| `job_agent` | StateGraph (sync `graph.invoke`) | **StateGraph (no checkpointer)** | `job_agent.invoke(state)` | N/A (runs in worker thread per job) | `job_agent.py:187` |
-| `ReconOrchestratorActor` | async actor | checkpointer (create_agent) | `run_session_agent` -> `arun_session_turn` | `OrchestratorSession(run_id)` | `orchestrator_agent.py:202` |
-| `decide_routing` (legacy) | sync leaf | invoke_role | `invoke_role("job_orchestrator", ...)` | N/A (one-shot) | `orchestrator_agent.py:110-113` |
-| `crawl_agent` | async (vendored ReAct) | stateless | `_run_agentic_crawl` loop | N/A | `crawl_agentic.py:60` |
+| `configurator` (pod) | sync leaf | deterministic template fill (no LLM; the `configurator` role is dormant, reserved for #238) | none (no role call) | N/A | `pod.py:326-370` |
+| `triager` (pod) | sync leaf | ContextVar + stateful_turn | `_pod_ctx().get()` -> `stateful_turn` or `invoke_role` | `PodSession(run, phase, tool, asset)` via ContextVar | `pod.py:707-769` |
+| `pod_graph` | StateGraph (sync `graph.invoke`) | **StateGraph (no checkpointer)** | `pod_graph.invoke(state)` | N/A (runs in worker thread per pod) | `job_agent.py:163-208` |
+| `job_agent` | StateGraph (sync `graph.invoke`) | **StateGraph (no checkpointer)** | `run_job` -> `build_job_agent().invoke(state)` | N/A (runs in worker thread per job) | `job_agent.py:298-344` |
+| `ReconOrchestratorActor` | async actor | checkpointer (create_agent) | `run_session_agent` -> `arun_session_turn` | `OrchestratorSession(run_id)` | `orchestrator_agent.py:240-399` |
+| `decide_routing` (RETIRED) | - | - | removed by #223 D223-12 (mid-run steering retired) | - | - |
+| `crawl_agent` | async (vendored ReAct) | stateless | `_run_agentic_crawl` loop | N/A | `crawl_agentic.py:184` |
 
 ### Analysis
 
@@ -61,7 +62,7 @@ and the thread identity (how concurrent instances avoid collision).
 
 ### OUTLIER-1: `pod_graph` and `job_agent` have no StateGraph checkpoint
 
-**Location**: `recon/domain/pod.py:443`, `recon/control/job_agent.py:254`
+**Location**: `src/polymerhus/recon/domain/pod.py:543`, `src/polymerhus/recon/control/job_agent.py:270`
 
 Both graphs return `g.compile()` with no checkpointer argument. This means:
 - A pod crash mid-execution cannot resume from the last successful super-step.
@@ -93,19 +94,14 @@ The future full conversion of the supervisor into an async-native
 actor-with-mailbox (pooled checkpointer + `create_agent`) is ticketed:
 https://github.com/Diekgbbtt/polyphemus/issues/102.
 
-### OUTLIER-3: `decide_routing` / `build_gate_reason_fn` / `build_rematch_fn` are legacy sync seams
+### OUTLIER-3: the legacy sync orchestrator seams (one retired, two hunting-only)
 
-**Location**: `orchestrator_agent.py:99`, `llm.py:226,248`
+**Location**: `attack/hunting/llm.py:226,248` (`build_gate_reason_fn` / `build_rematch_fn`)
 
-These are the pre-actor sync one-shot seams that the actor versions
-(`ReconOrchestratorActor`, `HuntOrchestratorActor`) supersede. They remain as
-thin compatibility wrappers for tests and rollback. The production default is the
-actor path.
+The recon `decide_routing` seam has been **removed** (#223 D223-12 retired mid-run steering); no `decide_routing` symbol survives in `recon/`.
+The hunting `build_gate_reason_fn` / `build_rematch_fn` remain injectable sync one-shot seams that the `HuntOrchestratorActor` supersedes; the production callers pass `None` to use the actor path, and the sync versions are retained only for test injection.
 
-**Status**: Superseded. Both `decide_routing` and `build_gate_reason_fn` /
-`build_rematch_fn` are wired as injectable seams; the production callers pass
-`None` to use the actor path. The sync versions are retained only for test
-injection and sync rollback.
+**Status**: `decide_routing` retired; hunting seams superseded.
 
 ### OUTLIER-4: `_hunter_turn` dual-path (ContextVar or invoke_role)
 
@@ -140,7 +136,7 @@ resumes from chunk N's reasoning) without the overhead of a persistent actor loo
 | Scenario | Recommended pattern | Example |
 |---|---|---|
 | Agent dispatches subagents and needs cross-turn memory | **async actor** (`run_session_agent` + `AgentInbox`) | `ReconOrchestratorActor`, `HuntOrchestratorActor` |
-| Agent is a leaf with data dependencies, needs session memory | **sync leaf + `stateful_turn`** (`create_agent` with checkpointer) | `assigner`, `mechanism_typist`, `data_modeller`, `triager`, `configurator` |
+| Agent is a leaf with data dependencies, needs session memory | **sync leaf + `stateful_turn`** (`create_agent` with checkpointer) | `assigner`, `mechanism_typist`, `data_modeller`, `triager` |
 | Agent is a leaf, stateless one-shot call | **sync leaf + `invoke_role`** (no checkpointer) | `bootstrapper`, `anatomy`, `curation`, `sweep` |
 | Graph orchestrates multiple nodes with routing logic | **StateGraph without checkpointer** (in-memory; durable archive lives in the spawned agents' pooled checkpointer) | `supervisor` (see #102 for the actor-model conversion) |
 | Graph is a deterministic pipeline, short-lived | **StateGraph without checkpointer** (fault tolerance via node-level fail-open) | `pod_graph`, `job_agent` |
@@ -155,7 +151,7 @@ parameter, never agent-logic changes.
 | Consumer | Seam | Builder |
 |---|---|---|
 | `assigner` / `mechanism_typist` / `data_modeller` (analysis) | `stateful_invoke_fn` builds one middleware per run, passed through `stateful_turn` | `compaction.build_role_compaction_middleware(role_id)` |
-| `configurator` / `triager` (recon pod) | the pod-graph node's ContextVar path passes a process-wide per-role middleware through `stateful_turn` (manager keyed by `thread_id`, so re-witnesses share state) | `compaction.cached_role_compaction_middleware(role_id)` |
+| `triager` (recon pod) | the pod-graph node's ContextVar path passes a process-wide per-role middleware through `stateful_turn` (manager keyed by `thread_id`, so re-witnesses share state). The `configurator` node is deterministic and holds no session, so it is not compacted | `compaction.cached_role_compaction_middleware(role_id)` (`pod.py:762`) |
 | `ReconOrchestratorActor` / `HuntOrchestratorActor` / `HuntingHunterActor` | `_ensure_started` appends the middleware to `run_session_agent` (`compaction=None` auto-wires, `False` disables) | `compaction.build_role_compaction_middleware(role_id)` |
 
 The one-shot `invoke_role` leaves (bootstrapper, anatomy, curation, sweep, the
