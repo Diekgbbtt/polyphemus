@@ -5,9 +5,9 @@ HEADs, fast-forwards every eval worktree to `dev` only inside an all-idle
 window (the app-state proxy, D26), stashes leaked tracked edits and pops them
 across the move (D25), records the last-known-good `eval` SHA before moving
 (D38), writes a heartbeat every poll, and alerts on a non-fast-forward (R13).
-It computes the #266 stack manifest and decision input after a successful
-advance and emits it for the orchestrator (D42); it never decides an alignment
-action.
+It computes the #266 stack manifest, its compressed fingerprint, and the
+decision input after a successful advance and emits them for the orchestrator
+(D42); it never decides an alignment action.
 
 The three-way separation is structural, not conventional. The polling path
 issues only `rev-parse`, `status`, `merge-base --is-ancestor`, `stash push`,
@@ -37,6 +37,7 @@ from pathlib import Path
 from typing import Callable, Mapping, Sequence
 
 from advance import app_state, decision as decision_input, manifest
+from advance.fingerprint import fingerprint
 from advance.images import CommandResult
 
 # --- states ------------------------------------------------------------------
@@ -466,7 +467,15 @@ class Daemon:
             built = decision_input.build_decision_input(
                 dev_sha, eval_sha, True, manifest_dev=after, manifest_eval=before
             )
-            return json.loads(json.dumps(asdict(built)))
+            payload = json.loads(json.dumps(asdict(built)))
+            # The compressed fingerprint per side (D39): one value for "did the
+            # stack change", beside the per-group diff. The orchestrator reads
+            # the diff to decide alignment; it is not an action here.
+            payload["fingerprints"] = {
+                "eval": fingerprint(before),
+                "dev": fingerprint(after),
+            }
+            return payload
         except Exception as exc:  # noqa: BLE001 - a diff failure must not undo the move
             self._log({"event": "decision_failed", "error": str(exc)})
             return None

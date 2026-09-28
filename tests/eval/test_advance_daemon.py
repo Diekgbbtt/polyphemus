@@ -368,6 +368,7 @@ def test_heartbeat_reflects_each_poll_and_carries_the_decision(
     assert decision["all_idle"] is True
     changed = {c["name"] for c in decision["delta"]["changed"]}
     assert "src" in changed
+    assert decision["fingerprints"]["eval"] != decision["fingerprints"]["dev"]
 
     # A later no-op poll keeps the last advance timestamp.
     third = d.poll_once()
