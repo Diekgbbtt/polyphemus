@@ -34,6 +34,11 @@ An operator's request to recon a project - `POST /projects/{id}/recon`.
 It is guarded before launch (the project must exist, any job subset must be valid, and a `target_domain` must be configured - a targetless run is refused so the pipeline never silently scans the example.com placeholder) and then scheduled non-blocking, returning a `run_id` immediately.
 The Run *entity* itself (its phases, jobs, heartbeat, terminal status) is Recon vocabulary; project-management owns only the request for one and the polling of its status.
 
+**App-state read surface**:
+The instance-wide running-state read - `GET /app-state` (optional `?project_id` scope, `idle` reflects the scope).
+Per project it reports the in-flight runs of every run class the store expresses (recon `running`, analysis `draining`, hunting `running` - each the only live state of its lifecycle) plus the top-level `idle`; read-only, no mutation surface, with the equivalent direct-postgres query documented on the route as the fallback.
+The pre-existing unscoped `GET /runs?status=running` stays as the recon-only listing; the new surface consolidates all three classes rather than multiplying per-class endpoints.
+
 **Module-lifecycle request** (#118/#121):
 An operator's drive of the runtime plane over the wire - `POST /projects/{id}/modules/{module}/pause|resume|drain` (`module` in `recon|analysis|hunting`).
 The verbs route to the module runtime's `RuntimeManager.pause/resume/drain` (the in-process lifecycle state machine), fail closed with 503 when no runtime is active, and 404 on an unknown module; pause of a stopped module and resume of a non-paused module are the runtime verb's own safe no-ops, and the response always reports the current state.

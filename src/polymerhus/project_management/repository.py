@@ -73,6 +73,51 @@ def running_runs(now: datetime | None = None) -> dict:
     return {"runs": runs, "liveness_ttl_seconds": ttl}
 
 
+def app_state(project_id: str | None = None, now: datetime | None = None) -> dict:
+    """Instance-wide running state: per-project in-flight runs across every run
+    class the store expresses, plus the top-level idle flag. Read-only
+    (SELECTs only). `project_id` narrows the scope (unknown -> the caller's
+    404); `idle` reflects the returned scope. A run counts as in-flight by
+    persisted row alone - recon `running`, analysis `draining`, hunting
+    `running` - the only live state of each lifecycle."""
+    if project_id is not None and not pg.project_exists(project_id):
+        raise ProjectNotFound(project_id)
+    projects = pg.list_projects()
+    if project_id is not None:
+        projects = [p for p in projects if p["project_id"] == project_id]
+    entries: dict[str, dict] = {
+        p["project_id"]: {
+            "project_id": p["project_id"], "project_name": p["name"],
+            "in_flight": False, "recon": [], "analysis": [], "hunting": [],
+        }
+        for p in projects
+    }
+    # Runs of a project absent from the listing (unreachable through the API -
+    # projects are never deleted) still count: they are execution in flight.
+    for run in running_runs(now=now)["runs"]:
+        entries.setdefault(run["project_id"], {
+            "project_id": run["project_id"], "project_name": None,
+            "in_flight": False, "recon": [], "analysis": [], "hunting": [],
+        })["recon"].append(run)
+    for run in pg.list_running_analysis_runs():
+        entries.setdefault(run["project_id"], {
+            "project_id": run["project_id"], "project_name": None,
+            "in_flight": False, "recon": [], "analysis": [], "hunting": [],
+        })["analysis"].append(run)
+    for run in pg.list_running_hunting_runs():
+        entries.setdefault(run["project_id"], {
+            "project_id": run["project_id"], "project_name": None,
+            "in_flight": False, "recon": [], "analysis": [], "hunting": [],
+        })["hunting"].append(run)
+    scoped = [entries[pid] for pid in entries if project_id is None or pid == project_id]
+    for entry in scoped:
+        entry["in_flight"] = bool(entry["recon"] or entry["analysis"] or entry["hunting"])
+    return {
+        "idle": all(not e["in_flight"] for e in scoped),
+        "projects": scoped,
+    }
+
+
 def save_project_settings(project_id: str, recon: dict) -> None:
     """Persist a partial settings PUT (#223 T4 #243: the settings blob carries
     no auth - the AuthContext value object and its validation are retired
