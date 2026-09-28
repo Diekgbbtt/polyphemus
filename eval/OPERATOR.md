@@ -473,6 +473,34 @@ breakdowns.
   dashboard are deliberately absent from this harness. The evidence bundles are
   the migration seam to that future harness.
 
+### 2.8. Delivering `dev` to the eval server (the delivery plane)
+
+A push to `dev` fast-forwards the eval server's canonical `dev` checkout. The
+delivery is owned by `.github/workflows/deploy-eval.yml`, which pipes
+`eval/deploy/ff_dev.sh` over SSH; it touches only the server's `dev` branch and
+never the `eval` branch or any instance worktree (`dev` -> `eval` is the sync
+daemon's job).
+
+Configure once, in the repository's Actions secrets (Settings -> Secrets and
+variables -> Actions):
+
+| Secret | What it is |
+|---|---|
+| `EVAL_SSH_KEY` | The private deploy key authorised for `root@<server>` (the full private-key block). The workflow installs it at `~/.ssh/eval_deploy`, mode 0600. |
+| `EVAL_HOST` | The server host the workflow connects to as `root@$EVAL_HOST`. |
+| `EVAL_SSH_KNOWN_HOSTS` | The server's pinned host key(s), e.g. `ssh-keyscan -H <host>`. Verifies the host key (`StrictHostKeyChecking=yes`); there is no trust-on-first-use. |
+
+And, as a repository variable (same screen, Variables tab):
+
+| Variable | What it is |
+|---|---|
+| `EVAL_DEV_DIR` | Absolute path of the canonical server `dev` checkout. The script clones the public HTTPS origin there if it does not exist, then fast-forwards it. Defaults to `/opt/polymerhus-dev`. |
+
+To test before any push: Actions -> `deploy-eval` -> Run workflow
+(`workflow_dispatch`). A missing secret fails the run with an explicit
+`::error::` naming the secret to configure; a non-fast-forwardable `dev` fails
+loudly and leaves the server's working tree untouched.
+
 ## 3. KB authoring
 
 # Operator-KB authoring prompt (the effective prompt, implementation-reverse-engineering revision)
