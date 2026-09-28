@@ -144,28 +144,45 @@ never inflate a verdict because the surface is known to be incomplete.
 
 #### The seed and the front
 
-The target is fronted by the remote nginx (a system service): the `targetctl`
-strategy writes one server block per synthetic Host proxying `http://<host>/`
-to the target's actual published port, reloads nginx, and returns
-`front_url=http://<host>/`. The seed is THE BARE SYNTHETIC HOST from that URL
-(`t-<short>.target`) - never an IP, never a URL with a scheme or port: the
-platform's domain-mode scope is exact on the raw seed string and the fleet
-probes the default web port (80). A scheme/port-bearing seed breaks the scope
-gate (assets dropped, crawl chain skipped) - a dev-side defect, tracked
-separately, NOT worked around here.
+The seed is THE BARE SYNTHETIC HOST (`t-<short>.target`) - never an IP, never a
+URL with a scheme or port: the platform's domain-mode scope is exact on the raw
+seed string and the fleet probes the default web port (80). A scheme/port-bearing
+seed breaks the scope gate (assets dropped, crawl chain skipped) - a dev-side
+defect, tracked separately, NOT worked around here. Every target is therefore
+fronted on :80 and `front_url=http://<host>/`; the front mechanism differs by
+where the target runs:
+
+- `targetctl` (remote workshop host): that host's own nginx (a system service).
+  The strategy writes one server block per synthetic Host proxying
+  `http://<host>/` to the target's actual published port and reloads nginx.
+- `image`/`compose` (local, host-published): a SHARED host-level nginx
+  container, `ph-eval-front` (SP2). It binds the host's port 80 and carries one
+  conf per synthetic Host, each proxying `http://<host>/` to the target's
+  published port over the Docker host gateway
+  (`proxy_pass http://host.docker.internal:<port>`). The orchestrator creates
+  the container before the first local target and removes it after the last;
+  confs are added and removed per target with `nginx -t` + reload, so several
+  local targets and instances share the one :80 binding without colliding.
+  Creating it on first up keeps a single target's bring-up self-contained; the
+  up command is idempotent, so a crashed run can be re-run or torn down safely.
 
 The routing module aliases the synthetic Host inside that instance's kali
 `/etc/hosts` (runtime-only): belt-and-braces deterministic resolution for the
 recon fleet. The alias target depends on where the target runs:
 
-- `targetctl` (remote workshop host): the workshop host's public IP.
-- `image`/`compose` (local, host-published): `host.docker.internal`, the Docker
-  host gateway (`host.docker.internal:host-gateway`). Kali is NOT on the host
-  network, so `127.0.0.1` would resolve to kali itself.
+- `targetctl` (remote workshop host): the workshop host's public IP (already
+  numeric).
+- `image`/`compose` (local, host-published): the Docker host gateway, resolved
+  to a NUMERIC address at run time (`getent hosts host.docker.internal` inside
+  that instance's kali, SP1). `/etc/hosts` does NOT resolve a hostname in its
+  address column, so the literal `host.docker.internal` is never written; a
+  resolution failure is fatal. Kali is NOT on the host network, so `127.0.0.1`
+  would resolve to kali itself, and the front is reached through the resolved
+  gateway on port 80.
   The gateway is a host interface, so a local target must publish on an
   interface the gateway can reach: `image` uses docker's default all-interfaces
   publish, and a `compose` target's own compose file MUST NOT bind
-  `127.0.0.1:<port>:...` (loopback-only is unreachable from kali).
+  `127.0.0.1:<port>:...` (loopback-only is unreachable from kali and the front).
 
 Settings PUT body (`ph.py settings put`):
 
@@ -261,10 +278,12 @@ operator KB, research notes, evidence, verdicts, trial record - lands there.
 1. Bring the target up through the orchestrator (`python3 -m orchestrator up
    <setup.yaml>`); capture the `TARGET_URL` (the synthetic Host front URL) and
    the backend from its output.
-2. The orchestrator aliases the synthetic Host inside the instance kali
-   (`targetctl`: the target's public IP; `image`/`compose`: the host gateway,
-   `host.docker.internal`), so the recon fleet can reach the target. The
-   synthetic Host name is what the pipeline will observe.
+2. The orchestrator fronts the target on :80 (the remote nginx for `targetctl`;
+   the shared `ph-eval-front` container for local `image`/`compose`) and aliases
+   the synthetic Host inside the instance kali (`targetctl`: the target's public
+   IP; `image`/`compose`: the host gateway resolved to a numeric address), so
+   the recon fleet can reach the target. The synthetic Host name is what the
+   pipeline will observe.
 3. `gt.py <target>`; read the ground truth (the JUDGE's private reference, kept
    out of anything the pipeline sees).
 4. **The operator-KB stage**: use the PRECOMPUTED per-target KB VERBATIM:

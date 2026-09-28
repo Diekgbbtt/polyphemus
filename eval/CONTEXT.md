@@ -48,9 +48,15 @@ _Avoid_: target kind, deployment
 
 **Synthetic Host**:
 The unique per-`TargetRun` hostname (`t-<short>.target`) written into the target front's `server_name` and aliased in that instance's kali `/etc/hosts`; the routing discriminator.
-The alias target is the target's public IP for `targetctl` and the Docker host gateway (`host.docker.internal`) for `image`/`compose` (kali is not on the host network).
+The alias target is the target's public IP for `targetctl` and the Docker host gateway resolved to a numeric address for `image`/`compose` (kali is not on the host network, and `/etc/hosts` has no resolver in its address column).
 A port-bearing seed was rejected because it breaks the platform's bare-domain scope gate.
 _Avoid_: alias, virtual host, domain
+
+**Target front**:
+What serves every target on `http://<synthetic-host>/` - the bare domain on the standard web port the platform scope gate requires.
+For `targetctl` it is the remote workshop host's nginx; for local `image`/`compose` it is the shared host-level `ph-eval-front` nginx container bound to host port 80, carrying one conf per synthetic Host that proxies to the target's published port over the Docker host gateway.
+The container is created before the first local target and removed after the last.
+_Avoid_: proxy, reverse proxy, gateway
 
 **Work item**:
 An eval-wide pre-eval data dependency (auth bootstrap, L1 surface, hunting artifacts) recorded at the `EvalSetup` level and gated before any target starts (D14).
