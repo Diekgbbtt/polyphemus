@@ -369,6 +369,50 @@ PYTHONPATH=eval python3 -m orchestrator down <setup.yaml>
 `plan` and `up --dry-run` print every ssh, docker, compose, preflight, and git
 worktree command without running any of them.
 
+### 1.6. The artifact store (one-way sync and the per-trial tree)
+
+The `artifact_store` in the `EvalSetup` is the durable host-side sink (D7/D12):
+each instance data root is streamed into it one way, and each finished trial is
+materialized into a self-contained tree that outlives the live stack.
+
+The raw mirror is secondary: `<store>/<instance_id>/live/` is the target of a
+strictly one-way `lsyncd` (inotify -> rsync). Nothing ever writes back into the
+instance data root; the generated config names the data root as `source` and the
+live dir as `target`, and `delete = false` keeps the mirror append-only.
+
+The authoritative record is per target / target-run / trial:
+
+```
+<store>/<target_id>/<target_run_id>/<trial_id>/
+  verdicts.yaml            # copied from the trial dir
+  diagnoses.yaml           # copied when present (required once a verdict is missed/partial)
+  run-manifest.yaml        # trial pointers: ids, phases, eval SHA, fingerprint, chain sources, copy time
+  <data-root-relative>/... # the copied evidence chain, structure preserved
+```
+
+The middle level is the target-run: the evaluation of one target on one instance
+(`eval/CONTEXT.md`). A trial record may carry its own `target_run_id`; when it
+does not, the instance id is used. Because the evidence chain paths are already
+data-root-relative, copying the chain under the trial dir lets `verdicts.yaml`
+resolve against the trial dir itself, with no live stack reachable.
+
+Render the sync configs and units (one pair per instance, into `<store>/_sync/`
+by default), and materialize one finished trial:
+
+```
+PYTHONPATH=eval python3 -m orchestrator store render-sync <setup.yaml> [--out DIR] [--dry-run]
+PYTHONPATH=eval python3 -m orchestrator store materialize <setup.yaml> --trial <trial-dir> [--data-root DIR] [--dry-run]
+```
+
+`store materialize` derives the data root as `<instances-root>/<instance_id>/data`
+from the trial record unless `--data-root` overrides it; `--instances-root`
+defaults to `eval/instances`. Both verbs write nothing under `--dry-run`.
+Materialize is idempotent: re-running replaces each copy atomically from the
+source, and it fails loud with a named code when a chain path does not resolve
+(`chain_unresolved`) or a missed/partial verdict has no `diagnoses.yaml`
+(`diagnoses_missing`). Retention and pruning are out of scope - the store only
+grows.
+
 ## 2. Operator procedures
 
 ### 2.1. Observation interfaces

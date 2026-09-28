@@ -98,6 +98,10 @@ class FileStore:
     def read_text(self, path: str | Path) -> str:
         return Path(path).read_text(encoding="utf-8")
 
+    def read_bytes(self, path: str | Path) -> bytes:
+        """Raw bytes: the artifact store copies evidence without decoding it."""
+        return Path(path).read_bytes()
+
     def write_text(self, path: str | Path, text: str) -> None:
         target = Path(path)
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -117,6 +121,29 @@ class FileStore:
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as handle:
                 handle.write(text)
+            os.replace(tmp, target)
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
+
+    def write_bytes_atomic(self, path: str | Path, data: bytes) -> None:
+        """Write bytes via a sibling temp file + `os.replace` (atomic rename).
+
+        The artifact store copies evidence byte-for-byte; a crash leaves either
+        the old copy or the complete new one, never a truncated chain file that
+        the post-copy resolution check would misread.
+        """
+        target = Path(path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(
+            dir=str(target.parent), prefix=f".{target.name}.", suffix=".tmp"
+        )
+        try:
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(data)
             os.replace(tmp, target)
         except BaseException:
             try:

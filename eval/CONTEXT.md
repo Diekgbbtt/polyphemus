@@ -71,7 +71,9 @@ Operator-supplied hunt configs/specs placed at a mounted location before the pro
 _Avoid_: seeds, preload
 
 **Artifact store**:
-The durable host-side location that the instance data root is continuously synced into.
+The durable host-side location that the instance data root is continuously synced into (D7/D12).
+It has two layers: a secondary raw mirror at `<store>/<instance_id>/live/`, streamed one way by `lsyncd` and never an authority, and the authoritative self-contained per-trial tree at `<store>/<target_id>/<target_run_id>/<trial_id>/` holding `verdicts.yaml`, `diagnoses.yaml`, the copied evidence chain, and the run manifest.
+The store is a sink: nothing ever writes from the store back into the instance data root.
 _Avoid_: backup, archive
 
 **Assessment**:

@@ -693,3 +693,17 @@ def test_trial_record_defaults_the_version_identity_to_none(tmp_path) -> None:
     assert record.stack_fingerprint is None
     assert record.assessment is None
     assert record.to_dict()["assessment"] is None
+
+
+def test_trial_record_stamps_the_target_run_default_to_the_instance(tmp_path) -> None:
+    record = _trial(tmp_path, FakeApi(_full_routes())).run()
+
+    assert record.target_run_id == "arm-a"
+
+
+def test_trial_record_honours_an_explicit_target_run(tmp_path) -> None:
+    record = _trial(
+        tmp_path, FakeApi(_full_routes()), target_run_id="run-1"
+    ).run()
+
+    assert record.target_run_id == "run-1"
