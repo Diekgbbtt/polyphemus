@@ -133,7 +133,7 @@ class RecordingResumer:
 class FakeRepairKit:
     """Records the bounded repair and restart calls; supports what it is told."""
 
-    def __init__(self, supported=("env", "clear_lock")) -> None:
+    def __init__(self, supported=("env", "replace_artifacts")) -> None:
         self.supported = set(supported)
         self.applied: list[str] = []
         self.restarted: list[str] = []
@@ -233,6 +233,10 @@ def test_cap_reached_is_detected_from_the_trial_cap_accounting(tmp_path) -> None
     assert state.triggers[0].start_phase == "hunting"
     assert state.triggers[0].project_id == "pid"
     assert "cap 2" in state.triggers[0].detail
+    # The cap trigger names the hunting run so `terminate` can actually stop it:
+    # a trigger with no run is unactionable.
+    assert state.triggers[0].run_kind == "hunting"
+    assert state.triggers[0].run_id == "h1"
 
 
 def test_a_failed_run_is_detected_from_the_record_phase(tmp_path) -> None:
@@ -485,25 +489,27 @@ def test_fix_env_recreates_restarts_and_resumes_at_the_recorded_phase(tmp_path) 
     assert "surfer" in plan.intervention
 
 
-def test_fix_clear_lock_removes_the_documented_lock_file(tmp_path) -> None:
-    data_root = tmp_path / "data"
-    lock = data_root / surfer.LOCK_FILE
-    lock.parent.mkdir(parents=True, exist_ok=True)
-    lock.write_text("stale", encoding="utf-8")
-    project_lock = data_root / "pid" / surfer.PROJECT_LOCK_FILE
-    project_lock.parent.mkdir(parents=True, exist_ok=True)
-    project_lock.write_text("stale", encoding="utf-8")
+def test_the_fabricated_lock_repair_is_not_a_bounded_repair(tmp_path) -> None:
+    # `.execute.lock`/`.project.lease` exist nowhere in the pipeline (the app's
+    # locks are in-process), so `clear_lock` was a fabricated repair. No repair
+    # may claim it (CODING_STANDARD section 12).
+    assert "clear_lock" not in surfer.REPAIR_KINDS
 
-    kit = surfer.SurferRepairKit(
-        make_paths(tmp_path), runner=None, data_root=data_root,
-        preloaded=None,
-    )
-    assert kit.supports(surfer.REPAIR_CLEAR_LOCK) is True
+    trigger = failed_trigger()
+    asserter = StaticAsserter(state_with(trigger))
+    decider = StaticDecider(surfer.SurferDecision(surfer.FIX, repair="clear_lock"))
+    state = alignment.AlignmentState(tmp_path / "alignment.yaml")
+    resumer = RecordingResumer()
 
-    kit.apply(surfer.REPAIR_CLEAR_LOCK, project_id="pid")
+    outcome = make_surfer(
+        asserter, decider, tmp_path=tmp_path, repair_kit=FakeRepairKit(),
+        resumer=resumer, state=state,
+    ).cycle()
 
-    assert not lock.exists()
-    assert not project_lock.exists()
+    assert outcome.escalated is True
+    assert outcome.hold is not None
+    assert "clear_lock" in outcome.hold.rationale
+    assert resumer.plans == []
 
 
 def test_replace_artifacts_needs_preloaded_configuration(tmp_path) -> None:
@@ -539,7 +545,7 @@ def test_a_code_change_repair_attempt_escalates_and_is_never_applied(tmp_path) -
     decider = StaticDecider(
         surfer.SurferDecision(surfer.FIX, repair="edit_source", reason="patch the bug")
     )
-    kit = FakeRepairKit(supported=("env", "clear_lock"))
+    kit = FakeRepairKit(supported=("env", "replace_artifacts"))
     resumer = RecordingResumer()
     state = alignment.AlignmentState(tmp_path / "alignment.yaml")
 
@@ -615,7 +621,7 @@ def test_an_unknown_decision_kind_is_handled_once(tmp_path) -> None:
 def test_a_supported_repair_the_kit_cannot_apply_escalates(tmp_path) -> None:
     asserter = StaticAsserter(state_with(failed_trigger()))
     decider = StaticDecider(surfer.SurferDecision(surfer.FIX, repair=surfer.REPAIR_ENV))
-    kit = FakeRepairKit(supported=("clear_lock",))
+    kit = FakeRepairKit(supported=("replace_artifacts",))
     state = alignment.AlignmentState(tmp_path / "alignment.yaml")
 
     outcome = make_surfer(
@@ -690,33 +696,101 @@ def test_two_cycles_on_the_same_terminal_state_act_once(tmp_path) -> None:
 
 
 def test_a_second_distinct_trigger_is_handled_too(tmp_path) -> None:
+    # Two real triggers on one state: a failed hunting run and a cap-reached
+    # run. Both name a run, so `terminate` stops both; the second cycle is a
+    # no-op because both identities were recorded.
     state = alignment.AlignmentState(tmp_path / "alignment.yaml")
-    triggers = (
-        failed_trigger(run_kind="hunting", run_id="h1"),
-        surfer.Trigger(
-            kind=surfer.CAP_REACHED,
-            instance_id="arm-a",
-            detail="hunting cap 2 reached",
-            target_id="t1",
-            project_id="pid",
-            start_phase="hunting",
-        ),
+    cap_record = {
+        "instance_id": "arm-a",
+        "target_id": "t1",
+        "project_id": "pid",
+        "terminal": "stopped",
+        "start_phase": "hunting",
+        "phases": [{"phase": "hunting", "status": "stopped", "run_id": "h2"}],
+        "cap": 2,
+        "stop_count": 2,
+        "final_count": 3,
+    }
+    triggers = (failed_trigger(run_kind="hunting", run_id="h1"),) + tuple(
+        surfer.cap_triggers(cap_record)
     )
     asserter = StaticAsserter(state_with(*triggers))
     decider = StaticDecider(surfer.SurferDecision(surfer.TERMINATE))
+    api_runner = FakeApi()
     engine = make_surfer(
-        asserter, decider, tmp_path=tmp_path, api_runner=FakeApi(), state=state
+        asserter, decider, tmp_path=tmp_path, api_runner=api_runner, state=state
     )
 
     first = engine.cycle()
     second = engine.cycle()
 
     assert first.action == surfer.TERMINATE
+    assert api_runner.paths == [
+        "POST /projects/pid/hunting/h1/stop",
+        "POST /projects/pid/hunting/h2/stop",
+    ]
     assert second.no_op is True
     assert len(decider.requests) == 1
     handled = state.applied_for(surfer.HANDLED_SHA, surfer.HANDLED_FINGERPRINT)
     assert surfer.trigger_key(triggers[0]) in handled
     assert surfer.trigger_key(triggers[1]) in handled
+
+
+def test_two_distinct_cap_events_are_two_identities() -> None:
+    # Two cap events in the same instance/target/project must not collapse into
+    # one identity: each names its own hunting run.
+    first = surfer.cap_triggers(
+        {
+            "instance_id": "arm-a",
+            "target_id": "t1",
+            "project_id": "pid",
+            "phases": [{"phase": "hunting", "status": "stopped", "run_id": "h1"}],
+            "cap": 2,
+            "stop_count": 2,
+        }
+    )[0]
+    second = surfer.cap_triggers(
+        {
+            "instance_id": "arm-a",
+            "target_id": "t1",
+            "project_id": "pid",
+            "phases": [{"phase": "hunting", "status": "stopped", "run_id": "h2"}],
+            "cap": 2,
+            "stop_count": 2,
+        }
+    )[0]
+
+    assert first.run_id == "h1"
+    assert second.run_id == "h2"
+    assert surfer.trigger_key(first) != surfer.trigger_key(second)
+
+
+def test_terminate_without_a_named_run_escalates(tmp_path) -> None:
+    # A trigger that names no run cannot be stopped. `terminate` must not record
+    # success; it escalates instead.
+    state = alignment.AlignmentState(tmp_path / "alignment.yaml")
+    signal = surfer.Trigger(
+        kind=surfer.FAILURE_SIGNAL,
+        instance_id="arm-a",
+        detail="credits exhausted",
+        target_id="t1",
+        project_id="pid",
+        signal=surfer.CREDIT_EXHAUSTION,
+    )
+    asserter = StaticAsserter(state_with(signal))
+    decider = StaticDecider(surfer.SurferDecision(surfer.TERMINATE))
+    api_runner = FakeApi()
+    engine = make_surfer(
+        asserter, decider, tmp_path=tmp_path, api_runner=api_runner, state=state
+    )
+
+    outcome = engine.cycle()
+
+    assert outcome.escalated is True
+    assert outcome.action == surfer.ESCALATE
+    assert outcome.hold is not None
+    assert "no run" in outcome.detail
+    assert api_runner.calls == []
 
 
 def test_a_new_distinct_record_is_a_new_identity_and_acts(tmp_path) -> None:

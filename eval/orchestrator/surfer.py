@@ -9,9 +9,8 @@ the orchestrator. The orchestrator decides exactly one of:
 - `terminate`: stop the in-flight run(s) cleanly through the REST seam;
 - `destroy`: tear the instance down through `instances.down`;
 - `fix`: a repair bounded to the configuration layer (the `.env` preflight and
-  recreate) or the data layer (clear a stuck lock/lease file, re-place pre-mined
-  hunting artifacts), then restart the affected services and resume the trial at
-  its recorded phase;
+  recreate) or the data layer (re-place pre-mined hunting artifacts), then
+  restart the affected services and resume the trial at its recorded phase;
 - `escalate`: write a surfer hold (the same mechanism an alignment escalation
   uses) and stop until an operator resolves it.
 
@@ -25,7 +24,10 @@ A trigger is acted on once: its deterministic identity (`trigger_key`) is
 recorded in the alignment state through `record_applied`, so a long-running loop
 skips a trigger it already handled and a new record (a new run or phase) is a new
 identity that prompts afresh. The record survives a loop restart; `alignment
-resolve` never clears it.
+resolve` never clears it, so an escalated trigger stays disarmed after the hold
+is resolved. The operator remedy is to start the trial manually (a new run/phase
+is a new identity that the loop acts on); there is deliberately no re-arm verb,
+because re-arming an unchanged record would only re-escalate.
 
 Every effect is injected - the state source, the decider agent turn, the command
 runner, the REST client, the repair kit, the trial resumer, the clock, the log,
@@ -64,17 +66,14 @@ FAILED_RUN = "failed_run"
 CAP_REACHED = "cap_reached"
 TRIGGER_KINDS = (FAILURE_SIGNAL, FAILED_RUN, CAP_REACHED)
 
-# The bounded repair vocabulary. `env` is configuration-layer; the other two are
-# data-layer and limited to the instance data root. Anything else escalates.
+# The bounded repair vocabulary. `env` is configuration-layer; the data-layer
+# repair re-places the target's pre-mined hunting artifacts into the pipeline's
+# own `produced/` inboxes. Anything else escalates. There is deliberately no
+# lock/lease repair: the app's locks are in-process `threading.Lock`s, so no
+# data-root lock marker exists for a repair to clear (CODING_STANDARD section 12).
 REPAIR_ENV = "env"
-REPAIR_CLEAR_LOCK = "clear_lock"
 REPAIR_REPLACE_ARTIFACTS = "replace_artifacts"
-REPAIR_KINDS = (REPAIR_ENV, REPAIR_CLEAR_LOCK, REPAIR_REPLACE_ARTIFACTS)
-
-# The data-layer lock/lease markers the symbolic layer owns. Only these exact
-# paths are ever removed; the repair is limited to the instance data root.
-LOCK_FILE = ".execute.lock"
-PROJECT_LOCK_FILE = ".project.lease"
+REPAIR_KINDS = (REPAIR_ENV, REPAIR_REPLACE_ARTIFACTS)
 
 CREDIT_EXHAUSTION = "credit_exhaustion"
 # Substrings that classify an error payload as credit exhaustion. Data, not
@@ -318,7 +317,12 @@ class SurferStateSource:
 
 
 def cap_triggers(record: Mapping) -> list[Trigger]:
-    """Cap-reached triggers from the trial engine's own cap accounting."""
+    """Cap-reached triggers from the trial engine's own cap accounting.
+
+    The trigger names the hunting run (`run_kind`/`run_id`) so `terminate` can
+    actually stop it and so two distinct cap events in the same instance/target/
+    project are two identities rather than one.
+    """
     cap = record.get("cap")
     stop = record.get("stop_count")
     if not isinstance(cap, int) or not isinstance(stop, int) or stop < cap:
@@ -331,6 +335,8 @@ def cap_triggers(record: Mapping) -> list[Trigger]:
                 f"hunting cap {cap} reached (stopped at {stop}, "
                 f"final {record.get('final_count')})"
             ),
+            run_kind="hunting",
+            run_id=_hunting_run_id(record),
             start_phase="hunting",
         )
     ]
@@ -427,6 +433,13 @@ def _recon_run_id(record: Mapping) -> str | None:
     return record.get("recon_run_id")
 
 
+def _hunting_run_id(record: Mapping) -> str | None:
+    for phase in record.get("phases") or []:
+        if phase.get("phase") == "hunting":
+            return phase.get("run_id")
+    return record.get("hunting_run_id")
+
+
 # --- the decider seam ---------------------------------------------------------
 
 
@@ -445,14 +458,9 @@ class SurferDecider(Protocol):
     def decide(self, request: "SurferRequest") -> SurferDecision: ...
 
 
-class StaticDecider:
-    """A decision already made (tests, and a supplied decision document)."""
-
-    def __init__(self, decision: SurferDecision) -> None:
-        self.decision = decision
-
-    def decide(self, request: "SurferRequest") -> SurferDecision:
-        return self.decision
+# The static decider is the shared shape (`subagents.StaticDecider`); the module
+# keeps the public name for callers that reach it off this module.
+StaticDecider = subagents.StaticDecider
 
 
 @dataclass(frozen=True)
@@ -485,16 +493,8 @@ def plan_dispatch(
     env: Mapping[str, str] | None = None,
 ) -> Command:
     """Render the configured agent command with `{prompt}`/`{input}`/`{destination}`."""
-    return subagents.render_command(
-        argv,
-        {
-            "prompt": str(request.prompt),
-            "input": str(request.input_file),
-            "destination": str(request.destination),
-        },
-        cwd=cwd,
-        env=env,
-        description="surfer decision",
+    return subagents.plan_dispatch(
+        request, argv, cwd=cwd, env=env, description="surfer decision"
     )
 
 
@@ -539,10 +539,18 @@ class SubagentSurferDecider:
     files: FileStore = field(default_factory=FileStore)
 
     def decide(self, request: SurferRequest) -> SurferDecision:
-        self.files.write_text(request.input_file, render_request_input(request))
-        command = plan_dispatch(request, self.argv, cwd=self.cwd, env=self.env)
-        require_ok(self.runner(command), command, error=SurferError)
-        return load_decision(request.destination, files=self.files)
+        return subagents.decide_via_agent(
+            request,
+            runner=self.runner,
+            argv=self.argv,
+            files=self.files,
+            render_input=render_request_input,
+            load=load_decision,
+            error=SurferError,
+            description="surfer decision",
+            cwd=self.cwd,
+            env=self.env,
+        )
 
 
 # --- the bounded repairs ------------------------------------------------------
@@ -574,7 +582,7 @@ class SurferRepairKit:
     preloaded: PreloadedArtifacts | None = None
 
     def supports(self, repair: str) -> bool:
-        if repair in (REPAIR_ENV, REPAIR_CLEAR_LOCK):
+        if repair == REPAIR_ENV:
             return True
         if repair == REPAIR_REPLACE_ARTIFACTS:
             return self.preloaded is not None
@@ -586,13 +594,6 @@ class SurferRepairKit:
             self._require_runner()
             command = instances.plan_preflight(self.paths)
             require_ok(self.runner(command), command, error=SurferError)
-            return
-        if repair == REPAIR_CLEAR_LOCK:
-            for path in (
-                self.data_root / LOCK_FILE,
-                self.data_root / project_id / PROJECT_LOCK_FILE,
-            ):
-                self.files.unlink(path)
             return
         if repair == REPAIR_REPLACE_ARTIFACTS:
             if self.preloaded is None:
@@ -617,7 +618,7 @@ class SurferRepairKit:
             )
             require_ok(self.runner(command), command, error=SurferError)
             return
-        if repair in (REPAIR_CLEAR_LOCK, REPAIR_REPLACE_ARTIFACTS):
+        if repair == REPAIR_REPLACE_ARTIFACTS:
             self._require_runner()
             instances.up(self.paths, self.runner)
             return
@@ -799,7 +800,13 @@ class Surfer:
                 state, decision.reason or "the orchestrator escalated", decision
             )
         if decision.kind == TERMINATE:
-            calls = self._terminate(state)
+            calls, unactionable = self._terminate(state)
+            if unactionable:
+                # A terminate that cannot name a run must not report success:
+                # an operator has to see the unactionable trigger instead.
+                return self._escalate(
+                    state, _unactionable_terminate(unactionable), decision
+                )
             self._record_handled(state.triggers)
             return SurferOutcome(
                 cycle=self._cycle,
@@ -820,17 +827,28 @@ class Surfer:
             )
         return self._fix(state, decision)
 
-    def _terminate(self, state: SurfacedState) -> list[api.ApiCall]:
+    def _terminate(self, state: SurfacedState) -> tuple[list[api.ApiCall], list[Trigger]]:
+        """Plan the stop calls; return them and any trigger that names no run.
+
+        All calls are planned before any is issued, and an unactionable trigger
+        returns no calls at all: a partial stop followed by an escalation would
+        leave the state half-resolved, so the caller escalates instead.
+        """
         if self._api is None:
             raise SurferError("terminate requires an API runner")
         calls: list[api.ApiCall] = []
+        unactionable: list[Trigger] = []
         for trigger in state.triggers:
             call = _stop_call(trigger)
             if call is None:
-                continue
+                unactionable.append(trigger)
+            else:
+                calls.append(call)
+        if unactionable:
+            return [], unactionable
+        for call in calls:
             self._api(call)
-            calls.append(call)
-        return calls
+        return calls, []
 
     def _destroy(self, state: SurfacedState) -> list[str]:
         if self._runner is None:
@@ -972,6 +990,12 @@ def _stop_call(trigger: Trigger) -> api.ApiCall | None:
     if trigger.run_kind == "hunting":
         return api.stop_hunting(trigger.project_id, trigger.run_id)
     return None
+
+
+def _unactionable_terminate(triggers: Sequence[Trigger]) -> str:
+    """A named reason for a terminate whose triggers name no run to stop."""
+    named = ", ".join(f"{trigger.kind} ({trigger.instance_id})" for trigger in triggers)
+    return f"terminate names no run to stop for {named}"
 
 
 def trigger_key(trigger: Trigger) -> str:

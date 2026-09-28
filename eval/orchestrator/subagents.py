@@ -15,7 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, ClassVar, Mapping, Protocol, TypeVar
+from typing import Callable, ClassVar, Generic, Mapping, Protocol, Sequence, TypeVar
 
 import yaml
 
@@ -25,6 +25,7 @@ from orchestrator.files import FileStore
 Request = TypeVar("Request")
 Record = TypeVar("Record")
 Attempt = TypeVar("Attempt")
+Decision = TypeVar("Decision")
 
 # The request fields both subagents share; the caller adds its own.
 COMMON_FIELDS = (
@@ -96,6 +97,71 @@ def render_command(
     """Render an argv template against the request's fields into a `Command`."""
     rendered = tuple(str(part).format(**fields) for part in argv)
     return Command(argv=rendered, cwd=cwd, env=env, description=description)
+
+
+class DispatchRequest(Protocol):
+    """The request shape every agent-decision seam renders into its command."""
+
+    prompt: Path
+    input_file: Path
+    destination: Path
+
+
+@dataclass
+class StaticDecider(Generic[Decision]):
+    """A decision already made (tests, and a supplied decision document)."""
+
+    decision: Decision
+
+    def decide(self, request: DispatchRequest) -> Decision:
+        return self.decision
+
+
+def plan_dispatch(
+    request: DispatchRequest,
+    argv: Sequence[str],
+    *,
+    cwd: str | None = None,
+    env: Mapping[str, str] | None = None,
+    description: str,
+) -> Command:
+    """Render the configured agent command with `{prompt}`/`{input}`/`{destination}`."""
+    return render_command(
+        argv,
+        {
+            "prompt": str(request.prompt),
+            "input": str(request.input_file),
+            "destination": str(request.destination),
+        },
+        cwd=cwd,
+        env=env,
+        description=description,
+    )
+
+
+def decide_via_agent(
+    request: DispatchRequest,
+    *,
+    runner: CommandRunner,
+    argv: Sequence[str],
+    files: FileStore,
+    render_input: Callable[[DispatchRequest], str],
+    load: Callable[..., Decision],
+    error: type[Exception],
+    description: str,
+    cwd: str | None = None,
+    env: Mapping[str, str] | None = None,
+) -> Decision:
+    """Write the input, run the agent command, read the decision document.
+
+    The shared body of every `Subagent*Decider`: the two callers differ only in
+    the input renderer, the decision loader, the error class, and the command
+    description, so the three I/O steps have exactly one implementation.
+    """
+    files.write_text(request.input_file, render_input(request))
+    command = plan_dispatch(request, argv, cwd=cwd, env=env, description=description)
+    require_ok(runner(command), command, error=error)
+    return load(request.destination, files=files)
 
 
 class Repair(Protocol):

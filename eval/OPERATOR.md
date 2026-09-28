@@ -844,8 +844,10 @@ The bounded repairs are:
 | Repair | Layer | What it does |
 |---|---|---|
 | `env` | configuration | Re-run `eval/env_preflight.py` on the instance `.env`, then recreate the stack (`docker compose up -d --force-recreate`). |
-| `clear_lock` | data | Remove the two documented stale markers only: `<data_root>/.execute.lock` and `<data_root>/<project_id>/.project.lease`. |
 | `replace_artifacts` | data | Re-place the target's pre-mined hunting artifacts into the pipeline's own `produced/` inboxes (only when the target declares them). |
+
+There is deliberately no lock/lease repair: polymerhus's per-project locks are in-process `threading.Lock`s (`src/polymerhus/attack/hunting/hunt_store.py`, `src/polymerhus/app/auth/store.py`), not files or rows under the data root, so there is no stuck lock marker inside the repair's bounded scope.
+A `fix` naming any other repair is escalated, never applied.
 
 After a fix the affected services are restarted (`instances.up` for the
 data-layer repairs, the recreate for `env`) and the trial is resumed at its
@@ -864,6 +866,14 @@ than re-applying terminate/destroy/fix every interval. A new record - a new run
 or a new phase - is a new identity and prompts afresh. The handled record
 survives a loop restart (it is in the state file), and `alignment resolve` never
 clears it.
+
+That includes an escalation: the acted-on trigger stays recorded after the
+operator resolves the hold, so the *same* terminal record does not re-prompt the
+surfer. The operator remedy is to start the trial manually after resolving the
+hold: a manually-started trial produces a new run (and new phase record), which
+is a new identity that the surfer acts on afresh. There is no re-arm verb: the
+loop cannot tell a resolved-but-unchanged record from one it never saw, and
+re-arming the same identity would simply re-escalate until the record changes.
 
 | Primitive | Contract |
 |---|---|
