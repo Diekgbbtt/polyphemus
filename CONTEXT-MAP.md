@@ -45,6 +45,12 @@ The no-glossary part of the ruling still holds for the helper modules: their dom
 The product-skill catalogue (`skills/`) and its loader (`app/llm/skills.py`, co-located with the session seam) are shared kernel of the same kind: role prompts live instead with their owning module in `prompts/` dirs and are read directly, never through the loader.
 The **session seam** (the stateful-agent runtime: `app/llm/session.py`, `session_address.py`, `checkpoints.py`, `actor.py`, `#94`) is the one technical-support surface with real domain content - its typed `SessionAddress` value objects ARE domain concepts (a session's collision-free instance identity), owned per module (`AnalysisSession`/`PodSession`/`HuntSession`) and reasoned in `domain-model.md` §3.7 - so the seam gets ontology coverage without ever becoming a bounded context of its own.
 
+## The eval harness (a consumer system, not a bounded context)
+
+The multi-instance evaluation system under `eval/` drives polymerhus against a target dataset and scores discovery.
+It is a consumer of every context above, not a bounded context of its own: its vocabulary is a separate glossary at [`eval/CONTEXT.md`](./eval/CONTEXT.md).
+Its spec is `docs/design/eval-multi-instance-spec.md`; decisions are in `docs/design/eval-multi-instance-decisions.md`, the evaluated-version ADR in `docs/design/eval-environment-version-pinning-adr.md`, and the FR rewrite plus impact map in `docs/design/eval-harness-multi-instance-solution.md`.
+
 ## Where the architecture and workflow live
 
 This map and the per-context `CONTEXT.md` files are pure glossary.
