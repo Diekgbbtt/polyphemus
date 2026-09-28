@@ -324,6 +324,11 @@ a closer look.
   container's `/etc/hosts`.
 - `target.sh down <target>` / `hosts.sh clear <domain>` - the teardown verbs,
   also part of the agent's workflow.
+- `GET /app-state` (optional `?project_id=`) - the idle proxy: per-project
+  in-flight recon (`running`), analysis (`draining`), and hunting (`running`)
+  runs plus the top-level `idle` flag.
+  When the API is unreachable, the advancement daemon reads the same rows
+  straight from postgres - idle iff this returns no rows: `SELECT 'recon' AS kind, run_id AS id, project_id FROM recon_runs WHERE status = 'running' UNION ALL SELECT 'analysis', analysis_run_id, project_id FROM analysis_runs WHERE status = 'draining' UNION ALL SELECT 'hunting', hunting_run_id, project_id FROM hunting_runs WHERE status = 'running';`.
 
 ### 2.2. The judgment protocol (you are the oracle)
 
