@@ -15,8 +15,8 @@ Everything beyond that is deliberately non-optimal and temporary.
 
 Two pieces:
 
-1. A tiny toolkit under `tools/eval/`: four small files plus one static mapping table.
-2. One agent-facing playbook (`tools/eval/PLAYBOOK.md`): the workflow, the judgment protocol, and the verdict schema.
+1. A tiny toolkit under `eval/`: four small files plus one static mapping table.
+2. One agent-facing playbook (`eval/OPERATOR.md`): the workflow, the judgment protocol, and the verdict schema.
 
 The agent (driven through opencode, or a dispatched subagent) executes the playbook using the toolkit.
 There is no orchestration engine, no oracle code, no judge service, no dashboard, no CAGE integration.
@@ -29,12 +29,12 @@ The WebExploitBench checkout already ships `targetctl` (list / build / up / ps /
 The playbook instructs the agent to use it directly: `targetctl up <challenge>`, read the published URL, `targetctl down` after the trial.
 Zero new code. Down-after-trial also solves the machine-space constraint for the bundled 5 targets.
 
-### 3.2 `tools/eval/gt.py` - ground truth table
+### 3.2 `eval/gt.py` - ground truth table
 
 One small script: given a challenge directory, prints the vuln table `{vuln_id, Location, Vulnerability Type}` from `challenge.json` + `vulnerability/*/metadata.json`.
 Removes parsing variance from the agent's judgment input. ~40 lines.
 
-### 3.3 `tools/eval/ph.py` - the polymerhus API client
+### 3.3 `eval/ph.py` - the polymerhus API client
 
 The one substantial primitive. Thin subcommand client over the polymerhus REST surface, encoding the payloads and polling semantics so the agent never guesses API shapes:
 
@@ -49,17 +49,17 @@ The one substantial primitive. Thin subcommand client over the polymerhus REST s
 
 ~200 lines. The operator KB is written by the agent per target, derived from the challenge's neutral `agent_input`, never leaking the vuln list.
 
-### 3.4 `tools/eval/ev.py` - the evidence bundle collector
+### 3.4 `eval/ev.py` - the evidence bundle collector
 
 Assembles ONE self-contained bundle directory per trial: the graph JSON, the hunt-store trail for the run, the per-project memory, the pod artifact tree (when present), the hunting run status, timestamps.
 The bundle is the oracle's only input, and it is the migration seam: the full design's deterministic oracle later replays the same bundles. ~80 lines.
 
-### 3.5 `tools/eval/cwes.yaml` - the Vulnerability Type -> CWE mapping
+### 3.5 `eval/cwes.yaml` - the Vulnerability Type -> CWE mapping
 
 Static table mapping WebExploitBench's `Vulnerability Type` vocabulary onto CWE ids through the fault-KB (SQL Injection -> CWE-89, SSRF -> CWE-918, Arbitrary File Read -> CWE-22, XSS -> CWE-79, weak credentials -> CWE-1392/CWE-521, ...).
 The agent consults it during judgment so the fault-class conjunct is consistent across trials. ~30 lines.
 
-### 3.6 `tools/eval/PLAYBOOK.md` - the instructions
+### 3.6 `eval/OPERATOR.md` - the instructions
 
 The playbook is the harness interface. It contains:
 

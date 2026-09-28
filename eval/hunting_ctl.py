@@ -21,13 +21,13 @@ Control (API):
 
 Monitoring (the orchestrator tail):
   - The ratified-config count is read from the project's HuntStore on the HOST
-    path (the dev compose mounts src/ into /srv/src), never docker exec:
-    src/polymerhus/attack/hunting/data/<project>/orchestration/hunt_configs/
-    produced + consumed. Stop is issued via the API when the count reaches the
-    threshold, or when the run reaches terminal on its own.
+    path (the #234 app-owned data root), never docker exec:
+    data/<project>/hunting/orchestration/hunt_configs/ produced + consumed.
+    Stop is issued via the API when the count reaches the threshold, or when
+    the run reaches terminal on its own.
 
 Env: PH_API (default http://localhost:8080), HUNT_DATA_ROOT (default
-src/polymerhus/attack/hunting/data).
+<repo>/data).
 """
 from __future__ import annotations
 
@@ -46,18 +46,15 @@ PH_API = os.environ.get("PH_API", "http://localhost:8080")
 
 
 def _hunt_data_root() -> Path:
-    """The HuntStore root. Env override first, then the CWD-relative repo
-    `src/...`, then the main checkout beside the worktree layout
-    (`<repo>/.claude/worktrees/<name>/tools/eval/` -> repo root). The dev
-    compose mounts the MAIN checkout's src into /srv/src, so the container
-    writes land on the main checkout path, never the worktree's."""
+    """The HuntStore root: the #234 app-owned data root. Env override first,
+    then the repo root beside this script (`eval/` -> `..`), then the CWD."""
     env = os.environ.get("HUNT_DATA_ROOT")
     if env:
         return Path(env)
     here = Path(__file__).resolve()
     candidates = [
-        here.parents[5] / "src" / "polymerhus" / "attack" / "hunting" / "data",
-        Path.cwd() / "src" / "polymerhus" / "attack" / "hunting" / "data",
+        here.parents[1] / "data",
+        Path.cwd() / "data",
     ]
     for c in candidates:
         if c.exists():
@@ -86,7 +83,7 @@ def _ratified_count(project_id: str) -> int:
     """The orchestrator tail: distinct ratified configs in the HuntStore
     produced+consumed families (the consumed move is the at-least-once marker,
     so a config may appear once per side - dedupe by file stem)."""
-    base = HUNT_DATA_ROOT / project_id / "orchestration" / "hunt_configs"
+    base = HUNT_DATA_ROOT / project_id / "hunting" / "orchestration" / "hunt_configs"
     seen: set[str] = set()
     for side in ("produced", "consumed"):
         for f in (base / side).glob("*.yaml") if (base / side).exists() else ():

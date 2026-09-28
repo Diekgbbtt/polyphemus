@@ -12,6 +12,12 @@ Stdlib only. The polymerhus API base is PH_API (default http://localhost:8080).
 Usage:
   ev.py collect <project_id> <hunting_run_id> --out <dir>
                 [--recon-run RUN_ID] [--target-url URL] [--challenge ID]
+
+Bundle sources resolve under the #234 app-owned data root
+(<repo>/data/<project_id>/hunting/...). The slot mapping is provisional
+pending the automation rewrite: the old per-run hunts/ trail collapsed into
+hunting/orchestration, and the hunter bucket stands in for the
+project-memory slot.
 """
 from __future__ import annotations
 
@@ -27,9 +33,9 @@ from pathlib import Path
 
 API_BASE = os.environ.get("PH_API", "http://localhost:8080").rstrip("/")
 
-# The hunting module's data seam, resolved from this script's location:
-# tools/eval/ -> ../../src/polymerhus/attack/hunting/data
-HUNTING_DATA = Path(__file__).resolve().parent.parent.parent / "src" / "polymerhus" / "attack" / "hunting" / "data"
+# The #234 app-owned data root, resolved from this script's location:
+# eval/ -> ../data
+DATA_ROOT = Path(__file__).resolve().parent.parent / "data"
 
 
 def api_get(path: str) -> dict | None:
@@ -76,10 +82,11 @@ def collect(project_id: str, hunting_run_id: str, out: Path, *,
     (out / "analysis_status.json").write_text(
         json.dumps(analysis_status, indent=2) if analysis_status else "null")
 
-    hunt_store = _copy_tree(HUNTING_DATA / "hunts" / hunting_run_id, out / "hunt_store")
-    project_memory = _copy_tree(HUNTING_DATA / "hunts" / "projects" / project_id, out / "project_memory")
-    pod_memory = _copy_tree(HUNTING_DATA / str(project_id) / "test-executor-pod", out / "pod_memory")
-    wiring_memory = _copy_tree(HUNTING_DATA / str(project_id) / "hunting", out / "wiring_memory")
+    hunting = DATA_ROOT / str(project_id) / "hunting"
+    hunt_store = _copy_tree(hunting / "orchestration", out / "hunt_store")
+    project_memory = _copy_tree(hunting / "hunter", out / "project_memory")
+    pod_memory = _copy_tree(hunting / "test-executor-pod", out / "pod_memory")
+    wiring_memory = _copy_tree(hunting, out / "wiring_memory")
 
     kb_files = {
         name: (out / name).exists()
