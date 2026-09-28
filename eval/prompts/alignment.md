@@ -69,6 +69,10 @@ command (D28, the version freeze: the config layer is the only authority).
 - `gateway` (`gateway/**`): restart the `litellm` component (it never
   hot-reloads; it is the gateway process inside the agent container).
 - `topology_env` (compose files): recreate ONLY the affected services.
+- A `restart` may only name a component the delta impacted (a changed running
+  image, or the component its artifact class maps to); a `recreate` may only
+  name impacted services. A name outside the impacted set is a hold, never an
+  execution - the blast radius never widens beyond the delta.
 - `config_schema` (`.env.example`): `config_align`; the orchestrator runs the
   preflight and recreates the instance when the keyset changed.
 - `schema_data_layout`, `platform`, `image_definition`: align only through a

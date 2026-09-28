@@ -247,6 +247,81 @@ def test_compose_change_force_recreates_only_the_named_services(tmp_path: Path) 
     assert runner.commands[0].cwd == str(paths.worktree)
 
 
+def test_restart_of_a_component_outside_the_delta_escalates(tmp_path: Path) -> None:
+    """I6: a restart name outside the delta's impacted set never executes."""
+    paths = make_paths(tmp_path)
+    runner = RecordingRunner()
+    state = make_state(tmp_path)
+    # Only the gateway changed; postgres is not impacted.
+    decider = FakeDecider(
+        alignment.AlignmentDecision(
+            actions=(alignment.DecisionAction(kind="restart", component="postgres"),)
+        )
+    )
+
+    outcome = alignment.run(
+        decision_input([art("gateway", "gateway")]),
+        decider=decider,
+        environment=make_environment(paths),
+        runner=runner,
+        state=state,
+    )
+
+    assert outcome.escalated is True
+    assert outcome.hold is not None
+    assert "postgres" in outcome.hold.rationale
+    assert runner.commands == []
+    assert outcome.results == ()
+
+
+def test_recreate_of_a_service_outside_the_delta_escalates(tmp_path: Path) -> None:
+    paths = make_paths(tmp_path)
+    runner = RecordingRunner()
+    state = make_state(tmp_path)
+    decider = FakeDecider(
+        alignment.AlignmentDecision(
+            actions=(alignment.DecisionAction(kind="recreate", services=("postgres",)),)
+        )
+    )
+
+    outcome = alignment.run(
+        decision_input([art("gateway", "gateway")]),
+        decider=decider,
+        environment=make_environment(paths),
+        runner=runner,
+        state=state,
+    )
+
+    assert outcome.escalated is True
+    assert "postgres" in outcome.hold.rationale
+    assert runner.commands == []
+
+
+def test_an_impacted_component_from_a_changed_image_still_executes(tmp_path: Path) -> None:
+    """A component named by a changed image digest is impacted, so it runs."""
+    paths = make_paths(tmp_path)
+    runner = RecordingRunner()
+    decider = FakeDecider(
+        alignment.AlignmentDecision(
+            actions=(alignment.DecisionAction(kind="restart", component="kali"),)
+        )
+    )
+
+    outcome = alignment.run(
+        decision_input(
+            images_changed=[
+                {"component": "kali", "before_digest": "sha256:x", "after_digest": "sha256:y"}
+            ]
+        ),
+        decider=decider,
+        environment=make_environment(paths),
+        runner=runner,
+        state=make_state(tmp_path),
+    )
+
+    assert outcome.results[0].status == "applied"
+
+
 def test_config_align_runs_preflight_and_recreates_on_keyset_change(tmp_path: Path) -> None:
     paths = make_paths(tmp_path)
     runner = RecordingRunner(

@@ -30,7 +30,7 @@ from typing import Callable, Mapping, Protocol, Sequence
 
 import yaml
 
-from advance.images import default_containers
+from advance.images import COMPONENTS, default_containers
 from orchestrator import subagents
 from orchestrator.commands import Command, CommandRunner
 from orchestrator.files import FileStore
@@ -52,6 +52,21 @@ CONFIG_ALIGN = "config_align"
 MIGRATION = "migration"
 REBUILD = "rebuild"
 ACTION_KINDS = (RESTART, RECREATE, CONFIG_ALIGN, MIGRATION, REBUILD)
+
+# I6: the artifact class -> running component(s) it can impact, used to bound a
+# restart/recreate to the delta's impacted set. Data, not a decision branch: a
+# class the map does not name contributes no component, and a decider naming a
+# component outside the impacted set escalates rather than touching it.
+COMPONENTS_BY_ARTIFACT_CLASS: Mapping[str, tuple[str, ...]] = {
+    "exec_plane": ("kali",),
+    "gateway": ("litellm",),
+    "agent_code": ("agent",),
+    "schema_data_layout": ("postgres",),
+    "topology_env": COMPONENTS,
+    "config_schema": COMPONENTS,
+    "platform": COMPONENTS,
+    "image_definition": COMPONENTS,
+}
 
 # Ready / failed / planned / skipped. `skipped` means already applied for this
 # version; `planned` is dry-run; `failed` always carries evidence.
@@ -543,8 +558,13 @@ def run(
     # C1/D28: a decider-supplied inline command is never an authority. It must
     # be covered by a setup declaration (or it is a hold); the declaration's
     # command is what runs. This is the version freeze: no arbitrary shell.
+    # I6: a restart/recreate may only name a component or service the delta
+    # actually impacted; anything else is a hold, never a broader blast radius.
+    impacted = _impacted_components(decision_input)
     for action in decision.actions:
-        refusal = _undeclared_inline_command(action, environment.declarations)
+        refusal = _undeclared_inline_command(
+            action, environment.declarations
+        ) or _out_of_scope_action(action, impacted)
         if refusal is None:
             continue
         hold = None
@@ -803,6 +823,54 @@ def _execute_config_align(
 
 
 # --- decision-input normalisation --------------------------------------------
+
+
+def _impacted_components(decision_input: Mapping) -> frozenset[str]:
+    """The components/services the delta actually impacted (I6).
+
+    A changed artifact class contributes its mapped component(s); a changed
+    running image contributes the component itself. This bounds a restart or
+    recreate to what moved.
+    """
+    impacted: set[str] = set()
+    for entry in _changed_entries(decision_input):
+        artifact_class = str(entry.get("artifact_class") or "")
+        impacted.update(COMPONENTS_BY_ARTIFACT_CLASS.get(artifact_class, ()))
+    for entry in _images_changed(decision_input):
+        component = entry.get("component")
+        if component:
+            impacted.add(str(component))
+    return frozenset(impacted)
+
+
+def _out_of_scope_action(
+    action: DecisionAction, impacted: frozenset[str]
+) -> str | None:
+    """A refusal rationale when a restart/recreate names a non-impacted name.
+
+    I6: the decider may not widen the blast radius beyond the delta. A name
+    outside the impacted set is a hold, never an execution.
+    """
+    if action.kind == RESTART:
+        if action.component and action.component not in impacted:
+            return (
+                f"restart names component {action.component!r}, which is not in "
+                f"the delta's impacted components ({_impacted_text(impacted)})"
+            )
+        return None
+    if action.kind == RECREATE:
+        outside = [service for service in action.services if service not in impacted]
+        if outside:
+            return (
+                f"recreate names service(s) {', '.join(outside)}, which are not in "
+                f"the delta's impacted components ({_impacted_text(impacted)})"
+            )
+        return None
+    return None
+
+
+def _impacted_text(impacted: frozenset[str]) -> str:
+    return ", ".join(sorted(impacted)) or "none"
 
 
 def _changed_entries(decision_input: Mapping) -> tuple[Mapping, ...]:
