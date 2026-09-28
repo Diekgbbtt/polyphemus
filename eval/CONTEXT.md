@@ -79,7 +79,7 @@ The out-of-band scoring of a completed trial by a background agent, producing `v
 _Avoid_: judging, scoring run
 
 **Close verification**:
-The eval-close phase that checks every trial's `verdicts.yaml` presence and schema, re-dispatches a missing/invalid trial at most twice, then micro-diagnoses a bounded configuration-layer repair or a named escalation (D15/D28).
+The eval-close phase that checks every trial's `verdicts.yaml` presence and schema and, once present, the `diagnoses.yaml` pairing (exactly one entry per `missed`/`partial` verdict); it re-dispatches a missing/invalid/unpaired trial at most twice, then micro-diagnoses a bounded configuration-layer repair or a named escalation (D15/D28).
 _Avoid_: final check, audit
 
 **Assessment attempt**:

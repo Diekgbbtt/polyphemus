@@ -635,6 +635,54 @@ trial record - never invented.
 Every dispatch and verification attempt is recorded under `assessment` in
 `trial.yaml` (`status`, `attempts[]`, `verdicts_path`, `failure`).
 
+### 2.10. Diagnosis dispatch, pairing, and the issue bank
+
+Once a trial's `verdicts.yaml` is present, the diagnoser subagent (a background agent, D18) explains every `missed` and `partial` verdict and writes `diagnoses.yaml`, paired with the verdicts.
+One entry per `missed`/`partial` verdict, keyed by the verdict's `vuln`; an `identified` verdict gets no entry.
+The prompt is `eval/prompts/diagnoser.md`, the adapted scientific debugging loop (D18) grounded on the design docs and counter-checked against the code, reasoning mostly over observability.
+
+Configure the diagnoser command once, as `EVAL_DIAGNOSE_COMMAND` (or `--diagnose-command` per invocation). It is a shell line whose placeholders the orchestrator substitutes before running it:
+
+| Placeholder | Substituted with |
+|---|---|
+| `{prompt}` | `eval/prompts/diagnoser.md` - the diagnosis contract. |
+| `{trial_record}` | the trial's `trial.yaml`. |
+| `{verdicts}` | the trial's `verdicts.yaml`. |
+| `{ground_truth}` | the challenge ground-truth directory. |
+| `{data_root}` | the instance's app data root. |
+| `{destination}` | the trial's `diagnoses.yaml`. |
+| `{vulns}` | the comma-separated ids of the `missed`/`partial` verdicts to diagnose. |
+| `{trace_id}` | the trial's Langfuse trace id, when one was recorded (empty otherwise). |
+
+Example:
+
+```
+EVAL_DIAGNOSE_COMMAND='opencode run --prompt {prompt} --trial {trial_record} --verdicts {verdicts} --data-root {data_root} --out {destination}'
+```
+
+#### The issue bank is read-only
+
+The diagnoser searches the origin issue bank and records either the closest matching issue (`closest_issue`) or a `proposed_issue` block; it never files.
+This is a work-authority rule (`loop-constraints.md`): only the operator starts work.
+A `proposed_issue` is written into `diagnoses.yaml` for the operator to file manually.
+
+The search primitive is `python3 -m orchestrator issue-search "<query>" [--repo owner/name]`.
+It reads `EVAL_GITHUB_TOKEN` from the environment and issues only GitHub REST `GET` requests against the search API; the implementation exposes no write method of any kind.
+
+```
+EVAL_GITHUB_TOKEN=... python3 -m orchestrator issue-search "hunter test exploration" --repo Diekgbbtt/polyphemus
+```
+
+| Primitive | Contract |
+|---|---|
+| `PYTHONPATH=eval python3 -m orchestrator diagnose <setup.yaml> --trial <trial-dir>` | Dispatch the background diagnoser subagent for one trial (fire-and-forget, D18). It refuses loudly when the trial has no `verdicts.yaml`; `--dry-run` prints the rendered command without dispatching. |
+| `PYTHONPATH=eval python3 -m orchestrator issue-search "<query>" [--repo owner/name] [--limit N]` | The read-only issue-bank search (D22). It never files; a `proposed_issue` is for the operator. |
+| `PYTHONPATH=eval python3 -m orchestrator close-verify <setup.yaml>` | Also checks `diagnoses.yaml` presence, schema, and pairing once the verdicts are present: every `missed`/`partial` needs exactly one entry. Missing/invalid/unpaired diagnoses are re-dispatched twice, then micro-diagnosed like the assessment check. |
+
+Every dispatch and verification attempt is recorded under `diagnosis` in
+`trial.yaml` (`status`, `attempts[]`, `diagnoses_path`, `entries_written`,
+`issues_matched`, `issues_proposed`, `failure`).
+
 ## 3. KB authoring
 
 # Operator-KB authoring prompt (the effective prompt, implementation-reverse-engineering revision)
