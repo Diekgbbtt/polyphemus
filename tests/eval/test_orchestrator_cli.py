@@ -125,3 +125,93 @@ def test_status_prints_front_urls_and_kali_aliases(
     assert code == 0
     assert "http://t-" in out
     assert "t-aaaa.target" in out
+
+
+# --- the trial verb (#270) ----------------------------------------------------
+
+
+class _FakeApi:
+    """A minimal recording `ApiRunner` for the CLI wiring test."""
+
+    def __init__(self, routes):
+        self.routes = routes
+        self.calls = []
+
+    def __call__(self, call):
+        self.calls.append(call)
+        key = f"{call.method} {call.path}"
+        for needle, resp in self.routes.items():
+            if needle in key:
+                return resp
+        raise AssertionError(f"unexpected API call {key}")
+
+
+def _trial_routes() -> dict:
+    graph = {"nodes": [{"type": "L1Service"}, {"type": "Endpoint"}], "links": []}
+    return {
+        "GET /projects/pid/recon/r1": {
+            "status": "complete",
+            "per_job": [{"job": "crawl", "status": "complete"}],
+            "stats": {"analysis_drained": True},
+        },
+        "GET /projects/pid/hunting/h1": {"status": "complete"},
+        "POST /projects/pid/hunting": {"hunting_run_id": "h1"},
+        "POST /projects/pid/recon": {"run_id": "r1"},
+        "GET /projects/pid/graph": graph,
+        "PUT /projects/pid/settings": {"ok": True},
+        "POST /projects": {"project_id": "pid"},
+        "GET /projects": {"projects": [{"project_id": "pid"}]},
+    }
+
+
+def test_trial_dry_run_prints_and_executes_nothing(sample_setup, tmp_path, capsys) -> None:
+    setup_path = _write_setup(tmp_path, sample_setup)
+
+    code = cli.main(
+        ["trial", setup_path, "arm-a", "jetlinks-1", "--dry-run"],
+        runner_factory=_explode,
+        api_factory=_explode,
+    )
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "POST /projects" in out
+    assert "scaffold.py" in out
+    assert "poll" in out.lower()
+
+
+def test_trial_executes_through_the_injected_api_and_runner(
+    sample_setup, tmp_path, recording_runner, fake_result
+) -> None:
+    sample_setup["instances"][0]["targets"][0]["target_config"]["target_seed"] = "t.test"
+    setup_path = _write_setup(tmp_path, sample_setup)
+    runner = recording_runner(
+        routes={
+            "scripts/targetctl up": fake_result(0, "UI: http://127.0.0.1:32768/\n"),
+            "hostname -I": fake_result(0, "10.0.0.5 \n"),
+            "scaffold.py": fake_result(0, "services: 3\n"),
+            "curl": fake_result(0, "200"),
+        }
+    )
+    api = _FakeApi(_trial_routes())
+
+    code = cli.main(
+        [
+            "trial",
+            setup_path,
+            "arm-a",
+            "jetlinks-1",
+            "--instances-root",
+            str(tmp_path / "instances"),
+            "--data-root",
+            str(tmp_path / "data"),
+            "--runs-root",
+            str(tmp_path / "runs"),
+        ],
+        runner_factory=lambda: runner,
+        api_factory=lambda base: api,
+    )
+
+    assert code == 0
+    assert any(c.path == "/projects/pid/recon" for c in api.calls)
+    assert any("scripts/targetctl up jetlinks" in t for t in runner.argv_texts)

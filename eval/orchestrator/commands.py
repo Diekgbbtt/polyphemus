@@ -7,9 +7,10 @@ and plan mode never constructs one.
 """
 from __future__ import annotations
 
+import os
 import subprocess
 from dataclasses import dataclass
-from typing import Callable
+from typing import Callable, Mapping
 
 
 @dataclass(frozen=True)
@@ -19,20 +20,26 @@ class Command:
     `stdin` carries piped input (the nginx front block, the kali `/etc/hosts`
     rewrite) so it is part of the recorded command, not a hidden side effect.
     `cwd` is where the command runs (compose resolves relative binds and the
-    `.env` from the instance worktree).
+    `.env` from the instance worktree). `env` is the command's environment
+    overlay (the trial's L1 scaffold needs `PYTHONPATH=src`), merged over the
+    inherited environment by the runner.
     """
 
     argv: tuple[str, ...]
     stdin: str | None = None
     cwd: str | None = None
+    env: Mapping[str, str] | None = None
     description: str = ""
 
     def display(self) -> str:
-        """A plan-mode rendering: the shell line plus its cwd and stdin."""
+        """A plan-mode rendering: the shell line plus its cwd, env, and stdin."""
         line = " ".join(self.argv)
         parts = []
         if self.cwd:
             parts.append(f"cwd={self.cwd}")
+        if self.env:
+            rendered = " ".join(f"{k}={v}" for k, v in sorted(self.env.items()))
+            parts.append(f"env({rendered})")
         if self.stdin:
             parts.append(f"<<< {self.stdin.rstrip()}")
         return f"{line}" + (f"   [{', '.join(parts)}]" if parts else "")
@@ -52,10 +59,14 @@ class LocalRunner:
     """The thin production runner: `subprocess.run`, captured, with stdin."""
 
     def __call__(self, command: Command) -> CommandResult:
+        env = None
+        if command.env:
+            env = {**os.environ, **command.env}
         proc = subprocess.run(
             list(command.argv),
             input=command.stdin,
             cwd=command.cwd,
+            env=env,
             capture_output=True,
             text=True,
         )
