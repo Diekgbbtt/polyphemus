@@ -180,6 +180,9 @@ class TrialConfig:
     data_root: Path = Path("data")
     runs_root: Path = Path("eval/runs")
     trial_id: str | None = None
+    # The target-run this trial belongs to (the artifact-store middle level,
+    # #273). Defaults to the instance id: one instance evaluates one target run.
+    target_run_id: str | None = None
     with_analysis: bool = True
     scaffold: ScaffoldSpec | None = None
     budget_s: float = 7200.0
@@ -299,6 +302,9 @@ class TrialRecord:
     overshoot: int | None = None
     notes: list[str] = field(default_factory=list)
     trial_dir: str | None = None
+    # #273: the target-run grouping level of the artifact store (defaults to
+    # the instance id when the trial did not name one).
+    target_run_id: str | None = None
     # D32/D37: the version identity the trial ran on, and the assessment state.
     eval_sha: str | None = None
     stack_fingerprint: str | None = None
@@ -677,6 +683,7 @@ class Trial:
             overshoot=cap.overshoot if cap else None,
             notes=aggregated,
             trial_dir=str(trial_dir),
+            target_run_id=cfg.target_run_id or cfg.instance_id,
             eval_sha=cfg.eval_sha,
             stack_fingerprint=cfg.stack_fingerprint,
         )

@@ -17,7 +17,7 @@ from typing import Callable, TextIO
 
 import yaml
 
-from orchestrator import api, assessment, diagnosis, evidence, instances, trial, verdicts
+from orchestrator import api, assessment, diagnosis, evidence, instances, store, trial, verdicts
 from orchestrator.commands import LocalRunner
 from orchestrator.files import FileStore
 from orchestrator.instances import InstanceError
@@ -57,6 +57,7 @@ _HANDLED = (
     diagnosis.DiagnosisError,
     evidence.EvidenceError,
     verdicts.VerdictError,
+    store.StoreError,
     OSError,
 )
 
@@ -173,6 +174,46 @@ def _parser() -> argparse.ArgumentParser:
         "--repo",
         default=os.environ.get("EVAL_ISSUE_REPO"),
         help="scope the search to one repository (owner/name)",
+    )
+
+    # --- the artifact store verbs (#273) --------------------------------------
+    store_parser = sub.add_parser(
+        "store", help="render one-way syncs and materialize finished trials"
+    )
+    store_sub = store_parser.add_subparsers(dest="store_verb", required=True)
+
+    sync_parser = store_sub.add_parser(
+        "render-sync", help="render the per-instance lsyncd configs and systemd units"
+    )
+    _common_args(sync_parser)
+    sync_parser.add_argument(
+        "--out",
+        default=os.environ.get("EVAL_STORE_SYNC_DIR"),
+        help="where to write the rendered files (default: <artifact_store>/_sync)",
+    )
+    sync_parser.add_argument(
+        "--data-root",
+        default=os.environ.get("EVAL_DATA_ROOT"),
+        help="override the per-instance data root (single-instance hosts)",
+    )
+    sync_parser.add_argument(
+        "--dry-run", action="store_true", help="print the plan without writing"
+    )
+
+    materialize_parser = store_sub.add_parser(
+        "materialize", help="assemble one finished trial into the per-trial tree"
+    )
+    _common_args(materialize_parser)
+    materialize_parser.add_argument(
+        "--trial", required=True, help="the source trial directory"
+    )
+    materialize_parser.add_argument(
+        "--data-root",
+        default=os.environ.get("EVAL_DATA_ROOT"),
+        help="the instance data root (default: <instances-root>/<instance>/data)",
+    )
+    materialize_parser.add_argument(
+        "--dry-run", action="store_true", help="print the plan without writing"
     )
     return parser
 
@@ -693,6 +734,64 @@ def _run_close_verify(args, setup: EvalSetup, out: TextIO, err: TextIO,
     return 1 if escalated else 0
 
 
+# --- artifact store (#273) ----------------------------------------------------
+
+
+def _run_render_sync(args, setup: EvalSetup, out: TextIO, files: FileStore) -> int:
+    plan = store.plan_sync(
+        setup,
+        instances_root=Path(args.instances_root),
+        out_dir=Path(args.out) if args.out else None,
+        data_root=Path(args.data_root) if args.data_root else None,
+    )
+    if args.dry_run:
+        for entry in plan.files:
+            print(f"# {entry.path}", file=out)
+        return 0
+    for path in store.write_sync(plan, files=files):
+        print(f"write {path}", file=out)
+    return 0
+
+
+def _materialize_data_root(args, files: FileStore) -> Path:
+    if args.data_root:
+        return Path(args.data_root)
+    record = assessment.load_trial_record(Path(args.trial) / "trial.yaml", files=files)
+    instance_id = str(record.get("instance_id") or "")
+    if not instance_id:
+        raise store.StoreError(
+            "trial record carries no instance_id", failure="verdicts_missing"
+        )
+    return store.instance_data_root(Path(args.instances_root), instance_id)
+
+
+def _run_materialize(args, setup: EvalSetup, out: TextIO, files: FileStore) -> int:
+    trial_dir = Path(args.trial)
+    record = assessment.load_trial_record(trial_dir / "trial.yaml", files=files)
+    dest = store.store_trial_dir(
+        Path(setup.artifact_store),
+        str(record.get("target_id") or ""),
+        str(record.get("target_run_id") or record.get("instance_id") or ""),
+        str(record.get("trial_id") or ""),
+    )
+    if args.dry_run:
+        print(f"# materialize {trial_dir}", file=out)
+        print(f"store {dest}", file=out)
+        print(f"write {dest / verdicts.VERDICTS_FILENAME}", file=out)
+        if files.exists(trial_dir / "diagnoses.yaml"):
+            print(f"write {dest / diagnosis.DIAGNOSES_FILENAME}", file=out)
+        print(f"write {dest / store.RUN_MANIFEST}", file=out)
+        return 0
+    result = store.materialize(
+        trial_dir,
+        store=Path(setup.artifact_store),
+        data_root=_materialize_data_root(args, files),
+        files=files,
+    )
+    print(f"store {result}", file=out)
+    return 0
+
+
 def _run_issue_search(args, out: TextIO, bank_factory: IssueBankFactory | None) -> int:
     bank = bank_factory() if bank_factory is not None else diagnosis.GitHubIssueBank.from_env()
     query = f"{args.query} repo:{args.repo}" if args.repo else args.query
@@ -750,6 +849,11 @@ def main(
         if args.verb == "trial":
             factory = api_factory or (lambda base: api.HttpApiRunner(base))
             return _run_trial(args, setup, config, out, err, runner_factory, factory)
+        if args.verb == "store":
+            files = FileStore()
+            if args.store_verb == "render-sync":
+                return _run_render_sync(args, setup, out, files)
+            return _run_materialize(args, setup, out, files)
         if args.verb == "assess":
             return _run_assess(args, setup, out, err, runner_factory, dispatch_factory)
         if args.verb == "diagnose":
