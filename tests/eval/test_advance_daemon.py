@@ -97,7 +97,9 @@ def eval_env(tmp_path: Path) -> EvalEnv:
     dev = tmp_path / "dev"
     git(root, "worktree", "add", "-q", str(dev), "dev")
     eval_wt = tmp_path / "eval"
-    git(root, "worktree", "add", "-q", "-b", "eval", str(eval_wt), "dev")
+    # #269/D29: eval instances run detached so they can share the read-only
+    # `eval` branch; the daemon requires a detached eval worktree (M4).
+    git(root, "worktree", "add", "-q", "--detach", str(eval_wt), "dev")
     return EvalEnv(root=root, dev=dev, evals=(eval_wt,))
 
 
@@ -306,7 +308,7 @@ def test_advance_moves_every_eval_worktree_environment_wide(
     eval_env: EvalEnv, tmp_path: Path
 ) -> None:
     second = tmp_path / "eval2"
-    git(eval_env.root, "worktree", "add", "-q", "-b", "eval-2", str(second), "dev")
+    git(eval_env.root, "worktree", "add", "-q", "--detach", str(second), "dev")
     env = EvalEnv(root=eval_env.root, dev=eval_env.dev, evals=eval_env.evals + (second,))
     dev_sha = env.advance_dev("v1\n")
     d, _records, _recorder, _proxy = make_daemon(env, tmp_path, idle=True)
@@ -354,6 +356,45 @@ def test_detached_non_fast_forward_alerts_and_leaves_both_untouched(
     assert [env.head(worktree) for worktree in env.evals] == before
     assert "merge" not in recorder.subcommands()
     assert_poll_commands_safe(recorder)
+
+
+# --- M4: only a detached eval worktree is advanced ----------------------------
+
+
+def test_a_branch_checked_out_worktree_is_skipped_and_alerted(tmp_path: Path) -> None:
+    env = make_detached_env(tmp_path, n=2)
+    base = env.head(env.evals[1])
+    git(env.root, "branch", "evalb", "dev")
+    git(env.evals[1], "checkout", "-q", "evalb")
+    dev_sha = env.advance_dev("v1\n")
+    d, records, recorder, _proxy = make_daemon(env, tmp_path, idle=True)
+
+    heartbeat = d.poll_once()
+
+    # The detached worktree moved; the branch checkout was skipped untouched.
+    assert env.head(env.evals[0]) == dev_sha
+    assert env.head(env.evals[1]) == base
+    assert "worktree_not_detached" in alert_kinds(records)
+    assert heartbeat["state"] == daemon.STATE_PARTIAL
+    assert "advance_failed" not in alert_kinds(records)
+    assert_poll_commands_safe(recorder)
+
+
+def test_all_branch_worktrees_are_not_reported_as_advanced(tmp_path: Path) -> None:
+    env = make_detached_env(tmp_path, n=2)
+    git(env.root, "branch", "evalb0", "dev")
+    git(env.root, "branch", "evalb1", "dev")
+    git(env.evals[0], "checkout", "-q", "evalb0")
+    git(env.evals[1], "checkout", "-q", "evalb1")
+    before = [env.head(worktree) for worktree in env.evals]
+    env.advance_dev("v1\n")
+    d, records, _recorder, _proxy = make_daemon(env, tmp_path, idle=True)
+
+    heartbeat = d.poll_once()
+
+    assert heartbeat["state"] == daemon.STATE_WORKTREE_NOT_DETACHED
+    assert [env.head(w) for w in env.evals] == before
+    assert "worktree_not_detached" in alert_kinds(records)
 
 
 # --- dirty worktree ----------------------------------------------------------
@@ -432,6 +473,50 @@ def test_non_fast_forward_alerts_and_leaves_the_tree_untouched(
     assert_poll_commands_safe(recorder)
 
 
+# --- M6: a git ancestry error is not a non-fast-forward -----------------------
+
+
+@dataclass
+class AncestryFailingGit:
+    """A git runner whose `merge-base --is-ancestor` fails (a transient error)."""
+
+    calls: list[tuple[Path, list[str]]] = field(default_factory=list)
+
+    def __call__(self, repo: Path, args) -> images.CommandResult:
+        self.calls.append((Path(repo), list(args)))
+        if list(args)[:2] == ["merge-base", "--is-ancestor"]:
+            return images.CommandResult(2, "", "fatal: bad revision")
+        return manifest.default_git_runner(repo, args)
+
+    def subcommands(self) -> list[str]:
+        return [args[0] for _repo, args in self.calls]
+
+
+def test_ancestry_check_failure_is_not_reported_as_non_fast_forward(
+    eval_env: EvalEnv, tmp_path: Path
+) -> None:
+    old = eval_env.head(eval_env.evals[0])
+    eval_env.advance_dev("v1\n")
+    records: list[dict] = []
+    runner = AncestryFailingGit()
+    d = daemon.Daemon(
+        make_config(eval_env, tmp_path),
+        git_runner=runner,
+        idle_proxy=FakeIdle(True),
+        clock=FakeClock(),
+        log=records.append,
+        image_digests=lambda: dict(DIGESTS),
+    )
+
+    heartbeat = d.poll_once()
+
+    assert heartbeat["state"] == daemon.STATE_ERROR
+    assert "ancestry_check_failed" in alert_kinds(records)
+    assert "non_fast_forward" not in alert_kinds(records)
+    assert eval_env.head(eval_env.evals[0]) == old
+    assert "merge" not in runner.subcommands()
+
+
 # --- heartbeat and last-known-good ------------------------------------------
 
 
@@ -440,7 +525,7 @@ def test_partial_advance_reports_each_worktree_actual_head(
 ) -> None:
     """#267: a later worktree's failure must not report the pre-advance SHA."""
     second = tmp_path / "eval2"
-    git(eval_env.root, "worktree", "add", "-q", "-b", "eval-2", str(second), "dev")
+    git(eval_env.root, "worktree", "add", "-q", "--detach", str(second), "dev")
     env = EvalEnv(root=eval_env.root, dev=eval_env.dev, evals=eval_env.evals + (second,))
     base = env.head(env.evals[0])
     dev_sha = env.advance_dev("v1\n")
@@ -607,6 +692,183 @@ def test_daemon_defaults_to_collecting_digests_from_config(
     assert heartbeat["decision"]["fingerprints"]["dev"]
 
 
+# --- I1: N-instance idle gate and per-instance digests ------------------------
+
+
+def make_multi_config(
+    eval_env: EvalEnv, tmp_path: Path, instances: tuple[daemon.InstanceConfig, ...]
+) -> daemon.DaemonConfig:
+    return daemon.DaemonConfig(
+        dev_worktree=eval_env.dev,
+        eval_worktrees=eval_env.evals,
+        app_state_url=instances[0].app_state_url,
+        heartbeat_path=tmp_path / "heartbeat.json",
+        poll_interval=1.0,
+        instances=instances,
+    )
+
+
+def test_two_instances_one_busy_does_not_advance(
+    eval_env: EvalEnv, tmp_path: Path
+) -> None:
+    """I1/D36: with N instances, one busy instance refuses the whole advance."""
+    old = eval_env.head(eval_env.evals[0])
+    eval_env.advance_dev("v1\n")
+    config = make_multi_config(
+        eval_env,
+        tmp_path,
+        (
+            daemon.InstanceConfig("arm-a", "http://a"),
+            daemon.InstanceConfig("arm-b", "http://b"),
+        ),
+    )
+    records: list[dict] = []
+    d = daemon.Daemon(
+        config,
+        git_runner=RecordingGit(),
+        idle_proxies={"arm-a": FakeIdle(True), "arm-b": FakeIdle(False)},
+        clock=FakeClock(),
+        log=records.append,
+        image_digests=lambda: dict(DIGESTS),
+    )
+
+    heartbeat = d.poll_once()
+
+    assert heartbeat["state"] == daemon.STATE_BUSY
+    assert heartbeat["idle"] is False
+    assert eval_env.head(eval_env.evals[0]) == old
+
+
+def test_two_instances_any_unknown_does_not_advance(
+    eval_env: EvalEnv, tmp_path: Path
+) -> None:
+    """I1/D36: an unknown idle verdict for any instance is never idle."""
+    old = eval_env.head(eval_env.evals[0])
+    eval_env.advance_dev("v1\n")
+    config = make_multi_config(
+        eval_env,
+        tmp_path,
+        (
+            daemon.InstanceConfig("arm-a", "http://a"),
+            daemon.InstanceConfig("arm-b", "http://b"),
+        ),
+    )
+    records: list[dict] = []
+    d = daemon.Daemon(
+        config,
+        git_runner=RecordingGit(),
+        idle_proxies={
+            "arm-a": FakeIdle(True),
+            "arm-b": FakeIdle(error=app_state.AppStateUnavailable("down")),
+        },
+        clock=FakeClock(),
+        log=records.append,
+        image_digests=lambda: dict(DIGESTS),
+    )
+
+    heartbeat = d.poll_once()
+
+    assert heartbeat["state"] == daemon.STATE_IDLE_UNKNOWN
+    assert heartbeat["idle"] is None
+    assert eval_env.head(eval_env.evals[0]) == old
+    assert "idle_unknown" in alert_kinds(records)
+
+
+def test_two_instances_both_idle_advances(eval_env: EvalEnv, tmp_path: Path) -> None:
+    """I1/D36: every instance idle is the only window that advances."""
+    dev_sha = eval_env.advance_dev("v1\n")
+    config = make_multi_config(
+        eval_env,
+        tmp_path,
+        (
+            daemon.InstanceConfig("arm-a", "http://a"),
+            daemon.InstanceConfig("arm-b", "http://b"),
+        ),
+    )
+    d = daemon.Daemon(
+        config,
+        git_runner=RecordingGit(),
+        idle_proxies={"arm-a": FakeIdle(True), "arm-b": FakeIdle(True)},
+        clock=FakeClock(),
+        log=lambda record: None,
+        image_digests=lambda: dict(DIGESTS),
+    )
+
+    heartbeat = d.poll_once()
+
+    assert heartbeat["state"] == daemon.STATE_ADVANCED
+    assert heartbeat["idle"] is True
+    assert heartbeat["eval_sha"] == dev_sha
+
+
+def test_default_image_digests_collects_each_instance_stack() -> None:
+    """I1: digests are collected per instance stack and merged qualified."""
+    config = daemon.DaemonConfig(
+        dev_worktree=Path("/dev"),
+        eval_worktrees=(Path("/e1"),),
+        app_state_url="http://a",
+        heartbeat_path=Path("/hb.json"),
+        instances=(
+            daemon.InstanceConfig("arm-a", "http://a", compose_project="ph-a"),
+            daemon.InstanceConfig("arm-b", "http://b", compose_project="ph-b"),
+        ),
+    )
+    seen: list[list[str]] = []
+
+    def runner(args) -> images.CommandResult:
+        seen.append(list(args))
+        container = args[-1]
+        mark = "a" if "-a-" in container else "b"
+        return images.CommandResult(0, "sha256:" + mark * 64 + "\n")
+
+    digests = daemon.default_image_digests(config, run=runner)()
+
+    assert digests["arm-a:postgres"].startswith("sha256:" + "a" * 64)
+    assert digests["arm-b:kali"].startswith("sha256:" + "b" * 64)
+    assert "postgres" not in digests
+    # Each stack's whole component map was inspected.
+    assert any("ph-a-postgres-1" in call[-1] for call in seen)
+    assert any("ph-b-postgres-1" in call[-1] for call in seen)
+
+
+def test_two_instance_digests_flow_into_the_manifest_and_fingerprint(
+    eval_env: EvalEnv, tmp_path: Path
+) -> None:
+    """I1: the manifest/fingerprint carry both instance-qualified stacks."""
+    dev_sha = eval_env.advance_dev("v1\n")
+    config = make_multi_config(
+        eval_env,
+        tmp_path,
+        (
+            daemon.InstanceConfig("arm-a", "http://a"),
+            daemon.InstanceConfig("arm-b", "http://b"),
+        ),
+    )
+    merged = {
+        "arm-a:postgres": "sha256:" + "a" * 64,
+        "arm-b:postgres": "sha256:" + "b" * 64,
+    }
+    d = daemon.Daemon(
+        config,
+        git_runner=RecordingGit(),
+        idle_proxies={"arm-a": FakeIdle(True), "arm-b": FakeIdle(True)},
+        clock=FakeClock(),
+        log=lambda record: None,
+        image_digests=lambda: dict(merged),
+    )
+
+    heartbeat = d.poll_once()
+    decision = heartbeat["decision"]
+
+    assert set(decision["delta"]["images_unchanged"]) >= set(merged)
+    expected = fingerprint(
+        manifest.build_manifest(
+            eval_env.evals[0], dev_sha, merged, git_runner=manifest.default_git_runner
+        )
+    )
+    assert decision["fingerprints"]["dev"] == expected
+
+
 def test_heartbeat_write_is_an_atomic_replace(tmp_path: Path, monkeypatch) -> None:
     import os
 
@@ -746,6 +1008,64 @@ def test_config_parses_the_compose_project_and_container_map(tmp_path: Path) -> 
         "kali": "ph-arm-a-kali-1",
     }
     assert config.image_containers is not None
+
+
+def test_config_parses_a_multi_instance_list(tmp_path: Path) -> None:
+    """I1: `EVAL_ADVANCE_INSTANCES` is a JSON/YAML list, one entry per instance."""
+    env = {
+        "EVAL_ADVANCE_DEV_WORKTREE": str(tmp_path / "dev"),
+        "EVAL_ADVANCE_EVAL_WORKTREES": str(tmp_path / "e1"),
+        "EVAL_ADVANCE_HEARTBEAT": str(tmp_path / "heartbeat.json"),
+        "EVAL_ADVANCE_INSTANCES": json.dumps(
+            [
+                {
+                    "instance_id": "arm-a",
+                    "app_state_url": "http://a",
+                    "compose_project": "ph-a",
+                    "image_containers": {"kali": "ph-a-kali-1"},
+                },
+                {"instance_id": "arm-b", "app_state_url": "http://b"},
+            ]
+        ),
+    }
+
+    config = daemon.load_config_from_env(env)
+
+    assert [i.instance_id for i in config.instances] == ["arm-a", "arm-b"]
+    assert config.instances[0].compose_project == "ph-a"
+    assert config.instances[0].image_containers == {"kali": "ph-a-kali-1"}
+    assert config.instances[1].compose_project is None
+    assert config.resolved_instances() == config.instances
+
+
+def test_legacy_single_instance_env_resolves_to_one_instance(tmp_path: Path) -> None:
+    """I1: a config from the legacy single-instance envs resolves to one entry."""
+    env = {
+        "EVAL_ADVANCE_DEV_WORKTREE": str(tmp_path / "dev"),
+        "EVAL_ADVANCE_EVAL_WORKTREES": str(tmp_path / "e1"),
+        "EVAL_ADVANCE_APP_STATE_URL": "http://agent:8000",
+        "EVAL_ADVANCE_HEARTBEAT": str(tmp_path / "heartbeat.json"),
+        "EVAL_ADVANCE_COMPOSE_PROJECT": "ph-arm-a",
+    }
+
+    config = daemon.load_config_from_env(env)
+
+    assert config.instances == ()
+    (resolved,) = config.resolved_instances()
+    assert resolved.app_state_url == "http://agent:8000"
+    assert resolved.compose_project == "ph-arm-a"
+
+
+def test_config_rejects_a_malformed_instance_list(tmp_path: Path) -> None:
+    env = {
+        "EVAL_ADVANCE_DEV_WORKTREE": str(tmp_path / "dev"),
+        "EVAL_ADVANCE_EVAL_WORKTREES": str(tmp_path / "e1"),
+        "EVAL_ADVANCE_HEARTBEAT": str(tmp_path / "heartbeat.json"),
+        "EVAL_ADVANCE_INSTANCES": json.dumps([{"instance_id": "arm-a"}]),
+    }
+
+    with pytest.raises(daemon.ConfigError, match="app_state_url"):
+        daemon.load_config_from_env(env)
 
 
 def test_cli_rewind_without_confirm_exits_nonzero(

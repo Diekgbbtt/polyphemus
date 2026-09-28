@@ -457,7 +457,7 @@ grows.
 | File | What it tells you |
 |---|---|
 | `verdicts.yaml` | The oracle's per-vuln rows: `identified / partial / missed`, confidence, evidence refs with quoted passages |
-| `trial.yaml` | Run metadata + the integrity gates (recon status + job counts, hunting status, oracle summary) + the `remediations` log (every failure detected, the minimal-impact action taken, and its outcome) |
+| `trial.yaml` | The trial record (#270): `trial_id`, `instance_id`/`target_id`/`target_run_id`, `start_phase`, `terminal`, the per-phase rows (`entered`, `status`, `run_id`, `blocks`, `notes`, `failure`), timings, the cap accounting (`cap`/`stop_count`/`final_count`/`overshoot`), the aggregated `notes`, the version identity (`eval_sha`/`stack_fingerprint`/`trace_id`), and the `assessment`/`diagnosis` state |
 | `manifest.json` | What `ev.py` collected and what was absent (per-store `present` flags, statuses, KB files) |
 | `operator_kb.md` / `research-notes.md` | What the pipeline was told the deployed application is (per-target, precomputed in `eval/kbs/<target>/`), and the reverse-engineering source ledger |
 | `surface-map.md` (in `eval/kbs/<target>/`) | The reverse-engineered endpoint inventory the KB was derived from - judge's reference only, never piped |
@@ -864,16 +864,21 @@ target + project + run kind/id + resume phase + trigger kind) is recorded in the
 alignment state, so a long-running loop skips a trigger it already handled rather
 than re-applying terminate/destroy/fix every interval. A new record - a new run
 or a new phase - is a new identity and prompts afresh. The handled record
-survives a loop restart (it is in the state file), and `alignment resolve` never
-clears it.
+survives a loop restart (it is in the state file), and an unresolved trigger
+stays disarmed until it is resolved.
 
-That includes an escalation: the acted-on trigger stays recorded after the
-operator resolves the hold, so the *same* terminal record does not re-prompt the
-surfer. The operator remedy is to start the trial manually after resolving the
-hold: a manually-started trial produces a new run (and new phase record), which
-is a new identity that the surfer acts on afresh. There is no re-arm verb: the
-loop cannot tell a resolved-but-unchanged record from one it never saw, and
-re-arming the same identity would simply re-escalate until the record changes.
+Resolving a surfer hold with `alignment resolve` clears the handled markers
+recorded under that hold's triggers, so the next surfer cycle re-asserts them; if
+the condition persists the trigger re-escalates, and the re-opened hold records
+the operator's prior decision in its `history`. This is deliberate: a resolution
+is an assertion that the condition is addressed, and an unchanged condition that
+persists is re-surfaced rather than silently suppressed.
+
+The alignment state file (`--state`, `EVAL_ALIGNMENT_STATE`, default
+`eval/state/alignment.yaml`) is read fail-open when it is absent or empty: a
+missing file means no holds and no handled keys. Deleting it therefore drops
+every hold and every act-once marker at once. Never delete it to clear a hold:
+resolve the hold, or restore the file from a backup.
 
 | Primitive | Contract |
 |---|---|

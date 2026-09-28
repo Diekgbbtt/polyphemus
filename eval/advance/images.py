@@ -100,3 +100,24 @@ def collect_image_digests(
             )
         digests[component] = digest
     return digests
+
+
+def merge_instance_digests(
+    per_instance: Mapping[str, Mapping[str, str]]
+) -> dict[str, str]:
+    """Merge per-instance component digests into one manifest map (I1).
+
+    With one instance the component names stay unqualified, backward compatible
+    with the single-instance manifest and fingerprint. With more than one, every
+    key is `<instance_id>:<component>` so two instances' same-named components
+    never collide; the sorted canonical lines then cover both stacks
+    deterministically.
+    """
+    if len(per_instance) <= 1:
+        only = next(iter(per_instance.values()), {})
+        return dict(only)
+    merged: dict[str, str] = {}
+    for instance_id in sorted(per_instance):
+        for component, digest in per_instance[instance_id].items():
+            merged[f"{instance_id}:{component}"] = digest
+    return merged

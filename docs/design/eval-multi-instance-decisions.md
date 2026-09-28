@@ -55,6 +55,8 @@
 
 ### D17 - Evidence chain includes observability reasoning references
 *2026-09-28.* Extends N13: beyond the artifact FS chain, each qualifying verdict may reference observability-platform reasoning details - reasoning logs citing state assertions, decision nodes, taken branches with rationale - mapped to the agent workflow phases.
+*Status 2026-09-28 (adversarial review, I4):* the reasoning seam is **designed-not-built** (CODING_STANDARD section 12).
+The evidence resolver accepts an injected read-only `ReasoningSource` and maps observations to phases, but no production source is wired, so reasoning references are optional and currently **unproduced**; no Langfuse capture is advertised. A trace id can still be supplied via `--trace-id`/`EVAL_TRACE_ID`; it is stamped into the trial record and substituted into the dispatches, and a real source can be wired later without a schema change.
 
 ### D18 - Diagnoser methodology
 *2026-09-28.* A dedicated adapted procedure, authored under the eval harness and built on `debug-hypothesis`'s loop plus `diagnosing-bugs`' discipline, run by the diagnoser subagent. Neither installed skill alone fits; `/measuring-experiment` as named does not exist.

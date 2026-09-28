@@ -106,9 +106,10 @@ HEALTHY_PHASE_TERMINALS = {
 # The alignment-state namespace for handled surfer triggers. Reusing the
 # alignment `applied` map keeps one atomic state file; this constant pair
 # isolates the surfer's handled keys from the alignment's per-version action
-# keys, so neither can ever clear the other.
-HANDLED_SHA = "surfer"
-HANDLED_FINGERPRINT = ""
+# keys, so neither can ever clear the other. Defined in `alignment` so
+# `resolve_hold` can re-arm a surfer hold's triggers (I7).
+HANDLED_SHA = alignment.SURFER_HANDLED_SHA
+HANDLED_FINGERPRINT = alignment.SURFER_HANDLED_FINGERPRINT
 
 
 class SurferError(RuntimeError):
@@ -170,6 +171,81 @@ class CreditExhaustionReader:
         return tuple(signals)
 
 
+@dataclass
+class RunErrorEvidence:
+    """The production evidence reader (I9): a failed run's error payloads.
+
+    The trial record carries phase-level failures and notes but not the run's own
+    error text (the recon per-job `error`). This reads each run the trial log
+    names through the injected REST seam, so a credit-exhaustion error is
+    classified even when the record is terse. A read failure is logged and
+    skipped: evidence is advisory, never a reason to crash the loop.
+    """
+
+    api_runner: api.ApiRunner
+    trial_log: TrialLog
+    log: Callable[[dict], None] = lambda record: None
+
+    def __call__(self) -> tuple[FailureEvidence, ...]:
+        evidence: list[FailureEvidence] = []
+        for record in self.trial_log.records():
+            if not isinstance(record, Mapping):
+                continue
+            instance_id = str(record.get("instance_id") or "")
+            target_id = record.get("target_id")
+            project_id = record.get("project_id")
+            if not project_id:
+                continue
+            for phase in phase_mappings(record):
+                run_kind = str(phase.get("phase") or "")
+                run_id = phase.get("run_id")
+                if not run_id or run_kind not in ("recon", "analysis", "hunting"):
+                    continue
+                for text in self._read_run(str(project_id), run_kind, str(run_id)):
+                    evidence.append(
+                        FailureEvidence(
+                            instance_id, text, "run_error", target_id, project_id
+                        )
+                    )
+        return tuple(evidence)
+
+    def _read_run(self, project_id: str, run_kind: str, run_id: str) -> tuple[str, ...]:
+        if run_kind == "recon":
+            call = api.recon_status(project_id, run_id)
+        elif run_kind == "analysis":
+            call = api.analysis_status(project_id, run_id)
+        else:
+            call = api.hunting_status(project_id, run_id)
+        try:
+            payload = self.api_runner(call)
+        except Exception as exc:  # noqa: BLE001 - evidence is advisory, never fatal
+            self.log(
+                {
+                    "event": "run_error_evidence_failed",
+                    "run_kind": run_kind,
+                    "run_id": run_id,
+                    "project_id": project_id,
+                    "error": str(exc),
+                }
+            )
+            return ()
+        return _run_error_texts(payload)
+
+
+def _run_error_texts(payload: object) -> tuple[str, ...]:
+    """Every error string a run's status payload carries (top-level + per-job)."""
+    if not isinstance(payload, Mapping):
+        return ()
+    texts: list[str] = []
+    error = payload.get("error")
+    if error:
+        texts.append(str(error))
+    for job in api.per_job_rows(payload):
+        if isinstance(job, Mapping) and job.get("error"):
+            texts.append(str(job["error"]))
+    return tuple(texts)
+
+
 # --- the asserted state -------------------------------------------------------
 
 
@@ -210,7 +286,11 @@ class SurfacedState:
     def to_dict(self) -> dict:
         return {
             "idle": self.idle,
-            "projects": [dict(project) for project in self.projects],
+            # I3: only mapping project entries survive; a non-mapping one is a
+            # malformed app-state payload, not a reason to crash the loop.
+            "projects": [
+                dict(project) for project in self.projects if isinstance(project, Mapping)
+            ],
             "triggers": [trigger.to_dict() for trigger in self.triggers],
         }
 
@@ -285,6 +365,7 @@ class SurferStateSource:
     trial_log: TrialLog
     signals: FailureSignalReader
     evidence: Callable[[], Sequence[FailureEvidence]] = lambda: ()
+    log: Callable[[dict], None] = lambda record: None
 
     def assert_state(self) -> SurfacedState:
         app = self.app_state()
@@ -292,12 +373,20 @@ class SurferStateSource:
         signals: list[Trigger] = []
         failed: list[Trigger] = []
         caps: list[Trigger] = []
+        valid: list[Mapping] = []
         for record in records:
+            error = _record_shape_error(record)
+            if error is not None:
+                # I3: a record the surfer cannot safely walk is skipped and
+                # named, never a crash and never a silent drop.
+                self._log_invalid(record, error)
+                continue
+            valid.append(record)
             caps.extend(cap_triggers(record))
             trigger = failed_run_trigger(record)
             if trigger is not None:
                 failed.append(trigger)
-        evidence = tuple(self.evidence()) + trial_evidence(records)
+        evidence = tuple(self.evidence()) + trial_evidence(valid)
         for signal in self.signals.read(evidence):
             signals.append(
                 Trigger(
@@ -314,6 +403,52 @@ class SurferStateSource:
             triggers=tuple(signals + failed + caps),
             projects=tuple(app.projects),
         )
+
+    def _log_invalid(self, record: object, error: str) -> None:
+        mapping = record if isinstance(record, Mapping) else {}
+        self.log(
+            {
+                "event": "surfer_record_invalid",
+                "instance_id": str(mapping.get("instance_id") or ""),
+                "target_id": mapping.get("target_id"),
+                "project_id": mapping.get("project_id"),
+                "error": error,
+            }
+        )
+
+
+def _record_shape_error(record: object) -> str | None:
+    """A named reason a record's shape is unsafe to read, or None (I3).
+
+    Guards every nesting depth the surfer reads: the record must be a mapping,
+    `phases` a list of mappings, and `notes` a list. Anything else is skipped.
+    """
+    if not isinstance(record, Mapping):
+        return f"record is not a mapping: {type(record).__name__}"
+    phases = record.get("phases")
+    if phases is not None:
+        if not isinstance(phases, list):
+            return f"phases is not a list: {type(phases).__name__}"
+        for index, phase in enumerate(phases):
+            if not isinstance(phase, Mapping):
+                return f"phases[{index}] is not a mapping: {type(phase).__name__}"
+    notes = record.get("notes")
+    if notes is not None and not isinstance(notes, list):
+        return f"notes is not a list: {type(notes).__name__}"
+    return None
+
+
+def phase_mappings(record: Mapping) -> tuple[Mapping, ...]:
+    """The record's phase entries that are mappings; malformed entries ignored.
+
+    Every surfer reader walks phases through this shape guard (I3), so a record
+    reached directly (or a reader outside `assert_state`) cannot crash on a
+    non-mapping entry.
+    """
+    phases = record.get("phases") if isinstance(record, Mapping) else None
+    if not isinstance(phases, list):
+        return ()
+    return tuple(phase for phase in phases if isinstance(phase, Mapping))
 
 
 def cap_triggers(record: Mapping) -> list[Trigger]:
@@ -344,8 +479,7 @@ def cap_triggers(record: Mapping) -> list[Trigger]:
 
 def failed_run_trigger(record: Mapping) -> Trigger | None:
     """A failed/interrupted run trigger from the record's phase terminals."""
-    phases = record.get("phases") or []
-    for phase in phases:
+    for phase in phase_mappings(record):
         name = str(phase.get("phase") or "")
         status = phase.get("status")
         failure = phase.get("failure")
@@ -376,7 +510,7 @@ def resume_phase(record: Mapping) -> str:
     resumes hunting; a failed recon resumes recon; an all-clean record resumes at
     its last phase.
     """
-    phases = record.get("phases") or []
+    phases = phase_mappings(record)
     for phase in phases:
         name = str(phase.get("phase") or "")
         if phase.get("failure"):
@@ -396,7 +530,7 @@ def trial_evidence(records: Sequence[Mapping]) -> tuple[FailureEvidence, ...]:
         instance_id = str(record.get("instance_id") or "")
         target_id = record.get("target_id")
         project_id = record.get("project_id")
-        for phase in record.get("phases") or []:
+        for phase in phase_mappings(record):
             failure = phase.get("failure")
             if failure:
                 evidence.append(
@@ -404,7 +538,10 @@ def trial_evidence(records: Sequence[Mapping]) -> tuple[FailureEvidence, ...]:
                         instance_id, str(failure), "trial_record", target_id, project_id
                     )
                 )
-        for note in record.get("notes") or []:
+        notes = record.get("notes")
+        if not isinstance(notes, list):
+            continue
+        for note in notes:
             evidence.append(
                 FailureEvidence(
                     instance_id, str(note), "trial_record", target_id, project_id
@@ -427,14 +564,14 @@ def _trigger(kind: str, record: Mapping, **fields) -> Trigger:
 
 
 def _recon_run_id(record: Mapping) -> str | None:
-    for phase in record.get("phases") or []:
+    for phase in phase_mappings(record):
         if phase.get("phase") == "recon":
             return phase.get("run_id")
     return record.get("recon_run_id")
 
 
 def _hunting_run_id(record: Mapping) -> str | None:
-    for phase in record.get("phases") or []:
+    for phase in phase_mappings(record):
         if phase.get("phase") == "hunting":
             return phase.get("run_id")
     return record.get("hunting_run_id")
@@ -915,7 +1052,7 @@ class Surfer:
         hold = None
         if self._state is not None:
             hold = write_hold(
-                self._state, trigger=state.primary, reason=reason, now=self._now()
+                self._state, triggers=state.triggers, reason=reason, now=self._now()
             )
         # Every escalation - a decider `escalate`, an unknown decision kind, or an
         # unbounded repair - records the acted-on trigger, so an unchanged trigger
@@ -1024,14 +1161,20 @@ def trigger_key(trigger: Trigger) -> str:
 def write_hold(
     state: alignment.AlignmentState,
     *,
-    trigger: Trigger | None,
+    triggers: Sequence[Trigger],
     reason: str,
     now: str,
 ) -> alignment.Hold:
-    """Write a surfer hold through the alignment state (D42's mechanism)."""
+    """Write a surfer hold through the alignment state (D42's mechanism).
+
+    The hold records its triggers' identities (I7), so `alignment resolve` can
+    clear exactly those handled markers and re-arm them.
+    """
+    primary = triggers[0] if triggers else None
     return state.add_hold(
-        target_sha=(trigger.eval_sha if trigger else None) or "surfer",
-        target_fingerprint=(trigger.stack_fingerprint if trigger else None) or "",
+        target_sha=(primary.eval_sha if primary else None) or "surfer",
+        target_fingerprint=(primary.stack_fingerprint if primary else None) or "",
         rationale=f"surfer: {reason}",
         now=now,
+        trigger_keys=tuple(trigger_key(trigger) for trigger in triggers),
     )

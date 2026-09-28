@@ -55,3 +55,6 @@ Write a YAML list, one row per ground-truth vulnerability:
 `evidence_chain` is required for `identified` and `partial`, and every path in it must be data-root-relative and resolve on disk.
 `eval_sha` and `stack_fingerprint` are copied verbatim from the trial record; never invent them.
 A `missed` verdict may omit `evidence_chain`.
+
+The `reasoning` references are optional and currently unproduced: no production observability reader is wired (designed-not-built, CODING_STANDARD section 12).
+Supply them only when trace reasoning observations were actually provided to you; otherwise omit the key entirely and never fabricate a `decision_node` or `observation_ref`.

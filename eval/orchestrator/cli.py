@@ -18,7 +18,7 @@ from typing import Callable, TextIO
 
 import yaml
 
-from orchestrator import api, assessment, diagnosis, evidence, instances, routing, store, surfer, trial, verdicts
+from orchestrator import api, assessment, diagnosis, evidence, instances, routing, store, subagents, surfer, trial, verdicts
 from orchestrator import alignment
 from orchestrator.commands import LocalRunner
 from orchestrator.files import FileStore
@@ -62,6 +62,8 @@ _HANDLED = (
     OrchestratorError,
     trial.TrialError,
     trial.EscalationError,
+    api.ApiError,
+    subagents.CommandTemplateError,
     assessment.AssessmentError,
     diagnosis.DiagnosisError,
     evidence.EvidenceError,
@@ -167,8 +169,9 @@ def _parser() -> argparse.ArgumentParser:
     run_parser.add_argument(
         "--trace-id",
         default=os.environ.get("EVAL_TRACE_ID"),
-        help="the Langfuse trace id this trial ran under (stamped into the record "
-        "and substituted into the assessment/diagnosis {trace_id})",
+        help="the trace id this trial ran under (stamped into the record and "
+        "substituted into the assessment/diagnosis {trace_id}); no production "
+        "reasoning source is wired yet, so the reasoning refs stay empty",
     )
     run_parser.add_argument(
         "--dry-run", action="store_true", help="print the plan without executing"
@@ -544,7 +547,9 @@ def _run_trial(args, setup: EvalSetup, config: OrchestratorConfig, out: TextIO, 
             f"final {record.final_count} (overshoot {record.overshoot})",
             file=out,
         )
-    return 0
+    # I2: a failed or timed-out run is a handled failure (the record is written
+    # and printed), so exit non-zero instead of reporting success.
+    return 1 if record.terminal in ("failed", "timeout") else 0
 
 
 # --- assessment (#271) --------------------------------------------------------
@@ -608,7 +613,7 @@ def _assessment_request(
 
 
 def _trace_id_of(payload: dict) -> str | None:
-    """The trial record's Langfuse trace id, when one was recorded."""
+    """The trial record's trace id, when one was recorded."""
     value = payload.get("trace_id")
     return str(value) if value else None
 
@@ -1166,7 +1171,12 @@ def _run_align(args, setup: EvalSetup, config: OrchestratorConfig, out: TextIO,
         dry_run=args.dry_run,
     )
     if outcome.no_op and not outcome.results and not outcome.escalated:
-        print("alignment: no change; nothing to align", file=out)
+        # M1: a true no-op (nothing moved) and a decider-chosen no-action for a
+        # real delta are different facts and read differently.
+        if outcome.consulted:
+            print("alignment: decided no action; nothing to align", file=out)
+        else:
+            print("alignment: no change; nothing to align", file=out)
     else:
         _print_alignment_outcome(outcome, out)
     return 0 if outcome.ok else 1
@@ -1237,12 +1247,20 @@ def _surfer_log(err: TextIO) -> Callable[[dict], None]:
 
 
 def _surfer_asserter(
-    args, files: FileStore, *, log: Callable[[dict], None] | None = None
+    args, files: FileStore, *, log: Callable[[dict], None] | None = None,
+    api_runner=None,
 ) -> surfer.SurferStateSource:
+    trial_log = surfer.FileTrialLog(args.runs_root, files=files, log=log)
+    # I9: the production evidence reader reads each failed run's error payload
+    # through the REST seam, so credit-exhaustion-like errors are classified
+    # even when the trial record's own text is terse.
+    reader = api_runner if api_runner is not None else api.HttpApiRunner(args.api)
     return surfer.SurferStateSource(
         app_state=_surfer_app_state(args),
-        trial_log=surfer.FileTrialLog(args.runs_root, files=files, log=log),
+        trial_log=trial_log,
         signals=surfer.CreditExhaustionReader(),
+        evidence=surfer.RunErrorEvidence(reader, trial_log, log=log or (lambda record: None)),
+        log=log or (lambda record: None),
     )
 
 

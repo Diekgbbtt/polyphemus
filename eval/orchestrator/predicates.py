@@ -146,14 +146,24 @@ def analysis_entry(
     if api.graph_counts(graph).l0 <= 0:
         blocks.append("L0 count is zero")
 
-    notes = tuple(
-        f"recon job {job.get('job')} failed (note-and-continue)"
-        for job in jobs
-        if job.get("status") == "failed"
-    )
+    notes = recon_job_notes(run)
     if blocks:
         return GateResult(False, tuple(blocks), notes=notes)
     return GateResult(True, notes=notes)
+
+
+def recon_job_notes(run: Mapping | None) -> tuple[str, ...]:
+    """A note per failed recon job (note-and-continue).
+
+    I8: shared by the analysis-entry gate and the trial's recon phase, so a
+    single failed job in a full recon run is recorded as a partial-surface
+    marker rather than being dropped.
+    """
+    return tuple(
+        f"recon job {job.get('job')} failed (note-and-continue)"
+        for job in api.per_job_rows(run)
+        if job.get("status") == "failed"
+    )
 
 
 def hunting_entry(

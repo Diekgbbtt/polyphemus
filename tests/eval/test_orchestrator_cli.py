@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import yaml
 
-from orchestrator import cli
+from orchestrator import api, cli
 
 
 def _write_setup(tmp_path, payload) -> str:
@@ -215,6 +215,55 @@ def test_trial_executes_through_the_injected_api_and_runner(
     assert code == 0
     assert any(c.path == "/projects/pid/recon" for c in api.calls)
     assert any("scripts/targetctl up jetlinks" in t for t in runner.argv_texts)
+
+
+def test_trial_api_transport_failure_is_handled_not_a_traceback(
+    sample_setup, tmp_path, recording_runner, fake_result, capsys
+) -> None:
+    """I2: a transport failure yields a written failed record and exit 1."""
+    sample_setup["instances"][0]["targets"][0]["target_config"]["target_seed"] = "t.test"
+    setup_path = _write_setup(tmp_path, sample_setup)
+    runner = recording_runner(
+        routes={
+            "scripts/targetctl up": fake_result(0, "UI: http://127.0.0.1:32768/\n"),
+            "hostname -I": fake_result(0, "10.0.0.5 \n"),
+            "scaffold.py": fake_result(0, "services: 3\n"),
+            "curl": fake_result(0, "200"),
+        }
+    )
+
+    class ExplodingApi:
+        def __call__(self, call):
+            raise api.ApiError(call, 0, "connection refused")
+
+    code = cli.main(
+        [
+            "trial",
+            setup_path,
+            "arm-a",
+            "jetlinks-1",
+            "--instances-root",
+            str(tmp_path / "instances"),
+            "--data-root",
+            str(tmp_path / "data"),
+            "--runs-root",
+            str(tmp_path / "runs"),
+        ],
+        runner_factory=lambda: runner,
+        api_factory=lambda base: ExplodingApi(),
+    )
+
+    captured = capsys.readouterr()
+    assert code == 1
+    assert "connection refused" in captured.err
+    records = list((tmp_path / "runs" / "jetlinks-1").glob("*/trial.yaml"))
+    assert len(records) == 1
+    record = yaml.safe_load(records[0].read_text(encoding="utf-8"))
+    assert record["terminal"] == "failed"
+    assert any(
+        "connection refused" in (phase.get("failure") or "")
+        for phase in record["phases"]
+    )
 
 
 def _run_trial_cli(sample_setup, tmp_path, recording_runner, fake_result, extra_args=()):

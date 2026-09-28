@@ -199,8 +199,9 @@ class TrialConfig:
     # D32: the version identity stamped into the trial record and the verdicts.
     eval_sha: str | None = None
     stack_fingerprint: str | None = None
-    # The Langfuse trace id this trial ran under, when one was recorded; the
-    # assessment/diagnoser dispatches substitute it into `{trace_id}`.
+    # The trace id this trial ran under, when one was recorded; the
+    # assessment/diagnoser dispatches substitute it into `{trace_id}`. No
+    # production reasoning source consumes it yet (designed-not-built, I4).
     trace_id: str | None = None
     # #275: a surfer intervention note stamped into the record when this trial
     # resumes a failed one at its recorded phase.
@@ -323,7 +324,7 @@ class TrialRecord:
     # D32/D37: the version identity the trial ran on, and the assessment state.
     eval_sha: str | None = None
     stack_fingerprint: str | None = None
-    # The trial's Langfuse trace id, when one was recorded; the assessment and
+    # The trial's trace id, when one was recorded; the assessment and
     # diagnosis requests substitute it into `{trace_id}`.
     trace_id: str | None = None
     assessment: AssessmentRecord | None = None
@@ -476,48 +477,95 @@ class Trial:
         if bring_up is not None:
             self.chain(bring_up, repair)
 
-        project_id = cfg.project_id or self._create_project()
-        state = self._bootstrap(project_id)
-
+        project_id = cfg.project_id or ""
         phases: list[PhaseRecord] = []
         cap: PollResult | None = None
         terminal = "complete"
+        # I2: the phase the run is currently in, so an API transport failure
+        # mid-poll still records which phase it reached.
+        current_phase = cfg.start_phase
+        try:
+            project_id = cfg.project_id or self._create_project()
+            state = self._bootstrap(project_id)
 
-        if cfg.start_phase == "recon":
-            phases.append(self._phase_recon(state))
-            phase = phases[-1]
-            if not phase.entered:
-                terminal = "blocked"
-            elif phase.status == "timeout":
-                terminal = "timeout"
-            elif _phase_failed(phase):
-                terminal = "failed"
-            else:
-                state = replace(state, recon_run_id=phase.run_id)
-                nxt, cap = self._phase_hunting(state)
-                phases.append(nxt)
-                terminal = _terminal_of(nxt, cap)
-        elif cfg.start_phase == "analysis":
-            phases.append(self._phase_analysis(state))
-            phase = phases[-1]
-            if not phase.entered:
-                terminal = "blocked"
-            elif phase.status == "timeout":
-                terminal = "timeout"
-            elif _phase_failed(phase):
-                terminal = "failed"
-            else:
-                nxt, cap = self._phase_hunting(state)
-                phases.append(nxt)
-                terminal = _terminal_of(nxt, cap)
-        elif cfg.start_phase == "hunting":
-            phase, cap = self._phase_hunting(state)
-            phases.append(phase)
-            terminal = _terminal_of(phase, cap)
-        else:  # pragma: no cover - setup validation prevents this
-            raise TrialError(f"unknown start phase: {cfg.start_phase!r}")
+            if cfg.start_phase == "recon":
+                current_phase = "recon"
+                phases.append(self._phase_recon(state))
+                phase = phases[-1]
+                if not phase.entered:
+                    terminal = "blocked"
+                elif phase.status == "timeout":
+                    terminal = "timeout"
+                elif _phase_failed(phase):
+                    terminal = "failed"
+                else:
+                    state = replace(state, recon_run_id=phase.run_id)
+                    current_phase = "hunting"
+                    nxt, cap = self._phase_hunting(state)
+                    phases.append(nxt)
+                    terminal = _terminal_of(nxt, cap)
+            elif cfg.start_phase == "analysis":
+                current_phase = "analysis"
+                phases.append(self._phase_analysis(state))
+                phase = phases[-1]
+                if not phase.entered:
+                    terminal = "blocked"
+                elif phase.status == "timeout":
+                    terminal = "timeout"
+                elif _phase_failed(phase):
+                    terminal = "failed"
+                else:
+                    current_phase = "hunting"
+                    nxt, cap = self._phase_hunting(state)
+                    phases.append(nxt)
+                    terminal = _terminal_of(nxt, cap)
+            elif cfg.start_phase == "hunting":
+                current_phase = "hunting"
+                phase, cap = self._phase_hunting(state)
+                phases.append(phase)
+                terminal = _terminal_of(phase, cap)
+            else:  # pragma: no cover - setup validation prevents this
+                raise TrialError(f"unknown start phase: {cfg.start_phase!r}")
 
-        return self._finish(started, project_id, phases, terminal, cap, [])
+            return self._finish(started, project_id, phases, terminal, cap, [])
+        except api.ApiError as exc:
+            # I2: a transport failure mid-trial is a written failure, not a lost
+            # run: the record names the error and the phase it reached, so the
+            # surfer's state source sees it.
+            return self._finish_api_failure(
+                started, project_id, phases, current_phase, exc
+            )
+
+    def _finish_api_failure(
+        self,
+        started: str,
+        project_id: str,
+        phases: list[PhaseRecord],
+        phase_name: str,
+        error: api.ApiError,
+    ) -> TrialRecord:
+        """Write a failed record for an API transport failure (I2).
+
+        The reached phase carries the error; a failure before any phase (during
+        project creation or bootstrap) lands on the entry phase. `terminal` is
+        `failed` so the surfer classifies it.
+        """
+        detail = f"api transport failure: {error}"
+        reached = [phase for phase in phases if phase.phase == phase_name]
+        if reached:
+            reached[-1].failure = str(error)
+        else:
+            phases = list(phases) + [
+                PhaseRecord(
+                    phase=phase_name,
+                    entered=True,
+                    status="failed",
+                    failure=str(error),
+                )
+            ]
+        return self._finish(
+            started, project_id or "<unknown>", phases, "failed", None, [detail]
+        )
 
     # --- bootstrap ------------------------------------------------------------
 
@@ -603,28 +651,21 @@ class Trial:
         )
         # P8 liveness: a recon run that reports `complete` with no job rows, or
         # with every job failed, is a failed run - never chained into hunting.
+        # I8: a partial surface (some jobs failed) is recorded as a note.
+        notes = list(gate.notes)
         failure = None
         if status == "complete":
-            failure = self._recon_failure(state.project_id, run_id)
+            run = self._call(api.recon_status(state.project_id, run_id))
+            failure = _recon_failure(run)
+            notes.extend(predicates.recon_job_notes(run))
         return PhaseRecord(
             phase="recon",
             entered=True,
             status=status,
             run_id=run_id,
-            notes=list(gate.notes),
+            notes=notes,
             failure=failure,
         )
-
-    def _recon_failure(self, project_id: str, run_id: str) -> str | None:
-        """The liveness failure of a `complete` recon run, or None when healthy."""
-        run = self._call(api.recon_status(project_id, run_id))
-        jobs = api.per_job_rows(run)
-        if not jobs:
-            return "recon reported complete with no job rows (a failed run, P8)"
-        if all((job or {}).get("status") == "failed" for job in jobs):
-            names = ", ".join(str((job or {}).get("job")) for job in jobs)
-            return f"recon reported complete but every job failed ({names})"
-        return None
 
     def _phase_analysis(self, state: predicates.PhaseState) -> PhaseRecord:
         if self._api is None:
@@ -818,6 +859,22 @@ def _premined_inboxes(cfg: TrialConfig, project: str) -> tuple[str, ...]:
 def _phase_failed(phase: PhaseRecord) -> bool:
     """True when a phase's terminal (or its liveness failure) is a failure."""
     return phase.failure is not None or phase.status in FAILED_TERMINALS
+
+
+def _recon_failure(run: Mapping) -> str | None:
+    """The liveness failure of a `complete` recon run, or None when healthy.
+
+    A run with no job rows, or with every job failed, is a failed run (P8).
+    A partial surface (some jobs failed) is healthy here; it is recorded as a
+    note through `predicates.recon_job_notes` (I8).
+    """
+    jobs = api.per_job_rows(run)
+    if not jobs:
+        return "recon reported complete with no job rows (a failed run, P8)"
+    if all((job or {}).get("status") == "failed" for job in jobs):
+        names = ", ".join(str((job or {}).get("job")) for job in jobs)
+        return f"recon reported complete but every job failed ({names})"
+    return None
 
 
 def _terminal_of(phase: PhaseRecord, cap: PollResult | None) -> str:

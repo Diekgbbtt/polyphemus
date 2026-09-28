@@ -325,6 +325,23 @@ def test_analysis_entry_notes_a_single_failed_job_and_continues() -> None:
     assert any("content" in note and "failed" in note for note in result.notes)
 
 
+def test_recon_job_notes_names_every_failed_job() -> None:
+    """I8: the shared helper the recon and analysis phases both use."""
+    run = _recon_run(
+        jobs=[
+            {"job": "crawl", "status": "complete"},
+            {"job": "content", "status": "failed"},
+            {"job": "katana", "status": "failed"},
+        ]
+    )
+
+    notes = predicates.recon_job_notes(run)
+
+    assert len(notes) == 2
+    assert any("content" in note for note in notes)
+    assert any("katana" in note for note in notes)
+
+
 def test_analysis_entry_accumulates_every_missing_prerequisite() -> None:
     state = predicates.PhaseState(project_id=PROJECT, recon_run_id="r1")
     run = _recon_run(status="running", jobs=[])

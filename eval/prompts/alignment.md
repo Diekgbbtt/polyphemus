@@ -54,10 +54,12 @@ Or an explicit not-alignable escalation with a rationale:
 escalation: "db/** changed with no declared migration for schema_data_layout; an operator must decide"
 ```
 
-An action may also carry an explicit `command` list when the decision itself
-supplies it; otherwise a `migration`/`rebuild` command is resolved from the
-matching declaration in `environment.declarations`. If no declaration exists,
-escalate - never invent a command.
+An action may also carry an explicit `command` list only when it exactly
+matches the matching declaration's command; the orchestrator refuses to execute
+any command the setup has not declared. Otherwise a `migration`/`rebuild`
+command is resolved from the matching declaration in
+`environment.declarations`. If no declaration exists, escalate - never invent a
+command (D28, the version freeze: the config layer is the only authority).
 
 ## Rules
 
@@ -67,6 +69,10 @@ escalate - never invent a command.
 - `gateway` (`gateway/**`): restart the `litellm` component (it never
   hot-reloads; it is the gateway process inside the agent container).
 - `topology_env` (compose files): recreate ONLY the affected services.
+- A `restart` may only name a component the delta impacted (a changed running
+  image, or the component its artifact class maps to); a `recreate` may only
+  name impacted services. A name outside the impacted set is a hold, never an
+  execution - the blast radius never widens beyond the delta.
 - `config_schema` (`.env.example`): `config_align`; the orchestrator runs the
   preflight and recreates the instance when the keyset changed.
 - `schema_data_layout`, `platform`, `image_definition`: align only through a

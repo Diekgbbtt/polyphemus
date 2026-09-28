@@ -39,6 +39,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Mapping, Sequence
 
+import yaml
+
 from advance import app_state, decision as decision_input, images, manifest
 from advance.effects import CommandResult, run_process
 from advance.fingerprint import fingerprint
@@ -55,6 +57,7 @@ STATE_POP_CONFLICT = "pop_conflict"
 STATE_IMAGE_DIGESTS_UNKNOWN = "image_digests_unknown"
 STATE_DECISION_UNKNOWN = "decision_unknown"
 STATE_PARTIAL = "partial_advance"
+STATE_WORKTREE_NOT_DETACHED = "worktree_not_detached"
 STATE_ERROR = "error"
 
 
@@ -81,6 +84,20 @@ MAX_LAST_KNOWN_GOOD = 50
 
 
 @dataclass(frozen=True)
+class InstanceConfig:
+    """One eval instance's idle/digest identity for the N-instance daemon (I1).
+
+    `app_state_url` is that instance's `/app-state` proxy; `compose_project` and
+    `image_containers` name its running stack for the manifest's digests.
+    """
+
+    instance_id: str
+    app_state_url: str
+    compose_project: str | None = None
+    image_containers: Mapping[str, str] | None = None
+
+
+@dataclass(frozen=True)
 class DaemonConfig:
     """The daemon's whole configuration surface (env-mapped in the unit file)."""
 
@@ -101,6 +118,10 @@ class DaemonConfig:
     # one wrong project.
     compose_project: str | None = None
     image_containers: Mapping[str, str] | None = None
+    # I1/D36: with N instances one app-state URL cannot prove the environment
+    # idle. Each entry carries its own app-state URL and stack identity; empty
+    # means the legacy single-instance fields above apply.
+    instances: tuple[InstanceConfig, ...] = ()
 
     @property
     def last_known_good_file(self) -> Path:
@@ -108,6 +129,24 @@ class DaemonConfig:
         if self.last_known_good_path is not None:
             return self.last_known_good_path
         return self.heartbeat_path.parent / _LAST_KNOWN_GOOD_FILENAME
+
+    def resolved_instances(self) -> tuple[InstanceConfig, ...]:
+        """The per-instance identities; the legacy fields synthesize one.
+
+        Backward compatible: a config built from the single-instance envs has no
+        `instances`, so it resolves to one entry carrying the legacy
+        `app_state_url`/`compose_project`/`image_containers`.
+        """
+        if self.instances:
+            return self.instances
+        return (
+            InstanceConfig(
+                instance_id="default",
+                app_state_url=self.app_state_url,
+                compose_project=self.compose_project,
+                image_containers=self.image_containers,
+            ),
+        )
 
 
 # --- structured log and alert sink -------------------------------------------
@@ -248,6 +287,21 @@ def git_has_tracked_edits(repo: Path, git_runner: GitRunner) -> bool:
     return bool(result.stdout.strip())
 
 
+def git_is_detached(repo: Path, git_runner: GitRunner) -> bool:
+    """True when HEAD is detached (the eval instance contract, D29/#269).
+
+    `git symbolic-ref -q HEAD` exits 0 when a branch is checked out and 1 when
+    HEAD is detached; any other exit is an error. M4: a worktree still on a
+    branch must never be fast-forwarded, so the daemon skips and alerts it.
+    """
+    result = git_runner(repo, ["symbolic-ref", "-q", "HEAD"])
+    if result.returncode == 0:
+        return False
+    if result.returncode == 1:
+        return True
+    raise GitError(f"git symbolic-ref failed in {repo}: {result.stderr.strip()}")
+
+
 def git_stash_push(repo: Path, message: str, git_runner: GitRunner) -> None:
     result = git_runner(repo, ["stash", "push", "-m", message])
     if result.returncode != 0:
@@ -274,20 +328,30 @@ def default_image_digests(
     project (`<project>-<service>-1`). SP4: with neither set the provider fails
     loudly rather than inspecting a guessed project; the caller then alerts and
     refuses to advance (D37's fail-closed default, "unknown is never idle").
+
+    I1: every resolved instance's stack is collected and merged; with more than
+    one instance the component keys are instance-qualified so two instances'
+    same-named containers never collide in the manifest.
     """
-    containers = dict(config.image_containers) if config.image_containers else None
-    project = config.compose_project
 
     def collect() -> Mapping[str, str]:
-        if containers is not None:
-            return images.collect_image_digests(containers, run=run)
-        if not project:
-            raise images.ImageDigestError(
-                "no running-stack identity configured (SP4): set "
-                "EVAL_ADVANCE_COMPOSE_PROJECT=<ph-<short>> or "
-                "EVAL_ADVANCE_IMAGE_CONTAINERS=<component=container,...>"
+        per_instance: dict[str, Mapping[str, str]] = {}
+        for instance in config.resolved_instances():
+            containers = (
+                dict(instance.image_containers) if instance.image_containers else None
             )
-        return images.collect_image_digests(images.default_containers(project), run=run)
+            if containers is None:
+                if not instance.compose_project:
+                    raise images.ImageDigestError(
+                        "no running-stack identity configured (SP4): set "
+                        "EVAL_ADVANCE_COMPOSE_PROJECT=<ph-<short>> or "
+                        "EVAL_ADVANCE_IMAGE_CONTAINERS=<component=container,...>"
+                    )
+                containers = images.default_containers(instance.compose_project)
+            per_instance[instance.instance_id] = images.collect_image_digests(
+                containers, run=run
+            )
+        return images.merge_instance_digests(per_instance)
 
     return collect
 
@@ -308,6 +372,7 @@ class Daemon:
         *,
         git_runner: GitRunner = manifest.default_git_runner,
         idle_proxy: object | None = None,
+        idle_proxies: Mapping[str, object] | None = None,
         clock: Clock = _default_clock,
         log: LogFn = default_log,
         alert_command: str | None = None,
@@ -319,9 +384,22 @@ class Daemon:
         self._git = git_runner
         self._clock = clock
         self._log = log
-        self._idle_proxy = idle_proxy or app_state.IdleProxy(
-            config.app_state_url, dsn=config.dsn, log=log
-        )
+        # I1/D36: one idle proxy per configured instance. An injected single
+        # proxy wins for the legacy one-instance config; the production path
+        # builds one per instance from its own app-state URL.
+        if idle_proxies is not None:
+            self._idle_proxies = dict(idle_proxies)
+        elif idle_proxy is not None:
+            self._idle_proxies = {
+                config.resolved_instances()[0].instance_id: idle_proxy
+            }
+        else:
+            self._idle_proxies = {
+                instance.instance_id: app_state.IdleProxy(
+                    instance.app_state_url, dsn=config.dsn, log=log
+                )
+                for instance in config.resolved_instances()
+            }
         self._alerts = AlertSink(
             command=alert_command if alert_command is not None else config.alert_command,
             run=alert_runner,
@@ -380,7 +458,16 @@ class Daemon:
                 last_advance_at, None,
             )
 
-        if not self._is_ancestor(eval_sha, dev_sha):
+        ancestor = self._is_ancestor(eval_sha, dev_sha)
+        if ancestor is None:
+            # M6: a git error is not a divergence. It is reported as an error
+            # (and alerted) rather than as a genuine non-fast-forward.
+            return self._finish(
+                now, dev_sha, eval_sha, idle, STATE_ERROR,
+                "ancestry check failed (git error); refusing to move",
+                last_advance_at, None,
+            )
+        if not ancestor:
             self._alerts.emit(
                 "non_fast_forward",
                 "eval is not an ancestor of dev; refusing to move (no reset)",
@@ -471,21 +558,47 @@ class Daemon:
     # internal -------------------------------------------------------------
 
     def _idle(self) -> bool | None:
-        try:
-            return bool(self._idle_proxy.fetch().idle)
-        except app_state.AppStateUnavailable as exc:
-            self._log({"event": "idle_unavailable", "error": str(exc)})
-            return None
+        """All-instance idle (I1/D36): every instance idle, unknown is not idle.
 
-    def _is_ancestor(self, ancestor: str, descendant: str) -> bool:
-        """An ancestry-check failure is an error, not a fast-forward."""
+        With N instances a single app-state URL cannot prove the whole
+        environment idle, so each instance is asserted; any instance unknown
+        makes the aggregate unknown (fail closed) and any instance busy makes
+        it busy.
+        """
+        idle = True
+        for instance in self.config.resolved_instances():
+            proxy = self._idle_proxies.get(instance.instance_id)
+            try:
+                if proxy is None:
+                    raise app_state.AppStateUnavailable(
+                        f"no idle proxy for instance {instance.instance_id!r}"
+                    )
+                if not bool(proxy.fetch().idle):
+                    idle = False
+            except app_state.AppStateUnavailable as exc:
+                self._log(
+                    {
+                        "event": "idle_unavailable",
+                        "instance_id": instance.instance_id,
+                        "error": str(exc),
+                    }
+                )
+                return None
+        return idle
+
+    def _is_ancestor(self, ancestor: str, descendant: str) -> bool | None:
+        """`True`/`False` for a real answer, `None` for a git error (M6).
+
+        An ancestry-check failure is an error, not a fast-forward verdict; the
+        caller reports it as an error rather than a false non-fast-forward.
+        """
         try:
             return git_is_ancestor(
                 self.config.eval_worktrees[0], ancestor, descendant, self._git
             )
         except GitError as exc:
             self._alerts.emit("ancestry_check_failed", str(exc), ancestor=ancestor)
-            return False
+            return None
 
     def _collect_digests(self, dev_sha: str, eval_sha: str) -> Mapping[str, str] | None:
         """The running-image digests, or None (alerted) when unobservable.
@@ -558,12 +671,26 @@ class Daemon:
             return STATE_ERROR, f"last-known-good write failed: {exc}", None, last_advance_at
 
         stashed: list[Path] = []
+        skipped: list[Path] = []
         try:
             for worktree in self.config.eval_worktrees:
+                # M4: only a detached worktree may be fast-forwarded. A branch
+                # checkout is alerted and skipped, never moved.
+                if not git_is_detached(worktree, self._git):
+                    skipped.append(worktree)
+                    self._alerts.emit(
+                        "worktree_not_detached",
+                        f"eval worktree {worktree} is on a branch; skipping it "
+                        "(instances must run detached)",
+                        worktree=str(worktree),
+                    )
+                    continue
                 if git_has_tracked_edits(worktree, self._git):
                     git_stash_push(worktree, f"eval-advance {now}", self._git)
                     stashed.append(worktree)
             for worktree in self.config.eval_worktrees:
+                if worktree in skipped:
+                    continue
                 result = git_ff_only(worktree, dev_sha, self._git)
                 if result.returncode != 0:
                     raise GitError(
@@ -583,6 +710,15 @@ class Daemon:
         last_advance_at = now
         if conflict:
             return STATE_POP_CONFLICT, "stash pop conflict", decision, last_advance_at
+        if skipped:
+            # Nothing moved on the skipped worktrees; never report a clean
+            # environment-wide advance (the caller re-reads every actual HEAD).
+            return (
+                STATE_WORKTREE_NOT_DETACHED,
+                "an eval worktree is checked out on a branch; it was not advanced",
+                decision,
+                last_advance_at,
+            )
         self._log(
             {
                 "event": STATE_ADVANCED,
@@ -722,19 +858,72 @@ def rewind(
 # --- config from the environment ---------------------------------------------
 
 
+def parse_instances(value: str | None) -> tuple[InstanceConfig, ...]:
+    """Parse `EVAL_ADVANCE_INSTANCES`: a JSON/YAML list of instance mappings.
+
+    Each entry needs `instance_id` and `app_state_url`; `compose_project` and
+    `image_containers` (a mapping) are optional. Absent/empty means the legacy
+    single-instance fields apply (I1, backward compatible).
+    """
+    if not value:
+        return ()
+    try:
+        payload = yaml.safe_load(value)
+    except yaml.YAMLError as exc:
+        raise ConfigError(f"EVAL_ADVANCE_INSTANCES is not valid YAML/JSON: {exc}") from exc
+    if not isinstance(payload, list) or not payload:
+        raise ConfigError("EVAL_ADVANCE_INSTANCES must be a non-empty list")
+    instances: list[InstanceConfig] = []
+    for index, entry in enumerate(payload):
+        where = f"EVAL_ADVANCE_INSTANCES[{index}]"
+        if not isinstance(entry, Mapping):
+            raise ConfigError(f"{where}: expected a mapping")
+        instance_id = entry.get("instance_id")
+        url = entry.get("app_state_url")
+        if not isinstance(instance_id, str) or not instance_id:
+            raise ConfigError(f"{where}.instance_id: expected a non-empty string")
+        if not isinstance(url, str) or not url:
+            raise ConfigError(f"{where}.app_state_url: expected a non-empty string")
+        compose_project = entry.get("compose_project")
+        if compose_project is not None and not isinstance(compose_project, str):
+            raise ConfigError(f"{where}.compose_project: expected a string")
+        raw_containers = entry.get("image_containers")
+        if raw_containers is not None and not isinstance(raw_containers, Mapping):
+            raise ConfigError(f"{where}.image_containers: expected a mapping")
+        instances.append(
+            InstanceConfig(
+                instance_id=instance_id,
+                app_state_url=url,
+                compose_project=compose_project,
+                image_containers=(
+                    {str(k): str(v) for k, v in raw_containers.items()}
+                    if raw_containers is not None
+                    else None
+                ),
+            )
+        )
+    return tuple(instances)
+
+
 def load_config_from_env(env: Mapping[str, str] | None = None) -> DaemonConfig:
     """Build the config from `EVAL_ADVANCE_*` environment variables.
 
     The systemd unit sources these from `EnvironmentFile=`, so a manual run
-    and the unit share one documented surface.
+    and the unit share one documented surface. I1: `EVAL_ADVANCE_INSTANCES`
+    (a JSON/YAML list) configures N instances; the legacy single-instance
+    `EVAL_ADVANCE_APP_STATE_URL`/`EVAL_ADVANCE_COMPOSE_PROJECT` envs still work.
     """
     env = os.environ if env is None else env
+    instances = parse_instances(env.get("EVAL_ADVANCE_INSTANCES"))
     required = {
         "EVAL_ADVANCE_DEV_WORKTREE": env.get("EVAL_ADVANCE_DEV_WORKTREE"),
         "EVAL_ADVANCE_EVAL_WORKTREES": env.get("EVAL_ADVANCE_EVAL_WORKTREES"),
-        "EVAL_ADVANCE_APP_STATE_URL": env.get("EVAL_ADVANCE_APP_STATE_URL"),
         "EVAL_ADVANCE_HEARTBEAT": env.get("EVAL_ADVANCE_HEARTBEAT"),
     }
+    # The single app-state URL is required only for the legacy single-instance
+    # form; with an explicit instances list each entry carries its own URL.
+    if not instances:
+        required["EVAL_ADVANCE_APP_STATE_URL"] = env.get("EVAL_ADVANCE_APP_STATE_URL")
     missing = [name for name, value in required.items() if not value]
     if missing:
         raise ConfigError(
@@ -761,7 +950,7 @@ def load_config_from_env(env: Mapping[str, str] | None = None) -> DaemonConfig:
     return DaemonConfig(
         dev_worktree=Path(required["EVAL_ADVANCE_DEV_WORKTREE"] or ""),
         eval_worktrees=worktrees,
-        app_state_url=required["EVAL_ADVANCE_APP_STATE_URL"] or "",
+        app_state_url=env.get("EVAL_ADVANCE_APP_STATE_URL") or "",
         heartbeat_path=Path(required["EVAL_ADVANCE_HEARTBEAT"] or ""),
         poll_interval=interval,
         dsn=env.get("EVAL_ADVANCE_DSN") or None,
@@ -777,6 +966,7 @@ def load_config_from_env(env: Mapping[str, str] | None = None) -> DaemonConfig:
         ),
         compose_project=env.get("EVAL_ADVANCE_COMPOSE_PROJECT") or None,
         image_containers=image_containers,
+        instances=instances,
     )
 
 

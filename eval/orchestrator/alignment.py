@@ -30,7 +30,7 @@ from typing import Callable, Mapping, Protocol, Sequence
 
 import yaml
 
-from advance.images import default_containers
+from advance.images import COMPONENTS, default_containers
 from orchestrator import subagents
 from orchestrator.commands import Command, CommandRunner
 from orchestrator.files import FileStore
@@ -52,6 +52,21 @@ CONFIG_ALIGN = "config_align"
 MIGRATION = "migration"
 REBUILD = "rebuild"
 ACTION_KINDS = (RESTART, RECREATE, CONFIG_ALIGN, MIGRATION, REBUILD)
+
+# I6: the artifact class -> running component(s) it can impact, used to bound a
+# restart/recreate to the delta's impacted set. Data, not a decision branch: a
+# class the map does not name contributes no component, and a decider naming a
+# component outside the impacted set escalates rather than touching it.
+COMPONENTS_BY_ARTIFACT_CLASS: Mapping[str, tuple[str, ...]] = {
+    "exec_plane": ("kali",),
+    "gateway": ("litellm",),
+    "agent_code": ("agent",),
+    "schema_data_layout": ("postgres",),
+    "topology_env": COMPONENTS,
+    "config_schema": COMPONENTS,
+    "platform": COMPONENTS,
+    "image_definition": COMPONENTS,
+}
 
 # Ready / failed / planned / skipped. `skipped` means already applied for this
 # version; `planned` is dry-run; `failed` always carries evidence.
@@ -298,6 +313,15 @@ def environment_context(environment: AlignmentEnvironment) -> dict:
 # --- the state: holds and applied actions -------------------------------------
 
 
+# The alignment-state namespace for the surfer's handled-trigger keys. Reusing
+# the alignment `applied` map keeps one atomic state file; this constant pair
+# isolates the surfer's handled keys from the alignment's per-version action
+# keys. Defined here (surfer aliases them) so `resolve_hold` can clear the
+# markers a surfer hold recorded, re-arming its triggers (I7).
+SURFER_HANDLED_SHA = "surfer"
+SURFER_HANDLED_FINGERPRINT = ""
+
+
 @dataclass(frozen=True)
 class Hold:
     """An unresolved alignment escalation; blocks trials until resolved."""
@@ -310,9 +334,15 @@ class Hold:
     resolved: bool = False
     decision: str | None = None
     resolved_at: str | None = None
+    # I7: the surfer trigger identities this hold disarmed, so resolving it can
+    # re-arm them; `history` records the operator resolutions of prior re-opens.
+    trigger_keys: tuple[str, ...] = ()
+    history: tuple[Mapping, ...] = ()
 
 
 def _hold_from(entry: Mapping) -> Hold:
+    history = entry.get("history") or []
+    trigger_keys = entry.get("trigger_keys") or []
     return Hold(
         hold_id=str(entry.get("hold_id") or ""),
         rationale=str(entry.get("rationale") or ""),
@@ -323,6 +353,10 @@ def _hold_from(entry: Mapping) -> Hold:
         decision=(str(entry["decision"]) if entry.get("decision") is not None else None),
         resolved_at=(
             str(entry["resolved_at"]) if entry.get("resolved_at") is not None else None
+        ),
+        trigger_keys=tuple(str(key) for key in trigger_keys if key is not None),
+        history=tuple(
+            item for item in history if isinstance(item, Mapping)
         ),
     )
 
@@ -359,26 +393,56 @@ class AlignmentState:
         target_fingerprint: str,
         rationale: str,
         now: str,
+        trigger_keys: Sequence[str] = (),
     ) -> Hold:
-        """Write a hold marker atomically; re-adding the same one is idempotent."""
+        """Write a hold marker atomically; re-adding the same one is idempotent.
+
+        I7: if the same hold was resolved, re-adding re-opens it (unresolved
+        again) and appends the prior resolution to its `history`, so a condition
+        that persists after an operator resolution re-escalates with that
+        context recorded.
+        """
         payload = self._load()
         hold_id = short_id(f"{target_sha}:{target_fingerprint}:{rationale}")
+        keys = tuple(str(key) for key in trigger_keys if key is not None)
         for entry in payload["holds"]:
-            if entry.get("hold_id") == hold_id:
-                return _hold_from(entry)
+            if entry.get("hold_id") != hold_id:
+                continue
+            if entry.get("resolved"):
+                history = list(entry.get("history") or [])
+                history.append(
+                    {
+                        "decision": entry.get("decision"),
+                        "resolved_at": entry.get("resolved_at"),
+                    }
+                )
+                entry["history"] = history
+                entry["resolved"] = False
+                entry["decision"] = None
+                entry["resolved_at"] = None
+                if keys:
+                    entry["trigger_keys"] = sorted(set(entry.get("trigger_keys") or []) | set(keys))
+                self._write(payload)
+            return _hold_from(entry)
         hold = Hold(
             hold_id=hold_id,
             rationale=rationale,
             target_sha=target_sha,
             target_fingerprint=target_fingerprint,
             created_at=now,
+            trigger_keys=keys,
         )
         payload["holds"].append(asdict(hold))
         self._write(payload)
         return hold
 
     def resolve_hold(self, hold_id: str, decision: str, *, now: str | None = None) -> Hold:
-        """Record the operator's decision and clear the hold (D38: no rewind)."""
+        """Record the operator's decision and clear the hold (D38: no rewind).
+
+        I7: the surfer handled markers recorded under this hold's triggers are
+        cleared, so the next surfer cycle re-asserts; a condition that persists
+        re-escalates (and re-opens the hold with this decision in its history).
+        """
         payload = self._load()
         for entry in payload["holds"]:
             if entry.get("hold_id") != hold_id:
@@ -388,9 +452,23 @@ class AlignmentState:
             entry["resolved"] = True
             entry["decision"] = decision
             entry["resolved_at"] = (now or subagents.utcnow)()
+            self._clear_surfer_markers(payload, entry.get("trigger_keys") or [])
             self._write(payload)
             return _hold_from(entry)
         raise AlignmentError(f"no alignment hold {hold_id!r}")
+
+    def _clear_surfer_markers(self, payload: dict, trigger_keys: Sequence) -> None:
+        """Clear the surfer handled markers for `trigger_keys` (I7)."""
+        keys = {str(key) for key in trigger_keys if key is not None}
+        if not keys:
+            return
+        pair = _pair_key(SURFER_HANDLED_SHA, SURFER_HANDLED_FINGERPRINT)
+        current = [str(key) for key in payload["applied"].get(pair, [])]
+        remaining = [key for key in current if key not in keys]
+        if remaining:
+            payload["applied"][pair] = remaining
+        else:
+            payload["applied"].pop(pair, None)
 
     # -- applied actions (idempotency) -------------------------------------
 
@@ -459,6 +537,9 @@ class AlignmentOutcome:
     hold: Hold | None = None
     escalated: bool = False
     no_op: bool = False
+    # M1: True when the decider was actually dispatched. Distinguishes a true
+    # no-op (nothing moved) from a decider-chosen "no action for a real delta".
+    consulted: bool = False
     escalation: str | None = None
 
     @property
@@ -534,11 +615,41 @@ def run(
             target_fp,
             hold=hold,
             escalated=True,
+            consulted=True,
             escalation=decision.escalation,
         )
 
     if not decision.actions:
-        return AlignmentOutcome(target_sha, target_fp, no_op=True)
+        return AlignmentOutcome(target_sha, target_fp, no_op=True, consulted=True)
+
+    # C1/D28: a decider-supplied inline command is never an authority. It must
+    # be covered by a setup declaration (or it is a hold); the declaration's
+    # command is what runs. This is the version freeze: no arbitrary shell.
+    # I6: a restart/recreate may only name a component or service the delta
+    # actually impacted; anything else is a hold, never a broader blast radius.
+    impacted = _impacted_components(decision_input)
+    for action in decision.actions:
+        refusal = _undeclared_inline_command(
+            action, environment.declarations
+        ) or _out_of_scope_action(action, impacted)
+        if refusal is None:
+            continue
+        hold = None
+        if not dry_run:
+            hold = state.add_hold(
+                target_sha=target_sha,
+                target_fingerprint=target_fp,
+                rationale=refusal,
+                now=now(),
+            )
+        return AlignmentOutcome(
+            target_sha,
+            target_fp,
+            hold=hold,
+            escalated=True,
+            consulted=True,
+            escalation=refusal,
+        )
 
     applied = state.applied_for(target_sha, target_fp)
     results: list[ActionResult] = []
@@ -562,7 +673,7 @@ def run(
 
     if not dry_run and newly_applied:
         state.record_applied(target_sha, target_fp, newly_applied)
-    return AlignmentOutcome(target_sha, target_fp, results=tuple(results))
+    return AlignmentOutcome(target_sha, target_fp, results=tuple(results), consulted=True)
 
 
 def _execute(
@@ -675,8 +786,13 @@ def _plan_commands(
 def _resolve_declared_command(
     action: DecisionAction, declarations: AlignmentDeclarations
 ) -> tuple[str, ...] | None:
-    if action.command:
-        return tuple(action.command)
+    """The declared migration/rebuild command matching the action, or None.
+
+    The declaration is the only authority (D28): the action's own `command` is
+    never a source here, so the decider can only name a declared recipe. An
+    inline command that does not match a declaration is escalated by
+    `_undeclared_inline_command` before execution is ever planned.
+    """
     if action.kind == MIGRATION and action.artifact_class:
         for migration in declarations.migrations:
             if migration.artifact_class == action.artifact_class:
@@ -691,6 +807,27 @@ def _resolve_declared_command(
             if class_matches or image_matches:
                 return tuple(rebuild.command)
     return None
+
+
+def _undeclared_inline_command(
+    action: DecisionAction, declarations: AlignmentDeclarations
+) -> str | None:
+    """A refusal rationale when an inline command is not covered by a declaration.
+
+    The decider may name a declared migration/rebuild, but a command it supplies
+    itself must exactly match a declaration's; anything else is an escalation,
+    never an execution (D28, the version freeze).
+    """
+    if action.kind not in (MIGRATION, REBUILD) or not action.command:
+        return None
+    declared = _resolve_declared_command(action, declarations)
+    if declared is not None and tuple(action.command) == declared:
+        return None
+    return (
+        f"decider-supplied {action.kind} command {list(action.command)!r} for "
+        f"{action.artifact_class or action.image!r} is not covered by a setup "
+        "declaration; refusing to execute (D28)"
+    )
 
 
 # The preflight report's keyset counts; a changed keyset needs a recreate.
@@ -754,6 +891,54 @@ def _execute_config_align(
 
 
 # --- decision-input normalisation --------------------------------------------
+
+
+def _impacted_components(decision_input: Mapping) -> frozenset[str]:
+    """The components/services the delta actually impacted (I6).
+
+    A changed artifact class contributes its mapped component(s); a changed
+    running image contributes the component itself. This bounds a restart or
+    recreate to what moved.
+    """
+    impacted: set[str] = set()
+    for entry in _changed_entries(decision_input):
+        artifact_class = str(entry.get("artifact_class") or "")
+        impacted.update(COMPONENTS_BY_ARTIFACT_CLASS.get(artifact_class, ()))
+    for entry in _images_changed(decision_input):
+        component = entry.get("component")
+        if component:
+            impacted.add(str(component))
+    return frozenset(impacted)
+
+
+def _out_of_scope_action(
+    action: DecisionAction, impacted: frozenset[str]
+) -> str | None:
+    """A refusal rationale when a restart/recreate names a non-impacted name.
+
+    I6: the decider may not widen the blast radius beyond the delta. A name
+    outside the impacted set is a hold, never an execution.
+    """
+    if action.kind == RESTART:
+        if action.component and action.component not in impacted:
+            return (
+                f"restart names component {action.component!r}, which is not in "
+                f"the delta's impacted components ({_impacted_text(impacted)})"
+            )
+        return None
+    if action.kind == RECREATE:
+        outside = [service for service in action.services if service not in impacted]
+        if outside:
+            return (
+                f"recreate names service(s) {', '.join(outside)}, which are not in "
+                f"the delta's impacted components ({_impacted_text(impacted)})"
+            )
+        return None
+    return None
+
+
+def _impacted_text(impacted: frozenset[str]) -> str:
+    return ", ".join(sorted(impacted)) or "none"
 
 
 def _changed_entries(decision_input: Mapping) -> tuple[Mapping, ...]:

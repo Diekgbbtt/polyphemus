@@ -327,6 +327,105 @@ def test_a_credit_exhaustion_signal_becomes_a_trigger(tmp_path) -> None:
     assert state.triggers[0].instance_id == "arm-a"
 
 
+def test_run_error_evidence_reads_a_failed_recon_job_error() -> None:
+    """I9: the production reader surfaces the run's own error payload via REST."""
+    record = {
+        "instance_id": "arm-a",
+        "target_id": "t1",
+        "project_id": "pid",
+        "phases": [{"phase": "recon", "status": "complete", "run_id": "r1"}],
+    }
+
+    class FakeApi:
+        def __init__(self) -> None:
+            self.paths: list[str] = []
+
+        def __call__(self, call):
+            self.paths.append(call.path)
+            return {
+                "per_job": [
+                    {"job": "crawl", "status": "failed", "error": "boom"},
+                    {"job": "content", "status": "complete", "error": None},
+                ]
+            }
+
+    api_runner = FakeApi()
+    reader = surfer.RunErrorEvidence(api_runner, StaticTrialLog([record]))
+
+    evidence = reader()
+
+    assert api_runner.paths == ["/projects/pid/recon/r1"]
+    assert len(evidence) == 1
+    assert evidence[0].text == "boom"
+    assert evidence[0].source == "run_error"
+    assert evidence[0].instance_id == "arm-a"
+
+
+def test_a_live_run_error_credit_exhaustion_becomes_a_trigger() -> None:
+    record = {
+        "instance_id": "arm-a",
+        "target_id": "t1",
+        "project_id": "pid",
+        "terminal": "complete",
+        "phases": [{"phase": "recon", "status": "complete", "run_id": "r1"}],
+    }
+
+    class FakeApi:
+        def __call__(self, call):
+            return {
+                "per_job": [
+                    {
+                        "job": "crawl",
+                        "status": "failed",
+                        "error": "litellm: insufficient_quota (billing hard limit)",
+                    }
+                ]
+            }
+
+    trial_log = StaticTrialLog([record])
+    source = surfer.SurferStateSource(
+        app_state=lambda: AppState(idle=True, projects=()),
+        trial_log=trial_log,
+        signals=surfer.CreditExhaustionReader(),
+        evidence=surfer.RunErrorEvidence(FakeApi(), trial_log),
+    )
+
+    state = source.assert_state()
+
+    assert [t.kind for t in state.triggers] == [surfer.FAILURE_SIGNAL]
+    assert state.triggers[0].signal == surfer.CREDIT_EXHAUSTION
+
+
+def test_run_error_evidence_skips_a_non_mapping_record() -> None:
+    class ExplodingApi:
+        def __call__(self, call):  # pragma: no cover - never reached
+            raise AssertionError("no API call for a malformed record")
+
+    reader = surfer.RunErrorEvidence(ExplodingApi(), StaticTrialLog(["oops"]))
+
+    assert reader() == ()
+
+
+def test_run_error_evidence_is_fail_soft_on_an_api_error() -> None:
+    record = {
+        "instance_id": "arm-a",
+        "project_id": "pid",
+        "phases": [{"phase": "recon", "status": "complete", "run_id": "r1"}],
+    }
+
+    class ExplodingApi:
+        def __call__(self, call):
+            raise trial.api.ApiError(call, 0, "connection refused")
+
+    logs: list[dict] = []
+    reader = surfer.RunErrorEvidence(
+        ExplodingApi(), StaticTrialLog([record]), log=logs.append
+    )
+
+    assert reader() == ()
+    assert any(r.get("event") == "run_error_evidence_failed" for r in logs)
+
+
 def test_an_unrelated_error_is_not_a_credit_signal() -> None:
     reader = surfer.CreditExhaustionReader()
 
@@ -384,6 +483,84 @@ def test_file_trial_log_surfaces_an_invalid_record(tmp_path) -> None:
     assert len(invalid) == 2
     assert {Path(rec["path"]).name for rec in invalid} == {"trial.yaml"}
     assert {Path(rec["path"]).parent.name for rec in invalid} == {"trial-2", "trial-3"}
+
+
+def test_a_non_mapping_phase_entry_is_skipped_and_logged() -> None:
+    """I3: `phases: [oops]` is a named invalid-record event, never a crash."""
+    logs: list[dict] = []
+    record = {
+        "instance_id": "arm-a",
+        "target_id": "t1",
+        "project_id": "pid",
+        "terminal": "failed",
+        "phases": ["oops"],
+    }
+    source = surfer.SurferStateSource(
+        app_state=lambda: AppState(idle=False, projects=()),
+        trial_log=StaticTrialLog([record]),
+        signals=surfer.CreditExhaustionReader(),
+        evidence=lambda: (),
+        log=logs.append,
+    )
+
+    state = source.assert_state()
+
+    assert state.triggers == ()
+    invalid = [r for r in logs if r.get("event") == "surfer_record_invalid"]
+    assert len(invalid) == 1
+    assert "phases[0]" in invalid[0]["error"]
+
+
+def test_a_non_list_phases_value_is_skipped_and_logged() -> None:
+    logs: list[dict] = []
+    record = {"instance_id": "arm-b", "project_id": "pid", "phases": 7}
+    source = surfer.SurferStateSource(
+        app_state=lambda: AppState(idle=True, projects=()),
+        trial_log=StaticTrialLog([record]),
+        signals=surfer.CreditExhaustionReader(),
+        evidence=lambda: (),
+        log=logs.append,
+    )
+
+    assert source.assert_state().triggers == ()
+    assert any(r.get("event") == "surfer_record_invalid" for r in logs)
+
+
+def test_a_malformed_record_does_not_hide_a_valid_one() -> None:
+    good = {
+        "instance_id": "arm-a",
+        "target_id": "t1",
+        "project_id": "pid",
+        "terminal": "stopped",
+        "phases": [{"phase": "hunting", "status": "stopped", "run_id": "h1"}],
+        "cap": 2,
+        "stop_count": 2,
+        "final_count": 3,
+    }
+    bad = {"instance_id": "arm-b", "project_id": "pid", "phases": [{"phase": "recon"}, "oops"]}
+    logs: list[dict] = []
+    source = surfer.SurferStateSource(
+        app_state=lambda: AppState(idle=True, projects=()),
+        trial_log=StaticTrialLog([bad, good]),
+        signals=surfer.CreditExhaustionReader(),
+        evidence=lambda: (),
+        log=logs.append,
+    )
+
+    kinds = [trigger.kind for trigger in source.assert_state().triggers]
+
+    assert kinds == [surfer.CAP_REACHED]
+    assert any(r.get("event") == "surfer_record_invalid" for r in logs)
+
+
+def test_the_phase_readers_tolerate_a_non_mapping_entry() -> None:
+    # Every reader that walks `phases` is shape-guarded, not only the source.
+    record = {"start_phase": "hunting", "phases": ["oops"]}
+
+    assert surfer.failed_run_trigger(record) is None
+    assert surfer.resume_phase(record) == "hunting"
+    assert surfer.cap_triggers(record) == []
+    assert surfer.trial_evidence([record]) == ()
 
 
 def test_terminate_touches_no_command_runner_and_writes_no_hold(
@@ -839,7 +1016,8 @@ def test_the_handled_marker_survives_a_loop_restart(tmp_path) -> None:
     assert restarted.cycle().no_op is True
 
 
-def test_alignment_resolve_does_not_clear_handled_markers(tmp_path) -> None:
+def test_alignment_resolve_rearms_the_trigger_and_it_re_escalates(tmp_path) -> None:
+    """I7: resolving a surfer hold re-arms its triggers for the next cycle."""
     state = alignment.AlignmentState(tmp_path / "alignment.yaml")
     asserter = StaticAsserter(state_with(failed_trigger()))
     decider = StaticDecider(
@@ -849,16 +1027,45 @@ def test_alignment_resolve_does_not_clear_handled_markers(tmp_path) -> None:
 
     first = engine.cycle()
     assert first.hold is not None
-    handled = state.applied_for(surfer.HANDLED_SHA, surfer.HANDLED_FINGERPRINT)
-    assert handled
+    assert state.applied_for(surfer.HANDLED_SHA, surfer.HANDLED_FINGERPRINT)
 
     state.resolve_hold(first.hold.hold_id, "operator funded the account")
 
+    # Resolving clears the handled markers recorded under the hold's triggers.
+    assert (
+        state.applied_for(surfer.HANDLED_SHA, surfer.HANDLED_FINGERPRINT) == frozenset()
+    )
+
     after = make_surfer(asserter, decider, tmp_path=tmp_path, state=state).cycle()
-    assert after.no_op is True
-    assert state.applied_for(surfer.HANDLED_SHA, surfer.HANDLED_FINGERPRINT) == handled
+
+    # The condition persists, so the re-armed trigger re-escalates.
+    assert after.escalated is True
+    assert after.hold is not None
+    assert after.hold.resolved is False
+    assert len(decider.requests) == 2
     assert len(state.holds()) == 1
-    assert state.unresolved_holds() == ()
+    assert len(state.unresolved_holds()) == 1
+    # The operator's resolution context is recorded on the re-opened hold.
+    assert any(
+        entry.get("decision") == "operator funded the account"
+        for entry in after.hold.history
+    )
+
+
+def test_act_once_is_kept_for_an_unresolved_trigger(tmp_path) -> None:
+    state = alignment.AlignmentState(tmp_path / "alignment.yaml")
+    asserter = StaticAsserter(state_with(failed_trigger()))
+    decider = StaticDecider(
+        surfer.SurferDecision(surfer.ESCALATE, reason="fund the account")
+    )
+    engine = make_surfer(asserter, decider, tmp_path=tmp_path, state=state)
+
+    first = engine.cycle()
+    second = engine.cycle()  # no resolve -> the marker still disarms it
+
+    assert first.escalated is True
+    assert second.no_op is True
+    assert len(decider.requests) == 1
 
 
 def test_a_skipped_trigger_is_logged(tmp_path) -> None:
@@ -1060,6 +1267,40 @@ class _TrialApi:
             "POST /projects/pid/hunting": {"hunting_run_id": "h1"},
             "GET /projects/pid/graph": {"nodes": [{"type": "L1Service"}], "links": []},
         }[key]
+
+
+def test_a_transport_failure_record_is_visible_to_the_surfer(tmp_path) -> None:
+    """I2: the failed record an API transport error writes is a surfer trigger."""
+    calls: list = []
+
+    class ExplodingApi:
+        def __call__(self, call):
+            calls.append(call)
+            raise trial.api.ApiError(call, 0, "connection refused")
+
+    cfg = trial.TrialConfig(
+        instance_id="arm-a",
+        target_id="t1",
+        start_phase="hunting",
+        project_id="pid",
+        data_root=tmp_path / "data",
+        runs_root=tmp_path / "runs",
+    )
+    trial.Trial(cfg, api_runner=ExplodingApi()).run()
+
+    source = surfer.SurferStateSource(
+        app_state=lambda: AppState(idle=False, projects=()),
+        trial_log=surfer.FileTrialLog(tmp_path / "runs"),
+        signals=surfer.CreditExhaustionReader(),
+        evidence=lambda: (),
+    )
+
+    state = source.assert_state()
+
+    assert any(t.kind == surfer.FAILED_RUN for t in state.triggers)
+    failed = next(t for t in state.triggers if t.kind == surfer.FAILED_RUN)
+    assert failed.instance_id == "arm-a"
+    assert "connection refused" in failed.detail
 
 
 def test_a_resumed_trial_records_the_surfer_intervention(tmp_path) -> None:
