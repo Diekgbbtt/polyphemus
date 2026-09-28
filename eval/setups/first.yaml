@@ -1,0 +1,85 @@
+# The first live EvalSetup (ticket #276): one instance, one workshop target.
+#
+# This file is operator data committed with the harness so the first end-to-end
+# run is reproducible and reviewable. The live run is gated on the operator
+# bootstrap checklist in eval/E2E-SCAFFOLD.md; nothing here executes until an
+# operator runs the orchestrator on the eval server.
+#
+# Paths and identities the CLI receives out of band (they are NOT EvalSetup
+# fields; documented here so the setup is self-explanatory):
+#   --repo / EVAL_REPO            the eval server's canonical polymerhus
+#                                checkout the instance worktrees are added from
+#                                (e.g. /opt/polymerhus-dev, the server's `dev`
+#                                checkout; the delivery plane owns that checkout)
+#   --instances-root             defaults to eval/instances; the instance
+#                                worktree lands at <root>/<instance_id>
+#   --branch / EVAL_BRANCH       the read-only branch every worktree is
+#                                detached at; defaults to `eval`
+#   --state                      the alignment/surfer state file; must carry no
+#                                unresolved hold before `up`/`trial`
+#
+# Ground truth and the workshop checkout are resolved by the target's name:
+# eval/gt.py reads <EVAL_WEB_DIR>/<target>/challenge.json, with EVAL_WEB_DIR
+# defaulting to ~/WebExploitBench on the eval server. `params.target` below is
+# that name.
+
+schema_version: 1
+
+# Outside the repo (D7/D12: the store is a durable sink, never the data root).
+# store materialize writes <artifact_store>/<target_id>/<target_run_id>/<trial_id>/.
+artifact_store: /srv/eval-artifacts
+
+# Eval-wide pre-eval data dependencies (D14/N12). The gate refuses `up` while
+# any required item is not `complete`, naming the offender.
+work_items:
+  # comfyui exposes no authenticated surface, so there is nothing to
+  # bootstrap: not required rather than silently marked complete.
+  - name: auth-bootstrap
+    status: incomplete
+    required: false
+  # eval/kbs/comfyui/operator_kb.md is committed; scaffold.py projects it
+  # deterministically into the L1 skeleton with no LLM call.
+  - name: l1-surface
+    status: complete
+  # No pre-mined hunting artifacts for the first run; nothing to mount.
+  - name: hunting-artifacts
+    status: complete
+
+instances:
+  # The eval server's canonical instance. `instance_id` names both the worktree
+  # under the instances root and the compose project (ph-<short hash>).
+  - instance_id: eval-server-1
+    # A manually managed `.env`. It MUST be placed at the worktree root before
+    # `up`: it is resolved here relative to the instances root, and the eval
+    # compose overlay reads `.env` from the worktree cwd with `required: true`.
+    # env_preflight.py fills missing keys from .env.example but does NOT create
+    # the file (a missing .env is an operator error, exit 2). The operator
+    # bootstrap in E2E-SCAFFOLD.md creates the worktree and places this file.
+    env_file: eval-server-1/.env
+    targets:
+      - target_id: comfyui-1
+        start_phase: recon
+        # The hunting cap, counted from the consumed hunt-configs directory
+        # (pre-mined files included). 10 configs bounds a 6-vuln challenge.
+        hunt_config_budget: 10
+        # preloaded_hunting_artifacts is omitted: no pre-mined artifacts.
+        target_config:
+          lifecycle: targetctl
+          # eval/kbs/comfyui/ is the committed per-target operator KB; the
+          # harness reads only operator_kb.md. params.target is BOTH the
+          # targetctl target name and the ground-truth name gt.py resolves.
+          operator_kb: eval/kbs/comfyui/operator_kb.md
+          params:
+            target: comfyui
+          # target_seed is omitted on purpose: the harness derives it from the
+          # synthetic Host for this run, `t-1fc05262.target` (sha1 of
+          # "eval-server-1/comfyui-1", the routing discriminator written into
+          # the target front and aliased in this instance's kali). Pinning a
+          # different value here would route by one Host and scan by another.
+          #
+          # auth and l1_surface are omitted: comfyui needs no AuthContext, and
+          # L1 is projected deterministically from operator_kb at trial start.
+
+# `alignment:` is intentionally absent: the first run declares no
+# migrations/rebuilds (the empty form is rejected by setup validation, so the
+# key is omitted until an artifact class actually needs one).

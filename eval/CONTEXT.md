@@ -29,6 +29,7 @@ _Avoid_: job, task
 
 **TargetConfig**:
 The linked configuration of a Target: lifecycle strategy, seed, operator KB, auth context, and bootstrapped L1 surface.
+The seed is the bare Synthetic Host; when a setup leaves it unset the harness derives it from the target-run identity, so routing and scope cannot disagree.
 _Avoid_: target definition
 
 **AuthContext**:
