@@ -300,6 +300,64 @@ def test_path_unsafe_target_run_id_is_named(sample_setup) -> None:
         setup_mod.parse_eval_setup(sample_setup)
 
 
+# --- alignment declarations (#274) --------------------------------------------
+
+
+def test_alignment_declarations_are_optional(sample_setup) -> None:
+    parsed = setup_mod.parse_eval_setup(sample_setup)
+
+    assert parsed.alignment is None
+
+
+def test_parses_declared_migration_and_rebuild(sample_setup) -> None:
+    sample_setup["alignment"] = {
+        "migrations": [
+            {
+                "artifact_class": "schema_data_layout",
+                "command": ["python3", "eval/migrations/0001.py"],
+                "reason": "db layout",
+            }
+        ],
+        "rebuilds": [
+            {
+                "artifact_class": "image_definition",
+                "image": "agent",
+                "command": ["docker", "build", "-t", "ph-agent", "."],
+            }
+        ],
+    }
+
+    parsed = setup_mod.parse_eval_setup(sample_setup)
+
+    assert parsed.alignment is not None
+    assert parsed.alignment.migrations[0].artifact_class == "schema_data_layout"
+    assert parsed.alignment.migrations[0].command == ("python3", "eval/migrations/0001.py")
+    assert parsed.alignment.rebuilds[0].image == "agent"
+
+
+def test_alignment_unknown_field_is_named(sample_setup) -> None:
+    sample_setup["alignment"] = {"migrations": [], "oops": 1}
+
+    with pytest.raises(setup_mod.SetupError, match="oops"):
+        setup_mod.parse_eval_setup(sample_setup)
+
+
+def test_alignment_empty_is_refused(sample_setup) -> None:
+    sample_setup["alignment"] = {"migrations": [], "rebuilds": []}
+
+    with pytest.raises(setup_mod.SetupError, match="alignment"):
+        setup_mod.parse_eval_setup(sample_setup)
+
+
+def test_declared_migration_without_a_command_is_named(sample_setup) -> None:
+    sample_setup["alignment"] = {
+        "migrations": [{"artifact_class": "schema_data_layout"}]
+    }
+
+    with pytest.raises(setup_mod.SetupError, match="command"):
+        setup_mod.parse_eval_setup(sample_setup)
+
+
 def test_missing_file_names_the_path(tmp_path) -> None:
     with pytest.raises(FileNotFoundError, match="nope.yaml"):
         setup_mod.load_eval_setup(tmp_path / "nope.yaml")
