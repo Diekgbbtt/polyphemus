@@ -67,3 +67,13 @@ def test_every_documented_component_has_a_collector_slot() -> None:
         "litellm",
         "agent",
     )
+
+
+def test_default_containers_map_every_component_to_the_compose_project() -> None:
+    containers = images.default_containers("ph-arm-a")
+
+    assert set(containers) == set(images.COMPONENTS)
+    assert containers["postgres"] == "ph-arm-a-postgres-1"
+    assert containers["kali"] == "ph-arm-a-kali-1"
+    # litellm is the gateway process inside the agent container, not a service.
+    assert containers["litellm"] == containers["agent"]

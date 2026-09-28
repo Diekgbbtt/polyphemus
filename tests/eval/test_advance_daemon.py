@@ -22,6 +22,7 @@ from pathlib import Path
 import pytest
 
 from advance import app_state, daemon, images, manifest
+from advance.fingerprint import fingerprint
 
 DIGESTS = {
     "postgres": "sha256:" + "1" * 64,
@@ -100,12 +101,60 @@ def eval_env(tmp_path: Path) -> EvalEnv:
     return EvalEnv(root=root, dev=dev, evals=(eval_wt,))
 
 
+def make_detached_env(tmp_path: Path, n: int = 2) -> EvalEnv:
+    """An env whose eval worktrees are DETACHED at the eval ref (D29, #269).
+
+    A branch can be checked out in one worktree only; the orchestrator creates
+    every instance detached so they can share the read-only `eval` branch.
+    """
+    root = tmp_path / "droot"
+    root.mkdir()
+    git(root, "init", "-q", "-b", "main")
+    git(root, "config", "user.email", "eval@example.invalid")
+    git(root, "config", "user.name", "eval test")
+    write(root, "src/polymerhus/app.py", "v0\n")
+    write(root, "base.txt", "base\n")
+    commit_all(root, "base")
+    git(root, "branch", "dev")
+    git(root, "branch", "eval", "dev")
+
+    dev = tmp_path / "ddev"
+    git(root, "worktree", "add", "-q", str(dev), "dev")
+    evals = []
+    for index in range(n):
+        worktree = tmp_path / f"deval{index}"
+        git(root, "worktree", "add", "-q", "--detach", str(worktree), "eval")
+        evals.append(worktree)
+    return EvalEnv(root=root, dev=dev, evals=tuple(evals))
+
+
 @dataclass
 class RecordingGit:
     calls: list[tuple[Path, list[str]]] = field(default_factory=list)
 
     def __call__(self, repo: Path, args) -> images.CommandResult:
         self.calls.append((Path(repo), list(args)))
+        return manifest.default_git_runner(repo, args)
+
+    def subcommands(self) -> list[str]:
+        return [args[0] for _repo, args in self.calls]
+
+
+@dataclass
+class PartialMergeGit:
+    """A git runner whose `merge --ff-only` fails for one worktree only.
+
+    Models the #267 partial advance: an earlier worktree is already fast-forwarded
+    when a later one refuses, so the environment ends split.
+    """
+
+    fail_worktree: Path
+    calls: list[tuple[Path, list[str]]] = field(default_factory=list)
+
+    def __call__(self, repo: Path, args) -> images.CommandResult:
+        self.calls.append((Path(repo), list(args)))
+        if list(args)[:2] == ["merge", "--ff-only"] and Path(repo) == self.fail_worktree:
+            return images.CommandResult(1, "", "fatal: Not possible to fast-forward")
         return manifest.default_git_runner(repo, args)
 
     def subcommands(self) -> list[str]:
@@ -155,6 +204,7 @@ def make_daemon(
     idle: bool = True,
     idle_error: Exception | None = None,
     config: daemon.DaemonConfig | None = None,
+    image_digests=None,
 ):
     records: list[dict] = []
     recorder = RecordingGit()
@@ -166,7 +216,7 @@ def make_daemon(
         idle_proxy=proxy,
         clock=clock,
         log=records.append,
-        image_digests=lambda: dict(DIGESTS),
+        image_digests=image_digests or (lambda: dict(DIGESTS)),
     )
     return d, records, recorder, proxy
 
@@ -267,6 +317,45 @@ def test_advance_moves_every_eval_worktree_environment_wide(
     assert env.head(env.evals[0]) == dev_sha
 
 
+def test_advance_moves_detached_worktrees_in_lockstep(tmp_path: Path) -> None:
+    """#269: the orchestrator creates detached instances; the daemon still advances them."""
+    env = make_detached_env(tmp_path, n=2)
+    dev_sha = env.advance_dev("v1\n")
+    d, _records, recorder, _proxy = make_daemon(env, tmp_path, idle=True)
+
+    heartbeat = d.poll_once()
+
+    assert heartbeat["state"] == daemon.STATE_ADVANCED
+    assert heartbeat["eval_sha"] == dev_sha
+    for worktree in env.evals:
+        assert env.head(worktree) == dev_sha
+    # A detached HEAD is fast-forwarded by `merge --ff-only`, never reset.
+    assert "merge" in recorder.subcommands()
+    assert "reset" not in recorder.subcommands()
+    assert_poll_commands_safe(recorder)
+
+
+def test_detached_non_fast_forward_alerts_and_leaves_both_untouched(
+    tmp_path: Path,
+) -> None:
+    env = make_detached_env(tmp_path, n=2)
+    leaked = env.diverge_eval("eval-only\n")
+    # Both detached worktrees at the SAME leaked commit: no skew, a real
+    # non-fast-forward for the whole environment.
+    git(env.evals[1], "checkout", "-q", "--detach", leaked)
+    env.advance_dev("v1\n")
+    before = [env.head(worktree) for worktree in env.evals]
+    d, records, recorder, _proxy = make_daemon(env, tmp_path, idle=True)
+
+    heartbeat = d.poll_once()
+
+    assert heartbeat["state"] == daemon.STATE_NON_FAST_FORWARD
+    assert "non_fast_forward" in alert_kinds(records)
+    assert [env.head(worktree) for worktree in env.evals] == before
+    assert "merge" not in recorder.subcommands()
+    assert_poll_commands_safe(recorder)
+
+
 # --- dirty worktree ----------------------------------------------------------
 
 
@@ -346,6 +435,47 @@ def test_non_fast_forward_alerts_and_leaves_the_tree_untouched(
 # --- heartbeat and last-known-good ------------------------------------------
 
 
+def test_partial_advance_reports_each_worktree_actual_head(
+    eval_env: EvalEnv, tmp_path: Path
+) -> None:
+    """#267: a later worktree's failure must not report the pre-advance SHA."""
+    second = tmp_path / "eval2"
+    git(eval_env.root, "worktree", "add", "-q", "-b", "eval-2", str(second), "dev")
+    env = EvalEnv(root=eval_env.root, dev=eval_env.dev, evals=eval_env.evals + (second,))
+    base = env.head(env.evals[0])
+    dev_sha = env.advance_dev("v1\n")
+    records: list[dict] = []
+    runner = PartialMergeGit(fail_worktree=second)
+    d = daemon.Daemon(
+        make_config(env, tmp_path),
+        git_runner=runner,
+        idle_proxy=FakeIdle(True),
+        clock=FakeClock(),
+        log=records.append,
+        image_digests=lambda: dict(DIGESTS),
+    )
+
+    heartbeat = d.poll_once()
+
+    assert runner.subcommands().count("merge") == 2
+    assert heartbeat["state"] == daemon.STATE_PARTIAL
+    assert env.head(env.evals[0]) == dev_sha  # the first worktree really moved
+    assert env.head(second) == base
+    by_path = {entry["path"]: entry for entry in heartbeat["worktrees"]}
+    assert by_path[str(env.evals[0])]["head"] == dev_sha
+    assert by_path[str(env.evals[0])]["at_dev"] is True
+    assert by_path[str(second)]["head"] == base
+    assert by_path[str(second)]["at_dev"] is False
+    # The reported eval SHA is a real observed HEAD, not the stale pre-advance one.
+    assert heartbeat["eval_sha"] == dev_sha
+    assert "advance_failed" in alert_kinds(records)
+    logged = [record for record in records if record.get("event") == daemon.STATE_PARTIAL]
+    assert logged and {entry["path"] for entry in logged[0]["worktrees"]} == {
+        str(env.evals[0]),
+        str(second),
+    }
+
+
 def test_heartbeat_reflects_each_poll_and_carries_the_decision(
     eval_env: EvalEnv, tmp_path: Path
 ) -> None:
@@ -374,6 +504,107 @@ def test_heartbeat_reflects_each_poll_and_carries_the_decision(
     third = d.poll_once()
     assert third["state"] == daemon.STATE_UP_TO_DATE
     assert third["last_advance_at"] == second["last_advance_at"]
+
+
+def test_running_image_digests_flow_into_the_manifest_fingerprint(
+    eval_env: EvalEnv, tmp_path: Path
+) -> None:
+    """#266/#267: production digests are the ones the manifest/fingerprint record."""
+    dev_sha = eval_env.advance_dev("v1\n")
+    d, _records, _recorder, _proxy = make_daemon(eval_env, tmp_path, idle=True)
+
+    heartbeat = d.poll_once()
+
+    repo = eval_env.evals[0]
+    expected = fingerprint(
+        manifest.build_manifest(repo, dev_sha, DIGESTS, git_runner=manifest.default_git_runner)
+    )
+    assert heartbeat["decision"]["fingerprints"]["dev"] == expected
+    other_digests = {**DIGESTS, "kali": "sha256:" + "f" * 64}
+    other = fingerprint(
+        manifest.build_manifest(
+            repo, dev_sha, other_digests, git_runner=manifest.default_git_runner
+        )
+    )
+    assert heartbeat["decision"]["fingerprints"]["dev"] != other
+
+
+def test_digest_collection_failure_alerts_and_does_not_advance(
+    eval_env: EvalEnv, tmp_path: Path
+) -> None:
+    """#266/#267: an unobservable stack is never advanced on an empty digest map."""
+    old = eval_env.head(eval_env.evals[0])
+    eval_env.advance_dev("v1\n")
+
+    def explode():
+        raise images.ImageDigestError("docker inspect failed for 'kali' (c-kali)")
+
+    d, records, recorder, _proxy = make_daemon(
+        eval_env, tmp_path, idle=True, image_digests=explode
+    )
+
+    heartbeat = d.poll_once()
+
+    assert eval_env.head(eval_env.evals[0]) == old
+    assert heartbeat["state"] == daemon.STATE_IMAGE_DIGESTS_UNKNOWN
+    assert "image_digests_unknown" in alert_kinds(records)
+    assert heartbeat["eval_sha"] == old
+    assert "merge" not in recorder.subcommands()
+    assert daemon.last_known_good_shas(
+        make_config(eval_env, tmp_path).last_known_good_file
+    ) == []
+    assert_poll_commands_safe(recorder)
+
+
+def test_empty_digest_map_alerts_and_does_not_advance(
+    eval_env: EvalEnv, tmp_path: Path
+) -> None:
+    """An empty map is the old silent default; it must be treated as unknown."""
+    old = eval_env.head(eval_env.evals[0])
+    eval_env.advance_dev("v1\n")
+    d, records, recorder, _proxy = make_daemon(
+        eval_env, tmp_path, idle=True, image_digests=dict
+    )
+
+    heartbeat = d.poll_once()
+
+    assert eval_env.head(eval_env.evals[0]) == old
+    assert heartbeat["state"] == daemon.STATE_IMAGE_DIGESTS_UNKNOWN
+    assert "image_digests_unknown" in alert_kinds(records)
+    assert "merge" not in recorder.subcommands()
+
+
+def test_daemon_defaults_to_collecting_digests_from_config(
+    eval_env: EvalEnv, tmp_path: Path
+) -> None:
+    """#266/#267: `Daemon` with no injected provider uses the configured collector."""
+    config = make_config(
+        eval_env,
+        tmp_path,
+        image_containers={"kali": "ph-x-kali-1", "agent": "ph-x-agent-1"},
+    )
+    eval_env.advance_dev("v1\n")
+    seen: list[list[str]] = []
+
+    def image_runner(args) -> images.CommandResult:
+        seen.append(list(args))
+        return images.CommandResult(0, "sha256:" + "a" * 64 + "\n")
+
+    records: list[dict] = []
+    d = daemon.Daemon(
+        config,
+        git_runner=RecordingGit(),
+        idle_proxy=FakeIdle(True),
+        clock=FakeClock(),
+        log=records.append,
+        image_runner=image_runner,
+    )
+
+    heartbeat = d.poll_once()
+
+    assert heartbeat["state"] == daemon.STATE_ADVANCED
+    assert [call[-1] for call in seen] == ["ph-x-kali-1", "ph-x-agent-1"]
+    assert heartbeat["decision"]["fingerprints"]["dev"]
 
 
 def test_heartbeat_write_is_an_atomic_replace(tmp_path: Path, monkeypatch) -> None:
@@ -495,6 +726,26 @@ def test_config_loads_required_values_from_the_environment(tmp_path: Path) -> No
 def test_config_requires_the_dev_worktree_and_eval_worktrees() -> None:
     with pytest.raises(daemon.ConfigError):
         daemon.load_config_from_env({})
+
+
+def test_config_parses_the_compose_project_and_container_map(tmp_path: Path) -> None:
+    env = {
+        "EVAL_ADVANCE_DEV_WORKTREE": str(tmp_path / "dev"),
+        "EVAL_ADVANCE_EVAL_WORKTREES": str(tmp_path / "e1"),
+        "EVAL_ADVANCE_APP_STATE_URL": "http://agent:8000",
+        "EVAL_ADVANCE_HEARTBEAT": str(tmp_path / "heartbeat.json"),
+        "EVAL_ADVANCE_COMPOSE_PROJECT": "ph-arm-a",
+        "EVAL_ADVANCE_IMAGE_CONTAINERS": "postgres=ph-arm-a-postgres-1,kali=ph-arm-a-kali-1",
+    }
+
+    config = daemon.load_config_from_env(env)
+
+    assert config.compose_project == "ph-arm-a"
+    assert config.image_containers == {
+        "postgres": "ph-arm-a-postgres-1",
+        "kali": "ph-arm-a-kali-1",
+    }
+    assert config.image_containers is not None
 
 
 def test_cli_rewind_without_confirm_exits_nonzero(

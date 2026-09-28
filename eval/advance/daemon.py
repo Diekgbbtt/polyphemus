@@ -7,7 +7,11 @@ across the move (D25), records the last-known-good `eval` SHA before moving
 (D38), writes a heartbeat every poll, and alerts on a non-fast-forward (R13).
 It computes the #266 stack manifest, its compressed fingerprint, and the
 decision input after a successful advance and emits them for the orchestrator
-(D42); it never decides an alignment action.
+(D42); it never decides an alignment action. The manifest carries the digests of
+the images actually running (D39), collected through `docker inspect`; a stack
+it cannot observe alerts and does not advance (fail-closed, "unknown is never
+idle"). A partial advance (an earlier worktree moved, a later one refused)
+reports each worktree's actual HEAD and is never disguised as a clean move.
 
 The three-way separation is structural, not conventional. The polling path
 issues only `rev-parse`, `status`, `merge-base --is-ancestor`, `stash push`,
@@ -36,7 +40,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Mapping, Sequence
 
-from advance import app_state, decision as decision_input, manifest
+from advance import app_state, decision as decision_input, images, manifest
 from advance.fingerprint import fingerprint
 from advance.images import CommandResult
 
@@ -49,6 +53,8 @@ STATE_NON_FAST_FORWARD = "non_fast_forward"
 STATE_WORKTREE_SKEW = "worktree_skew"
 STATE_IDLE_UNKNOWN = "idle_unknown"
 STATE_POP_CONFLICT = "pop_conflict"
+STATE_IMAGE_DIGESTS_UNKNOWN = "image_digests_unknown"
+STATE_PARTIAL = "partial_advance"
 STATE_ERROR = "error"
 
 
@@ -84,6 +90,11 @@ class DaemonConfig:
     alert_command: str | None = None
     dev_ahead_message: str = "dev is ahead while all instances are idle"
     last_known_good_path: Path | None = None
+    # The running-stack identity for the manifest's image digests (D39): the
+    # compose project names the containers; an explicit map overrides the
+    # derived names when the stack is deployed differently.
+    compose_project: str = "polymerhus"
+    image_containers: Mapping[str, str] | None = None
 
     @property
     def last_known_good_file(self) -> Path:
@@ -242,6 +253,31 @@ def git_ff_only(repo: Path, target: str, git_runner: GitRunner) -> CommandResult
     return git_runner(repo, ["merge", "--ff-only", target])
 
 
+# --- production image-digest provider ----------------------------------------
+
+
+def default_image_digests(
+    config: DaemonConfig, run: images.CommandRunner = images.default_run
+) -> ImageDigests:
+    """The production digest provider: `docker inspect` each running container.
+
+    The container map is the configured one, else derived from the compose
+    project (`<project>-<service>-1`). Raises `ImageDigestError` on an
+    unobservable stack; the caller refuses to advance rather than emitting an
+    empty map (D37's fail-closed default, "unknown is never idle").
+    """
+    containers = (
+        dict(config.image_containers)
+        if config.image_containers
+        else images.default_containers(config.compose_project)
+    )
+
+    def collect() -> Mapping[str, str]:
+        return images.collect_image_digests(containers, run=run)
+
+    return collect
+
+
 # --- the daemon --------------------------------------------------------------
 
 
@@ -263,6 +299,7 @@ class Daemon:
         alert_command: str | None = None,
         alert_runner: Callable[[Sequence[str]], CommandResult] = default_shell_runner,
         image_digests: ImageDigests | None = None,
+        image_runner: images.CommandRunner = images.default_run,
     ) -> None:
         self.config = config
         self._git = git_runner
@@ -276,7 +313,14 @@ class Daemon:
             run=alert_runner,
             log=log,
         )
-        self._image_digests = image_digests or dict
+        # An injected provider wins; the production path collects the running
+        # images from the configured containers (D39) instead of defaulting to
+        # an empty map.
+        self._image_digests = (
+            image_digests
+            if image_digests is not None
+            else default_image_digests(config, image_runner)
+        )
 
     # public ---------------------------------------------------------------
 
@@ -360,15 +404,45 @@ class Daemon:
             dev_sha=dev_sha,
             eval_sha=eval_sha,
         )
+        # D39/D37: the manifest must carry the digests of the images actually
+        # running. An unobservable stack is never advanced on an empty map.
+        digests = self._collect_digests(dev_sha, eval_sha)
+        if digests is None:
+            return self._finish(
+                now, dev_sha, eval_sha, True, STATE_IMAGE_DIGESTS_UNKNOWN,
+                "running image digests unavailable", last_advance_at, None,
+            )
         state, last_error, decision, last_advance_at = self._advance(
-            now, eval_sha, dev_sha, last_advance_at
+            now, eval_sha, dev_sha, digests, last_advance_at
         )
-        # An advance moved every worktree to dev; a partial move is reported as
-        # an error with the original head, so the heartbeat never claims a
-        # commit that was not reached.
-        current_eval = dev_sha if state in (STATE_ADVANCED, STATE_POP_CONFLICT) else eval_sha
+        # Re-read every worktree's ACTUAL head after a failed or partial move:
+        # an earlier worktree may already have moved while a later one refused,
+        # so the heartbeat must never report the stale pre-advance SHA (D36).
+        worktrees = self._worktree_states(dev_sha)
+        if state in (STATE_ADVANCED, STATE_POP_CONFLICT):
+            current_eval = dev_sha
+        else:
+            moved = {entry["head"] for entry in worktrees}
+            if len(moved) > 1:
+                state = STATE_PARTIAL
+                last_error = last_error or (
+                    "partial advance: eval worktrees are not at the same commit"
+                )
+            current_eval = next(
+                (entry["head"] for entry in worktrees if entry["head"]), eval_sha
+            )
+            self._log(
+                {
+                    "event": state,
+                    "dev_sha": dev_sha,
+                    "eval_sha": current_eval,
+                    "error": last_error,
+                    "worktrees": worktrees,
+                }
+            )
         return self._finish(
-            now, dev_sha, current_eval, True, state, last_error, last_advance_at, decision
+            now, dev_sha, current_eval, True, state, last_error, last_advance_at,
+            decision, worktrees=worktrees,
         )
 
     def run_forever(self) -> None:
@@ -399,8 +473,56 @@ class Daemon:
             self._alerts.emit("ancestry_check_failed", str(exc), ancestor=ancestor)
             return False
 
+    def _collect_digests(self, dev_sha: str, eval_sha: str) -> Mapping[str, str] | None:
+        """The running-image digests, or None (alerted) when unobservable.
+
+        A collection failure or an empty map is fail-closed: the daemon alerts
+        and refuses to advance rather than recording a manifest from a stack it
+        cannot observe (D37/D39).
+        """
+        try:
+            digests = self._image_digests()
+        except Exception as exc:  # noqa: BLE001 - any collection failure is fail-closed
+            self._alerts.emit(
+                "image_digests_unknown",
+                f"running image digests unavailable: {exc}",
+                dev_sha=dev_sha,
+                eval_sha=eval_sha,
+            )
+            return None
+        if not digests:
+            self._alerts.emit(
+                "image_digests_unknown",
+                "running image digests are empty; refusing to advance",
+                dev_sha=dev_sha,
+                eval_sha=eval_sha,
+            )
+            return None
+        return dict(digests)
+
+    def _worktree_states(self, dev_sha: str) -> list[dict]:
+        """Each eval worktree's actual HEAD and whether it reached dev."""
+        states: list[dict] = []
+        for worktree in self.config.eval_worktrees:
+            try:
+                head = git_read_head(worktree, self._git)
+            except GitError as exc:
+                states.append(
+                    {"path": str(worktree), "head": None, "at_dev": False, "error": str(exc)}
+                )
+            else:
+                states.append(
+                    {"path": str(worktree), "head": head, "at_dev": head == dev_sha}
+                )
+        return states
+
     def _advance(
-        self, now: str, eval_sha: str, dev_sha: str, last_advance_at: str | None
+        self,
+        now: str,
+        eval_sha: str,
+        dev_sha: str,
+        digests: Mapping[str, str],
+        last_advance_at: str | None,
     ) -> tuple[str, str | None, dict | None, str | None]:
         try:
             record_last_known_good(self.config.last_known_good_file, eval_sha, now)
@@ -431,7 +553,7 @@ class Daemon:
             if not self._pop(worktree, alert=True):
                 conflict = True
 
-        decision = self._decision(eval_sha, dev_sha)
+        decision = self._decision(eval_sha, dev_sha, digests)
         last_advance_at = now
         if conflict:
             return STATE_POP_CONFLICT, "stash pop conflict", decision, last_advance_at
@@ -458,9 +580,10 @@ class Daemon:
             )
         return False
 
-    def _decision(self, eval_sha: str, dev_sha: str) -> dict | None:
+    def _decision(
+        self, eval_sha: str, dev_sha: str, digests: Mapping[str, str]
+    ) -> dict | None:
         try:
-            digests = self._image_digests()
             repo = self.config.eval_worktrees[0]
             before = manifest.build_manifest(repo, eval_sha, digests, git_runner=self._git)
             after = manifest.build_manifest(repo, dev_sha, digests, git_runner=self._git)
@@ -500,6 +623,7 @@ class Daemon:
         last_error: str | None,
         last_advance_at: str | None,
         decision: dict | None,
+        worktrees: list[dict] | None = None,
     ) -> dict:
         record = {
             "timestamp": timestamp,
@@ -510,6 +634,7 @@ class Daemon:
             "last_error": last_error,
             "last_advance_at": last_advance_at,
             "decision": decision,
+            "worktrees": worktrees,
         }
         write_heartbeat(self.config.heartbeat_path, record)
         return record
@@ -588,6 +713,12 @@ def load_config_from_env(env: Mapping[str, str] | None = None) -> DaemonConfig:
         interval = float(interval_raw)
     except ValueError as exc:
         raise ConfigError(f"EVAL_ADVANCE_POLL_INTERVAL is not a number: {interval_raw!r}") from exc
+    try:
+        image_containers = images.parse_container_map(
+            env.get("EVAL_ADVANCE_IMAGE_CONTAINERS")
+        )
+    except ValueError as exc:
+        raise ConfigError(str(exc)) from exc
     return DaemonConfig(
         dev_worktree=Path(required["EVAL_ADVANCE_DEV_WORKTREE"] or ""),
         eval_worktrees=worktrees,
@@ -605,6 +736,8 @@ def load_config_from_env(env: Mapping[str, str] | None = None) -> DaemonConfig:
             if env.get("EVAL_ADVANCE_LAST_KNOWN_GOOD")
             else None
         ),
+        compose_project=env.get("EVAL_ADVANCE_COMPOSE_PROJECT", "polymerhus"),
+        image_containers=image_containers,
     )
 
 
