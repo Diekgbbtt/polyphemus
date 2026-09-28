@@ -62,6 +62,7 @@ _HANDLED = (
     OrchestratorError,
     trial.TrialError,
     trial.EscalationError,
+    api.ApiError,
     assessment.AssessmentError,
     diagnosis.DiagnosisError,
     evidence.EvidenceError,
@@ -544,7 +545,9 @@ def _run_trial(args, setup: EvalSetup, config: OrchestratorConfig, out: TextIO, 
             f"final {record.final_count} (overshoot {record.overshoot})",
             file=out,
         )
-    return 0
+    # I2: a failed or timed-out run is a handled failure (the record is written
+    # and printed), so exit non-zero instead of reporting success.
+    return 1 if record.terminal in ("failed", "timeout") else 0
 
 
 # --- assessment (#271) --------------------------------------------------------

@@ -476,48 +476,95 @@ class Trial:
         if bring_up is not None:
             self.chain(bring_up, repair)
 
-        project_id = cfg.project_id or self._create_project()
-        state = self._bootstrap(project_id)
-
+        project_id = cfg.project_id or ""
         phases: list[PhaseRecord] = []
         cap: PollResult | None = None
         terminal = "complete"
+        # I2: the phase the run is currently in, so an API transport failure
+        # mid-poll still records which phase it reached.
+        current_phase = cfg.start_phase
+        try:
+            project_id = cfg.project_id or self._create_project()
+            state = self._bootstrap(project_id)
 
-        if cfg.start_phase == "recon":
-            phases.append(self._phase_recon(state))
-            phase = phases[-1]
-            if not phase.entered:
-                terminal = "blocked"
-            elif phase.status == "timeout":
-                terminal = "timeout"
-            elif _phase_failed(phase):
-                terminal = "failed"
-            else:
-                state = replace(state, recon_run_id=phase.run_id)
-                nxt, cap = self._phase_hunting(state)
-                phases.append(nxt)
-                terminal = _terminal_of(nxt, cap)
-        elif cfg.start_phase == "analysis":
-            phases.append(self._phase_analysis(state))
-            phase = phases[-1]
-            if not phase.entered:
-                terminal = "blocked"
-            elif phase.status == "timeout":
-                terminal = "timeout"
-            elif _phase_failed(phase):
-                terminal = "failed"
-            else:
-                nxt, cap = self._phase_hunting(state)
-                phases.append(nxt)
-                terminal = _terminal_of(nxt, cap)
-        elif cfg.start_phase == "hunting":
-            phase, cap = self._phase_hunting(state)
-            phases.append(phase)
-            terminal = _terminal_of(phase, cap)
-        else:  # pragma: no cover - setup validation prevents this
-            raise TrialError(f"unknown start phase: {cfg.start_phase!r}")
+            if cfg.start_phase == "recon":
+                current_phase = "recon"
+                phases.append(self._phase_recon(state))
+                phase = phases[-1]
+                if not phase.entered:
+                    terminal = "blocked"
+                elif phase.status == "timeout":
+                    terminal = "timeout"
+                elif _phase_failed(phase):
+                    terminal = "failed"
+                else:
+                    state = replace(state, recon_run_id=phase.run_id)
+                    current_phase = "hunting"
+                    nxt, cap = self._phase_hunting(state)
+                    phases.append(nxt)
+                    terminal = _terminal_of(nxt, cap)
+            elif cfg.start_phase == "analysis":
+                current_phase = "analysis"
+                phases.append(self._phase_analysis(state))
+                phase = phases[-1]
+                if not phase.entered:
+                    terminal = "blocked"
+                elif phase.status == "timeout":
+                    terminal = "timeout"
+                elif _phase_failed(phase):
+                    terminal = "failed"
+                else:
+                    current_phase = "hunting"
+                    nxt, cap = self._phase_hunting(state)
+                    phases.append(nxt)
+                    terminal = _terminal_of(nxt, cap)
+            elif cfg.start_phase == "hunting":
+                current_phase = "hunting"
+                phase, cap = self._phase_hunting(state)
+                phases.append(phase)
+                terminal = _terminal_of(phase, cap)
+            else:  # pragma: no cover - setup validation prevents this
+                raise TrialError(f"unknown start phase: {cfg.start_phase!r}")
 
-        return self._finish(started, project_id, phases, terminal, cap, [])
+            return self._finish(started, project_id, phases, terminal, cap, [])
+        except api.ApiError as exc:
+            # I2: a transport failure mid-trial is a written failure, not a lost
+            # run: the record names the error and the phase it reached, so the
+            # surfer's state source sees it.
+            return self._finish_api_failure(
+                started, project_id, phases, current_phase, exc
+            )
+
+    def _finish_api_failure(
+        self,
+        started: str,
+        project_id: str,
+        phases: list[PhaseRecord],
+        phase_name: str,
+        error: api.ApiError,
+    ) -> TrialRecord:
+        """Write a failed record for an API transport failure (I2).
+
+        The reached phase carries the error; a failure before any phase (during
+        project creation or bootstrap) lands on the entry phase. `terminal` is
+        `failed` so the surfer classifies it.
+        """
+        detail = f"api transport failure: {error}"
+        reached = [phase for phase in phases if phase.phase == phase_name]
+        if reached:
+            reached[-1].failure = str(error)
+        else:
+            phases = list(phases) + [
+                PhaseRecord(
+                    phase=phase_name,
+                    entered=True,
+                    status="failed",
+                    failure=str(error),
+                )
+            ]
+        return self._finish(
+            started, project_id or "<unknown>", phases, "failed", None, [detail]
+        )
 
     # --- bootstrap ------------------------------------------------------------
 

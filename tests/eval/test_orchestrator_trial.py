@@ -884,6 +884,49 @@ def test_recon_complete_with_no_job_rows_is_a_failed_run(tmp_path) -> None:
     assert "no job rows" in record.phases[0].failure
 
 
+# --- I2: an API transport failure is a written, visible failure ----------------
+
+class ExplodingApi:
+    """An `ApiRunner` whose every call fails at the transport layer."""
+
+    def __init__(self, detail: str = "connection refused") -> None:
+        self.detail = detail
+        self.calls: list = []
+
+    def __call__(self, call):
+        self.calls.append(call)
+        raise api.ApiError(call, 0, self.detail)
+
+
+def test_api_transport_failure_writes_a_failed_record_with_the_phase(tmp_path) -> None:
+    """I2: a mid-trial transport failure is recorded, never lost to a traceback."""
+    api_runner = ExplodingApi()
+
+    record = _trial(tmp_path, api_runner, project_id="pid", start_phase="hunting").run()
+
+    assert record.terminal == "failed"
+    assert record.phases, "the reached phase must be recorded"
+    reached = record.phases[-1]
+    assert reached.phase == "hunting"
+    assert reached.entered is True
+    assert reached.failure is not None and "connection refused" in reached.failure
+    assert any("connection refused" in note for note in record.notes)
+    written = yaml.safe_load(Path(record.trial_dir, "trial.yaml").read_text())
+    assert written["terminal"] == "failed"
+    assert "connection refused" in yaml.safe_dump(written)
+
+
+def test_api_transport_failure_during_project_creation_is_recorded(tmp_path) -> None:
+    """A failure before any phase lands on the entry phase, still recorded."""
+    api_runner = ExplodingApi()
+
+    record = _trial(tmp_path, api_runner, start_phase="recon").run()
+
+    assert record.terminal == "failed"
+    assert record.phases[-1].phase == "recon"
+    assert "connection refused" in record.phases[-1].failure
+
+
 # --- the trace id and the record writer (#271/D6) -----------------------------
 
 

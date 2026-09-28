@@ -1062,6 +1062,40 @@ class _TrialApi:
         }[key]
 
 
+def test_a_transport_failure_record_is_visible_to_the_surfer(tmp_path) -> None:
+    """I2: the failed record an API transport error writes is a surfer trigger."""
+    calls: list = []
+
+    class ExplodingApi:
+        def __call__(self, call):
+            calls.append(call)
+            raise trial.api.ApiError(call, 0, "connection refused")
+
+    cfg = trial.TrialConfig(
+        instance_id="arm-a",
+        target_id="t1",
+        start_phase="hunting",
+        project_id="pid",
+        data_root=tmp_path / "data",
+        runs_root=tmp_path / "runs",
+    )
+    trial.Trial(cfg, api_runner=ExplodingApi()).run()
+
+    source = surfer.SurferStateSource(
+        app_state=lambda: AppState(idle=False, projects=()),
+        trial_log=surfer.FileTrialLog(tmp_path / "runs"),
+        signals=surfer.CreditExhaustionReader(),
+        evidence=lambda: (),
+    )
+
+    state = source.assert_state()
+
+    assert any(t.kind == surfer.FAILED_RUN for t in state.triggers)
+    failed = next(t for t in state.triggers if t.kind == surfer.FAILED_RUN)
+    assert failed.instance_id == "arm-a"
+    assert "connection refused" in failed.detail
+
+
 def test_a_resumed_trial_records_the_surfer_intervention(tmp_path) -> None:
     cfg = trial.TrialConfig(
         instance_id="arm-a",
