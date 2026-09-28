@@ -416,8 +416,11 @@ The authoritative record is per target / target-run / trial:
 ```
 
 The middle level is the target-run: the evaluation of one target on one instance
-(`eval/CONTEXT.md`). A trial record may carry its own `target_run_id`; when it
-does not, the instance id is used. Because the evidence chain paths are already
+(`eval/CONTEXT.md`). Its identity is resolved in order: the `trial` verb's
+`--target-run-id` override, then the `TargetRun.target_run_id` declared in the
+setup, then - only when both leave it unset - the instance id. An explicit id
+must be path-safe and unique within the setup, so two target-runs of one target
+never merge into one tree. Because the evidence chain paths are already
 data-root-relative, copying the chain under the trial dir lets `verdicts.yaml`
 resolve against the trial dir itself, with no live stack reachable.
 

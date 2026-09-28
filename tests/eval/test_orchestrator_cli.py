@@ -215,3 +215,91 @@ def test_trial_executes_through_the_injected_api_and_runner(
     assert code == 0
     assert any(c.path == "/projects/pid/recon" for c in api.calls)
     assert any("scripts/targetctl up jetlinks" in t for t in runner.argv_texts)
+
+
+def _run_trial_cli(sample_setup, tmp_path, recording_runner, fake_result, extra_args=()):
+    sample_setup["instances"][0]["targets"][0]["target_config"]["target_seed"] = "t.test"
+    setup_path = _write_setup(tmp_path, sample_setup)
+    runner = recording_runner(
+        routes={
+            "scripts/targetctl up": fake_result(0, "UI: http://127.0.0.1:32768/\n"),
+            "hostname -I": fake_result(0, "10.0.0.5 \n"),
+            "scaffold.py": fake_result(0, "services: 3\n"),
+            "curl": fake_result(0, "200"),
+        }
+    )
+    api = _FakeApi(_trial_routes())
+    code = cli.main(
+        [
+            "trial",
+            setup_path,
+            "arm-a",
+            "jetlinks-1",
+            "--instances-root",
+            str(tmp_path / "instances"),
+            "--data-root",
+            str(tmp_path / "data"),
+            "--runs-root",
+            str(tmp_path / "runs"),
+            *extra_args,
+        ],
+        runner_factory=lambda: runner,
+        api_factory=lambda base: api,
+    )
+    records = list((tmp_path / "runs" / "jetlinks-1").glob("*/trial.yaml"))
+    assert len(records) == 1
+    return code, yaml.safe_load(records[0].read_text(encoding="utf-8"))
+
+
+def test_trial_threads_the_setup_target_run_id_into_the_record(
+    sample_setup, tmp_path, recording_runner, fake_result
+) -> None:
+    sample_setup["instances"][0]["targets"][0]["target_run_id"] = "setup-run"
+
+    code, record = _run_trial_cli(sample_setup, tmp_path, recording_runner, fake_result)
+
+    assert code == 0
+    assert record["target_run_id"] == "setup-run"
+
+
+def test_trial_cli_target_run_id_overrides_the_setup(
+    sample_setup, tmp_path, recording_runner, fake_result
+) -> None:
+    sample_setup["instances"][0]["targets"][0]["target_run_id"] = "setup-run"
+
+    code, record = _run_trial_cli(
+        sample_setup,
+        tmp_path,
+        recording_runner,
+        fake_result,
+        extra_args=("--target-run-id", "cli-run"),
+    )
+
+    assert code == 0
+    assert record["target_run_id"] == "cli-run"
+
+
+def test_trial_rejects_a_path_unsafe_target_run_id(
+    sample_setup, tmp_path, recording_runner, fake_result, capsys
+) -> None:
+    setup_path = _write_setup(tmp_path, sample_setup)
+
+    code = cli.main(
+        [
+            "trial",
+            setup_path,
+            "arm-a",
+            "jetlinks-1",
+            "--data-root",
+            str(tmp_path / "data"),
+            "--runs-root",
+            str(tmp_path / "runs"),
+            "--target-run-id",
+            "../escape",
+        ],
+        runner_factory=_explode,
+        api_factory=_explode,
+    )
+
+    assert code == 1
+    assert "target_run_id" in capsys.readouterr().err

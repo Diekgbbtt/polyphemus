@@ -75,6 +75,7 @@ TargetRun
   target_config: TargetConfig
   start_phase: recon|analysis|hunting
   hunt_config_budget: int | null
+  target_run_id: <id> | null              # artifact store middle level; default instance id
   preloaded_hunting_artifacts:
     configs: <host path> | null            # hunt configs -> hunt_configs/produced/
     test_specs: [{path: <host path>, fault_key: <fault key>}]  # -> test-specs/<fault_key>/produced/

@@ -108,6 +108,9 @@ class TargetRun:
     start_phase: str = "recon"
     hunt_config_budget: int | None = None
     preloaded_hunting_artifacts: PreloadedArtifacts | None = None
+    # #273: the target-run identity (the artifact store's middle level). Unset
+    # means the trial record defaults it to the instance id.
+    target_run_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -175,7 +178,8 @@ def is_path_safe_id(value: object) -> bool:
     """True when `value` is one safe path segment.
 
     A store/trial directory joins these ids into a path, so a separator or a
-    `.`/`..` segment would escape its level.
+    `.`/`..` segment would escape its level. Shared with the CLI so a
+    `--target-run-id` override enforces the same rule as the setup file.
     """
     return (
         isinstance(value, str)
@@ -185,6 +189,13 @@ def is_path_safe_id(value: object) -> bool:
         and "\\" not in value
         and "\x00" not in value
     )
+
+
+def _path_safe(mapping: Mapping, key: str, where: str) -> str | None:
+    value = _optional_str(mapping, key, where)
+    if value is not None and not is_path_safe_id(value):
+        raise SetupError(f"{where}.{key}: expected a path-safe identifier, got {value!r}")
+    return value
 
 
 # --- parsing ------------------------------------------------------------------
@@ -217,6 +228,16 @@ def parse_eval_setup(payload: object) -> EvalSetup:
     duplicates = sorted({x for x in ids if ids.count(x) > 1})
     if duplicates:
         raise SetupError(f"EvalSetup.instances: duplicate instance_id(s): {', '.join(duplicates)}")
+
+    # #273: an explicit target-run identity is the artifact store's middle
+    # level, so two of them in one setup would merge two target-runs' trees.
+    run_ids = [t.target_run_id for i in instances for t in i.targets if t.target_run_id]
+    run_duplicates = sorted({x for x in run_ids if run_ids.count(x) > 1})
+    if run_duplicates:
+        raise SetupError(
+            "EvalSetup.instances[].targets: duplicate target_run_id(s): "
+            + ", ".join(run_duplicates)
+        )
 
     work_items = tuple(_parse_work_item(item, i) for i, item in enumerate(root.get("work_items", []) or []))
 
@@ -261,6 +282,7 @@ def _parse_target_run(payload: object, where: str) -> TargetRun:
             "start_phase",
             "hunt_config_budget",
             "preloaded_hunting_artifacts",
+            "target_run_id",
         ),
         where,
     )
@@ -286,6 +308,7 @@ def _parse_target_run(payload: object, where: str) -> TargetRun:
             mapping.get("preloaded_hunting_artifacts"),
             f"{where}.preloaded_hunting_artifacts",
         ),
+        target_run_id=_path_safe(mapping, "target_run_id", where),
     )
 
 

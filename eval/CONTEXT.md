@@ -23,7 +23,8 @@ The evaluated application a trial runs against; WebExploitBench's unit is called
 _Avoid_: challenge, app
 
 **TargetRun**:
-The evaluation of one Target on one instance: its linked target configuration, the phase it starts at, its hunting cap, and any pre-mined artifacts.
+The evaluation of one Target on one instance: its linked target configuration, the phase it starts at, its hunting cap, any pre-mined artifacts, and its optional `target_run_id` identity.
+That identity names the artifact store's middle level and is resolved CLI override > setup `target_run_id` > instance id; when set it must be path-safe and unique within the setup.
 _Avoid_: job, task
 
 **TargetConfig**:
@@ -74,6 +75,7 @@ _Avoid_: seeds, preload
 **Artifact store**:
 The durable host-side location that the instance data root is continuously synced into (D7/D12).
 It has two layers: a secondary raw mirror at `<store>/<instance_id>/live/`, streamed one way by `lsyncd` and never an authority, and the authoritative self-contained per-trial tree at `<store>/<target_id>/<target_run_id>/<trial_id>/` holding `verdicts.yaml`, `diagnoses.yaml`, the copied evidence chain, and the run manifest.
+The `<target_run_id>` level is the TargetRun identity, not necessarily the instance id.
 The store is a sink: nothing ever writes from the store back into the instance data root.
 _Avoid_: backup, archive
 

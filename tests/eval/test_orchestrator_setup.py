@@ -267,6 +267,39 @@ def test_preloaded_test_spec_path_unsafe_fault_key_is_named(sample_setup) -> Non
         setup_mod.parse_eval_setup(sample_setup)
 
 
+# --- target-run identity (#273) ------------------------------------------------
+
+
+def test_target_run_id_is_optional(sample_setup) -> None:
+    parsed = setup_mod.parse_eval_setup(sample_setup)
+
+    assert parsed.instances[0].targets[0].target_run_id is None
+
+
+def test_parses_an_explicit_target_run_id(sample_setup) -> None:
+    _target(sample_setup)["target_run_id"] = "jetlinks-1-run1"
+
+    parsed = setup_mod.parse_eval_setup(sample_setup)
+
+    assert parsed.instances[0].targets[0].target_run_id == "jetlinks-1-run1"
+
+
+def test_duplicate_target_run_id_is_named(sample_setup) -> None:
+    targets = sample_setup["instances"][0]["targets"]
+    targets[0]["target_run_id"] = "run-1"
+    targets.append({**targets[0], "target_id": "other-1"})
+
+    with pytest.raises(setup_mod.SetupError, match="target_run_id"):
+        setup_mod.parse_eval_setup(sample_setup)
+
+
+def test_path_unsafe_target_run_id_is_named(sample_setup) -> None:
+    _target(sample_setup)["target_run_id"] = "../escape"
+
+    with pytest.raises(setup_mod.SetupError, match="target_run_id"):
+        setup_mod.parse_eval_setup(sample_setup)
+
+
 def test_missing_file_names_the_path(tmp_path) -> None:
     with pytest.raises(FileNotFoundError, match="nope.yaml"):
         setup_mod.load_eval_setup(tmp_path / "nope.yaml")
