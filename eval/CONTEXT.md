@@ -89,6 +89,10 @@ _Avoid_: monitor, watchdog
 The environment-wide move of all instance worktrees from the current `eval` SHA to `dev`'s commit, performed only when all instances are idle.
 _Avoid_: sync, pull
 
+**Delivery plane**:
+The GitHub Actions CD controller's responsibility: fast-forwarding the eval server's canonical `dev` checkout from `origin/dev` on every push to `dev`; it never touches `eval` or instance worktrees, and it never fetches on the daemon's behalf.
+_Avoid_: deployment, CD, release
+
 **Idle proxy**:
 The read of the app module's running-state surface (`GET /app-state`, with the documented direct-postgres fallback) that tells the sync daemon whether every instance is idle; unknown state is never treated as idle.
 _Avoid_: eval lock, busy flag, execution-state variable
