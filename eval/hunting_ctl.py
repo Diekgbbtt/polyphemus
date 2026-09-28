@@ -37,32 +37,14 @@ import logging
 import os
 import sys
 import time
-from pathlib import Path
+
+# Shared eval data-root resolver (HUNT_DATA_ROOT override, else <repo>/data).
+from data_root import resolve
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("hunting_ctl")
 
 PH_API = os.environ.get("PH_API", "http://localhost:8080")
-
-
-def _hunt_data_root() -> Path:
-    """The HuntStore root: the #234 app-owned data root. Env override first,
-    then the repo root beside this script (`eval/` -> `..`), then the CWD."""
-    env = os.environ.get("HUNT_DATA_ROOT")
-    if env:
-        return Path(env)
-    here = Path(__file__).resolve()
-    candidates = [
-        here.parents[1] / "data",
-        Path.cwd() / "data",
-    ]
-    for c in candidates:
-        if c.exists():
-            return c
-    return candidates[0]
-
-
-HUNT_DATA_ROOT = _hunt_data_root()
 
 
 def _api(method: str, path: str, body=None, timeout: int = 30):
@@ -83,7 +65,7 @@ def _ratified_count(project_id: str) -> int:
     """The orchestrator tail: distinct ratified configs in the HuntStore
     produced+consumed families (the consumed move is the at-least-once marker,
     so a config may appear once per side - dedupe by file stem)."""
-    base = HUNT_DATA_ROOT / project_id / "hunting" / "orchestration" / "hunt_configs"
+    base = resolve() / project_id / "hunting" / "orchestration" / "hunt_configs"
     seen: set[str] = set()
     for side in ("produced", "consumed"):
         for f in (base / side).glob("*.yaml") if (base / side).exists() else ():

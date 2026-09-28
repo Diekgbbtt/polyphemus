@@ -2,10 +2,10 @@
 """ev.py - the light eval harness's evidence-bundle collector.
 
 Assembles ONE self-contained bundle directory per trial: the L0/L1 graph, the
-hunt-store trail, the per-project memory, the pod artifact tree and the wired
-pipeline's memory families (produced/consumed) when present, plus the run
-statuses and a manifest. The bundle is the oracle's only input, and the
-migration seam: a later deterministic oracle replays the same bundles.
+hunt-store trail, the hunter working memory, and the pod artifact tree when
+present, plus the run statuses and a manifest. The bundle is the oracle's only
+input, and the migration seam: a later deterministic oracle replays the same
+bundles.
 
 Stdlib only. The polymerhus API base is PH_API (default http://localhost:8080).
 
@@ -14,10 +14,9 @@ Usage:
                 [--recon-run RUN_ID] [--target-url URL] [--challenge ID]
 
 Bundle sources resolve under the #234 app-owned data root
-(<repo>/data/<project_id>/hunting/...). The slot mapping is provisional
-pending the automation rewrite: the old per-run hunts/ trail collapsed into
-hunting/orchestration, and the hunter bucket stands in for the
-project-memory slot.
+(<repo>/data/<project_id>/hunting/...): the orchestration, hunter, and
+test-executor-pod buckets are copied once each, so no file lands twice in
+the bundle. The slot mapping is provisional pending the automation rewrite.
 """
 from __future__ import annotations
 
@@ -31,11 +30,10 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-API_BASE = os.environ.get("PH_API", "http://localhost:8080").rstrip("/")
+# Shared eval data-root resolver (HUNT_DATA_ROOT override, else <repo>/data).
+from data_root import resolve
 
-# The #234 app-owned data root, resolved from this script's location:
-# eval/ -> ../data
-DATA_ROOT = Path(__file__).resolve().parent.parent / "data"
+API_BASE = os.environ.get("PH_API", "http://localhost:8080").rstrip("/")
 
 
 def api_get(path: str) -> dict | None:
@@ -82,11 +80,10 @@ def collect(project_id: str, hunting_run_id: str, out: Path, *,
     (out / "analysis_status.json").write_text(
         json.dumps(analysis_status, indent=2) if analysis_status else "null")
 
-    hunting = DATA_ROOT / str(project_id) / "hunting"
+    hunting = resolve() / str(project_id) / "hunting"
     hunt_store = _copy_tree(hunting / "orchestration", out / "hunt_store")
     project_memory = _copy_tree(hunting / "hunter", out / "project_memory")
     pod_memory = _copy_tree(hunting / "test-executor-pod", out / "pod_memory")
-    wiring_memory = _copy_tree(hunting, out / "wiring_memory")
 
     kb_files = {
         name: (out / name).exists()
@@ -107,7 +104,6 @@ def collect(project_id: str, hunting_run_id: str, out: Path, *,
             "hunt_store": hunt_store,
             "project_memory": project_memory,
             "pod_memory": pod_memory,
-            "wiring_memory": wiring_memory,
         },
         "kb": kb_files,
         "elapsed_s": round(time.time() - started, 1),

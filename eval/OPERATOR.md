@@ -39,7 +39,7 @@ Knobs: `<TARGET>` in `comfyui, jetlinks, prestashop, siyucms, white-jotter`;
 `<K>` is the attempt count (start with 1). For a targeted job subset, tell the
 agent, e.g. "skip the heavy browser/brute jobs (steel_crawl/ffuf/kiterunner)".
 
-Prerequisites: the polymerhus stack up (kali + agent API on `localhost:8000`),
+Prerequisites: the polymerhus stack up (kali + agent API on `localhost:8080`),
 ssh access to the remote docker host, and the bundled targets reachable there.
 
 ### 1.1. The toolkit
@@ -54,7 +54,7 @@ trials.
 This is a TEMPORARY harness. Keep every trial's evidence bundle and verdict
 record; a later deterministic oracle will replay the same bundles.
 
-All commands run from the polymerhus repo root (`eval/`).
+All commands run from the polymerhus repo root.
 
 | Primitive | Contract |
 |---|---|
@@ -257,7 +257,7 @@ operator KB, research notes, evidence, verdicts, trial record - lands there.
    never a scheme/port form - see section 1.2) +
    `--operator-kb eval/kbs/<target>/operator_kb.md` + the contract
    toggles.
-6. **Scaffold the L1 skeleton - the deterministic path, PRIMARY IMPORTANCE**:
+7. **Scaffold the L1 skeleton - the deterministic path, PRIMARY IMPORTANCE**:
    `PYTHONPATH=src` (repo root) `python3 eval/scaffold.py <project_id>
    --kb eval/kbs/<target>/operator_kb.md`. This is THE way the L1 gets
    scaffolded: deterministic, zero LLM calls, byte-identical skeleton per
@@ -266,16 +266,16 @@ operator KB, research notes, evidence, verdicts, trial record - lands there.
    stop the trial and record it. Only if the scaffold errors do you fall back
    to `ph.py bootstrap <project_id>` (the non-deterministic LLM path), and the
    fallback is recorded in `trial.yaml`.
-7. `ph.py recon launch` with the contract's job subset (section 1.2).
-8. `ph.py recon poll` to terminal, running the monitoring loop (section 1.3)
+8. `ph.py recon launch` with the contract's job subset (section 1.2).
+9. `ph.py recon poll` to terminal, running the monitoring loop (section 1.3)
    throughout - every poll reads the state, detects failure modes, and applies
    the minimal remediation. Record every remediation.
-9. `ph.py hunting launch`; `ph.py hunting poll` to terminal.
-10. `ph.py graph get --out <trial>/graph.json`; `ev.py collect --out <trial>`
+10. `ph.py hunting launch`; `ph.py hunting poll` to terminal.
+11. `ph.py graph get --out <trial>/graph.json`; `ev.py collect --out <trial>`
     with the run ids.
-11. Run the judgment protocol (section 2.2); write `verdicts.yaml` and
+12. Run the judgment protocol (section 2.2); write `verdicts.yaml` and
     `trial.yaml` into the trial directory.
-12. `hosts.sh clear <domain>`; `target.sh down <target>`.
+13. `hosts.sh clear <domain>`; `target.sh down <target>`.
 
 ## 2. Operator procedures
 
@@ -293,7 +293,7 @@ operator KB, research notes, evidence, verdicts, trial record - lands there.
 | `operator_kb.md` / `research-notes.md` | What the pipeline was told the deployed application is (per-target, precomputed in `eval/kbs/<target>/`), and the reverse-engineering source ledger |
 | `surface-map.md` (in `eval/kbs/<target>/`) | The reverse-engineered endpoint inventory the KB was derived from - judge's reference only, never piped |
 | `graph.json` | The L0+L1 graph the pipeline built |
-| `hunt_store/`, `project_memory/`, `pod_memory/`, `wiring_memory/` | The raw evidence the oracle judged on |
+| `hunt_store/`, `project_memory/`, `pod_memory/` | The raw evidence the oracle judged on |
 
 #### Live pipeline status
 
@@ -304,9 +304,9 @@ operator KB, research notes, evidence, verdicts, trial record - lands there.
 
 #### The hunting trail on disk
 
-`src/polymerhus/attack/hunting/data/hunts/<hunting_run_id>/*.md` - the
-append-only orchestration trail (configs, dispatches, results, back-edges);
-`.../hunts/projects/<project_id>/` - the per-project research memory.
+`data/<project_id>/hunting/orchestration/hunt_configs/{produced,consumed}/` -
+the hunt configs (the file name is the config identity) and `memory.yaml`
+notes; siblings `hunter/` (test specs + notes) and `test-executor-pod/`.
 
 #### Langfuse (the trajectory layer)
 
