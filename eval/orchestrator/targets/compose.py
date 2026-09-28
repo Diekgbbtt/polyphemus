@@ -3,9 +3,10 @@
 The stack runs under its own compose project (`ph-target-<short>`), distinct
 from the instance projects; the instance kali aliases the synthetic Host to the
 Docker host gateway (`host.docker.internal`), NOT `127.0.0.1`, because kali is
-not on the host network and `127.0.0.1` is kali itself. The stack reaches
-host-published ports the same way (`host.docker.internal:host-gateway`).
-`down` removes that project's containers and volumes.
+not on the host network and `127.0.0.1` is kali itself. The gateway is a host
+interface, so the target compose file MUST publish on an interface it can reach
+(all interfaces); a loopback-only (`127.0.0.1:<port>:...`) binding is
+unreachable from kali. `down` removes that project's containers and volumes.
 """
 from __future__ import annotations
 

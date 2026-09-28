@@ -1,11 +1,13 @@
 """The `image` strategy: a local pullable container.
 
-The target is a single image published on loopback; the instance kali aliases
-the synthetic Host to the Docker host gateway (`host.docker.internal`), NOT
-`127.0.0.1`: kali is not on the host network, so `127.0.0.1` is kali itself.
-The stack's compose services reach host-published ports the same way
-(`host.docker.internal:host-gateway`). `down` removes exactly the container it
-created.
+The target image is published on the host with docker's default binding (all
+interfaces, `0.0.0.0`), and the instance kali aliases the synthetic Host to the
+Docker host gateway (`host.docker.internal`), NOT `127.0.0.1`: kali is not on
+the host network, so `127.0.0.1` is kali itself. The gateway (the bridge's
+`172.x.0.1`) is a host interface, so the publish must not be loopback-only or
+kali could not reach it. The stack's compose services reach host-published
+ports the same way (`host.docker.internal:host-gateway`). `down` removes
+exactly the container it created.
 """
 from __future__ import annotations
 
@@ -66,7 +68,10 @@ class ImageStrategy:
                 "--name",
                 self.name,
                 "--publish",
-                f"127.0.0.1:{self.port}:{self.internal_port}",
+                # No host IP: docker's default binds all interfaces, including
+                # the bridge gateway `host.docker.internal` resolves to. A
+                # `127.0.0.1:` prefix would be unreachable from kali (Linux).
+                f"{self.port}:{self.internal_port}",
                 self.image,
             ),
             description=f"run image {self.image}",

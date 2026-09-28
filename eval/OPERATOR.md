@@ -161,8 +161,11 @@ recon fleet. The alias target depends on where the target runs:
 - `targetctl` (remote workshop host): the workshop host's public IP.
 - `image`/`compose` (local, host-published): `host.docker.internal`, the Docker
   host gateway (`host.docker.internal:host-gateway`). Kali is NOT on the host
-  network, so `127.0.0.1` would resolve to kali itself; `host.docker.internal`
-  is how the stack already reaches host-published ports.
+  network, so `127.0.0.1` would resolve to kali itself.
+  The gateway is a host interface, so a local target must publish on an
+  interface the gateway can reach: `image` uses docker's default all-interfaces
+  publish, and a `compose` target's own compose file MUST NOT bind
+  `127.0.0.1:<port>:...` (loopback-only is unreachable from kali).
 
 Settings PUT body (`ph.py settings put`):
 
