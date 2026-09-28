@@ -34,41 +34,47 @@ from polymerhus.recon.domain.types import ExecResult
 FIXTURES = Path(__file__).parent / "fixtures"
 
 
-def _admitting_orchestrator_factory(safe_rate_per_s: float = 20.0):
-    """A stub orchestrator answering the two pre-phase-0 turns with a FRESH
-    `mapped` profile, so a request-intensive job clears the admission gates.
-
-    The default (degraded) actor yields the conservative fallback - which
-    correctly PRUNES `arjun`/`ffuf` (#238 follow-up, Task 4). The tests that must
-    prove an intensive job actually RUNS therefore inject an admitting posture.
-    """
-    from datetime import datetime, timedelta, timezone
-
+def _admitting_orchestrator_factory():
+    """An auth-only stub returning the anonymous gateway verdict."""
     from polymerhus.recon.control.authn_loop import GatewayVerdict
-    from polymerhus.recon.domain.rate_limit import RateProfile, TrafficPolicy
 
     class _Stub:
         async def run_gateway(self, **kw):
             return GatewayVerdict(outcome="anonymous")
 
-        async def run_rate_limit(self, **kw):
-            now = datetime.now(timezone.utc)
-            policy = TrafficPolicy(
-                target_key="example.com", host_patterns=["example.com"],
-                rate_per_s=safe_rate_per_s, burst=2, max_concurrency=1,
-                min_delay_ms=1000.0 / safe_rate_per_s, source="measured",
-            )
-            return RateProfile(
-                target_key="example.com", host_patterns=["example.com"],
-                outcome="mapped", safe_rate_per_s=safe_rate_per_s,
-                measured_at=now, expires_at=now + timedelta(seconds=3600),
-                traffic_policy=policy,
-            )
-
         async def stop(self):
             pass
 
     return lambda run_id: _Stub()
+
+
+def _admitting_map_rate_profile(safe_rate_per_s: float = 20.0):
+    """A FRESH `mapped` profile, so a request-intensive job clears the gates.
+
+    The tests that must prove an intensive job actually RUNS inject this posture
+    directly into the pipeline's mapper seam.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from polymerhus.recon.domain.rate_limit import RateProfile, TrafficPolicy
+
+    async def map_rate_profile(
+        project_id, run_id, target_key, url, headers, host_patterns
+    ):
+        now = datetime.now(timezone.utc)
+        policy = TrafficPolicy(
+            target_key=target_key, host_patterns=list(host_patterns),
+            rate_per_s=safe_rate_per_s, burst=2, max_concurrency=1,
+            min_delay_ms=1000.0 / safe_rate_per_s, source="measured",
+        )
+        return RateProfile(
+            target_key=target_key, host_patterns=list(host_patterns),
+            outcome="mapped", safe_rate_per_s=safe_rate_per_s,
+            measured_at=now, expires_at=now + timedelta(seconds=3600),
+            traffic_policy=policy,
+        )
+
+    return map_rate_profile
 
 
 @pytest.fixture(autouse=True)
@@ -352,7 +358,8 @@ def test_pipeline_e2e_httpx_to_arjun_prop_dependent_target():
             load_settings=load_settings,
             registry=registry,
             read_assets=graph.read_assets,
-            orchestrator_factory=_admitting_orchestrator_factory(20.0),
+            orchestrator_factory=_admitting_orchestrator_factory(),
+            map_rate_profile=_admitting_map_rate_profile(20.0),
         )
     )
 

@@ -23,8 +23,8 @@ defaults to the real `polymerhus.recon.control.job_agent.run_job`,
 registry. The auth gateway is the production default
 (feat/stateful-recon-job-auth): the recon-orchestrator runs its ONE gateway
 turn before phase 0 and the typed verdict configures the run (pruned phases,
-the bound account identifier). Since #238 the SAME actor then takes a SECOND
-turn - the rate mapping - and the measured `TrafficPolicy` rides
+the bound account identifier). The PIPELINE then invokes the controller-owned
+rate mapper directly and the measured `TrafficPolicy` rides
 `extra["traffic_policy"]` into every HTTP job (and the Steel crawl's pacing
 adapter) while the profile is persisted under `recon_runs.stats["rate_limit"]`.
 `orchestrator_factory` builds the actor (tests inject the production actor over
@@ -143,19 +143,57 @@ def _rate_request_headers(project_id: str, account_name: str | None, auth_store)
     return dict(_iter_auth_headers(project_request_auth(account, overview)))
 
 
+async def _default_map_rate_profile(
+    project_id: str,
+    run_id: str,
+    target_key: str,
+    url: str,
+    headers: dict,
+    host_patterns: list[str],
+):
+    """Measure one target directly from the pipeline, without an LLM verdict."""
+    from polymerhus.recon.config import (  # noqa: PLC0415
+        RATE_LIMIT_PROFILE_TTL_S,
+        rate_limit_safety_budget,
+    )
+    from polymerhus.recon.control.rate_limit_runner import (  # noqa: PLC0415
+        RateLimitHarness,
+        build_kali_execute,
+    )
+
+    harness = RateLimitHarness(
+        target_key=target_key,
+        url=url,
+        budget=rate_limit_safety_budget(),
+        execute=build_kali_execute(project_id=project_id, run_id=run_id),
+        project_id=project_id,
+        run_id=run_id,
+        headers=headers,
+        host_patterns=host_patterns,
+        profile_ttl_s=float(RATE_LIMIT_PROFILE_TTL_S),
+    )
+    await harness.map()
+    return harness.build_baseline_profile()
+
+
 async def _rate_profile_for_run(
-    orchestrator, *, project_id: str, run_id: str, settings: dict | None,
+    *, project_id: str, run_id: str, settings: dict | None,
     auth_account: str | None, auth_store, browser_only: bool,
     capability_error: str | None = None,
+    map_rate_profile=None,
 ):
-    """Take the #238 rate-limit turn on the run's orchestrator actor.
+    """Resolve one run's `RateProfile` through the pipeline-owned mapper.
 
-    The actor owns the turn; this wrapper supplies the canonical target and the
-    lazily resolved request material and guarantees the pipeline ALWAYS gets a
-    `RateProfile` back: a missing seam, a raising turn or an absent target
-    degrade to the loud conservative policy, never to unthrottled traffic.
+    This wrapper supplies the canonical target and the lazily resolved request
+    material and guarantees the pipeline ALWAYS gets a `RateProfile` back: a
+    missing target, an incompatible runtime, browser-only non-replayability or
+    a raising mapper all degrade to the loud conservative policy - never to
+    unthrottled traffic.
     """
-    from polymerhus.recon.config import rate_limit_safety_budget  # noqa: PLC0415
+    from polymerhus.recon.config import (  # noqa: PLC0415
+        RATE_LIMIT_PROFILE_TTL_S,
+        rate_limit_safety_budget,
+    )
     from polymerhus.recon.domain.rate_limit import RateProfile  # noqa: PLC0415
 
     target = _rate_target(settings)
@@ -180,15 +218,18 @@ async def _rate_profile_for_run(
             target_key, [target_key], rate_limit_safety_budget(),
             f"runtime capability incompatible: {capability_error}",
             outcome="failed")
-    turn = getattr(orchestrator, "run_rate_limit", None)
-    if turn is None:
+    if browser_only:
         logger.warning(
-            "run %s orchestrator exposes no rate-limit turn; the conservative "
-            "policy applies (never unthrottled traffic)", run_id)
+            "run %s is browser-only (not HTTP-replayable); the mapper is "
+            "skipped and the conservative pacing profile applies", run_id)
         return RateProfile.conservative(
             target_key, [target_key], rate_limit_safety_budget(),
-            "orchestrator exposes no rate-limit turn: conservative fallback",
-            outcome="failed")
+            "browser-only target: no semantically equivalent HTTP request "
+            "could be replayed, so the traffic surface is not quantitatively "
+            "mapped; conservative Steel pacing applies",
+            outcome="inconclusive",
+            ttl_s=float(RATE_LIMIT_PROFILE_TTL_S),
+        )
     try:
         headers = await asyncio.to_thread(
             _rate_request_headers, project_id, auth_account, auth_store)
@@ -198,16 +239,19 @@ async def _rate_profile_for_run(
             "mapping proceeds anonymously", run_id, exc_info=True)
         headers = {}
     try:
-        return await turn(
-            target_key=target_key, url=url, headers=headers,
-            host_patterns=[target_key], browser_only=browser_only)
+        mapper = map_rate_profile or _default_map_rate_profile
+        return await mapper(
+            project_id, run_id, target_key, url, headers, [target_key]
+        )
     except Exception:  # noqa: BLE001 - fail-LOUD, conservative
         logger.warning(
-            "run %s rate-limit turn raised; the conservative policy applies "
+            "run %s rate mapper raised; the conservative policy applies "
             "(never unthrottled traffic)", run_id, exc_info=True)
         return RateProfile.conservative(
             target_key, [target_key], rate_limit_safety_budget(),
-            "rate-limit turn raised: conservative fallback", outcome="failed")
+            "rate mapper raised: conservative fallback", outcome="failed",
+            ttl_s=float(RATE_LIMIT_PROFILE_TTL_S),
+        )
 
 
 async def _persist_rate_profile(registry, run_id: str, profile) -> None:
@@ -546,6 +590,7 @@ async def run_pipeline(
     prepare_inputs=None,
     fetch_capabilities=None,
     write_posture=None,
+    map_rate_profile=None,
 ) -> None:
     """Drive the full (or subset) phase plan for `project_id` under `run_id`.
 
@@ -601,6 +646,8 @@ async def run_pipeline(
         from polymerhus.recon.control.job_agent import (  # noqa: PLC0415
             prepare_job_inputs as prepare_inputs,
         )
+    if map_rate_profile is None:
+        map_rate_profile = _default_map_rate_profile
 
     orchestrator = None
     # The gateway starts deterministically (D223-8): the actor is ALWAYS
@@ -767,11 +814,12 @@ async def run_pipeline(
         # heartbeat already runs, so both turns ride inside its window
         # (D223-10); a failure degrades to the loud conservative policy.
         rate_profile = await _rate_profile_for_run(
-            orchestrator, project_id=project_id, run_id=run_id, settings=settings,
+            project_id=project_id, run_id=run_id, settings=settings,
             auth_account=auth_account, auth_store=auth_store,
             browser_only=bool(gateway_verdict is not None
                               and gateway_verdict.branch == "browser_only"),
             capability_error=capability_error,
+            map_rate_profile=map_rate_profile,
         )
         await _persist_rate_profile(registry, run_id, rate_profile)
         # #238 follow-up: project the SAME validated profile into the

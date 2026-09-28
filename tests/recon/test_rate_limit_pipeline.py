@@ -1,11 +1,11 @@
-"""Pipeline tier: the #238 rate-limit turn, its persistence, and the Steel fallback.
+"""Pipeline tier: direct rate mapping, persistence, and the Steel fallback.
 
 Exercises the REAL `run_pipeline` boundary: after the auth gateway resolves and
-BEFORE phase 0, the same orchestrator actor takes the rate-limit turn, the
-public `RateProfile` lands in `recon_runs.stats["rate_limit"]`, and every HTTP
-job - plus the agent-driven Steel crawl - carries the serialized
-`TrafficPolicy` through `extra["traffic_policy"]`. No live model, no live
-database, no live Kali.
+BEFORE phase 0, the PIPELINE invokes the rate mapper directly, the public
+`RateProfile` lands in `recon_runs.stats["rate_limit"]`, and every HTTP job -
+plus the agent-driven Steel crawl - carries the serialized `TrafficPolicy`
+through `extra["traffic_policy"]`. No live model, no live database, no live
+Kali.
 """
 from __future__ import annotations
 
@@ -83,7 +83,8 @@ def _conservative_profile():
 
 
 class _FakeOrchestrator:
-    """The two-turn actor seam: records each turn in the shared event log."""
+    """The auth-only actor seam. `run_rate_limit` is a forbidden sentinel: the
+    pipeline must use the injected mapper even if this method still exists."""
 
     def __init__(self, *, events, verdict=None, profile=None, rate_error=None):
         self._events = events
@@ -98,22 +99,55 @@ class _FakeOrchestrator:
         return self._verdict
 
     async def run_rate_limit(self, **kw):
-        self._events.append("rate")
+        self._events.append("rate_turn_forbidden")
         self.rate_kwargs = dict(kw)
-        if self._rate_error is not None:
-            raise self._rate_error
-        return self._profile
+        return RateProfile.conservative(
+            TARGET_KEY, [TARGET_KEY], RateLimitSafetyBudget(),
+            "the actor rate turn is forbidden after direct mapping",
+            outcome="failed",
+        )
 
     async def stop(self):
         self._events.append("stop")
 
 
+def _mapper(events, *, profile=None, error=None, calls=None):
+    """The pipeline-owned mapping seam, with compact kwargs recording."""
+
+    async def map_rate_profile(
+        project_id, run_id, target_key, url, headers, host_patterns
+    ):
+        events.append("map")
+        if calls is not None:
+            calls.update(
+                project_id=project_id,
+                run_id=run_id,
+                target_key=target_key,
+                url=url,
+                headers=dict(headers),
+                host_patterns=list(host_patterns),
+            )
+        if error is not None:
+            raise error
+        return profile if profile is not None else _profile()
+
+    return map_rate_profile
+
+
 def _run(events, orchestrator, *, registry=None, store=None, job_subset=None,
          settings=None, prepare_inputs=None, pod_exports_for=None,
-         fetch_capabilities=None):
+         fetch_capabilities=None, map_rate_profile=None, mapper_kwargs=None,
+         write_posture=None):
     """Wire the real `run_pipeline` over a recording orchestrator + registry."""
     registry = registry or _RecordingRegistry(events)
     seen: dict = {}
+    if map_rate_profile is None:
+        map_rate_profile = _mapper(
+            events,
+            profile=getattr(orchestrator, "_profile", None),
+            error=getattr(orchestrator, "_rate_error", None),
+            calls=mapper_kwargs,
+        )
 
     async def fake_run_job(job, input_assets, *, run_id, phase, extra, prepared_pod_inputs=None):
         events.append(f"job:{job.tool}")
@@ -145,6 +179,8 @@ def _run(events, orchestrator, *, registry=None, store=None, job_subset=None,
             auth_store=store, feed_mode="queued", with_analysis=False,
             prepare_inputs=prepare_inputs,
             fetch_capabilities=fetch_capabilities,
+            map_rate_profile=map_rate_profile,
+            write_posture=write_posture,
         )
 
     asyncio.run(_drive())
@@ -174,18 +210,19 @@ def _auth_store(tmp_path, **overrides):
 # --- Step 1: ordering and persistence -----------------------------------------
 
 
-def test_rate_turn_runs_after_auth_and_persists_before_phase_zero():
-    """`create_run -> auth -> rate -> set_run_stats(rate_limit) -> phase 0`."""
+def test_mapping_runs_after_auth_and_persists_before_phase_zero():
+    """`create_run -> auth -> mapper -> set_run_stats(rate_limit) -> phase 0`."""
     events: list = []
     registry, _ = _run(events, _orchestrator(events))
 
     assert registry.run_stats["rate_limit"]["outcome"] == "mapped"
     index = {name: events.index(name) for name in (
-        "create_run", "gateway", "rate", "set_run_stats:rate_limit")}
-    assert index["create_run"] < index["gateway"] < index["rate"]
-    assert index["rate"] < index["set_run_stats:rate_limit"]
+        "create_run", "gateway", "map", "set_run_stats:rate_limit")}
+    assert index["create_run"] < index["gateway"] < index["map"]
+    assert index["map"] < index["set_run_stats:rate_limit"]
     assert index["set_run_stats:rate_limit"] < min(
         i for i, event in enumerate(events) if event.startswith("job:"))
+    assert "rate_turn_forbidden" not in events
 
 
 def test_rate_profile_is_persisted_as_json_with_refs_and_no_secrets():
@@ -217,8 +254,7 @@ def test_rate_stats_are_additive_and_never_clobber_analysis_stats():
 
 
 def test_heartbeat_ticks_during_a_slow_rate_turn(monkeypatch):
-    """Step 3: the heartbeat stays alive ACROSS both turns - a slow rate turn
-    must not trip the stale-run reaper."""
+    """The heartbeat stays alive during a slow DIRECT mapper call."""
     ticks: list = []
     monkeypatch.setattr(pipeline.config, "HEARTBEAT_TICK_SECONDS", 0.01, raising=False)
     monkeypatch.setattr(pipeline, "_touch_heartbeat", lambda rid: ticks.append(rid))
@@ -226,34 +262,76 @@ def test_heartbeat_ticks_during_a_slow_rate_turn(monkeypatch):
     events: list = []
     profile = _profile()
 
-    class _SlowRate(_FakeOrchestrator):
-        async def run_rate_limit(self, **kw):
-            events.append("rate")
-            await asyncio.sleep(0.06)
+    async def slow_mapper(*args, **kwargs):
+        events.append("map")
+        await asyncio.sleep(0.06)
+        return profile
+
+    _run(events, _orchestrator(events), map_rate_profile=slow_mapper)
+
+    assert len(ticks) >= 2, "heartbeat never ticked during the mapper call"
+
+
+def test_default_mapper_builds_the_harness_and_uses_the_baseline_profile(monkeypatch):
+    """The production mapper is controller-owned and LLM-free: it builds the
+    Kali executor, runs `map()`, then builds the baseline profile."""
+    from polymerhus.recon.control import rate_limit_runner as runner_module
+
+    calls: list[tuple] = []
+    profile = _profile()
+
+    class _Harness:
+        def __init__(self, **kwargs):
+            calls.append(("init", kwargs))
+
+        async def map(self):
+            calls.append(("map", None))
+            return object()
+
+        def build_baseline_profile(self):
+            calls.append(("baseline", None))
             return profile
 
-    _run(events, _SlowRate(events=events, profile=profile))
+    monkeypatch.setattr(runner_module, "RateLimitHarness", _Harness)
+    monkeypatch.setattr(runner_module, "build_kali_execute", lambda **kw: "EXEC")
 
-    assert len(ticks) >= 2, "heartbeat never ticked during the rate turn"
+    result = asyncio.run(pipeline._default_map_rate_profile(
+        "proj1", "run1", TARGET_KEY, TARGET_URL,
+        {"Authorization": "Bearer T"}, [TARGET_KEY],
+    ))
+
+    assert result is profile
+    assert [name for name, _ in calls] == ["init", "map", "baseline"]
+    init = calls[0][1]
+    assert init["target_key"] == TARGET_KEY
+    assert init["url"] == TARGET_URL
+    assert init["headers"] == {"Authorization": "Bearer T"}
+    assert init["host_patterns"] == [TARGET_KEY]
+    assert init["execute"] == "EXEC"
+    assert init["project_id"] == "proj1"
+    assert init["run_id"] == "run1"
 
 
 # --- Step 2: the branches ------------------------------------------------------
 
 
-def test_rate_turn_receives_the_canonical_target_and_the_resolved_auth(tmp_path):
+def test_mapper_receives_the_canonical_target_and_the_resolved_auth(tmp_path):
     """The pipeline derives the canonical target from `resolve_seed` and
     resolves the gateway-selected account's request material LAZILY - the
     harness headers carry the stored session, never the login credentials."""
     events: list = []
     orchestrator = _orchestrator(events)
-    _run(events, orchestrator, store=_auth_store(tmp_path))
+    mapper_kwargs: dict = {}
+    _run(events, orchestrator, store=_auth_store(tmp_path),
+         mapper_kwargs=mapper_kwargs)
 
-    assert orchestrator.rate_kwargs["target_key"] == TARGET_KEY
-    assert orchestrator.rate_kwargs["url"] == TARGET_URL
-    assert orchestrator.rate_kwargs["headers"] == {
+    assert mapper_kwargs["target_key"] == TARGET_KEY
+    assert mapper_kwargs["url"] == TARGET_URL
+    assert mapper_kwargs["headers"] == {
         "Authorization": "Bearer T", "Cookie": "sid=S"}
-    assert orchestrator.rate_kwargs["browser_only"] is False
-    assert "PASSWORD" not in repr(orchestrator.rate_kwargs)
+    assert mapper_kwargs["host_patterns"] == [TARGET_KEY]
+    assert "PASSWORD" not in repr(mapper_kwargs)
+    assert "rate_turn_forbidden" not in events
 
 
 def test_domain_target_can_explicitly_use_http():
@@ -262,11 +340,13 @@ def test_domain_target_can_explicitly_use_http():
     taken from the configured value, not the seed KIND."""
     events: list = []
     orchestrator = _orchestrator(events)
+    mapper_kwargs: dict = {}
     _run(events, orchestrator,
-         settings={"target_domain": SEED, "target_scheme": "http"})
+         settings={"target_domain": SEED, "target_scheme": "http"},
+         mapper_kwargs=mapper_kwargs)
 
-    assert orchestrator.rate_kwargs["url"] == f"http://{TARGET_KEY}/"
-    assert orchestrator.rate_kwargs["target_key"] == TARGET_KEY
+    assert mapper_kwargs["url"] == f"http://{TARGET_KEY}/"
+    assert mapper_kwargs["target_key"] == TARGET_KEY
 
 
 def test_legacy_inference_is_unchanged_when_no_scheme_is_configured():
@@ -274,9 +354,11 @@ def test_legacy_inference_is_unchanged_when_no_scheme_is_configured():
     behaviour) - only an EXPLICIT setting changes the transport."""
     events: list = []
     orchestrator = _orchestrator(events)
-    _run(events, orchestrator, settings={"target_domain": SEED})
+    mapper_kwargs: dict = {}
+    _run(events, orchestrator, settings={"target_domain": SEED},
+         mapper_kwargs=mapper_kwargs)
 
-    assert orchestrator.rate_kwargs["url"] == f"https://{TARGET_KEY}/"
+    assert mapper_kwargs["url"] == f"https://{TARGET_KEY}/"
 
 
 def test_invalid_target_scheme_fails_loudly():
@@ -294,15 +376,16 @@ def test_anonymous_verdict_still_measures_anonymously():
     events: list = []
     orchestrator = _orchestrator(events, verdict=GatewayVerdict(
         outcome="anonymous", rationale="no authenticated surface"))
-    _, seen = _run(events, orchestrator)
+    mapper_kwargs: dict = {}
+    _, seen = _run(events, orchestrator, mapper_kwargs=mapper_kwargs)
 
-    assert orchestrator.rate_kwargs["headers"] == {}
+    assert mapper_kwargs["headers"] == {}
     assert seen["httpx"]["extra"]["traffic_policy"]["target_key"] == TARGET_KEY
 
 
-def test_browser_only_prunes_and_paces_the_steel_crawl(tmp_path):
-    """Browser-only: the rate turn is asked with `browser_only=True`, the plan
-    is pruned to the Steel crawl, and the crawl job still carries the policy."""
+def test_browser_only_never_calls_the_mapper_and_uses_conservative_posture(tmp_path):
+    """Browser-only cannot be replayed over HTTP: the mapper is never called,
+    the profile is conservative/inconclusive, and only Steel remains."""
     store = _auth_store(tmp_path)
     store.replace_operator_state(
         "proj1", overview={"anti-bot": "waf:x", "http-client-replayability": False},
@@ -313,17 +396,23 @@ def test_browser_only_prunes_and_paces_the_steel_crawl(tmp_path):
         events, verdict=GatewayVerdict(outcome="authenticated", account="alice",
                                        branch="browser_only", rationale="t"),
         profile=_conservative_profile())
-    _, seen = _run(events, orchestrator, store=store,
-                   job_subset=["subfinder", "httpx", "katana", "steel_crawl"])
+    registry, seen = _run(
+        events, orchestrator, store=store,
+        job_subset=["subfinder", "httpx", "katana", "steel_crawl"],
+    )
 
-    assert orchestrator.rate_kwargs["browser_only"] is True
+    assert "map" not in events
+    assert "rate_turn_forbidden" not in events
+    stored = registry.run_stats["rate_limit"]
+    assert stored["outcome"] == "inconclusive"
+    assert stored["traffic_policy"]["rate_per_s"] <= 1.0
     assert set(seen) == {"steel_crawl"}
     assert seen["steel_crawl"]["extra"]["traffic_policy"]["rate_per_s"] <= 1.0
 
 
-def test_gateway_stop_runs_no_rate_turn_and_no_job():
-    """The fail-close missing-credentials path stops BEFORE the rate turn: the
-    run is marked failed and nothing runs."""
+def test_gateway_stop_runs_no_mapper_and_no_job():
+    """The fail-close missing-credentials path stops BEFORE the mapper: the run
+    is marked failed and nothing runs."""
     events: list = []
 
     class _Stopper(_FakeOrchestrator):
@@ -334,25 +423,27 @@ def test_gateway_stop_runs_no_rate_turn_and_no_job():
     registry = _RecordingRegistry(events)
     _run(events, _Stopper(events=events), registry=registry)
 
-    assert "rate" not in events
+    assert "map" not in events
+    assert "rate_turn_forbidden" not in events
     assert not any(event.startswith("job:") for event in events)
     assert any("failed" in status for status in registry.statuses)
 
 
-def test_degraded_gateway_still_attempts_an_anonymous_rate_turn():
+def test_degraded_gateway_still_attempts_an_anonymous_mapping():
     """Auth fail-open (no verdict) still measures the target - anonymously -
     and the run keeps every phase."""
     events: list = []
     orchestrator = _orchestrator(events, verdict=None)
-    _, seen = _run(events, orchestrator)
+    mapper_kwargs: dict = {}
+    _, seen = _run(events, orchestrator, mapper_kwargs=mapper_kwargs)
 
-    assert events.index("gateway") < events.index("rate")
-    assert orchestrator.rate_kwargs["headers"] == {}
+    assert events.index("gateway") < events.index("map")
+    assert mapper_kwargs["headers"] == {}
     assert "traffic_policy" in seen["httpx"]["extra"]
 
 
-def test_rate_turn_failure_degrades_to_the_conservative_policy():
-    """A raising rate turn never releases unthrottled traffic: the run
+def test_mapper_failure_degrades_to_the_conservative_policy():
+    """A raising mapper never releases unthrottled traffic: the run
     continues under the conservative fallback policy, loudly."""
     events: list = []
     orchestrator = _orchestrator(events, rate_error=RuntimeError("controller down"))
@@ -365,9 +456,8 @@ def test_rate_turn_failure_degrades_to_the_conservative_policy():
     assert any(event.startswith("job:") for event in events)  # phases still ran
 
 
-def test_an_orchestrator_without_the_rate_turn_degrades_conservatively():
-    """Retro-compatibility: an injected factory whose actor predates #238 keeps
-    the run alive under the conservative policy instead of crashing."""
+def test_an_orchestrator_without_the_rate_turn_still_uses_the_pipeline_mapper():
+    """The pipeline owns mapping: an auth-only actor needs no rate method."""
     events: list = []
 
     class _LegacyActor:
@@ -380,8 +470,10 @@ def test_an_orchestrator_without_the_rate_turn_degrades_conservatively():
 
     registry, seen = _run(events, _LegacyActor())
 
-    assert registry.run_stats["rate_limit"]["traffic_policy"]["rate_per_s"] <= 1.0
-    assert seen["httpx"]["extra"]["traffic_policy"]["rate_per_s"] <= 1.0
+    assert "map" in events
+    assert "rate_turn_forbidden" not in events
+    assert registry.run_stats["rate_limit"]["outcome"] == "mapped"
+    assert seen["httpx"]["extra"]["traffic_policy"]["rate_per_s"] == 4.0
 
 
 # --- Step 4: the policy feed, without touching the templates --------------------
@@ -903,6 +995,7 @@ def test_a_runtime_refusal_is_appended_without_rewriting_the_decision():
             [{"name": "app.t.com"}] if node_type == "Subdomain" else [{"url": "https://app.t.com"}]
         ),
         orchestrator_factory=lambda run_id: _orchestrator(events),
+        map_rate_profile=_mapper(events),
         feed_mode="queued", with_analysis=False,
     ))
 
@@ -947,9 +1040,10 @@ def test_incompatible_runtime_skips_mapping_and_prunes_target_facing_jobs():
         fetch_capabilities=_incompatible_status,
     )
 
-    # The rate turn is SKIPPED: measuring against an incompatible companion would
+    # The mapper is SKIPPED: measuring against an incompatible companion would
     # be meaningless.
-    assert orchestrator.rate_kwargs is None
+    assert "map" not in events
+    assert "rate_turn_forbidden" not in events
     # Non-target work continued.
     assert "job:subfinder" in events
     # Every target-facing candidate was pruned with the runtime reason.
@@ -982,7 +1076,8 @@ def test_a_compatible_runtime_proceeds_normally():
             },
         },
     )
-    assert orchestrator.rate_kwargs is not None
+    assert "map" in events
+    assert "rate_turn_forbidden" not in events
     assert "job:httpx" in events
     assert registry.run_stats["traffic_admission"]["warnings"] == []
 
