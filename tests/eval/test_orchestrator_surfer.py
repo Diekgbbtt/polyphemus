@@ -917,7 +917,8 @@ def test_the_handled_marker_survives_a_loop_restart(tmp_path) -> None:
     assert restarted.cycle().no_op is True
 
 
-def test_alignment_resolve_does_not_clear_handled_markers(tmp_path) -> None:
+def test_alignment_resolve_rearms_the_trigger_and_it_re_escalates(tmp_path) -> None:
+    """I7: resolving a surfer hold re-arms its triggers for the next cycle."""
     state = alignment.AlignmentState(tmp_path / "alignment.yaml")
     asserter = StaticAsserter(state_with(failed_trigger()))
     decider = StaticDecider(
@@ -927,16 +928,45 @@ def test_alignment_resolve_does_not_clear_handled_markers(tmp_path) -> None:
 
     first = engine.cycle()
     assert first.hold is not None
-    handled = state.applied_for(surfer.HANDLED_SHA, surfer.HANDLED_FINGERPRINT)
-    assert handled
+    assert state.applied_for(surfer.HANDLED_SHA, surfer.HANDLED_FINGERPRINT)
 
     state.resolve_hold(first.hold.hold_id, "operator funded the account")
 
+    # Resolving clears the handled markers recorded under the hold's triggers.
+    assert (
+        state.applied_for(surfer.HANDLED_SHA, surfer.HANDLED_FINGERPRINT) == frozenset()
+    )
+
     after = make_surfer(asserter, decider, tmp_path=tmp_path, state=state).cycle()
-    assert after.no_op is True
-    assert state.applied_for(surfer.HANDLED_SHA, surfer.HANDLED_FINGERPRINT) == handled
+
+    # The condition persists, so the re-armed trigger re-escalates.
+    assert after.escalated is True
+    assert after.hold is not None
+    assert after.hold.resolved is False
+    assert len(decider.requests) == 2
     assert len(state.holds()) == 1
-    assert state.unresolved_holds() == ()
+    assert len(state.unresolved_holds()) == 1
+    # The operator's resolution context is recorded on the re-opened hold.
+    assert any(
+        entry.get("decision") == "operator funded the account"
+        for entry in after.hold.history
+    )
+
+
+def test_act_once_is_kept_for_an_unresolved_trigger(tmp_path) -> None:
+    state = alignment.AlignmentState(tmp_path / "alignment.yaml")
+    asserter = StaticAsserter(state_with(failed_trigger()))
+    decider = StaticDecider(
+        surfer.SurferDecision(surfer.ESCALATE, reason="fund the account")
+    )
+    engine = make_surfer(asserter, decider, tmp_path=tmp_path, state=state)
+
+    first = engine.cycle()
+    second = engine.cycle()  # no resolve -> the marker still disarms it
+
+    assert first.escalated is True
+    assert second.no_op is True
+    assert len(decider.requests) == 1
 
 
 def test_a_skipped_trigger_is_logged(tmp_path) -> None:

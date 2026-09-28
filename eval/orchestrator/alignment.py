@@ -313,6 +313,15 @@ def environment_context(environment: AlignmentEnvironment) -> dict:
 # --- the state: holds and applied actions -------------------------------------
 
 
+# The alignment-state namespace for the surfer's handled-trigger keys. Reusing
+# the alignment `applied` map keeps one atomic state file; this constant pair
+# isolates the surfer's handled keys from the alignment's per-version action
+# keys. Defined here (surfer aliases them) so `resolve_hold` can clear the
+# markers a surfer hold recorded, re-arming its triggers (I7).
+SURFER_HANDLED_SHA = "surfer"
+SURFER_HANDLED_FINGERPRINT = ""
+
+
 @dataclass(frozen=True)
 class Hold:
     """An unresolved alignment escalation; blocks trials until resolved."""
@@ -325,9 +334,15 @@ class Hold:
     resolved: bool = False
     decision: str | None = None
     resolved_at: str | None = None
+    # I7: the surfer trigger identities this hold disarmed, so resolving it can
+    # re-arm them; `history` records the operator resolutions of prior re-opens.
+    trigger_keys: tuple[str, ...] = ()
+    history: tuple[Mapping, ...] = ()
 
 
 def _hold_from(entry: Mapping) -> Hold:
+    history = entry.get("history") or []
+    trigger_keys = entry.get("trigger_keys") or []
     return Hold(
         hold_id=str(entry.get("hold_id") or ""),
         rationale=str(entry.get("rationale") or ""),
@@ -338,6 +353,10 @@ def _hold_from(entry: Mapping) -> Hold:
         decision=(str(entry["decision"]) if entry.get("decision") is not None else None),
         resolved_at=(
             str(entry["resolved_at"]) if entry.get("resolved_at") is not None else None
+        ),
+        trigger_keys=tuple(str(key) for key in trigger_keys if key is not None),
+        history=tuple(
+            item for item in history if isinstance(item, Mapping)
         ),
     )
 
@@ -374,26 +393,56 @@ class AlignmentState:
         target_fingerprint: str,
         rationale: str,
         now: str,
+        trigger_keys: Sequence[str] = (),
     ) -> Hold:
-        """Write a hold marker atomically; re-adding the same one is idempotent."""
+        """Write a hold marker atomically; re-adding the same one is idempotent.
+
+        I7: if the same hold was resolved, re-adding re-opens it (unresolved
+        again) and appends the prior resolution to its `history`, so a condition
+        that persists after an operator resolution re-escalates with that
+        context recorded.
+        """
         payload = self._load()
         hold_id = short_id(f"{target_sha}:{target_fingerprint}:{rationale}")
+        keys = tuple(str(key) for key in trigger_keys if key is not None)
         for entry in payload["holds"]:
-            if entry.get("hold_id") == hold_id:
-                return _hold_from(entry)
+            if entry.get("hold_id") != hold_id:
+                continue
+            if entry.get("resolved"):
+                history = list(entry.get("history") or [])
+                history.append(
+                    {
+                        "decision": entry.get("decision"),
+                        "resolved_at": entry.get("resolved_at"),
+                    }
+                )
+                entry["history"] = history
+                entry["resolved"] = False
+                entry["decision"] = None
+                entry["resolved_at"] = None
+                if keys:
+                    entry["trigger_keys"] = sorted(set(entry.get("trigger_keys") or []) | set(keys))
+                self._write(payload)
+            return _hold_from(entry)
         hold = Hold(
             hold_id=hold_id,
             rationale=rationale,
             target_sha=target_sha,
             target_fingerprint=target_fingerprint,
             created_at=now,
+            trigger_keys=keys,
         )
         payload["holds"].append(asdict(hold))
         self._write(payload)
         return hold
 
     def resolve_hold(self, hold_id: str, decision: str, *, now: str | None = None) -> Hold:
-        """Record the operator's decision and clear the hold (D38: no rewind)."""
+        """Record the operator's decision and clear the hold (D38: no rewind).
+
+        I7: the surfer handled markers recorded under this hold's triggers are
+        cleared, so the next surfer cycle re-asserts; a condition that persists
+        re-escalates (and re-opens the hold with this decision in its history).
+        """
         payload = self._load()
         for entry in payload["holds"]:
             if entry.get("hold_id") != hold_id:
@@ -403,9 +452,23 @@ class AlignmentState:
             entry["resolved"] = True
             entry["decision"] = decision
             entry["resolved_at"] = (now or subagents.utcnow)()
+            self._clear_surfer_markers(payload, entry.get("trigger_keys") or [])
             self._write(payload)
             return _hold_from(entry)
         raise AlignmentError(f"no alignment hold {hold_id!r}")
+
+    def _clear_surfer_markers(self, payload: dict, trigger_keys: Sequence) -> None:
+        """Clear the surfer handled markers for `trigger_keys` (I7)."""
+        keys = {str(key) for key in trigger_keys if key is not None}
+        if not keys:
+            return
+        pair = _pair_key(SURFER_HANDLED_SHA, SURFER_HANDLED_FINGERPRINT)
+        current = [str(key) for key in payload["applied"].get(pair, [])]
+        remaining = [key for key in current if key not in keys]
+        if remaining:
+            payload["applied"][pair] = remaining
+        else:
+            payload["applied"].pop(pair, None)
 
     # -- applied actions (idempotency) -------------------------------------
 

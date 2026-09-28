@@ -106,9 +106,10 @@ HEALTHY_PHASE_TERMINALS = {
 # The alignment-state namespace for handled surfer triggers. Reusing the
 # alignment `applied` map keeps one atomic state file; this constant pair
 # isolates the surfer's handled keys from the alignment's per-version action
-# keys, so neither can ever clear the other.
-HANDLED_SHA = "surfer"
-HANDLED_FINGERPRINT = ""
+# keys, so neither can ever clear the other. Defined in `alignment` so
+# `resolve_hold` can re-arm a surfer hold's triggers (I7).
+HANDLED_SHA = alignment.SURFER_HANDLED_SHA
+HANDLED_FINGERPRINT = alignment.SURFER_HANDLED_FINGERPRINT
 
 
 class SurferError(RuntimeError):
@@ -976,7 +977,7 @@ class Surfer:
         hold = None
         if self._state is not None:
             hold = write_hold(
-                self._state, trigger=state.primary, reason=reason, now=self._now()
+                self._state, triggers=state.triggers, reason=reason, now=self._now()
             )
         # Every escalation - a decider `escalate`, an unknown decision kind, or an
         # unbounded repair - records the acted-on trigger, so an unchanged trigger
@@ -1085,14 +1086,20 @@ def trigger_key(trigger: Trigger) -> str:
 def write_hold(
     state: alignment.AlignmentState,
     *,
-    trigger: Trigger | None,
+    triggers: Sequence[Trigger],
     reason: str,
     now: str,
 ) -> alignment.Hold:
-    """Write a surfer hold through the alignment state (D42's mechanism)."""
+    """Write a surfer hold through the alignment state (D42's mechanism).
+
+    The hold records its triggers' identities (I7), so `alignment resolve` can
+    clear exactly those handled markers and re-arm them.
+    """
+    primary = triggers[0] if triggers else None
     return state.add_hold(
-        target_sha=(trigger.eval_sha if trigger else None) or "surfer",
-        target_fingerprint=(trigger.stack_fingerprint if trigger else None) or "",
+        target_sha=(primary.eval_sha if primary else None) or "surfer",
+        target_fingerprint=(primary.stack_fingerprint if primary else None) or "",
         rationale=f"surfer: {reason}",
         now=now,
+        trigger_keys=tuple(trigger_key(trigger) for trigger in triggers),
     )
