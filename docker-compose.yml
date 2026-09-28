@@ -162,8 +162,10 @@ services:
       - "app.onlineorders.com:host-gateway"
       - "soupmarket.shop:192.33.91.87"
       # The eval synthetic-Host aliases (eval/orchestrator) point at the Docker
-      # host so kali can reach a target published on the host's loopback. kali is
-      # not on the host network, so 127.0.0.1 would be kali itself (#269).
+      # host so kali can reach a target published on the host. The gateway is a
+      # host interface, so the target must publish on an interface it can reach
+      # (all interfaces); a loopback-only publish is not reachable from kali
+      # (#269).
       - "host.docker.internal:host-gateway"
     healthcheck:
       test: ["CMD-SHELL", "/opt/venv/bin/python /opt/kali/healthcheck.py"]

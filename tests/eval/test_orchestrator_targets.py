@@ -5,8 +5,9 @@ three strategies:
 
   * `targetctl` - the WebExploitBench lifecycle on the REMOTE workshop host,
     deployed over ssh and fronted by that host's nginx on the synthetic Host;
-  * `image` and `compose` - local pullable containers, fronted by a loopback
-    publish and aliased to `127.0.0.1` in the instance kali.
+  * `image` and `compose` - local pullable containers, published on the host and
+    aliased to `host.docker.internal` (the Docker host gateway) in the instance
+    kali, so a loopback-only publish would be unreachable.
 
 Every command goes through the injected runner; the readiness probe is a read
 whose failure is fatal (an unreachable target is never a silent success).
@@ -177,10 +178,16 @@ def test_image_up_down_status(tmp_path, recording_runner, fake_result) -> None:
 
     assert result.backend == "http://127.0.0.1:18080"
     assert result.front_url == f"http://{result.host}/"
-    run_text = " ".join(runner.calls[0].argv)
+    run_argv = runner.calls[0].argv
+    run_text = " ".join(run_argv)
     assert "docker run" in run_text
     assert "nginx:alpine" in run_text
-    assert "127.0.0.1:18080:80" in run_text
+    # The publish must bind an interface the kali alias can reach through
+    # host.docker.internal: docker's default all-interfaces publish, never
+    # loopback-only (the bridge gateway cannot reach a 127.0.0.1 bind).
+    publish = run_argv[run_argv.index("--publish") + 1]
+    assert publish == "18080:80"
+    assert "127.0.0.1" not in publish
 
     down_runner = recording_runner()
     strategy.down(down_runner)
@@ -188,6 +195,20 @@ def test_image_up_down_status(tmp_path, recording_runner, fake_result) -> None:
 
     status_runner = recording_runner(default=fake_result(0, stdout="running\n"))
     assert strategy.status(status_runner).strip() == "running"
+
+
+def test_image_plan_publishes_on_a_gateway_reachable_interface(tmp_path) -> None:
+    strategy, _ = _strategy(
+        tmp_path,
+        lifecycle="image",
+        params={"image": "nginx:alpine", "port": 18080, "internal_port": 8080},
+    )
+
+    run_cmd = strategy.plan_up()[0]
+    publish = run_cmd.argv[run_cmd.argv.index("--publish") + 1]
+
+    assert publish == "18080:8080"
+    assert "127.0.0.1" not in publish
 
 
 def test_image_aliases_kali_to_the_host_gateway(
