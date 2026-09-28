@@ -243,11 +243,45 @@ class AssessmentRecord:
 
 
 @dataclass
-class TrialRecord:
-    """The persisted trial record (ids, phases, timings, cap, assessment).
+class DiagnosisAttempt:
+    """One diagnoser dispatch or pairing-verification attempt (#272/D19)."""
 
-    `eval_sha`/`stack_fingerprint`/`assessment` are additive (#271) and default
-    to None, so a #270 record still loads and an old record remains readable.
+    attempt: int
+    outcome: str
+    detail: str | None = None
+    at: str | None = None
+
+
+@dataclass
+class DiagnosisRecord:
+    """The trial's diagnosis outcome and its full attempt history (#272/D19).
+
+    Present from the first dispatch (`status="dispatched"`); rewritten by the
+    eval-close pairing check to `present`, `not_required` (every verdict was
+    `identified`), or `escalated` with a named failure. `entries_written`,
+    `issues_matched`, and `issues_proposed` are the counts the close-verify
+    reader observed in `diagnoses.yaml`.
+    """
+
+    status: str
+    attempts: list[DiagnosisAttempt] = field(default_factory=list)
+    diagnoses_path: str | None = None
+    entries_written: int = 0
+    issues_matched: int = 0
+    issues_proposed: int = 0
+    failure: str | None = None
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+@dataclass
+class TrialRecord:
+    """The persisted trial record (ids, phases, timings, cap, assessment, diagnosis).
+
+    `eval_sha`/`stack_fingerprint`/`assessment` (#271) and `diagnosis` (#272)
+    are additive and default to None, so a #270 record still loads and an old
+    record remains readable.
     """
 
     trial_id: str
@@ -269,6 +303,8 @@ class TrialRecord:
     eval_sha: str | None = None
     stack_fingerprint: str | None = None
     assessment: AssessmentRecord | None = None
+    # D19/D20 (#272): the diagnosis state, paired with verdicts after assessment.
+    diagnosis: DiagnosisRecord | None = None
 
     def to_dict(self) -> dict:
         return asdict(self)

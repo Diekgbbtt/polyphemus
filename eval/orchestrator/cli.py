@@ -8,13 +8,16 @@ are parameters so plan mode's "execute nothing" is provable in a test.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shlex
 import sys
 from pathlib import Path
 from typing import Callable, TextIO
 
-from orchestrator import api, assessment, evidence, instances, trial, verdicts
+import yaml
+
+from orchestrator import api, assessment, diagnosis, evidence, instances, trial, verdicts
 from orchestrator.commands import LocalRunner
 from orchestrator.files import FileStore
 from orchestrator.instances import InstanceError
@@ -38,6 +41,10 @@ RunnerFactory = Callable[[], object]
 ApiFactory = Callable[[str], object]
 # The assessment dispatcher factory: the rendered command argv -> a dispatcher.
 DispatchFactory = Callable[[tuple[str, ...]], assessment.SubagentDispatcher]
+# The diagnoser dispatcher factory (#272).
+DiagnoseDispatchFactory = Callable[[tuple[str, ...]], diagnosis.SubagentDispatcher]
+# The issue-bank factory: builds a read-only bank for the `issue-search` verb.
+IssueBankFactory = Callable[[], diagnosis.IssueBank]
 _HANDLED = (
     SetupError,
     WorkItemGateError,
@@ -47,6 +54,7 @@ _HANDLED = (
     trial.TrialError,
     trial.EscalationError,
     assessment.AssessmentError,
+    diagnosis.DiagnosisError,
     evidence.EvidenceError,
     verdicts.VerdictError,
     OSError,
@@ -140,15 +148,37 @@ def _parser() -> argparse.ArgumentParser:
 
     close_parser = sub.add_parser(
         "close-verify",
-        help="verify every trial's verdicts.yaml; re-dispatch, then micro-diagnose",
+        help="verify every trial's verdicts.yaml and diagnoses.yaml pairing",
     )
     _common_args(close_parser)
     _assessment_args(close_parser)
+    _diagnosis_args(close_parser)
+
+    # --- the diagnosis verbs (#272) -------------------------------------------
+    diag_parser = sub.add_parser(
+        "diagnose", help="dispatch the background diagnoser subagent for one trial"
+    )
+    _common_args(diag_parser)
+    diag_parser.add_argument("--trial", required=True, help="the trial directory")
+    _paths_args(diag_parser)
+    _diagnosis_args(diag_parser)
+
+    # `issue-search` is deliberately standalone (no setup): it is the read-only
+    # issue-bank primitive the diagnoser prompt invokes.
+    search_parser = sub.add_parser(
+        "issue-search", help="read-only GitHub issue-bank search; never files"
+    )
+    search_parser.add_argument("query", help="the free-text search query")
+    search_parser.add_argument(
+        "--repo",
+        default=os.environ.get("EVAL_ISSUE_REPO"),
+        help="scope the search to one repository (owner/name)",
+    )
     return parser
 
 
-def _assessment_args(parser: argparse.ArgumentParser) -> None:
-    """The shared knobs of the `assess`/`close-verify` verbs (D15/D6)."""
+def _paths_args(parser: argparse.ArgumentParser) -> None:
+    """The path/plan knobs shared by `assess`, `diagnose`, and `close-verify`."""
     parser.add_argument(
         "--ground-truth",
         default=os.environ.get("EVAL_GROUND_TRUTH"),
@@ -165,13 +195,29 @@ def _assessment_args(parser: argparse.ArgumentParser) -> None:
         help="where per-trial record directories live",
     )
     parser.add_argument(
+        "--dry-run", action="store_true", help="print the plan without dispatching"
+    )
+
+
+def _assessment_args(parser: argparse.ArgumentParser) -> None:
+    """The shared knobs of the `assess`/`close-verify` verbs (D15/D6)."""
+    _paths_args(parser)
+    parser.add_argument(
         "--command",
         default=os.environ.get("EVAL_ASSESS_COMMAND"),
         help="the assessment agent command line; placeholders: {prompt} "
         "{trial_record} {ground_truth} {data_root} {destination} {trace_id}",
     )
+
+
+def _diagnosis_args(parser: argparse.ArgumentParser) -> None:
+    """The diagnoser knob shared by `diagnose` and `close-verify` (D19/D22)."""
     parser.add_argument(
-        "--dry-run", action="store_true", help="print the plan without dispatching"
+        "--diagnose-command",
+        default=os.environ.get("EVAL_DIAGNOSE_COMMAND"),
+        help="the diagnoser agent command line; placeholders: {prompt} "
+        "{trial_record} {verdicts} {ground_truth} {data_root} {destination} "
+        "{vulns} {trace_id}",
     )
 
 
@@ -408,9 +454,177 @@ def _run_assess(args, setup: EvalSetup, out: TextIO, err: TextIO,
     return 0
 
 
+# --- diagnosis (#272) ---------------------------------------------------------
+
+
+def _diagnosis_argv(args) -> tuple[str, ...]:
+    if not args.diagnose_command:
+        raise diagnosis.DiagnosisError(
+            "no diagnoser command configured; pass --diagnose-command or "
+            "EVAL_DIAGNOSE_COMMAND"
+        )
+    return tuple(shlex.split(args.diagnose_command))
+
+
+def _make_diagnosis_dispatcher(args, runner_factory: RunnerFactory,
+                               factory: DiagnoseDispatchFactory | None):
+    argv = _diagnosis_argv(args)
+    if factory is not None:
+        return factory(argv)
+    return diagnosis.CommandDispatcher(runner_factory(), argv)
+
+
+def _prior_diagnosis_attempts(payload: dict) -> list[trial.DiagnosisAttempt]:
+    raw = (payload.get("diagnosis") or {}).get("attempts") or []
+    return [trial.DiagnosisAttempt(**entry) for entry in raw]
+
+
+def _load_verdicts(args, run: TargetRun, trial_dir: Path, files: FileStore,
+                   sha: str, fingerprint: str):
+    return verdicts.load_verdicts(
+        trial_dir / verdicts.VERDICTS_FILENAME,
+        files=files,
+        data_root=_assessment_data_root(args),
+        eval_sha=sha,
+        stack_fingerprint=fingerprint,
+    )
+
+
+def _diagnosis_request(args, run: TargetRun, trial_dir: Path, vulns) -> diagnosis.DiagnosisRequest:
+    return diagnosis.DiagnosisRequest(
+        prompt=diagnosis.DIAGNOSER_PROMPT,
+        trial_record=trial_dir / "trial.yaml",
+        verdicts=trial_dir / verdicts.VERDICTS_FILENAME,
+        ground_truth=_ground_truth_for(args, run),
+        data_root=_assessment_data_root(args),
+        destination=trial_dir / diagnosis.DIAGNOSES_FILENAME,
+        vulns=tuple(vulns),
+    )
+
+
+def _diagnosis_plan_request(args, trial_dir: Path, vulns) -> diagnosis.DiagnosisRequest:
+    """A dispatch-free request for plan mode: explicit paths or placeholders."""
+    return diagnosis.DiagnosisRequest(
+        prompt=diagnosis.DIAGNOSER_PROMPT,
+        trial_record=trial_dir / "trial.yaml",
+        verdicts=trial_dir / verdicts.VERDICTS_FILENAME,
+        ground_truth=Path(args.ground_truth) if args.ground_truth else Path("<ground-truth>"),
+        data_root=Path(args.data_root) if args.data_root else Path("<data-root>"),
+        destination=trial_dir / diagnosis.DIAGNOSES_FILENAME,
+        vulns=tuple(vulns),
+    )
+
+
+def _run_diagnose(args, setup: EvalSetup, out: TextIO, err: TextIO,
+                  runner_factory: RunnerFactory,
+                  factory: DiagnoseDispatchFactory | None) -> int:
+    files = FileStore()
+    trial_dir = Path(args.trial)
+    record_path = trial_dir / "trial.yaml"
+
+    if args.dry_run:
+        vulns = _plan_required_vulns(args, trial_dir, files)
+        request = _diagnosis_plan_request(args, trial_dir, vulns)
+        print(diagnosis.plan_dispatch(request, _diagnosis_argv(args)).display(), file=out)
+        return 0
+
+    payload = assessment.load_trial_record(record_path, files=files)
+    run = _find_target_run(setup, str(payload.get("target_id") or ""))
+    sha, fingerprint = assessment.trial_identity(record_path, files=files)
+    verdict_rows = _load_verdicts(args, run, trial_dir, files, sha, fingerprint)
+    vulns = diagnosis.required_vulns(verdict_rows)
+    request = _diagnosis_request(args, run, trial_dir, vulns)
+    if not vulns:
+        record = diagnosis.verify_diagnoses(
+            request, dispatcher=_noop_dispatcher, files=files, verdicts=verdict_rows,
+            prior=_prior_diagnosis_attempts(payload),
+        )
+        diagnosis.record_diagnosis(record_path, record, files=files)
+        print(f"diagnose {trial_dir.name}: not_required (all identified)", file=out)
+        return 0
+    dispatcher = _make_diagnosis_dispatcher(args, runner_factory, factory)
+    record = diagnosis.dispatch(
+        request, dispatcher=dispatcher, prior=_prior_diagnosis_attempts(payload)
+    )
+    diagnosis.record_diagnosis(record_path, record, files=files)
+    print(
+        f"diagnose {trial_dir.name}: dispatched (attempt {len(record.attempts)}, "
+        f"vulns {', '.join(vulns)})",
+        file=out,
+    )
+    return 0
+
+
+def _noop_dispatcher(request) -> None:  # pragma: no cover - only the not_required branch
+    raise diagnosis.DiagnosisError("no diagnosis entries are required")
+
+
+def _plan_required_vulns(args, trial_dir: Path, files: FileStore) -> tuple[str, ...]:
+    """Best-effort required vulns for plan mode; no live root resolution."""
+    path = trial_dir / verdicts.VERDICTS_FILENAME
+    if not files.exists(path):
+        return ()
+    try:
+        payload = yaml.safe_load(files.read_text(path))
+    except yaml.YAMLError:
+        return ()
+    if not isinstance(payload, list):
+        return ()
+    return tuple(
+        str(row.get("vuln_id"))
+        for row in payload
+        if isinstance(row, dict) and row.get("identified") in diagnosis.DIAGNOSABLE
+    )
+
+
+def _close_verify_diagnosis(args, run: TargetRun, trial_dir: Path, files: FileStore,
+                            runner_factory: RunnerFactory,
+                            factory: DiagnoseDispatchFactory | None, *,
+                            sha: str, fingerprint: str,
+                            prior: list[trial.DiagnosisAttempt]) -> trial.DiagnosisRecord | None:
+    """The paired `diagnoses.yaml` check for one trial, once verdicts are present."""
+    try:
+        verdict_rows = _load_verdicts(args, run, trial_dir, files, sha, fingerprint)
+    except (verdicts.VerdictError, OSError):
+        return None  # the verdict check already owns this failure
+    request = _diagnosis_request(
+        args, run, trial_dir, diagnosis.required_vulns(verdict_rows)
+    )
+    if not diagnosis.required_vulns(verdict_rows):
+        return diagnosis.verify_diagnoses(
+            request, dispatcher=_noop_dispatcher, files=files, verdicts=verdict_rows,
+            prior=prior,
+        )
+    # A present, paired file needs no dispatcher at all: short-circuit before the
+    # factory runs, so a dry or already-complete close never constructs a command.
+    if diagnosis.check_diagnoses(request, files=files, verdicts=verdict_rows) == "present":
+        return diagnosis.verify_diagnoses(
+            request, dispatcher=_noop_dispatcher, files=files, verdicts=verdict_rows,
+            prior=prior,
+        )
+    try:
+        dispatcher = _make_diagnosis_dispatcher(args, runner_factory, factory)
+    except diagnosis.DiagnosisError:
+        return trial.DiagnosisRecord(
+            "escalated",
+            list(prior),
+            str(request.destination),
+            failure="diagnosis_no_command",
+        )
+    return diagnosis.verify_diagnoses(
+        request,
+        dispatcher=dispatcher,
+        files=files,
+        verdicts=verdict_rows,
+        repair=diagnosis.DiagnoserReDispatchRepair(dispatcher, request),
+        prior=prior,
+    )
+
+
 def _run_close_verify(args, setup: EvalSetup, out: TextIO, err: TextIO,
                       runner_factory: RunnerFactory,
-                      dispatch_factory: DispatchFactory | None) -> int:
+                      dispatch_factory: DispatchFactory | None,
+                      diagnose_dispatch_factory: DiagnoseDispatchFactory | None = None) -> int:
     files = FileStore()
     argv = _assessment_argv(args)
     escalated = 0
@@ -427,6 +641,12 @@ def _run_close_verify(args, setup: EvalSetup, out: TextIO, err: TextIO,
                     print(f"# {run.target_id}/{trial_dir.name}", file=out)
                     print(f"  check {request.destination}", file=out)
                     print(f"  {assessment.plan_dispatch(request, argv).display()}", file=out)
+                    vulns = _plan_required_vulns(args, trial_dir, files)
+                    if vulns:
+                        diag_request = _diagnosis_plan_request(args, trial_dir, vulns)
+                        print(f"  check {diag_request.destination}", file=out)
+                        planned = diagnosis.plan_dispatch(diag_request, _diagnosis_argv(args))
+                        print(f"  {planned.display()}", file=out)
                     continue
                 request = _assessment_request(args, run, trial_dir)
                 payload = assessment.load_trial_record(record_path, files=files)
@@ -449,10 +669,57 @@ def _run_close_verify(args, setup: EvalSetup, out: TextIO, err: TextIO,
                         f"close-verify: {run.target_id}/{trial_dir.name}: {record.failure}",
                         file=err,
                     )
+                    continue
+                payload = assessment.load_trial_record(record_path, files=files)
+                diag_record = _close_verify_diagnosis(
+                    args, run, trial_dir, files, runner_factory,
+                    diagnose_dispatch_factory,
+                    sha=sha, fingerprint=fingerprint,
+                    prior=_prior_diagnosis_attempts(payload),
+                )
+                if diag_record is None:
+                    continue
+                diagnosis.record_diagnosis(record_path, diag_record, files=files)
+                print(f"{run.target_id}/{trial_dir.name}: diagnosis {diag_record.status}", file=out)
+                if diag_record.status not in ("present", "not_required"):
+                    escalated += 1
+                    print(
+                        f"close-verify: {run.target_id}/{trial_dir.name}: {diag_record.failure}",
+                        file=err,
+                    )
     if args.dry_run:
         print(f"# close-verify would check {checked} trial(s)", file=out)
         return 0
     return 1 if escalated else 0
+
+
+def _run_issue_search(args, out: TextIO, bank_factory: IssueBankFactory | None) -> int:
+    bank = bank_factory() if bank_factory is not None else diagnosis.GitHubIssueBank.from_env()
+    query = f"{args.query} repo:{args.repo}" if args.repo else args.query
+    outcome = diagnosis.match_issue(
+        bank, query=query, rationale="read-only search result", proposed=None
+    )
+    closest = outcome.closest_issue
+    print(
+        json.dumps(
+            {
+                "closest_issue": (
+                    {
+                        "repo": closest.repo,
+                        "number": closest.number,
+                        "title": closest.title,
+                    }
+                    if closest
+                    else None
+                ),
+                "proposed_issue": None,
+            },
+            indent=2,
+        ),
+        file=out,
+    )
+    return 0
+
 
 
 def main(
@@ -461,6 +728,8 @@ def main(
     runner_factory: RunnerFactory = LocalRunner,
     api_factory: ApiFactory | None = None,
     dispatch_factory: DispatchFactory | None = None,
+    diagnose_dispatch_factory: DiagnoseDispatchFactory | None = None,
+    issue_bank_factory: IssueBankFactory | None = None,
     stdout: TextIO | None = None,
     stderr: TextIO | None = None,
 ) -> int:
@@ -469,6 +738,9 @@ def main(
     args = _parser().parse_args(argv)
 
     try:
+        if args.verb == "issue-search":
+            return _run_issue_search(args, out, issue_bank_factory)
+
         setup = load_eval_setup(Path(args.setup))
         config = OrchestratorConfig(
             repo=Path(args.repo),
@@ -480,8 +752,15 @@ def main(
             return _run_trial(args, setup, config, out, err, runner_factory, factory)
         if args.verb == "assess":
             return _run_assess(args, setup, out, err, runner_factory, dispatch_factory)
+        if args.verb == "diagnose":
+            return _run_diagnose(
+                args, setup, out, err, runner_factory, diagnose_dispatch_factory
+            )
         if args.verb == "close-verify":
-            return _run_close_verify(args, setup, out, err, runner_factory, dispatch_factory)
+            return _run_close_verify(
+                args, setup, out, err, runner_factory, dispatch_factory,
+                diagnose_dispatch_factory,
+            )
 
         dry_run = args.verb == "plan" or getattr(args, "dry_run", False)
         if dry_run:
