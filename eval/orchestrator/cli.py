@@ -18,7 +18,7 @@ from typing import Callable, TextIO
 
 import yaml
 
-from orchestrator import api, assessment, diagnosis, evidence, instances, store, surfer, trial, verdicts
+from orchestrator import api, assessment, diagnosis, evidence, instances, routing, store, surfer, trial, verdicts
 from orchestrator import alignment
 from orchestrator.commands import LocalRunner
 from orchestrator.files import FileStore
@@ -114,6 +114,12 @@ def _parser() -> argparse.ArgumentParser:
         _common_args(child)
     sub.choices["up"].add_argument(
         "--dry-run", action="store_true", help="print the plan without executing"
+    )
+    # `plan` already executes nothing; the flag is accepted so the documented
+    # `plan <setup> --dry-run` invocation (E2E-SCAFFOLD.md) parses rather than
+    # tripping argparse's unrecognized-argument error.
+    sub.choices["plan"].add_argument(
+        "--dry-run", action="store_true", help="accepted for symmetry; plan is always dry"
     )
 
     # --- the trial verb (#270) ------------------------------------------------
@@ -479,7 +485,12 @@ def _trial_config(args, setup: EvalSetup, config: OrchestratorConfig) -> tuple[
         target_id=run.target_id,
         start_phase=run.start_phase,
         project_name=f"eval-{run.target_id}",
-        target_seed=run.target_config.target_seed,
+        # The seed the scope gate requires is the bare synthetic Host. When the
+        # setup leaves it unset, derive it from the same `<instance>/<target>`
+        # identity the front and routing use, so a run cannot be routed but
+        # seeded differently (a setup that pins it still wins).
+        target_seed=run.target_config.target_seed
+        or routing.synthetic_host(f"{instance.instance_id}/{run.target_id}"),
         operator_kb=kb,
         auth=run.target_config.auth,
         auth_surface=run.target_config.auth is not None,

@@ -335,6 +335,10 @@ branch in two worktrees); the daemon fast-forwards each detached HEAD. Every
 target run gets a unique synthetic Host (`t-<short>.target`), written into the
 target front and aliased in that instance's kali.
 
+The first committed setup is `eval/setups/first.yaml` (one instance, the
+`comfyui` workshop target); the operator bootstrap and the per-step acceptance
+criteria for running it live are in `eval/E2E-SCAFFOLD.md`.
+
 ```yaml
 schema_version: 1
 artifact_store: /srv/eval-artifacts
@@ -361,6 +365,7 @@ instances:
           operator_kb: eval/kbs/jetlinks/operator_kb.md
           params:
             target: jetlinks   # targetctl params; image/compose take image/port/compose_file
+          # target_seed defaults to this run's synthetic Host; set it only to pin.
 ```
 
 **Pre-mined hunting artifacts** (the two ratified lazy-read seams). The
