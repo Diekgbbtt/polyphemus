@@ -46,7 +46,6 @@ from polymerhus.app.llm.skills import (
 # and in `ROLE_SKILLS`. `job_orchestrator` is auth-only again: the pipeline owns
 # rate mapping, so the gateway loads only the project `authn` skill.
 EXEMPT_ROLES = {
-    "configurator",
     "job_orchestrator",
     "assigner",
     "mechanism_typist",
@@ -56,6 +55,7 @@ EXEMPT_ROLES = {
 
 BOUND_ROLES = {
     "triager": ("webpage-analysis", "webpage-profile"),
+    "configurator": ("rate-aware-recon-configuration",),
     "hunting_hunter": ("lightrag-query", "steel-browser"),
     "pod_runner": ("lightrag-query", "steel-browser"),
     "pod_triager": ("lightrag-query",),
@@ -206,6 +206,11 @@ def test_the_orchestrator_is_exempt_and_the_bypass_procedure_stays_dormant() -> 
     knowledge for explicit future workflows but is bound to no role."""
     assert skills_for_role("job_orchestrator") == ()
     assert BYPASS_SKILL in list_skills()
+
+
+def test_the_configurator_binds_only_the_rate_aware_configuration_skill() -> None:
+    """Phase pod selection is the Configurator's one product discipline."""
+    assert skills_for_role("configurator") == ("rate-aware-recon-configuration",)
 
 
 def test_auth_capable_binding_scopes_the_armed_surface_to_its_explicit_project(

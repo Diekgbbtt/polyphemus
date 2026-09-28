@@ -31,8 +31,8 @@ def test_analysis_role_gains_no_auth_capability() -> None:
 
 
 def test_exempt_role_gains_no_auth_capability() -> None:
-    # configurator is signal-only (exempt); it waits for #223 for its binding.
-    binding = auth_capable_binding("configurator")
+    # assigner is an analysis proposer with local-context-only reasoning.
+    binding = auth_capable_binding("assigner")
 
     assert binding.tools == []
     assert binding.context == {}

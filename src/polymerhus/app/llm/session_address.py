@@ -163,6 +163,24 @@ class OrchestratorSession:
 
 
 @dataclass(frozen=True)
+class ConfiguratorSession:
+    """The rate-aware recon Configurator's run-scoped session.
+
+    One Configurator is invoked at every phase boundary on the SAME thread, so
+    checkpointed memory carries prior pod decisions across phases. The phase is
+    deliberately absent from the identity: a new phase is a new turn, not a new
+    agent. The literal `run:` prefix is part of the operator-approved address.
+    """
+
+    run_id: str
+    role_id: str = "configurator"
+
+    @property
+    def thread_id(self) -> str:
+        return _compose("run", self.run_id, role_id=self.role_id)
+
+
+@dataclass(frozen=True)
 class HuntingOrchestratorSession:
     """The hunt-orchestrator's session: ONE actor per hunting run
     (feat/async-actor-agents).

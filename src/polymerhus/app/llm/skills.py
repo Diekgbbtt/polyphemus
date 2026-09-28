@@ -209,10 +209,10 @@ ROLE_SKILLS: dict[str, tuple[str, ...]] = {
     # observations; classifying a page's rendering and architectural shape is
     # exactly what the two anatomy skills state.
     "triager": ("webpage-analysis", "webpage-profile"),
-    # The configurator role is reserved for the profile-driven pod
-    # configuration; the Auth Gateway is auth-only and loads its project
-    # `authn` procedure through the write-capable auth binding, not this roster.
-    "configurator": (),
+    # The Configurator decides which phase pods exist and how their tools are
+    # parameterised from the measured posture. Its product knowledge is the
+    # bounded syntax/capability guide for the configurable tools.
+    "configurator": ("rate-aware-recon-configuration",),
     "job_orchestrator": (),
     # -- analysis (exempt: local-context reasoning only) ------------------------
     # The three proposers reason over the published L0/L1 substrate into typed
