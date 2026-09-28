@@ -61,6 +61,7 @@
 
 ### D19 - `diagnoses.yaml` typed surface
 *2026-09-28.* Renamed to `diagnoses.yaml`, paired with `verdicts.yaml`. Per un-`identified` vuln: `{vuln, failure_mode, root_cause: {type, extended_description, combination_of?: []}, diagnosis_overview, evidences: [], closest_issue: {repo, number, title, rationale} | null, proposed_issue?: {title, body, labels}}`.
+*Amended 2026-09-28 (batch-3 review):* each entry also carries `eval_sha` and `stack_fingerprint`, validated against the trial record, so every produced record is version-attributable (#276 AC2).
 
 ### D20 - Diagnosis covers `missed` and `partial`
 *2026-09-28.* "Successfully discovered" means `identified` only, so both `missed` and `partial` receive a diagnosis entry.
