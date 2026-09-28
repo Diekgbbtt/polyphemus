@@ -884,6 +884,26 @@ def test_recon_complete_with_no_job_rows_is_a_failed_run(tmp_path) -> None:
     assert "no job rows" in record.phases[0].failure
 
 
+def test_a_single_failed_recon_job_is_a_recorded_note(tmp_path) -> None:
+    """I8: a partial recon surface is a note on the recon phase, not dropped."""
+    routes = _full_routes()
+    routes["GET /projects/pid/recon/r1"] = {
+        "status": "complete",
+        "per_job": [
+            {"job": "crawl", "status": "complete"},
+            {"job": "content", "status": "failed"},
+        ],
+        "stats": {"analysis_drained": True},
+    }
+
+    record = _trial(tmp_path, FakeApi(routes), project_id="pid").run()
+
+    recon = next(phase for phase in record.phases if phase.phase == "recon")
+    assert any("content" in note and "failed" in note for note in recon.notes)
+    assert any("content" in note and "failed" in note for note in record.notes)
+    assert record.terminal != "failed"
+
+
 # --- I2: an API transport failure is a written, visible failure ----------------
 
 class ExplodingApi:

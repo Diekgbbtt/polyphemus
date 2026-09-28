@@ -650,28 +650,21 @@ class Trial:
         )
         # P8 liveness: a recon run that reports `complete` with no job rows, or
         # with every job failed, is a failed run - never chained into hunting.
+        # I8: a partial surface (some jobs failed) is recorded as a note.
+        notes = list(gate.notes)
         failure = None
         if status == "complete":
-            failure = self._recon_failure(state.project_id, run_id)
+            run = self._call(api.recon_status(state.project_id, run_id))
+            failure = _recon_failure(run)
+            notes.extend(predicates.recon_job_notes(run))
         return PhaseRecord(
             phase="recon",
             entered=True,
             status=status,
             run_id=run_id,
-            notes=list(gate.notes),
+            notes=notes,
             failure=failure,
         )
-
-    def _recon_failure(self, project_id: str, run_id: str) -> str | None:
-        """The liveness failure of a `complete` recon run, or None when healthy."""
-        run = self._call(api.recon_status(project_id, run_id))
-        jobs = api.per_job_rows(run)
-        if not jobs:
-            return "recon reported complete with no job rows (a failed run, P8)"
-        if all((job or {}).get("status") == "failed" for job in jobs):
-            names = ", ".join(str((job or {}).get("job")) for job in jobs)
-            return f"recon reported complete but every job failed ({names})"
-        return None
 
     def _phase_analysis(self, state: predicates.PhaseState) -> PhaseRecord:
         if self._api is None:
@@ -865,6 +858,22 @@ def _premined_inboxes(cfg: TrialConfig, project: str) -> tuple[str, ...]:
 def _phase_failed(phase: PhaseRecord) -> bool:
     """True when a phase's terminal (or its liveness failure) is a failure."""
     return phase.failure is not None or phase.status in FAILED_TERMINALS
+
+
+def _recon_failure(run: Mapping) -> str | None:
+    """The liveness failure of a `complete` recon run, or None when healthy.
+
+    A run with no job rows, or with every job failed, is a failed run (P8).
+    A partial surface (some jobs failed) is healthy here; it is recorded as a
+    note through `predicates.recon_job_notes` (I8).
+    """
+    jobs = api.per_job_rows(run)
+    if not jobs:
+        return "recon reported complete with no job rows (a failed run, P8)"
+    if all((job or {}).get("status") == "failed" for job in jobs):
+        names = ", ".join(str((job or {}).get("job")) for job in jobs)
+        return f"recon reported complete but every job failed ({names})"
+    return None
 
 
 def _terminal_of(phase: PhaseRecord, cap: PollResult | None) -> str:
