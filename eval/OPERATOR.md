@@ -758,6 +758,53 @@ Every dispatch and verification attempt is recorded under `diagnosis` in
 `trial.yaml` (`status`, `attempts[]`, `diagnoses_path`, `entries_written`,
 `issues_matched`, `issues_proposed`, `failure`).
 
+### 2.11. Version-advance alignment and holds
+
+The sync daemon fast-forwards `eval` to `dev` when every instance is idle and
+records a stack manifest diff (the `decision` payload of its heartbeat). It
+never decides what a jump requires; the orchestrator does (`align`, D42).
+
+`align` reads the latest decision input from the daemon heartbeat (or a
+supplied file), interposes an agent turn with the delta, the documented impact
+map, and the environment context, and executes the returned actions: restart a
+named component (`kali`, `litellm`), recreate only the named compose services,
+run the `env_preflight.py` config-layer alignment and recreate when the keyset
+changed, or run a migration/rebuild declared per artifact class in the setup's
+`alignment:` section. There is no hardcoded fail-closed set: an artifact class
+the map does not name still reaches the decider.
+
+A jump the decider cannot align without an operator decision is escalated and
+held: an atomic hold marker lands in the alignment state, and `up`/`trial`
+refuse to start until an operator resolves it. The daemon's advance is never
+reverted (D38: no rewind); the operator decides how to proceed and records that
+decision on the hold.
+
+| Primitive | Contract |
+|---|---|
+| `PYTHONPATH=eval python3 -m orchestrator align <setup.yaml> [--instance <id>] [--decision-file <yaml>] [--dry-run]` | Assert the advance delta and execute the alignment decision. `--decision-file` supplies a decision-input YAML; the default is the daemon heartbeat (`--heartbeat`, `EVAL_ADVANCE_HEARTBEAT`). `--dry-run` plans every action and executes nothing. The alignment state lives at `--state` (`EVAL_ALIGNMENT_STATE`, default `eval/state/alignment.yaml`). |
+| `PYTHONPATH=eval python3 -m orchestrator alignment resolve <setup.yaml> --hold-id <id> --decision <text>` | Record the operator's decision on a named hold and clear it, unblocking `up`/`trial`. The advance is not reverted. |
+
+Configure the alignment agent command once, as `EVAL_ALIGN_COMMAND` (or
+`--command` per invocation). It is a shell line whose placeholders the
+orchestrator substitutes before running it:
+
+| Placeholder | Substituted with |
+|---|---|
+| `{prompt}` | `eval/prompts/alignment.md` - the alignment decision contract. |
+| `{input}` | the rendered input (decision input + impact map + environment context). |
+| `{destination}` | where the agent writes the decision document. |
+
+Example:
+
+```
+EVAL_ALIGN_COMMAND='opencode run --prompt {prompt} --input {input} --out {destination}'
+```
+
+The impact map is DATA the prompt receives; the code contains no per-class
+branch that chooses an action. The executor only honours the decision and
+resolves a declared migration/rebuild command by artifact class; an action with
+no declaration fails loud rather than inventing one.
+
 ## 3. KB authoring
 
 # Operator-KB authoring prompt (the effective prompt, implementation-reverse-engineering revision)

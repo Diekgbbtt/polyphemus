@@ -149,6 +149,10 @@ _Avoid_: build hash, checksum
 The restart, recreate, or config-layer adjustment a version advance requires for an impacted component, decided by the eval orchestrator (not hardcoded); a jump the orchestrator cannot align without an operator decision is escalated and held.
 _Avoid_: deploy, rollout
 
+**Hold**:
+The atomic marker an alignment escalation writes in the eval state: until an operator resolves it, `up`/`trial` refuse to start and name the hold and its rationale; resolving records the operator's decision and clears the block, without reverting the advance.
+_Avoid_: lock, freeze, pause
+
 **Eval compose overlay**:
 `docker-compose.eval.yml`: it requires the per-instance `.env`, fails loud on missing required interpolation, and pairs with the preflight that fills missing keys without clobbering operator values.
 _Avoid_: prod compose, eval env

@@ -51,6 +51,39 @@ class SetupError(ValueError):
 
 
 @dataclass(frozen=True)
+class DeclaredMigration:
+    """A migration command declared for one artifact class (#274, D37).
+
+    The alignment executor never invents a migration: the decider may name an
+    artifact class, and the command is resolved from this declaration. No
+    declaration for a touched class is a fact the decider sees, and an
+    unalignable jump is escalated and held.
+    """
+
+    artifact_class: str
+    command: tuple[str, ...]
+    reason: str = ""
+
+
+@dataclass(frozen=True)
+class DeclaredRebuild:
+    """A rebuild recipe declared for one artifact class (#274, D37)."""
+
+    artifact_class: str
+    image: str
+    command: tuple[str, ...]
+    reason: str = ""
+
+
+@dataclass(frozen=True)
+class AlignmentDeclarations:
+    """The per-artifact-class migrations and rebuilds a setup declares (D37)."""
+
+    migrations: tuple[DeclaredMigration, ...] = ()
+    rebuilds: tuple[DeclaredRebuild, ...] = ()
+
+
+@dataclass(frozen=True)
 class WorkItem:
     """One eval-wide pre-eval dependency (auth bootstrap, L1 surface, artifacts)."""
 
@@ -131,6 +164,9 @@ class EvalSetup:
     artifact_store: str
     instances: tuple[Instance, ...]
     work_items: tuple[WorkItem, ...] = ()
+    # #274: declared per-artifact-class migrations/rebuilds the alignment step
+    # resolves a decider's action against. Absent means nothing is declared.
+    alignment: AlignmentDeclarations | None = None
 
 
 # --- validation helpers -------------------------------------------------------
@@ -216,7 +252,7 @@ def parse_eval_setup(payload: object) -> EvalSetup:
 
     artifact_store = _str_field(root, "artifact_store", "EvalSetup", required=True)
 
-    allowed = ("schema_version", "artifact_store", "instances", "work_items")
+    allowed = ("schema_version", "artifact_store", "instances", "work_items", "alignment")
     _check_keys(root, allowed, "EvalSetup")
 
     raw_instances = _require(root, "instances", "EvalSetup")
@@ -246,6 +282,7 @@ def parse_eval_setup(payload: object) -> EvalSetup:
         artifact_store=artifact_store,
         instances=instances,
         work_items=work_items,
+        alignment=_parse_alignment(root.get("alignment"), "EvalSetup.alignment"),
     )
 
 
@@ -411,6 +448,71 @@ def _parse_work_item(payload: object, index: int) -> WorkItem:
     if not isinstance(required, bool):
         raise SetupError(f"{where}.required: expected a boolean")
     return WorkItem(name=name, status=status, required=required)
+
+
+def _command_list(mapping: Mapping, where: str) -> tuple[str, ...]:
+    """A non-empty list of non-empty strings: the declared command argv."""
+    raw = _require(mapping, "command", where)
+    if not isinstance(raw, list) or not raw:
+        raise SetupError(f"{where}.command: expected a non-empty list")
+    parts: list[str] = []
+    for item in raw:
+        if not isinstance(item, str) or not item:
+            raise SetupError(f"{where}.command: every element must be a non-empty string")
+        parts.append(item)
+    return tuple(parts)
+
+
+def _parse_alignment(payload: object, where: str) -> AlignmentDeclarations | None:
+    """Validate the per-artifact-class migration/rebuild declarations (#274)."""
+    if payload is None:
+        return None
+    mapping = _mapping(payload, where)
+    _check_keys(mapping, ("migrations", "rebuilds"), where)
+
+    raw_migrations = mapping.get("migrations") or []
+    if not isinstance(raw_migrations, list):
+        raise SetupError(f"{where}.migrations: expected a list")
+    migrations = tuple(
+        _parse_declared_migration(item, f"{where}.migrations[{i}]")
+        for i, item in enumerate(raw_migrations)
+    )
+
+    raw_rebuilds = mapping.get("rebuilds") or []
+    if not isinstance(raw_rebuilds, list):
+        raise SetupError(f"{where}.rebuilds: expected a list")
+    rebuilds = tuple(
+        _parse_declared_rebuild(item, f"{where}.rebuilds[{i}]")
+        for i, item in enumerate(raw_rebuilds)
+    )
+
+    if not migrations and not rebuilds:
+        raise SetupError(f"{where}: expected at least one of 'migrations' or 'rebuilds'")
+    return AlignmentDeclarations(migrations=migrations, rebuilds=rebuilds)
+
+
+def _parse_declared_migration(payload: object, where: str) -> DeclaredMigration:
+    mapping = _mapping(payload, where)
+    _check_keys(mapping, ("artifact_class", "command", "reason"), where)
+    artifact_class = _str_field(mapping, "artifact_class", where, required=True)
+    return DeclaredMigration(
+        artifact_class=artifact_class,
+        command=_command_list(mapping, where),
+        reason=_optional_str(mapping, "reason", where) or "",
+    )
+
+
+def _parse_declared_rebuild(payload: object, where: str) -> DeclaredRebuild:
+    mapping = _mapping(payload, where)
+    _check_keys(mapping, ("artifact_class", "image", "command", "reason"), where)
+    artifact_class = _str_field(mapping, "artifact_class", where, required=True)
+    image = _str_field(mapping, "image", where, required=True)
+    return DeclaredRebuild(
+        artifact_class=artifact_class,
+        image=image,
+        command=_command_list(mapping, where),
+        reason=_optional_str(mapping, "reason", where) or "",
+    )
 
 
 def load_eval_setup(path: Path) -> EvalSetup:

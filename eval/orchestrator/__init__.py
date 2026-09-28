@@ -10,10 +10,13 @@ subagent and run the eval-close presence/schema verification with
 re-dispatch and a bounded micro-diagnosis; `diagnose` (#272) dispatches the
 diagnoser subagent and `issue-search` exposes the read-only issue bank;
 `store render-sync`/`store materialize` (#273) render the one-way artifact
-sync and assemble the self-contained per-trial tree. The package is a pure
-symbolic layer: every external effect (ssh, docker, compose, git worktree, the
-env preflight, the REST calls, the assessment/diagnoser subagents) is a
-`Command`/`ApiCall` run by an injected runner, and `plan()` builds the whole
-effect list without a runner. Importing this package performs no I/O
-(CODING_STANDARD section 6).
+sync and assemble the self-contained per-trial tree. `align` (#274) asserts the
+advance delta the daemon emitted, decides the alignment action through an agent
+turn (`orchestrator.alignment`), executes it, or escalates and writes a hold
+that blocks `up`/`trial` until `alignment resolve` records the operator's
+decision. The package is a pure symbolic layer: every external effect (ssh,
+docker, compose, git worktree, the env preflight, the REST calls, the
+assessment/diagnoser/alignment subagents) is a `Command`/`ApiCall` run by an
+injected runner, and `plan()` builds the whole effect list without a runner.
+Importing this package performs no I/O (CODING_STANDARD section 6).
 """

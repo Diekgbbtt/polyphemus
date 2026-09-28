@@ -18,6 +18,7 @@ from typing import Callable, TextIO
 import yaml
 
 from orchestrator import api, assessment, diagnosis, evidence, instances, store, trial, verdicts
+from orchestrator import alignment
 from orchestrator.commands import LocalRunner
 from orchestrator.files import FileStore
 from orchestrator.instances import InstanceError
@@ -65,6 +66,7 @@ _HANDLED = (
     evidence.EvidenceError,
     verdicts.VerdictError,
     store.StoreError,
+    alignment.AlignmentError,
     OSError,
 )
 
@@ -85,6 +87,12 @@ def _common_args(parser: argparse.ArgumentParser) -> None:
         "--branch",
         default=os.environ.get("EVAL_BRANCH", DEFAULT_BRANCH),
         help="the read-only branch instances run from",
+    )
+    parser.add_argument(
+        "--state",
+        default=os.environ.get("EVAL_ALIGNMENT_STATE", str(alignment.DEFAULT_STATE_PATH)),
+        help="the alignment state file (holds and applied actions); an "
+        "unresolved hold blocks `up` and `trial`",
     )
 
 
@@ -239,6 +247,44 @@ def _parser() -> argparse.ArgumentParser:
     )
     materialize_parser.add_argument(
         "--dry-run", action="store_true", help="print the plan without writing"
+    )
+
+    # --- the alignment verbs (#274) -------------------------------------------
+    align_parser = sub.add_parser(
+        "align", help="assert the advance delta and execute the alignment decision"
+    )
+    _common_args(align_parser)
+    align_parser.add_argument(
+        "--instance", help="restrict the alignment to one instance of the EvalSetup"
+    )
+    align_parser.add_argument(
+        "--decision-file",
+        default=os.environ.get("EVAL_ALIGN_DECISION"),
+        help="a decision-input YAML (default: the latest decision in the heartbeat)",
+    )
+    align_parser.add_argument(
+        "--heartbeat",
+        default=os.environ.get("EVAL_ADVANCE_HEARTBEAT", str(alignment.DEFAULT_HEARTBEAT_PATH)),
+        help="the sync daemon heartbeat carrying the latest decision input",
+    )
+    align_parser.add_argument(
+        "--command",
+        default=os.environ.get("EVAL_ALIGN_COMMAND"),
+        help="the alignment agent command line; placeholders: {prompt} {input} {destination}",
+    )
+    align_parser.add_argument(
+        "--dry-run", action="store_true", help="plan the alignment actions without executing"
+    )
+
+    align_group = sub.add_parser("alignment", help="alignment hold management")
+    align_sub = align_group.add_subparsers(dest="alignment_verb", required=True)
+    resolve_parser = align_sub.add_parser(
+        "resolve", help="record the operator's decision and clear a hold"
+    )
+    _common_args(resolve_parser)
+    resolve_parser.add_argument("--hold-id", required=True, help="the hold to resolve")
+    resolve_parser.add_argument(
+        "--decision", required=True, help="the operator's decision, recorded on the hold"
     )
     return parser
 
@@ -940,6 +986,122 @@ def _run_issue_search(args, out: TextIO, bank_factory: IssueBankFactory | None) 
 
 
 
+# --- alignment (#274) ---------------------------------------------------------
+
+
+def _unused_runner(command):  # pragma: no cover - dry-run never runs a command
+    raise AssertionError("alignment dry-run must not execute a command")
+
+
+def _alignment_instance_paths(args, setup: EvalSetup, config: OrchestratorConfig):
+    selected = setup.instances
+    if getattr(args, "instance", None):
+        selected = tuple(i for i in setup.instances if i.instance_id == args.instance)
+        if not selected:
+            raise SetupError(f"no instance {args.instance!r} in the EvalSetup")
+    return tuple(
+        instances.instance_paths(
+            instance,
+            config.instances_root,
+            repo=config.repo,
+            branch=config.branch,
+            compose_files=config.compose_files,
+        )
+        for instance in selected
+    )
+
+
+def _alignment_environment(args, setup: EvalSetup, config: OrchestratorConfig):
+    return alignment.AlignmentEnvironment(
+        instances=_alignment_instance_paths(args, setup, config),
+        declarations=setup.alignment or alignment.AlignmentDeclarations(),
+    )
+
+
+def _load_decision_input(args, files: FileStore) -> dict:
+    if args.decision_file:
+        path = Path(args.decision_file)
+        if not files.is_file(path):
+            raise alignment.AlignmentError(f"decision input not found: {path}")
+        try:
+            payload = yaml.safe_load(files.read_text(path))
+        except yaml.YAMLError as exc:
+            raise alignment.AlignmentError(f"decision input {path}: invalid YAML: {exc}") from exc
+        if not isinstance(payload, dict):
+            raise alignment.AlignmentError(f"decision input {path}: expected a mapping")
+        return payload
+    heartbeat = Path(args.heartbeat)
+    if not files.is_file(heartbeat):
+        raise alignment.AlignmentError(
+            f"no recorded decision input at {heartbeat}; run the advance daemon "
+            "or pass --decision-file"
+        )
+    try:
+        payload = yaml.safe_load(files.read_text(heartbeat))
+    except yaml.YAMLError as exc:
+        raise alignment.AlignmentError(f"heartbeat {heartbeat}: invalid YAML: {exc}") from exc
+    if not isinstance(payload, dict) or not payload.get("decision"):
+        raise alignment.AlignmentError(
+            f"heartbeat {heartbeat} carries no decision input; pass --decision-file"
+        )
+    return payload["decision"]
+
+
+def _print_alignment_outcome(outcome: alignment.AlignmentOutcome, out: TextIO) -> None:
+    for result in outcome.results:
+        detail = f" ({result.evidence})" if result.evidence else ""
+        print(f"  {result.action.kind}: {result.status}{detail}", file=out)
+    if outcome.escalated:
+        hold = outcome.hold.hold_id if outcome.hold else "dry-run"
+        print(f"alignment escalated (hold {hold}): {outcome.escalation}", file=out)
+
+
+def _run_align(args, setup: EvalSetup, config: OrchestratorConfig, out: TextIO,
+               runner_factory: RunnerFactory,
+               decider: alignment.AlignmentDecider | None) -> int:
+    files = FileStore()
+    state = alignment.AlignmentState(Path(args.state), files=files)
+    decision_input = _load_decision_input(args, files)
+    environment = _alignment_environment(args, setup, config)
+
+    if decider is None:
+        if not args.command:
+            raise alignment.AlignmentError(
+                "no alignment command configured; pass --command or EVAL_ALIGN_COMMAND"
+            )
+        runner = runner_factory()
+        decider = alignment.SubagentAlignmentDecider(
+            runner, tuple(shlex.split(args.command)), files=files
+        )
+    else:
+        # An injected decider (tests) never constructs a runner in dry-run.
+        runner = _unused_runner if args.dry_run else runner_factory()
+
+    outcome = alignment.run(
+        decision_input,
+        decider=decider,
+        environment=environment,
+        runner=runner,
+        state=state,
+        dry_run=args.dry_run,
+    )
+    if outcome.no_op and not outcome.results and not outcome.escalated:
+        print("alignment: no change; nothing to align", file=out)
+    else:
+        _print_alignment_outcome(outcome, out)
+    return 0 if outcome.ok else 1
+
+
+def _run_alignment_resolve(args, out: TextIO) -> int:
+    state = alignment.AlignmentState(Path(args.state))
+    hold = state.resolve_hold(args.hold_id, args.decision)
+    print(
+        f"alignment hold {hold.hold_id}: resolved ({hold.decision})",
+        file=out,
+    )
+    return 0
+
+
 def main(
     argv: list[str] | None = None,
     *,
@@ -948,6 +1110,7 @@ def main(
     dispatch_factory: DispatchFactory | None = None,
     diagnose_dispatch_factory: DiagnoseDispatchFactory | None = None,
     issue_bank_factory: IssueBankFactory | None = None,
+    alignment_decider: alignment.AlignmentDecider | None = None,
     stdout: TextIO | None = None,
     stderr: TextIO | None = None,
 ) -> int:
@@ -965,7 +1128,15 @@ def main(
             instances_root=Path(args.instances_root),
             branch=args.branch,
         )
+        if args.verb == "alignment":
+            return _run_alignment_resolve(args, out)
+        if args.verb == "align":
+            return _run_align(
+                args, setup, config, out, runner_factory, alignment_decider
+            )
         if args.verb == "trial":
+            # D42: an unresolved alignment hold refuses to start a new trial.
+            alignment.AlignmentState(Path(args.state)).require_no_holds()
             factory = api_factory or (lambda base: api.HttpApiRunner(base))
             return _run_trial(args, setup, config, out, err, runner_factory, factory)
         if args.verb == "store":
@@ -990,6 +1161,8 @@ def main(
             _print_plan(Orchestrator(setup, config).plan(), out)
             return 0
 
+        if args.verb == "up":
+            alignment.AlignmentState(Path(args.state)).require_no_holds()
         orchestrator = Orchestrator(setup, config, runner=runner_factory())
         if args.verb == "up":
             _print_results(orchestrator.up(), out)
