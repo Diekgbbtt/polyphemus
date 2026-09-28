@@ -52,7 +52,7 @@ A run attempted with one missing fails loud; none is silently defaulted.
 | B4 | The workshop checkout `~/WebExploitBench` with the `comfyui` target built (targetctl clones if missing) | target routed | `targetctl build/up comfyui` runs there |
 | B5 | The ground-truth checkout `~/WebExploitBench` on the eval server (or `EVAL_WEB_DIR`) | assessment, diagnosis | `gt.py` reads `<EVAL_WEB_DIR>/comfyui/challenge.json`; the KB is committed at `eval/kbs/comfyui/operator_kb.md` |
 | B6 | LLM provider credits/keys for the roles in B2 | trial | Recon/analysis/hunting spend them |
-| B7 | `EVAL_SHA` and `EVAL_STACK_FINGERPRINT` | trial, store | The `eval` branch commit and the daemon's stack fingerprint. Read the SHA with `git -C "$EVAL_REPO" rev-parse eval`; read the fingerprint from the advance daemon heartbeat (`decision.fingerprints.eval`). Both are mandatory: `store materialize` refuses `identity_missing` and verdict rows must carry them. |
+| B7 | `EVAL_SHA` and `EVAL_STACK_FINGERPRINT` | trial, store | The `eval` branch commit and the daemon's stack fingerprint of the running (post-advance) tree. Read the SHA with `git -C "$EVAL_REPO" rev-parse eval`; read the fingerprint from the advance daemon heartbeat's `decision.fingerprints.dev` - the post-advance/running side, which pairs with the now-current SHA. Do NOT use `decision.fingerprints.eval`: that is the pre-advance fingerprint and would pair the new SHA with a stale stack. Both are mandatory: `store materialize` refuses `identity_missing`, and every verdict and diagnosis row must carry them. |
 | B8 | `EVAL_ASSESS_COMMAND` and `EVAL_DIAGNOSE_COMMAND` | assessment, diagnosis | Shell lines with the documented placeholders (OPERATOR.md 2.9/2.10); no command means `assessment_no_command` / `diagnosis_no_command` escalation |
 | B9 | `EVAL_GITHUB_TOKEN` | diagnosis | The read-only `issue-search` bank; absent means the diagnoser writes a `proposed_issue` |
 | B10 | `EVAL_ALIGNMENT_STATE` with no unresolved hold | trial | `up`/`trial` refuse while a hold exists; resolve with `alignment resolve` |
@@ -82,12 +82,13 @@ export EVAL_SSH_HOST=ubuntu@dj-viscon-workshop-1.vsos.ethz.ch
 export EVAL_WEB_DIR=~/WebExploitBench
 export PH_API=http://localhost:8080
 export EVAL_SHA=$(git -C "$EVAL_REPO" rev-parse eval)
-export EVAL_STACK_FINGERPRINT=<daemon heartbeat decision.fingerprints.eval>
+export EVAL_STACK_FINGERPRINT=<daemon heartbeat decision.fingerprints.dev>
 export EVAL_ASSESS_COMMAND='opencode run --prompt {prompt} --trial {trial_record} --ground-truth {ground_truth} --data-root {data_root} --out {destination}'
 export EVAL_DIAGNOSE_COMMAND='opencode run --prompt {prompt} --trial {trial_record} --verdicts {verdicts} --data-root {data_root} --out {destination}'
 ```
 
-`EVAL_STACK_FINGERPRINT` comes from the daemon heartbeat only when an advance was recorded.
+`EVAL_STACK_FINGERPRINT` is always the fingerprint of the running (post-advance) tree, so it matches the current `EVAL_SHA`.
+It comes from the daemon heartbeat (`decision.fingerprints.dev`, never `.eval`) only when an advance was recorded.
 For the very first run (no advance yet), compute it once the instance stack is up (step 1), over the current `eval` SHA and the running image digests:
 
 ```
@@ -154,8 +155,8 @@ PYTHONPATH=eval python3 -m orchestrator diagnose eval/setups/first.yaml --trial 
 ```
 
 Needs: B5, B6, B8, B9.
-Expected: `diagnoses.yaml` with exactly one entry per `missed`/`partial` verdict; `trial.yaml` gets `diagnosis.status` and the counts (`entries_written`, `issues_matched`, `issues_proposed`).
-Failure path: no `verdicts.yaml` refuses loudly; no diagnoser command escalates `diagnosis_no_command`; a missing/unpaired entry is caught by `close-verify`.
+Expected: `diagnoses.yaml` with exactly one entry per `missed`/`partial` verdict; every row carries the trial record's `eval_sha` and `stack_fingerprint`, exactly like a verdict row; `trial.yaml` gets `diagnosis.status` and the counts (`entries_written`, `issues_matched`, `issues_proposed`).
+Failure path: no `verdicts.yaml` refuses loudly; no diagnoser command escalates `diagnosis_no_command`; a missing/unpaired entry is caught by `close-verify`; a diagnosis row whose identity is missing or does not match the record is refused (`DiagnosisError`).
 
 ### Step 5 - close verification
 
@@ -185,11 +186,12 @@ Every produced record must carry the version identity. Verify:
 ```
 grep -E "eval_sha|stack_fingerprint" eval/runs/comfyui-1/<trial_id>/trial.yaml
 grep -E "eval_sha|stack_fingerprint" eval/runs/comfyui-1/<trial_id>/verdicts.yaml
+grep -E "eval_sha|stack_fingerprint" eval/runs/comfyui-1/<trial_id>/diagnoses.yaml
 grep -E "eval_sha|stack_fingerprint" /srv/eval-artifacts/comfyui-1/eval-server-1/<trial_id>/run-manifest.yaml
 ```
 
-Expected: the same `EVAL_SHA` and `EVAL_STACK_FINGERPRINT` in all three.
-The verdict schema refuses a row whose identity does not match the record, and `store materialize` refuses a record with no identity, so an unattributed artifact cannot land in the store.
+Expected: the same `EVAL_SHA` and `EVAL_STACK_FINGERPRINT` in all four.
+The verdict and diagnosis schemas refuse a row whose identity is missing or does not match the record, and `store materialize` refuses a record with no identity, so an unattributed artifact cannot land in the store.
 
 ## 4. Failure reporting, never silent patching
 

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import yaml
 
+from advance.app_state import AppState
 from orchestrator import alignment, cli, surfer
 
 
@@ -119,6 +120,40 @@ def test_surfer_dry_run_asserts_and_never_dispatches_the_decider(tmp_path, capsy
     assert code == 0
     assert "failed_run" in out
     assert "hunting failed" in out
+
+
+def test_surfer_surfaces_a_corrupt_trial_record_on_stderr(
+    tmp_path, capsys, monkeypatch
+) -> None:
+    # A corrupt record is named on stderr (the operator's channel) and never
+    # crashes the cycle; the app-state read is stubbed so no network is touched.
+    monkeypatch.setattr(
+        cli, "_surfer_app_state", lambda args: (lambda: AppState(idle=True, projects=()))
+    )
+    setup_path = _write_setup(tmp_path)
+    trial_dir = tmp_path / "runs" / "jetlinks-1" / "trial-1"
+    trial_dir.mkdir(parents=True)
+    (trial_dir / "trial.yaml").write_text("trial_id: [unclosed\n", encoding="utf-8")
+
+    code = cli.main(
+        [
+            "surfer",
+            setup_path,
+            "--dry-run",
+            "--state",
+            str(tmp_path / "alignment.yaml"),
+            "--data-root",
+            str(tmp_path / "data"),
+            "--runs-root",
+            str(tmp_path / "runs"),
+        ],
+        runner_factory=_explode,
+    )
+
+    err = capsys.readouterr().err
+    assert code == 0
+    assert "trial_record_invalid" in err
+    assert "trial.yaml" in err
 
 
 def test_surfer_once_terminate_stops_the_named_runs(tmp_path, capsys, recording_runner) -> None:

@@ -311,7 +311,11 @@ def materialize(
         )
         try:
             entries = diagnosis.load_diagnoses(
-                diagnoses_path, files=files, verdicts=validated
+                diagnoses_path,
+                files=files,
+                verdicts=validated,
+                eval_sha=eval_sha,
+                stack_fingerprint=fingerprint,
             )
             diagnosis.check_pairing(validated, entries)
         except (diagnosis.DiagnosisError, OSError) as exc:

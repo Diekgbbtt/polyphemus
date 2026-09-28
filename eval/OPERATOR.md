@@ -716,6 +716,7 @@ Every dispatch and verification attempt is recorded under `assessment` in
 
 Once a trial's `verdicts.yaml` is present, the diagnoser subagent (a background agent, D18) explains every `missed` and `partial` verdict and writes `diagnoses.yaml`, paired with the verdicts.
 One entry per `missed`/`partial` verdict, keyed by the verdict's `vuln`; an `identified` verdict gets no entry.
+Every diagnosis row carries the `eval_sha` and `stack_fingerprint` copied from the trial record - never invented; a row whose identity is missing or does not match the record is refused, exactly like a verdict row.
 The prompt is `eval/prompts/diagnoser.md`, the adapted scientific debugging loop (D18) grounded on the design docs and counter-checked against the code, reasoning mostly over observability.
 
 Configure the diagnoser command once, as `EVAL_DIAGNOSE_COMMAND` (or `--diagnose-command` per invocation). It is a shell line whose placeholders the orchestrator substitutes before running it:

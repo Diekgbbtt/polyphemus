@@ -5,7 +5,9 @@ keyed by the verdict's `vuln`. The entry carries a failure mode (D21/D33), a
 typed root cause that may reach into the persisted data layer (D24), a
 diagnosis overview, evidence references, and either the closest matching
 issue-bank issue or a proposed issue - never both, and never a filed issue
-(D22).
+(D22). Like a verdict, every entry carries `eval_sha` and `stack_fingerprint`
+from the trial record - never invented: a row whose identity does not match the
+record, or a record with no identity at all, is refused (D32/#276 AC2).
 
 The diagnoser is dispatched through the same fire-and-forget seam as the
 assessment (#271/D6): the orchestrator hands the configured command the prompt
@@ -82,8 +84,18 @@ _ROW_FIELDS = (
     "evidences",
     "closest_issue",
     "proposed_issue",
+    "eval_sha",
+    "stack_fingerprint",
 )
-_REQUIRED_FIELDS = ("vuln", "failure_mode", "root_cause", "diagnosis_overview", "evidences")
+_REQUIRED_FIELDS = (
+    "vuln",
+    "failure_mode",
+    "root_cause",
+    "diagnosis_overview",
+    "evidences",
+    "eval_sha",
+    "stack_fingerprint",
+)
 _ROOT_CAUSE_FIELDS = ("type", "combination_of", "extended_description")
 _EVIDENCE_FIELDS = ("source", "ref", "note")
 _CLOSEST_FIELDS = ("repo", "number", "title", "rationale")
@@ -145,12 +157,20 @@ class Diagnosis:
     evidences: tuple[Evidence, ...]
     closest_issue: ClosestIssue | None
     proposed_issue: ProposedIssue | None
+    eval_sha: str
+    stack_fingerprint: str
 
 
 # --- validation ----------------------------------------------------------------
 
 
-def parse_diagnosis(row: Mapping, *, verdicts_by_id: Mapping[str, str]) -> Diagnosis:
+def parse_diagnosis(
+    row: Mapping,
+    *,
+    verdicts_by_id: Mapping[str, str],
+    eval_sha: str | None,
+    stack_fingerprint: str | None,
+) -> Diagnosis:
     """Validate one decoded row against the trial's verdicts and build it."""
     if not isinstance(row, Mapping):
         raise DiagnosisError(f"diagnosis row must be a mapping, got {type(row).__name__}")
@@ -160,6 +180,17 @@ def parse_diagnosis(row: Mapping, *, verdicts_by_id: Mapping[str, str]) -> Diagn
     missing = [name for name in _REQUIRED_FIELDS if name not in row or row[name] is None]
     if missing:
         raise DiagnosisError(f"diagnosis row: missing required field(s): {', '.join(missing)}")
+
+    subagents.check_identity(
+        row["eval_sha"], eval_sha, "eval_sha", error=DiagnosisError, noun="diagnosis"
+    )
+    subagents.check_identity(
+        row["stack_fingerprint"],
+        stack_fingerprint,
+        "stack_fingerprint",
+        error=DiagnosisError,
+        noun="diagnosis",
+    )
 
     vuln = _non_empty(row["vuln"], "vuln")
     if vuln not in verdicts_by_id:
@@ -205,11 +236,17 @@ def parse_diagnosis(row: Mapping, *, verdicts_by_id: Mapping[str, str]) -> Diagn
         evidences=evidences,
         closest_issue=closest,
         proposed_issue=proposed,
+        eval_sha=str(row["eval_sha"]),
+        stack_fingerprint=str(row["stack_fingerprint"]),
     )
 
 
 def validate_diagnoses(
-    rows: Sequence, *, verdicts: Sequence[verdicts.Verdict]
+    rows: Sequence,
+    *,
+    verdicts: Sequence[verdicts.Verdict],
+    eval_sha: str | None,
+    stack_fingerprint: str | None,
 ) -> tuple[Diagnosis, ...]:
     """Validate a whole `diagnoses.yaml` payload (a list of rows).
 
@@ -224,7 +261,12 @@ def validate_diagnoses(
     seen: set[str] = set()
     parsed: list[Diagnosis] = []
     for row in rows:
-        entry = parse_diagnosis(row, verdicts_by_id=by_id)
+        entry = parse_diagnosis(
+            row,
+            verdicts_by_id=by_id,
+            eval_sha=eval_sha,
+            stack_fingerprint=stack_fingerprint,
+        )
         if entry.vuln in seen:
             raise DiagnosisError(f"diagnosis row {entry.vuln}: duplicate entry")
         seen.add(entry.vuln)
@@ -238,9 +280,16 @@ def write_diagnoses(
     *,
     files: FileStore,
     verdicts: Sequence[verdicts.Verdict],
+    eval_sha: str | None,
+    stack_fingerprint: str | None,
 ) -> None:
     """Validate, then write the rows atomically (temp + rename)."""
-    validate_diagnoses(rows, verdicts=verdicts)
+    validate_diagnoses(
+        rows,
+        verdicts=verdicts,
+        eval_sha=eval_sha,
+        stack_fingerprint=stack_fingerprint,
+    )
     files.write_text_atomic(path, yaml.safe_dump(list(rows), sort_keys=False))
 
 
@@ -249,6 +298,8 @@ def load_diagnoses(
     *,
     files: FileStore,
     verdicts: Sequence[verdicts.Verdict],
+    eval_sha: str | None,
+    stack_fingerprint: str | None,
 ) -> tuple[Diagnosis, ...]:
     """Read and validate `diagnoses.yaml`; raise `DiagnosisError` on any defect."""
     if not files.exists(path):
@@ -258,7 +309,12 @@ def load_diagnoses(
         payload = yaml.safe_load(text)
     except yaml.YAMLError as exc:
         raise DiagnosisError(f"diagnoses.yaml: invalid YAML: {exc}") from exc
-    return validate_diagnoses(payload, verdicts=verdicts)
+    return validate_diagnoses(
+        payload,
+        verdicts=verdicts,
+        eval_sha=eval_sha,
+        stack_fingerprint=stack_fingerprint,
+    )
 
 
 # --- pairing (both directions) -------------------------------------------------
@@ -294,12 +350,20 @@ def check_diagnoses(
     *,
     files: FileStore,
     verdicts: Sequence[verdicts.Verdict],
+    eval_sha: str | None,
+    stack_fingerprint: str | None,
 ) -> str:
     """`present`, `missing`, `invalid`, or `unpaired` for the request's destination."""
     if not files.exists(request.destination):
         return "missing"
     try:
-        entries = load_diagnoses(request.destination, files=files, verdicts=verdicts)
+        entries = load_diagnoses(
+            request.destination,
+            files=files,
+            verdicts=verdicts,
+            eval_sha=eval_sha,
+            stack_fingerprint=stack_fingerprint,
+        )
     except (DiagnosisError, OSError):
         return "invalid"
     try:
@@ -438,6 +502,8 @@ def verify_diagnoses(
     dispatcher: SubagentDispatcher,
     files: FileStore,
     verdicts: Sequence[verdicts.Verdict],
+    eval_sha: str | None,
+    stack_fingerprint: str | None,
     repair: DiagnosisRepair | None = None,
     prior: Sequence[trial.DiagnosisAttempt] = (),
     now: Callable[[], str] | None = None,
@@ -457,11 +523,23 @@ def verify_diagnoses(
         )
 
     def inspect() -> tuple[str, tuple[Diagnosis, ...]]:
-        state = check_diagnoses(request, files=files, verdicts=verdicts)
+        state = check_diagnoses(
+            request,
+            files=files,
+            verdicts=verdicts,
+            eval_sha=eval_sha,
+            stack_fingerprint=stack_fingerprint,
+        )
         entries: tuple[Diagnosis, ...] = ()
         if state in ("present", "unpaired"):
             try:
-                entries = load_diagnoses(request.destination, files=files, verdicts=verdicts)
+                entries = load_diagnoses(
+                    request.destination,
+                    files=files,
+                    verdicts=verdicts,
+                    eval_sha=eval_sha,
+                    stack_fingerprint=stack_fingerprint,
+                )
             except (DiagnosisError, OSError):  # pragma: no cover - state is unpaired
                 entries = ()
         return state, entries

@@ -742,6 +742,7 @@ def _run_diagnose(args, setup: EvalSetup, out: TextIO, err: TextIO,
     if not vulns:
         record = diagnosis.verify_diagnoses(
             request, dispatcher=_noop_dispatcher, files=files, verdicts=verdict_rows,
+            eval_sha=sha, stack_fingerprint=fingerprint,
             prior=_prior_diagnosis_attempts(payload),
         )
         diagnosis.record_diagnosis(record_path, record, files=files)
@@ -803,13 +804,24 @@ def _close_verify_diagnosis(args, run: TargetRun, trial_dir: Path, files: FileSt
     if not diagnosis.required_vulns(verdict_rows):
         return diagnosis.verify_diagnoses(
             request, dispatcher=_noop_dispatcher, files=files, verdicts=verdict_rows,
+            eval_sha=sha, stack_fingerprint=fingerprint,
             prior=prior,
         )
     # A present, paired file needs no dispatcher at all: short-circuit before the
     # factory runs, so a dry or already-complete close never constructs a command.
-    if diagnosis.check_diagnoses(request, files=files, verdicts=verdict_rows) == "present":
+    if (
+        diagnosis.check_diagnoses(
+            request,
+            files=files,
+            verdicts=verdict_rows,
+            eval_sha=sha,
+            stack_fingerprint=fingerprint,
+        )
+        == "present"
+    ):
         return diagnosis.verify_diagnoses(
             request, dispatcher=_noop_dispatcher, files=files, verdicts=verdict_rows,
+            eval_sha=sha, stack_fingerprint=fingerprint,
             prior=prior,
         )
     try:
@@ -826,6 +838,8 @@ def _close_verify_diagnosis(args, run: TargetRun, trial_dir: Path, files: FileSt
         dispatcher=dispatcher,
         files=files,
         verdicts=verdict_rows,
+        eval_sha=sha,
+        stack_fingerprint=fingerprint,
         repair=diagnosis.DiagnoserReDispatchRepair(dispatcher, request),
         prior=prior,
     )
@@ -1205,10 +1219,29 @@ def _surfer_app_state(args):
     return read
 
 
-def _surfer_asserter(args, files: FileStore) -> surfer.SurferStateSource:
+def _surfer_log(err: TextIO) -> Callable[[dict], None]:
+    """Surface the surfer's structured records as operator-readable lines."""
+
+    def log(record: dict) -> None:
+        event = str(record.get("event", "event"))
+        path = record.get("path")
+        detail = record.get("error") or record.get("reason")
+        line = f"surfer: {event}"
+        if path:
+            line += f" {path}"
+        if detail:
+            line += f": {detail}"
+        print(line, file=err)
+
+    return log
+
+
+def _surfer_asserter(
+    args, files: FileStore, *, log: Callable[[dict], None] | None = None
+) -> surfer.SurferStateSource:
     return surfer.SurferStateSource(
         app_state=_surfer_app_state(args),
-        trial_log=surfer.FileTrialLog(args.runs_root, files=files),
+        trial_log=surfer.FileTrialLog(args.runs_root, files=files, log=log),
         signals=surfer.CreditExhaustionReader(),
     )
 
@@ -1333,6 +1366,7 @@ def _run_surfer(args, setup: EvalSetup, config: OrchestratorConfig, out: TextIO,
     files = FileStore()
     state = alignment.AlignmentState(Path(args.state), files=files)
     instance_paths = _alignment_instance_paths(args, setup, config)
+    log = _surfer_log(err)
 
     # Dry-run asserts and prints only: it never dispatches the decider, never
     # constructs an execution runner, and never mutates (the surfer's own
@@ -1340,7 +1374,7 @@ def _run_surfer(args, setup: EvalSetup, config: OrchestratorConfig, out: TextIO,
     if args.dry_run:
         engine = surfer.Surfer(
             _surfer_config(args),
-            asserter=asserter or _surfer_asserter(args, files),
+            asserter=asserter or _surfer_asserter(args, files, log=log),
             decider=_UnusedDecider(),
             instances=instance_paths,
             state=state,
@@ -1354,7 +1388,7 @@ def _run_surfer(args, setup: EvalSetup, config: OrchestratorConfig, out: TextIO,
     if decider is None:
         decider = surfer.SubagentSurferDecider(runner, _surfer_argv(args), files=files)
     if asserter is None:
-        asserter = _surfer_asserter(args, files)
+        asserter = _surfer_asserter(args, files, log=log)
     if repairs_factory is None:
         repairs_factory = _surfer_repair_factory(args, setup, config, data_root, runner)
     if resumer is None:
@@ -1371,6 +1405,7 @@ def _run_surfer(args, setup: EvalSetup, config: OrchestratorConfig, out: TextIO,
         repairs=repairs_factory,
         resumer=resumer,
         state=state,
+        log=log,
     )
     outcomes = engine.run(once=args.once)
     _print_surfer(outcomes, out)

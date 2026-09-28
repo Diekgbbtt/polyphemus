@@ -18,7 +18,8 @@ the orchestrator. The orchestrator decides exactly one of:
 No code change is ever applied. A decision the loop does not recognise as one of
 the three bounded actions, or a `fix` whose repair is not in the enumerated
 bounded set, becomes an escalation - structurally, in `_resolve`, not by trusting
-the prompt.
+the prompt. A structural escalation records the handled trigger exactly like an
+explicit `escalate`, so an unchanged trigger is not re-dispatched each cycle.
 
 A trigger is acted on once: its deterministic identity (`trigger_key`) is
 recorded in the alignment state through `record_applied`, so a long-running loop
@@ -228,11 +229,23 @@ class TrialLog(Protocol):
 
 
 class FileTrialLog:
-    """Read every `trial.yaml` under the runs root through the file seam."""
+    """Read every `trial.yaml` under the runs root through the file seam.
 
-    def __init__(self, runs_root: str | Path, *, files: FileStore | None = None) -> None:
+    `log` receives a structured record when a `trial.yaml` cannot be parsed or
+    is not a mapping, so a corrupt record is named to the operator instead of
+    silently vanishing; the walk always continues.
+    """
+
+    def __init__(
+        self,
+        runs_root: str | Path,
+        *,
+        files: FileStore | None = None,
+        log: Callable[[dict], None] | None = None,
+    ) -> None:
         self._runs_root = Path(runs_root)
         self._files = files or FileStore()
+        self._log = log or (lambda record: None)
 
     def records(self) -> tuple[Mapping, ...]:
         records: list[Mapping] = []
@@ -241,10 +254,21 @@ class FileTrialLog:
                 continue
             try:
                 payload = yaml.safe_load(self._files.read_text(path))
-            except yaml.YAMLError:
+            except yaml.YAMLError as exc:
+                self._log(
+                    {"event": "trial_record_invalid", "path": str(path), "error": str(exc)}
+                )
                 continue
-            if isinstance(payload, Mapping):
-                records.append(payload)
+            if not isinstance(payload, Mapping):
+                self._log(
+                    {
+                        "event": "trial_record_invalid",
+                        "path": str(path),
+                        "error": f"expected a mapping, got {type(payload).__name__}",
+                    }
+                )
+                continue
+            records.append(payload)
         return tuple(records)
 
 
@@ -771,11 +795,9 @@ class Surfer:
                 decision,
             )
         if decision.kind == ESCALATE:
-            outcome = self._escalate(
+            return self._escalate(
                 state, decision.reason or "the orchestrator escalated", decision
             )
-            self._record_handled(state.triggers)
-            return outcome
         if decision.kind == TERMINATE:
             calls = self._terminate(state)
             self._record_handled(state.triggers)
@@ -877,6 +899,10 @@ class Surfer:
             hold = write_hold(
                 self._state, trigger=state.primary, reason=reason, now=self._now()
             )
+        # Every escalation - a decider `escalate`, an unknown decision kind, or an
+        # unbounded repair - records the acted-on trigger, so an unchanged trigger
+        # is not re-dispatched every cycle. The hold itself is idempotent.
+        self._record_handled(state.triggers)
         return SurferOutcome(
             cycle=self._cycle,
             state=state,

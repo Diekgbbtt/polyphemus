@@ -67,8 +67,12 @@ Write a YAML list with exactly one entry per named vuln:
   evidences: [{source, ref, note}]
   closest_issue: {repo, number, title, rationale} | null
   proposed_issue: {title, body, labels} | null
+  eval_sha: string          # the trial record's eval_sha, copied verbatim
+  stack_fingerprint: string # the trial record's stack_fingerprint, copied verbatim
 ```
 
+Every entry must carry the trial record's `eval_sha` and `stack_fingerprint`, copied verbatim from the trial record; they are required, non-empty, and checked on write.
+Never invent them, and never change them: a row whose identity does not match the trial record is refused, exactly like a verdict row.
 `failure_mode` and `root_cause.type` are closed vocabularies; use only the values above.
 More failure modes are expected, particularly in the analysis layer, but they are a recorded future extension and may not be invented here.
 `root_cause.combination_of` carries only the additional types; never repeat the primary `type`.

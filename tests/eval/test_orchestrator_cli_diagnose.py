@@ -91,6 +91,8 @@ def _diagnosis_row(vuln: str = "v1") -> dict:
         "diagnosis_overview": "never reached the sink",
         "evidences": [{"source": "pod_export", "ref": "run1", "note": "no success"}],
         "proposed_issue": {"title": "gap", "body": "b", "labels": []},
+        "eval_sha": "eval-sha-1",
+        "stack_fingerprint": "fp-1",
     }
 
 

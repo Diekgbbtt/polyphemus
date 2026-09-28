@@ -1,9 +1,11 @@
 """The diagnosis schema, the dispatcher seam, and the issue-bank seam (#272).
 
 `diagnoses.yaml` is paired with `verdicts.yaml`: one entry per `missed`/`partial`
-verdict, keyed by the verdict's `vuln`. Validation is strict on write (atomic
-rename) and pairing is checked in both directions - an entry needs a
-`missed`/`partial` verdict, and close verification needs an entry for every one.
+verdict, keyed by the verdict's `vuln`. Every entry carries the trial record's
+`eval_sha` and `stack_fingerprint`, exactly like a verdict row. Validation is
+strict on write (atomic rename) and pairing is checked in both directions - an
+entry needs a `missed`/`partial` verdict, and close verification needs an entry
+for every one.
 The issue bank is read-only by construction: `GitHubIssueBank` exposes only a
 `search` method and only ever issues GET requests.
 """
@@ -53,6 +55,8 @@ def row(
     evidences: list | None = None,
     closest_issue: object = _UNSET,
     proposed_issue: object = _UNSET,
+    sha: str = SHA,
+    fingerprint: str = FINGERPRINT,
 ) -> dict:
     payload: dict = {
         "vuln": vuln,
@@ -65,6 +69,8 @@ def row(
         "evidences": evidences if evidences is not None else [
             {"source": "pod_export", "ref": "run1", "note": "no terminal success"}
         ],
+        "eval_sha": sha,
+        "stack_fingerprint": fingerprint,
     }
     if combination_of is not None:
         payload["root_cause"]["combination_of"] = combination_of
@@ -77,6 +83,39 @@ def row(
         if proposed_issue is not _UNSET and proposed_issue is not None:
             payload["proposed_issue"] = proposed_issue
     return payload
+
+
+# The trial record's identity the fixture verdicts (and so every valid row)
+# carry. The schema-level tests below inject it here so the fixtures stay valid
+# by construction; the dedicated identity tests call the real API explicitly.
+_IDENTITY = {"eval_sha": SHA, "stack_fingerprint": FINGERPRINT}
+
+
+def _validate(rows, *, verdicts):
+    return diagnosis.validate_diagnoses(rows, verdicts=verdicts, **_IDENTITY)
+
+
+def _write(path, rows, *, files, verdicts):
+    diagnosis.write_diagnoses(path, rows, files=files, verdicts=verdicts, **_IDENTITY)
+
+
+def _load(path, *, files, verdicts):
+    return diagnosis.load_diagnoses(path, files=files, verdicts=verdicts, **_IDENTITY)
+
+
+def _check(request, *, files, verdicts):
+    return diagnosis.check_diagnoses(request, files=files, verdicts=verdicts, **_IDENTITY)
+
+
+def _verify(request, *, dispatcher, files, verdicts, **kwargs):
+    return diagnosis.verify_diagnoses(
+        request,
+        dispatcher=dispatcher,
+        files=files,
+        verdicts=verdicts,
+        **_IDENTITY,
+        **kwargs,
+    )
 
 
 class FakeDispatcher:
@@ -109,30 +148,97 @@ class FakeBank:
 
 def test_validate_accepts_a_missed_and_a_partial_entry() -> None:
     rows = [row("v1", failure_mode="cap_hit"), row("v2", failure_mode="pod_diverged_trajectory")]
-    diags = diagnosis.validate_diagnoses(
+    diags = _validate(
         rows, verdicts=[verdict("v1", "missed"), verdict("v2", "partial")]
     )
     assert [d.vuln for d in diags] == ["v1", "v2"]
     assert diags[0].failure_mode == "cap_hit"
     assert diags[0].root_cause.type == "implementation_defect"
+    # Every entry carries the trial record's version identity (D32/#276 AC2).
+    assert diags[0].eval_sha == SHA
+    assert diags[0].stack_fingerprint == FINGERPRINT
+
+
+def test_rejects_an_entry_with_no_identity_fields() -> None:
+    bad = row()
+    del bad["eval_sha"]
+    with pytest.raises(diagnosis.DiagnosisError, match="eval_sha"):
+        _validate([bad], verdicts=[verdict("v1", "missed")])
+
+    bad = row()
+    del bad["stack_fingerprint"]
+    with pytest.raises(diagnosis.DiagnosisError, match="stack_fingerprint"):
+        _validate([bad], verdicts=[verdict("v1", "missed")])
+
+
+def test_rejects_an_empty_identity_on_an_entry() -> None:
+    with pytest.raises(diagnosis.DiagnosisError, match="eval_sha"):
+        _validate([row(sha="")], verdicts=[verdict("v1", "missed")])
+    with pytest.raises(diagnosis.DiagnosisError, match="stack_fingerprint"):
+        _validate([row(fingerprint="")], verdicts=[verdict("v1", "missed")])
+
+
+def test_rejects_an_identity_that_does_not_match_the_trial_record() -> None:
+    with pytest.raises(diagnosis.DiagnosisError, match="eval_sha"):
+        _validate([row(sha="invented-sha")], verdicts=[verdict("v1", "missed")])
+    with pytest.raises(diagnosis.DiagnosisError, match="stack_fingerprint"):
+        _validate([row(fingerprint="invented-fp")], verdicts=[verdict("v1", "missed")])
+
+
+def test_rejects_a_record_without_an_identity() -> None:
+    # The record's own identity is the expected side; a record with none is
+    # refused rather than defaulting (the diagnosis may never invent one).
+    with pytest.raises(diagnosis.DiagnosisError, match="trial record"):
+        diagnosis.validate_diagnoses(
+            [row()],
+            verdicts=[verdict("v1", "missed")],
+            eval_sha=None,
+            stack_fingerprint=FINGERPRINT,
+        )
+    with pytest.raises(diagnosis.DiagnosisError, match="trial record"):
+        diagnosis.validate_diagnoses(
+            [row()],
+            verdicts=[verdict("v1", "missed")],
+            eval_sha=SHA,
+            stack_fingerprint=None,
+        )
+
+
+def test_write_validates_the_identity_before_writing() -> None:
+    import tempfile
+    from pathlib import Path
+
+    files = FileStore()
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "diagnoses.yaml"
+        with pytest.raises(diagnosis.DiagnosisError, match="eval_sha"):
+            diagnosis.write_diagnoses(
+                path,
+                [row(sha="invented-sha")],
+                files=files,
+                verdicts=[verdict("v1", "missed")],
+                eval_sha=SHA,
+                stack_fingerprint=FINGERPRINT,
+            )
+        assert not path.exists()
 
 
 def test_rejects_an_unknown_failure_mode() -> None:
     with pytest.raises(diagnosis.DiagnosisError, match="failure_mode"):
-        diagnosis.validate_diagnoses(
+        _validate(
             [row(failure_mode="made_up")], verdicts=[verdict("v1", "missed")]
         )
 
 
 def test_rejects_an_unknown_root_cause_type() -> None:
     with pytest.raises(diagnosis.DiagnosisError, match="root_cause.type"):
-        diagnosis.validate_diagnoses(
+        _validate(
             [row(type_="made_up")], verdicts=[verdict("v1", "missed")]
         )
 
 
 def test_root_cause_accepts_the_data_layer_types_and_a_combination() -> None:
-    diags = diagnosis.validate_diagnoses(
+    diags = _validate(
         [row(type_="kb_coverage_gap", combination_of=["skill_defect"])],
         verdicts=[verdict("v1", "missed")],
     )
@@ -142,17 +248,17 @@ def test_root_cause_accepts_the_data_layer_types_and_a_combination() -> None:
 
 def test_rejects_a_self_referential_or_duplicated_combination() -> None:
     with pytest.raises(diagnosis.DiagnosisError, match="combination_of"):
-        diagnosis.validate_diagnoses(
+        _validate(
             [row(type_="implementation_defect", combination_of=["implementation_defect"])],
             verdicts=[verdict("v1", "missed")],
         )
     with pytest.raises(diagnosis.DiagnosisError, match="combination_of"):
-        diagnosis.validate_diagnoses(
+        _validate(
             [row(type_="implementation_defect", combination_of=["implementation_defect"])],
             verdicts=[verdict("v1", "missed")],
         )
     with pytest.raises(diagnosis.DiagnosisError, match="combination_of"):
-        diagnosis.validate_diagnoses(
+        _validate(
             [row(type_="implementation_defect", combination_of=["skill_defect", "skill_defect"])],
             verdicts=[verdict("v1", "missed")],
         )
@@ -160,25 +266,25 @@ def test_rejects_a_self_referential_or_duplicated_combination() -> None:
 
 def test_rejects_empty_narratives() -> None:
     with pytest.raises(diagnosis.DiagnosisError, match="diagnosis_overview"):
-        diagnosis.validate_diagnoses(
+        _validate(
             [row(diagnosis_overview="")], verdicts=[verdict("v1", "missed")]
         )
     with pytest.raises(diagnosis.DiagnosisError, match="extended_description"):
-        diagnosis.validate_diagnoses(
+        _validate(
             [row(extended_description="")], verdicts=[verdict("v1", "missed")]
         )
 
 
 def test_rejects_a_duplicate_vuln_entry() -> None:
     with pytest.raises(diagnosis.DiagnosisError, match="duplicate"):
-        diagnosis.validate_diagnoses(
+        _validate(
             [row("v1"), row("v1")], verdicts=[verdict("v1", "missed")]
         )
 
 
 def test_rejects_an_entry_with_no_verdict() -> None:
     with pytest.raises(diagnosis.DiagnosisError, match="no verdict"):
-        diagnosis.validate_diagnoses(
+        _validate(
             [row("ghost")], verdicts=[verdict("v1", "missed")]
         )
 
@@ -186,14 +292,14 @@ def test_rejects_an_entry_with_no_verdict() -> None:
 def test_rejects_an_entry_for_an_identified_vuln() -> None:
     # `identified` is a success; it may not carry a diagnosis entry (D20).
     with pytest.raises(diagnosis.DiagnosisError, match="identified"):
-        diagnosis.validate_diagnoses(
+        _validate(
             [row("v1")], verdicts=[verdict("v1", "identified")]
         )
 
 
 def test_rejects_both_a_closest_and_a_proposed_issue() -> None:
     with pytest.raises(diagnosis.DiagnosisError, match="closest_issue"):
-        diagnosis.validate_diagnoses(
+        _validate(
             [
                 row(
                     closest_issue={"repo": "o/r", "number": 1, "title": "t", "rationale": "r"},
@@ -206,14 +312,14 @@ def test_rejects_both_a_closest_and_a_proposed_issue() -> None:
 
 def test_rejects_neither_a_closest_nor_a_proposed_issue() -> None:
     with pytest.raises(diagnosis.DiagnosisError, match="exactly one"):
-        diagnosis.validate_diagnoses(
+        _validate(
             [row(closest_issue=None, proposed_issue=None)],
             verdicts=[verdict("v1", "missed")],
         )
 
 
 def test_accepts_a_closest_issue_only() -> None:
-    diags = diagnosis.validate_diagnoses(
+    diags = _validate(
         [
             row(
                 closest_issue={
@@ -233,7 +339,7 @@ def test_accepts_a_closest_issue_only() -> None:
 
 
 def test_accepts_a_proposed_issue_only() -> None:
-    diags = diagnosis.validate_diagnoses(
+    diags = _validate(
         [row(proposed_issue={"title": "new", "body": "b", "labels": ["bug"]})],
         verdicts=[verdict("v1", "missed")],
     )
@@ -250,13 +356,13 @@ def test_write_is_atomic_and_round_trips() -> None:
     files = FileStore()
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / "diagnoses.yaml"
-        diagnosis.write_diagnoses(
+        _write(
             path,
             [row("v1", proposed_issue={"title": "new", "body": "b", "labels": ["bug"]})],
             files=files,
             verdicts=[verdict("v1", "missed")],
         )
-        loaded = diagnosis.load_diagnoses(
+        loaded = _load(
             path, files=files, verdicts=[verdict("v1", "missed")]
         )
         leftovers = [p.name for p in path.parent.iterdir() if p.name.startswith(".diagnoses")]
@@ -276,7 +382,7 @@ def test_write_validates_before_writing() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / "diagnoses.yaml"
         with pytest.raises(diagnosis.DiagnosisError):
-            diagnosis.write_diagnoses(
+            _write(
                 path, [row(failure_mode="nope")], files=files,
                 verdicts=[verdict("v1", "missed")],
             )
@@ -288,7 +394,7 @@ def test_write_validates_before_writing() -> None:
 
 def test_missing_entries_lists_every_unpaired_missed_and_partial() -> None:
     vs = [verdict("v1", "missed"), verdict("v2", "partial"), verdict("v3", "identified")]
-    diags = diagnosis.validate_diagnoses([row("v1")], verdicts=vs)
+    diags = _validate([row("v1")], verdicts=vs)
     assert diagnosis.required_vulns(vs) == ("v1", "v2")
     assert diagnosis.missing_entries(vs, diags) == ("v2",)
     with pytest.raises(diagnosis.DiagnosisError, match="v2"):
@@ -412,7 +518,7 @@ def _paired_request(tmp_path):
 def test_verify_diagnoses_not_required_when_every_verdict_is_identified(tmp_path) -> None:
     request = _paired_request(tmp_path)
     dispatcher = FakeDispatcher()
-    record = diagnosis.verify_diagnoses(
+    record = _verify(
         request, dispatcher=dispatcher, files=FileStore(),
         verdicts=[verdict("v1", "identified")],
     )
@@ -423,14 +529,14 @@ def test_verify_diagnoses_not_required_when_every_verdict_is_identified(tmp_path
 def test_verify_diagnoses_short_circuits_on_a_present_paired_file(tmp_path) -> None:
     request = _paired_request(tmp_path)
     files = FileStore()
-    diagnosis.write_diagnoses(
+    _write(
         request.destination,
         [row("v1", closest_issue={"repo": "o/r", "number": 3, "title": "t", "rationale": "r"})],
         files=files,
         verdicts=[verdict("v1", "missed")],
     )
     dispatcher = FakeDispatcher()
-    record = diagnosis.verify_diagnoses(
+    record = _verify(
         request, dispatcher=dispatcher, files=files, verdicts=[verdict("v1", "missed")]
     )
     assert record.status == "present"
@@ -443,7 +549,7 @@ def test_verify_diagnoses_short_circuits_on_a_present_paired_file(tmp_path) -> N
 def test_verify_diagnoses_redispatches_twice_then_escalates(tmp_path) -> None:
     request = _paired_request(tmp_path)
     dispatcher = FakeDispatcher()  # never writes the file
-    record = diagnosis.verify_diagnoses(
+    record = _verify(
         request, dispatcher=dispatcher, files=FileStore(),
         verdicts=[verdict("v1", "missed")],
     )
@@ -460,14 +566,14 @@ def test_verify_diagnoses_repairs_a_missing_entry_then_passes(tmp_path) -> None:
     def action(req):
         calls["n"] += 1
         if calls["n"] > 2:
-            diagnosis.write_diagnoses(
+            _write(
                 req.destination, [row("v1")], files=files,
                 verdicts=[verdict("v1", "missed")],
             )
 
     dispatcher = FakeDispatcher(action)
     repair = diagnosis.DiagnoserReDispatchRepair(dispatcher, request)
-    record = diagnosis.verify_diagnoses(
+    record = _verify(
         request, dispatcher=dispatcher, repair=repair, files=files,
         verdicts=[verdict("v1", "missed")],
     )
@@ -480,12 +586,12 @@ def test_verify_diagnoses_flags_an_unpaired_file(tmp_path) -> None:
     request = _paired_request(tmp_path)
     files = FileStore()
     # A valid entry for v1, but the verdict set requires v1 and v2.
-    diagnosis.write_diagnoses(
+    _write(
         request.destination, [row("v1")], files=files,
         verdicts=[verdict("v1", "missed"), verdict("v2", "missed")],
     )
     vs = [verdict("v1", "missed"), verdict("v2", "missed")]
-    assert diagnosis.check_diagnoses(request, files=files, verdicts=vs) == "unpaired"
+    assert _check(request, files=files, verdicts=vs) == "unpaired"
 
 
 def test_record_diagnosis_preserves_the_rest_of_the_trial_record(tmp_path) -> None:
