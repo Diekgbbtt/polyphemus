@@ -88,13 +88,17 @@ class InstanceConfig:
     """One eval instance's idle/digest identity for the N-instance daemon (I1).
 
     `app_state_url` is that instance's `/app-state` proxy; `compose_project` and
-    `image_containers` name its running stack for the manifest's digests.
+    `image_containers` name its running stack for the manifest's digests. `dsn`
+    is that instance's own postgres fallback, so a down API attributes its rows
+    to that instance's database rather than a shared one (R-I1); unset falls
+    back to the daemon-wide `EVAL_ADVANCE_DSN`.
     """
 
     instance_id: str
     app_state_url: str
     compose_project: str | None = None
     image_containers: Mapping[str, str] | None = None
+    dsn: str | None = None
 
 
 @dataclass(frozen=True)
@@ -359,6 +363,30 @@ def default_image_digests(
 # --- the daemon --------------------------------------------------------------
 
 
+def idle_proxy_for(
+    instance: InstanceConfig,
+    *,
+    shared_dsn: str | None,
+    log: LogFn = default_log,
+    http_transport: app_state.HttpTransport = app_state.default_http_transport,
+    dsn_transport: app_state.DsnTransport = app_state.default_dsn_transport,
+) -> app_state.IdleProxy:
+    """The per-instance idle proxy: its own DSN, else the daemon-wide fallback.
+
+    R-I1: with N instances a single shared fallback DSN would attribute one
+    database's in-flight rows to whichever instance queried it, so each instance
+    carries its own `dsn` when configured. An instance without one keeps the
+    backward-compatible shared `EVAL_ADVANCE_DSN`.
+    """
+    return app_state.IdleProxy(
+        instance.app_state_url,
+        dsn=instance.dsn if instance.dsn is not None else shared_dsn,
+        http_transport=http_transport,
+        dsn_transport=dsn_transport,
+        log=log,
+    )
+
+
 def _default_clock() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -395,8 +423,8 @@ class Daemon:
             }
         else:
             self._idle_proxies = {
-                instance.instance_id: app_state.IdleProxy(
-                    instance.app_state_url, dsn=config.dsn, log=log
+                instance.instance_id: idle_proxy_for(
+                    instance, shared_dsn=config.dsn, log=log
                 )
                 for instance in config.resolved_instances()
             }
@@ -861,9 +889,10 @@ def rewind(
 def parse_instances(value: str | None) -> tuple[InstanceConfig, ...]:
     """Parse `EVAL_ADVANCE_INSTANCES`: a JSON/YAML list of instance mappings.
 
-    Each entry needs `instance_id` and `app_state_url`; `compose_project` and
-    `image_containers` (a mapping) are optional. Absent/empty means the legacy
-    single-instance fields apply (I1, backward compatible).
+    Each entry needs `instance_id` and `app_state_url`; `compose_project`,
+    `dsn`, and `image_containers` (a mapping) are optional. An instance without
+    a `dsn` falls back to the daemon-wide `EVAL_ADVANCE_DSN` (R-I1). Absent/empty
+    means the legacy single-instance fields apply (I1, backward compatible).
     """
     if not value:
         return ()
@@ -887,6 +916,9 @@ def parse_instances(value: str | None) -> tuple[InstanceConfig, ...]:
         compose_project = entry.get("compose_project")
         if compose_project is not None and not isinstance(compose_project, str):
             raise ConfigError(f"{where}.compose_project: expected a string")
+        dsn = entry.get("dsn")
+        if dsn is not None and not isinstance(dsn, str):
+            raise ConfigError(f"{where}.dsn: expected a string")
         raw_containers = entry.get("image_containers")
         if raw_containers is not None and not isinstance(raw_containers, Mapping):
             raise ConfigError(f"{where}.image_containers: expected a mapping")
@@ -895,6 +927,7 @@ def parse_instances(value: str | None) -> tuple[InstanceConfig, ...]:
                 instance_id=instance_id,
                 app_state_url=url,
                 compose_project=compose_project,
+                dsn=dsn,
                 image_containers=(
                     {str(k): str(v) for k, v in raw_containers.items()}
                     if raw_containers is not None
