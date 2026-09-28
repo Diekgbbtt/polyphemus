@@ -12,12 +12,13 @@ import json
 import os
 import shlex
 import sys
+from dataclasses import replace
 from pathlib import Path
 from typing import Callable, TextIO
 
 import yaml
 
-from orchestrator import api, assessment, diagnosis, evidence, instances, store, trial, verdicts
+from orchestrator import api, assessment, diagnosis, evidence, instances, store, surfer, trial, verdicts
 from orchestrator import alignment
 from orchestrator.commands import LocalRunner
 from orchestrator.files import FileStore
@@ -67,6 +68,7 @@ _HANDLED = (
     verdicts.VerdictError,
     store.StoreError,
     alignment.AlignmentError,
+    surfer.SurferError,
     OSError,
 )
 
@@ -285,6 +287,59 @@ def _parser() -> argparse.ArgumentParser:
     resolve_parser.add_argument("--hold-id", required=True, help="the hold to resolve")
     resolve_parser.add_argument(
         "--decision", required=True, help="the operator's decision, recorded on the hold"
+    )
+
+    # --- the surfer loop (#275) -----------------------------------------------
+    surfer_parser = sub.add_parser(
+        "surfer",
+        help="assert instance state and recover a cap-reached or failed run",
+    )
+    _common_args(surfer_parser)
+    surfer_parser.add_argument(
+        "--api",
+        default=os.environ.get("PH_API", DEFAULT_API),
+        help="the instance polymerhus API base URL (the app-state source)",
+    )
+    surfer_parser.add_argument(
+        "--dsn",
+        default=os.environ.get("EVAL_PG_DSN"),
+        help="the postgres DSN for the app-state fallback (unknown is never idle)",
+    )
+    surfer_parser.add_argument(
+        "--data-root",
+        default=os.environ.get("EVAL_DATA_ROOT"),
+        help="the instance's app data root (the bounded repair's scope)",
+    )
+    surfer_parser.add_argument(
+        "--runs-root",
+        default=os.environ.get("EVAL_RUNS_ROOT", DEFAULT_RUNS_ROOT),
+        help="where per-trial record directories live",
+    )
+    surfer_parser.add_argument(
+        "--interval-s",
+        type=float,
+        default=float(os.environ.get("EVAL_SURFER_INTERVAL_S", 60.0)),
+        help="the poll interval between cycles",
+    )
+    surfer_parser.add_argument(
+        "--once",
+        action="store_true",
+        help="perform exactly one poll-assert-decide cycle (the testable unit)",
+    )
+    surfer_parser.add_argument(
+        "--command",
+        default=os.environ.get("EVAL_SURFER_COMMAND"),
+        help="the surfer agent command line; placeholders: {prompt} {input} {destination}",
+    )
+    surfer_parser.add_argument("--budget-s", type=float, default=7200.0)
+    surfer_parser.add_argument("--poll-s", type=float, default=15.0)
+    surfer_parser.add_argument("--eval-sha", default=os.environ.get("EVAL_SHA"))
+    surfer_parser.add_argument(
+        "--stack-fingerprint", default=os.environ.get("EVAL_STACK_FINGERPRINT")
+    )
+    surfer_parser.add_argument("--trace-id", default=os.environ.get("EVAL_TRACE_ID"))
+    surfer_parser.add_argument(
+        "--dry-run", action="store_true", help="assert the state and dispatch nothing"
     )
     return parser
 
@@ -1102,6 +1157,208 @@ def _run_alignment_resolve(args, out: TextIO) -> int:
     return 0
 
 
+# --- the surfer loop (#275) ---------------------------------------------------
+
+
+class _UnusedDecider:
+    """A decider that must never be dispatched: dry-run asserts only."""
+
+    def decide(self, request):  # pragma: no cover - never reached
+        raise AssertionError("surfer dry-run must not dispatch the decider")
+
+
+def _surfer_argv(args) -> tuple[str, ...]:
+    if not args.command:
+        raise surfer.SurferError(
+            "no surfer command configured; pass --command or EVAL_SURFER_COMMAND"
+        )
+    return tuple(shlex.split(args.command))
+
+
+def _surfer_config(args) -> surfer.SurferConfig:
+    return surfer.SurferConfig(interval_s=args.interval_s)
+
+
+def _surfer_app_state(args):
+    """The injected idle proxy, failing closed: an unknown state is never idle."""
+    from advance.app_state import AppState, AppStateUnavailable, IdleProxy
+
+    proxy = IdleProxy(args.api, dsn=args.dsn)
+
+    def read():
+        try:
+            return proxy.fetch()
+        except AppStateUnavailable:
+            return AppState(idle=False, projects=())
+
+    return read
+
+
+def _surfer_asserter(args, files: FileStore) -> surfer.SurferStateSource:
+    return surfer.SurferStateSource(
+        app_state=_surfer_app_state(args),
+        trial_log=surfer.FileTrialLog(args.runs_root, files=files),
+        signals=surfer.CreditExhaustionReader(),
+    )
+
+
+def _surfer_preloaded_for(setup: EvalSetup):
+    """target_id -> the target's pre-mined artifacts, for `replace_artifacts`."""
+    mapping = {
+        run.target_id: run.preloaded_hunting_artifacts
+        for instance in setup.instances
+        for run in instance.targets
+        if run.preloaded_hunting_artifacts is not None
+    }
+    return lambda target_id: mapping.get(target_id) if target_id else None
+
+
+def _surfer_repair_factory(args, setup: EvalSetup, config: OrchestratorConfig,
+                           data_root: Path, runner):
+    """Build the bounded repair kit for the trigger's instance."""
+    paths = {
+        p.instance.instance_id: p
+        for p in _alignment_instance_paths(args, setup, config)
+    }
+    preloaded = _surfer_preloaded_for(setup)
+
+    def build(trigger: surfer.Trigger):
+        instance_paths = paths.get(trigger.instance_id)
+        if instance_paths is None:
+            return None
+        return surfer.SurferRepairKit(
+            instance_paths,
+            runner=runner,
+            data_root=data_root,
+            preloaded=preloaded(trigger.target_id),
+        )
+
+    return build
+
+
+def _resume_trial(args, setup: EvalSetup, config: OrchestratorConfig,
+                  plan: surfer.ResumePlan, data_root: Path, runner_factory: RunnerFactory,
+                  api_factory: ApiFactory | None) -> str:
+    """Relaunch a failed trial at its recorded phase through the trial engine."""
+    instance = _find_instance(setup, plan.instance_id)
+    paths = instances.instance_paths(
+        instance,
+        config.instances_root,
+        repo=config.repo,
+        branch=config.branch,
+        compose_files=config.compose_files,
+    )
+    resume_args = argparse.Namespace(
+        instance_id=plan.instance_id,
+        target_id=plan.target_id,
+        target_run_id=None,
+        data_root=str(data_root),
+        runs_root=args.runs_root,
+        budget_s=args.budget_s,
+        poll_s=args.poll_s,
+        project_id=plan.project_id,
+        recon_run=plan.recon_run_id,
+        eval_sha=args.eval_sha,
+        stack_fingerprint=args.stack_fingerprint,
+        trace_id=args.trace_id,
+        repo=args.repo,
+        dry_run=False,
+    )
+    cfg, _paths, _run = _trial_config(resume_args, setup, config)
+    cfg = replace(cfg, start_phase=plan.start_phase, intervention=plan.intervention)
+    runner = runner_factory()
+    api_runner = (api_factory or (lambda base: api.HttpApiRunner(base)))(args.api)
+    probe = trial.make_reachability_probe(paths, runner, trial.front_url(cfg))
+    engine = trial.Trial(cfg, api_runner=api_runner, runner=runner, reachable=probe)
+    orchestrator = Orchestrator(setup, config, runner=runner)
+    record = engine.run(
+        bring_up=orchestrator.up, repair=trial.InstanceRepair(paths, runner)
+    )
+    return record.trial_id
+
+
+def _surfer_resumer(args, setup: EvalSetup, config: OrchestratorConfig,
+                    data_root: Path, runner_factory: RunnerFactory,
+                    api_factory: ApiFactory | None):
+    def run(plan: surfer.ResumePlan) -> str:
+        return _resume_trial(
+            args, setup, config, plan, data_root, runner_factory, api_factory
+        )
+
+    return surfer.CallbackResumer(run)
+
+
+def _print_surfer(outcomes: list[surfer.SurferOutcome], out: TextIO) -> None:
+    for outcome in outcomes:
+        if outcome.no_op:
+            print(f"surfer cycle {outcome.cycle}: idle; no trigger", file=out)
+            continue
+        for trigger in outcome.state.triggers:
+            print(
+                f"surfer cycle {outcome.cycle}: {trigger.kind} {trigger.instance_id}: "
+                f"{trigger.detail}",
+                file=out,
+            )
+        if outcome.planned:
+            print(f"  {outcome.detail}", file=out)
+        elif outcome.action:
+            print(f"  {outcome.action}: {outcome.detail}", file=out)
+
+
+def _run_surfer(args, setup: EvalSetup, config: OrchestratorConfig, out: TextIO,
+                err: TextIO, runner_factory: RunnerFactory,
+                api_factory: ApiFactory | None,
+                decider: surfer.SurferDecider | None,
+                asserter: surfer.StateAsserter | None,
+                resumer: surfer.TrialResumer | None,
+                repairs_factory) -> int:
+    files = FileStore()
+    state = alignment.AlignmentState(Path(args.state), files=files)
+    instance_paths = _alignment_instance_paths(args, setup, config)
+
+    # Dry-run asserts and prints only: it never dispatches the decider, never
+    # constructs an execution runner, and never mutates (the surfer's own
+    # side-effect-free contract, unlike #274's align).
+    if args.dry_run:
+        engine = surfer.Surfer(
+            _surfer_config(args),
+            asserter=asserter or _surfer_asserter(args, files),
+            decider=_UnusedDecider(),
+            instances=instance_paths,
+            state=state,
+            dry_run=True,
+        )
+        _print_surfer(engine.run(once=True), out)
+        return 0
+
+    data_root = _resolve_data_root(args)
+    runner = runner_factory()
+    if decider is None:
+        decider = surfer.SubagentSurferDecider(runner, _surfer_argv(args), files=files)
+    if asserter is None:
+        asserter = _surfer_asserter(args, files)
+    if repairs_factory is None:
+        repairs_factory = _surfer_repair_factory(args, setup, config, data_root, runner)
+    if resumer is None:
+        resumer = _surfer_resumer(
+            args, setup, config, data_root, runner_factory, api_factory
+        )
+    engine = surfer.Surfer(
+        _surfer_config(args),
+        asserter=asserter,
+        decider=decider,
+        instances=instance_paths,
+        runner=runner,
+        api=(api_factory or (lambda base: api.HttpApiRunner(base)))(args.api),
+        repairs=repairs_factory,
+        resumer=resumer,
+        state=state,
+    )
+    outcomes = engine.run(once=args.once)
+    _print_surfer(outcomes, out)
+    return 1 if any(outcome.escalated for outcome in outcomes) else 0
+
+
 def main(
     argv: list[str] | None = None,
     *,
@@ -1111,6 +1368,10 @@ def main(
     diagnose_dispatch_factory: DiagnoseDispatchFactory | None = None,
     issue_bank_factory: IssueBankFactory | None = None,
     alignment_decider: alignment.AlignmentDecider | None = None,
+    surfer_decider: surfer.SurferDecider | None = None,
+    surfer_asserter: surfer.StateAsserter | None = None,
+    surfer_resumer: surfer.TrialResumer | None = None,
+    surfer_repairs: Callable[[surfer.Trigger], surfer.SurferRepairs] | None = None,
     stdout: TextIO | None = None,
     stderr: TextIO | None = None,
 ) -> int:
@@ -1133,6 +1394,11 @@ def main(
         if args.verb == "align":
             return _run_align(
                 args, setup, config, out, runner_factory, alignment_decider
+            )
+        if args.verb == "surfer":
+            return _run_surfer(
+                args, setup, config, out, err, runner_factory, api_factory,
+                surfer_decider, surfer_asserter, surfer_resumer, surfer_repairs,
             )
         if args.verb == "trial":
             # D42: an unresolved alignment hold refuses to start a new trial.

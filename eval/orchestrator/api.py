@@ -172,6 +172,14 @@ def hunting_status(project_id: str, hunting_run_id: str) -> ApiCall:
     return ApiCall("GET", f"/projects/{project_id}/hunting/{hunting_run_id}")
 
 
+def stop_recon(project_id: str, run_id: str) -> ApiCall:
+    return ApiCall("POST", f"/projects/{project_id}/recon/{run_id}/stop")
+
+
+def stop_analysis(project_id: str, run_id: str) -> ApiCall:
+    return ApiCall("POST", f"/projects/{project_id}/analysis/{run_id}/stop")
+
+
 def stop_hunting(project_id: str, hunting_run_id: str) -> ApiCall:
     return ApiCall("POST", f"/projects/{project_id}/hunting/{hunting_run_id}/stop")
 

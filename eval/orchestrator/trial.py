@@ -202,6 +202,9 @@ class TrialConfig:
     # The Langfuse trace id this trial ran under, when one was recorded; the
     # assessment/diagnoser dispatches substitute it into `{trace_id}`.
     trace_id: str | None = None
+    # #275: a surfer intervention note stamped into the record when this trial
+    # resumes a failed one at its recorded phase.
+    intervention: str | None = None
 
 
 @dataclass
@@ -571,18 +574,12 @@ class Trial:
         pipeline's lazy read looks, so the normal mover consumes them. The trial
         never uploads or fabricates an artifact through the API.
         """
-        cfg = self.config
-        pre = cfg.preloaded_hunting_artifacts
-        if pre.configs is not None:
-            produced = hunt_configs_dir(cfg.data_root, project_id, "produced")
-            for path in _premined_sources(self._files, pre.configs):
-                self._files.write_text(produced / path.name, self._files.read_text(path))
-        for spec in pre.test_specs:
-            produced = hunter_test_specs_fault_dir(
-                cfg.data_root, project_id, spec.fault_key, "produced"
-            )
-            for path in _premined_sources(self._files, spec.path):
-                self._files.write_text(produced / path.name, self._files.read_text(path))
+        place_premined(
+            self._files,
+            data_root=self.config.data_root,
+            project_id=project_id,
+            preloaded=self.config.preloaded_hunting_artifacts,
+        )
 
     # --- phases ---------------------------------------------------------------
 
@@ -715,7 +712,10 @@ class Trial:
         cfg = self.config
         trial_id = cfg.trial_id or _default_trial_id(cfg, self._now)
         trial_dir = Path(cfg.runs_root) / cfg.target_id / trial_id
-        aggregated = list(notes) + [note for phase in phases for note in phase.notes]
+        intervention = [cfg.intervention] if cfg.intervention else []
+        aggregated = intervention + list(notes) + [
+            note for phase in phases for note in phase.notes
+        ]
         record = TrialRecord(
             trial_id=trial_id,
             instance_id=cfg.instance_id,
@@ -770,6 +770,31 @@ def _premined_sources(files: FileStore, source: str) -> list[Path]:
     """The files a pre-mined artifact source contributes: itself, or its walk."""
     path = Path(source)
     return [path] if files.is_file(path) else files.walk_files(path)
+
+
+def place_premined(
+    files: FileStore,
+    *,
+    data_root: str | Path,
+    project_id: str,
+    preloaded: PreloadedArtifacts,
+) -> None:
+    """Place pre-mined artifacts into the pipeline's own `produced/` inboxes.
+
+    Shared with the surfer's `replace_artifacts` data-layer repair (#275) so the
+    trial bootstrap and the repair can never drift: both land in the exact
+    `produced/` inbox the pipeline's lazy read drains, never a bespoke path.
+    """
+    if preloaded.configs is not None:
+        produced = hunt_configs_dir(data_root, project_id, "produced")
+        for path in _premined_sources(files, preloaded.configs):
+            files.write_text(produced / path.name, files.read_text(path))
+    for spec in preloaded.test_specs:
+        produced = hunter_test_specs_fault_dir(
+            data_root, project_id, spec.fault_key, "produced"
+        )
+        for path in _premined_sources(files, spec.path):
+            files.write_text(produced / path.name, files.read_text(path))
 
 
 def _premined_inboxes(cfg: TrialConfig, project: str) -> tuple[str, ...]:

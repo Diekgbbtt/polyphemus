@@ -1,0 +1,788 @@
+"""The surfer loop (#275, D5/D31/N17).
+
+The surfer asserts instance state in the background and prompts the orchestrator
+on a cap-reached or failed state; the orchestrator decides terminate, destroy or
+a bounded fix-and-restart, or escalates into a hold. Every effect is injected -
+the state source, the decider agent turn, the command runner, the REST client,
+the repair kit, the trial resumer, the clock, and the hold state - so the loop is
+exercised without Docker, a live stack, or an agent. Import performs no I/O.
+"""
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from advance.app_state import AppState
+from orchestrator import alignment, api, instances, surfer, trial
+from orchestrator.commands import CommandResult
+from orchestrator.files import FileStore, hunt_configs_dir
+from orchestrator.instances import InstancePaths
+from orchestrator.setup import (
+    EvalSetup,
+    Instance,
+    PreloadedArtifacts,
+    PreloadedTestSpec,
+    TargetConfig,
+    TargetRun,
+)
+
+
+# --- fixtures and helpers -----------------------------------------------------
+
+
+def make_paths(tmp_path: Path, instance_id: str = "arm-a", *, worktree: bool = True):
+    instance = Instance(instance_id=instance_id, targets=())
+    paths = instances.instance_paths(
+        instance, tmp_path / "instances", repo=tmp_path / "repo", branch="eval"
+    )
+    if worktree:
+        paths.worktree.mkdir(parents=True, exist_ok=True)
+    return paths
+
+
+def make_setup(instance_id: str = "arm-a", target_id: str = "t1") -> EvalSetup:
+    return EvalSetup(
+        schema_version=1,
+        artifact_store="/srv/store",
+        instances=(
+            Instance(
+                instance_id=instance_id,
+                targets=(
+                    TargetRun(
+                        target_id=target_id,
+                        target_config=TargetConfig(lifecycle="image", params={}),
+                    ),
+                ),
+            ),
+        ),
+    )
+
+
+def failed_trigger(
+    *, instance_id: str = "arm-a", target_id: str = "t1", project_id: str = "pid",
+    run_kind: str = "hunting", run_id: str = "h1", start_phase: str = "hunting",
+    detail: str = "hunting interrupted",
+) -> surfer.Trigger:
+    return surfer.Trigger(
+        kind=surfer.FAILED_RUN,
+        instance_id=instance_id,
+        detail=detail,
+        target_id=target_id,
+        project_id=project_id,
+        run_kind=run_kind,
+        run_id=run_id,
+        start_phase=start_phase,
+    )
+
+
+def state_with(*triggers: surfer.Trigger, idle: bool = False) -> surfer.SurfacedState:
+    return surfer.SurfacedState(idle=idle, triggers=tuple(triggers))
+
+
+class StaticAsserter:
+    def __init__(self, state: surfer.SurfacedState) -> None:
+        self.state = state
+        self.calls = 0
+
+    def assert_state(self) -> surfer.SurfacedState:
+        self.calls += 1
+        return self.state
+
+
+class StaticDecider:
+    def __init__(self, decision: surfer.SurferDecision) -> None:
+        self.decision = decision
+        self.requests: list[surfer.SurferRequest] = []
+
+    def decide(self, request: surfer.SurferRequest) -> surfer.SurferDecision:
+        self.requests.append(request)
+        return self.decision
+
+
+_EXPLODE = "the decider must never be dispatched"
+
+
+class ExplodingDecider:
+    def decide(self, request):  # pragma: no cover - a dry-run never dispatches
+        raise AssertionError(_EXPLODE)
+
+
+class FakeApi:
+    def __init__(self) -> None:
+        self.calls: list = []
+
+    def __call__(self, call):
+        self.calls.append(call)
+        return {}
+
+    @property
+    def paths(self) -> list[str]:
+        return [f"{c.method} {c.path}" for c in self.calls]
+
+
+class RecordingResumer:
+    def __init__(self) -> None:
+        self.plans: list[surfer.ResumePlan] = []
+
+    def resume(self, plan: surfer.ResumePlan) -> str:
+        self.plans.append(plan)
+        return f"{plan.target_id}-resumed"
+
+
+class FakeRepairKit:
+    """Records the bounded repair and restart calls; supports what it is told."""
+
+    def __init__(self, supported=("env", "clear_lock")) -> None:
+        self.supported = set(supported)
+        self.applied: list[str] = []
+        self.restarted: list[str] = []
+        self.projects: list[str] = []
+
+    def supports(self, repair: str) -> bool:
+        return repair in self.supported
+
+    def apply(self, repair: str, *, project_id: str) -> None:
+        if repair not in self.supported:
+            raise surfer.SurferError(f"unsupported repair: {repair!r}")
+        self.applied.append(repair)
+        self.projects.append(project_id)
+
+    def restart(self, repair: str) -> None:
+        self.restarted.append(repair)
+
+
+def make_surfer(
+    asserter,
+    decider,
+    *,
+    tmp_path: Path,
+    state=None,
+    runner=None,
+    api_runner=None,
+    repair_kit=None,
+    resumer=None,
+    instances=("arm-a",),
+    dry_run=False,
+    config=None,
+    sleep=None,
+    now=None,
+):
+    paths = [make_paths(tmp_path, instance_id=i, worktree=False) for i in instances]
+    return surfer.Surfer(
+        config or surfer.SurferConfig(),
+        asserter=asserter,
+        decider=decider,
+        instances=tuple(paths),
+        runner=runner,
+        api=api_runner,
+        repairs=(lambda trigger: repair_kit) if repair_kit is not None else None,
+        resumer=resumer,
+        state=state,
+        dry_run=dry_run,
+        sleep=sleep,
+        now=now or (lambda: "2026-09-28T00:00:00+00:00"),
+    )
+
+
+# --- no trigger / assertion source --------------------------------------------
+
+
+def test_no_trigger_is_a_no_op_and_never_calls_the_decider(tmp_path) -> None:
+    asserter = StaticAsserter(state_with(idle=True))
+    decider = StaticDecider(surfer.SurferDecision(surfer.TERMINATE))
+    api_runner = FakeApi()
+    kit = FakeRepairKit()
+
+    outcome = make_surfer(
+        asserter, decider, tmp_path=tmp_path, api_runner=api_runner, repair_kit=kit
+    ).cycle()
+
+    assert outcome.no_op is True
+    assert outcome.decision is None
+    assert decider.requests == []
+    assert api_runner.calls == []
+    assert kit.applied == []
+
+
+def test_cap_reached_is_detected_from_the_trial_cap_accounting(tmp_path) -> None:
+    record = {
+        "instance_id": "arm-a",
+        "target_id": "t1",
+        "project_id": "pid",
+        "terminal": "stopped",
+        "start_phase": "hunting",
+        "phases": [{"phase": "hunting", "status": "stopped", "run_id": "h1"}],
+        "cap": 2,
+        "stop_count": 2,
+        "final_count": 3,
+        "overshoot": 1,
+    }
+    source = surfer.SurferStateSource(
+        app_state=lambda: AppState(idle=True, projects=()),
+        trial_log=StaticTrialLog([record]),
+        signals=surfer.CreditExhaustionReader(),
+        evidence=lambda: (),
+    )
+
+    state = source.assert_state()
+
+    assert [t.kind for t in state.triggers] == [surfer.CAP_REACHED]
+    assert state.triggers[0].start_phase == "hunting"
+    assert state.triggers[0].project_id == "pid"
+    assert "cap 2" in state.triggers[0].detail
+
+
+def test_a_failed_run_is_detected_from_the_record_phase(tmp_path) -> None:
+    record = {
+        "instance_id": "arm-a",
+        "target_id": "t1",
+        "project_id": "pid",
+        "terminal": "failed",
+        "start_phase": "hunting",
+        "phases": [
+            {"phase": "recon", "status": "complete", "run_id": "r1"},
+            {"phase": "hunting", "status": "failed", "run_id": "h1", "failure": None},
+        ],
+    }
+    source = surfer.SurferStateSource(
+        app_state=lambda: AppState(idle=False, projects=()),
+        trial_log=StaticTrialLog([record]),
+        signals=surfer.CreditExhaustionReader(),
+        evidence=lambda: (),
+    )
+
+    state = source.assert_state()
+
+    assert [t.kind for t in state.triggers] == [surfer.FAILED_RUN]
+    trigger = state.triggers[0]
+    assert trigger.run_kind == "hunting"
+    assert trigger.run_id == "h1"
+    assert trigger.start_phase == "hunting"
+
+
+def test_an_interrupted_phase_is_a_failed_run() -> None:
+    record = {
+        "instance_id": "arm-a",
+        "project_id": "pid",
+        "phases": [{"phase": "analysis", "status": "interrupted", "run_id": "a1"}],
+    }
+    source = surfer.SurferStateSource(
+        app_state=lambda: AppState(idle=False, projects=()),
+        trial_log=StaticTrialLog([record]),
+        signals=surfer.CreditExhaustionReader(),
+        evidence=lambda: (),
+    )
+
+    state = source.assert_state()
+
+    assert state.triggers[0].kind == surfer.FAILED_RUN
+    assert state.triggers[0].start_phase == "analysis"
+
+
+def test_credit_exhaustion_evidence_classifies_as_a_failure_signal() -> None:
+    reader = surfer.CreditExhaustionReader()
+    evidence = (
+        surfer.FailureEvidence(
+            instance_id="arm-a",
+            text="litellm: Error code: 429 - insufficient_quota (billing hard limit reached)",
+            source="trial_record",
+            target_id="t1",
+            project_id="pid",
+        ),
+    )
+
+    signals = reader.read(evidence)
+
+    assert [s.kind for s in signals] == [surfer.CREDIT_EXHAUSTION]
+    assert signals[0].instance_id == "arm-a"
+
+
+def test_a_credit_exhaustion_signal_becomes_a_trigger(tmp_path) -> None:
+    evidence = (
+        surfer.FailureEvidence(
+            instance_id="arm-a",
+            text="provider error: exceeded your current quota",
+            source="run_error",
+            project_id="pid",
+        ),
+    )
+    source = surfer.SurferStateSource(
+        app_state=lambda: AppState(idle=True, projects=()),
+        trial_log=StaticTrialLog([]),
+        signals=surfer.CreditExhaustionReader(),
+        evidence=lambda: evidence,
+    )
+
+    state = source.assert_state()
+
+    assert [t.kind for t in state.triggers] == [surfer.FAILURE_SIGNAL]
+    assert state.triggers[0].signal == surfer.CREDIT_EXHAUSTION
+    assert state.triggers[0].instance_id == "arm-a"
+
+
+def test_an_unrelated_error_is_not_a_credit_signal() -> None:
+    reader = surfer.CreditExhaustionReader()
+
+    assert reader.read(
+        (
+            surfer.FailureEvidence(
+                instance_id="arm-a", text="connection refused", source="run_error"
+            ),
+        )
+    ) == ()
+
+
+def test_state_source_reports_the_app_state_idle_verdict() -> None:
+    source = surfer.SurferStateSource(
+        app_state=lambda: AppState(idle=False, projects=({"project_id": "pid"},)),
+        trial_log=StaticTrialLog([]),
+        signals=surfer.CreditExhaustionReader(),
+        evidence=lambda: (),
+    )
+
+    state = source.assert_state()
+
+    assert state.idle is False
+    assert state.projects == ({"project_id": "pid"},)
+
+
+class StaticTrialLog:
+    def __init__(self, records) -> None:
+        self._records = tuple(records)
+
+    def records(self):
+        return self._records
+
+
+def test_terminate_touches_no_command_runner_and_writes_no_hold(
+    tmp_path, recording_runner
+) -> None:
+    runner = recording_runner()
+    api_runner = FakeApi()
+    state = alignment.AlignmentState(tmp_path / "alignment.yaml")
+    asserter = StaticAsserter(state_with(failed_trigger(run_kind="hunting", run_id="h1")))
+    decider = StaticDecider(surfer.SurferDecision(surfer.TERMINATE))
+
+    outcome = make_surfer(
+        asserter, decider, tmp_path=tmp_path, runner=runner, api_runner=api_runner,
+        state=state,
+    ).cycle()
+
+    assert outcome.action == surfer.TERMINATE
+    assert runner.calls == []
+    assert state.holds() == ()
+
+
+def test_fix_touches_no_api_runner_and_writes_no_hold(tmp_path) -> None:
+    api_runner = FakeApi()
+    state = alignment.AlignmentState(tmp_path / "alignment.yaml")
+    asserter = StaticAsserter(state_with(failed_trigger()))
+    decider = StaticDecider(surfer.SurferDecision(surfer.FIX, repair=surfer.REPAIR_ENV))
+    kit = FakeRepairKit(supported=("env",))
+
+    outcome = make_surfer(
+        asserter, decider, tmp_path=tmp_path, api_runner=api_runner,
+        repair_kit=kit, resumer=RecordingResumer(), state=state,
+    ).cycle()
+
+    assert outcome.action == surfer.FIX
+    assert api_runner.calls == []
+    assert state.holds() == ()
+
+
+# --- the decisions ------------------------------------------------------------
+
+
+def test_terminate_stops_the_named_runs_through_the_api(tmp_path) -> None:
+    trigger = failed_trigger(run_kind="recon", run_id="r1")
+    asserter = StaticAsserter(state_with(trigger))
+    api_runner = FakeApi()
+    decider = StaticDecider(surfer.SurferDecision(surfer.TERMINATE, reason="budget blown"))
+    kit = FakeRepairKit()
+
+    outcome = make_surfer(
+        asserter, decider, tmp_path=tmp_path, api_runner=api_runner, repair_kit=kit
+    ).cycle()
+
+    assert outcome.action == surfer.TERMINATE
+    assert outcome.escalated is False
+    assert api_runner.paths == ["POST /projects/pid/recon/r1/stop"]
+    assert kit.applied == []
+
+
+def test_destroy_tears_the_instance_down_through_instances_down(
+    tmp_path, recording_runner
+) -> None:
+    runner = recording_runner()
+    trigger = failed_trigger()
+    asserter = StaticAsserter(state_with(trigger))
+    decider = StaticDecider(surfer.SurferDecision(surfer.DESTROY, reason="unrecoverable"))
+    paths = make_paths(tmp_path, "arm-a")  # worktree exists, so compose down runs
+
+    instance = surfer.Surfer(
+        surfer.SurferConfig(),
+        asserter=asserter,
+        decider=decider,
+        instances=(paths,),
+        runner=runner,
+        now=lambda: "2026-09-28T00:00:00+00:00",
+    )
+    outcome = instance.cycle()
+
+    assert outcome.action == surfer.DESTROY
+    assert any("down -v --remove-orphans" in t for t in runner.argv_texts)
+    assert any("worktree" in t and "remove" in t for t in runner.argv_texts)
+
+
+def test_fix_env_recreates_restarts_and_resumes_at_the_recorded_phase(tmp_path) -> None:
+    trigger = failed_trigger(start_phase="hunting", project_id="pid", target_id="t1")
+    asserter = StaticAsserter(state_with(trigger))
+    decider = StaticDecider(surfer.SurferDecision(surfer.FIX, repair=surfer.REPAIR_ENV))
+    kit = FakeRepairKit(supported=("env",))
+    resumer = RecordingResumer()
+
+    outcome = make_surfer(
+        asserter, decider, tmp_path=tmp_path, repair_kit=kit, resumer=resumer
+    ).cycle()
+
+    assert outcome.action == surfer.FIX
+    assert kit.applied == ["env"]
+    assert kit.projects == ["pid"]
+    assert kit.restarted == ["env"]
+    assert len(resumer.plans) == 1
+    plan = resumer.plans[0]
+    assert plan.start_phase == "hunting"
+    assert plan.project_id == "pid"
+    assert plan.target_id == "t1"
+    assert "surfer" in plan.intervention
+
+
+def test_fix_clear_lock_removes_the_documented_lock_file(tmp_path) -> None:
+    data_root = tmp_path / "data"
+    lock = data_root / surfer.LOCK_FILE
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    lock.write_text("stale", encoding="utf-8")
+    project_lock = data_root / "pid" / surfer.PROJECT_LOCK_FILE
+    project_lock.parent.mkdir(parents=True, exist_ok=True)
+    project_lock.write_text("stale", encoding="utf-8")
+
+    kit = surfer.SurferRepairKit(
+        make_paths(tmp_path), runner=None, data_root=data_root,
+        preloaded=None,
+    )
+    assert kit.supports(surfer.REPAIR_CLEAR_LOCK) is True
+
+    kit.apply(surfer.REPAIR_CLEAR_LOCK, project_id="pid")
+
+    assert not lock.exists()
+    assert not project_lock.exists()
+
+
+def test_replace_artifacts_needs_preloaded_configuration(tmp_path) -> None:
+    kit = surfer.SurferRepairKit(
+        make_paths(tmp_path), runner=None, data_root=tmp_path / "data", preloaded=None
+    )
+
+    assert kit.supports(surfer.REPAIR_REPLACE_ARTIFACTS) is False
+
+
+def test_replace_artifacts_replaces_the_premined_configs(tmp_path) -> None:
+    source = tmp_path / "premined" / "c1.yaml"
+    source.parent.mkdir(parents=True)
+    source.write_text("id: c1\n", encoding="utf-8")
+    preloaded = PreloadedArtifacts(configs=str(source))
+    kit = surfer.SurferRepairKit(
+        make_paths(tmp_path), runner=None, data_root=tmp_path / "data", preloaded=preloaded
+    )
+
+    assert kit.supports(surfer.REPAIR_REPLACE_ARTIFACTS) is True
+    kit.apply(surfer.REPAIR_REPLACE_ARTIFACTS, project_id="pid")
+
+    produced = hunt_configs_dir(tmp_path / "data", "pid", "produced")
+    assert (produced / "c1.yaml").is_file()
+
+
+# --- structural enforcement: no code change is ever applied -------------------
+
+
+def test_a_code_change_repair_attempt_escalates_and_is_never_applied(tmp_path) -> None:
+    trigger = failed_trigger()
+    asserter = StaticAsserter(state_with(trigger))
+    decider = StaticDecider(
+        surfer.SurferDecision(surfer.FIX, repair="edit_source", reason="patch the bug")
+    )
+    kit = FakeRepairKit(supported=("env", "clear_lock"))
+    resumer = RecordingResumer()
+    state = alignment.AlignmentState(tmp_path / "alignment.yaml")
+
+    outcome = make_surfer(
+        asserter, decider, tmp_path=tmp_path, repair_kit=kit, resumer=resumer, state=state
+    ).cycle()
+
+    assert outcome.escalated is True
+    assert outcome.hold is not None
+    assert "edit_source" in outcome.hold.rationale
+    assert kit.applied == []
+    assert resumer.plans == []
+    assert len(state.unresolved_holds()) == 1
+
+
+def test_an_unknown_decision_kind_escalates(tmp_path) -> None:
+    asserter = StaticAsserter(state_with(failed_trigger()))
+    decider = StaticDecider(surfer.SurferDecision("patch_code", reason="rewrite the hunter"))
+    state = alignment.AlignmentState(tmp_path / "alignment.yaml")
+
+    outcome = make_surfer(asserter, decider, tmp_path=tmp_path, state=state).cycle()
+
+    assert outcome.escalated is True
+    assert outcome.hold is not None
+    assert "patch_code" in outcome.hold.rationale
+    assert len(state.unresolved_holds()) == 1
+
+
+def test_a_supported_repair_the_kit_cannot_apply_escalates(tmp_path) -> None:
+    asserter = StaticAsserter(state_with(failed_trigger()))
+    decider = StaticDecider(surfer.SurferDecision(surfer.FIX, repair=surfer.REPAIR_ENV))
+    kit = FakeRepairKit(supported=("clear_lock",))
+    state = alignment.AlignmentState(tmp_path / "alignment.yaml")
+
+    outcome = make_surfer(
+        asserter, decider, tmp_path=tmp_path, repair_kit=kit, state=state
+    ).cycle()
+
+    assert outcome.escalated is True
+    assert kit.applied == []
+
+
+# --- escalation holds ---------------------------------------------------------
+
+
+def test_escalate_writes_a_hold_that_blocks_new_trials(tmp_path) -> None:
+    asserter = StaticAsserter(state_with(failed_trigger()))
+    decider = StaticDecider(
+        surfer.SurferDecision(surfer.ESCALATE, reason="operator must fund the account")
+    )
+    state = alignment.AlignmentState(tmp_path / "alignment.yaml")
+
+    outcome = make_surfer(asserter, decider, tmp_path=tmp_path, state=state).cycle()
+
+    assert outcome.escalated is True
+    assert outcome.hold is not None
+    assert "operator must fund the account" in outcome.hold.rationale
+    with pytest.raises(alignment.AlignmentHoldError) as excinfo:
+        state.require_no_holds()
+    assert outcome.hold.hold_id in str(excinfo.value)
+
+
+def test_rerunning_the_same_escalation_does_not_duplicate_the_hold(tmp_path) -> None:
+    state = alignment.AlignmentState(tmp_path / "alignment.yaml")
+    asserter = StaticAsserter(state_with(failed_trigger()))
+    decider = StaticDecider(surfer.SurferDecision(surfer.ESCALATE, reason="same reason"))
+
+    first = make_surfer(asserter, decider, tmp_path=tmp_path, state=state).cycle()
+    second = make_surfer(asserter, decider, tmp_path=tmp_path, state=state).cycle()
+
+    assert first.hold is not None and second.hold is not None
+    assert first.hold.hold_id == second.hold.hold_id
+    assert len(state.holds()) == 1
+
+
+# --- dry-run, --once, interval ------------------------------------------------
+
+
+def test_dry_run_asserts_but_never_dispatches_the_decider_and_mutates_nothing(
+    tmp_path, recording_runner
+) -> None:
+    runner = recording_runner()
+    api_runner = FakeApi()
+    resumer = RecordingResumer()
+    kit = FakeRepairKit()
+    state = alignment.AlignmentState(tmp_path / "alignment.yaml")
+    asserter = StaticAsserter(state_with(failed_trigger()))
+
+    outcome = make_surfer(
+        asserter,
+        ExplodingDecider(),
+        tmp_path=tmp_path,
+        state=state,
+        runner=runner,
+        api_runner=api_runner,
+        repair_kit=kit,
+        resumer=resumer,
+        dry_run=True,
+    ).cycle()
+
+    assert outcome.planned is True
+    assert outcome.dry_run is True
+    assert outcome.decision is None
+    assert runner.calls == []
+    assert api_runner.calls == []
+    assert resumer.plans == []
+    assert kit.applied == []
+    assert state.holds() == ()
+
+
+def test_once_runs_exactly_one_cycle(tmp_path) -> None:
+    asserter = StaticAsserter(state_with(idle=True))
+    decider = StaticDecider(surfer.SurferDecision(surfer.ESCALATE))
+    instance = make_surfer(asserter, decider, tmp_path=tmp_path)
+
+    outcomes = instance.run(once=True)
+
+    assert len(outcomes) == 1
+    assert asserter.calls == 1
+
+
+def test_the_loop_sleeps_for_the_configured_interval(tmp_path) -> None:
+    sleeps: list[float] = []
+    asserter = StaticAsserter(state_with(idle=True))
+    decider = StaticDecider(surfer.SurferDecision(surfer.ESCALATE))
+    instance = make_surfer(
+        asserter,
+        decider,
+        tmp_path=tmp_path,
+        config=surfer.SurferConfig(interval_s=7.0, max_cycles=3),
+        sleep=sleeps.append,
+    )
+
+    outcomes = instance.run()
+
+    assert len(outcomes) == 3
+    assert sleeps == [7.0, 7.0]
+
+
+# --- resume phase derivation --------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "record,expected",
+    [
+        (
+            {
+                "start_phase": "hunting",
+                "phases": [
+                    {"phase": "recon", "status": "complete"},
+                    {"phase": "hunting", "status": "stopped", "run_id": "h1"},
+                ],
+            },
+            "hunting",
+        ),
+        (
+            {
+                "start_phase": "recon",
+                "phases": [{"phase": "recon", "status": "failed", "run_id": "r1"}],
+            },
+            "recon",
+        ),
+        (
+            {
+                "start_phase": "analysis",
+                "phases": [
+                    {"phase": "recon", "status": "complete"},
+                    {"phase": "analysis", "status": "interrupted", "run_id": "a1"},
+                ],
+            },
+            "analysis",
+        ),
+        (
+            {
+                "start_phase": "hunting",
+                "phases": [
+                    {"phase": "recon", "status": "complete"},
+                    {"phase": "hunting", "status": "complete"},
+                ],
+            },
+            "hunting",
+        ),
+    ],
+)
+def test_resume_phase_uses_the_recorded_phase(record, expected) -> None:
+    assert surfer.resume_phase(record) == expected
+
+
+# --- the decider seam ---------------------------------------------------------
+
+
+def test_load_decision_parses_a_fix_and_requires_a_repair(tmp_path) -> None:
+    files = FileStore()
+    good = tmp_path / "good.yaml"
+    good.write_text("decision: fix\nrepair: env\nreason: stale key\n", encoding="utf-8")
+    decision = surfer.load_decision(good, files=files)
+    assert decision.kind == surfer.FIX
+    assert decision.repair == surfer.REPAIR_ENV
+
+    bad = tmp_path / "bad.yaml"
+    bad.write_text("decision: fix\n", encoding="utf-8")
+    with pytest.raises(surfer.SurferError, match="repair"):
+        surfer.load_decision(bad, files=files)
+
+
+def test_load_decision_parses_terminate_and_escalate(tmp_path) -> None:
+    files = FileStore()
+    path = tmp_path / "d.yaml"
+    path.write_text("decision: terminate\n", encoding="utf-8")
+    assert surfer.load_decision(path, files=files).kind == surfer.TERMINATE
+
+    path.write_text("decision: escalate\nreason: no way forward\n", encoding="utf-8")
+    decision = surfer.load_decision(path, files=files)
+    assert decision.kind == surfer.ESCALATE
+    assert decision.reason == "no way forward"
+
+
+def test_subagent_decider_writes_the_input_dispatches_and_reads_the_decision(
+    tmp_path, recording_runner
+) -> None:
+    files = FileStore()
+    runner = recording_runner()
+    request = surfer.SurferRequest(
+        prompt=Path("surfer.md"),
+        input_file=tmp_path / "input.yaml",
+        destination=tmp_path / "decision.yaml",
+        state={"triggers": []},
+        repairs=surfer.REPAIR_KINDS,
+        environment={"instances": []},
+    )
+    files.write_text(request.destination, "decision: destroy\nreason: dead\n")
+
+    decider = surfer.SubagentSurferDecider(
+        runner, ("python3", "agent.py", "{input}", "{destination}"), files=files
+    )
+    decision = decider.decide(request)
+
+    assert decision.kind == surfer.DESTROY
+    assert request.input_file.is_file()
+    assert "repairs" in files.read_text(request.input_file)
+    assert runner.argv_texts[0].endswith(f"{request.input_file} {request.destination}")
+
+
+# --- the trial engine records the surfer intervention -------------------------
+
+
+class _TrialApi:
+    """The minimal hunting-terminal route map the resume record test needs."""
+
+    def __call__(self, call):
+        key = f"{call.method} {call.path}"
+        return {
+            "GET /projects/pid/hunting/h1": {"status": "complete"},
+            "POST /projects/pid/hunting": {"hunting_run_id": "h1"},
+            "GET /projects/pid/graph": {"nodes": [{"type": "L1Service"}], "links": []},
+        }[key]
+
+
+def test_a_resumed_trial_records_the_surfer_intervention(tmp_path) -> None:
+    cfg = trial.TrialConfig(
+        instance_id="arm-a",
+        target_id="t1",
+        start_phase="hunting",
+        project_id="pid",
+        data_root=tmp_path / "data",
+        runs_root=tmp_path / "runs",
+        intervention="surfer: resumed at hunting after fix env",
+    )
+    record = trial.Trial(cfg, api_runner=_TrialApi()).run()
+
+    assert any("surfer: resumed at hunting" in note for note in record.notes)
+    written = FileStore().read_text(Path(record.trial_dir) / "trial.yaml")
+    assert "surfer: resumed at hunting" in written
