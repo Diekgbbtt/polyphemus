@@ -187,6 +187,9 @@ class TrialConfig:
     # Resume: reuse an existing project and/or drain an existing recon run.
     project_id: str | None = None
     recon_run_id: str | None = None
+    # D32: the version identity stamped into the trial record and the verdicts.
+    eval_sha: str | None = None
+    stack_fingerprint: str | None = None
 
 
 @dataclass
@@ -212,8 +215,40 @@ class PollResult:
 
 
 @dataclass
+class AssessmentAttempt:
+    """One assessment dispatch or verification attempt (#271/D15)."""
+
+    attempt: int
+    outcome: str
+    detail: str | None = None
+    at: str | None = None
+
+
+@dataclass
+class AssessmentRecord:
+    """The trial's assessment outcome and its full attempt history (#271/D6).
+
+    Present from the first dispatch (`status="dispatched"`); rewritten by the
+    eval-close verification phase to `present`, or `escalated` with a named
+    failure. The attempt list is append-only across both.
+    """
+
+    status: str
+    attempts: list[AssessmentAttempt] = field(default_factory=list)
+    verdicts_path: str | None = None
+    failure: str | None = None
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+@dataclass
 class TrialRecord:
-    """The persisted trial record (ids, phases, timings, cap outcome)."""
+    """The persisted trial record (ids, phases, timings, cap, assessment).
+
+    `eval_sha`/`stack_fingerprint`/`assessment` are additive (#271) and default
+    to None, so a #270 record still loads and an old record remains readable.
+    """
 
     trial_id: str
     instance_id: str
@@ -230,6 +265,10 @@ class TrialRecord:
     overshoot: int | None = None
     notes: list[str] = field(default_factory=list)
     trial_dir: str | None = None
+    # D32/D37: the version identity the trial ran on, and the assessment state.
+    eval_sha: str | None = None
+    stack_fingerprint: str | None = None
+    assessment: AssessmentRecord | None = None
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -602,6 +641,8 @@ class Trial:
             overshoot=cap.overshoot if cap else None,
             notes=aggregated,
             trial_dir=str(trial_dir),
+            eval_sha=cfg.eval_sha,
+            stack_fingerprint=cfg.stack_fingerprint,
         )
         import yaml  # lazy: the record is the one place the trial serializes
 

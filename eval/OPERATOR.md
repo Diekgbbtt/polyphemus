@@ -593,6 +593,48 @@ To test before any push: Actions -> `deploy-eval` -> Run workflow
 `::error::` naming the secret to configure; a non-fast-forwardable `dev` fails
 loudly and leaves the server's working tree untouched.
 
+### 2.9. Assessment dispatch and close verification
+
+The symbolic orchestrator owns the trial and the eval-close phase; the
+assessment subagent (a background agent, D6) owns the judgment and writes
+`verdicts.yaml` only.
+Dispatch never blocks the next target; the eval-close phase is the presence
+check (D15).
+
+Configure the assessment agent command once, as `EVAL_ASSESS_COMMAND` (or
+`--command` per invocation). It is a shell line whose placeholders the
+orchestrator substitutes before running it:
+
+| Placeholder | Substituted with |
+|---|---|
+| `{prompt}` | `eval/prompts/assessment.md` - the assessment contract. |
+| `{trial_record}` | the trial's `trial.yaml`. |
+| `{ground_truth}` | the challenge ground-truth directory (`--ground-truth`, else resolved by `eval/gt.py`). |
+| `{data_root}` | the instance's app data root. |
+| `{destination}` | the trial's `verdicts.yaml`. |
+| `{trace_id}` | the trial's Langfuse trace id, when one was recorded (empty otherwise). |
+
+Example:
+
+```
+EVAL_ASSESS_COMMAND='opencode run --prompt {prompt} --trial {trial_record} --ground-truth {ground_truth} --data-root {data_root} --out {destination}'
+```
+
+The prompt tells the subagent to read the trial record, the ground truth
+(`python3 eval/gt.py <dir> --json`), and the persisted evidence under the data
+root, then write the destination and nothing else.
+The verdict rows carry the `eval_sha` and `stack_fingerprint` copied from the
+trial record - never invented.
+
+| Primitive | Contract |
+|---|---|
+| `PYTHONPATH=eval python3 -m orchestrator trial <setup.yaml> <instance> <target> [--eval-sha S] [--stack-fingerprint F]` | Run one trial; the SHA and fingerprint are stamped into `trial.yaml` (D32/D37), so the assessment can copy them. |
+| `PYTHONPATH=eval python3 -m orchestrator assess <setup.yaml> --trial <trial-dir>` | Dispatch the background assessment subagent for one trial (fire-and-forget, D6). `--dry-run` prints the rendered command. |
+| `PYTHONPATH=eval python3 -m orchestrator close-verify <setup.yaml>` | The eval-close phase (D15): check `verdicts.yaml` presence and schema for every trial under the runs root; re-dispatch missing/invalid trials twice, then micro-diagnose - a bounded configuration-layer re-dispatch (D28) or a named escalation. `--dry-run` lists the trials. |
+
+Every dispatch and verification attempt is recorded under `assessment` in
+`trial.yaml` (`status`, `attempts[]`, `verdicts_path`, `failure`).
+
 ## 3. KB authoring
 
 # Operator-KB authoring prompt (the effective prompt, implementation-reverse-engineering revision)
