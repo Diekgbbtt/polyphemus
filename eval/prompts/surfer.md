@@ -13,8 +13,8 @@ Read the input file named in your launch command. It carries three things:
   project, run kind/id, the phase a resume would re-enter, and a human `detail`.
   The first trigger is the one a `fix` acts on.
 - `repairs`: the bounded repair vocabulary a `fix` may name (`env`,
-  `clear_lock`, `replace_artifacts`). Anything else is a code change and is
-  escalated by the loop, never applied.
+  `replace_artifacts`). Anything else is a code change and is escalated by the
+  loop, never applied.
 - `environment`: the instances (`instance_id`, `compose_project`, `worktree`,
   `env_file`) and the bounded `repairs`.
 
@@ -37,7 +37,7 @@ reason: "the instance stack is wedged and cannot be recovered in place"
 
 ```yaml
 decision: fix
-repair: env            # env | clear_lock | replace_artifacts
+repair: env            # env | replace_artifacts
 reason: "stale .env key after a version advance"
 ```
 
@@ -53,10 +53,9 @@ reason: "LLM credits are exhausted; an operator must fund the account"
 - `destroy`: tear the instance down through `instances.down`. Use it when the
   stack cannot be recovered in place.
 - `fix`: a repair bounded to the configuration layer (`env`: the `.env`
-  preflight and recreate) or the data layer (`clear_lock`: clear a stuck
-  lock/lease marker; `replace_artifacts`: re-place the target's pre-mined hunting
-  artifacts). After a fix the orchestrator restarts the affected services and
-  resumes the trial at its recorded phase.
+  preflight and recreate) or the data layer (`replace_artifacts`: re-place the
+  target's pre-mined hunting artifacts). After a fix the orchestrator restarts
+  the affected services and resumes the trial at its recorded phase.
 - `escalate`: the only correct answer when the repair would need a code change,
   when no bounded repair fits, or when an operator decision is required (for
   example LLM credits exhausted). It writes a hold that blocks new trials until

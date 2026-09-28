@@ -30,7 +30,7 @@ Observed plan summary (from the committed setup, no execution):
 | Front URL | `http://t-1fc05262.target/` | remote workshop nginx on :80 |
 | Instance worktree | `<EVAL_INSTANCES_ROOT>/eval-server-1` | `--instances-root` (default `eval/instances`) |
 | Instance `.env` | `<instance worktree>/.env` | manually managed; see the checklist |
-| Data root | `<instance worktree>/data` | the compose `./data` bind; `store materialize` derives it |
+| Data root | `<instance worktree>/data` = `$EVAL_DATA_ROOT` | the compose `./data` bind; passed explicitly as `--data-root`/`EVAL_DATA_ROOT` (see B12). `store materialize` derives the same path from `--instances-root` + the instance id, but the trial/assess/diagnose verbs default to `<repo>/data`, so it must be passed explicitly. |
 | Artifact store | `/srv/eval-artifacts` | `first.yaml` |
 | Trial dir | `eval/runs/comfyui-1/<trial_id>/` | `--runs-root` (default `eval/runs`) |
 | Store trial tree | `/srv/eval-artifacts/comfyui-1/eval-server-1/<trial_id>/` | `target_run_id` defaults to the instance id |
@@ -57,6 +57,7 @@ A run attempted with one missing fails loud; none is silently defaulted.
 | B9 | `EVAL_GITHUB_TOKEN` | diagnosis | The read-only `issue-search` bank; absent means the diagnoser writes a `proposed_issue` |
 | B10 | `EVAL_ALIGNMENT_STATE` with no unresolved hold | trial | `up`/`trial` refuse while a hold exists; resolve with `alignment resolve` |
 | B11 | The store root `/srv/eval-artifacts` writable on the eval server | store sync/materialize | The harness creates the tree; its parent must exist and be writable |
+| B12 | The instance data root `EVAL_DATA_ROOT` = `$EVAL_INSTANCES_ROOT/eval-server-1/data` | trial, assess, diagnose, close-verify, store | Export it in section 3 and pass `--data-root "$EVAL_DATA_ROOT"` on every step. The trial/assess/diagnose verbs default to `<repo>/data` while `store materialize` derives `<instances-root>/<instance>/data`; an unset root splits the pipeline across two trees (`chain_unresolved` at materialize, or unattributable paths). |
 
 Create the instance worktree and `.env` before the first `up` (the worktree add is idempotent, so `up` will skip it):
 
@@ -77,6 +78,7 @@ Set the common environment once (from the repo root):
 export PYTHONPATH=eval
 export EVAL_REPO=<canonical checkout>
 export EVAL_INSTANCES_ROOT=eval/instances
+export EVAL_DATA_ROOT="$EVAL_INSTANCES_ROOT/eval-server-1/data"
 export EVAL_BRANCH=eval
 export EVAL_SSH_HOST=ubuntu@dj-viscon-workshop-1.vsos.ethz.ch
 export EVAL_WEB_DIR=~/WebExploitBench
@@ -128,7 +130,8 @@ Every failure prints `orchestrator: error: ...` and exits 1.
 
 ```
 PYTHONPATH=eval python3 -m orchestrator trial eval/setups/first.yaml eval-server-1 comfyui-1 \
-  --eval-sha "$EVAL_SHA" --stack-fingerprint "$EVAL_STACK_FINGERPRINT"
+  --eval-sha "$EVAL_SHA" --stack-fingerprint "$EVAL_STACK_FINGERPRINT" \
+  --data-root "$EVAL_DATA_ROOT"
 ```
 
 Needs: B5, B6, B7, B10.
@@ -141,7 +144,8 @@ Never read a failed recon run as an empty finding.
 ### Step 3 - assessment
 
 ```
-PYTHONPATH=eval python3 -m orchestrator assess eval/setups/first.yaml --trial eval/runs/comfyui-1/<trial_id>
+PYTHONPATH=eval python3 -m orchestrator assess eval/setups/first.yaml --trial eval/runs/comfyui-1/<trial_id> \
+  --data-root "$EVAL_DATA_ROOT"
 ```
 
 Needs: B5, B6, B8.
@@ -151,7 +155,8 @@ Failure path: `close-verify` re-dispatches a missing/invalid verdicts file twice
 ### Step 4 - diagnosis
 
 ```
-PYTHONPATH=eval python3 -m orchestrator diagnose eval/setups/first.yaml --trial eval/runs/comfyui-1/<trial_id>
+PYTHONPATH=eval python3 -m orchestrator diagnose eval/setups/first.yaml --trial eval/runs/comfyui-1/<trial_id> \
+  --data-root "$EVAL_DATA_ROOT"
 ```
 
 Needs: B5, B6, B8, B9.
@@ -161,7 +166,8 @@ Failure path: no `verdicts.yaml` refuses loudly; no diagnoser command escalates 
 ### Step 5 - close verification
 
 ```
-PYTHONPATH=eval python3 -m orchestrator close-verify eval/setups/first.yaml
+PYTHONPATH=eval python3 -m orchestrator close-verify eval/setups/first.yaml \
+  --data-root "$EVAL_DATA_ROOT"
 ```
 
 Expected: exit 0 with `comfyui-1/<trial_id>: present` and `diagnosis present` (or `not_required` when every verdict was `identified`).
@@ -171,7 +177,8 @@ Failure path: exit 1, with one `close-verify: ...` line per escalated trial on s
 
 ```
 PYTHONPATH=eval python3 -m orchestrator store render-sync eval/setups/first.yaml
-PYTHONPATH=eval python3 -m orchestrator store materialize eval/setups/first.yaml --trial eval/runs/comfyui-1/<trial_id>
+PYTHONPATH=eval python3 -m orchestrator store materialize eval/setups/first.yaml --trial eval/runs/comfyui-1/<trial_id> \
+  --data-root "$EVAL_DATA_ROOT"
 ```
 
 Needs: B7.
@@ -196,7 +203,7 @@ The verdict and diagnosis schemas refuse a row whose identity is missing or does
 ## 4. Failure reporting, never silent patching
 
 - The orchestrator's verbs surface every failure on stderr as `orchestrator: error: <named cause>` and exit non-zero, except `trial`, which records a non-`complete` terminal in `trial.yaml` and stdout (exit 0) for the surfer loop to recover.
-- Configuration-layer repairs only: the trial's `chain` retries once after an `env`/`stack` repair; the surfer loop may apply `env`, `clear_lock`, or `replace_artifacts` and resume.
+- Configuration-layer repairs only: the trial's `chain` retries once after an `env`/`stack` repair; the surfer loop may apply `env` or `replace_artifacts` and resume.
 - An unalignable version jump or an unbound surfer action writes a hold (same mechanism) and blocks `up`/`trial` until an operator resolves it.
 - The artifact store fails loud with a named code rather than copying a partial tree.
 - A proposed issue is written into `diagnoses.yaml`; the diagnoser never files.
@@ -205,7 +212,7 @@ The verdict and diagnosis schemas refuse a row whose identity is missing or does
 
 Accept the scaffold for execution when:
 
-- every bootstrap item B1-B11 is answered by name (no doubles, no placeholders);
+- every bootstrap item B1-B12 is answered by name (no doubles, no placeholders);
 - `plan ... --dry-run` and `trial ... --dry-run` match section 1 and section 3;
 - the target is deployed at the workshop host and answers on `http://t-1fc05262.target/` from the instance kali before recon launches.
 

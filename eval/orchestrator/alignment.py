@@ -32,7 +32,7 @@ import yaml
 
 from advance.images import default_containers
 from orchestrator import subagents
-from orchestrator.commands import Command, CommandRunner, require_ok
+from orchestrator.commands import Command, CommandRunner
 from orchestrator.files import FileStore
 from orchestrator.ids import short_id
 from orchestrator.instances import InstancePaths, compose_argv, plan_preflight
@@ -157,14 +157,9 @@ class AlignmentDecider(Protocol):
     def decide(self, request: AlignmentRequest) -> AlignmentDecision: ...
 
 
-class StaticDecider:
-    """A decision already made (tests, and a supplied decision document)."""
-
-    def __init__(self, decision: AlignmentDecision) -> None:
-        self.decision = decision
-
-    def decide(self, request: AlignmentRequest) -> AlignmentDecision:
-        return self.decision
+# The static decider is the shared shape (`subagents.StaticDecider`); the module
+# keeps the public name for callers that reach it off this module.
+StaticDecider = subagents.StaticDecider
 
 
 def render_request_input(request: AlignmentRequest) -> str:
@@ -185,16 +180,8 @@ def plan_dispatch(
     env: Mapping[str, str] | None = None,
 ) -> Command:
     """Render the configured agent command with `{prompt}`/`{input}`/`{destination}`."""
-    return subagents.render_command(
-        argv,
-        {
-            "prompt": str(request.prompt),
-            "input": str(request.input_file),
-            "destination": str(request.destination),
-        },
-        cwd=cwd,
-        env=env,
-        description="alignment decision",
+    return subagents.plan_dispatch(
+        request, argv, cwd=cwd, env=env, description="alignment decision"
     )
 
 
@@ -259,10 +246,18 @@ class SubagentAlignmentDecider:
     files: FileStore = field(default_factory=FileStore)
 
     def decide(self, request: AlignmentRequest) -> AlignmentDecision:
-        self.files.write_text(request.input_file, render_request_input(request))
-        command = plan_dispatch(request, self.argv, cwd=self.cwd, env=self.env)
-        require_ok(self.runner(command), command, error=AlignmentError)
-        return load_decision(request.destination, files=self.files)
+        return subagents.decide_via_agent(
+            request,
+            runner=self.runner,
+            argv=self.argv,
+            files=self.files,
+            render_input=render_request_input,
+            load=load_decision,
+            error=AlignmentError,
+            description="alignment decision",
+            cwd=self.cwd,
+            env=self.env,
+        )
 
 
 # --- the environment context --------------------------------------------------

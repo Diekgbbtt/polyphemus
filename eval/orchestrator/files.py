@@ -192,17 +192,6 @@ class FileStore:
             return []
         return sorted(p for p in base.iterdir() if self.is_file(p))
 
-    def unlink(self, path: str | Path) -> None:
-        """Remove one regular file; a missing path is the normal absent case.
-
-        The surfer's bounded data-layer repair clears only named lock/lease
-        markers, and a repair is idempotent: removing an already-absent marker
-        is success, not an error.
-        """
-        target = Path(path)
-        if target.is_file():
-            target.unlink()
-
     def list_dirs(self, directory: str | Path) -> list[Path]:
         """Subdirectories directly under `directory`, sorted; missing -> []."""
         base = Path(directory)
