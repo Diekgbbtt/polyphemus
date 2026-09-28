@@ -671,6 +671,124 @@ def test_reprofile_configurator_builds_single_exec_over_full_endpoint_list():
     assert out["export"].stats.get("endpoints_total") == 2
 
 
+def test_build_pod_command_prefers_the_configured_template():
+    configured = pod.build_pod_command(
+        HTTPX_JOB,
+        {"name": "app.example.com"},
+        {},
+        "sess-1",
+        command_template="httpx -u {target} -rate-limit 2 -session {session}",
+    )
+    assert configured == (
+        "httpx -u app.example.com -rate-limit 2 -session sess-1"
+    )
+
+    fallback = pod.build_pod_command(
+        HTTPX_JOB, {"name": "app.example.com"}, {}, "sess-1"
+    )
+    assert fallback == "httpx -u app.example.com -json -silent"
+
+
+def test_configured_command_reaches_exec_and_retries_unchanged():
+    commands: list[str] = []
+    attempts = {"n": 0}
+    proposed = (
+        "httpx -u {target} -rate-limit 2 -threads 1 "
+        "-session {session} {auth_flags}"
+    )
+    assert "SECRET-COOKIE" not in proposed
+
+    def exec_fn(cmd, sid, t):
+        commands.append(cmd)
+        attempts["n"] += 1
+        rc = 1 if attempts["n"] == 1 else 0
+        return ExecResult(stdout=FIX_LINE, stderr="retry", returncode=rc)
+
+    g = pod.build_pod_graph(
+        exec_fn=exec_fn,
+        curate_fn=lambda a, o, p: (len(a), len(o), a, o),
+        triage_fn=lambda er, a, j: [],
+    )
+    out = g.invoke({
+        "job": HTTPX_JOB,
+        "input_asset": {"name": "app.example.com"},
+        "extra": {"auth_context": {"cookies": [
+            {"name": "sid", "value": "SECRET-COOKIE"}
+        ]}},
+        "configured_command": proposed,
+        "session_id": "sess-1",
+        "iteration": 0,
+        "project_id": "proj1",
+    })
+
+    assert out["export"].verdict == "success"
+    assert len(commands) == 2
+    assert commands[0] == commands[1]
+    assert "SECRET-COOKIE" in commands[0]
+    assert "{auth_flags}" not in commands[0]
+    assert "{session}" not in commands[0]
+    assert "-session sess-1" in commands[0]
+
+
+def test_configured_command_overrides_a_batch_job():
+    captured = {}
+
+    def exec_fn(cmd, sid, t):
+        captured["cmd"] = cmd
+        return ExecResult(stdout="", stderr="", returncode=0, duration_ms=1)
+
+    g = pod.build_pod_graph(
+        exec_fn=exec_fn,
+        curate_fn=lambda a, o, p: (len(a), len(o), a, o),
+        triage_fn=lambda er, a, j: [],
+    )
+    g.invoke({
+        "job": JOBS["jsluice"],
+        "input_asset": {"batch": ["https://h/app.js"]},
+        "extra": {},
+        "configured_command": "jsluice-batch {session}",
+        "session_id": "batch-s",
+        "iteration": 0,
+        "project_id": "proj1",
+    })
+
+    assert captured["cmd"] == "jsluice-batch batch-s"
+    assert "python3 -" not in captured["cmd"]
+
+
+def test_configured_command_overrides_one_pod_reprofile_and_fills_endpoints():
+    captured = {}
+
+    def exec_fn(cmd, sid, t):
+        captured["cmd"] = cmd
+        return ExecResult(stdout=_REPROFILE_STDOUT, stderr="", returncode=0, duration_ms=1)
+
+    g = pod.build_pod_graph(
+        exec_fn=exec_fn,
+        curate_fn=lambda a, o, p: (len(a), len(o), a, o),
+        triage_fn=lambda er, a, j: [],
+    )
+    g.invoke({
+        "job": REPROFILE_JOB,
+        "input_asset": {"endpoints": REPROFILE_ENDPOINTS},
+        "extra": {},
+        "configured_command": (
+            "httpx -l /work/{session}/custom.txt -rl 2 {endpoints}"
+        ),
+        "session_id": "reprofile-s",
+        "iteration": 0,
+        "project_id": "proj1",
+    })
+
+    cmd = captured["cmd"]
+    assert cmd.startswith(
+        "httpx -l /work/reprofile-s/custom.txt -rl 2 "
+    )
+    assert "https://h/api/v1/orders" in cmd
+    assert "https://h/" in cmd
+    assert "{endpoints}" not in cmd
+
+
 def test_reprofile_pod_without_endpoints_raises_not_silently_probes_nothing():
     """The one-pod dispatch seam is TOTAL: an endpoint_profiling pod MUST arrive
     with its packed `endpoints` set. A mis-shaped dispatch (no endpoints key)

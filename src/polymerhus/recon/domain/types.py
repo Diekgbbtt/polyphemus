@@ -204,6 +204,7 @@ class PodState(TypedDict, total=False):
     # directly-invoked pod graph (tests) omits them and the triager stays stateless.
     run_id: str
     phase: int
+    configured_command: str | None
     invocation: ToolInvocation
     exec_result: ExecResult
     iteration: int

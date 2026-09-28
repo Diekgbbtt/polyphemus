@@ -221,6 +221,7 @@ def default_pod_invoke(pod_input: dict, job: JobSpec, run_id: str, phase: int) -
         "extra": extra,
         "session_id": session_id,
         "project_id": project_id,
+        "configured_command": pod_input.get("configured_command"),
         # #94: the pod's run + phase, so the triager node can address its STATEFUL
         # session per concurrent pod instance (PodSession). Absent in tests
         # that invoke the pod graph directly -> the triager stays stateless there.

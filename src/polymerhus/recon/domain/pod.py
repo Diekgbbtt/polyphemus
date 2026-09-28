@@ -347,6 +347,56 @@ def fill_template(
     return result
 
 
+def build_pod_command(
+    job: JobSpec,
+    input_asset: dict,
+    extra: dict,
+    session_id: str,
+    command_template: str | None = None,
+) -> str:
+    """Build one pod command, preferring the Configurator's proposed template.
+
+    With no override, the historical deterministic dispatch remains intact:
+    batch jobs use their registered batch builder and endpoint-profiling jobs
+    expand the packed endpoint set. With an override, the proposal is filled by
+    the same late runtime substitution used everywhere else.
+    """
+    endpoints: list[str] | None = None
+    if job.endpoint_profiling:
+        if "endpoints" not in input_asset:
+            raise ValueError(
+                f"endpoint_profiling job {job.tool} dispatched without an "
+                "'endpoints' set - default_preprocess_fn must pack the dedup'd "
+                "probe set into ONE pod_input (#208)"
+            )
+        from polymerhus.recon.control.batching import bundle_url  # noqa: PLC0415
+
+        endpoints = [
+            url
+            for url in (
+                bundle_url(endpoint) for endpoint in input_asset["endpoints"]
+            )
+            if url is not None
+        ]
+
+    if command_template is None and job.batch and "batch" in input_asset:
+        from polymerhus.recon.control.batching import (  # noqa: PLC0415
+            build_batch_command,
+        )
+
+        return build_batch_command(job, input_asset["batch"])
+
+    template = job.command_template if command_template is None else command_template
+    return fill_template(
+        template,
+        input_asset,
+        extra,
+        session_id=session_id,
+        tool=job.tool,
+        endpoints=endpoints,
+    )
+
+
 def _best_effort_triage(triage_fn, exec_result, assets, job) -> list:
     """Structural decoupling (#208): production (exec -> parse -> curate of the
     asset deltas) and consumption (the triager's Observations) are separate
@@ -369,12 +419,10 @@ def build_pod_graph(*, exec_fn, curate_fn, triage_fn):
     curate_fn(assets, observations, project_id) -> (int, int),
     triage_fn(exec_result, assets, job) -> list[Observation].
 
-    The configurator node is the deterministic command-fill only (#243:
-    the per-pod steering-fed throttle turn retired with the mid-run
-    steering machinery, D223-12 - request phases run unthrottled until the
-    #238 rate-limit work lands its profile-driven configuration; that profile
-    now rides `extra["traffic_policy"]` INTO the exec seam, where Kali's shared
-    per-target governor enforces it - the command template stays fixed).
+    The configurator node is the technical command assembler: it prefers the
+    `configured_command` chosen by the phase Configurator and falls back to the
+    deterministic job template for direct/legacy callers. Runtime placeholders
+    are still expanded only here.
     """
     # #196: resolved ONCE per graph - the seam either can carry a capture context
     # or it cannot, and that does not change between this pod's executions.
@@ -410,44 +458,13 @@ def build_pod_graph(*, exec_fn, curate_fn, triage_fn):
         job = state["job"]
         extra = dict(state.get("extra") or {})
         input_asset = state["input_asset"]
-        if job.batch and "batch" in input_asset:
-            # Batched job (jsluice, D17/Q6): the pod runs one command over a
-            # list of bundle URLs, not a single-asset template fill.
-            from polymerhus.recon.control.batching import build_batch_command
-
-            command = build_batch_command(job, input_asset["batch"])
-        elif job.endpoint_profiling:
-            # #208 one-pod reprofile: the pod runs ONE httpx exec over the FULL
-            # dedup'd endpoint set (the whole reprofile pass in a single pod).
-            # The command writes the shell-quoted URL list to the per-pod
-            # workdir and probes it via `httpx -l`, then cats the `-o` JSON
-            # file - the established `/work/{session}` file + cat persistence
-            # pattern. `endpoints` extracts each asset's probe URL via the
-            # shared bundle_url helper (url, else baseurl+path). The dispatch
-            # is TOTAL: an endpoint_profiling job MUST arrive with its packed
-            # `endpoints` set (the preprocess packs it into ONE pod_input); a
-            # mis-shaped dispatch raises rather than silently probing nothing.
-            if "endpoints" not in input_asset:
-                raise ValueError(
-                    f"endpoint_profiling job {job.tool} dispatched without an "
-                    "'endpoints' set - default_preprocess_fn must pack the dedup'd "
-                    "probe set into ONE pod_input (#208)"
-                )
-            from polymerhus.recon.control.batching import bundle_url
-
-            urls = [u for u in (bundle_url(e) for e in input_asset["endpoints"]) if u is not None]
-            command = fill_template(
-                job.command_template, input_asset, extra,
-                session_id=state["session_id"], tool=job.tool, endpoints=urls,
-            )
-        else:
-            command = fill_template(
-                job.command_template,
-                input_asset,
-                extra,
-                session_id=state["session_id"],
-                tool=job.tool,
-            )
+        command = build_pod_command(
+            job,
+            input_asset,
+            extra,
+            state["session_id"],
+            command_template=state.get("configured_command"),
+        )
         invocation = ToolInvocation(command=command, session_id=state["session_id"])
         iteration = state.get("iteration", 0) + 1
         return {"invocation": invocation, "iteration": iteration, "extra": extra}

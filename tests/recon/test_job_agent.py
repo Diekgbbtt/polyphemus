@@ -216,6 +216,7 @@ def test_run_job_offloads_blocking_invoke_so_gather_is_concurrent():
 
 def test_default_pod_invoke_routes_agent_configurator_mode_jobs_to_crawl_pod(monkeypatch):
     from polymerhus.recon.crawl import crawl_pod as crawl_pod_module
+    from polymerhus.recon.domain import pod as pod_module
     from polymerhus.recon.domain.traffic_admission import BOUNDED_HTTP_COST
     from polymerhus.recon.domain.types import JobSpec, PodExport
 
@@ -226,17 +227,31 @@ def test_default_pod_invoke_routes_agent_configurator_mode_jobs_to_crawl_pod(mon
         return PodExport(input_asset=pod_input["input_asset"], verdict="success")
 
     monkeypatch.setattr(crawl_pod_module, "crawl_pod_invoke", fake_crawl_pod_invoke)
+    monkeypatch.setattr(
+        pod_module,
+        "pod_graph",
+        type("ForbiddenPodGraph", (), {
+            "invoke": lambda *a, **kw: (_ for _ in ()).throw(
+                AssertionError("agentic job must not use the template pod graph")
+            )
+        })(),
+    )
 
     agent_job = JobSpec(
         tool="steel_crawl", skill="agentic_crawl", command_template="",
         produces=["BaseURL"], consumes="BaseURL", configurator_mode="agent",
         traffic_cost=BOUNDED_HTTP_COST,
     )
-    pod_input = {"input_asset": {"url": "https://app.example.com"}, "extra": {}}
+    pod_input = {
+        "input_asset": {"url": "https://app.example.com"},
+        "extra": {},
+        "configured_command": "must-not-be-used",
+    }
     export = ja.default_pod_invoke(pod_input, agent_job, "run-1", 4)
 
     assert export.verdict == "success"
     assert len(calls) == 1
+    assert calls[0][0]["configured_command"] == "must-not-be-used"
 
 
 def test_default_pod_invoke_uses_template_pod_for_deterministic_jobs(monkeypatch):
@@ -255,6 +270,30 @@ def test_default_pod_invoke_uses_template_pod_for_deterministic_jobs(monkeypatch
     export = ja.default_pod_invoke(pod_input, job, "run-1", 0)
 
     assert export.verdict == "success"
+
+
+def test_default_pod_invoke_threads_configured_command_into_pod_state(monkeypatch):
+    from polymerhus.recon.domain import pod as pod_module
+    from polymerhus.recon.domain.types import PodExport
+
+    seen = {}
+
+    class FakePodGraph:
+        def invoke(self, state, config=None):
+            seen.update(state)
+            return {"export": PodExport(input_asset=state["input_asset"], verdict="success")}
+
+    monkeypatch.setattr(pod_module, "pod_graph", FakePodGraph())
+
+    pod_input = {
+        "input_asset": {"name": "a.com"},
+        "extra": {},
+        "configured_command": "httpx -u {target} -rate-limit 2",
+    }
+    export = ja.default_pod_invoke(pod_input, JOBS["httpx"], "run-1", 3)
+
+    assert export.verdict == "success"
+    assert seen["configured_command"] == "httpx -u {target} -rate-limit 2"
 
 
 def test_default_job_agent_is_import_safe_module_level_instance():
