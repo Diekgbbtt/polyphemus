@@ -263,7 +263,11 @@ def test_image_up_down_status(tmp_path, recording_runner, fake_result) -> None:
 
     down_runner = recording_runner()
     strategy.down(down_runner)
-    assert any("docker rm -f" in t for t in down_runner.argv_texts)
+    down_texts = down_runner.argv_texts
+    assert any("docker rm -f" in t for t in down_texts)
+    # The front conf is removed and nginx reloaded; the alias is cleared.
+    assert any("rm -f" in t and "nginx -s reload" in t for t in down_texts)
+    assert any("awk" in t for t in down_texts)
 
     status_runner = recording_runner(default=fake_result(0, stdout="running\n"))
     assert strategy.status(status_runner).strip() == "running"
