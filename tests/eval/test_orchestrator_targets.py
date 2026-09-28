@@ -141,6 +141,27 @@ def test_targetctl_up_without_a_url_is_fatal(tmp_path, recording_runner, fake_re
         strategy.up(runner)
 
 
+def test_targetctl_up_without_a_numeric_ip_is_fatal(
+    tmp_path, recording_runner, fake_result
+) -> None:
+    """SP1: no numeric IP means abort before any alias command is issued."""
+    strategy, _ = _strategy(tmp_path)
+    runner = recording_runner(
+        routes={
+            "scripts/targetctl up": fake_result(0, "UI: http://127.0.0.1:32768/\n"),
+            "hostname -I": fake_result(0, "  \n"),
+            "curl": fake_result(0, "200"),
+        }
+    )
+
+    with pytest.raises(targetctl.TargetctlError, match="numeric IP"):
+        strategy.up(runner)
+
+    # The up path aborted before touching kali: no docker-exec alias command.
+    assert not any("docker exec" in t for t in runner.argv_texts)
+    assert not any("alias" in (c.description or "") for c in runner.calls)
+
+
 def test_targetctl_down_removes_target_front_and_alias(
     tmp_path, recording_runner
 ) -> None:

@@ -35,6 +35,20 @@ class RoutingError(RuntimeError):
     """A remote routing command failed or an address could not be resolved."""
 
 
+def is_numeric_address(value: str) -> bool:
+    """True when `value` is a numeric IPv4 address, not a hostname.
+
+    `/etc/hosts` has no resolver in its address column, so every value written
+    as an alias target must be numeric (SP1).
+    """
+    return bool(_IPV4_RE.match(value))
+
+
+def is_plan_placeholder(ip: str) -> bool:
+    """True for a plan-mode placeholder such as `<gateway-ip>` (never executed)."""
+    return ip.startswith("<") and ip.endswith(">")
+
+
 def synthetic_host(identity: str) -> str:
     """`t-<short>.target` for a TargetRun identity (`<instance_id>/<target_id>`)."""
     return f"t-{short_id(identity)}{SYNTHETIC_SUFFIX}"
@@ -140,9 +154,16 @@ def kali_alias_command(paths: InstancePaths, host: str, ip: str) -> Command:
 
     `ip` must be a NUMERIC address (SP1): `/etc/hosts` does not resolve a
     hostname in its address column, so an unresolved `host.docker.internal`
-    line would silently point nowhere. Local strategies resolve the gateway
-    first with `resolve_gateway`.
+    line would silently point nowhere. This is the single write point, so it
+    enforces the guarantee for every caller; a plan-mode placeholder (never
+    executed) is the only non-numeric value allowed. Local strategies resolve
+    the gateway first with `resolve_gateway`.
     """
+    if not (is_numeric_address(ip) or is_plan_placeholder(ip)):
+        raise RoutingError(
+            f"refusing to alias {host} to non-numeric address {ip!r}: "
+            "/etc/hosts does not resolve a hostname in its address column"
+        )
     inner = _rewrite_hosts(host) + f" && echo '{ip} {host}' >> /etc/hosts"
     return _kali_exec_command(
         paths, inner, description=f"alias {host} -> {ip} in {paths.compose_project} kali"
@@ -165,7 +186,7 @@ def plan_gateway_resolve(paths: InstancePaths) -> Command:
 def parse_gateway_address(text: str) -> str:
     """The first numeric address in `getent hosts` output (SP1)."""
     for token in text.split():
-        if _IPV4_RE.match(token):
+        if is_numeric_address(token):
             return token
     raise RoutingError(
         f"no numeric address for {HOST_GATEWAY} in getent output: {text!r}"

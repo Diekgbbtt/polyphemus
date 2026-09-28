@@ -121,6 +121,29 @@ def test_ssh_builder_is_the_shared_shape() -> None:
     assert command.argv[-1] == "echo hi"
 
 
+def test_is_numeric_address_distinguishes_ips_from_hosts() -> None:
+    assert routing.is_numeric_address("172.17.0.1")
+    assert not routing.is_numeric_address("host.docker.internal")
+    assert not routing.is_numeric_address("")
+    assert not routing.is_numeric_address("t-a.target")
+
+
+def test_kali_alias_command_rejects_a_non_numeric_address(tmp_path) -> None:
+    """SP1: the single write point refuses to put a hostname in /etc/hosts."""
+    paths = _paths(tmp_path)
+
+    with pytest.raises(routing.RoutingError, match="non-numeric"):
+        routing.kali_alias_command(paths, "t-aaaa.target", "host.docker.internal")
+
+
+def test_kali_alias_command_allows_a_plan_placeholder(tmp_path) -> None:
+    paths = _paths(tmp_path)
+
+    command = routing.kali_alias_command(paths, "t-aaaa.target", routing.PLAN_GATEWAY_IP)
+
+    assert routing.PLAN_GATEWAY_IP in " ".join(command.argv)
+
+
 def test_parse_gateway_address_takes_the_first_numeric_token() -> None:
     text = "fe80::1 host.docker.internal\n172.17.0.1 host.docker.internal\n"
 

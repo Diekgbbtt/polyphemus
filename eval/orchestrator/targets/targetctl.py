@@ -207,10 +207,24 @@ class TargetctlStrategy:
         )
 
     def _resolve_ip(self, run: CommandRunner) -> str:
+        """The workshop host's numeric IP, or a loud failure.
+
+        The alias is written into kali's `/etc/hosts`, whose address column has
+        no resolver: a hostname (e.g. `public_host`) would silently point
+        nowhere. If `hostname -I` yields no numeric address the up path aborts
+        here, before any alias command is built.
+        """
         ip_cmd = self._ip_cmd()
         result = run(ip_cmd)
         remote_ip = result.stdout.strip().split()[0] if result.stdout.strip() else ""
-        return remote_ip or self.public_host
+        if not routing.is_numeric_address(remote_ip):
+            detail = result.stderr.strip() or result.stdout.strip()
+            raise TargetctlError(
+                f"target {self.target!r}: no numeric IP for {self.host} from "
+                f"`hostname -I` (got {detail!r}); refusing to write a non-numeric "
+                "alias into kali /etc/hosts"
+            )
+        return remote_ip
 
     def plan_down(self) -> list[Command]:
         return [
