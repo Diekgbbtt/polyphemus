@@ -24,10 +24,12 @@ from orchestrator.files import (
     FileStore,
     authn_skill_path,
     hunt_configs_dir,
+    hunter_test_specs_fault_dir,
 )
 from orchestrator.ids import short_id
 from orchestrator.instances import InstanceError, InstancePaths
 from orchestrator.predicates import GateResult
+from orchestrator.setup import PreloadedArtifacts
 from orchestrator.workitems import WorkItemGateError
 from orchestrator.targets.base import READY_UNREACHABLE
 
@@ -175,7 +177,7 @@ class TrialConfig:
     operator_kb: str | None = None
     auth: Mapping[str, object] | None = None
     auth_surface: bool = False
-    preloaded_hunting_artifacts: Path | None = None
+    preloaded_hunting_artifacts: PreloadedArtifacts | None = None
     hunt_config_budget: int | None = None
     data_root: Path = Path("data")
     runs_root: Path = Path("eval/runs")
@@ -405,7 +407,7 @@ class Trial:
             steps.append(
                 TrialPlanStep(
                     "pre-mined hunting artifacts",
-                    files=(str(hunt_configs_dir(cfg.data_root, project, "produced")),),
+                    files=_premined_inboxes(cfg, project),
                 )
             )
         if cfg.start_phase == "recon":
@@ -542,18 +544,26 @@ class Trial:
         )
 
     def _place_premined(self, project_id: str) -> None:
-        """Place pre-mined configs into the pipeline's own `produced/` inbox.
+        """Place pre-mined artifacts into the pipeline's own `produced/` inboxes.
 
-        No bespoke read path: the files land exactly where the pipeline's lazy
-        read looks, so the normal mover consumes them. The trial never uploads
-        or fabricates a config through the API.
+        No bespoke read path: hunt configs land in the hunt-config `produced/`
+        inbox and each test spec lands in its fault key's
+        `hunter/test-specs/<fault_key>/produced/` inbox, exactly where the
+        pipeline's lazy read looks, so the normal mover consumes them. The trial
+        never uploads or fabricates an artifact through the API.
         """
         cfg = self.config
-        source = Path(cfg.preloaded_hunting_artifacts)
-        sources = [source] if source.is_file() else self._files.walk_files(source)
-        produced = hunt_configs_dir(cfg.data_root, project_id, "produced")
-        for path in sources:
-            self._files.write_text(produced / path.name, self._files.read_text(path))
+        pre = cfg.preloaded_hunting_artifacts
+        if pre.configs is not None:
+            produced = hunt_configs_dir(cfg.data_root, project_id, "produced")
+            for path in _premined_sources(self._files, pre.configs):
+                self._files.write_text(produced / path.name, self._files.read_text(path))
+        for spec in pre.test_specs:
+            produced = hunter_test_specs_fault_dir(
+                cfg.data_root, project_id, spec.fault_key, "produced"
+            )
+            for path in _premined_sources(self._files, spec.path):
+                self._files.write_text(produced / path.name, self._files.read_text(path))
 
     # --- phases ---------------------------------------------------------------
 
@@ -714,6 +724,30 @@ def _hunting_plan_step(cfg: TrialConfig, project: str) -> TrialPlanStep:
         calls=(api.launch_hunting(project),),
         note=f"poll hunting to terminal{cap} (budget {cfg.budget_s:g}s)",
     )
+
+
+def _premined_sources(files: FileStore, source: str) -> list[Path]:
+    """The files a pre-mined artifact source contributes: itself, or its walk."""
+    path = Path(source)
+    return [path] if path.is_file() else files.walk_files(path)
+
+
+def _premined_inboxes(cfg: TrialConfig, project: str) -> tuple[str, ...]:
+    """Every `produced/` inbox a pre-mined artifact set writes into."""
+    pre = cfg.preloaded_hunting_artifacts
+    raw_project = cfg.project_id or project
+    inboxes: list[str] = []
+    if pre.configs is not None:
+        inboxes.append(str(hunt_configs_dir(cfg.data_root, raw_project, "produced")))
+    for spec in pre.test_specs:
+        inboxes.append(
+            str(
+                hunter_test_specs_fault_dir(
+                    cfg.data_root, raw_project, spec.fault_key, "produced"
+                )
+            )
+        )
+    return tuple(inboxes)
 
 
 def _terminal_of(phase: PhaseRecord, cap: PollResult | None) -> str:

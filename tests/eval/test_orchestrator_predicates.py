@@ -9,7 +9,12 @@ from __future__ import annotations
 import pytest
 
 from orchestrator import api, predicates
-from orchestrator.files import FileStore, authn_skill_path, hunt_configs_dir
+from orchestrator.files import (
+    FileStore,
+    authn_skill_path,
+    hunt_configs_dir,
+    hunter_test_specs_fault_dir,
+)
 
 
 class FakeApi:
@@ -338,6 +343,29 @@ def test_hunting_entry_blocks_when_configured_premined_artifacts_are_absent(
 
     produced = hunt_configs_dir(tmp_path, PROJECT, "produced")
     FileStore().write_text(produced / "unit_CWE-1_x.yaml", "id: x\n")
+    result = predicates.hunting_entry(
+        _routed(**{"GET /projects/pid/recon/r1": _recon_run()}), FileStore(), state
+    )
+    assert result.ok
+
+
+def test_hunting_entry_accepts_premined_test_specs_present(tmp_path) -> None:
+    # A setup that pre-mines only test specs must still pass the gate: presence
+    # counts both the hunt-config and the test-spec produced/consumed inboxes.
+    state = predicates.PhaseState(
+        project_id=PROJECT,
+        recon_run_id="r1",
+        preloaded_configured=True,
+        data_root=tmp_path,
+    )
+
+    result = predicates.hunting_entry(
+        _routed(**{"GET /projects/pid/recon/r1": _recon_run()}), FileStore(), state
+    )
+    assert not result.ok
+
+    spec_dir = hunter_test_specs_fault_dir(tmp_path, PROJECT, "fault-a", "produced")
+    FileStore().write_text(spec_dir / "s.yaml", "id: s\n")
     result = predicates.hunting_entry(
         _routed(**{"GET /projects/pid/recon/r1": _recon_run()}), FileStore(), state
     )

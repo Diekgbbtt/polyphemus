@@ -67,7 +67,8 @@ The per-Target bound on hunting, counted as the number of files in the consumed 
 _Avoid_: budget, limit
 
 **Pre-mined hunting artifacts**:
-Operator-supplied hunt configs/specs placed at a mounted location before the project run starts, consumed by the pipeline's normal lazy read.
+Operator-supplied hunt configs and hunter test specs placed before the project run starts, consumed by the pipeline's normal lazy read.
+Hunt configs land in `<data_root>/<project_id>/hunting/orchestration/hunt_configs/produced/`; each test spec carries its `fault_key` and lands in `<data_root>/<project_id>/hunting/hunter/test-specs/<fault_key>/produced/`.
 _Avoid_: seeds, preload
 
 **Artifact store**:

@@ -335,7 +335,6 @@ def _trial_config(args, setup: EvalSetup, config: OrchestratorConfig) -> tuple[
     scaffold = None
     if run.start_phase == "recon" and kb:
         scaffold = trial.ScaffoldSpec(cwd=str(paths.worktree), kb=kb)
-    pinned = run.preloaded_hunting_artifacts
     if args.data_root:
         data_root = Path(args.data_root)
     elif args.dry_run:
@@ -351,7 +350,7 @@ def _trial_config(args, setup: EvalSetup, config: OrchestratorConfig) -> tuple[
         operator_kb=kb,
         auth=run.target_config.auth,
         auth_surface=run.target_config.auth is not None,
-        preloaded_hunting_artifacts=Path(pinned) if pinned else None,
+        preloaded_hunting_artifacts=run.preloaded_hunting_artifacts,
         hunt_config_budget=run.hunt_config_budget,
         data_root=data_root,
         runs_root=Path(args.runs_root),

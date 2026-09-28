@@ -350,12 +350,37 @@ instances:
       - target_id: jetlinks-1
         start_phase: recon     # recon | analysis | hunting
         hunt_config_budget: 10
+        target_run_id: jetlinks-1-run1  # optional; the artifact store middle level (#273)
+        preloaded_hunting_artifacts:    # optional; see below
+          configs: /mnt/premined-configs          # a config file or a directory of them
+          test_specs:                             # each spec names its fault key
+            - path: /mnt/premined-specs/unit_CWE-89_sqli.yaml
+              fault_key: unit_CWE-89_sqli
         target_config:
           lifecycle: targetctl # targetctl | image | compose
           operator_kb: eval/kbs/jetlinks/operator_kb.md
           params:
             target: jetlinks   # targetctl params; image/compose take image/port/compose_file
 ```
+
+**Pre-mined hunting artifacts** (the two ratified lazy-read seams). The
+pipeline consumes hunting artifacts only by reading its own produced/ inboxes,
+so the trial drops the operator's files exactly there before the run; there is
+no import/seed API and the trial never fabricates an artifact through the API.
+
+- `configs`: a host path to one hunt config or to a directory of them. Every
+  file lands in `data/<project_id>/hunting/orchestration/hunt_configs/produced/`.
+- `test_specs`: a list of `{path, fault_key}` entries. Each spec file (or
+  directory of them) lands in
+  `data/<project_id>/hunting/hunter/test-specs/<fault_key>/produced/`, the
+  inbox the hunter's normal mover drains. A missing or path-unsafe `fault_key`
+  fails setup validation loud.
+
+The legacy single-string form is still accepted and means `configs` only:
+`preloaded_hunting_artifacts: /mnt/premined-configs`. Pre-mined files count
+toward the hunting cap exactly like produced ones, and a setup that declares
+`preloaded_hunting_artifacts` does not enter hunting until at least one artifact
+is present on disk.
 
 Run it from the repo root:
 
