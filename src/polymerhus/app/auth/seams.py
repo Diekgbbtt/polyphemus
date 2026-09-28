@@ -10,15 +10,16 @@ reimplementation of either the tool or the skill surface.
 
 Scope rules (operator rulings): the analysis-domain agents never bind
 authentication capability; since #223 the recon orchestrator (`job_orchestrator`)
-arms the write-capable auth surface (D223-13); #238 later gave that role the
-generic `performing-api-rate-limiting-bypass` roster entry, so the orchestrator
-now takes the BOUND path below and the explicit `project_id` is threaded through
-both the skill binding and the `auth_store` tool - never silently falling back to
-the deployment-wide `config.PROJECT_ID` when a caller passed one; the recon
-job-specific agents deliberately never take the binding (D223-5); every other
-stateful agent (the roster's bound roles) binds the read-only surface. Project
-scope stays tool-owned for the site (`config.PROJECT_ID` when no explicit id is
-passed), so no agent harness has to thread identity.
+arms the write-capable auth surface (D223-13). It remains roster-exempt, so the
+write-capable exempt path below supplies `load_skill` + `write_skill` +
+`auth_store` and the project `authn` skill; the explicit `project_id` is
+threaded through both the skill binding and the `auth_store` tool - never
+silently falling back to the deployment-wide `config.PROJECT_ID` when a caller
+passed one. The recon job-specific agents deliberately never take the binding
+(D223-5); every other stateful agent (the roster's bound roles) binds the
+read-only surface. Project scope stays tool-owned for the site
+(`config.PROJECT_ID` when no explicit id is passed), so no agent harness has to
+thread identity.
 
 Import performs no I/O and touches no env (CODING_STANDARD section 6): the
 collaborators resolve lazily inside the call.

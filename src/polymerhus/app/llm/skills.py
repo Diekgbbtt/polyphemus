@@ -209,18 +209,11 @@ ROLE_SKILLS: dict[str, tuple[str, ...]] = {
     # observations; classifying a page's rendering and architectural shape is
     # exactly what the two anatomy skills state.
     "triager": ("webpage-analysis", "webpage-profile"),
-    # The configurator role is reserved for the #238 profile-driven
-    # rate-limit configuration (its steering-fed throttle turn retired with
-    # the mid-run steering machinery, #243), and the control-plane
-    # orchestrator routes jobs over assets and phases - both are coverage
-    # bookkeeping over signals, not target knowledge.
+    # The configurator role is reserved for the profile-driven pod
+    # configuration; the Auth Gateway is auth-only and loads its project
+    # `authn` procedure through the write-capable auth binding, not this roster.
     "configurator": (),
-    # The recon orchestrator's SECOND turn (the #238 post-authentication
-    # rate-limit mapping) reasons about a limiter it may bypass: the generic
-    # bounded-mutation procedure is exactly that discipline. ONE shared entry -
-    # the catalogue carries the taxonomy, artifacts and the `RateProfile`
-    # carry target-specific evidence, so no per-project copy is ever made.
-    "job_orchestrator": ("performing-api-rate-limiting-bypass",),
+    "job_orchestrator": (),
     # -- analysis (exempt: local-context reasoning only) ------------------------
     # The three proposers reason over the published L0/L1 substrate into typed
     # model deltas; the catalogue carries no modelling discipline for that job,

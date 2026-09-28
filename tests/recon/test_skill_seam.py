@@ -43,10 +43,11 @@ from polymerhus.app.llm.skills import (
 # context (the published L0/L1 substrate, their own prompts, steering signals)
 # and never with an external environment, so no catalogue skill bears on them.
 # Pinned exactly, so adding or removing an exemption is a deliberate edit here
-# and in `ROLE_SKILLS`. `job_orchestrator` left this set with #238: the
-# post-authentication rate-limit turn runs the generic bypass procedure.
+# and in `ROLE_SKILLS`. `job_orchestrator` is auth-only again: the pipeline owns
+# rate mapping, so the gateway loads only the project `authn` skill.
 EXEMPT_ROLES = {
     "configurator",
+    "job_orchestrator",
     "assigner",
     "mechanism_typist",
     "data_modeller",
@@ -55,13 +56,13 @@ EXEMPT_ROLES = {
 
 BOUND_ROLES = {
     "triager": ("webpage-analysis", "webpage-profile"),
-    "job_orchestrator": ("performing-api-rate-limiting-bypass",),
     "hunting_hunter": ("lightrag-query", "steel-browser"),
     "pod_runner": ("lightrag-query", "steel-browser"),
     "pod_triager": ("lightrag-query",),
 }
 
-# The generic bypass procedure the orchestrator's rate-limit turn runs (#238).
+# The generic bypass procedure remains in the catalogue for explicit future
+# workflows, but no baseline role binds it after the gateway is auth-only.
 BYPASS_SKILL = "performing-api-rate-limiting-bypass"
 
 
@@ -199,23 +200,20 @@ def test_the_roster_is_exactly_the_bound_plus_the_exempt_roles() -> None:
     assert {role for role, names in ROLE_SKILLS.items() if not names} == EXEMPT_ROLES
 
 
-def test_the_orchestrator_binds_the_generic_bypass_procedure() -> None:
-    """#238: the orchestrator's second (rate-limit) turn runs the ONE generic
-    bypass procedure from the shared catalogue - a bounded single-entry roster,
-    never a per-project copy of the taxonomy (target-specific evidence lives in
-    artifacts and the `RateProfile`). The project `authn` procedure rides
-    beside it through the auth binding, not through this roster."""
-    assert skills_for_role("job_orchestrator") == (BYPASS_SKILL,)
+def test_the_orchestrator_is_exempt_and_the_bypass_procedure_stays_dormant() -> None:
+    """The Auth Gateway loads only the project `authn` procedure through the
+    write-capable auth binding. The generic bypass skill remains catalogue
+    knowledge for explicit future workflows but is bound to no role."""
+    assert skills_for_role("job_orchestrator") == ()
+    assert BYPASS_SKILL in list_skills()
 
 
 def test_auth_capable_binding_scopes_the_armed_surface_to_its_explicit_project(
     tmp_path, monkeypatch
 ) -> None:
-    """The roster change (#238) moves `job_orchestrator` out of
-    `auth_capable_binding`'s exempt branch and into the BOUND branch, whose
-    project scope must be the EXPLICIT one: both the project-authored skill
-    surface and the `auth_store` tool must address `p2`, never fall back to the
-    deployment-wide `config.PROJECT_ID`."""
+    """The auth-only gateway returns to the write-capable exempt branch, whose
+    explicit project scope must bind the project-authored `authn` surface and
+    `auth_store` to `p2`, never the deployment-wide default."""
     from polymerhus.app.auth.seams import auth_capable_binding
     from polymerhus.app.auth.store import AuthStore
     from polymerhus.app.config import config
@@ -231,7 +229,7 @@ def test_auth_capable_binding_scopes_the_armed_surface_to_its_explicit_project(
     )
 
     assert binding.context["project_id"] == "p2"
-    assert binding.context["skills"] == [BYPASS_SKILL, "authn"]
+    assert binding.context["skills"] == ["authn"]
     assert [t.name for t in binding.tools] == [
         "load_skill", "write_skill", "auth_store"
     ]

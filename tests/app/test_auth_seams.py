@@ -39,20 +39,15 @@ def test_exempt_role_gains_no_auth_capability() -> None:
 
 
 def test_orchestrator_arms_the_write_capable_auth_surface() -> None:
-    """#223 D223-13 as amended by #238 Task 2: the recon orchestrator carries
-    `auth_store`, `load_skill`, `write_skill`, the project `authn` procedure,
-    AND the generic `performing-api-rate-limiting-bypass` procedure its
-    post-authentication rate-limit turn runs. That second skill arrives
-    through the roster (the orchestrator is no longer roster-exempt), while
-    the write capability still rides `with_write_skill`."""
+    """The auth-only gateway carries `auth_store`, `load_skill`, `write_skill`
+    and only the project `authn` procedure. The dormant bypass procedure is
+    not in its skill context."""
     binding = auth_capable_binding(
         "job_orchestrator", project_id="p1", with_write_skill=True)
 
     tool_names = [t.name for t in binding.tools]
     assert tool_names == ["load_skill", "write_skill", "auth_store"]
-    assert binding.context["skills"] == [
-        "performing-api-rate-limiting-bypass", AUTHN_SKILL
-    ]
+    assert binding.context["skills"] == [AUTHN_SKILL]
     assert binding.context["project_id"] == "p1"
     assert len(binding.middleware) == 1  # the L1 index middleware
 
