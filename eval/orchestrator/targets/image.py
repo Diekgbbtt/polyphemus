@@ -1,7 +1,10 @@
 """The `image` strategy: a local pullable container.
 
 The target is a single image published on loopback; the instance kali aliases
-the synthetic Host to `127.0.0.1`. `down` removes exactly the container it
+the synthetic Host to the Docker host gateway (`host.docker.internal`), NOT
+`127.0.0.1`: kali is not on the host network, so `127.0.0.1` is kali itself.
+The stack's compose services reach host-published ports the same way
+(`host.docker.internal:host-gateway`). `down` removes exactly the container it
 created.
 """
 from __future__ import annotations
@@ -22,6 +25,7 @@ from orchestrator.targets.base import (
 
 DEFAULT_INTERNAL_PORT = 80
 LOOPBACK = "127.0.0.1"
+HOST_GATEWAY = "host.docker.internal"
 
 
 class ImageError(TargetError):
@@ -94,7 +98,7 @@ class ImageStrategy:
         return [
             self._run_cmd(),
             self._probe_cmd(),
-            routing.kali_alias_command(self.paths, self.host, LOOPBACK),
+            routing.kali_alias_command(self.paths, self.host, HOST_GATEWAY),
         ]
 
     def up(self, run: CommandRunner) -> TargetUpResult:
@@ -106,7 +110,7 @@ class ImageStrategy:
             raise TargetNotReadyError(
                 f"image target {self.image!r} did not answer at {self.front_url}"
             )
-        alias = routing.kali_alias_command(self.paths, self.host, LOOPBACK)
+        alias = routing.kali_alias_command(self.paths, self.host, HOST_GATEWAY)
         require_ok(run(alias), alias, error=ImageError)
         return TargetUpResult(
             host=self.host, front_url=self.front_url, backend=self.backend, ready=True

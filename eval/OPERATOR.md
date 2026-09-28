@@ -61,7 +61,7 @@ All commands run from the polymerhus repo root.
 | `PYTHONPATH=eval python3 -m orchestrator plan <setup.yaml>` | Print every instance, target, and routing command for an `EvalSetup` without executing anything (`up --dry-run` is the same). |
 | `PYTHONPATH=eval python3 -m orchestrator up <setup.yaml>` | Gate the eval-wide work items, then bring up each instance stack (worktree off `eval`, `.env` preflight, compose overlay) and its targets (the `targetctl` strategy deploys to the REMOTE workshop host; `image`/`compose` are local). |
 | `PYTHONPATH=eval python3 -m orchestrator down <setup.yaml>` | Tear every target down (front, kali alias, target containers) and then every instance project (`docker compose down -v`, worktree removed). |
-| `PYTHONPATH=eval python3 -m orchestrator status <setup.yaml>` | Per-instance stack status and per-target status. |
+| `PYTHONPATH=eval python3 -m orchestrator status <setup.yaml>` | Per-instance stack status, live kali aliases, and each target's synthetic host, front URL, and status. |
 
 The former `eval/target.sh` and `eval/hosts.sh` primitives are replaced by the
 orchestrator's target strategies (`eval/orchestrator/targets/`) and routing
@@ -154,9 +154,15 @@ probes the default web port (80). A scheme/port-bearing seed breaks the scope
 gate (assets dropped, crawl chain skipped) - a dev-side defect, tracked
 separately, NOT worked around here.
 
-The routing module aliases the synthetic Host to the target's public IP inside
-that instance's kali `/etc/hosts` (runtime-only): belt-and-braces deterministic
-resolution for the recon fleet.
+The routing module aliases the synthetic Host inside that instance's kali
+`/etc/hosts` (runtime-only): belt-and-braces deterministic resolution for the
+recon fleet. The alias target depends on where the target runs:
+
+- `targetctl` (remote workshop host): the workshop host's public IP.
+- `image`/`compose` (local, host-published): `host.docker.internal`, the Docker
+  host gateway (`host.docker.internal:host-gateway`). Kali is NOT on the host
+  network, so `127.0.0.1` would resolve to kali itself; `host.docker.internal`
+  is how the stack already reaches host-published ports.
 
 Settings PUT body (`ph.py settings put`):
 
@@ -252,8 +258,9 @@ operator KB, research notes, evidence, verdicts, trial record - lands there.
 1. Bring the target up through the orchestrator (`python3 -m orchestrator up
    <setup.yaml>`); capture the `TARGET_URL` (the synthetic Host front URL) and
    the backend from its output.
-2. The orchestrator aliases the synthetic Host to the target's public IP inside
-   the instance kali, so the recon fleet can reach the remote target. The
+2. The orchestrator aliases the synthetic Host inside the instance kali
+   (`targetctl`: the target's public IP; `image`/`compose`: the host gateway,
+   `host.docker.internal`), so the recon fleet can reach the target. The
    synthetic Host name is what the pipeline will observe.
 3. `gt.py <target>`; read the ground truth (the JUDGE's private reference, kept
    out of anything the pipeline sees).
@@ -298,11 +305,13 @@ operator KB, research notes, evidence, verdicts, trial record - lands there.
 One `EvalSetup` YAML declares the whole evaluation: the instances, each with a
 serial target pipeline, the durable artifact store, and the eval-wide work
 items (D14) that must be complete before any target starts. Each instance runs
-from its own git worktree off the `eval` branch under the configured instances
-root, with its own `.env` validated by `eval/env_preflight.py`; the compose
-project is `ph-<short>`. Every target run gets a unique synthetic Host
-(`t-<short>.target`), written into the target front and aliased in that
-instance's kali.
+from its own git worktree DETACHED at the `eval` branch commit under the
+configured instances root, with its own `.env` validated by
+`eval/env_preflight.py`; the compose project is `ph-<short>`. Detached means any
+number of instances share the one read-only `eval` branch (git refuses the same
+branch in two worktrees); the daemon fast-forwards each detached HEAD. Every
+target run gets a unique synthetic Host (`t-<short>.target`), written into the
+target front and aliased in that instance's kali.
 
 ```yaml
 schema_version: 1
@@ -380,7 +389,9 @@ a closer look.
 #### The environment state
 
 - `python3 -m orchestrator status <setup.yaml>` - which instances and targets
-  are up, their front URLs, and the aliases injected into each kali.
+  are up, each target's synthetic host and front URL, and the synthetic-host
+  aliases actually present in each instance's kali `/etc/hosts` (read live;
+  reported as unavailable, never omitted, when kali cannot be reached).
 - `python3 -m orchestrator down <setup.yaml>` - the teardown verb, also part
   of the agent's workflow.
 - `GET /app-state` (optional `?project_id=`) - the idle proxy: per-project

@@ -1,8 +1,11 @@
 """The `compose` strategy: a local pullable compose stack.
 
 The stack runs under its own compose project (`ph-target-<short>`), distinct
-from the instance projects; the instance kali aliases the synthetic Host to
-`127.0.0.1`. `down` removes that project's containers and volumes.
+from the instance projects; the instance kali aliases the synthetic Host to the
+Docker host gateway (`host.docker.internal`), NOT `127.0.0.1`, because kali is
+not on the host network and `127.0.0.1` is kali itself. The stack reaches
+host-published ports the same way (`host.docker.internal:host-gateway`).
+`down` removes that project's containers and volumes.
 """
 from __future__ import annotations
 
@@ -21,6 +24,7 @@ from orchestrator.targets.base import (
 )
 
 LOOPBACK = "127.0.0.1"
+HOST_GATEWAY = "host.docker.internal"
 
 
 class ComposeTargetError(TargetError):
@@ -84,7 +88,7 @@ class ComposeStrategy:
         return [
             self._compose("up", "-d"),
             self._probe_cmd(),
-            routing.kali_alias_command(self.paths, self.host, LOOPBACK),
+            routing.kali_alias_command(self.paths, self.host, HOST_GATEWAY),
         ]
 
     def up(self, run: CommandRunner) -> TargetUpResult:
@@ -96,7 +100,7 @@ class ComposeStrategy:
             raise TargetNotReadyError(
                 f"compose target {self.compose_file!r} did not answer at {self.front_url}"
             )
-        alias = routing.kali_alias_command(self.paths, self.host, LOOPBACK)
+        alias = routing.kali_alias_command(self.paths, self.host, HOST_GATEWAY)
         require_ok(run(alias), alias, error=ComposeTargetError)
         return TargetUpResult(
             host=self.host, front_url=self.front_url, backend=self.backend, ready=True

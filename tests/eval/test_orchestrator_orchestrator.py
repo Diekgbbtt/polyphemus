@@ -88,3 +88,42 @@ def test_down_removes_targets_then_the_instance(
     assert any("scripts/targetctl down jetlinks" in t for t in texts)
     assert any("down -v --remove-orphans" in t for t in texts)
     assert any("worktree remove" in t for t in texts)
+
+
+def test_status_reports_target_host_front_url_and_kali_aliases(
+    sample_setup, tmp_path, recording_runner, fake_result
+) -> None:
+    """#269: status must report the synthetic host, its front URL, and the live aliases."""
+    host = routing.synthetic_host("arm-a/jetlinks-1")
+    runner = recording_runner(
+        routes={
+            "/etc/hosts": fake_result(
+                0, stdout="127.0.0.1 localhost\n10.0.0.5 t-aaaa.target\n"
+            ),
+        },
+        default=fake_result(0, stdout="running\n"),
+    )
+
+    report = _orchestrator(sample_setup, tmp_path, runner=runner).status()
+
+    entry = report["arm-a"]
+    assert "running" in entry["stack"]
+    (target,) = entry["targets"].values()
+    assert target["host"] == host
+    assert target["front_url"] == f"http://{host}/"
+    assert target["status"].strip() == "running"
+    assert entry["aliases"] == {"t-aaaa.target": "10.0.0.5"}
+
+
+def test_down_is_idempotent_when_the_worktree_is_absent(
+    sample_setup, tmp_path, recording_runner
+) -> None:
+    """#269: teardown must not fail because the instance worktree never existed."""
+    runner = recording_runner()
+
+    _orchestrator(sample_setup, tmp_path, runner=runner).down()
+
+    texts = runner.argv_texts
+    assert any("scripts/targetctl down jetlinks" in t for t in texts)
+    # No compose down for a worktree that does not exist.
+    assert not any("down -v --remove-orphans" in t for t in texts)

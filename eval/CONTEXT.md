@@ -6,7 +6,8 @@ This glossary is for the eval harness itself; polymerhus's own vocabulary lives 
 ## Language
 
 **PolyphemusInstance**:
-One polymerhus deployment (agent + kali + postgres + neo4j + lightrag) dedicated to an eval instance; identified by a uuid and defined by its `.env` file.
+One polymerhus deployment (agent + kali + postgres + neo4j + lightrag) dedicated to an eval instance; identified by a uuid, defined by its `.env` file, and running from its own git worktree detached at the `eval` branch commit.
+Detached so any number of instances share the one read-only `eval` branch (git refuses the same branch in two worktrees).
 _Avoid_: system instance, stack, system
 
 **EvalSetup**:
@@ -47,6 +48,7 @@ _Avoid_: target kind, deployment
 
 **Synthetic Host**:
 The unique per-`TargetRun` hostname (`t-<short>.target`) written into the target front's `server_name` and aliased in that instance's kali `/etc/hosts`; the routing discriminator.
+The alias target is the target's public IP for `targetctl` and the Docker host gateway (`host.docker.internal`) for `image`/`compose` (kali is not on the host network).
 A port-bearing seed was rejected because it breaks the platform's bare-domain scope gate.
 _Avoid_: alias, virtual host, domain
 
@@ -96,6 +98,7 @@ _Avoid_: monitor, watchdog
 
 **Version advance**:
 The environment-wide move of all instance worktrees from the current `eval` SHA to `dev`'s commit, performed only when all instances are idle.
+Each detached HEAD is fast-forwarded; a move that reaches only some worktrees is reported as a partial advance, never as a clean one.
 _Avoid_: sync, pull
 
 **Delivery plane**:
@@ -107,7 +110,7 @@ The read of the app module's running-state surface (`GET /app-state`, with the d
 _Avoid_: eval lock, busy flag, execution-state variable
 
 **Heartbeat**:
-The file the sync daemon atomically rewrites every poll carrying the observed `dev` and `eval` SHAs, the idle verdict, the advance state, the last error, and the timestamp of the last advance.
+The file the sync daemon atomically rewrites every poll carrying the observed `dev` and `eval` SHAs, the idle verdict, the advance state, each worktree's observed HEAD, the last error, and the timestamp of the last advance.
 _Avoid_: status file, health check
 
 **Last-known-good SHA**:
