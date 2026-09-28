@@ -224,6 +224,22 @@ def kali_hosts_command(paths: InstancePaths) -> Command:
     )
 
 
+def kali_probe_command(paths: InstancePaths, url: str, *, max_time_s: int = 10) -> Command:
+    """Probe a URL from INSIDE that instance's kali (the phase-entry check).
+
+    A target the recon fleet cannot reach is a failed run, not an empty
+    finding, so the recon predicate probes through the same exec plane the
+    pipeline uses. The command answers the HTTP status on stdout.
+    """
+    inner = (
+        f"curl -sS -o /dev/null -w '%{{http_code}}' --max-time {int(max_time_s)} "
+        f"{shlex.quote(url)}"
+    )
+    return _kali_exec_command(
+        paths, inner, description=f"probe {url} from {paths.compose_project} kali"
+    )
+
+
 def parse_synthetic_aliases(hosts_text: str) -> dict[str, str]:
     """The synthetic-Host aliases present in an `/etc/hosts` body: host -> ip."""
     aliases: dict[str, str] = {}
