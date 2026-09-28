@@ -781,7 +781,7 @@ decision on the hold.
 
 | Primitive | Contract |
 |---|---|
-| `PYTHONPATH=eval python3 -m orchestrator align <setup.yaml> [--instance <id>] [--decision-file <yaml>] [--dry-run]` | Assert the advance delta and execute the alignment decision. `--decision-file` supplies a decision-input YAML; the default is the daemon heartbeat (`--heartbeat`, `EVAL_ADVANCE_HEARTBEAT`). `--dry-run` plans every action and executes nothing. The alignment state lives at `--state` (`EVAL_ALIGNMENT_STATE`, default `eval/state/alignment.yaml`). |
+| `PYTHONPATH=eval python3 -m orchestrator align <setup.yaml> [--instance <id>] [--decision-file <yaml>] [--dry-run]` | Assert the advance delta and execute the alignment decision. `--decision-file` supplies a decision-input YAML; the default is the daemon heartbeat (`--heartbeat`, `EVAL_ADVANCE_HEARTBEAT`). `--dry-run` plans the alignment commands and executes none of them (the agent turn still runs to obtain a decision). The alignment state lives at `--state` (`EVAL_ALIGNMENT_STATE`, default `eval/state/alignment.yaml`). |
 | `PYTHONPATH=eval python3 -m orchestrator alignment resolve <setup.yaml> --hold-id <id> --decision <text>` | Record the operator's decision on a named hold and clear it, unblocking `up`/`trial`. The advance is not reverted. |
 
 Configure the alignment agent command once, as `EVAL_ALIGN_COMMAND` (or
