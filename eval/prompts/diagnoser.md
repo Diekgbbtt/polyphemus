@@ -98,5 +98,5 @@ The command only ever issues a GET; you cannot file from it and you must not fil
 Work authority lives in `loop-constraints.md`: only the operator starts work, so never create an issue.
 
 - When a matching issue exists, record it in `closest_issue` with a `rationale` explaining why it is the closest.
-- When none exists, write a `proposed_issue` block for the operator to file.
-- Record exactly one of the two; never both, and never neither.
+- When none exists, **or when the issue bank is unavailable** (the search errors, the token is missing, the network is down), write a `proposed_issue` block for the operator to file.
+- Record exactly one of the two; never both, and never neither. Every row must carry one, so a bank you cannot reach still yields a proposal.

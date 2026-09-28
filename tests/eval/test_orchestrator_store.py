@@ -266,7 +266,7 @@ def test_materialize_assembles_the_full_trial_tree(tmp_path) -> None:
                 "diagnosis_overview": "o",
                 "evidences": [{"source": "s", "ref": "r", "note": "n"}],
                 "closest_issue": None,
-                "proposed_issue": None,
+                "proposed_issue": {"title": "gap", "body": "b", "labels": []},
             }
         ],
     )
@@ -440,7 +440,7 @@ def test_materialize_copies_a_present_diagnoses_file(tmp_path) -> None:
                 "diagnosis_overview": "o",
                 "evidences": [{"source": "s", "ref": "r", "note": "n"}],
                 "closest_issue": None,
-                "proposed_issue": None,
+                "proposed_issue": {"title": "gap", "body": "b", "labels": []},
             }
         ],
     )

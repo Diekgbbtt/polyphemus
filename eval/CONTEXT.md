@@ -103,6 +103,7 @@ _Avoid_: proof, references
 
 **Diagnosis**:
 The per-un-found-vuln root-cause record in `diagnoses.yaml` (paired with `verdicts.yaml`) produced by the diagnoser subagent.
+Each record carries exactly one issue reference: a `closest_issue` from the origin bank or, when none matches (or the bank is unavailable), a `proposed_issue` for the operator to file; never both, never neither.
 _Avoid_: post-mortem, failure report
 
 **Failure mode**:

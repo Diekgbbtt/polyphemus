@@ -18,6 +18,14 @@ from orchestrator.files import FileStore
 SHA = "eval-sha-1"
 FINGERPRINT = "fp-1"
 
+# The schema requires exactly one issue reference per row; a factory default
+# carries a proposal so every "valid row" is valid by construction.
+_UNSET = object()
+
+
+def _proposal() -> dict:
+    return {"title": "new gap", "body": "b", "labels": []}
+
 
 # --- fixtures -----------------------------------------------------------------
 
@@ -43,8 +51,8 @@ def row(
     extended_description: str = "the scanner missed the route",
     diagnosis_overview: str = "the pipeline never reached the sink",
     evidences: list | None = None,
-    closest_issue: dict | None = None,
-    proposed_issue: dict | None = None,
+    closest_issue: object = _UNSET,
+    proposed_issue: object = _UNSET,
 ) -> dict:
     payload: dict = {
         "vuln": vuln,
@@ -60,10 +68,14 @@ def row(
     }
     if combination_of is not None:
         payload["root_cause"]["combination_of"] = combination_of
-    if closest_issue is not None:
-        payload["closest_issue"] = closest_issue
-    if proposed_issue is not None:
-        payload["proposed_issue"] = proposed_issue
+    if closest_issue is _UNSET and proposed_issue is _UNSET:
+        # Default valid row: exactly one of the two, a proposal.
+        payload["proposed_issue"] = _proposal()
+    else:
+        if closest_issue is not _UNSET and closest_issue is not None:
+            payload["closest_issue"] = closest_issue
+        if proposed_issue is not _UNSET and proposed_issue is not None:
+            payload["proposed_issue"] = proposed_issue
     return payload
 
 
@@ -188,6 +200,45 @@ def test_rejects_both_a_closest_and_a_proposed_issue() -> None:
             ],
             verdicts=[verdict("v1", "missed")],
         )
+
+
+def test_rejects_neither_a_closest_nor_a_proposed_issue() -> None:
+    with pytest.raises(diagnosis.DiagnosisError, match="exactly one"):
+        diagnosis.validate_diagnoses(
+            [row(closest_issue=None, proposed_issue=None)],
+            verdicts=[verdict("v1", "missed")],
+        )
+
+
+def test_accepts_a_closest_issue_only() -> None:
+    diags = diagnosis.validate_diagnoses(
+        [
+            row(
+                closest_issue={
+                    "repo": "o/r",
+                    "number": 7,
+                    "title": "known gap",
+                    "rationale": "same surface gap",
+                }
+            )
+        ],
+        verdicts=[verdict("v1", "missed")],
+    )
+
+    assert diags[0].closest_issue is not None
+    assert diags[0].closest_issue.number == 7
+    assert diags[0].proposed_issue is None
+
+
+def test_accepts_a_proposed_issue_only() -> None:
+    diags = diagnosis.validate_diagnoses(
+        [row(proposed_issue={"title": "new", "body": "b", "labels": ["bug"]})],
+        verdicts=[verdict("v1", "missed")],
+    )
+
+    assert diags[0].proposed_issue is not None
+    assert diags[0].proposed_issue.labels == ("bug",)
+    assert diags[0].closest_issue is None
 
 
 def test_write_is_atomic_and_round_trips() -> None:
@@ -466,6 +517,10 @@ def test_diagnoser_prompt_is_a_file_and_states_the_contract() -> None:
     assert "skill_defect" in text
     assert "closest_issue" in text
     assert "proposed_issue" in text
+    # Every row carries exactly one issue reference; an unavailable bank still
+    # forces a proposal.
+    assert "exactly one" in text.lower()
+    assert "unavailable" in text.lower()
     # The adapted procedure grounds on the two named skills by full path.
     assert "debug-hypothesis" in text
     assert "diagnosing-bugs" in text

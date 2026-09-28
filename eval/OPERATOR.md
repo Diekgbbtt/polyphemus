@@ -732,6 +732,7 @@ EVAL_DIAGNOSE_COMMAND='opencode run --prompt {prompt} --trial {trial_record} --v
 #### The issue bank is read-only
 
 The diagnoser searches the origin issue bank and records either the closest matching issue (`closest_issue`) or a `proposed_issue` block; it never files.
+The two are mutually exclusive and one is mandatory: a row with neither is rejected by the schema, so when no issue matches - or the bank is unavailable - the diagnoser writes a `proposed_issue`.
 This is a work-authority rule (`loop-constraints.md`): only the operator starts work.
 A `proposed_issue` is written into `diagnoses.yaml` for the operator to file manually.
 
