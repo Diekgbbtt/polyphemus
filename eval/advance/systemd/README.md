@@ -52,4 +52,9 @@ Without `--confirm`, or with a SHA outside the recorded history, the command is 
 - The idle proxy reads `GET /app-state` first and falls back to the documented direct-postgres query through `psql`; if both are unavailable the daemon refuses to advance (unknown is not idle).
 - The alert threshold is intentionally not invented here.
   The structured log line is always emitted; an optional shell hook can be configured.
+- The heartbeat carries each eval worktree's observed HEAD and whether it reached `dev`, in every state.
+  A `worktree_skew` heartbeat names the divergent worktrees instead of hiding them.
+- The running-stack identity for image digests has no default: set `EVAL_ADVANCE_COMPOSE_PROJECT` (eval instances run as `ph-<short>`) or `EVAL_ADVANCE_IMAGE_CONTAINERS`.
+  With neither, the daemon alerts and refuses to advance (SP4).
+- The last-known-good history is bounded to the most recent 50 SHAs (SP5), so an operator rewind only targets a recent recorded good SHA.
 - The heartbeat and last-known-good history are the daemon's only writes.

@@ -8,8 +8,11 @@ template.
 """
 from __future__ import annotations
 
+import inspect
 import re
 from pathlib import Path
+
+from advance import daemon
 
 SYSTEMD_DIR = Path(__file__).resolve().parents[2] / "eval" / "advance" / "systemd"
 
@@ -27,19 +30,12 @@ def test_env_template_documents_every_configuration_variable() -> None:
     template = (SYSTEMD_DIR / "eval-advance.env.example").read_text(encoding="utf-8")
     documented = set(re.findall(r"EVAL_ADVANCE_[A-Z_]+", template))
 
-    expected = {
-        "EVAL_ADVANCE_DEV_WORKTREE",
-        "EVAL_ADVANCE_EVAL_WORKTREES",
-        "EVAL_ADVANCE_APP_STATE_URL",
-        "EVAL_ADVANCE_DSN",
-        "EVAL_ADVANCE_HEARTBEAT",
-        "EVAL_ADVANCE_POLL_INTERVAL",
-        "EVAL_ADVANCE_ALERT_COMMAND",
-        "EVAL_ADVANCE_DEV_AHEAD_MESSAGE",
-        "EVAL_ADVANCE_LAST_KNOWN_GOOD",
-        "EVAL_ADVANCE_COMPOSE_PROJECT",
-        "EVAL_ADVANCE_IMAGE_CONTAINERS",
-    }
+    # S8: derive the expected set from the code, not a hand-maintained literal,
+    # so a new variable read by the loader cannot ship undocumented.
+    expected = set(
+        re.findall(r"EVAL_ADVANCE_[A-Z_]+", inspect.getsource(daemon.load_config_from_env))
+    )
+    assert expected, "no EVAL_ADVANCE_* variables found in load_config_from_env"
     assert expected <= documented
 
 

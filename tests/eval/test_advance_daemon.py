@@ -803,3 +803,161 @@ def test_full_poll_cycle_against_temp_repos_and_fake_app_state(
     assert proxy.calls == 1
     assert "advanced" in [r.get("event") for r in records]
     assert_poll_commands_safe(recorder)
+
+
+# --- S3: the heartbeat always carries per-worktree observation ----------------
+
+
+def test_up_to_date_heartbeat_carries_each_worktree_head(
+    eval_env: EvalEnv, tmp_path: Path
+) -> None:
+    d, _records, _recorder, _proxy = make_daemon(eval_env, tmp_path, idle=True)
+
+    heartbeat = d.poll_once()
+
+    assert heartbeat["state"] == daemon.STATE_UP_TO_DATE
+    assert heartbeat["worktrees"]
+    (entry,) = heartbeat["worktrees"]
+    assert entry["path"] == str(eval_env.evals[0])
+    assert entry["head"] == eval_env.head(eval_env.evals[0])
+    assert entry["at_dev"] is True
+
+
+def test_skew_heartbeat_carries_each_worktree_actual_head(tmp_path: Path) -> None:
+    """S3: STATE_WORKTREE_SKEW must still report every worktree's observed HEAD."""
+    env = make_detached_env(tmp_path, n=2)
+    env.diverge_eval("eval-only\n")  # evals[0] diverges; evals[1] stays at base
+    before = [env.head(worktree) for worktree in env.evals]
+    d, records, _recorder, _proxy = make_daemon(env, tmp_path, idle=True)
+
+    heartbeat = d.poll_once()
+
+    assert heartbeat["state"] == daemon.STATE_WORKTREE_SKEW
+    assert "worktree_skew" in alert_kinds(records)
+    by_path = {entry["path"]: entry for entry in heartbeat["worktrees"]}
+    assert set(by_path) == {str(worktree) for worktree in env.evals}
+    dev_sha = env.head(env.dev)
+    for worktree, head in zip(env.evals, before):
+        assert by_path[str(worktree)]["head"] == head
+        assert by_path[str(worktree)]["at_dev"] is (head == dev_sha)
+    # The top-level eval SHA is one of the observed heads, never a guess.
+    assert heartbeat["eval_sha"] in before
+
+
+# --- S4: a decision-input failure alerts and refuses the advance --------------
+
+
+@dataclass
+class LsTreeFailingGit:
+    """A git runner whose `ls-tree` fails, so the manifest/decision cannot build."""
+
+    calls: list[tuple[Path, list[str]]] = field(default_factory=list)
+
+    def __call__(self, repo: Path, args) -> images.CommandResult:
+        self.calls.append((Path(repo), list(args)))
+        if list(args)[:1] == ["ls-tree"]:
+            return images.CommandResult(1, "", "fatal: bad object")
+        return manifest.default_git_runner(repo, args)
+
+    def subcommands(self) -> list[str]:
+        return [args[0] for _repo, args in self.calls]
+
+
+def test_decision_failure_alerts_and_refuses_the_advance(
+    eval_env: EvalEnv, tmp_path: Path
+) -> None:
+    old = eval_env.head(eval_env.evals[0])
+    eval_env.advance_dev("v1\n")
+    records: list[dict] = []
+    runner = LsTreeFailingGit()
+    d = daemon.Daemon(
+        make_config(eval_env, tmp_path),
+        git_runner=runner,
+        idle_proxy=FakeIdle(True),
+        clock=FakeClock(),
+        log=records.append,
+        image_digests=lambda: dict(DIGESTS),
+    )
+
+    heartbeat = d.poll_once()
+
+    assert heartbeat["state"] == daemon.STATE_DECISION_UNKNOWN
+    assert eval_env.head(eval_env.evals[0]) == old
+    assert "decision_failed" in alert_kinds(records)
+    assert "merge" not in runner.subcommands()
+    # The advance was refused before the good SHA was recorded.
+    assert daemon.last_known_good_shas(
+        make_config(eval_env, tmp_path).last_known_good_file
+    ) == []
+
+
+# --- SP4: no silent default stack identity -----------------------------------
+
+
+def test_config_leaves_compose_project_unset_when_absent(tmp_path: Path) -> None:
+    env = {
+        "EVAL_ADVANCE_DEV_WORKTREE": str(tmp_path / "dev"),
+        "EVAL_ADVANCE_EVAL_WORKTREES": str(tmp_path / "e1"),
+        "EVAL_ADVANCE_APP_STATE_URL": "http://agent:8000",
+        "EVAL_ADVANCE_HEARTBEAT": str(tmp_path / "heartbeat.json"),
+    }
+
+    config = daemon.load_config_from_env(env)
+
+    # No baked-in "polymerhus": an unconfigured stack identity is explicit.
+    assert config.compose_project is None
+
+
+def test_default_image_digests_without_identity_fails_loud() -> None:
+    config = daemon.DaemonConfig(
+        dev_worktree=Path("/dev"),
+        eval_worktrees=(Path("/e1"),),
+        app_state_url="http://agent:8000",
+        heartbeat_path=Path("/hb.json"),
+    )
+
+    provider = daemon.default_image_digests(config)
+
+    with pytest.raises(images.ImageDigestError, match="COMPOSE_PROJECT"):
+        provider()
+
+
+def test_missing_stack_identity_alerts_and_does_not_advance(
+    eval_env: EvalEnv, tmp_path: Path
+) -> None:
+    old = eval_env.head(eval_env.evals[0])
+    eval_env.advance_dev("v1\n")
+    config = make_config(
+        eval_env, tmp_path, compose_project=None, image_containers=None
+    )
+    records: list[dict] = []
+    d = daemon.Daemon(
+        config,
+        git_runner=RecordingGit(),
+        idle_proxy=FakeIdle(True),
+        clock=FakeClock(),
+        log=records.append,
+    )
+
+    heartbeat = d.poll_once()
+
+    assert heartbeat["state"] == daemon.STATE_IMAGE_DIGESTS_UNKNOWN
+    assert "image_digests_unknown" in alert_kinds(records)
+    assert eval_env.head(eval_env.evals[0]) == old
+
+
+# --- SP5: the last-known-good history is bounded -----------------------------
+
+
+def test_last_known_good_history_is_bounded(tmp_path: Path) -> None:
+    path = tmp_path / "last-known-good.json"
+    shas = [f"{index:040x}" for index in range(daemon.MAX_LAST_KNOWN_GOOD + 10)]
+
+    for index, sha in enumerate(shas):
+        daemon.record_last_known_good(path, sha, f"t{index}")
+
+    history = daemon.load_last_known_good(path)
+    assert len(history) == daemon.MAX_LAST_KNOWN_GOOD
+    assert [record["sha"] for record in history] == shas[-daemon.MAX_LAST_KNOWN_GOOD:]
+    # The file is a bounded window, not an ever-growing list.
+    assert daemon.last_known_good_shas(path)[0] == shas[10]
