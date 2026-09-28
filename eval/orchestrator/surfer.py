@@ -20,14 +20,20 @@ the three bounded actions, or a `fix` whose repair is not in the enumerated
 bounded set, becomes an escalation - structurally, in `_resolve`, not by trusting
 the prompt.
 
+A trigger is acted on once: its deterministic identity (`trigger_key`) is
+recorded in the alignment state through `record_applied`, so a long-running loop
+skips a trigger it already handled and a new record (a new run or phase) is a new
+identity that prompts afresh. The record survives a loop restart; `alignment
+resolve` never clears it.
+
 Every effect is injected - the state source, the decider agent turn, the command
-runner, the REST client, the repair kit, the trial resumer, the clock, and the
-hold state. Import performs no I/O (CODING_STANDARD section 6).
+runner, the REST client, the repair kit, the trial resumer, the clock, the log,
+and the hold state. Import performs no I/O (CODING_STANDARD section 6).
 """
 from __future__ import annotations
 
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Callable, Mapping, Protocol, Sequence
 
@@ -96,6 +102,13 @@ HEALTHY_PHASE_TERMINALS = {
     "analysis": frozenset({"drained"}),
     "hunting": frozenset({"complete"}),
 }
+
+# The alignment-state namespace for handled surfer triggers. Reusing the
+# alignment `applied` map keeps one atomic state file; this constant pair
+# isolates the surfer's handled keys from the alignment's per-version action
+# keys, so neither can ever clear the other.
+HANDLED_SHA = "surfer"
+HANDLED_FINGERPRINT = ""
 
 
 class SurferError(RuntimeError):
@@ -645,6 +658,8 @@ class SurferOutcome:
     no_op: bool = False
     planned: bool = False
     dry_run: bool = False
+    # The identities of already-handled triggers this cycle skipped.
+    skipped: tuple[str, ...] = ()
 
     @property
     def ok(self) -> bool:
@@ -668,6 +683,7 @@ class Surfer:
         state: alignment.AlignmentState | None = None,
         now: Callable[[], str] | None = None,
         sleep: Callable[[float], None] | None = None,
+        log: Callable[[dict], None] | None = None,
         dry_run: bool = False,
     ) -> None:
         self._config = config
@@ -681,31 +697,57 @@ class Surfer:
         self._state = state
         self._now = now or subagents.utcnow
         self._sleep = sleep or time.sleep
+        self._log = log or (lambda record: None)
         self._dry_run = dry_run
         self._cycle = 0
 
     def cycle(self) -> SurferOutcome:
-        """One poll-assert-decide (and, unless dry-run, execute) cycle."""
+        """One poll-assert-decide (and, unless dry-run, execute) cycle.
+
+        A trigger already recorded as handled in the alignment state is skipped,
+        so a long-running loop acts once per distinct trigger identity; a new
+        record (a new run/phase) is a new identity and is handled normally. A
+        dry-run never records, so it always shows the pending triggers.
+        """
         self._cycle += 1
         state = self._asserter.assert_state()
-        if not state.triggers:
-            return SurferOutcome(
-                cycle=self._cycle, state=state, no_op=True, dry_run=self._dry_run
-            )
-        if self._dry_run:
+        handled = self._handled_keys()
+        pending = tuple(t for t in state.triggers if trigger_key(t) not in handled)
+        skipped = tuple(trigger_key(t) for t in state.triggers if trigger_key(t) in handled)
+        for key in skipped:
+            self._log({"event": "surfer_skip", "trigger": key, "reason": "already handled"})
+        if not pending:
             return SurferOutcome(
                 cycle=self._cycle,
                 state=state,
+                no_op=True,
+                dry_run=self._dry_run,
+                skipped=skipped,
+                detail=(
+                    f"{len(skipped)} already-handled trigger(s); nothing to do"
+                    if skipped
+                    else ""
+                ),
+            )
+        pending_state = SurfacedState(
+            idle=state.idle, triggers=pending, projects=state.projects
+        )
+        if self._dry_run:
+            return SurferOutcome(
+                cycle=self._cycle,
+                state=pending_state,
                 planned=True,
                 dry_run=True,
+                skipped=skipped,
                 detail=(
-                    f"{len(state.triggers)} trigger(s) asserted; "
+                    f"{len(pending)} trigger(s) asserted; "
                     "the decider is not dispatched"
                 ),
             )
-        request = self._request(state)
+        request = self._request(pending_state)
         decision = self._decider.decide(request)
-        return self._resolve(state, decision)
+        outcome = self._resolve(pending_state, decision)
+        return replace(outcome, skipped=skipped)
 
     def run(self, *, once: bool = False) -> list[SurferOutcome]:
         """Run cycles until `once`, the cycle bound, or forever (the supervisor)."""
@@ -729,11 +771,14 @@ class Surfer:
                 decision,
             )
         if decision.kind == ESCALATE:
-            return self._escalate(
+            outcome = self._escalate(
                 state, decision.reason or "the orchestrator escalated", decision
             )
+            self._record_handled(state.triggers)
+            return outcome
         if decision.kind == TERMINATE:
             calls = self._terminate(state)
+            self._record_handled(state.triggers)
             return SurferOutcome(
                 cycle=self._cycle,
                 state=state,
@@ -743,6 +788,7 @@ class Surfer:
             )
         if decision.kind == DESTROY:
             done = self._destroy(state)
+            self._record_handled(state.triggers)
             return SurferOutcome(
                 cycle=self._cycle,
                 state=state,
@@ -814,6 +860,7 @@ class Surfer:
             ),
         )
         new_id = self._resumer.resume(plan)
+        self._record_handled((primary,))
         return SurferOutcome(
             cycle=self._cycle,
             state=state,
@@ -841,6 +888,20 @@ class Surfer:
         )
 
     # --- seams ----------------------------------------------------------------
+
+    def _handled_keys(self) -> frozenset[str]:
+        """The trigger identities already acted on (persisted in the state file)."""
+        if self._state is None:
+            return frozenset()
+        return self._state.applied_for(HANDLED_SHA, HANDLED_FINGERPRINT)
+
+    def _record_handled(self, triggers: Sequence[Trigger]) -> None:
+        """Record the acted-on trigger identities so the loop does not repeat them."""
+        if self._state is None or not triggers:
+            return
+        self._state.record_applied(
+            HANDLED_SHA, HANDLED_FINGERPRINT, [trigger_key(t) for t in triggers]
+        )
 
     def _request(self, state: SurfacedState) -> SurferRequest:
         directory = self._state.path.parent if self._state is not None else Path("eval/state")
@@ -885,6 +946,29 @@ def _stop_call(trigger: Trigger) -> api.ApiCall | None:
     if trigger.run_kind == "hunting":
         return api.stop_hunting(trigger.project_id, trigger.run_id)
     return None
+
+
+def trigger_key(trigger: Trigger) -> str:
+    """A stable identity for one asserted trigger, for the handled record.
+
+    Deterministic and record-derived: instance + target + project + run
+    kind/id + resume phase + trigger kind (+ signal kind). A new failure (a new
+    run id, a new phase) is a new identity and is handled; an unchanged terminal
+    record keeps its identity and is skipped after it was handled once.
+    """
+    return "|".join(
+        str(part)
+        for part in (
+            trigger.kind,
+            trigger.instance_id,
+            trigger.target_id or "",
+            trigger.project_id or "",
+            trigger.run_kind or "",
+            trigger.run_id or "",
+            trigger.start_phase or "",
+            trigger.signal or "",
+        )
+    )
 
 
 def write_hold(

@@ -167,6 +167,7 @@ def make_surfer(
     config=None,
     sleep=None,
     now=None,
+    log=None,
 ):
     paths = [make_paths(tmp_path, instance_id=i, worktree=False) for i in instances]
     return surfer.Surfer(
@@ -182,6 +183,7 @@ def make_surfer(
         dry_run=dry_run,
         sleep=sleep,
         now=now or (lambda: "2026-09-28T00:00:00+00:00"),
+        log=log,
     )
 
 
@@ -575,7 +577,9 @@ def test_escalate_writes_a_hold_that_blocks_new_trials(tmp_path) -> None:
     assert outcome.hold.hold_id in str(excinfo.value)
 
 
-def test_rerunning_the_same_escalation_does_not_duplicate_the_hold(tmp_path) -> None:
+def test_rerunning_the_same_escalation_is_skipped_and_does_not_duplicate_the_hold(
+    tmp_path,
+) -> None:
     state = alignment.AlignmentState(tmp_path / "alignment.yaml")
     asserter = StaticAsserter(state_with(failed_trigger()))
     decider = StaticDecider(surfer.SurferDecision(surfer.ESCALATE, reason="same reason"))
@@ -583,9 +587,151 @@ def test_rerunning_the_same_escalation_does_not_duplicate_the_hold(tmp_path) -> 
     first = make_surfer(asserter, decider, tmp_path=tmp_path, state=state).cycle()
     second = make_surfer(asserter, decider, tmp_path=tmp_path, state=state).cycle()
 
-    assert first.hold is not None and second.hold is not None
-    assert first.hold.hold_id == second.hold.hold_id
+    assert first.hold is not None
+    assert second.no_op is True
+    assert second.hold is None
+    assert second.skipped  # the identity is reported as already handled
+    assert len(decider.requests) == 1
     assert len(state.holds()) == 1
+    assert state.holds()[0].hold_id == first.hold.hold_id
+
+
+# --- cross-cycle idempotency (the handled-trigger record) ---------------------
+
+
+def test_two_cycles_on_the_same_terminal_state_act_once(tmp_path) -> None:
+    state = alignment.AlignmentState(tmp_path / "alignment.yaml")
+    asserter = StaticAsserter(state_with(failed_trigger()))
+    decider = StaticDecider(surfer.SurferDecision(surfer.FIX, repair=surfer.REPAIR_ENV))
+    kit = FakeRepairKit(supported=("env",))
+    resumer = RecordingResumer()
+    engine = make_surfer(
+        asserter, decider, tmp_path=tmp_path, repair_kit=kit, resumer=resumer, state=state
+    )
+
+    first = engine.cycle()
+    second = engine.cycle()
+
+    assert first.action == surfer.FIX
+    assert second.no_op is True
+    assert second.skipped == (surfer.trigger_key(asserter.state.triggers[0]),)
+    assert len(decider.requests) == 1
+    assert kit.applied == ["env"]
+    assert len(resumer.plans) == 1
+
+
+def test_a_second_distinct_trigger_is_handled_too(tmp_path) -> None:
+    state = alignment.AlignmentState(tmp_path / "alignment.yaml")
+    triggers = (
+        failed_trigger(run_kind="hunting", run_id="h1"),
+        surfer.Trigger(
+            kind=surfer.CAP_REACHED,
+            instance_id="arm-a",
+            detail="hunting cap 2 reached",
+            target_id="t1",
+            project_id="pid",
+            start_phase="hunting",
+        ),
+    )
+    asserter = StaticAsserter(state_with(*triggers))
+    decider = StaticDecider(surfer.SurferDecision(surfer.TERMINATE))
+    engine = make_surfer(
+        asserter, decider, tmp_path=tmp_path, api_runner=FakeApi(), state=state
+    )
+
+    first = engine.cycle()
+    second = engine.cycle()
+
+    assert first.action == surfer.TERMINATE
+    assert second.no_op is True
+    assert len(decider.requests) == 1
+    handled = state.applied_for(surfer.HANDLED_SHA, surfer.HANDLED_FINGERPRINT)
+    assert surfer.trigger_key(triggers[0]) in handled
+    assert surfer.trigger_key(triggers[1]) in handled
+
+
+def test_a_new_distinct_record_is_a_new_identity_and_acts(tmp_path) -> None:
+    state = alignment.AlignmentState(tmp_path / "alignment.yaml")
+    kit = FakeRepairKit(supported=("env",))
+    resumer = RecordingResumer()
+    decider = StaticDecider(surfer.SurferDecision(surfer.FIX, repair=surfer.REPAIR_ENV))
+    asserter = StaticAsserter(state_with(failed_trigger(run_id="h1")))
+    engine = make_surfer(
+        asserter, decider, tmp_path=tmp_path, repair_kit=kit, resumer=resumer, state=state
+    )
+
+    engine.cycle()
+    asserter.state = state_with(failed_trigger(run_id="h2"))  # a new failure event
+    second = engine.cycle()
+
+    assert second.action == surfer.FIX
+    assert len(decider.requests) == 2
+    assert len(resumer.plans) == 2
+
+
+def test_the_handled_marker_survives_a_loop_restart(tmp_path) -> None:
+    state_path = tmp_path / "alignment.yaml"
+    kit = FakeRepairKit(supported=("env",))
+    decider = StaticDecider(surfer.SurferDecision(surfer.FIX, repair=surfer.REPAIR_ENV))
+
+    first = make_surfer(
+        StaticAsserter(state_with(failed_trigger())),
+        decider,
+        tmp_path=tmp_path,
+        repair_kit=kit,
+        resumer=RecordingResumer(),
+        state=alignment.AlignmentState(state_path),
+    ).cycle()
+    assert first.action == surfer.FIX
+
+    # A fresh loop over the same state file (a restart) sees the marker.
+    restarted = make_surfer(
+        StaticAsserter(state_with(failed_trigger())),
+        StaticDecider(surfer.SurferDecision(surfer.FIX, repair=surfer.REPAIR_ENV)),
+        tmp_path=tmp_path,
+        repair_kit=kit,
+        resumer=RecordingResumer(),
+        state=alignment.AlignmentState(state_path),
+    )
+    assert restarted.cycle().no_op is True
+
+
+def test_alignment_resolve_does_not_clear_handled_markers(tmp_path) -> None:
+    state = alignment.AlignmentState(tmp_path / "alignment.yaml")
+    asserter = StaticAsserter(state_with(failed_trigger()))
+    decider = StaticDecider(
+        surfer.SurferDecision(surfer.ESCALATE, reason="fund the account")
+    )
+    engine = make_surfer(asserter, decider, tmp_path=tmp_path, state=state)
+
+    first = engine.cycle()
+    assert first.hold is not None
+    handled = state.applied_for(surfer.HANDLED_SHA, surfer.HANDLED_FINGERPRINT)
+    assert handled
+
+    state.resolve_hold(first.hold.hold_id, "operator funded the account")
+
+    after = make_surfer(asserter, decider, tmp_path=tmp_path, state=state).cycle()
+    assert after.no_op is True
+    assert state.applied_for(surfer.HANDLED_SHA, surfer.HANDLED_FINGERPRINT) == handled
+    assert len(state.holds()) == 1
+    assert state.unresolved_holds() == ()
+
+
+def test_a_skipped_trigger_is_logged(tmp_path) -> None:
+    state = alignment.AlignmentState(tmp_path / "alignment.yaml")
+    logs: list[dict] = []
+    asserter = StaticAsserter(state_with(failed_trigger()))
+    decider = StaticDecider(surfer.SurferDecision(surfer.TERMINATE))
+    engine = make_surfer(
+        asserter, decider, tmp_path=tmp_path, api_runner=FakeApi(), state=state,
+        log=logs.append,
+    )
+
+    engine.cycle()
+    engine.cycle()
+
+    assert any(record.get("event") == "surfer_skip" for record in logs)
 
 
 # --- dry-run, --once, interval ------------------------------------------------
@@ -621,6 +767,8 @@ def test_dry_run_asserts_but_never_dispatches_the_decider_and_mutates_nothing(
     assert resumer.plans == []
     assert kit.applied == []
     assert state.holds() == ()
+    # A dry-run never records a handled marker either.
+    assert state.applied_for(surfer.HANDLED_SHA, surfer.HANDLED_FINGERPRINT) == frozenset()
 
 
 def test_once_runs_exactly_one_cycle(tmp_path) -> None:

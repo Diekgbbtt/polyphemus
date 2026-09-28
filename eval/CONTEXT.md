@@ -114,6 +114,7 @@ _Avoid_: error, reason
 
 **Surfer loop**:
 The background loop that monitors instance state and prompts the orchestrator to assert it and decide: terminate, destroy, or fix (configuration/data layer only) and restart; a jump or repair it cannot bound is escalated into a hold.
+Each acted-on trigger is recorded by its deterministic identity in the eval state, so the loop acts once per distinct trigger and skips one it already handled.
 _Avoid_: monitor, watchdog
 
 **Version advance**:

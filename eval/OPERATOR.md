@@ -851,6 +851,14 @@ An escalation writes a hold through the same mechanism `align` uses, so it block
 `up`/`trial` until an operator resolves it with `alignment resolve`; the
 surfer loop itself never reverts anything.
 
+A trigger is acted on exactly once: its deterministic identity (instance +
+target + project + run kind/id + resume phase + trigger kind) is recorded in the
+alignment state, so a long-running loop skips a trigger it already handled rather
+than re-applying terminate/destroy/fix every interval. A new record - a new run
+or a new phase - is a new identity and prompts afresh. The handled record
+survives a loop restart (it is in the state file), and `alignment resolve` never
+clears it.
+
 | Primitive | Contract |
 |---|---|
 | `PYTHONPATH=eval python3 -m orchestrator surfer <setup.yaml> [--interval-s <s>] [--once] [--dry-run]` | Run the surfer loop. `--once` performs exactly one poll-assert-decide cycle (the testable unit); the default loops at the interval. `--dry-run` asserts the state and prints it, dispatching nothing and mutating nothing (no decider, no runner, no hold). The hold state lives at `--state` (`EVAL_ALIGNMENT_STATE`, default `eval/state/alignment.yaml`). The app-state source is `--api` (`PH_API`) with the `--dsn` (`EVAL_PG_DSN`) fallback; the trial records are read under `--runs-root`. |

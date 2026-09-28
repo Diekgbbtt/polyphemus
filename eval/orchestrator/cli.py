@@ -1291,7 +1291,14 @@ def _surfer_resumer(args, setup: EvalSetup, config: OrchestratorConfig,
 def _print_surfer(outcomes: list[surfer.SurferOutcome], out: TextIO) -> None:
     for outcome in outcomes:
         if outcome.no_op:
-            print(f"surfer cycle {outcome.cycle}: idle; no trigger", file=out)
+            if outcome.skipped:
+                print(
+                    f"surfer cycle {outcome.cycle}: "
+                    f"{len(outcome.skipped)} trigger(s) already handled; skipped",
+                    file=out,
+                )
+            else:
+                print(f"surfer cycle {outcome.cycle}: idle; no trigger", file=out)
             continue
         for trigger in outcome.state.triggers:
             print(
