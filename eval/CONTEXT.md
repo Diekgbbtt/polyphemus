@@ -89,6 +89,22 @@ _Avoid_: monitor, watchdog
 The environment-wide move of all instance worktrees from the current `eval` SHA to `dev`'s commit, performed only when all instances are idle.
 _Avoid_: sync, pull
 
+**Idle proxy**:
+The read of the app module's running-state surface (`GET /app-state`, with the documented direct-postgres fallback) that tells the sync daemon whether every instance is idle; unknown state is never treated as idle.
+_Avoid_: eval lock, busy flag, execution-state variable
+
+**Heartbeat**:
+The file the sync daemon atomically rewrites every poll carrying the observed `dev` and `eval` SHAs, the idle verdict, the advance state, the last error, and the timestamp of the last advance.
+_Avoid_: status file, health check
+
+**Last-known-good SHA**:
+The `eval` SHA the sync daemon records before each advance; the only SHAs an operator rewind may target.
+_Avoid_: checkpoint, backup ref
+
+**Rewind**:
+The operator-only rollback of every eval worktree to a recorded last-known-good SHA, behind an explicit confirmation flag; the daemon's polling loop can never perform one.
+_Avoid_: rollback, revert, reset
+
 **Stack fingerprint**:
 A single compressed hash over the stack manifest (alignment-relevant artifact SHAs plus running image digests) that tells whether a version advance needs an alignment action.
 _Avoid_: build hash, checksum

@@ -1,0 +1,20 @@
+[Unit]
+Description=polymerhus eval advancement daemon (dev -> eval fast-forward when all instances idle)
+Documentation=file:///opt/polymerhus/docs/design/eval-environment-version-pinning-adr.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# WorkingDirectory must be the checkout's `eval/` directory so that
+# `python -m advance.daemon` can import the `advance` package. The daemon does
+# the mechanical advance only; it never fetches from origin and never rewinds.
+WorkingDirectory=/opt/polymerhus/eval
+EnvironmentFile=/etc/polymerhus/eval-advance.env
+ExecStart=/usr/bin/env python3 -m advance.daemon run
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
