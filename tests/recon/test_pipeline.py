@@ -273,17 +273,13 @@ def test_feed_absent_without_a_verdict_account():
         )
     )
 
-    # #238: an HTTP job also carries the TrafficPolicy in `extra` - the ONLY
-    # addition (the auth keys still stay absent on an anonymous run). This
-    # stub gateway exposes no rate turn, so the policy is the conservative one.
+    # Task 7 retired runtime policy forwarding: an HTTP job carries no
+    # `traffic_policy` in `extra` (auth keys also stay absent on an anonymous run).
     assert set(seen_extra["httpx"]) == {
-        "project_id", "scope_domain", "traffic_policy"}
+        "project_id", "scope_domain"}
     assert seen_extra["httpx"]["project_id"] == "proj1"
     assert seen_extra["httpx"]["scope_domain"] == "t.com"
     assert "auth_account" not in seen_extra["httpx"]
-    policy = seen_extra["httpx"]["traffic_policy"]
-    assert policy["target_key"] == "t.com"
-    assert policy["rate_per_s"] <= 1.0
 
 
 def test_run_job_exception_marks_job_degraded_and_pipeline_still_completes():

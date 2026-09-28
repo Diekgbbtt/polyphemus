@@ -30,11 +30,6 @@ from polymerhus.recon.domain.types import (
     PodState, ToolInvocation, PodExport, ExecResult, AssetDelta, Observation, JobSpec,
     CaptureContext,
 )
-from polymerhus.recon.domain.traffic_admission import (
-    TRAFFIC_REFUSAL_RETURNCODE,
-    AdmissionReason,
-    TrafficRefusal,
-)
 from polymerhus.recon.control.auth_feed import serialize_auth_flags
 from polymerhus.recon.domain.parsers import get_parser
 from polymerhus.recon.domain.parsers import graphql_parser, takeover_parser
@@ -181,34 +176,6 @@ def _accepts_capture_context(fn) -> bool:
         return False
 
 
-def _accepts_traffic_policy(fn) -> bool:
-    """True only when an exec seam explicitly declares `traffic_policy`.
-
-    Same discipline as `_accepts_capture_context`, but with a stricter
-    consequence: a seam that cannot carry the #238 policy does not silently run
-    unthrottled traffic - the pod DISCLOSES it in the export (`stats.traffic`),
-    so a run that was not governed can never read as if it had been.
-    """
-    try:
-        return "traffic_policy" in inspect.signature(fn).parameters
-    except (TypeError, ValueError):
-        return False
-
-
-def pod_traffic_policy(state: PodState) -> dict | None:
-    """The #238 `TrafficPolicy` this pod's command egresses under, or None.
-
-    Deliberately INDEPENDENT of `pod_capture_context`: the policy rides
-    `extra["traffic_policy"]` (the pipeline attaches it to every job that sends
-    HTTP to the target), while capture is gated by `POD_HTTP_CAPTURE` - so
-    killing the recording plane must never disarm the governor.
-    """
-    policy = (state.get("extra") or {}).get("traffic_policy")
-    if not isinstance(policy, dict) or not policy:
-        return None
-    return policy
-
-
 def pod_capture_context(state: PodState) -> CaptureContext | None:
     """The #196 correlation for one recon pod's terminal call.
 
@@ -240,25 +207,6 @@ def pod_capture_context(state: PodState) -> CaptureContext | None:
     )
 
 
-def _traffic_refusal(state: PodState, exec_result) -> TrafficRefusal | None:
-    """A runtime governor refusal, when the exec seam refused an armed command.
-
-    Return code 78 is the exec seam's stable 'an armed TrafficPolicy could not be
-    enforced' signal (mirrored by value from the Kali service). The refusal is
-    secret-safe: the target key and policy version come from the job's own
-    `extra["traffic_policy"]`, never from a URL, header, or body.
-    """
-    returncode = getattr(exec_result, "returncode", None)
-    if returncode != TRAFFIC_REFUSAL_RETURNCODE:
-        return None
-    policy = (state.get("extra") or {}).get("traffic_policy") or {}
-    return TrafficRefusal(
-        reason_code=AdmissionReason.GOVERNOR_REFUSED,
-        target_key=str(policy.get("target_key", "")),
-        policy_version=str(policy.get("version", "")),
-    )
-
-
 def _capture_stats(
     state: PodState, exec_result: ExecResult | None, *, sent: bool
 ) -> dict:
@@ -280,23 +228,6 @@ def _capture_stats(
         "sent": bool(sent),
         "refs": len(getattr(exec_result, "http_artifact_refs", None) or []),
         "warning": getattr(exec_result, "capture_warning", None),
-    }
-
-
-def _traffic_stats(
-    state: PodState, exec_result: ExecResult | None, *, sent: bool
-) -> dict:
-    """The pod's governance outcome, for `recon_jobs.stats`.
-
-    `sent=False` means the pod could not hand its policy to the exec seam (a
-    legacy fake, or no policy attached) - never the same thing as "governed and
-    admitted". `warning` carries the exec seam's loud refusal reason, so a
-    degraded run is legible instead of looking like an ordinary tool result.
-    """
-    return {
-        "sent": bool(sent),
-        "returncode": getattr(exec_result, "returncode", None),
-        "warning": getattr(exec_result, "traffic_warning", None),
     }
 
 
@@ -427,8 +358,6 @@ def build_pod_graph(*, exec_fn, curate_fn, triage_fn):
     # #196: resolved ONCE per graph - the seam either can carry a capture context
     # or it cannot, and that does not change between this pod's executions.
     capture_aware = _accepts_capture_context(exec_fn)
-    # #238: same for the traffic policy, which travels on its own argument.
-    policy_aware = _accepts_traffic_policy(exec_fn)
 
     def capture_context_for(state: PodState) -> CaptureContext | None:
         """The context to send with this pod's terminal call, or None."""
@@ -444,15 +373,6 @@ def build_pod_graph(*, exec_fn, curate_fn, triage_fn):
         a new `PodState` channel that no node writes stalls the pod fan-out.
         """
         return capture_context_for(state) is not None
-
-    def traffic_policy_for(state: PodState) -> dict | None:
-        """The policy to send with this pod's terminal call, or None."""
-        if not policy_aware:
-            return None
-        return pod_traffic_policy(state)
-
-    def traffic_was_sent(state: PodState) -> bool:
-        return traffic_policy_for(state) is not None
 
     def configurator(state: PodState) -> dict:
         job = state["job"]
@@ -482,14 +402,9 @@ def build_pod_graph(*, exec_fn, curate_fn, triage_fn):
             # produces. Only for a seam that can carry it; the context is None
             # when the feature is killed by config or the pod has no identity.
             capture = capture_context_for(state)
-            # #238: the measured per-target policy is a SEPARATE argument - it is
-            # sent even when capture is off, and only to a seam that declares it.
-            policy = traffic_policy_for(state)
             kwargs: dict = {}
             if capture is not None:
                 kwargs["capture_context"] = capture
-            if policy is not None:
-                kwargs["traffic_policy"] = policy
             if kwargs:
                 exec_result = exec_fn(
                     invocation.command, invocation.session_id, EXEC_TIMEOUT_S, **kwargs
@@ -589,11 +504,6 @@ def build_pod_graph(*, exec_fn, curate_fn, triage_fn):
             stats["capture"] = _capture_stats(
                 state, state.get("exec_result"), sent=capture_was_sent(state)
             )
-            # #238: and the governance outcome, in its own slot - a run whose
-            # policy could not be carried (or was refused) must be legible.
-            stats["traffic"] = _traffic_stats(
-                state, state.get("exec_result"), sent=traffic_was_sent(state)
-            )
         if job.endpoint_profiling:
             # #208: the reprofile pod is ONE pod for the WHOLE pass - record how
             # many endpoints it probed so the phase's lineage is recoverable from
@@ -628,7 +538,6 @@ def build_pod_graph(*, exec_fn, curate_fn, triage_fn):
         # "the exec failed" and "we have no record of what it asked" are two
         # different facts and the operator needs both.
         stats["capture"] = _capture_stats(state, exec_result, sent=capture_was_sent(state))
-        stats["traffic"] = _traffic_stats(state, exec_result, sent=traffic_was_sent(state))
         export = PodExport(
             input_asset=state["input_asset"],
             verdict="failed",
@@ -637,10 +546,6 @@ def build_pod_graph(*, exec_fn, curate_fn, triage_fn):
             iterations=state.get("iteration", 0),
             error=error,
             stats=stats,
-            # #238 follow-up (Task 6): a governor refusal is not a tool failure -
-            # record it, secret-safely, so the run's admission envelope can show
-            # that an armed policy blocked egress.
-            traffic_refusal=_traffic_refusal(state, exec_result),
         )
         return {"export": export}
 
@@ -698,11 +603,6 @@ def _exec_result_from_artifact(artifact, *, content=None, duration_ms: int = 0) 
                 if structured.get("capture_warning")
                 else None
             ),
-            traffic_warning=(
-                str(structured["traffic_warning"])
-                if structured.get("traffic_warning")
-                else None
-            ),
         )
 
     # No structured result: treat as FAILURE, never assume success.
@@ -752,15 +652,14 @@ def _mcp_call_timeout_s(timeout_s: int) -> float:
 
 
 def default_exec_fn(
-    command: str, session_id: str, timeout_s: int, capture_context=None, traffic_policy=None
+    command: str, session_id: str, timeout_s: int, capture_context=None
 ) -> ExecResult:
     """Real collaborator: run `command` via the kali MCP `execute_command`
     tool. Builds its MCP client lazily on each call - no client/connection is
     constructed at import time.
 
-    `capture_context` and `traffic_policy` are INDEPENDENT optional channels:
-    the first asks Kali to record the traffic, the second hands it the measured
-    budget to enforce (and to refuse on, loudly, when it cannot).
+    `capture_context` asks Kali to record the traffic. Runtime traffic-policy
+    enforcement is not part of the recon execution path.
     """
     from langchain_mcp_adapters.client import MultiServerMCPClient
     from polymerhus.app.config import config
@@ -798,8 +697,6 @@ def default_exec_fn(
         args = {"command": command, "session_id": session_id, "timeout_s": timeout_s}
         if capture_context is not None:
             args.update(capture_context.as_mcp_args())
-        if traffic_policy is not None:
-            args["traffic_policy"] = traffic_policy
         try:
             return await asyncio.wait_for(
                 exec_tool.ainvoke(

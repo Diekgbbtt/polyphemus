@@ -158,9 +158,9 @@ def test_export_declares_an_uncaptured_exec_without_pretending():
     }
 
 
-# --- #238 Task 7: the governed exec seam ------------------------------------------
+# --- Task 7: policy retired, capture retained ------------------------------------
 
-_POLICY = {
+_LEGACY_POLICY = {
     "target_key": "app.example.com",
     "host_patterns": ["app.example.com"],
     "rate_per_s": 2.0,
@@ -172,175 +172,48 @@ _POLICY = {
 }
 
 
-def test_a_governor_refusal_becomes_a_secret_safe_traffic_refusal():
-    """#238 follow-up (Task 6): return code 78 is the exec seam's 'armed policy
-    could not be enforced' signal. The pod records a structured, secret-safe
-    refusal instead of a bare tool failure."""
-    from polymerhus.recon.domain.traffic_admission import AdmissionReason
-
-    def exec_fn(command, session_id, timeout_s, capture_context=None, traffic_policy=None):
-        return ExecResult(
-            stdout="",
-            stderr="refused: governor unavailable: Authorization Bearer SECRET-TOKEN",
-            returncode=78,
-            duration_ms=1,
-        )
-
-    out = _graph(exec_fn).invoke(
-        _state(extra={"traffic_policy": _POLICY}, iteration=MAX_POD_ITERS)
-    )
-    export = out["export"]
-
-    assert export.verdict == "failed"
-    refusal = export.traffic_refusal
-    assert refusal is not None
-    assert refusal.reason_code is AdmissionReason.GOVERNOR_REFUSED
-    assert refusal.target_key == "app.example.com"
-    assert refusal.policy_version == "traffic-policy/v2"
-    # The refusal record itself is secret-safe.
-    blob = refusal.model_dump(mode="json")
-    assert "SECRET-TOKEN" not in str(blob)
-    assert set(blob) == {"reason_code", "target_key", "policy_version"}
-
-
-def test_a_tool_failure_is_not_a_governor_refusal():
-    def exec_fn(command, session_id, timeout_s, capture_context=None, traffic_policy=None):
-        return ExecResult(stdout="", stderr="boom", returncode=1, duration_ms=1)
-
-    out = _graph(exec_fn).invoke(
-        _state(extra={"traffic_policy": _POLICY}, iteration=MAX_POD_ITERS)
-    )
-    assert out["export"].traffic_refusal is None
-
-
-def test_the_pod_passes_the_traffic_policy_beside_the_capture_context():
+def test_pod_does_not_forward_a_legacy_traffic_policy():
     seen = {}
-
-    def exec_fn(command, session_id, timeout_s, capture_context=None, traffic_policy=None):
-        seen["capture"] = capture_context
-        seen["policy"] = traffic_policy
-        return ExecResult(stdout=FIX_LINE, stderr="", returncode=0, duration_ms=1)
-
-    out = _graph(exec_fn).invoke(_state(extra={"traffic_policy": _POLICY}))
-
-    assert out["export"].verdict == "success"
-    assert seen["policy"] == _POLICY
-    assert seen["capture"] is not None
-    # The policy is NOT a fifth capture field: it rides its own MCP argument.
-    assert "traffic_policy" not in seen["capture"].as_mcp_args()
-
-
-def test_the_policy_survives_capture_being_killed_by_config(monkeypatch):
-    """`POD_HTTP_CAPTURE=0` disables recording; it must never disarm a policy."""
-    seen = {}
-
-    def exec_fn(command, session_id, timeout_s, capture_context=None, traffic_policy=None):
-        seen["capture"] = capture_context
-        seen["policy"] = traffic_policy
-        return ExecResult(stdout=FIX_LINE, stderr="", returncode=0, duration_ms=1)
-
-    monkeypatch.setattr(pod, "POD_HTTP_CAPTURE", False)
-    _graph(exec_fn).invoke(_state(extra={"traffic_policy": _POLICY}))
-
-    assert seen["capture"] is None
-    assert seen["policy"] == _POLICY
-
-
-def test_a_pod_without_a_policy_sends_none():
-    seen = {}
-
-    def exec_fn(command, session_id, timeout_s, capture_context=None, traffic_policy=None):
-        seen["policy"] = traffic_policy
-        return ExecResult(stdout=FIX_LINE, stderr="", returncode=0, duration_ms=1)
-
-    _graph(exec_fn).invoke(_state())
-    assert seen["policy"] is None
-
-
-def test_a_seam_without_the_policy_parameter_still_runs_and_declares_it():
-    """Legacy fakes keep working, but a dropped policy is DISCLOSED, never
-    silently assumed to have been enforced."""
-    calls = []
 
     def exec_fn(command, session_id, timeout_s, capture_context=None):
-        calls.append(command)
+        seen["capture"] = capture_context
+        seen["kwargs"] = {"capture_context": capture_context}
         return ExecResult(stdout=FIX_LINE, stderr="", returncode=0, duration_ms=1)
 
-    out = _graph(exec_fn).invoke(_state(extra={"traffic_policy": _POLICY}))
+    out = _graph(exec_fn).invoke(
+        _state(extra={"traffic_policy": _LEGACY_POLICY})
+    )
 
     assert out["export"].verdict == "success"
-    assert len(calls) == 1
-    assert out["export"].stats["traffic"] == {
-        "sent": False,
-        "returncode": 0,
-        "warning": None,
-    }
+    assert seen["capture"] is not None
+    assert "traffic_policy" not in seen["kwargs"]
+    assert "traffic" not in out["export"].stats
 
 
-def test_the_export_declares_the_governed_outcome():
-    def exec_fn(command, session_id, timeout_s, capture_context=None, traffic_policy=None):
-        return ExecResult(stdout=FIX_LINE, stderr="", returncode=0, duration_ms=1)
-
-    out = _graph(exec_fn).invoke(_state(extra={"traffic_policy": _POLICY}))
-    assert out["export"].stats["traffic"] == {
-        "sent": True,
-        "returncode": 0,
-        "warning": None,
-    }
-
-
-def test_a_governor_refusal_is_exported_as_a_loud_warning():
-    def exec_fn(command, session_id, timeout_s, capture_context=None, traffic_policy=None):
-        return ExecResult(
-            stdout="", stderr="governor unavailable", returncode=78, duration_ms=0,
-            traffic_warning="governor unavailable: proxy not reachable",
-        )
-
-    out = _graph(exec_fn).invoke(_state(extra={"traffic_policy": _POLICY}))
-
-    assert out["export"].verdict == "failed"
-    assert out["export"].stats["traffic"]["warning"] == (
-        "governor unavailable: proxy not reachable"
-    )
-    assert out["export"].stats["traffic"]["returncode"] == 78
-
-
-def test_the_mcp_exec_result_carries_the_traffic_warning():
-    result = pod._exec_result_from_artifact(
-        {"returncode": 78, "stderr": "refused", "traffic_warning": "governor unavailable"}
-    )
-    assert result.returncode == 78
-    assert result.traffic_warning == "governor unavailable"
-
-
-def test_the_default_exec_seam_declares_both_optional_channels():
+def test_default_exec_seam_no_longer_declares_traffic_policy():
     parameters = inspect.signature(pod.default_exec_fn).parameters
     assert "capture_context" in parameters
-    assert "traffic_policy" in parameters
+    assert "traffic_policy" not in parameters
 
 
-# --- the adversarial regression gate (#238 Task 11) -------------------------------
+def test_returncode_78_is_no_longer_a_traffic_refusal():
+    def exec_fn(command, session_id, timeout_s, capture_context=None):
+        return ExecResult(stdout="", stderr="refused", returncode=78, duration_ms=1)
+
+    out = _graph(exec_fn).invoke(
+        _state(extra={"traffic_policy": _LEGACY_POLICY}, iteration=MAX_POD_ITERS)
+    )
+
+    assert out["export"].verdict == "failed"
+    assert not hasattr(out["export"], "traffic_refusal")
+    assert "traffic" not in out["export"].stats
 
 
-def test_pod_forwards_mandatory_policy_v2():
-    """Kills: "remove `traffic_policy` from the pod's MCP args".
+def test_exec_result_has_no_traffic_warning_field():
+    assert "traffic_warning" not in ExecResult.model_fields
 
-    The pod is the LAST hand-off before Kali: if the policy stops riding it, an
-    armed run silently becomes unthrottled traffic - the exact failure the
-    feature exists to prevent. The forwarded payload must be the v2 contract
-    (the version Kali enforces), not a policy-less exec.
-    """
-    seen: dict = {}
 
-    def exec_fn(command, session_id, timeout_s, capture_context=None,
-                traffic_policy=None):
-        seen["policy"] = traffic_policy
-        return ExecResult(stdout=FIX_LINE, stderr="", returncode=0, duration_ms=1)
+def test_pod_export_has_no_traffic_refusal_field():
+    from polymerhus.recon.domain.types import PodExport
 
-    out = _graph(exec_fn).invoke(_state(extra={"traffic_policy": _POLICY}))
-
-    assert seen["policy"] == _POLICY, "the pod dropped the run's traffic policy"
-    assert seen["policy"]["version"] == "traffic-policy/v2"
-    assert seen["policy"]["rate_per_s"] > 0
-    assert seen["policy"]["max_concurrency"] >= 1
-    assert out["export"].verdict == "success"
+    assert "traffic_refusal" not in PodExport.model_fields

@@ -3,7 +3,7 @@ import operator
 from typing import Annotated, Literal, TypedDict
 from pydantic import BaseModel, Field, model_validator
 
-from polymerhus.recon.domain.traffic_admission import JobTrafficCost, TrafficRefusal
+from polymerhus.recon.domain.traffic_admission import JobTrafficCost
 
 
 class Edge(BaseModel):
@@ -58,11 +58,6 @@ class ExecResult(BaseModel):
     exec_id: str = ""
     http_artifact_refs: list[str] = Field(default_factory=list)
     capture_warning: str | None = None
-    # #238 Task 7: additive governance metadata. `traffic_warning` is set when an
-    # armed TrafficPolicy could NOT be enforced - the command was refused
-    # (returncode 78) and nothing egressed. A default of None is what every
-    # pre-#238 caller and fake already means.
-    traffic_warning: str | None = None
 
 
 class CaptureContext(BaseModel):
@@ -188,10 +183,6 @@ class PodExport(BaseModel):
     iterations: int = 0
     error: str | None = None
     stats: dict | None = None
-    # #238 follow-up (Task 6): a runtime governor refusal this pod hit, so the
-    # pipeline can record it in the run's admission envelope. Secret-safe.
-    traffic_refusal: TrafficRefusal | None = None
-
 class PodState(TypedDict, total=False):
     job: JobSpec
     input_asset: dict

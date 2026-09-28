@@ -26,7 +26,6 @@ from polymerhus.recon.crawl import steel_client
 from polymerhus.recon.crawl.crawl_agentic import (
     AgenticCrawlRequest,
     CRAWL_TOOL_NAMES,
-    derive_crawl_pacing,
     _run_agentic_crawl,
 )
 
@@ -96,7 +95,6 @@ async def run_crawl(
     max_iters: Optional[int] = None,
     auth_cookies: Optional[list] = None,
     steel_profile: Optional[str] = None,
-    traffic_policy: Optional[dict] = None,
     sleeper=None,
     clock=None,
 ) -> dict:
@@ -111,13 +109,7 @@ async def run_crawl(
     (profile-mount-only auth). Ignored when `tools` are injected
     (tests build the provider themselves).
 
-    `traffic_policy` (#238) is the run's measured `TrafficPolicy` (already
-    serialized). It is turned into conservative BROWSER pacing by
-    `derive_crawl_pacing`: the inter-action delay and reduced page/iteration
-    caps, plus the one-active-crawl-per-target rule. The browser's sub-requests
-    are NOT individually governed - this is an action-cadence adapter, never a
-    claim that Steel traffic obeys the egress governor. `sleeper` / `clock` are
-    the injectable time seams.
+    `sleeper` / `clock` are the injectable time seams.
 
     Best-effort: any exception (Steel unconfigured, tool/LLM failure, ...)
     yields the empty manifest rather than propagating, so callers (the crawl
@@ -152,16 +144,11 @@ async def run_crawl(
                 max_iterations=max_iters if max_iters is not None else config.CRAWL_MAX_ITERS,
                 job_timeout_s=config.CRAWL_JOB_TIMEOUT_S,
             )
-            pacing = derive_crawl_pacing(
-                traffic_policy, max_pages=body.max_pages,
-                max_iterations=body.max_iterations,
-                navigate_wait_ms=body.navigate_wait_ms)
-
             return await _run_agentic_crawl(
                 body,
                 mcp_manager,
                 build_llm_fn=build_llm_fn,
-                pacing=pacing,
+                pacing=None,
                 sleeper=sleeper,
                 clock=clock,
             )

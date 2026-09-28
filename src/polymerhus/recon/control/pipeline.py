@@ -24,9 +24,9 @@ registry. The auth gateway is the production default
 (feat/stateful-recon-job-auth): the recon-orchestrator runs its ONE gateway
 turn before phase 0 and the typed verdict configures the run (pruned phases,
 the bound account identifier). The PIPELINE then invokes the controller-owned
-rate mapper directly and the measured `TrafficPolicy` rides
-`extra["traffic_policy"]` into every HTTP job (and the Steel crawl's pacing
-adapter) while the profile is persisted under `recon_runs.stats["rate_limit"]`.
+rate mapper directly and persists the profile under
+`recon_runs.stats["rate_limit"]`. Traffic selection/parameterisation belongs to
+the phase Configurator; no runtime TrafficPolicy is forwarded to pods.
 `orchestrator_factory` builds the actor (tests inject the production actor over
 scripted models and temp stores) - there is NO gateway injection seam; tests
 exercise this real boundary.
@@ -50,7 +50,6 @@ from polymerhus.recon.control.auth_feed import (
 )
 from polymerhus.recon.domain.curator import ALLOWED_LABELS, curate
 from polymerhus.recon.control.jobs import JOBS, build_phase_plan, validate_job_subset
-from polymerhus.recon.domain.traffic_admission import TrafficCostClass
 from polymerhus.recon.control.scope import (
     DISCOVERY_JOBS,
     HOST_MODE_ONLY_JOBS,
@@ -70,19 +69,6 @@ logger = logging.getLogger(__name__)
 # Node properties that are bookkeeping, not part of an asset's identity -
 # excluded when re-hydrating produced assets from Neo4j for the next phase.
 _NON_IDENTITY_KEYS = {"project_id", "first_seen", "last_seen"}
-
-# --- #238 rate-limit turn wiring --------------------------------------------------
-
-# #238 follow-up (Task 4): the source of truth for "does this job need a traffic
-# policy" is now the job's OWN typed `JobSpec.traffic_cost.cost_class`, never a
-# sparse name list. A `bounded_http` or `request_intensive` job is refused
-# without a policy (the decision function records `policy_missing`); a
-# `non_target` job carries no policy. The agent-driven Steel crawl always gets
-# the policy too, through its own conservative pacing adapter.
-_POLICY_BEARING_CLASSES = frozenset(
-    {TrafficCostClass.BOUNDED_HTTP, TrafficCostClass.REQUEST_INTENSIVE}
-)
-
 
 def _rate_target(settings: dict | None) -> tuple[str, str] | None:
     """The canonical `(target_key, url)` the rate-mapping turn measures.
@@ -819,13 +805,6 @@ async def run_pipeline(
             )
             await asyncio.to_thread(registry.set_run_status, run_id, "failed")
             return
-        # A production profile always carries a policy (the conservative fallback
-        # IS a policy).
-        traffic_policy = (
-            rate_profile.traffic_policy.model_dump(mode="json")
-            if rate_profile.traffic_policy is not None
-            else None
-        )
         rate_target = _rate_target(settings)
         target_key = rate_profile.target_key or (rate_target[0] if rate_target else "")
 
@@ -871,18 +850,6 @@ async def run_pipeline(
                             input_assets = _services_to_probe_targets(input_assets)
 
                     extra = {"project_id": project_id}
-                    # #238 follow-up: the measured policy configures the target's
-                    # request traffic - carried ONLY in `extra["traffic_policy"]`,
-                    # never as a flag string or a template slot (the fixed
-                    # templates stay fixed), and never for jobs that do not egress
-                    # to the target (DNS/passive tooling). The gate is the job's
-                    # OWN typed cost class, not a sparse name list; the
-                    # agent-driven crawl gets it too, for its conservative pacing.
-                    if (
-                        job.traffic_cost.cost_class in _POLICY_BEARING_CLASSES
-                        or job.configurator_mode == "agent"
-                    ) and traffic_policy is not None:
-                        extra["traffic_policy"] = traffic_policy
                     if auth_account is not None and job.use_auth:
                         # D223-19, the lazy feed (#243): the gateway-selected
                         # account's IDENTIFIER rides the pipeline state (never

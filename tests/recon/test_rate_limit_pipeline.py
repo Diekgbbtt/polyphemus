@@ -2,10 +2,9 @@
 
 Exercises the REAL `run_pipeline` boundary: after the auth gateway resolves and
 BEFORE phase 0, the PIPELINE invokes the rate mapper directly, the public
-`RateProfile` lands in `recon_runs.stats["rate_limit"]`, and every HTTP job -
-plus the agent-driven Steel crawl - carries the serialized `TrafficPolicy`
-through `extra["traffic_policy"]`. No live model, no live database, no live
-Kali.
+`RateProfile` lands in `recon_runs.stats["rate_limit"]`, and the Configurator
+owns phase materialization. No runtime TrafficPolicy is forwarded after that
+decision. No live model, no live database, no live Kali.
 """
 from __future__ import annotations
 
@@ -381,7 +380,7 @@ def test_anonymous_verdict_still_measures_anonymously():
     _, seen = _run(events, orchestrator, mapper_kwargs=mapper_kwargs)
 
     assert mapper_kwargs["headers"] == {}
-    assert seen["httpx"]["extra"]["traffic_policy"]["target_key"] == TARGET_KEY
+    assert "traffic_policy" not in seen["httpx"]["extra"]
 
 
 def test_browser_only_never_calls_the_mapper_and_uses_conservative_posture(tmp_path):
@@ -408,7 +407,7 @@ def test_browser_only_never_calls_the_mapper_and_uses_conservative_posture(tmp_p
     assert stored["outcome"] == "inconclusive"
     assert stored["traffic_policy"]["rate_per_s"] <= 1.0
     assert set(seen) == {"steel_crawl"}
-    assert seen["steel_crawl"]["extra"]["traffic_policy"]["rate_per_s"] <= 1.0
+    assert "traffic_policy" not in seen["steel_crawl"]["extra"]
 
 
 def test_gateway_stop_runs_no_mapper_and_no_job():
@@ -440,7 +439,7 @@ def test_degraded_gateway_still_attempts_an_anonymous_mapping():
 
     assert events.index("gateway") < events.index("map")
     assert mapper_kwargs["headers"] == {}
-    assert "traffic_policy" in seen["httpx"]["extra"]
+    assert "traffic_policy" not in seen["httpx"]["extra"]
 
 
 def test_mapper_failure_degrades_to_the_conservative_policy():
@@ -453,7 +452,7 @@ def test_mapper_failure_degrades_to_the_conservative_policy():
     policy = registry.run_stats["rate_limit"]["traffic_policy"]
     assert policy["rate_per_s"] <= 1.0
     assert registry.run_stats["rate_limit"]["outcome"] == "failed"
-    assert seen["httpx"]["extra"]["traffic_policy"]["rate_per_s"] <= 1.0
+    assert "traffic_policy" not in seen["httpx"]["extra"]
     assert any(event.startswith("job:") for event in events)  # phases still ran
 
 
@@ -474,22 +473,20 @@ def test_an_orchestrator_without_the_rate_turn_still_uses_the_pipeline_mapper():
     assert "map" in events
     assert "rate_turn_forbidden" not in events
     assert registry.run_stats["rate_limit"]["outcome"] == "mapped"
-    assert seen["httpx"]["extra"]["traffic_policy"]["rate_per_s"] == 4.0
+    assert "traffic_policy" not in seen["httpx"]["extra"]
 
 
-# --- Step 4: the policy feed, without touching the templates --------------------
+# --- Step 4: no runtime policy feed ---------------------------------------------
 
 
-def test_http_jobs_carry_only_the_traffic_policy_and_no_flag_strings():
-    """HTTP jobs gain `extra["traffic_policy"]` and nothing else: no flag
-    string, no `{rate_flags}` slot, no template edit."""
+def test_request_jobs_carry_no_runtime_traffic_policy():
+    """The Configurator's command is the traffic decision; no policy is attached."""
     events: list = []
     _, seen = _run(events, _orchestrator(events))
 
-    policy = seen["httpx"]["extra"]["traffic_policy"]
-    assert policy["version"] == "traffic-policy/v2"
-    assert policy == seen["katana"]["extra"]["traffic_policy"]
     assert "traffic_policy" not in seen["subfinder"]["extra"]
+    assert "traffic_policy" not in seen["httpx"]["extra"]
+    assert "traffic_policy" not in seen["katana"]["extra"]
     for job, payload in seen.items():
         assert "rate_flags" not in payload["extra"]
         assert not any(isinstance(v, str) and "--rate" in v
@@ -498,18 +495,16 @@ def test_http_jobs_carry_only_the_traffic_policy_and_no_flag_strings():
     assert "{rate_flags}" not in JOBS["httpx"].command_template
 
 
-def test_default_preprocess_fn_preserves_the_traffic_policy():
-    """Step 4: the policy rides verbatim through the deterministic preprocess
-    into every pod input - the seam the pod reads it from."""
+def test_default_preprocess_fn_does_not_add_a_traffic_policy():
     from polymerhus.recon.control.job_agent import default_preprocess_fn
     from polymerhus.recon.control.jobs import JOBS
 
-    policy = _profile().traffic_policy.model_dump(mode="json")
     inputs = default_preprocess_fn(
         [{"url": "https://app.t.com"}], JOBS["httpx"],
-        {"project_id": "proj1", "traffic_policy": policy}, "")
+        {"project_id": "proj1"}, "")
 
-    assert inputs and all(pi["extra"]["traffic_policy"] == policy for pi in inputs)
+    assert inputs
+    assert all("traffic_policy" not in pi["extra"] for pi in inputs)
 
 
 # --- Step 5: conservative Steel pacing -----------------------------------------
@@ -551,9 +546,8 @@ def test_crawl_pacing_without_a_policy_keeps_the_operator_defaults():
                       "max_concurrent_crawls": 1}
 
 
-def test_crawl_pod_forwards_the_traffic_policy_to_the_crawl_seam():
-    """The crawl node reads the policy from `extra` and hands it to the crawl
-    seam (declared on the seam's signature), which is what applies the pacing."""
+def test_crawl_pod_ignores_a_legacy_traffic_policy():
+    """A legacy policy in extra is ignored; the Configurator owns the command."""
     from polymerhus.recon.crawl import crawl_pod
     from polymerhus.recon.domain.parsers.steel_parser import parse as steel_parse
     from polymerhus.recon.domain.traffic_admission import BOUNDED_HTTP_COST
@@ -583,7 +577,7 @@ def test_crawl_pod_forwards_the_traffic_policy_to_the_crawl_seam():
         "session_id": "s", "project_id": "proj1",
     })
 
-    assert seen["policy"] == policy
+    assert seen["policy"] is None
 
 
 def test_one_active_crawl_per_target():

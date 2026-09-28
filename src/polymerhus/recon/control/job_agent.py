@@ -15,12 +15,9 @@ accumulate into `pod_exports` through an `operator.add` reducer so the parallel
 `default_pod_invoke` (wraps Foundation `polymerhus.recon.domain.pod.pod_graph`) and
 `default_preprocess_fn` (deterministic 1:1 asset->pod_input mapping up to the
 MAX_JOB_ASSETS budget, except for batched/reprofile jobs which pack; `extra`
-is threaded through verbatim). The per-pod throttle input retired with the
-mid-run steering machinery (#243, D223-12): the per-job `-rate` flag is gone
-for good. Traffic is paced by the ONE measured policy instead - the pipeline
-puts the serialized `traffic_policy` in `extra`, the pod forwards it to Kali's
-governor, and admission decides which intensive jobs run at all (#238
-follow-up; see docs/design/rate-limit-job-admission-operations.md).
+is threaded through verbatim). Traffic selection and parameterisation belong to
+the phase Configurator; the pod executes the resulting command without a
+runtime TrafficPolicy.
 `notify_fn` (optional)
 is the #94 delivery seam: fired after each pod completes so a parent actor can be
 told a pod finished and go READ that pod's session memory; `pod_completion_notify`
@@ -103,11 +100,6 @@ def prepare_job_inputs(
     non-auth pods must never see it, even if the caller passed it in.
     `extra["apex_registrable"]` (the orchestration datum for the batched
     first-party filter) is popped so it never reaches a pod.
-    `extra["traffic_policy"]` (#238) rides through VERBATIM with the rest of
-    `extra`: it is the per-target `TrafficPolicy` the pipeline attached to this
-    job, and the pod (or the Steel pacing adapter) is the seam that consumes
-    it - the preprocess never invents, rewrites or drops it.
-
     Fail-open (P6): a derivation failure degrades to the raw assets wrapped
     in the job's pack shape (so the pod dispatch stays runnable) with a loud
     warning - never a raised exception that kills the phase.
@@ -184,12 +176,8 @@ def default_preprocess_fn(
     return prepare_job_inputs(input_assets, job, extra, asset_context)
 
 
-# Per-pod throttling retired with the mid-run steering machinery (#243,
-# D223-12): `default_preprocess_fn` threads `extra` through to every pod_input
-# verbatim, and the pod fills its command deterministically. The #238
-# follow-up owns the profile-driven replacement: request traffic is shaped by
-# the measured `TrafficPolicy` at the shared Kali egress governor, and
-# request-intensive jobs are admitted (or pruned) before materialization.
+# `default_preprocess_fn` threads `extra` through to every pod_input verbatim;
+# command choice and traffic parameters are owned by the phase Configurator.
 
 
 def default_pod_invoke(pod_input: dict, job: JobSpec, run_id: str, phase: int) -> PodExport:
