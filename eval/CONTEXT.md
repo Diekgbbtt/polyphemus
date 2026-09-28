@@ -113,7 +113,8 @@ The classification of why a vulnerability was not identified (e.g. `pod_notsuffi
 _Avoid_: error, reason
 
 **Surfer loop**:
-The background loop that monitors instance state and prompts the orchestrator to assert it and decide: terminate, destroy, or fix (configuration/data layer only) and restart.
+The background loop that monitors instance state and prompts the orchestrator to assert it and decide: terminate, destroy, or fix (configuration/data layer only) and restart; a jump or repair it cannot bound is escalated into a hold.
+Each acted-on trigger is recorded by its deterministic identity in the eval state, so the loop acts once per distinct trigger and skips one it already handled.
 _Avoid_: monitor, watchdog
 
 **Version advance**:
@@ -150,7 +151,8 @@ The restart, recreate, or config-layer adjustment a version advance requires for
 _Avoid_: deploy, rollout
 
 **Hold**:
-The atomic marker an alignment escalation writes in the eval state: until an operator resolves it, `up`/`trial` refuse to start and name the hold and its rationale; resolving records the operator's decision and clears the block, without reverting the advance.
+The atomic marker an escalation writes in the eval state: until an operator resolves it, `up`/`trial` refuse to start and name the hold and its rationale; resolving records the operator's decision and clears the block, without reverting the advance.
+Both an alignment escalation and a surfer escalation write one, through the same mechanism.
 _Avoid_: lock, freeze, pause
 
 **Eval compose overlay**:

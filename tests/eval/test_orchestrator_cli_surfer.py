@@ -1,0 +1,238 @@
+"""The `surfer` CLI verb (#275).
+
+`surfer --dry-run` asserts the state and prints it without dispatching the
+decider or mutating anything; `surfer --once` performs exactly one
+poll-assert-decide cycle. An escalation writes a hold through the same
+mechanism `align` uses, so it blocks `trial` until `alignment resolve`.
+"""
+from __future__ import annotations
+
+import yaml
+
+from orchestrator import alignment, cli, surfer
+
+
+def _setup_payload() -> dict:
+    return {
+        "schema_version": 1,
+        "artifact_store": "/srv/eval-artifacts",
+        "work_items": [
+            {"name": "auth-bootstrap", "status": "complete"},
+            {"name": "l1-surface", "status": "complete"},
+        ],
+        "instances": [
+            {
+                "instance_id": "arm-a",
+                "env_file": "arm-a/.env",
+                "targets": [
+                    {
+                        "target_id": "jetlinks-1",
+                        "target_config": {
+                            "lifecycle": "targetctl",
+                            "params": {"target": "jetlinks"},
+                        },
+                    }
+                ],
+            }
+        ],
+    }
+
+
+def _write_setup(tmp_path, payload: dict | None = None) -> str:
+    path = tmp_path / "setup.yaml"
+    path.write_text(yaml.safe_dump(payload or _setup_payload()), encoding="utf-8")
+    return str(path)
+
+
+class _Asserter:
+    def __init__(self, state: surfer.SurfacedState) -> None:
+        self.state = state
+
+    def assert_state(self) -> surfer.SurfacedState:
+        return self.state
+
+
+class _Decider:
+    def __init__(self, decision: surfer.SurferDecision) -> None:
+        self.decision = decision
+        self.calls = 0
+
+    def decide(self, request):
+        self.calls += 1
+        return self.decision
+
+
+class _ExplodingDecider:
+    def decide(self, request):  # pragma: no cover - a dry-run never dispatches
+        raise AssertionError("the decider must not be dispatched in dry-run")
+
+
+class _ExplodingApi:
+    def __call__(self, call):  # pragma: no cover - a dry-run performs no call
+        raise AssertionError("dry-run must not call the API")
+
+
+def _explode(*args, **kwargs):
+    raise AssertionError("dry-run must not construct a runner")
+
+
+def _failed_state() -> surfer.SurfacedState:
+    return surfer.SurfacedState(
+        idle=False,
+        triggers=(
+            surfer.Trigger(
+                kind=surfer.FAILED_RUN,
+                instance_id="arm-a",
+                detail="hunting failed",
+                target_id="jetlinks-1",
+                project_id="pid",
+                run_kind="hunting",
+                run_id="h1",
+                start_phase="hunting",
+            ),
+        ),
+    )
+
+
+def test_surfer_dry_run_asserts_and_never_dispatches_the_decider(tmp_path, capsys) -> None:
+    setup_path = _write_setup(tmp_path)
+
+    code = cli.main(
+        [
+            "surfer",
+            setup_path,
+            "--dry-run",
+            "--state",
+            str(tmp_path / "alignment.yaml"),
+            "--data-root",
+            str(tmp_path / "data"),
+            "--runs-root",
+            str(tmp_path / "runs"),
+        ],
+        runner_factory=_explode,
+        api_factory=lambda base: _ExplodingApi(),
+        surfer_asserter=_Asserter(_failed_state()),
+        surfer_decider=_ExplodingDecider(),
+    )
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "failed_run" in out
+    assert "hunting failed" in out
+
+
+def test_surfer_once_terminate_stops_the_named_runs(tmp_path, capsys, recording_runner) -> None:
+    setup_path = _write_setup(tmp_path)
+    api_runner = _RecordingApi()
+    runner = recording_runner()
+    decider = _Decider(surfer.SurferDecision(surfer.TERMINATE, reason="budget"))
+
+    code = cli.main(
+        [
+            "surfer",
+            setup_path,
+            "--once",
+            "--state",
+            str(tmp_path / "alignment.yaml"),
+            "--instances-root",
+            str(tmp_path / "instances"),
+            "--data-root",
+            str(tmp_path / "data"),
+            "--runs-root",
+            str(tmp_path / "runs"),
+        ],
+        runner_factory=lambda: runner,
+        api_factory=lambda base: api_runner,
+        surfer_asserter=_Asserter(_failed_state()),
+        surfer_decider=decider,
+    )
+
+    assert code == 0
+    assert decider.calls == 1
+    assert api_runner.paths == ["POST /projects/pid/hunting/h1/stop"]
+    assert runner.calls == []
+
+
+def test_surfer_escalation_blocks_trial_until_resolved(
+    tmp_path, capsys, recording_runner
+) -> None:
+    setup_path = _write_setup(tmp_path)
+    state_path = str(tmp_path / "alignment.yaml")
+    decider = _Decider(
+        surfer.SurferDecision(surfer.ESCALATE, reason="operator must top up credits")
+    )
+    runner = recording_runner()
+
+    code = cli.main(
+        [
+            "surfer",
+            setup_path,
+            "--once",
+            "--state",
+            state_path,
+            "--instances-root",
+            str(tmp_path / "instances"),
+            "--data-root",
+            str(tmp_path / "data"),
+            "--runs-root",
+            str(tmp_path / "runs"),
+        ],
+        runner_factory=lambda: runner,
+        surfer_asserter=_Asserter(_failed_state()),
+        surfer_decider=decider,
+    )
+    # An escalation is deliberate but needs an operator: non-zero.
+    assert code == 1
+    hold_id = alignment.AlignmentState(state_path).unresolved_holds()[0].hold_id
+
+    blocked = cli.main(
+        [
+            "trial",
+            setup_path,
+            "arm-a",
+            "jetlinks-1",
+            "--state",
+            state_path,
+            "--instances-root",
+            str(tmp_path / "instances"),
+            "--runs-root",
+            str(tmp_path / "runs"),
+            "--data-root",
+            str(tmp_path / "data"),
+        ],
+        runner_factory=_explode,
+        api_factory=lambda base: _ExplodingApi(),
+    )
+    err = capsys.readouterr().err
+    assert blocked == 1
+    assert hold_id in err
+    assert "operator must top up credits" in err
+
+    resolved = cli.main(
+        [
+            "alignment",
+            "resolve",
+            setup_path,
+            "--hold-id",
+            hold_id,
+            "--decision",
+            "operator funded the account",
+            "--state",
+            state_path,
+        ]
+    )
+    assert resolved == 0
+    alignment.AlignmentState(state_path).require_no_holds()  # no longer raises
+
+
+class _RecordingApi:
+    def __init__(self) -> None:
+        self.calls: list = []
+
+    def __call__(self, call):
+        self.calls.append(call)
+        return {}
+
+    @property
+    def paths(self) -> list[str]:
+        return [f"{c.method} {c.path}" for c in self.calls]

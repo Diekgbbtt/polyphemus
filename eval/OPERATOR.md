@@ -805,6 +805,80 @@ branch that chooses an action. The executor only honours the decision and
 resolves a declared migration/rebuild command by artifact class; an action with
 no declaration fails loud rather than inventing one.
 
+### 2.12. The surfer loop (background state assertion and recovery)
+
+The symbolic layer owns lifecycle (D5); the trial engine enforces the hunting cap
+and stops a run at a failed terminal. The surfer loop is the background
+supervisor that asserts the environment state and prompts the orchestrator when
+the hunting cap is reached or an instance is in a failed state (for example LLM
+credits exhausted).
+
+Each cycle asserts three things through injected seams:
+
+- the app-state surface (`GET /app-state`, with the documented postgres
+  fallback) for the idle verdict; an unavailable app-state is never treated as
+  idle;
+- the persisted trial records under the runs root for the cap accounting (a
+  `stop_count` at or above the cap) and a failed/interrupted run (a phase whose
+  status is `failed`/`interrupted` or that carries a `failure`);
+- a `FailureSignal` classifier over the evidence the records carry (phase
+  failures, trial notes, and any injected run-error payloads), which classifies
+  credit-exhaustion-like failures.
+
+The orchestrator decider (prompt `eval/prompts/surfer.md`) returns exactly one
+decision: `terminate` (stop the in-flight run(s) cleanly through the REST stop
+verbs), `destroy` (tear the instance down via `instances.down`), `fix` (a bounded
+configuration/data-layer repair, then restart and resume), or `escalate`. The
+loop applies only the three bounded actions; an unknown decision kind, or a `fix`
+naming a repair outside the enumerated set, is escalated and never applied - a
+code change is structurally impossible.
+
+The bounded repairs are:
+
+| Repair | Layer | What it does |
+|---|---|---|
+| `env` | configuration | Re-run `eval/env_preflight.py` on the instance `.env`, then recreate the stack (`docker compose up -d --force-recreate`). |
+| `clear_lock` | data | Remove the two documented stale markers only: `<data_root>/.execute.lock` and `<data_root>/<project_id>/.project.lease`. |
+| `replace_artifacts` | data | Re-place the target's pre-mined hunting artifacts into the pipeline's own `produced/` inboxes (only when the target declares them). |
+
+After a fix the affected services are restarted (`instances.up` for the
+data-layer repairs, the recreate for `env`) and the trial is resumed at its
+recorded phase - the first phase that did not cleanly complete (a cap-stopped
+hunting run resumes hunting, a failed recon resumes recon). The resumed trial
+record carries the surfer intervention in its `notes`.
+
+An escalation writes a hold through the same mechanism `align` uses, so it blocks
+`up`/`trial` until an operator resolves it with `alignment resolve`; the
+surfer loop itself never reverts anything.
+
+A trigger is acted on exactly once: its deterministic identity (instance +
+target + project + run kind/id + resume phase + trigger kind) is recorded in the
+alignment state, so a long-running loop skips a trigger it already handled rather
+than re-applying terminate/destroy/fix every interval. A new record - a new run
+or a new phase - is a new identity and prompts afresh. The handled record
+survives a loop restart (it is in the state file), and `alignment resolve` never
+clears it.
+
+| Primitive | Contract |
+|---|---|
+| `PYTHONPATH=eval python3 -m orchestrator surfer <setup.yaml> [--interval-s <s>] [--once] [--dry-run]` | Run the surfer loop. `--once` performs exactly one poll-assert-decide cycle (the testable unit); the default loops at the interval. `--dry-run` asserts the state and prints it, dispatching nothing and mutating nothing (no decider, no runner, no hold). The hold state lives at `--state` (`EVAL_ALIGNMENT_STATE`, default `eval/state/alignment.yaml`). The app-state source is `--api` (`PH_API`) with the `--dsn` (`EVAL_PG_DSN`) fallback; the trial records are read under `--runs-root`. |
+
+Configure the surfer agent command once, as `EVAL_SURFER_COMMAND` (or `--command`
+per invocation). It is a shell line whose placeholders the orchestrator
+substitutes before running it:
+
+| Placeholder | Substituted with |
+|---|---|
+| `{prompt}` | `eval/prompts/surfer.md` - the surfer decision contract. |
+| `{input}` | the rendered asserted state, the bounded repairs, and the environment. |
+| `{destination}` | where the agent writes the decision document. |
+
+Example:
+
+```
+EVAL_SURFER_COMMAND='opencode run --prompt {prompt} --input {input} --out {destination}'
+```
+
 ## 3. KB authoring
 
 # Operator-KB authoring prompt (the effective prompt, implementation-reverse-engineering revision)
