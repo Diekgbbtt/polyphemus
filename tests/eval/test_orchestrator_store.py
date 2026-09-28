@@ -67,6 +67,22 @@ def _verdict_row(vuln_id: str = "v1", identified: str = "identified") -> dict:
     }
 
 
+def _diagnosis_row(vuln_id: str = "v1") -> dict:
+    return {
+        "vuln": vuln_id,
+        "failure_mode": "surface_gap",
+        "root_cause": {
+            "type": "implementation_defect",
+            "combination_of": [],
+            "extended_description": "d",
+        },
+        "diagnosis_overview": "o",
+        "evidences": [{"source": "s", "ref": "r", "note": "n"}],
+        "closest_issue": None,
+        "proposed_issue": {"title": "gap", "body": "b", "labels": []},
+    }
+
+
 def _make_data_root(root: Path) -> Path:
     """Populate a minimal instance data root matching the evidence chain paths."""
     (root / "pid/hunting/orchestration/hunt_configs/consumed").mkdir(parents=True)
@@ -554,24 +570,12 @@ def test_materialize_names_a_verdicts_invalid_failure(tmp_path) -> None:
 
 
 def test_materialize_rejects_a_defective_diagnosis_before_the_copy(tmp_path) -> None:
+    bad = _diagnosis_row()
+    bad["failure_mode"] = "made_up"
     trial_dir, data_root = _make_trial(
         tmp_path,
         rows=[_verdict_row(identified="missed")],
-        diagnoses=[
-            {
-                "vuln": "v1",
-                "failure_mode": "made_up",
-                "root_cause": {
-                    "type": "implementation_defect",
-                    "combination_of": [],
-                    "extended_description": "d",
-                },
-                "diagnosis_overview": "o",
-                "evidences": [{"source": "s", "ref": "r", "note": "n"}],
-                "closest_issue": None,
-                "proposed_issue": {"title": "gap", "body": "b", "labels": []},
-            }
-        ],
+        diagnoses=[bad],
     )
 
     with pytest.raises(store.StoreError) as excinfo:
@@ -583,6 +587,39 @@ def test_materialize_rejects_a_defective_diagnosis_before_the_copy(tmp_path) -> 
     # It failed before landing anything in the authoritative tree.
     assert not (tmp_path / "store" / "jetlinks-1").exists()
 
+
+def test_materialize_rejects_an_unpaired_empty_diagnoses(tmp_path) -> None:
+    trial_dir, data_root = _make_trial(
+        tmp_path,
+        rows=[_verdict_row(identified="missed")],
+        diagnoses=[],
+    )
+
+    with pytest.raises(store.StoreError) as excinfo:
+        store.materialize(
+            trial_dir, store=tmp_path / "store", data_root=data_root, files=FileStore()
+        )
+
+    assert excinfo.value.failure == "diagnoses_invalid"
+    # The missed verdict has no entry; nothing landed in the store.
+    assert not (tmp_path / "store" / "jetlinks-1").exists()
+
+
+def test_materialize_rejects_a_partially_paired_diagnoses(tmp_path) -> None:
+    trial_dir, data_root = _make_trial(
+        tmp_path,
+        rows=[_verdict_row("v1", "missed"), _verdict_row("v2", "missed")],
+        diagnoses=[_diagnosis_row("v1")],
+    )
+
+    with pytest.raises(store.StoreError) as excinfo:
+        store.materialize(
+            trial_dir, store=tmp_path / "store", data_root=data_root, files=FileStore()
+        )
+
+    assert excinfo.value.failure == "diagnoses_invalid"
+    assert "v2" in str(excinfo.value)
+    assert not (tmp_path / "store" / "jetlinks-1").exists()
 
 
 def test_deploy_readme_documents_the_one_way_install() -> None:

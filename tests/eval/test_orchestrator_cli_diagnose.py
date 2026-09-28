@@ -7,10 +7,11 @@ extends to the `diagnoses.yaml` pairing check (D19/D22).
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import yaml
 
-from orchestrator import cli, diagnosis
+from orchestrator import assessment, cli, diagnosis
 
 
 def _setup_payload(*, target: str = "comfyui") -> dict:
@@ -293,6 +294,96 @@ def test_close_verify_continues_past_an_identity_less_record(tmp_path, capsys) -
     assert "trial-1: present" in captured.out
     payload = yaml.safe_load((good_dir / "trial.yaml").read_text())
     assert payload["assessment"]["status"] == "present"
+
+
+def test_close_verify_continues_past_a_missing_ground_truth(
+    tmp_path, capsys, monkeypatch
+) -> None:
+    setup_payload = {
+        "schema_version": 1,
+        "artifact_store": "/srv/a",
+        "work_items": [{"name": "auth-bootstrap", "status": "complete"}],
+        "instances": [
+            {
+                "instance_id": "arm-a",
+                "targets": [
+                    {
+                        "target_id": "comfyui",
+                        "target_config": {
+                            "lifecycle": "targetctl",
+                            "params": {"target": "comfyui"},
+                        },
+                    },
+                    {
+                        # An image target declares no ground-truth name.
+                        "target_id": "no-gt",
+                        "target_config": {
+                            "lifecycle": "image",
+                            "params": {"image": "nginx", "port": 18080},
+                        },
+                    },
+                ],
+            }
+        ],
+    }
+    setup = _write_setup(tmp_path, setup_payload)
+    good_dir = tmp_path / "runs" / "comfyui" / "trial-1"
+    _write_trial(tmp_path, verdicts_rows=[_missed_verdict()])
+    (good_dir / "diagnoses.yaml").write_text(
+        yaml.safe_dump([_diagnosis_row()]), encoding="utf-8"
+    )
+    # A second target's trial with identity but no resolvable ground truth.
+    bad_dir = tmp_path / "runs" / "no-gt" / "trial-2"
+    bad_dir.mkdir(parents=True)
+    (bad_dir / "trial.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "trial_id": "trial-2",
+                "instance_id": "arm-a",
+                "target_id": "no-gt",
+                "project_id": "pid",
+                "start_phase": "recon",
+                "terminal": "complete",
+                "phases": [],
+                "eval_sha": "eval-sha-1",
+                "stack_fingerprint": "fp-1",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def fake_resolve(target: str) -> Path:
+        if target == "comfyui":
+            root = tmp_path / "gt" / "comfyui"
+            root.mkdir(parents=True, exist_ok=True)
+            return root
+        raise assessment.AssessmentError(f"ground truth for {target!r} not found")
+
+    monkeypatch.setattr(cli.assessment, "resolve_ground_truth", fake_resolve)
+
+    code = cli.main(
+        [
+            "close-verify",
+            setup,
+            "--data-root",
+            str(tmp_path / "data"),
+            "--runs-root",
+            str(tmp_path / "runs"),
+            "--command",
+            "agent assess {prompt}",
+            "--diagnose-command",
+            "agent diagnose {prompt}",
+        ],
+        runner_factory=_explode,
+        dispatch_factory=_explode,
+        diagnose_dispatch_factory=_explode,
+    )
+
+    captured = capsys.readouterr()
+    assert code == 1
+    # The no-ground-truth target is escalated alone; the other still verifies.
+    assert "ground_truth" in captured.err.lower()
+    assert "comfyui/trial-1: present" in captured.out
 
 
 def test_issue_search_prints_read_only_matches(tmp_path, capsys) -> None:

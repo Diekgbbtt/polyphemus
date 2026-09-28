@@ -303,12 +303,17 @@ def materialize(
     diagnoses_present = files.exists(diagnoses_path)
     if diagnoses_present:
         # Validate the diagnosis before the copy: a defective or unpaired file
-        # must fail loudly, never land in the authoritative tree.
+        # must fail loudly, never land in the authoritative tree. Pairing is
+        # checked here too (load_diagnoses only validates the rows themselves),
+        # so a missed/partial verdict with no entry is rejected pre-copy.
         validated = _validated_verdicts(
             rows, data_root, files, eval_sha=eval_sha, stack_fingerprint=fingerprint
         )
         try:
-            diagnosis.load_diagnoses(diagnoses_path, files=files, verdicts=validated)
+            entries = diagnosis.load_diagnoses(
+                diagnoses_path, files=files, verdicts=validated
+            )
+            diagnosis.check_pairing(validated, entries)
         except (diagnosis.DiagnosisError, OSError) as exc:
             raise StoreError(str(exc), failure="diagnoses_invalid") from exc
     elif _has_diagnosable(rows):

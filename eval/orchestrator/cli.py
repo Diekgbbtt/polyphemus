@@ -748,8 +748,10 @@ def _run_close_verify(args, setup: EvalSetup, out: TextIO, err: TextIO,
                         planned = diagnosis.plan_dispatch(diag_request, _diagnosis_argv(args))
                         print(f"  {planned.display()}", file=out)
                     continue
-                # The identity is resolved per trial: an identity-less record is
-                # escalated on its own and the pass continues with the rest.
+                # The identity and the ground truth are resolved per trial: a
+                # record without identity, or a target with no resolvable
+                # ground-truth name, is escalated on its own and the pass
+                # continues with the rest.
                 try:
                     payload = assessment.load_trial_record(record_path, files=files)
                     sha, fingerprint = assessment.trial_identity(record_path, files=files)
@@ -761,9 +763,18 @@ def _run_close_verify(args, setup: EvalSetup, out: TextIO, err: TextIO,
                         file=err,
                     )
                     continue
-                request = _assessment_request(
-                    args, run, trial_dir, trace_id=_trace_id_of(payload)
-                )
+                try:
+                    request = _assessment_request(
+                        args, run, trial_dir, trace_id=_trace_id_of(payload)
+                    )
+                except assessment.AssessmentError as exc:
+                    escalated += 1
+                    print(
+                        f"close-verify: {run.target_id}/{trial_dir.name}: "
+                        f"ground_truth_missing: {exc}",
+                        file=err,
+                    )
+                    continue
                 # Mirror the diagnosis path: a present, valid file needs no
                 # dispatcher, so the configured command is never constructed.
                 if (
