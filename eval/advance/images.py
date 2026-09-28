@@ -52,6 +52,38 @@ def default_run(args: Sequence[str]) -> CommandResult:
     return CommandResult(proc.returncode, proc.stdout, proc.stderr)
 
 
+def default_containers(compose_project: str) -> dict[str, str]:
+    """The stack's containers by component, named `<project>-<service>-1`.
+
+    The eval instance compose project is `ph-<short>` (D1), so the daemon needs
+    the project to name the running containers. `litellm` is not a compose
+    service: it is the gateway process inside the `agent` container (D10), so it
+    shares that container's running image.
+    """
+    containers = {
+        component: f"{compose_project}-{component}-1" for component in COMPONENTS
+    }
+    # litellm is the gateway process inside the agent container (D10).
+    containers["litellm"] = f"{compose_project}-agent-1"
+    return containers
+
+
+def parse_container_map(value: str | None) -> dict[str, str] | None:
+    """Parse `component=container,...` into a map; `None`/empty means "use defaults"."""
+    if not value:
+        return None
+    mapping: dict[str, str] = {}
+    for item in value.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        component, separator, container = item.partition("=")
+        if not separator or not component.strip() or not container.strip():
+            raise ValueError(f"invalid image-container mapping: {item!r}")
+        mapping[component.strip()] = container.strip()
+    return mapping or None
+
+
 def collect_image_digests(
     containers: Mapping[str, str],
     *,

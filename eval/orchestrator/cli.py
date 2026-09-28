@@ -123,8 +123,22 @@ def main(
         else:
             for instance_id, report in orchestrator.status().items():
                 print(f"instance {instance_id}:\n{report['stack']}", file=out)
-                for target_id, target_status in report["targets"].items():
-                    print(f"  target {target_id}: {target_status.strip()}", file=out)
+                aliases = report.get("aliases") or {}
+                if "error" in aliases:
+                    print(f"  kali aliases: unavailable ({aliases['error']})", file=out)
+                elif aliases:
+                    rendered = ", ".join(
+                        f"{host} -> {ip}" for host, ip in sorted(aliases.items())
+                    )
+                    print(f"  kali aliases: {rendered}", file=out)
+                else:
+                    print("  kali aliases: none", file=out)
+                for target_id, target in report["targets"].items():
+                    print(
+                        f"  target {target_id}: {target['host']} {target['front_url']}"
+                        f" -> {target['status'].strip()}",
+                        file=out,
+                    )
         return 0
     except _HANDLED as exc:
         print(f"orchestrator: error: {exc}", file=err)

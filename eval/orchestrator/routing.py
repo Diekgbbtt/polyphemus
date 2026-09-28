@@ -88,33 +88,57 @@ def _rewrite_hosts(host: str) -> str:
     )
 
 
-def _kali_exec_script(paths: InstancePaths, host: str, *, append: str | None) -> str:
-    inner = _rewrite_hosts(host)
-    if append:
-        inner += f" && echo '{append}' >> /etc/hosts"
-    return (
+def _kali_exec_command(
+    paths: InstancePaths, inner: str, *, description: str
+) -> Command:
+    script = (
         f"cid=$({_compose_ps_kali(paths)}); "
         f"test -n \"$cid\" || {{ echo 'routing: no kali container for "
         f"{paths.compose_project}' >&2; exit 1; }}; "
         f"docker exec \"$cid\" sh -c {shlex.quote(inner)}"
     )
+    return Command(
+        argv=("sh", "-c", script),
+        cwd=str(paths.worktree),
+        description=description,
+    )
 
 
 def kali_alias_command(paths: InstancePaths, host: str, ip: str) -> Command:
     """Alias the synthetic Host inside that instance's kali `/etc/hosts`."""
-    script = _kali_exec_script(paths, host, append=f"{ip} {host}")
-    return Command(
-        argv=("sh", "-c", script),
-        cwd=str(paths.worktree),
-        description=f"alias {host} -> {ip} in {paths.compose_project} kali",
+    inner = _rewrite_hosts(host) + f" && echo '{ip} {host}' >> /etc/hosts"
+    return _kali_exec_command(
+        paths, inner, description=f"alias {host} -> {ip} in {paths.compose_project} kali"
     )
 
 
 def kali_clear_command(paths: InstancePaths, host: str) -> Command:
     """Remove every synthetic-Host alias line from that instance's kali."""
-    script = _kali_exec_script(paths, host, append=None)
-    return Command(
-        argv=("sh", "-c", script),
-        cwd=str(paths.worktree),
+    return _kali_exec_command(
+        paths,
+        _rewrite_hosts(host),
         description=f"clear {host} from {paths.compose_project} kali",
     )
+
+
+def kali_hosts_command(paths: InstancePaths) -> Command:
+    """Read that instance's kali `/etc/hosts` (the live alias surface)."""
+    return _kali_exec_command(
+        paths,
+        "cat /etc/hosts",
+        description=f"read {paths.compose_project} kali /etc/hosts",
+    )
+
+
+def parse_synthetic_aliases(hosts_text: str) -> dict[str, str]:
+    """The synthetic-Host aliases present in an `/etc/hosts` body: host -> ip."""
+    aliases: dict[str, str] = {}
+    for line in hosts_text.splitlines():
+        fields = line.split()
+        if len(fields) < 2:
+            continue
+        ip = fields[0]
+        for name in fields[1:]:
+            if name.endswith(SYNTHETIC_SUFFIX):
+                aliases[name] = ip
+    return aliases

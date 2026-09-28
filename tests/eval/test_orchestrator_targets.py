@@ -190,6 +190,31 @@ def test_image_up_down_status(tmp_path, recording_runner, fake_result) -> None:
     assert strategy.status(status_runner).strip() == "running"
 
 
+def test_image_aliases_kali_to_the_host_gateway(
+    tmp_path, recording_runner, fake_result
+) -> None:
+    """#269: kali is not on the host network, so 127.0.0.1 is kali itself."""
+    strategy, _ = _strategy(
+        tmp_path,
+        lifecycle="image",
+        params={"image": "nginx:alpine", "port": 18080},
+    )
+    runner = recording_runner(routes={"curl": fake_result(0, "200")})
+
+    result = strategy.up(runner)
+
+    alias_text = " ".join(runner.calls[-1].argv)
+    assert f"host.docker.internal {result.host}" in alias_text
+    assert f"127.0.0.1 {result.host}" not in alias_text
+    # The host-side readiness probe still runs on loopback.
+    probe_text = " ".join(
+        " ".join(command.argv)
+        for command in runner.calls
+        if "curl" in " ".join(command.argv)
+    )
+    assert "127.0.0.1:18080" in probe_text
+
+
 # --- compose (local pullable stack) ------------------------------------------
 
 
@@ -229,3 +254,21 @@ def test_compose_plan_up_uses_its_own_project(tmp_path) -> None:
 
     assert "ph-target-" in up_text
     assert paths.compose_project not in up_text
+
+
+def test_compose_aliases_kali_to_the_host_gateway(
+    tmp_path, recording_runner, fake_result
+) -> None:
+    """#269: kali is not on the host network, so 127.0.0.1 is kali itself."""
+    strategy, _ = _strategy(
+        tmp_path,
+        lifecycle="compose",
+        params={"compose_file": "target-compose.yml", "port": 18081},
+    )
+    runner = recording_runner(routes={"curl": fake_result(0, "200")})
+
+    result = strategy.up(runner)
+
+    alias_text = " ".join(runner.calls[-1].argv)
+    assert f"host.docker.internal {result.host}" in alias_text
+    assert f"127.0.0.1 {result.host}" not in alias_text

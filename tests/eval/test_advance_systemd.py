@@ -37,6 +37,8 @@ def test_env_template_documents_every_configuration_variable() -> None:
         "EVAL_ADVANCE_ALERT_COMMAND",
         "EVAL_ADVANCE_DEV_AHEAD_MESSAGE",
         "EVAL_ADVANCE_LAST_KNOWN_GOOD",
+        "EVAL_ADVANCE_COMPOSE_PROJECT",
+        "EVAL_ADVANCE_IMAGE_CONTAINERS",
     }
     assert expected <= documented
 

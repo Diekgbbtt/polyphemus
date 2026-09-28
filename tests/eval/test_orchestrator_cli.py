@@ -80,8 +80,14 @@ def test_up_executes_through_the_injected_runner(
 def test_down_executes_teardown(sample_setup, tmp_path, recording_runner) -> None:
     setup_path = _write_setup(tmp_path, sample_setup)
     runner = recording_runner()
+    # Teardown follows a bring-up that created the worktree; an absent worktree
+    # skips the compose-down (idempotent teardown, #269).
+    (tmp_path / "instances" / "arm-a").mkdir(parents=True)
 
-    code = cli.main(["down", setup_path], runner_factory=_SpyFactory(runner))
+    code = cli.main(
+        ["down", setup_path, "--instances-root", str(tmp_path / "instances")],
+        runner_factory=_SpyFactory(runner),
+    )
 
     assert code == 0
     assert any("down -v --remove-orphans" in t for t in runner.argv_texts)
@@ -98,3 +104,24 @@ def test_gate_refusal_exits_nonzero_and_names_the_item(
     err = capsys.readouterr().err
     assert code != 0
     assert "auth-bootstrap" in err
+
+
+def test_status_prints_front_urls_and_kali_aliases(
+    sample_setup, tmp_path, recording_runner, fake_result, capsys
+) -> None:
+    setup_path = _write_setup(tmp_path, sample_setup)
+    runner = recording_runner(
+        routes={
+            "/etc/hosts": fake_result(
+                0, stdout="127.0.0.1 localhost\n10.0.0.5 t-aaaa.target\n"
+            ),
+        },
+        default=fake_result(0, stdout="running\n"),
+    )
+
+    code = cli.main(["status", setup_path], runner_factory=_SpyFactory(runner))
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "http://t-" in out
+    assert "t-aaaa.target" in out

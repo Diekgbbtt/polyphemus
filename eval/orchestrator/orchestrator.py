@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
 
-from orchestrator import instances
+from orchestrator import instances, routing
 from orchestrator.commands import Command, CommandRunner
 from orchestrator.instances import COMPOSE_FILES, InstancePaths
 from orchestrator.setup import EvalSetup, Instance, TargetRun
@@ -134,16 +134,41 @@ class Orchestrator:
             instances.down(paths, runner)
 
     def status(self) -> dict:
-        """Per-instance stack status and per-target status."""
+        """Per-instance stack status, live kali aliases, and per-target status.
+
+        The aliases are read from each instance's kali `/etc/hosts` through the
+        runner, so the report shows what is actually present, not what was
+        planned. An unreadable kali is reported truthfully (an error entry),
+        never silently omitted.
+        """
         runner = self._require_runner()
         report: dict = {}
         for instance in self.setup.instances:
             paths = self._paths(instance)
             report[instance.instance_id] = {
                 "stack": instances.status(paths, runner),
+                "aliases": self._kali_aliases(paths, runner),
                 "targets": {
-                    run.target_id: self._strategy(paths, run).status(runner)
+                    run.target_id: self._target_status(paths, run, runner)
                     for run in instance.targets
                 },
             }
         return report
+
+    def _target_status(
+        self, paths: InstancePaths, run: TargetRun, runner: CommandRunner
+    ) -> dict:
+        strategy = self._strategy(paths, run)
+        return {
+            "status": strategy.status(runner),
+            "host": strategy.host,
+            "front_url": strategy.front_url,
+        }
+
+    def _kali_aliases(self, paths: InstancePaths, runner: CommandRunner) -> dict:
+        command = routing.kali_hosts_command(paths)
+        result = runner(command)
+        if result.returncode != 0:
+            detail = result.stderr.strip() or result.stdout.strip()
+            return {"error": detail or f"kali /etc/hosts unreadable (exit {result.returncode})"}
+        return routing.parse_synthetic_aliases(result.stdout)

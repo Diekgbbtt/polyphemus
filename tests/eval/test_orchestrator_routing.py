@@ -96,3 +96,28 @@ def test_kali_clear_removes_only_the_host(tmp_path) -> None:
     assert "t-aaaa.target" in script
     assert paths.compose_project in script
     assert "10.0.0.5" not in script
+
+
+def test_kali_hosts_command_reads_the_instance_hosts_file(tmp_path) -> None:
+    paths = _paths(tmp_path)
+
+    command = routing.kali_hosts_command(paths)
+    script = command.argv[-1]
+
+    assert "cat /etc/hosts" in script
+    assert paths.compose_project in script
+    assert command.cwd == str(paths.worktree)
+
+
+def test_parse_synthetic_aliases_reads_only_synthetic_hosts() -> None:
+    text = (
+        "127.0.0.1 localhost\n"
+        "10.0.0.5 t-aaaa.target\n"
+        "10.0.0.6 t-bbbb.target other.example\n"
+        "::1 ip6-localhost\n"
+    )
+
+    assert routing.parse_synthetic_aliases(text) == {
+        "t-aaaa.target": "10.0.0.5",
+        "t-bbbb.target": "10.0.0.6",
+    }

@@ -1,10 +1,11 @@
 """Per-instance stack lifecycle (D1/D10/D11/D29, D41).
 
 One `PolyphemusInstance` is one compose project (`ph-<short>`) running from its
-own git worktree off the `eval` branch, with its own `.env` validated by
-`eval/env_preflight.py` before the stack is rendered (`docker compose config`)
-or started. Teardown removes exactly that project's containers and volumes and
-its own worktree, never another instance's.
+own git worktree detached at the `eval` branch commit, with its own `.env`
+validated by `eval/env_preflight.py` before the stack is rendered
+(`docker compose config`) or started. Detached lets any number of instances
+share the one read-only `eval` branch. Teardown removes exactly that project's
+containers and volumes and its own worktree, never another instance's.
 
 The commands are planned purely; execution is one injected runner.
 """
@@ -92,6 +93,9 @@ def compose_argv(paths: InstancePaths, *verbs: str) -> list[str]:
 
 
 def plan_worktree_add(paths: InstancePaths) -> Command:
+    # Detached at the eval ref (D29): git refuses the same branch in two
+    # worktrees, so any number of instances share the one read-only branch this
+    # way. The daemon fast-forwards each detached HEAD with `merge --ff-only`.
     return Command(
         argv=(
             "git",
@@ -99,10 +103,11 @@ def plan_worktree_add(paths: InstancePaths) -> Command:
             str(paths.repo),
             "worktree",
             "add",
+            "--detach",
             str(paths.worktree),
             paths.branch,
         ),
-        description=f"worktree {paths.instance.instance_id} off {paths.branch}",
+        description=f"worktree {paths.instance.instance_id} detached at {paths.branch}",
     )
 
 
@@ -196,9 +201,15 @@ def up(paths: InstancePaths, run: CommandRunner) -> None:
 
 
 def down(paths: InstancePaths, run: CommandRunner) -> None:
-    """Tear down one instance stack and remove its worktree."""
-    command = plan_down(paths)[0]
-    require_ok(run(command), command, error=InstanceError)
+    """Tear down one instance stack and remove its worktree.
+
+    Idempotent: an absent worktree means no stack was ever reserved from it, so
+    the compose-down is skipped and only the (absent-is-success) worktree
+    removal runs.
+    """
+    if paths.worktree.exists():
+        command = plan_down(paths)[0]
+        require_ok(run(command), command, error=InstanceError)
     remove_worktree(paths, run)
 
 

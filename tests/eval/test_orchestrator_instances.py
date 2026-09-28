@@ -93,6 +93,9 @@ def test_plan_up_sequence(tmp_path, eval_repo) -> None:
     worktree_add = plan[0].argv
     assert worktree_add[:3] == ("git", "-C", str(eval_repo))
     assert worktree_add[3:5] == ("worktree", "add")
+    # Detached at the eval ref: any number of instances can share one branch
+    # (git refuses the same branch in two worktrees).
+    assert "--detach" in worktree_add
     assert str(paths.worktree) in worktree_add
     assert "eval" in worktree_add
 
@@ -202,3 +205,32 @@ def test_real_git_worktree_create_and_remove(tmp_path, eval_repo) -> None:
     instances.remove_worktree(paths, git)
 
     assert not paths.worktree.exists()
+
+
+def test_two_instances_share_the_eval_branch_detached(tmp_path, eval_repo) -> None:
+    """The #269 critical: a second instance must be creatable off the one eval branch.
+
+    A branch can be checked out in only one worktree, so instance worktrees are
+    created DETACHED at the eval commit (D29); any number can share it.
+    """
+    a = _paths(tmp_path, eval_repo, _instance("arm-a"))
+    b = _paths(tmp_path, eval_repo, _instance("arm-b"))
+    git = LocalRunner()
+    eval_sha = _git(eval_repo, "rev-parse", "eval").strip()
+
+    instances.ensure_worktree(a, git)
+    instances.ensure_worktree(b, git)
+
+    assert a.worktree.is_dir()
+    assert b.worktree.is_dir()
+    for path in (a.worktree, b.worktree):
+        assert _git(path, "rev-parse", "HEAD").strip() == eval_sha
+        # Detached: no branch is consumed by the worktree.
+        symbolic = subprocess.run(
+            ["git", "-C", str(path), "symbolic-ref", "-q", "HEAD"],
+            capture_output=True,
+            text=True,
+        )
+        assert symbolic.returncode != 0
+    # The eval branch is still available for the next instance.
+    assert _git(eval_repo, "rev-parse", "eval").strip() == eval_sha
