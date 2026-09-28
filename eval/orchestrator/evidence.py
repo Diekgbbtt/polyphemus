@@ -9,7 +9,11 @@ silently short chain (N13/D17).
 
 The reasoning seam is read-only and injected: given a trace id recorded by the
 trial it returns reasoning observations, which are mapped to the agent workflow
-phases. With no source (no Langfuse configuration) the refs are simply empty.
+phases. It is `designed-not-built` (CODING_STANDARD section 12): with no source
+wired (no production observability reader) the refs are simply empty, and a
+verdict's file chain alone satisfies N13. A trace id may still be supplied via
+`--trace-id`/`EVAL_TRACE_ID`; it is carried in the trial record for a future
+source to consume.
 
 Stdlib only. Import performs no I/O (CODING_STANDARD section 6).
 """
@@ -55,10 +59,10 @@ class ReasoningRef:
         }
 
 
-# The read-only observability seam: trace id -> raw reasoning observations.
-# Each observation is a mapping keyed by the four `_REASONING_FIELDS`; the real
-# implementation reads Langfuse, tests inject a fake. Absent a source, the
-# resolver leaves the refs empty.
+# The read-only observability seam (designed-not-built, I4): trace id -> raw
+# reasoning observations. Each observation is a mapping keyed by the four
+# `_REASONING_FIELDS`; tests inject a fake. No production source is wired, so
+# absent one the resolver leaves the refs empty.
 ReasoningSource = Callable[[str], Sequence[Mapping]]
 
 

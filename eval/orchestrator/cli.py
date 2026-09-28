@@ -168,8 +168,9 @@ def _parser() -> argparse.ArgumentParser:
     run_parser.add_argument(
         "--trace-id",
         default=os.environ.get("EVAL_TRACE_ID"),
-        help="the Langfuse trace id this trial ran under (stamped into the record "
-        "and substituted into the assessment/diagnosis {trace_id})",
+        help="the trace id this trial ran under (stamped into the record and "
+        "substituted into the assessment/diagnosis {trace_id}); no production "
+        "reasoning source is wired yet, so the reasoning refs stay empty",
     )
     run_parser.add_argument(
         "--dry-run", action="store_true", help="print the plan without executing"
@@ -611,7 +612,7 @@ def _assessment_request(
 
 
 def _trace_id_of(payload: dict) -> str | None:
-    """The trial record's Langfuse trace id, when one was recorded."""
+    """The trial record's trace id, when one was recorded."""
     value = payload.get("trace_id")
     return str(value) if value else None
 

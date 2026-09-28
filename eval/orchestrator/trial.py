@@ -199,8 +199,9 @@ class TrialConfig:
     # D32: the version identity stamped into the trial record and the verdicts.
     eval_sha: str | None = None
     stack_fingerprint: str | None = None
-    # The Langfuse trace id this trial ran under, when one was recorded; the
-    # assessment/diagnoser dispatches substitute it into `{trace_id}`.
+    # The trace id this trial ran under, when one was recorded; the
+    # assessment/diagnoser dispatches substitute it into `{trace_id}`. No
+    # production reasoning source consumes it yet (designed-not-built, I4).
     trace_id: str | None = None
     # #275: a surfer intervention note stamped into the record when this trial
     # resumes a failed one at its recorded phase.
@@ -323,7 +324,7 @@ class TrialRecord:
     # D32/D37: the version identity the trial ran on, and the assessment state.
     eval_sha: str | None = None
     stack_fingerprint: str | None = None
-    # The trial's Langfuse trace id, when one was recorded; the assessment and
+    # The trial's trace id, when one was recorded; the assessment and
     # diagnosis requests substitute it into `{trace_id}`.
     trace_id: str | None = None
     assessment: AssessmentRecord | None = None

@@ -102,6 +102,7 @@ _Avoid_: eval lock flag, busy flag
 
 **Evidence chain**:
 The per-verdict set of hunting artifacts (hunt config, `TestImplementationSpec`, experiment logs, `PodExport`) plus phase-mapped observability reasoning references that support a positive verdict.
+The reasoning references are optional and currently unproduced (designed-not-built, CODING_STANDARD section 12): the resolver's `ReasoningSource` seam is injected but no production source is wired, so a verdict's file chain alone satisfies N13. A trace id may still be supplied via `--trace-id`/`EVAL_TRACE_ID` and is carried in the trial record.
 _Avoid_: proof, references
 
 **Diagnosis**:
