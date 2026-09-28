@@ -428,6 +428,68 @@ def test_build_profile_merges_measurement_budget_and_artifact_refs():
     assert profile.expires_at is not None and profile.expires_at > profile.measured_at
 
 
+def test_baseline_profile_is_built_only_from_mapper_evidence():
+    harness = _mapped_harness()
+
+    profile = harness.build_baseline_profile()
+
+    assert profile.outcome == "mapped"
+    assert profile.target_key == "https://target.example"
+    assert profile.traffic_policy is not None
+    assert profile.traffic_policy.rate_per_s == pytest.approx(4.0)
+    assert profile.safe_rate_per_s == profile.traffic_policy.rate_per_s
+    assert profile.budget.max_requests == 400
+    assert profile.usage == harness.ledger.usage
+    assert profile.artifact_refs
+    assert profile.evidence
+    assert profile.bypass_outcome == "inconclusive"
+    assert profile.bypass_findings == []
+
+
+def test_baseline_profile_never_imports_bypass_claims():
+    def responder(spec: ExperimentSpec) -> ExperimentEvidence:
+        if spec.variant is None:
+            rejected = spec.rate_per_s > 5.0
+            return ExperimentEvidence(
+                experiment_id=spec.experiment_id,
+                phase=spec.phase,
+                offered_rate_per_s=spec.rate_per_s,
+                requests=spec.requests,
+                status_counts={"429": spec.requests} if rejected else {"200": spec.requests},
+                rejection_ratio=1.0 if rejected else 0.0,
+                body_fingerprint=["refusal"] if rejected else [],
+            )
+        return ExperimentEvidence(
+            experiment_id=spec.experiment_id,
+            phase=spec.phase,
+            offered_rate_per_s=spec.rate_per_s,
+            requests=spec.requests,
+            status_counts={"200": spec.requests},
+            rejection_ratio=0.0,
+            body_fingerprint=["welcome"],
+        )
+
+    harness = _harness(RecordingExecutor(responder))
+
+    async def scenario():
+        await harness.map()
+        await harness.judge_variant(
+            MutationSpec(variant_id="v1", family="parameter-carrier")
+        )
+
+    _run(scenario())
+    legacy = harness.build_profile(
+        RateLoopVerdict(bypass_outcome="confirmed", confirmed_variant_ids=["v1"])
+    )
+    assert legacy.bypass_outcome == "confirmed"
+    assert [finding.variant.variant_id for finding in legacy.bypass_findings] == ["v1"]
+
+    baseline = harness.build_baseline_profile()
+
+    assert baseline.bypass_outcome == "inconclusive"
+    assert baseline.bypass_findings == []
+
+
 def test_the_model_cannot_overwrite_a_measurement_or_enlarge_the_budget():
     harness = _mapped_harness()
     # A hostile verdict names variants and signals it never measured: neither

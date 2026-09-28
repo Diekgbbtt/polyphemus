@@ -590,13 +590,17 @@ class RateLimitHarness:
 
     # --- the public profile ----------------------------------------------------
 
-    def build_profile(self, verdict: RateLoopVerdict) -> RateProfile:
-        """Merge the model's interpretation into the controller's measurement.
+    def _build_profile(
+        self,
+        *,
+        bypass_outcome: str,
+        bypass_findings: list,
+    ) -> RateProfile:
+        """Build the public profile from mapper-owned evidence.
 
-        The verdict can only ever ADD an accepted bypass claim about an
-        experiment that exists and passed every gate. It cannot state a rate, a
-        burst, a budget, a policy or a confidence - those fields are the
-        controller's, and the model-facing type does not carry them.
+        Bypass outcome and findings are PASSED IN explicitly so the baseline
+        profile can never import the harness's dormant legacy findings. The
+        verdict-aware caller remains responsible for deriving them.
         """
         state = self._state
         if self._control is None and state is not None:
@@ -608,18 +612,6 @@ class RateLimitHarness:
             target_key=self.target_key,
             host_patterns=self.host_patterns,
         )
-
-        confirmed = []
-        for variant_id in verdict.confirmed_variant_ids:
-            finding = self._findings.get(variant_id)
-            if finding is not None and getattr(finding, "outcome", "") == "confirmed":
-                confirmed.append(finding)
-        if confirmed:
-            bypass_outcome = "confirmed"
-        elif verdict.bypass_outcome == "no_bypass" and not verdict.confirmed_variant_ids:
-            bypass_outcome = "no_bypass"
-        else:
-            bypass_outcome = "inconclusive"
 
         evidence = self.evidence
         artifact_refs = list(
@@ -670,13 +662,48 @@ class RateLimitHarness:
             artifact_refs=artifact_refs,
             evidence=evidence_references,
             bypass_outcome=bypass_outcome,
-            bypass_findings=confirmed,
+            bypass_findings=list(bypass_findings),
             signals=list(control.signals),
             traffic_policy=policy,
             reason=(
                 f"rate mapping {control.outcome}"
                 + (f": {self._failure_reason}" if self._failure_reason else "")
             ),
+        )
+
+    def build_baseline_profile(self) -> RateProfile:
+        """Build the profile from mapper evidence alone.
+
+        The baseline mapping performs no bypass probing and accepts no model
+        interpretation, so bypass claims are always absent here.
+        """
+        return self._build_profile(
+            bypass_outcome="inconclusive",
+            bypass_findings=[],
+        )
+
+    def build_profile(self, verdict: RateLoopVerdict) -> RateProfile:
+        """Merge the model's interpretation into the controller's measurement.
+
+        The verdict can only ever ADD an accepted bypass claim about an
+        experiment that exists and passed every gate. It cannot state a rate, a
+        burst, a budget, a policy or a confidence - those fields are the
+        controller's, and the model-facing type does not carry them.
+        """
+        confirmed = []
+        for variant_id in verdict.confirmed_variant_ids:
+            finding = self._findings.get(variant_id)
+            if finding is not None and getattr(finding, "outcome", "") == "confirmed":
+                confirmed.append(finding)
+        if confirmed:
+            bypass_outcome = "confirmed"
+        elif verdict.bypass_outcome == "no_bypass" and not verdict.confirmed_variant_ids:
+            bypass_outcome = "no_bypass"
+        else:
+            bypass_outcome = "inconclusive"
+        return self._build_profile(
+            bypass_outcome=bypass_outcome,
+            bypass_findings=confirmed,
         )
 
 
