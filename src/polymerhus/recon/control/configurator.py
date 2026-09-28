@@ -7,11 +7,12 @@ validates technical executability only; posture compliance is prompt-guided.
 """
 from __future__ import annotations
 
+import copy
 import json
 from typing import Literal
 from urllib.parse import urlsplit, urlunsplit
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from polymerhus.recon.control.jobs import JOBS
 from polymerhus.recon.domain.traffic_admission import TrafficCostClass
@@ -74,6 +75,11 @@ class PhaseOffers(BaseModel):
     phase: int
     target_key: str
     offers: list[ConfiguratorOffer]
+    # Runtime-only source mapping. Excluded from prompt serialization so the
+    # original pod inputs (including auth material) never reach the model.
+    source_inputs: dict[str, dict] = Field(
+        default_factory=dict, exclude=True, repr=False
+    )
 
 
 _PROMPT: str | None = None
@@ -135,6 +141,7 @@ def offer_phase_inputs(
 ) -> PhaseOffers:
     """Build the stable `(job, input)` offers for one phase boundary."""
     offers: list[ConfiguratorOffer] = []
+    source_inputs: dict[str, dict] = {}
     for job_name, prepared in prepared_by_job.items():
         job = jobs.get(job_name)
         if job is None:
@@ -146,11 +153,12 @@ def offer_phase_inputs(
                 if isinstance(pod_input, dict)
                 else {}
             )
+            input_id = f"{job_name}:{index}"
             offers.append(
                 ConfiguratorOffer(
                     job_name=job_name,
                     tool=job.tool,
-                    input_id=f"{job_name}:{index}",
+                    input_id=input_id,
                     input_preview=_input_preview(input_asset),
                     command_template=job.command_template,
                     consumes=job.consumes,
@@ -163,7 +171,79 @@ def offer_phase_inputs(
                     use_auth=job.use_auth,
                 )
             )
-    return PhaseOffers(phase=phase, target_key=target_key, offers=offers)
+            source_inputs[input_id] = copy.deepcopy(
+                pod_input if isinstance(pod_input, dict) else {}
+            )
+    return PhaseOffers(
+        phase=phase,
+        target_key=target_key,
+        offers=offers,
+        source_inputs=source_inputs,
+    )
+
+
+def materialize_configurator_decision(
+    decision: ConfiguratorDecision | None,
+    offers: PhaseOffers,
+) -> dict[str, list[dict]]:
+    """Validate one decision atomically and materialize its selected pod inputs.
+
+    This is deliberately pure and technical: it checks phase/target identity,
+    canonical job/input references and command shape only. It never reads the
+    posture or compares model-selected numbers with the measured rate.
+    """
+    if not isinstance(decision, ConfiguratorDecision):
+        raise ValueError("Configurator returned no valid decision")
+    if decision.phase != offers.phase:
+        raise ValueError(
+            f"Configurator phase mismatch: {decision.phase} != {offers.phase}"
+        )
+    if decision.target_key != offers.target_key:
+        raise ValueError(
+            f"Configurator target mismatch: {decision.target_key!r} != "
+            f"{offers.target_key!r}"
+        )
+
+    by_id = {offer.input_id: offer for offer in offers.offers}
+    seen: set[str] = set()
+    materialized: dict[str, list[dict]] = {}
+    for proposal in decision.pods:
+        if proposal.input_id in seen:
+            raise ValueError(
+                f"duplicate Configurator input_id: {proposal.input_id!r}"
+            )
+        seen.add(proposal.input_id)
+
+        offer = by_id.get(proposal.input_id)
+        if offer is None:
+            raise ValueError(
+                f"Configurator selected unknown input_id: {proposal.input_id!r}"
+            )
+        if proposal.job_name != offer.job_name:
+            raise ValueError(
+                f"input_id {proposal.input_id!r} belongs to job "
+                f"{offer.job_name!r}, not {proposal.job_name!r}"
+            )
+
+        if offer.configurator_mode == "agent":
+            if proposal.command is not None:
+                raise ValueError(
+                    f"agentic job {proposal.job_name!r} must use command=None"
+                )
+        elif not isinstance(proposal.command, str) or not proposal.command.strip():
+            raise ValueError(
+                f"shell job {proposal.job_name!r} requires a non-empty command"
+            )
+
+        source = offers.source_inputs.get(proposal.input_id)
+        if not isinstance(source, dict):
+            raise ValueError(
+                f"missing prepared input for {proposal.input_id!r}"
+            )
+        pod_input = copy.deepcopy(source)
+        pod_input["configured_command"] = proposal.command
+        materialized.setdefault(offer.job_name, []).append(pod_input)
+    return materialized
 
 
 def _offer_message(offers: PhaseOffers) -> str:
@@ -238,5 +318,6 @@ __all__ = [
     "PostureStatus",
     "ReconPodProposal",
     "configure_phase",
+    "materialize_configurator_decision",
     "offer_phase_inputs",
 ]

@@ -50,12 +50,6 @@ from polymerhus.recon.control.auth_feed import (
 )
 from polymerhus.recon.domain.curator import ALLOWED_LABELS, curate
 from polymerhus.recon.control.jobs import JOBS, build_phase_plan, validate_job_subset
-from polymerhus.recon.control.traffic_admission import (
-    build_admission_envelope,
-    materialize_admitted_phase,
-    persist_admission_envelope,
-)
-from polymerhus.recon.config import TRAFFIC_ADMISSION_SETTINGS
 from polymerhus.recon.domain.traffic_admission import TrafficCostClass
 from polymerhus.recon.control.scope import (
     DISCOVERY_JOBS,
@@ -296,19 +290,6 @@ async def _runtime_capabilities(reader=None) -> RuntimeCapabilities:
     if inspect.isawaitable(payload):
         payload = await payload
     return RuntimeCapabilities.from_proxy_status(payload)
-
-
-def _pod_observed_target(export) -> bool:
-    """Whether one pod's export is a REAL observation of the target (#238 A5).
-
-    A `success` verdict alone is not enough: a target-facing pod that ran,
-    exited 0 and merged nothing (every connection refused) proves nothing about
-    the target. `target_responses` is set from the pod's pre-curation parser
-    output, so a graph DUPLICATE stays positive while a no-response pod does
-    not. Graph novelty (`assets_merged`/`observations_merged`) is deliberately
-    NOT part of this predicate.
-    """
-    return export.verdict == "success" and getattr(export, "target_responses", 0) > 0
 
 
 def _exec_window(t0: float, started_at: str) -> dict:
@@ -573,6 +554,13 @@ def _default_write_posture(project_id: str, profile, run_id: str) -> None:
     RateLimitPostureStore().write(project_id, profile, run_id)
 
 
+def _default_configure_phase(project_id, run_id, phase, target_key, offers):
+    """Resolve the production Configurator lazily at the phase boundary."""
+    from polymerhus.recon.control.configurator import configure_phase  # noqa: PLC0415
+
+    return configure_phase(project_id, run_id, phase, target_key, offers)
+
+
 async def run_pipeline(
     project_id: str,
     *,
@@ -591,6 +579,7 @@ async def run_pipeline(
     fetch_capabilities=None,
     write_posture=None,
     map_rate_profile=None,
+    configure_phase=None,
 ) -> None:
     """Drive the full (or subset) phase plan for `project_id` under `run_id`.
 
@@ -642,12 +631,14 @@ async def run_pipeline(
         read_assets = globals()["read_assets"]
     if prepare_inputs is None:
         # #238 follow-up: ONE canonical consumption derivation, called ONCE per
-        # candidate job at the admission chokepoint (never inside the job graph).
+        # candidate job at the Configurator boundary (never inside the job graph).
         from polymerhus.recon.control.job_agent import (  # noqa: PLC0415
             prepare_job_inputs as prepare_inputs,
         )
     if map_rate_profile is None:
         map_rate_profile = _default_map_rate_profile
+    if configure_phase is None:
+        configure_phase = _default_configure_phase
 
     orchestrator = None
     # The gateway starts deterministically (D223-8): the actor is ALWAYS
@@ -785,13 +776,10 @@ async def run_pipeline(
         # surface fails closed: the mapping is skipped and every target-facing
         # job is pruned while non-target work continues.
         capability_error: str | None = None
-        capability_warning: str | None = None
         if fetch_capabilities is not None:
-            detail = "unreadable"
             try:
                 capabilities = await _runtime_capabilities(fetch_capabilities)
                 capability_error = capabilities.compatibility_error()
-                detail = capabilities.describe()
             except Exception as exc:  # noqa: BLE001 - unreadable is incompatible
                 capability_error = f"capability_probe_failed:{type(exc).__name__}"
                 logger.warning(
@@ -803,16 +791,8 @@ async def run_pipeline(
                         "run %s: Kali runtime capability incompatible (%s); "
                         "target-facing work will be refused",
                         run_id, capability_error)
-            if capability_error:
-                capability_warning = (
-                    "runtime_capability_incompatible: "
-                    f"{capability_error} ({detail})"
-                )
-        # #238: the SECOND turn on the same actor - measure this target's
-        # rate-limit behaviour under the authenticated context the gateway just
-        # selected, and persist the public profile, BEFORE phase 0. The
-        # heartbeat already runs, so both turns ride inside its window
-        # (D223-10); a failure degrades to the loud conservative policy.
+        # Measure this target under the authenticated context the gateway just
+        # selected, and persist the public profile before phase 0.
         rate_profile = await _rate_profile_for_run(
             project_id=project_id, run_id=run_id, settings=settings,
             auth_account=auth_account, auth_store=auth_store,
@@ -840,65 +820,16 @@ async def run_pipeline(
             await asyncio.to_thread(registry.set_run_status, run_id, "failed")
             return
         # A production profile always carries a policy (the conservative fallback
-        # IS a policy); this guard keeps the pipeline total for the policy-less
-        # shape admission already handles as `policy_missing`.
+        # IS a policy).
         traffic_policy = (
             rate_profile.traffic_policy.model_dump(mode="json")
             if rate_profile.traffic_policy is not None
             else None
         )
-        # The ordered trajectory the admission envelope carries. `auth` and
-        # `rate_mapping` are the two pre-phase-0 turns; `rate_profile_persisted`
-        # follows them; `admission_persisted` is appended before each phase's
-        # runners (the envelope is the executed configuration's record).
-        admission_events: list[str] = ["auth", "rate_mapping", "rate_profile_persisted"]
-        candidate_phases: list[tuple[str, ...]] = []
-        materialized_phases: list[tuple[str, ...]] = []
-        admission_decisions: list = []
-        admission_warnings: list[str] = []
-        admission_refusals: list = []
-        if capability_warning:
-            admission_warnings.append(capability_warning)
-        if rate_profile.outcome in ("failed", "inconclusive"):
-            # Spec 16.9: EVERY conservative path carries a structured warning, so
-            # an operator reading the envelope knows WHY target-facing work was
-            # pruned instead of having to reconstruct it from the decisions.
-            admission_warnings.append(
-                f"rate_profile_{rate_profile.outcome}: "
-                f"{getattr(rate_profile, 'reason', '') or 'conservative fallback'}"
-            )
-
-        async def _record_trajectory() -> None:
-            """Re-persist the envelope after a trajectory event was appended.
-
-            The pre-run persist is the LOAD-BEARING one (the executed
-            configuration must never be unobservable); this one is
-            observational, so a store hiccup is loud here and never fails the
-            run - the earlier record still stands.
-            """
-            try:
-                await asyncio.to_thread(
-                    persist_admission_envelope, registry, run_id,
-                    build_admission_envelope(
-                        profile=rate_profile,
-                        settings=TRAFFIC_ADMISSION_SETTINGS,
-                        candidate_phases=candidate_phases,
-                        materialized_phases=materialized_phases,
-                        decisions=admission_decisions,
-                        event_order=admission_events,
-                        warnings=admission_warnings,
-                        refusals=admission_refusals,
-                    ),
-                )
-            except Exception:  # best-effort: the pre-run record already stands
-                logger.warning(
-                    "run %s could not re-persist the traffic-admission "
-                    "trajectory (the pre-run record stands)", run_id,
-                    exc_info=True,
-                )
+        rate_target = _rate_target(settings)
+        target_key = rate_profile.target_key or (rate_target[0] if rate_target else "")
 
         for phase_idx, phase_jobs in enumerate(plan):
-            candidates = list(phase_jobs)
             prepared_by_job: dict[str, list[dict]] = {}
             extra_by_job: dict[str, dict] = {}
             assets_by_job: dict[str, list[dict]] = {}
@@ -1017,11 +948,8 @@ async def run_pipeline(
                                 else registrable_domain(seed)
                             )
 
-                    # The ONE canonical consumption derivation, done here at the
-                    # admission chokepoint - before job_configs, pods, runners or
-                    # target traffic - so admission and execution see the SAME
-                    # input count. `run_job` receives these prepared inputs and
-                    # never re-derives (#238 follow-up, Task 4).
+                    # The ONE canonical consumption derivation, done here before
+                    # the Configurator offers inputs or any pod exists.
                     prepared = await asyncio.to_thread(
                         prepare_inputs, input_assets, job, extra, ""
                     )
@@ -1041,74 +969,54 @@ async def run_pipeline(
                 extra_by_job[name] = extra
                 assets_by_job[name] = input_assets
 
-            # Deterministic admission at the phase boundary (#238 follow-up,
-            # Task 4): decide every successfully-prepared candidate, form the
-            # MATERIALIZED subset (the intersection of the static candidate list
-            # and the admitted decisions - never a union with any model output),
-            # and persist the envelope BEFORE any runner starts.
-            prepared_candidates = [n for n in candidates if n in prepared_by_job]
-            materialized, decisions = materialize_admitted_phase(
-                phase_idx,
-                prepared_candidates,
-                prepared_by_job,
-                rate_profile,
-                TRAFFIC_ADMISSION_SETTINGS,
-                datetime.now(timezone.utc),
-                runtime_incompatible=capability_error is not None,
+            # The phase Configurator decides which prepared pods exist. Its
+            # output is validated atomically against the canonical offers.
+            from polymerhus.recon.control.configurator import (  # noqa: PLC0415
+                materialize_configurator_decision,
+                offer_phase_inputs,
             )
-            candidate_phases.append(tuple(candidates))
-            materialized_phases.append(tuple(materialized))
-            admission_decisions.extend(decisions)
-            admission_events.append("admission_persisted")
-            envelope = build_admission_envelope(
-                profile=rate_profile,
-                settings=TRAFFIC_ADMISSION_SETTINGS,
-                candidate_phases=candidate_phases,
-                materialized_phases=materialized_phases,
-                decisions=admission_decisions,
-                event_order=admission_events,
-                warnings=admission_warnings,
-                refusals=admission_refusals,
+
+            offers = await asyncio.to_thread(
+                offer_phase_inputs,
+                phase_idx,
+                target_key,
+                prepared_by_job,
+                JOBS,
             )
             try:
-                await asyncio.to_thread(
-                    persist_admission_envelope, registry, run_id, envelope
+                decision = await asyncio.to_thread(
+                    configure_phase,
+                    project_id,
+                    run_id,
+                    phase_idx,
+                    target_key,
+                    offers,
                 )
-            except Exception:  # the executed configuration must never be unobservable
+                materialized = materialize_configurator_decision(decision, offers)
+            except Exception:
                 logger.error(
-                    "run %s could not persist the traffic-admission envelope; "
-                    "failing the run before any runner starts", run_id,
-                    exc_info=True,
+                    "run %s phase %s Configurator decision was rejected; "
+                    "failing before any pod starts",
+                    run_id, phase_idx, exc_info=True,
                 )
                 await asyncio.to_thread(registry.set_run_status, run_id, "failed")
                 return
-            excluded = [n for n in candidates if n not in materialized]
-            if excluded:
-                logger.info(
-                    "run %s phase %s pruned %s (materialized: %s)",
-                    run_id, phase_idx, excluded, materialized,
-                )
             job_configs: dict[str, tuple] = {
                 name: (
-                    JOBS[name], assets_by_job[name], prepared_by_job[name],
-                    extra_by_job[name],
+                    JOBS[name],
+                    assets_by_job.get(name, []),
+                    pods,
+                    extra_by_job.get(name, {}),
                 )
-                for name in materialized
+                for name, pods in materialized.items()
             }
 
             async def _run_one(name: str) -> None:
                 job, input_assets, prepared, extra = job_configs[name]
-                # #238 A4: the `recon_jobs` row is created HERE, for a
-                # MATERIALIZED job only - after the admission decision and the
-                # materialized subset are fixed. A pruned candidate therefore
-                # has its persisted DECISION but no row, pod, runner or traffic,
-                # and never an `in_progress` row that looks like a started
-                # execution.
+                # The `recon_jobs` row is created only for a job selected by the
+                # Configurator; an omitted candidate has no row, pod or traffic.
                 await asyncio.to_thread(
                     registry.upsert_job, run_id, phase_idx, name, "in_progress"
-                )
-                target_facing = (
-                    job.traffic_cost.cost_class is not TrafficCostClass.NON_TARGET
                 )
                 # The job's REAL execution window (#34 AST-DEC-09). `recon_jobs.
                 # started_at` cannot serve: `upsert_job` stamps it with now() on
@@ -1136,26 +1044,8 @@ async def run_pipeline(
                     return
 
                 total = len(pod_exports)
-                if (target_facing
-                        and "target_observed" not in admission_events
-                        and any(_pod_observed_target(e) for e in pod_exports)):
-                    # #238 A5: the run's first TARGET-FACING pod that actually
-                    # OBSERVED a response. A non-target job like subfinder proves
-                    # nothing about the target, and a target-facing pod that
-                    # reached nothing (zero responses) does not either - so
-                    # neither emits this.
-                    admission_events.append("target_observed")
-                    await _record_trajectory()
                 succeeded = sum(1 for e in pod_exports if e.verdict == "success")
                 failed = sum(1 for e in pod_exports if e.verdict == "failed")
-                # #238 follow-up (Task 6): a runtime governor refusal is recorded
-                # in the run's admission envelope WITHOUT rewriting the original
-                # decision - the pre-run persist already stands.
-                for export in pod_exports:
-                    refusal = getattr(export, "traffic_refusal", None)
-                    if refusal is not None:
-                        admission_refusals.append(refusal)
-                        admission_events.append("traffic_refused")
 
                 if total == 0:
                     status = "skipped"
@@ -1272,20 +1162,8 @@ async def run_pipeline(
             # MAX_PODS pod fan-out, not (jobs in phase) x MAX_PODS - the latter
             # OOM-killed the agent container on heavy phases (e.g. phase 4's
             # katana/ffuf/kiterunner/graphql-cop/paramspider/steel_crawl).
-            if job_configs and "pod_started" not in admission_events:
-                # The first MATERIALIZED runner is about to start: `pod_started`
-                # is the trajectory's boundary between the admitted
-                # configuration and its execution. A fully pruned phase set
-                # starts no pod, so it never emits this.
-                admission_events.append("pod_started")
-                await _record_trajectory()
             for name in job_configs:
                 await _run_one(name)
-
-            # Re-persist ONLY when a runtime refusal was recorded, so the
-            # envelope reflects the refusals without touching the decisions.
-            if admission_refusals:
-                await _record_trajectory()
 
         # #75: recon and analysis are DECOUPLED. For the INLINE rollback path only,
         # analysis ran on this task, so record its stats onto the recon run as
@@ -1333,6 +1211,4 @@ async def run_pipeline(
             pass
     # Recon reaches complete the instant its jobs finish - it does NOT wait on
     # analysis (#75 D3). Analysis settles independently on its own run row.
-    admission_events.append("run_finalized")
-    await _record_trajectory()
     await asyncio.to_thread(registry.set_run_status, run_id, "complete")

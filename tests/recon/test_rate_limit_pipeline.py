@@ -15,6 +15,8 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from polymerhus.recon.control import pipeline
+from polymerhus.recon.control import configurator as C
+from polymerhus.recon.control.jobs import JOBS
 from polymerhus.recon.control.authn_loop import GatewayVerdict
 from polymerhus.recon.control.orchestrator_agent import GatewayStop
 from polymerhus.recon.domain.rate_limit import (
@@ -137,7 +139,7 @@ def _mapper(events, *, profile=None, error=None, calls=None):
 def _run(events, orchestrator, *, registry=None, store=None, job_subset=None,
          settings=None, prepare_inputs=None, pod_exports_for=None,
          fetch_capabilities=None, map_rate_profile=None, mapper_kwargs=None,
-         write_posture=None):
+         write_posture=None, configure_phase=None):
     """Wire the real `run_pipeline` over a recording orchestrator + registry."""
     registry = registry or _RecordingRegistry(events)
     seen: dict = {}
@@ -181,6 +183,7 @@ def _run(events, orchestrator, *, registry=None, store=None, job_subset=None,
             fetch_capabilities=fetch_capabilities,
             map_rate_profile=map_rate_profile,
             write_posture=write_posture,
+            configure_phase=configure_phase,
         )
 
     asyncio.run(_drive())
@@ -240,17 +243,15 @@ def test_rate_profile_is_persisted_as_json_with_refs_and_no_secrets():
 
 
 def test_rate_stats_are_additive_and_never_clobber_analysis_stats():
-    """The pipeline adds the `rate_limit` and `traffic_admission` keys via the
-    additive JSONB seam: a merge keeps the analysis stats another writer already
-    put in the same run row, and never folds admission into the profile."""
+    """The pipeline adds the `rate_limit` key through the additive JSONB seam:
+    a merge keeps the analysis stats another writer already put in the row."""
     events: list = []
     registry = _RecordingRegistry(events)
     registry.run_stats["analysis"] = {"passes": 3}
     _run(events, _orchestrator(events), registry=registry)
 
     assert registry.run_stats["analysis"] == {"passes": 3}
-    assert set(registry.run_stats) == {"analysis", "rate_limit", "traffic_admission"}
-    assert registry.run_stats["traffic_admission"]["version"] == "traffic-admission/v1"
+    assert set(registry.run_stats) == {"analysis", "rate_limit"}
 
 
 def test_heartbeat_ticks_during_a_slow_rate_turn(monkeypatch):
@@ -633,255 +634,113 @@ def test_one_active_crawl_per_target():
     assert active["max"] == 1, "two crawls for one target ran concurrently"
 
 
-# --- #238 follow-up (Task 4): pre-materialization admission -----------------------
+# --- Task 6: Configurator materialization at the phase boundary ------------------
 
 
-class _NoPolicyProfile:
-    """A profile with NO enforceable policy - the shape `policy_missing` exists
-    for. A production `RateProfile` always carries a policy (the conservative
-    fallback is a policy), so this stub is the only way to exercise the branch
-    end to end through the pipeline."""
+def _configure(
+    events,
+    *,
+    selected: set[str] | None = None,
+    command: str = "httpx -u {target} -rate-limit 2",
+):
+    def configure_phase(project_id, run_id, phase, target_key, offers):
+        events.append(f"configure:{phase}")
+        pods = []
+        for offer in offers.offers:
+            if selected is not None and offer.input_id not in selected:
+                continue
+            pods.append(C.ReconPodProposal(
+                job_name=offer.job_name,
+                input_id=offer.input_id,
+                command=(
+                    None if offer.configurator_mode == "agent"
+                    else (offer.command_template or command)
+                ),
+                rationale="test",
+            ))
+        return C.ConfiguratorDecision(
+            phase=phase,
+            target_key=target_key,
+            posture_status="known_target",
+            pods=pods,
+            rationale="test",
+        )
 
-    version = "rate-profile/v2"
-    outcome = "inconclusive"
-    traffic_policy = None
-    safe_rate_per_s = None
-
-    def __init__(self):
-        self.measured_at = datetime.now(timezone.utc)
-        self.expires_at = self.measured_at + timedelta(seconds=3600)
-
-    def is_fresh(self, at):
-        return at < self.expires_at
-
-    def model_dump(self, mode="python"):
-        return {
-            "version": self.version,
-            "outcome": self.outcome,
-            "traffic_policy": None,
-            "measured_at": self.measured_at.isoformat(),
-            "expires_at": self.expires_at.isoformat(),
-        }
-
-
-def _excluded_reasons(registry) -> dict[str, str]:
-    stored = registry.run_stats["traffic_admission"]
-    return {
-        d["job"]: d["reason_code"]
-        for d in stored["decisions"]
-        if d["decision"] == "excluded"
-    }
+    return configure_phase
 
 
-def test_low_rate_prunes_intensive_runners_before_materialization():
-    """A conservative (low-rate) posture prunes `ffuf`/`arjun` at the phase
-    boundary: they are absent from the materialized phases, their runners are
-    never invoked, and their pruning reason is structured."""
-    events: list = []
-    registry, _ = _run(
-        events,
-        # A MAPPED posture whose safe rate is below the minimum: the pruning
-        # reason is the numeric gate (`below_min_safe_rate`), not the posture.
-        _orchestrator(events, profile=_profile(rate=1.0)),
-        job_subset=["subfinder", "httpx", "katana", "ffuf", "arjun"],
-    )
-
-    stored = registry.run_stats["traffic_admission"]
-    assert stored["version"] == "traffic-admission/v1"
-    assert stored["candidate_phases"] != stored["materialized_phases"]
-    # `ffuf` is below the rate gate; `arjun`'s Endpoint input set is empty here,
-    # so it is the execution reason `no_inputs` - neither is a rate failure
-    # leaking through.
-    reasons = _excluded_reasons(registry)
-    assert reasons["ffuf"] == "below_min_safe_rate"
-    assert reasons["arjun"] == "no_inputs"
-    assert "job:ffuf" not in events
-    assert "job:arjun" not in events
-    # The bounded jobs still ran, under the conservative policy.
-    assert "job:httpx" in events and "job:katana" in events
-
-
-def test_pruned_jobs_have_decisions_but_no_job_rows():
-    """#238 A4: an excluded candidate has a persisted DECISION but no
-    `recon_jobs` row - no pod, no runner, no traffic. The row was previously
-    created during phase setup, so `arjun`/`ffuf` showed an `in_progress`
-    execution that never happened."""
-    events: list = []
-    registry, _ = _run(
-        events,
-        _orchestrator(events, profile=_profile(rate=1.0)),
-        job_subset=["subfinder", "httpx", "katana", "ffuf", "arjun"],
-    )
-
-    reasons = _excluded_reasons(registry)
-    assert "ffuf" in reasons and "arjun" in reasons
-    rows = {row["job"] for row in registry.job_rows}
-    assert "ffuf" not in rows, "a pruned job must not have a job row"
-    assert "arjun" not in rows, "a pruned job must not have a job row"
-    # The admitted bounded job DOES have its row.
-    assert "httpx" in rows
-
-
-def test_admission_is_persisted_before_the_first_admitted_runner():
-    events: list = []
-    registry, _ = _run(events, _orchestrator(events))
-
-    assert events.index("set_run_stats:traffic_admission") < events.index("job:httpx")
-    assert events.index("set_run_stats:rate_limit") < events.index(
-        "set_run_stats:traffic_admission"
-    )
-
-
-def test_the_envelope_records_the_full_run_trajectory():
-    """`event_order` is the run's TRAJECTORY, not just the pre-phase-0 prefix.
-
-    The functional E2E asserts the whole sequence - the two turns, the profile,
-    the phase-boundary admission, the pod start, the first observed target
-    response, and the run's terminal act - so the envelope must carry all of
-    them in order (#238 follow-up, Task 10 step 4).
-    """
-    events: list = []
-    from polymerhus.recon.domain.traffic_admission import TrafficCostClass
-    from polymerhus.recon.domain.types import PodExport
-
-    def _exports_for(job, inputs):
-        # A real pod returns an export; a non-target job proves nothing about
-        # the target, so its export never satisfies `target_observed`.
-        if job.traffic_cost.cost_class is TrafficCostClass.NON_TARGET:
-            return []
-        # A target-facing pod that actually observed responses (#238 A5).
-        return [PodExport(input_asset={"name": "app.t.com"}, verdict="success",
-                          target_responses=1)]
-
-    registry, _ = _run(events, _orchestrator(events), pod_exports_for=_exports_for)
-
-    order = registry.run_stats["traffic_admission"]["event_order"]
-    assert order[:4] == ["auth", "rate_mapping", "rate_profile_persisted",
-                         "admission_persisted"], order
-    for label in ("pod_started", "target_observed", "run_finalized"):
-        assert label in order, order
-    assert order.index("admission_persisted") < order.index("pod_started")
-    assert order.index("pod_started") <= order.index("target_observed")
-    assert order[-1] == "run_finalized", order
-
-
-def test_pod_observed_target_predicate_needs_a_response():
-    """The predicate itself: success verdict alone is not enough."""
-    from polymerhus.recon.domain.types import PodExport
-
-    assert pipeline._pod_observed_target(
-        PodExport(input_asset={}, verdict="success")) is False
-    assert pipeline._pod_observed_target(
-        PodExport(input_asset={}, verdict="success", target_responses=1)) is True
-    assert pipeline._pod_observed_target(
-        PodExport(input_asset={}, verdict="failed", target_responses=1)) is False
-
-
-def test_a_target_facing_pod_with_no_response_records_no_target_observed():
-    """#238 A5: a target-facing pod that ran, exited 0 and merged nothing
-    (every connection refused) is NOT an observation of the target. The
-    trajectory must not claim one."""
-    events: list = []
-    from polymerhus.recon.domain.traffic_admission import TrafficCostClass
-    from polymerhus.recon.domain.types import PodExport
-
-    def _exports_for(job, inputs):
-        if job.traffic_cost.cost_class is TrafficCostClass.NON_TARGET:
-            return []
-        # verdict success, but no parser output: nothing reached the target.
-        return [PodExport(input_asset={"name": "app.t.com"}, verdict="success")]
-
-    registry, _ = _run(events, _orchestrator(events), pod_exports_for=_exports_for)
-
-    order = registry.run_stats["traffic_admission"]["event_order"]
-    assert "target_observed" not in order, order
-
-
-def test_an_observed_duplicate_records_target_observed():
-    """A response that was a graph DUPLICATE (merge counts zero) still means the
-    target was observed, so `target_observed` IS emitted (#238 A5)."""
-    events: list = []
-    from polymerhus.recon.domain.traffic_admission import TrafficCostClass
-    from polymerhus.recon.domain.types import PodExport
-
-    def _exports_for(job, inputs):
-        if job.traffic_cost.cost_class is TrafficCostClass.NON_TARGET:
-            return []
-        return [PodExport(input_asset={"name": "app.t.com"}, verdict="success",
-                          assets_merged=0, observations_merged=0,
-                          target_responses=1)]
-
-    registry, _ = _run(events, _orchestrator(events), pod_exports_for=_exports_for)
-
-    order = registry.run_stats["traffic_admission"]["event_order"]
-    assert "target_observed" in order, order
-
-
-def test_a_fully_pruned_run_records_no_pod_start():
-    """No materialized job means no pod started: the trajectory must not claim
-    one, or `pod_started` would stop meaning anything."""
-    events: list = []
-    registry, _ = _run(
-        events,
-        _orchestrator(events, profile=_NoPolicyProfile()),
-        # Every candidate is target-facing, so the policy-less profile refuses
-        # the whole plan and no runner is ever scheduled.
-        job_subset=["httpx", "katana", "ffuf"],
-    )
-
-    order = registry.run_stats["traffic_admission"]["event_order"]
-    assert "pod_started" not in order, order
-    assert "target_observed" not in order, order
-    assert order[-1] == "run_finalized", order
-
-
-def test_low_rate_prunes_intensive_runners_and_traffic():
-    """Kills: "start `arjun` or `ffuf` below the admission threshold".
-
-    Two halves, one test: the pruned runners are never INVOKED (no pod, so no
-    traffic from them), and the traffic that does run carries the conservative
-    policy the mapping measured - never an unthrottled default. The live twin
-    (`tests/e2e/test_rate_limit_admission_e2e.py`) reads the same conclusion off
-    the target's own counters.
-    """
+def test_configurator_plan_controls_materialized_jobs_and_commands():
     events: list = []
     registry, seen = _run(
         events,
-        _orchestrator(events, profile=_profile(rate=1.0)),
-        job_subset=["subfinder", "httpx", "katana", "ffuf", "arjun"],
+        _orchestrator(events),
+        job_subset=["subfinder", "httpx"],
+        configure_phase=_configure(events, selected={"httpx:0"}),
     )
 
-    materialized = {
-        job for phase in registry.run_stats["traffic_admission"]["materialized_phases"]
-        for job in phase
-    }
-    assert "ffuf" not in materialized and "arjun" not in materialized
-    assert "job:ffuf" not in events and "job:arjun" not in events
-
-    # The jobs that DID run carried the measured conservative policy, so their
-    # target traffic is paced at the safe rate (never an unthrottled default).
-    for tool in ("httpx", "katana"):
-        assert tool in seen, f"{tool} should still run under a bounded policy"
-        assert seen[tool]["extra"]["traffic_policy"]["rate_per_s"] == 1.0
+    assert "configure:0" in events
+    assert "job:httpx" in events
+    assert "job:subfinder" not in events
+    assert seen["httpx"]["prepared"][0]["configured_command"] == (
+        JOBS["httpx"].command_template
+    )
+    assert "traffic_admission" not in registry.run_stats
 
 
-def test_bounded_and_intensive_runners_are_refused_without_a_policy():
-    """No enforceable policy: `bounded_http` AND `request_intensive` runners are
-    both refused while `non_target` work continues."""
+def test_empty_configurator_plan_runs_no_phase_jobs():
     events: list = []
-    registry, _ = _run(
+    registry, seen = _run(
         events,
-        _orchestrator(events, profile=_NoPolicyProfile()),
-        job_subset=["subfinder", "httpx", "katana", "ffuf"],
+        _orchestrator(events),
+        job_subset=["subfinder", "httpx"],
+        configure_phase=_configure(events, selected=set()),
     )
 
-    reasons = _excluded_reasons(registry)
-    assert reasons["httpx"] == "policy_missing"
-    assert reasons["katana"] == "policy_missing"
-    assert reasons["ffuf"] == "policy_missing"
-    assert "job:subfinder" in events
-    assert "job:httpx" not in events
-    assert "job:ffuf" not in events
+    assert "configure:0" in events
+    assert not any(event.startswith("job:") for event in events)
+    assert seen == {}
+    assert registry.statuses[-1][1] == "complete"
+    assert "traffic_admission" not in registry.run_stats
+
+
+def test_invalid_configurator_decision_fails_before_any_job_runs():
+    events: list = []
+    registry = _RecordingRegistry(events)
+
+    def invalid_configure(project_id, run_id, phase, target_key, offers):
+        events.append(f"configure:{phase}")
+        return C.ConfiguratorDecision(
+            phase=phase,
+            target_key=target_key,
+            posture_status="known_target",
+            pods=[
+                C.ReconPodProposal(
+                    job_name="httpx",
+                    input_id="httpx:0",
+                    command="httpx -u {target}",
+                    rationale="valid",
+                ),
+                C.ReconPodProposal(
+                    job_name="httpx",
+                    input_id="unknown:0",
+                    command="httpx -u {target}",
+                    rationale="invalid",
+                ),
+            ],
+            rationale="mixed",
+        )
+
+    _run(
+        events,
+        _orchestrator(events),
+        registry=registry,
+        job_subset=["httpx"],
+        configure_phase=invalid_configure,
+    )
+
+    assert "configure:0" in events
+    assert not any(event.startswith("job:") for event in events)
+    assert any(status[1] == "failed" for status in registry.statuses)
 
 
 def test_each_candidate_is_derived_exactly_once_and_prepared_inputs_reach_run_job():
@@ -906,27 +765,6 @@ def test_each_candidate_is_derived_exactly_once_and_prepared_inputs_reach_run_jo
     assert isinstance(prepared[0]["extra"], dict) and prepared[0]["extra"]
 
 
-def test_a_profile_expired_before_materialization_prunes_intensive_jobs():
-    """Fresh during mapping, stale by materialization: admission re-evaluates
-    freshness and prunes the intensive job with `profile_stale`."""
-    events: list = []
-    now = datetime.now(timezone.utc)
-    stale = _profile(rate=10.0).model_copy(
-        update={
-            "measured_at": now - timedelta(hours=2),
-            "expires_at": now - timedelta(hours=1),
-        }
-    )
-    registry, _ = _run(
-        events,
-        _orchestrator(events, profile=stale),
-        job_subset=["subfinder", "httpx", "ffuf"],
-    )
-
-    assert _excluded_reasons(registry)["ffuf"] == "profile_stale"
-    assert "job:ffuf" not in events
-
-
 def test_model_facing_verdicts_cannot_carry_admission_fields():
     """The LLM cannot raise or reintroduce anything: neither model-facing verdict
     type accepts a rate, concurrency, budget, or phase-list field."""
@@ -941,78 +779,6 @@ def test_model_facing_verdicts_cannot_carry_admission_fields():
                 model(**{field: 1})
 
 
-def test_the_materialized_phase_is_the_static_candidates_intersected_with_admission():
-    """No union with model output: the materialized list is always a subset of
-    the controller's static candidate list."""
-    from polymerhus.recon.control.traffic_admission import (
-        materialize_admitted_phase,
-    )
-    from polymerhus.recon.config import TRAFFIC_ADMISSION_SETTINGS
-
-    prepared = {"httpx": [{"a": 1}], "arjun": [{"b": 1}]}
-    materialized, decisions = materialize_admitted_phase(
-        3, ["httpx"], prepared, _conservative_profile(),
-        TRAFFIC_ADMISSION_SETTINGS, datetime.now(timezone.utc),
-    )
-    assert materialized == ["httpx"]
-    assert "arjun" not in materialized
-    assert [d.job_name for d in decisions] == ["httpx"]
-
-
-def test_a_runtime_refusal_is_appended_without_rewriting_the_decision():
-    """#238 follow-up (Task 6): a pod-level governor refusal lands in the
-    envelope's refusals and event list; the original decisions are untouched."""
-    from polymerhus.recon.domain.traffic_admission import (
-        AdmissionReason,
-        TrafficRefusal,
-    )
-    from polymerhus.recon.domain.types import PodExport
-
-    events: list = []
-    registry = _RecordingRegistry(events)
-
-    async def refusing_run_job(job, input_assets, *, run_id, phase, extra,
-                               prepared_pod_inputs=None):
-        events.append(f"job:{job.tool}")
-        if job.tool == "httpx":
-            return [PodExport(
-                input_asset={"url": "https://app.t.com"}, verdict="failed",
-                error="refused by the governor",
-                traffic_refusal=TrafficRefusal(
-                    reason_code=AdmissionReason.GOVERNOR_REFUSED,
-                    target_key=TARGET_KEY, policy_version="traffic-policy/v2",
-                ),
-            )]
-        return []
-
-    asyncio.run(pipeline.run_pipeline(
-        "proj1", run_id="run1",
-        job_subset=["subfinder", "httpx"],
-        run_job=refusing_run_job,
-        load_settings=lambda pid: {"target_domain": SEED},
-        registry=registry,
-        read_assets=lambda node_type, project_id, where=None, **kw: (
-            [{"name": "app.t.com"}] if node_type == "Subdomain" else [{"url": "https://app.t.com"}]
-        ),
-        orchestrator_factory=lambda run_id: _orchestrator(events),
-        map_rate_profile=_mapper(events),
-        feed_mode="queued", with_analysis=False,
-    ))
-
-    stored = registry.run_stats["traffic_admission"]
-    assert stored["refusals"] == [{
-        "reason_code": "governor_refused",
-        "target_key": TARGET_KEY,
-        "policy_version": "traffic-policy/v2",
-    }]
-    assert "traffic_refused" in stored["event_order"]
-    # The admitted decision for httpx is unchanged by the refusal.
-    httpx_decisions = [
-        d for d in stored["decisions"] if d["job"] == "httpx"
-    ]
-    assert httpx_decisions and httpx_decisions[0]["decision"] == "included"
-
-
 # --- #238 A9: Kali runtime-capability negotiation --------------------------------
 
 
@@ -1020,7 +786,7 @@ def _incompatible_status() -> dict:
     return {
         "ok": True,
         "traffic_governor": {
-            "governor_enabled": False,  # the companion cannot enforce
+            "governor_enabled": False,
             "supported_policy_versions": ["traffic-policy/v1"],
         },
         "build": {"revision": "x", "vegeta_version": "v12.12.0"},
@@ -1028,42 +794,30 @@ def _incompatible_status() -> dict:
     }
 
 
-def test_incompatible_runtime_skips_mapping_and_prunes_target_facing_jobs():
-    """An incompatible Kali runtime refuses target-facing work and continues with
-    `non_target` work - never ungoverned HTTP, never an assumed capability."""
-    events: list = []
-    orchestrator = _orchestrator(events)
-    registry, seen = _run(
-        events,
-        orchestrator,
-        job_subset=["subfinder", "httpx", "katana", "ffuf"],
-        fetch_capabilities=_incompatible_status,
-    )
-
-    # The mapper is SKIPPED: measuring against an incompatible companion would
-    # be meaningless.
-    assert "map" not in events
-    assert "rate_turn_forbidden" not in events
-    # Non-target work continued.
-    assert "job:subfinder" in events
-    # Every target-facing candidate was pruned with the runtime reason.
-    reasons = _excluded_reasons(registry)
-    for job in ("httpx", "katana", "ffuf"):
-        assert reasons.get(job) == "runtime_capability_incompatible", (job, reasons)
-        assert f"job:{job}" not in events
-    stored = registry.run_stats["traffic_admission"]
-    assert any(
-        w.startswith("runtime_capability_incompatible:")
-        for w in stored["warnings"]
-    ), stored["warnings"]
-
-
-def test_a_compatible_runtime_proceeds_normally():
+def test_incompatible_runtime_skips_mapping_and_runs_only_selected_safe_work():
     events: list = []
     orchestrator = _orchestrator(events)
     registry, _ = _run(
         events,
         orchestrator,
+        job_subset=["subfinder", "httpx", "katana", "ffuf"],
+        fetch_capabilities=_incompatible_status,
+        configure_phase=_configure(events, selected={"subfinder:0"}),
+    )
+
+    assert "map" not in events
+    assert "job:subfinder" in events
+    assert "job:httpx" not in events
+    assert "job:katana" not in events
+    assert "job:ffuf" not in events
+    assert "traffic_admission" not in registry.run_stats
+
+
+def test_a_compatible_runtime_proceeds_normally():
+    events: list = []
+    registry, _ = _run(
+        events,
+        _orchestrator(events),
         job_subset=["subfinder", "httpx", "katana"],
         fetch_capabilities=lambda: {
             "traffic_governor": {
@@ -1075,28 +829,25 @@ def test_a_compatible_runtime_proceeds_normally():
                 "/usr/share/seclists/Discovery/Web-Content/common.txt": 4750
             },
         },
+        configure_phase=_configure(events, selected={"httpx:0"}),
     )
     assert "map" in events
-    assert "rate_turn_forbidden" not in events
     assert "job:httpx" in events
-    assert registry.run_stats["traffic_admission"]["warnings"] == []
+    assert "traffic_admission" not in registry.run_stats
 
 
-def test_an_unreadable_capability_surface_fails_closed():
-    """A probe that RAISES is treated as incompatible: an unprovable runtime must
-    not release target-facing traffic."""
+def test_an_unreadable_capability_surface_runs_only_selected_safe_work():
     events: list = []
 
     def boom():
         raise RuntimeError("kali MCP unavailable")
 
-    registry, _ = _run(
+    _run(
         events,
         _orchestrator(events),
         job_subset=["subfinder", "httpx"],
         fetch_capabilities=boom,
+        configure_phase=_configure(events, selected={"subfinder:0"}),
     )
     assert "job:subfinder" in events
     assert "job:httpx" not in events
-    reasons = _excluded_reasons(registry)
-    assert reasons.get("httpx") == "runtime_capability_incompatible"

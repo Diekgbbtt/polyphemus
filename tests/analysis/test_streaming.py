@@ -8,10 +8,39 @@ passes, and the pipeline hook with the existing injected-fakes style.
 """
 import asyncio
 
+import pytest
+
 from polymerhus.recon.control import pipeline
+from polymerhus.recon.control import configurator as C
 from polymerhus.analysis import streaming
 from polymerhus.analysis.pod import AnalyserExport
 from polymerhus.recon.domain.types import PodExport
+
+
+@pytest.fixture(autouse=True)
+def _deterministic_phase_configurator(monkeypatch):
+    def configure_phase(project_id, run_id, phase, target_key, offers):
+        return C.ConfiguratorDecision(
+            phase=phase,
+            target_key=target_key,
+            posture_status="known_target",
+            pods=[
+                C.ReconPodProposal(
+                    job_name=offer.job_name,
+                    input_id=offer.input_id,
+                    command=(
+                        None
+                        if offer.configurator_mode == "agent"
+                        else (offer.command_template or "true")
+                    ),
+                    rationale="streaming-test default",
+                )
+                for offer in offers.offers
+            ],
+            rationale="streaming-test default",
+        )
+
+    monkeypatch.setattr(pipeline, "_default_configure_phase", configure_phase)
 
 
 # --- stream_analyser_step (the batch invocatiaon, kept for non-feed callers) ---
