@@ -41,7 +41,9 @@ eseguibile; non decidono se sia sufficientemente prudente.
 
 ```text
 auth gateway
-  -> misura rate-limit con Vegeta in Kali
+  -> GatewayVerdict + account identifier
+  -> pipeline risolve il contesto HTTP autorizzato
+  -> RateLimitMapper misura con Vegeta in Kali
   -> RateProfile
   -> recon_runs.stats["rate_limit"]
   -> data/<project_id>/rate-limit/<target_key>.yaml
@@ -85,28 +87,62 @@ Regole:
 - un file corrotto è `unreadable`, mai equivalente a postura assente;
 - gli agenti leggono soltanto tramite `rate_limit_posture`.
 
-## 5. Vegeta in Kali
+## 5. Confine dell'Auth Gateway
+
+L'Auth Gateway possiede esclusivamente l'accesso iniziale alla superficie:
+
+- stabilisce se la run è anonima o autenticata;
+- seleziona l'identificatore dell'account;
+- distingue replay HTTP e percorso browser-only;
+- termina emettendo il `GatewayVerdict`.
+
+Non misura il rate limit, non esegue Vegeta, non costruisce il `RateProfile` e
+non configura i pod. Il rate mapping dipende dal risultato dell'Auth Gateway,
+ma non gli appartiene.
+
+Il `ReconOrchestratorActor` viene quindi riportato a un solo turno di auth. Dal
+suo system prompt e dalla sua tool surface vengono rimossi il rate-limit
+gateway, `map_rate_limit`, `test_rate_limit_variant` e l'unione
+`GatewayVerdict | RateLoopVerdict`.
+
+La pipeline consuma il `GatewayVerdict`, risolve lazily l'account selezionato e
+passa al mapper soltanto il materiale HTTP necessario. Un risultato
+`browser_only` produce direttamente una postura conservativa e inconcludente,
+con zero esperimenti Vegeta.
+
+## 6. Vegeta in Kali
 
 Il mapping riusa il percorso già costruito:
 
-1. il recon orchestrator avvia il turno di rate mapping dopo l'auth;
-2. il tool `map_rate_limit` guida gli esperimenti bounded;
-3. Kali esegue Vegeta e conserva gli artifact grezzi;
-4. il controller deriva il `RateProfile` dalle evidenze;
-5. il modello interpreta le evidenze e può proporre varianti bounded, ma non
-   sceglie il budget degli esperimenti;
-6. il profilo validato viene scritto in Postgres e nello YAML.
+1. la pipeline riceve il `GatewayVerdict`;
+2. risolve il contesto HTTP dell'account selezionato;
+3. costruisce il `RateLimitMapper` con target, contesto e budget operatore;
+4. il mapper usa `RateLimitHarness.map()` per guidare direttamente gli
+   esperimenti bounded;
+5. Kali esegue Vegeta e conserva gli artifact grezzi;
+6. il mapper deriva il `RateProfile` dalle evidenze;
+7. il profilo validato viene scritto in Postgres e nello YAML.
+
+`RateLimitMapper` è un servizio controller-owned, non un agente e non un ruolo
+in `providers.py`. L'attuale costruzione del profilo viene separata dal
+`RateLoopVerdict`: il profilo di base nasce direttamente dal `MappedControl`,
+dal budget consumato e dalle evidenze. Il mapping di postura non esegue il
+turno LLM di bypass; `bypass_outcome` resta `inconclusive` e
+`bypass_findings` resta vuoto.
 
 La separazione tra misura e configurazione è intenzionale: Vegeta produce il
 fatto osservato; il Configurator decide come usare quel fatto nella recon.
 
-## 6. Un solo Configurator
+## 7. Un solo Configurator
 
 `providers.py` conserva un solo ruolo generico:
 
 ```python
 Role("configurator", "LLM_CONFIGURATOR", "session", ...)
 ```
+
+Il ruolo `job_orchestrator` resta l'Auth Gateway e non porta più responsabilità
+o prompt di rate mapping.
 
 Non vengono dichiarati ruoli come `phase_1_configurator`,
 `crawl_configurator` o `ffuf_configurator`.
@@ -125,7 +161,7 @@ Il Configurator deve essere collocato prima della materializzazione. Il vecchio
 nodo `configurator` interno al pod è troppo tardi per decidere se quel pod debba
 esistere.
 
-## 7. Ruolo di `skills.py`
+## 8. Ruolo di `skills.py`
 
 `skills.py` non costruisce il Configurator e non registra fasi. Dichiara solo
 il bounded skill set del ruolo e produce il binding comune tramite
@@ -145,7 +181,12 @@ La skill descrive la sintassi e le capacità dei tool. Il workflow, l'ordine
 delle decisioni e il comportamento prudente restano nel system prompt del
 ruolo.
 
-## 8. Input e output del Configurator
+La skill `performing-api-rate-limiting-bypass` non è più legata al
+`job_orchestrator` per la recon ordinaria: il mapper baseline non esegue un
+turno di bypass. La skill resta nel catalogo per eventuali workflow espliciti
+futuri, fuori da questo design.
+
+## 9. Input e output del Configurator
 
 Per ogni fase la pipeline presenta:
 
@@ -187,7 +228,7 @@ Il codice rifiuta soltanto forme ineseguibili: job estranei a `JOBS`, input non
 offerti, comando vuoto o output non validabile. Non ricalcola né confronta i
 parametri rate-aware.
 
-## 9. Workflow del system prompt
+## 10. Workflow del system prompt
 
 Il system prompt del Configurator impone questa sequenza:
 
@@ -208,7 +249,7 @@ Il system prompt del Configurator impone questa sequenza:
 Queste regole sono istruzioni al modello. Non esiste un checker numerico dopo
 la decisione.
 
-## 10. Runner e Triager
+## 11. Runner e Triager
 
 Il tool read-only `rate_limit_posture` resta disponibile anche al Runner e al
 Triager del test-executor pod:
@@ -219,10 +260,15 @@ Triager del test-executor pod:
 - nessuno dei due può scrivere o modificare la postura;
 - la loro lettura è informativa e non blocca tecnicamente l'esecuzione.
 
-## 11. Modifiche architetturali previste
+## 12. Modifiche architetturali previste
 
 - conservare Vegeta, `RateProfile`, posture store e tool read-only;
 - conservare il writer nel controller della pipeline;
+- terminare l'Auth Gateway al `GatewayVerdict`;
+- rimuovere il turno rate-limit, i relativi tool e il relativo prompt dal
+  `ReconOrchestratorActor`;
+- invocare direttamente il `RateLimitMapper` dalla pipeline dopo l'auth;
+- costruire il profilo baseline senza `RateLoopVerdict`;
 - trasformare il Configurator da riempimento deterministico interno al pod a
   decisione stateful al confine della fase;
 - aggiungere il system prompt del Configurator;
@@ -237,13 +283,16 @@ Triager del test-executor pod:
 
 Quando implementato, questo design supera le parti della precedente #238 che
 assegnano l'admission dei job e l'enforcement della `TrafficPolicy` al
-controller deterministico. Restano validi il mapping Vegeta bounded, il
-`RateProfile`, la persistenza per-run, il posture store e il tool read-only.
+controller deterministico, oltre alla parte che assegna il rate mapping al
+secondo turno del recon orchestrator. Restano validi il mapping Vegeta bounded,
+il `RateProfile`, la persistenza per-run, il posture store e il tool read-only.
 
-## 12. Failure semantics
+## 13. Failure semantics
 
 | Evento | Comportamento |
 |---|---|
+| Auth Gateway degradato | Pipeline anonima secondo la semantica auth corrente; il mapper riceve il contesto effettivamente disponibile |
+| Target browser-only | Profilo conservativo e inconcludente; zero esperimenti Vegeta |
 | Misura Vegeta fallita | Profilo conservativo, reso visibile al Configurator |
 | Scrittura YAML fallita | Run `failed` prima delle fasi |
 | YAML assente | Il prompt impone il fallback conservativo |
@@ -253,11 +302,16 @@ controller deterministico. Restano validi il mapping Vegeta bounded, il
 | Parametri superiori alla postura | Nessun rifiuto automatico; violazione del contratto del modello |
 | Tool fallito | Semantica corrente di retry/degrado del pod |
 
-## 13. Verifica prevista
+## 14. Verifica prevista
 
 La futura implementazione deve dimostrare almeno:
 
 - Vegeta produce e persiste una postura per target;
+- l'Auth Gateway emette soltanto `GatewayVerdict` e non possiede tool o prompt
+  di rate mapping;
+- la pipeline invoca il mapper dopo l'auth usando il contesto selezionato;
+- il mapper costruisce il profilo senza un turno LLM o un `RateLoopVerdict`;
+- un target browser-only produce zero chiamate Vegeta;
 - la stessa run scrive stats e YAML dallo stesso `RateProfile`;
 - un solo Configurator mantiene la sessione attraverso più fasi;
 - nessun ruolo Configurator per-fase compare in `providers.py` o `skills.py`;
@@ -270,9 +324,10 @@ La futura implementazione deve dimostrare almeno:
 - un E2E con modello controllato prova l'intero percorso Vegeta -> YAML ->
   Configurator -> pod -> Triager.
 
-## 14. Fuori scope
+## 15. Fuori scope
 
 - agenti specializzati per fase o per tool;
+- bypass probing durante il mapping baseline;
 - modifica della postura da parte di un agente;
 - storico delle posture nello YAML;
 - admission basata su soglie controller-owned;
