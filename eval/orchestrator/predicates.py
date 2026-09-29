@@ -49,7 +49,10 @@ class PhaseState:
     carries no read endpoint; the trial is its writer). `auth_surface` is the
     declared auth surface from the target config; `recon_run_id` is the run a
     later phase drains; `preloaded_configured` marks a trial that declared
-    pre-mined artifacts; `data_root` anchors the on-disk reads.
+    pre-mined artifacts; `data_root` anchors the on-disk reads. `seeded` marks a
+    trial hunting against a pre-recon'd project (#277): its L1 is transferred in
+    and the settings/scaffold were the operator's, so the hunting gate asserts
+    the project and the L1 service count instead of the drain.
     """
 
     project_id: str
@@ -58,6 +61,7 @@ class PhaseState:
     recon_run_id: str | None = None
     preloaded_configured: bool = False
     data_root: Path | None = None
+    seeded: bool = False
 
 
 def recon_entry(
@@ -173,18 +177,34 @@ def hunting_entry(
     the pre-mined artifacts are in place.
 
     The two prerequisites are accumulated in order (drained/L1 -> pre-mined).
+    A seeded trial (#277) instead asserts the reused project exists and its L1
+    carries services - the operator's transferred scaffold is the entry signal,
+    there is no drain to read - and never reads the graph of a missing project.
     """
     blocks: list[str] = []
-    graph = api_runner(api.project_graph(state.project_id))
-    counts = api.graph_counts(graph)
+    project_known = True
+    if state.seeded:
+        projects = api_runner(api.list_projects())
+        project_known = state.project_id in api.project_ids(projects)
+        if not project_known:
+            blocks.append(f"seeded project not found: {state.project_id}")
 
-    drained = False
-    if state.recon_run_id:
-        run = api_runner(api.recon_status(state.project_id, state.recon_run_id))
-        drained = bool(((run or {}).get("stats") or {}).get("analysis_drained"))
-
-    if not drained and counts.l1 <= 0:
-        blocks.append("analysis not drained and no L1 surface present")
+    if project_known:
+        graph = api_runner(api.project_graph(state.project_id))
+        counts = api.graph_counts(graph)
+        if state.seeded:
+            # The scaffold-presence signal is the service count, exactly as the
+            # recon-entry gate reads it; a seeded L1 with zero services is not a
+            # hunting entry.
+            if counts.services <= 0:
+                blocks.append("seeded project L1 is incomplete: 0 services")
+        else:
+            drained = False
+            if state.recon_run_id:
+                run = api_runner(api.recon_status(state.project_id, state.recon_run_id))
+                drained = bool(((run or {}).get("stats") or {}).get("analysis_drained"))
+            if not drained and counts.l1 <= 0:
+                blocks.append("analysis not drained and no L1 surface present")
 
     if state.preloaded_configured:
         if state.data_root is None:

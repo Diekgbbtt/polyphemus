@@ -42,6 +42,7 @@ Scope: one catalogue for the system spec. Contract predicates live in the integr
 | C31 | CD script (`eval/deploy/ff_dev.sh`) | unsafe + success | a target checkout on another branch; a remote carrying an `eval` ref; a first run; a new upstream commit | wrong-branch refused; `eval` never checked out or fetched; first run clones dev; second fast-forwards | `test_deploy_ff_dev.py` |
 | C32 | deployment workflow | contract | the workflow YAML | triggers push-dev + dispatch; `permissions: contents: read`; names the empty secret; carries no `eval` ref | `test_deploy_workflow.py` |
 | C33 | first setup (`eval/setups/first.yaml`) | success | the committed setup | parses; `plan --dry-run` and `trial --dry-run` cover the cycle in order with the derived seed and no execution | `test_eval_first_setup.py` |
+| C34 | seeded hunting entry (`orchestrator.setup`/`trial`/`predicates`, #277) | success + malformed + unsafe | a target with `existing_project_id` and L1 services present; a missing project; a zero-service L1; a contradictory explicit `start_phase`; a duplicate id across targets; the `--existing-project-id` flag/env | proceeds at hunting making no create/mutate call and records the reused `project_id` + `seeded: true`; a missing project or zero-service L1 blocks with a named reason and no fallback to creating one; contradictory phase, unsafe id, and duplicate id are rejected; dry-run shows the skip and the hunting entry with no execution | `test_orchestrator_seeded.py` |
 
 ## Walkthrough predicates (end-to-end)
 

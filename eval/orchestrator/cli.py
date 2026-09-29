@@ -149,6 +149,13 @@ def _parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--budget-s", type=float, default=7200.0)
     run_parser.add_argument("--poll-s", type=float, default=15.0)
     run_parser.add_argument("--project-id", help="resume an existing project")
+    run_parser.add_argument(
+        "--existing-project-id",
+        default=os.environ.get("EVAL_EXISTING_PROJECT_ID"),
+        help="hunt against a pre-recon'd project whose L0/L1 already exists "
+        "(skips project creation, settings, the auth mutation, and the L1 "
+        "scaffold); the target must start at hunting (#277)",
+    )
     run_parser.add_argument("--recon-run", help="the recon run a later phase drains")
     run_parser.add_argument(
         "--target-run-id",
@@ -477,6 +484,21 @@ def _trial_config(args, setup: EvalSetup, config: OrchestratorConfig) -> tuple[
         raise SetupError(
             f"target_run_id: expected a path-safe identifier, got {target_run_id!r}"
         )
+    # #277: the CLI flag overrides a setup declaration, like target_run_id. A
+    # seeded trial enters at hunting by construction, so an explicit recon or
+    # analysis phase is contradictory and refused here, never silently ignored.
+    existing_project_id = args.existing_project_id or run.existing_project_id
+    if existing_project_id is not None:
+        if not is_path_safe_id(existing_project_id):
+            raise SetupError(
+                f"existing_project_id: expected a path-safe identifier, "
+                f"got {existing_project_id!r}"
+            )
+        if run.start_phase != "hunting":
+            raise SetupError(
+                f"existing_project_id is set but start_phase is "
+                f"{run.start_phase!r}; a seeded project must start at hunting"
+            )
     if args.data_root:
         data_root = Path(args.data_root)
     elif args.dry_run:
@@ -508,6 +530,7 @@ def _trial_config(args, setup: EvalSetup, config: OrchestratorConfig) -> tuple[
         poll_s=args.poll_s,
         project_id=args.project_id,
         recon_run_id=args.recon_run,
+        existing_project_id=existing_project_id,
         eval_sha=args.eval_sha,
         stack_fingerprint=args.stack_fingerprint,
         trace_id=args.trace_id,

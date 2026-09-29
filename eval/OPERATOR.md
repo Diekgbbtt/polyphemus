@@ -355,6 +355,7 @@ instances:
         start_phase: recon     # recon | analysis | hunting
         hunt_config_budget: 10
         target_run_id: jetlinks-1-run1  # optional; the artifact store middle level (#273)
+        # existing_project_id: 12da8565-...  # optional; hunt a pre-recon'd project (#277)
         preloaded_hunting_artifacts:    # optional; see below
           configs: /mnt/premined-configs          # a config file or a directory of them
           test_specs:                             # each spec names its fault key
@@ -386,6 +387,19 @@ The legacy single-string form is still accepted and means `configs` only:
 toward the hunting cap exactly like produced ones, and a setup that declares
 `preloaded_hunting_artifacts` does not enter hunting until at least one artifact
 is present on disk.
+
+**The seeded hunting entry** (`existing_project_id`, #277). A trial may hunt
+directly against a pre-recon'd project whose L0/L1 already exists on the
+instance, instead of creating a project and running recon/analysis. Set
+`existing_project_id` on the target (or `--existing-project-id` /
+`EVAL_EXISTING_PROJECT_ID`); `start_phase` is then `hunting` by construction. The
+trial makes no call that creates or mutates the project and runs no scaffold: it
+asserts the project exists and that its L1 carries services, places any
+pre-mined artifacts, and enters hunting with the cap. A missing project or an L1
+with zero services blocks with a named reason; there is no fallback to creating a
+project. The volume transfer, the verification queries, and the `target_seed`
+update are documented in `eval/SEEDED-L0L1.md`, with the committed example
+`eval/setups/comfyui-hunting.yaml`.
 
 Run it from the repo root:
 

@@ -144,6 +144,10 @@ class TargetRun:
     # #273: the target-run identity (the artifact store's middle level). Unset
     # means the trial record defaults it to the instance id.
     target_run_id: str | None = None
+    # #277: reuse a pre-recon'd project (L0/L1 already transferred onto the
+    # instance) instead of creating one. Set means the trial enters at hunting;
+    # it must be path-safe and unique within the setup.
+    existing_project_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -275,6 +279,18 @@ def parse_eval_setup(payload: object) -> EvalSetup:
             + ", ".join(run_duplicates)
         )
 
+    # #277: two targets reusing the same pre-recon'd project would race on one
+    # project and data root; the seeded project is unique within the setup.
+    seeded_ids = [
+        t.existing_project_id for i in instances for t in i.targets if t.existing_project_id
+    ]
+    seeded_duplicates = sorted({x for x in seeded_ids if seeded_ids.count(x) > 1})
+    if seeded_duplicates:
+        raise SetupError(
+            "EvalSetup.instances[].targets: duplicate existing_project_id(s): "
+            + ", ".join(seeded_duplicates)
+        )
+
     work_items = tuple(_parse_work_item(item, i) for i, item in enumerate(root.get("work_items", []) or []))
 
     return EvalSetup(
@@ -320,17 +336,30 @@ def _parse_target_run(payload: object, where: str) -> TargetRun:
             "hunt_config_budget",
             "preloaded_hunting_artifacts",
             "target_run_id",
+            "existing_project_id",
         ),
         where,
     )
     target_id = _str_field(mapping, "target_id", where, required=True)
     target_config = _parse_target_config(_require(mapping, "target_config", where), f"{where}.target_config")
 
-    start_phase = mapping.get("start_phase", "recon")
-    if start_phase not in PHASES:
-        raise SetupError(
-            f"{where}.start_phase: expected one of {', '.join(PHASES)}, got {start_phase!r}"
-        )
+    existing_project_id = _path_safe(mapping, "existing_project_id", where)
+    raw_start_phase = mapping.get("start_phase")
+    if existing_project_id is not None:
+        # #277: reusing a project starts at hunting by construction; an explicit
+        # contradictory phase is refused, never silently overridden.
+        if raw_start_phase is not None and raw_start_phase != "hunting":
+            raise SetupError(
+                f"{where}.start_phase: a target reusing an existing project must "
+                f"start at 'hunting', got {raw_start_phase!r}"
+            )
+        start_phase = "hunting"
+    else:
+        start_phase = raw_start_phase if raw_start_phase is not None else "recon"
+        if start_phase not in PHASES:
+            raise SetupError(
+                f"{where}.start_phase: expected one of {', '.join(PHASES)}, got {start_phase!r}"
+            )
 
     budget = mapping.get("hunt_config_budget")
     if budget is not None and (not isinstance(budget, int) or isinstance(budget, bool)):
@@ -346,6 +375,7 @@ def _parse_target_run(payload: object, where: str) -> TargetRun:
             f"{where}.preloaded_hunting_artifacts",
         ),
         target_run_id=_path_safe(mapping, "target_run_id", where),
+        existing_project_id=existing_project_id,
     )
 
 
