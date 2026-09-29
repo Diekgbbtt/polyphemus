@@ -196,6 +196,10 @@ class TrialConfig:
     # Resume: reuse an existing project and/or drain an existing recon run.
     project_id: str | None = None
     recon_run_id: str | None = None
+    # #277: hunt against a pre-recon'd project whose L0/L1 already exists. Set
+    # means the trial skips project creation, settings, the auth mutation, and
+    # the L1 scaffold, asserts the project and its L1, and enters at hunting.
+    existing_project_id: str | None = None
     # D32: the version identity stamped into the trial record and the verdicts.
     eval_sha: str | None = None
     stack_fingerprint: str | None = None
@@ -321,6 +325,9 @@ class TrialRecord:
     # #273: the target-run grouping level of the artifact store (defaults to
     # the instance id when the trial did not name one).
     target_run_id: str | None = None
+    # #277: True when the trial hunted against a reused project; the reused id
+    # is `project_id` itself. Additive, defaults False, so older records load.
+    seeded: bool = False
     # D32/D37: the version identity the trial ran on, and the assessment state.
     eval_sha: str | None = None
     stack_fingerprint: str | None = None
@@ -382,44 +389,59 @@ class Trial:
     def plan(self) -> TrialPlan:
         """Print every call, file write, and command without reading anything."""
         cfg = self.config
-        project = cfg.project_id or "<project>"
+        seeded = cfg.existing_project_id is not None
+        project = cfg.existing_project_id or cfg.project_id or "<project>"
         steps: list[TrialPlanStep] = []
-        if cfg.project_id is None:
+        if seeded:
+            # #277: a seeded trial creates nothing and mutates nothing; the plan
+            # shows only its entry assertions (the project listing and graph).
             steps.append(
                 TrialPlanStep(
-                    "project",
-                    calls=(api.create_project(cfg.project_name or f"eval-{cfg.target_id}"),),
+                    "seeded project reuse",
+                    calls=(api.list_projects(), api.project_graph(project)),
+                    note=(
+                        f"reuse project {project}; require L1 services > 0 "
+                        "(no project/settings/scaffold)"
+                    ),
                 )
             )
-        settings: dict = {}
-        if cfg.target_seed:
-            settings["target_seed"] = cfg.target_seed
-        if cfg.operator_kb:
-            settings["operator_kb"] = f"<file:{cfg.operator_kb}>"
-        if settings:
-            steps.append(
-                TrialPlanStep("settings", calls=(api.put_settings(project, settings),))
-            )
-        if cfg.auth_surface:
-            steps.append(
-                TrialPlanStep(
-                    "auth (AuthContext)",
-                    calls=(api.seed_auth(project, overview="<overview>", accounts="<accounts>"),),
-                )
-            )
-            if (cfg.auth or {}).get("authn_skill"):
+        else:
+            if cfg.project_id is None:
                 steps.append(
                     TrialPlanStep(
-                        "authn skill",
-                        files=(str(authn_skill_path(cfg.data_root, project)),),
+                        "project",
+                        calls=(api.create_project(cfg.project_name or f"eval-{cfg.target_id}"),),
                     )
                 )
-        if cfg.scaffold is not None:
-            steps.append(
-                TrialPlanStep(
-                    "L1 scaffold", commands=(plan_scaffold(cfg.scaffold, project),)
+            settings: dict = {}
+            if cfg.target_seed:
+                settings["target_seed"] = cfg.target_seed
+            if cfg.operator_kb:
+                settings["operator_kb"] = f"<file:{cfg.operator_kb}>"
+            if settings:
+                steps.append(
+                    TrialPlanStep("settings", calls=(api.put_settings(project, settings),))
                 )
-            )
+            if cfg.auth_surface:
+                steps.append(
+                    TrialPlanStep(
+                        "auth (AuthContext)",
+                        calls=(api.seed_auth(project, overview="<overview>", accounts="<accounts>"),),
+                    )
+                )
+                if (cfg.auth or {}).get("authn_skill"):
+                    steps.append(
+                        TrialPlanStep(
+                            "authn skill",
+                            files=(str(authn_skill_path(cfg.data_root, project)),),
+                        )
+                    )
+            if cfg.scaffold is not None:
+                steps.append(
+                    TrialPlanStep(
+                        "L1 scaffold", commands=(plan_scaffold(cfg.scaffold, project),)
+                    )
+                )
         if cfg.preloaded_hunting_artifacts is not None:
             steps.append(
                 TrialPlanStep(
@@ -485,7 +507,12 @@ class Trial:
         # mid-poll still records which phase it reached.
         current_phase = cfg.start_phase
         try:
-            project_id = cfg.project_id or self._create_project()
+            # #277: a seeded trial reuses the transferred project as-is; it is
+            # never created and, by `_bootstrap`, never mutated.
+            if cfg.existing_project_id is not None:
+                project_id = cfg.existing_project_id
+            else:
+                project_id = cfg.project_id or self._create_project()
             state = self._bootstrap(project_id)
 
             if cfg.start_phase == "recon":
@@ -576,30 +603,38 @@ class Trial:
 
     def _bootstrap(self, project_id: str) -> predicates.PhaseState:
         cfg = self.config
-        if cfg.project_id is None:
-            settings: dict = {}
-            if cfg.target_seed:
-                settings["target_seed"] = cfg.target_seed
-            if cfg.operator_kb and self._files.exists(cfg.operator_kb):
-                settings["operator_kb"] = self._files.read_text(cfg.operator_kb)
-            if settings:
-                self._call(api.put_settings(project_id, settings))
+        # #277: a seeded project carries the operator's settings/auth/scaffold
+        # already; the trial must make no call that creates or mutates it and no
+        # scaffold command. Only the pre-mined placement (a filesystem write into
+        # the pipeline's own inbox) runs, exactly as the normal path.
+        seeded = cfg.existing_project_id is not None
+        if not seeded:
+            if cfg.project_id is None:
+                settings: dict = {}
+                if cfg.target_seed:
+                    settings["target_seed"] = cfg.target_seed
+                if cfg.operator_kb and self._files.exists(cfg.operator_kb):
+                    settings["operator_kb"] = self._files.read_text(cfg.operator_kb)
+                if settings:
+                    self._call(api.put_settings(project_id, settings))
 
-        if cfg.auth_surface and cfg.auth is not None:
-            auth = dict(cfg.auth)
-            skill = auth.pop("authn_skill", None)
-            self._call(
-                api.seed_auth(
-                    project_id,
-                    overview=auth.get("overview"),
-                    accounts=auth.get("accounts"),
+            if cfg.auth_surface and cfg.auth is not None:
+                auth = dict(cfg.auth)
+                skill = auth.pop("authn_skill", None)
+                self._call(
+                    api.seed_auth(
+                        project_id,
+                        overview=auth.get("overview"),
+                        accounts=auth.get("accounts"),
+                    )
                 )
-            )
-            if skill:
-                self._files.write_text(authn_skill_path(cfg.data_root, project_id), str(skill))
+                if skill:
+                    self._files.write_text(
+                        authn_skill_path(cfg.data_root, project_id), str(skill)
+                    )
 
-        if cfg.scaffold is not None:
-            self._run_command(plan_scaffold(cfg.scaffold, project_id))
+            if cfg.scaffold is not None:
+                self._run_command(plan_scaffold(cfg.scaffold, project_id))
 
         if cfg.preloaded_hunting_artifacts is not None:
             self._place_premined(project_id)
@@ -611,6 +646,7 @@ class Trial:
             recon_run_id=cfg.recon_run_id,
             preloaded_configured=cfg.preloaded_hunting_artifacts is not None,
             data_root=cfg.data_root,
+            seeded=seeded,
         )
 
     def _place_premined(self, project_id: str) -> None:
@@ -774,6 +810,7 @@ class Trial:
             notes=aggregated,
             trial_dir=str(trial_dir),
             target_run_id=cfg.target_run_id or cfg.instance_id,
+            seeded=cfg.existing_project_id is not None,
             eval_sha=cfg.eval_sha,
             stack_fingerprint=cfg.stack_fingerprint,
             trace_id=cfg.trace_id,

@@ -23,8 +23,9 @@ The evaluated application a trial runs against; WebExploitBench's unit is called
 _Avoid_: challenge, app
 
 **TargetRun**:
-The evaluation of one Target on one instance: its linked target configuration, the phase it starts at, its hunting cap, any pre-mined artifacts, and its optional `target_run_id` identity.
+The evaluation of one Target on one instance: its linked target configuration, the phase it starts at, its hunting cap, any pre-mined artifacts, its optional `target_run_id` identity, and its optional `existing_project_id`.
 That identity names the artifact store's middle level and is resolved CLI override > setup `target_run_id` > instance id; when set it must be path-safe and unique within the setup.
+`existing_project_id` names a pre-recon'd project whose L0/L1 were transferred onto the instance (#277): the trial then enters at hunting, skips creation/settings/scaffold, and asserts the project and its L1; it must be path-safe and unique within the setup, and it forces `start_phase: hunting`.
 _Avoid_: job, task
 
 **TargetConfig**:
@@ -37,7 +38,8 @@ The externally bootstrapped authentication state seeded into the store (overview
 _Avoid_: auth, credentials, session
 
 **Trial**:
-One attempt: a fresh target instance and a fresh polymerhus project, from phase entry to terminal.
+One attempt: a fresh target instance and a polymerhus project, from phase entry to terminal.
+The project is normally created fresh; a seeded trial (#277) instead reuses the `existing_project_id` as-is (no creation, settings, or scaffold), records `seeded: true`, and enters at hunting.
 _Avoid_: attempt, run
 
 **Phase**:
