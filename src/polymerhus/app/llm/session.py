@@ -188,6 +188,8 @@ def _build_agent(
     turn entry points can never drift."""
     from langchain.agents import create_agent
 
+    from polymerhus.app.llm.parsing_recovery import parsing_recovery_middleware
+
     if model_factory is not None:
         model = model_factory(role_id)
     elif read_timeout_s is not None:
@@ -199,8 +201,11 @@ def _build_agent(
         kwargs["system_prompt"] = system_prompt
     if response_format is not None:
         kwargs["response_format"] = response_format
-    if middleware:
-        kwargs["middleware"] = list(middleware)
+    # #280: parsing-error recovery is wired FIRST so it is the after_model
+    # loop-exit node - every caller after_model hook (the compaction ledger)
+    # runs before it, and its `jump_to="model"` is honoured by the model-to-tools
+    # routing. Always present: an unanswered invalid call poisons the thread.
+    kwargs["middleware"] = [parsing_recovery_middleware(), *list(middleware or ())]
     if store is not None:
         kwargs["store"] = store
     return create_agent(model, **kwargs)
