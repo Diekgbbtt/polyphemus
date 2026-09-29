@@ -710,7 +710,11 @@ def test_scaffold_command_runs_through_the_command_runner(
     scaffold_calls = [c for c in runner.calls if "scaffold.py" in " ".join(c.argv)]
     assert len(scaffold_calls) == 1
     assert "pid" in " ".join(scaffold_calls[0].argv)
-    assert scaffold_calls[0].env == {"PYTHONPATH": "src"}
+    import os
+
+    assert scaffold_calls[0].env == {
+        "PYTHONPATH": os.pathsep.join(("src", str(tmp_path)))
+    }
 
 
 def test_reachability_probe_maps_the_kali_http_code(tmp_path) -> None:

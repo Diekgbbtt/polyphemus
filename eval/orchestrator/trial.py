@@ -12,6 +12,7 @@ engine is exercised without a live stack. Import performs no I/O.
 """
 from __future__ import annotations
 
+import os
 import time
 from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime
@@ -135,8 +136,11 @@ class ScaffoldSpec:
 
 
 def plan_scaffold(spec: ScaffoldSpec, project_id: str) -> Command:
-    """`python3 eval/scaffold.py <project> --kb <kb>` with `src` on the path."""
-    env = {"PYTHONPATH": spec.pythonpath, **(dict(spec.env) if spec.env else {})}
+    """`python3 eval/scaffold.py <project> --kb <kb>` with `src` and the repo root
+    (`spec.cwd`) on the path: the scaffold imports both `polymerhus` (under
+    `src`) and `db` (at the repo root, for `db.neo4j.init_schema`)."""
+    pythonpath = os.pathsep.join((spec.pythonpath, str(spec.cwd)))
+    env = {"PYTHONPATH": pythonpath, **(dict(spec.env) if spec.env else {})}
     return Command(
         argv=("python3", spec.script, project_id, "--kb", spec.kb),
         cwd=spec.cwd,
