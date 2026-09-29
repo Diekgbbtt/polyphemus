@@ -1,0 +1,87 @@
+name: deploy-eval
+
+# The delivery plane (ADR section 1, D34): on every push to `dev`, fast-forward
+# the eval server's canonical `dev` checkout over SSH. This workflow owns
+# exactly `origin/dev` -> the server's `dev` checkout. It never references the
+# `eval` branch and never touches eval or instance worktrees; advancing
+# `dev` -> `eval` belongs to the server sync daemon, never here.
+#
+# Security: the deploy key is written from a secret into ~/.ssh with 0600, ssh
+# runs with BatchMode (no prompts), and the host key is pinned via
+# EVAL_SSH_KNOWN_HOSTS (StrictHostKeyChecking=yes, global known-hosts disabled)
+# - no trust-on-first-use and no runner-provided keys as a trust source.
+#
+# Required repository secrets: EVAL_SSH_KEY, EVAL_HOST, EVAL_SSH_KNOWN_HOSTS.
+# Optional repository variable: EVAL_DEV_DIR (the server checkout path).
+
+on:
+  push:
+    branches: [dev]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Serialise runs so two overlapping pushes cannot interleave their fast-forwards.
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  fast-forward-dev:
+    runs-on: ubuntu-latest
+    env:
+      EVAL_DEV_DIR: ${{ vars.EVAL_DEV_DIR || '/opt/polymerhus-dev' }}
+      EVAL_DEV_ORIGIN: https://github.com/Diekgbbtt/polyphemus.git
+    steps:
+      # First-party checkout; needed so the deploy script can be piped to the
+      # remote. The workflow's only writes are on the server's `dev` checkout.
+      - name: Check out the repository (for the deploy script)
+        uses: actions/checkout@v4
+
+      - name: Require the deployment secrets
+        env:
+          EVAL_SSH_KEY: ${{ secrets.EVAL_SSH_KEY }}
+          EVAL_HOST: ${{ secrets.EVAL_HOST }}
+          EVAL_SSH_KNOWN_HOSTS: ${{ secrets.EVAL_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          missing=()
+          for name in EVAL_SSH_KEY EVAL_HOST EVAL_SSH_KNOWN_HOSTS; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::required secret ${name} is empty or unset"
+              missing+=("${name}")
+            fi
+          done
+          if [ "${#missing[@]}" -ne 0 ]; then
+            echo "::error::deploy cancelled; configure these repository secrets: ${missing[*]}"
+            exit 1
+          fi
+          echo "All three deployment secrets are present."
+
+      - name: Install the deploy key and known_hosts
+        env:
+          EVAL_SSH_KEY: ${{ secrets.EVAL_SSH_KEY }}
+          EVAL_SSH_KNOWN_HOSTS: ${{ secrets.EVAL_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          install -d -m 700 "${HOME}/.ssh"
+          printf '%s\n' "${EVAL_SSH_KEY}" > "${HOME}/.ssh/eval_deploy"
+          chmod 600 "${HOME}/.ssh/eval_deploy"
+          printf '%s\n' "${EVAL_SSH_KNOWN_HOSTS}" > "${HOME}/.ssh/known_hosts"
+          chmod 600 "${HOME}/.ssh/known_hosts"
+
+      - name: Fast-forward the server's dev checkout
+        env:
+          EVAL_HOST: ${{ secrets.EVAL_HOST }}
+        run: |
+          set -euo pipefail
+          ssh -i "${HOME}/.ssh/eval_deploy" \
+            -o IdentitiesOnly=yes \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="${HOME}/.ssh/known_hosts" \
+            -o GlobalKnownHostsFile=/dev/null \
+            "root@${EVAL_HOST}" \
+            "EVAL_DEV_DIR='${EVAL_DEV_DIR}' EVAL_DEV_ORIGIN='${EVAL_DEV_ORIGIN}' bash -s" \
+            < eval/deploy/ff_dev.sh

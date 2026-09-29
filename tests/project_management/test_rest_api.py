@@ -424,3 +424,150 @@ def test_post_analysis_known_run_starts_the_consumer(monkeypatch):
     resp = client.post("/projects/p1/analysis", json={"run_id": "real"})
     assert resp.status_code == 200
     assert resp.json() == {"run_id": "real", "analysis_run_id": "real:aid"}
+
+
+# --- GET /app-state: the read-only running-state surface ----------------------
+# Consumers read this as the "is any effective project execution in flight?"
+# signal, with a direct-postgres query as the documented fallback (see the
+# route docstring). In-flight is a persisted-row predicate over the three run
+# classes the store can express: recon `running`, analysis `draining` (its
+# only live state), hunting `running` (its only live state).
+
+def _stub_app_state(monkeypatch, projects, recon=(), analysis=(), hunting=()):
+    monkeypatch.setattr(pg, "list_projects", lambda: list(projects))
+    monkeypatch.setattr(pg, "list_running_runs", lambda: list(recon))
+    monkeypatch.setattr(pg, "list_running_analysis_runs", lambda: list(analysis))
+    monkeypatch.setattr(pg, "list_running_hunting_runs", lambda: list(hunting))
+
+
+def _project(pid, name=None):
+    return {"project_id": pid, "name": name or pid, "created_at": None}
+
+
+def _recon_row(rid, pid):
+    return {"run_id": rid, "project_id": pid, "project_name": pid,
+            "status": "running", "current_phase": 0,
+            "started_at": None, "last_heartbeat_at": None, "jobs": {}}
+
+
+def test_app_state_idle_with_projects_present_but_nothing_running(monkeypatch):
+    """Idle is not "a project exists": projects with no in-flight run read idle."""
+    _stub_app_state(monkeypatch, [_project("p1"), _project("p2")])
+
+    resp = client.get("/app-state")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["idle"] is True
+    assert [p["project_id"] for p in body["projects"]] == ["p1", "p2"]
+    for entry in body["projects"]:
+        assert entry["in_flight"] is False
+        assert entry["recon"] == [] and entry["analysis"] == [] and entry["hunting"] == []
+
+
+def test_app_state_running_recon_is_in_flight(monkeypatch):
+    _stub_app_state(monkeypatch, [_project("p1")], recon=[_recon_row("r1", "p1")])
+
+    body = client.get("/app-state").json()
+
+    assert body["idle"] is False
+    (entry,) = body["projects"]
+    assert entry["in_flight"] is True
+    assert [r["run_id"] for r in entry["recon"]] == ["r1"]
+    assert entry["analysis"] == [] and entry["hunting"] == []
+
+
+def test_app_state_draining_analysis_is_in_flight(monkeypatch):
+    """Analysis `draining` is its only live state; every other analysis status
+    is terminal and must not count."""
+    _stub_app_state(
+        monkeypatch, [_project("p1")],
+        analysis=[{"analysis_run_id": "a1", "run_id": "r1", "project_id": "p1",
+                   "status": "draining", "started_at": None}],
+    )
+
+    body = client.get("/app-state").json()
+
+    assert body["idle"] is False
+    (entry,) = body["projects"]
+    assert entry["in_flight"] is True
+    assert [a["analysis_run_id"] for a in entry["analysis"]] == ["a1"]
+
+
+def test_app_state_running_hunting_is_in_flight(monkeypatch):
+    _stub_app_state(
+        monkeypatch, [_project("p1")],
+        hunting=[{"hunting_run_id": "h1", "project_id": "p1",
+                  "status": "running", "started_at": None, "finished_at": None}],
+    )
+
+    body = client.get("/app-state").json()
+
+    assert body["idle"] is False
+    (entry,) = body["projects"]
+    assert entry["in_flight"] is True
+    assert [h["hunting_run_id"] for h in entry["hunting"]] == ["h1"]
+
+
+def test_app_state_per_project_breakdown(monkeypatch):
+    """Two projects, one busy: the breakdown names the busy one and leaves the
+    other idle."""
+    _stub_app_state(
+        monkeypatch, [_project("p1"), _project("p2")],
+        recon=[_recon_row("r1", "p2")],
+        hunting=[{"hunting_run_id": "h1", "project_id": "p2",
+                  "status": "running", "started_at": None, "finished_at": None}],
+    )
+
+    body = client.get("/app-state").json()
+
+    assert body["idle"] is False
+    by_id = {p["project_id"]: p for p in body["projects"]}
+    assert by_id["p1"]["in_flight"] is False
+    assert by_id["p2"]["in_flight"] is True
+    assert [r["run_id"] for r in by_id["p2"]["recon"]] == ["r1"]
+    assert [h["hunting_run_id"] for h in by_id["p2"]["hunting"]] == ["h1"]
+
+
+def test_app_state_scoped_to_one_project(monkeypatch):
+    """?project_id narrows the scope; the top-level idle reflects the scope."""
+    _stub_app_state(
+        monkeypatch, [_project("p1"), _project("p2")],
+        recon=[_recon_row("r1", "p2")],
+    )
+    monkeypatch.setattr(pg, "project_exists", lambda pid: True)
+
+    idle_scope = client.get("/app-state", params={"project_id": "p1"}).json()
+    assert [p["project_id"] for p in idle_scope["projects"]] == ["p1"]
+    assert idle_scope["idle"] is True
+
+    busy_scope = client.get("/app-state", params={"project_id": "p2"}).json()
+    assert busy_scope["idle"] is False
+    assert busy_scope["projects"][0]["in_flight"] is True
+
+
+def test_app_state_unknown_project_404(monkeypatch):
+    monkeypatch.setattr(pg, "project_exists", lambda pid: False)
+
+    assert client.get("/app-state", params={"project_id": "nope"}).status_code == 404
+    assert client.get("/app-state", params={"project_id": "nope"}).json()["detail"] == "unknown project"
+    assert client.get("/app-state", params={"project_id": ""}).status_code == 404
+
+
+def test_app_state_writes_nothing(monkeypatch):
+    """The surface is read-only: every pg write verb raises, the GET still
+    succeeds, so no state change could have passed through the gateway seam."""
+    _stub_app_state(monkeypatch, [_project("p1")])
+
+    def _boom(*args, **kwargs):
+        raise AssertionError("app-state must not write")
+
+    for fn in ("create_project", "save_settings", "create_run", "set_run_status",
+               "create_analysis_run", "set_analysis_run_status",
+               "create_hunting_run", "set_hunting_run_status"):
+        monkeypatch.setattr(pg, fn, _boom)
+
+    resp = client.get("/app-state")
+
+    assert resp.status_code == 200
+    assert resp.json()["idle"] is True

@@ -67,3 +67,7 @@ uv.lock
 # Editor swap files (stray vim buffers on tracked markdown).
 *.swp
 *.swo
+
+# The eval alignment state (#274): hold markers and applied actions, written by
+# `orchestrator align`; per-machine runtime, never source.
+eval/state/
