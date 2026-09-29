@@ -1,7 +1,7 @@
 # LLM Rate-Aware Recon Configurator — Design
 
 **Data:** 2026-09-28
-**Stato:** approvato in chat; design only
+**Stato:** implementato e verificato nel worktree `feat/rate-limit-job-admission-e2e`
 **Ambito:** recon rate-limit posture e creazione dei pod
 
 ## 1. Obiettivo
@@ -203,7 +203,7 @@ Il modello restituisce un contratto chiuso:
 class ReconPodProposal(BaseModel):
     job_name: str
     input_id: str
-    command: str
+    command: str | None
     rationale: str
 
 class ConfiguratorDecision(BaseModel):
@@ -224,9 +224,17 @@ Ogni `input_id` identifica un singolo input già preparato dalla pipeline; un
 bundle o batch conta come un singolo input. `pods=[]` è una decisione valida e
 significa che il Configurator non ritiene sicuro o utile creare pod nella fase.
 
+`command` è obbligatorio e non vuoto per i job che eseguono un comando shell.
+Per un job agentico (`configurator_mode="agent"`, oggi `steel_crawl`) deve invece
+essere `None`: quel pod viene materializzato dalla pipeline, ma il suo loop usa
+i propri tool e non possiede un comando shell da configurare.
+
 Il codice rifiuta soltanto forme ineseguibili: job estranei a `JOBS`, input non
-offerti, comando vuoto o output non validabile. Non ricalcola né confronta i
-parametri rate-aware.
+offerti, comando mancante/vuoto per un job shell, comando presente per un job
+agentico, fase o target discordanti, oppure output non validabile. Il rifiuto è
+atomico per la decisione e ferma la run prima di creare i pod della fase; non
+viene eseguito un sottoinsieme ambiguo del piano. Il codice non ricalcola né
+confronta i parametri rate-aware.
 
 ## 10. Workflow del system prompt
 
@@ -297,8 +305,8 @@ il `RateProfile`, la persistenza per-run, il posture store e il tool read-only.
 | Scrittura YAML fallita | Run `failed` prima delle fasi |
 | YAML assente | Il prompt impone il fallback conservativo |
 | YAML illeggibile | Il prompt impone `pods=[]` per il traffico target-facing |
-| Risposta LLM non validabile | Nessun piano materializzabile; errore visibile |
-| Job o input sconosciuto | Proposta rifiutata come ineseguibile |
+| Risposta LLM non validabile | Run `failed` prima dei pod della fase |
+| Job o input sconosciuto | Intera decisione rifiutata; run `failed` prima dei pod della fase |
 | Parametri superiori alla postura | Nessun rifiuto automatico; violazione del contratto del modello |
 | Tool fallito | Semantica corrente di retry/degrado del pod |
 

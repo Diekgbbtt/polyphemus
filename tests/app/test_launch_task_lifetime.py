@@ -20,19 +20,20 @@ reconstructed from Postgres timestamps instead of read off a traceback.
 """
 import asyncio
 import logging
-import time
+import threading
 
 import pytest
 
 from polymerhus.app.logging_config import configure_logging
 
 
-def _wait_until(pred, timeout):
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
+async def _wait_until(pred, timeout):
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while loop.time() < deadline:
         if pred():
             return
-        time.sleep(0.01)
+        await asyncio.sleep(0.01)
     raise AssertionError(f"condition not met within {timeout}s")
 
 
@@ -57,18 +58,31 @@ def test_the_launched_task_is_referenced_while_it_runs(runtime):
     task set. The run must be registered while it runs and identifiable by name."""
     from polymerhus.project_management import api
 
-    async def quick(project_id, *, run_id, job_subset=None, with_analysis=True):
-        await asyncio.sleep(0.02)
+    entered = threading.Event()
+    release = threading.Event()
+
+    async def quick(
+        project_id,
+        *,
+        run_id,
+        job_subset=None,
+        with_analysis=True,
+        fetch_capabilities=None,
+    ):
+        entered.set()
+        await asyncio.to_thread(release.wait)
 
     async def scenario():
         original = api.run_pipeline
         api.run_pipeline = quick
         try:
             api._schedule_pipeline("proj1", "run1", None)
-            _wait_until(lambda: runtime.has_run("recon", "run1"), 5)
-            await asyncio.sleep(0.1)
-            _wait_until(lambda: not runtime.has_run("recon", "run1"), 5)
+            assert await asyncio.to_thread(entered.wait, 5)
+            assert runtime.has_run("recon", "run1")
+            release.set()
+            await _wait_until(lambda: not runtime.has_run("recon", "run1"), 5)
         finally:
+            release.set()
             api.run_pipeline = original
 
     asyncio.run(scenario())
@@ -80,8 +94,19 @@ def test_the_runtime_registry_does_not_leak_after_completion(runtime):
     so a long-lived process launching runs all day retains nothing it finished."""
     from polymerhus.project_management import api
 
-    async def quick(project_id, *, run_id, job_subset=None, with_analysis=True):
-        await asyncio.sleep(0.02)
+    entered = threading.Event()
+    release = threading.Event()
+
+    async def quick(
+        project_id,
+        *,
+        run_id,
+        job_subset=None,
+        with_analysis=True,
+        fetch_capabilities=None,
+    ):
+        entered.set()
+        await asyncio.to_thread(release.wait)
         return None
 
     async def scenario():
@@ -89,12 +114,15 @@ def test_the_runtime_registry_does_not_leak_after_completion(runtime):
         api.run_pipeline = quick
         try:
             api._schedule_pipeline("proj1", "run1", None)
-            _wait_until(lambda: runtime.has_run("recon", "run1"), 5)
+            assert await asyncio.to_thread(entered.wait, 5)
+            assert runtime.has_run("recon", "run1")
+            release.set()
+            await _wait_until(lambda: not runtime.has_run("recon", "run1"), 5)
         finally:
+            release.set()
             api.run_pipeline = original
 
     asyncio.run(scenario())
-    _wait_until(lambda: not runtime.has_run("recon", "run1"), 5)
 
 
 def test_a_raising_pipeline_is_logged_not_swallowed(caplog, runtime):
@@ -102,7 +130,14 @@ def test_a_raising_pipeline_is_logged_not_swallowed(caplog, runtime):
     traceback must reach a handler."""
     from polymerhus.project_management import api
 
-    async def boom(project_id, *, run_id, job_subset=None, with_analysis=True):
+    async def boom(
+        project_id,
+        *,
+        run_id,
+        job_subset=None,
+        with_analysis=True,
+        fetch_capabilities=None,
+    ):
         raise RuntimeError("pipeline exploded")
 
     async def scenario():
@@ -111,12 +146,27 @@ def test_a_raising_pipeline_is_logged_not_swallowed(caplog, runtime):
         try:
             with caplog.at_level(logging.ERROR):
                 api._schedule_pipeline("proj1", "run-boom", None)
-                await asyncio.sleep(0.05)
+                await _wait_until(
+                    lambda: any(
+                        "run-boom" in record.getMessage()
+                        and record.exc_info
+                        for record in caplog.records
+                    ),
+                    5,
+                )
         finally:
             api.run_pipeline = original
 
     asyncio.run(scenario())
-    assert any("run-boom" in r.message and r.exc_info for r in caplog.records)
+    matching = [
+        record
+        for record in caplog.records
+        if "run-boom" in record.getMessage() and record.exc_info
+    ]
+    assert matching
+    exc_type, exc, _ = matching[-1].exc_info
+    assert exc_type is RuntimeError
+    assert str(exc) == "pipeline exploded"
 
 
 # --- 2. the logs that went nowhere --------------------------------------------

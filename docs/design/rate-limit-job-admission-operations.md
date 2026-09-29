@@ -195,8 +195,6 @@ Run:
 ```sh
 sh scripts/issue_238_e2e_stack.sh config
 sh scripts/issue_238_e2e_stack.sh build
-sh scripts/issue_238_e2e_stack.sh up
-sh scripts/issue_238_e2e_stack.sh health
 sh scripts/issue_238_e2e_stack.sh gate-twice artifacts/issue-238-llm-configurator
 sh scripts/issue_238_e2e_stack.sh down
 ```
@@ -210,7 +208,38 @@ auth -> Vegeta -> stats/YAML -> Configurator -> selected pod commands -> Triager
 and that the second run does not reuse the first run's project, session or
 outputs.
 
-## 9. What not to do
+## 9. Pull-request verification gate
+
+Run the following from the root of the dedicated worktree. Unit and contract
+tests must have zero failures; skipped tests retain their normal environment
+gates. This scoped tier is intentional: bare `pytest` also collects unrelated
+live E2E suites and optional gateway components that require their own stacks
+and dependency sets.
+
+```sh
+.venv/bin/python -m pytest tests/app/test_launch_task_lifetime.py -q -p no:cacheprovider
+.venv/bin/python -m pytest tests/app tests/recon tests/attack -q -p no:cacheprovider
+sh scripts/issue_238_e2e_stack.sh config
+sh scripts/issue_238_e2e_stack.sh build
+sh scripts/issue_238_e2e_stack.sh gate-twice artifacts/issue-238-llm-configurator
+sh scripts/issue_238_e2e_stack.sh down
+git diff --check
+git status --short
+```
+
+`gate-twice` owns its isolated Compose lifecycle and resets Postgres, target
+counters and the deterministic provider between run A and run B. Always run
+`down` even after a failed gate.
+
+The curated files under `artifacts/issue-238-llm-configurator/` are the small
+review snapshot for the pull request. Do not stage concurrency probes or dated
+local QA reruns; `.gitignore` excludes both categories.
+
+Before requesting review, the authoritative spec, implementation plan,
+operations guide and QA record must all be tracked, and the branch must contain
+no unrelated changes.
+
+## 10. What not to do
 
 - Do not raise traffic by disabling a governor: the recon path does not arm one.
 - Do not edit the YAML to "fix" a run: it is advisory and read-only for agents.

@@ -48,6 +48,11 @@ docs/.DS_Store
 # Live-E2E run artifacts (tool logs, captured stdout, delta reports), written by
 # tests/e2e/test_recon_crawl_katana_depth.py; evidence, reproduced by re-running.
 .e2e-artifacts/
+# #238 scratch evidence. The curated, reviewable gate snapshot lives at
+# artifacts/issue-238-llm-configurator/; concurrency probes and dated QA reruns
+# are local diagnostics and must not leak into a pull request.
+artifacts/issue-238-concurrency/
+artifacts/issue-238-llm-configurator-qa-*/
 tests/e2e/fixtures/eval-targets.yaml
 
 # The shared app-owned data root (#234): one directory per module per project
