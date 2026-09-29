@@ -41,6 +41,7 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 
 from polymerhus.app.llm.capability import resolve_capability
 from polymerhus.app.llm.conversation import conversation_scope
+from polymerhus.app.llm.session_address import SessionAddress
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +50,7 @@ logger = logging.getLogger(__name__)
 # address that yields one); it never hand-builds one.
 
 
-def _as_thread_id(thread) -> str:
+def _as_thread_id(thread: SessionAddress | str) -> str:
     """Accept either a raw `thread_id` string or a `SessionAddress` (any object exposing
     `.thread_id`), so a caller can pass the typed address directly."""
     return getattr(thread, "thread_id", thread)
@@ -423,7 +424,7 @@ async def _areplay_reasoning(agent, config: dict, result: dict, role_id: str,
 
 def run_session_turn(
     role_id: str,
-    thread_id: str,
+    thread_id: SessionAddress | str,
     new_messages: Sequence[BaseMessage],
     *,
     checkpointer,
@@ -459,7 +460,11 @@ def run_session_turn(
     recovery turn's material, never lost (fail-open: the cut never raises).
 
     `extra_tags` appends caller-owned join keys (the bare run id) to the recorded
-    `langfuse_tags` (default None = today's tags, unchanged)."""
+    `langfuse_tags` (default None = today's tags, unchanged).
+    `thread_id` is a typed `SessionAddress` (`session_address.py`) - or, for
+    back-compat, a raw thread-id string - so a caller can pass the address directly;
+    the composed id reaches the conversation scope and every config/metadata seam."""
+    thread_id = _as_thread_id(thread_id)
     # D12: the conversation scope - every client built inside the turn (the
     # turn's own, and any a middleware builds, e.g. the summariser) binds the
     # thread id as the provider's conversation request primitive.
@@ -510,7 +515,7 @@ def run_session_turn(
 
 async def arun_session_turn(
     role_id: str,
-    thread_id: str,
+    thread_id: SessionAddress | str,
     new_messages: Sequence[BaseMessage],
     *,
     checkpointer,
@@ -539,7 +544,15 @@ async def arun_session_turn(
     absent means no context-carried bindings for this turn.
 
     T1 (#213): streamed generation is the DEFAULT mode here too - same blackloop
-    cut + reasoning capture as the sync turn, driven on the event loop."""
+    cut + reasoning capture as the sync turn, driven on the event loop.
+
+    `thread_id` is a typed `SessionAddress` (`session_address.py`) - or, for
+    back-compat, a raw thread-id string - exactly as `stateful_turn` accepts: the
+    composed thread id is derived BEFORE it is bound as the conversation and used
+    for the checkpoint config. A raw address in the opencode-go `x-opencode-session`
+    header fails the provider client's `default_headers` validation (the live e2e
+    defect: every pod turn degraded to `technical-infeasibility`, 0 iterations)."""
+    thread_id = _as_thread_id(thread_id)
     # D12: the conversation scope - the async turn binds the same thread id the
     # sync turn does, so both entry points emit identical request primitives.
     with conversation_scope(thread_id):
@@ -723,7 +736,7 @@ def _structured_response_format(
 
 def stateful_turn(
     role_id: str,
-    thread,
+    thread: SessionAddress | str,
     new_messages: Sequence[BaseMessage],
     *,
     checkpointer,
@@ -1092,7 +1105,7 @@ def _turn_from_state(values: dict, thread_id: str) -> "SessionTurn | None":
 # memory" TOOL would call - generic, because every stateful child lives in the same
 # store under its `SessionAddress` thread.
 
-def read_session_memory(checkpointer, thread) -> SessionTurn | None:
+def read_session_memory(checkpointer, thread: SessionAddress | str) -> SessionTurn | None:
     """Read a child session's PERSISTED memory (its latest checkpoint) without making a
     turn: returns the last `SessionTurn`'s worth of state, or None when the thread has no
     checkpoint yet (or the store cannot be read). Use this - NOT a tool round-trip - to
@@ -1106,7 +1119,7 @@ def read_session_memory(checkpointer, thread) -> SessionTurn | None:
     return _turn_from_state(values, thread_id)
 
 
-async def aread_session_memory(checkpointer, thread) -> SessionTurn | None:
+async def aread_session_memory(checkpointer, thread: SessionAddress | str) -> SessionTurn | None:
     """Async-native variant for a parent running on the event loop (the async actor's
     `on_message` path). Same contract as `read_session_memory`."""
     thread_id = _as_thread_id(thread)
