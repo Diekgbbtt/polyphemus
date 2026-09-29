@@ -10,9 +10,9 @@ A path marked pending is an intended grant, not a dead end: reason to the named 
 - **working memory** - the session context the checkpointer carries across a session's turns, ambient and automatic; no tool reads or writes it.
 - **L0/L1 attack-surface graph** - the observed L0 surface (Endpoint, Parameter, BaseURL, Header) and the judged L1 abstraction (Service, System, DataItem); `graph_view` answers it for all four roles.
 - **auth_context** - the per-project auth store of principal accounts, holding credentials, tokens, snapshots, and roles; `auth_store` reads and writes it for the hunter, the pod runner, and the pod triager.
-- **methodology knowledge base** - the everything-vulnerability-testing KB (WSTG plus writeup overlays) that holds the ten closed methodology entity types; `kb_query` retrieves it for the hunter, and `query_lightrag` for the pod runner and the pod triager.
+- **methodology knowledge base** - the everything-vulnerability-testing KB (WSTG plus writeup overlays) that holds the ten closed methodology entity types; `kb_query` retrieves it for the hunter, and `query_lightrag` for the pod runner and the pod triager; the hunter's `kb_query` leaves no durable trail, while the pod's `query_lightrag` records a durable `KbObservation` in the experiment log.
 - **HTTP request/response history** - the immutable `http-artifact/v1` capture of live target traffic; the hunter reads it with `search_http_history` and `get_http_artifact`, and the pod runner executes a captured request with `replay`.
-- **episodic notes** - the durable reasoning trail of a hunt, keyed by hunting identity; the hunt-orchestrator writes its `memory.yaml` with `notes`, the hunter writes its `notes.yaml` with `notes`, and the pod writes its experiment memory with `note`.
+- **episodic notes** - the durable reasoning trail of a hunt, one surface per hunting identity: the hunt-orchestrator's config-keyed `memory.yaml` written with `notes`, the hunter's fault-keyed `notes.yaml` written with `notes`, and the pod's spec-keyed experiment memory written with `note`; the skill lesson shard (`skills/lessons/<skill>.yaml`, written by `record_skill_lesson`) is a fourth, skill-keyed surface, not a hunting note.
 - **prior hunting artifacts** - the configs, specs, experiment logs, and pod exports a hunt produced; `hunts_store` reads the hunt-orchestrator's `HuntConfig` family, the hunter's store reads its `TestImplementationSpec` entries, and the pod store plus the parent-keyed hunter note carry the `ExperimentLog` and `PodExport`.
 - **skills (procedural knowledge)** - the ordered vulnerability-testing procedures a run follows; `load_skill` reads one and `record_skill_lesson` records a reusable lesson for the hunter, the pod runner, and the pod triager.
 - **rate_limit_posture** - the target's rate-limit behaviour and the request shaping it demands; intended, not yet in this build, see the pending register.
@@ -62,6 +62,7 @@ Where a role currently lacks the tool, the line names the intended grant and the
 
 - Does the target consistently answer 429, 403, or 401? -> rate_limit_posture (pending); until it lands, read the HTTP request/response history -> `search_http_history` and `get_http_artifact`.
 - How does the target's client-side JavaScript architecture expose this surface? -> client_side_js_architecture (not built); until it lands, read the L0/L1 attack-surface graph -> `graph_view`.
+- What secret material or technology stack did the surface expose? -> L0/L1 attack-surface graph -> `graph_view`, whose published schema names only Endpoint, Parameter, BaseURL, and Header; the wider L0 label allowlist (including Secret and Technology) is not documented to agents, so treat those as unreachable through the tool for now.
 
 ## The RDF<->KB mapping
 
