@@ -130,6 +130,37 @@ def test_runner_turn_performs_one_react_stretch_and_synthesizes_conclude(tmp_pat
     assert log.raw_observations[0].probe_ref == log.executed[0]
 
 
+def test_runner_turn_binds_the_composed_address_thread_id_as_the_conversation(tmp_path):
+    """The EXACT live failure surface: the production runner hands its typed
+    `HuntSession` address to `arun_session_turn`, and the model built inside the turn
+    must see the composed thread-id STRING as the ambient conversation (the
+    opencode-go `x-opencode-session` value) - never the address object. A raw address
+    failed the provider client's `default_headers` validation in live e2e and
+    degraded every pod turn to `technical-infeasibility` (0 iterations)."""
+    from polymerhus.app.llm.conversation import current_conversation_id
+    from polymerhus.attack.hunting.pod.llm import pod_session_address
+
+    seen: list = []
+    base = _factory(REACT_EXEC_AND_CONCLUDE)
+
+    def recording_factory(role_id):
+        seen.append(current_conversation_id())
+        return base(role_id)
+
+    log = ExperimentLog()
+    hc = PodHarnessContext(exec_fn=_exec(_OK), memory_store=PodMemoryStore(tmp_path),
+                           spec_id=SPEC_ID, log=log, variant_ref="v0",
+                           model_factory=recording_factory)
+    step = _run(_drive_runner(SPEC, hc))
+
+    expected = pod_session_address("run-x", "", SPEC_ID, role_id=POD_RUNNER_ROLE).thread_id
+    assert step.action == "conclude"                  # the production turn ran at all
+    assert seen, "the ReAct turn must build its model"
+    assert all(isinstance(v, str) for v in seen), (
+        f"the conversation must be the composed thread-id string, got {seen!r}")
+    assert set(seen) == {expected}
+
+
 def test_runner_turn_flags_an_empty_stretch_as_exhausted(tmp_path):
     # The runner concludes WITHOUT executing anything: the old empty-probe rule.
     log = ExperimentLog()

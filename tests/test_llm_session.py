@@ -803,6 +803,85 @@ def test_session_turns_bind_the_thread_as_the_conversation(monkeypatch):
     assert seen == ["run-3:triager", "run-3:triager"]
 
 
+def test_stateful_turn_accepts_a_typed_session_address(monkeypatch):
+    """The sync seam's documented input contract: `thread` is a typed `SessionAddress`
+    (`session_address.py`) - or, for back-compat, a raw thread-id string. The COMPOSED
+    thread id must reach the turn core, never the address object."""
+    from polymerhus.app.llm import session as S
+    from polymerhus.app.llm.session_address import HuntSession
+
+    captured: dict = {}
+
+    def fake_run(role_id, thread_id, msgs, *, response_format=None, **kw):
+        captured["thread_id"] = thread_id
+        return S.SessionTurn(content="ok", messages=[], thread_id=thread_id)
+
+    monkeypatch.setattr(S, "run_session_turn", fake_run)
+    address = HuntSession(run_id="run-9", hunt_id="h1", spec="auth_claim",
+                          role_id="pod_triager")
+    S.stateful_turn(address.role_id, address, [HumanMessage(content="lap")],
+                    checkpointer=None)
+    assert captured["thread_id"] == address.thread_id
+
+
+def test_the_turn_cores_accept_a_typed_session_address(monkeypatch):
+    """Both turn cores must derive the composed thread-id STRING when handed a typed
+    `SessionAddress` (the project-wide convention: the pod runner passes its
+    `HuntSession` to `arun_session_turn`, the triager passes it to `stateful_turn`).
+
+    Live e2e regression (#279 sibling): `arun_session_turn` skipped the `_as_thread_id`
+    normalization its siblings apply, so the raw address became the ambient
+    conversation, reached opencode-go's `x-opencode-session` header, and failed the
+    provider client's `default_headers` validation - every pod turn degraded to
+    `technical-infeasibility` with 0 iterations."""
+    from polymerhus.app.llm import session as S
+    from polymerhus.app.llm.session_address import HuntSession
+
+    class _FakeAgent:
+        def stream(self, *args, **kwargs):
+            yield from ()
+
+        async def astream(self, *args, **kwargs):
+            return
+            yield
+
+    seen: list = []
+    real_scope = S.conversation_scope
+
+    def _spy(conversation_id):
+        seen.append(conversation_id)
+        return real_scope(conversation_id)
+
+    monkeypatch.setattr(S, "_build_agent", lambda *a, **k: _FakeAgent())
+    monkeypatch.setattr(S, "conversation_scope", _spy)
+
+    address = HuntSession(run_id="run-9", hunt_id="h1", spec="auth_claim",
+                          role_id="pod_runner")
+    run_session_turn(address.role_id, address, [], checkpointer=None, observe=False)
+    asyncio.run(arun_session_turn(address.role_id, address, [],
+                                  checkpointer=None, observe=False))
+    assert seen == [address.thread_id, address.thread_id]
+    assert all(isinstance(v, str) for v in seen)
+
+
+def test_the_memory_read_seams_accept_a_typed_session_address():
+    """`read_session_memory` / `aread_session_memory` share the same input contract:
+    a typed `SessionAddress` resolves to its composed thread id (a raw address would
+    read nothing instead of the session's persisted turn)."""
+    from polymerhus.app.llm.session import aread_session_memory, read_session_memory
+    from polymerhus.app.llm.session_address import AnalysisSession
+
+    saver = InMemorySaver()
+    address = AnalysisSession(run_id="run-mem", role_id="assigner")
+    run_session_turn(address.role_id, address.thread_id, [HumanMessage(content="hello")],
+                     checkpointer=saver, model_factory=_factory(AIMessage(content="a1")),
+                     observe=False)
+    memory = read_session_memory(saver, address)
+    assert memory is not None and memory.content == "a1"
+    async_memory = asyncio.run(aread_session_memory(saver, address))
+    assert async_memory is not None and async_memory.content == "a1"
+
+
 def test_a6_structured_response_format_tools_bound_constrained_is_toolstrategy(monkeypatch):
     """A6: tools-bound + constrained profile -> ToolStrategy (the relaxed model
     makes it voluntary at bind time)."""
