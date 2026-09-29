@@ -11,13 +11,28 @@ earlier phase.
 """
 
 from polymerhus.recon.domain.types import AssetSelector, ConsumptionOptions, JobSpec
+from polymerhus.recon.domain.traffic_admission import (
+    BOUNDED_HTTP_COST,
+    JobTrafficCost,
+    NON_TARGET_COST,
+    TrafficCostClass,
+)
 from polymerhus.recon.config import KATANA_DEPTH
 
 DOMAIN = "Domain"  # pre-seeded root asset type (the project's target domain)
 
+# --- #238 follow-up: per-job traffic-cost declarations -----------------------
+#
+# Every canonical job declares its relationship to the MEASURED target's
+# traffic (the closed vocabulary lives on `JobTrafficCost`). The two shared
+# declarations `NON_TARGET_COST` / `BOUNDED_HTTP_COST` are referenced, not
+# duplicated; the request-intensive jobs carry their own estimate because each
+# is grounded in a different measurement.
+
 JOBS: dict[str, JobSpec] = {
     "subfinder": JobSpec(
         tool="subfinder",
+        traffic_cost=NON_TARGET_COST,
         skill="subdomain_discovery",
         command_template="subfinder -d {domain} -all -json -silent",
         produces=["Subdomain"],
@@ -26,6 +41,7 @@ JOBS: dict[str, JobSpec] = {
     ),
     "amass": JobSpec(
         tool="amass",
+        traffic_cost=NON_TARGET_COST,
         skill="subdomain_discovery",
         command_template="amass enum -json -d {domain}",
         produces=["Subdomain", "IP"],
@@ -34,6 +50,7 @@ JOBS: dict[str, JobSpec] = {
     ),
     "whois": JobSpec(
         tool="whois",
+        traffic_cost=NON_TARGET_COST,
         skill="whois_lookup",
         command_template="whois {domain}",
         produces=["Domain"],
@@ -42,6 +59,7 @@ JOBS: dict[str, JobSpec] = {
     ),
     "dnsx": JobSpec(
         tool="dnsx",
+        traffic_cost=NON_TARGET_COST,
         skill="dns_resolution",
         command_template="echo {target} | dnsx -json -a -aaaa -cname -silent",
         produces=["IP", "DNSRecord", "Subdomain"],
@@ -50,6 +68,7 @@ JOBS: dict[str, JobSpec] = {
     ),
     "puredns": JobSpec(
         tool="puredns",
+        traffic_cost=NON_TARGET_COST,
         skill="dns_resolution",
         command_template="echo {target} | puredns resolve -r /resolvers/resolvers.txt -q",
         produces=["Subdomain"],
@@ -58,6 +77,7 @@ JOBS: dict[str, JobSpec] = {
     ),
     "subdomain_takeover": JobSpec(
         tool="subdomain_takeover",
+        traffic_cost=NON_TARGET_COST,
         skill="takeover_check",
         command_template=(
             "subzy run --target {target} --output /work/{session}/takeover.json "
@@ -69,6 +89,7 @@ JOBS: dict[str, JobSpec] = {
     ),
     "naabu": JobSpec(
         tool="naabu",
+        traffic_cost=NON_TARGET_COST,
         skill="port_scan",
         command_template="naabu -host {target} -top-ports 100 -json",
         produces=["IP", "Port", "Service"],
@@ -77,6 +98,7 @@ JOBS: dict[str, JobSpec] = {
     ),
     "httpx": JobSpec(
         tool="httpx",
+        traffic_cost=BOUNDED_HTTP_COST,
         skill="http_probe",
         command_template="httpx -u {target} -sc -title -server -td -fr -silent -json -irh {auth_flags}",
         produces=["BaseURL", "Endpoint", "Technology", "Certificate", "Header"],
@@ -85,6 +107,7 @@ JOBS: dict[str, JobSpec] = {
     ),
     "httpx_services": JobSpec(
         tool="httpx_services",
+        traffic_cost=BOUNDED_HTTP_COST,
         skill="http_probe",
         # Same httpx probe as the phase-3 job, but pointed at the scheme-less
         # `<ip>:<port>` targets the pipeline synthesizes from naabu's Service
@@ -106,6 +129,7 @@ JOBS: dict[str, JobSpec] = {
     ),
     "httpx_reprofile": JobSpec(
         tool="httpx_reprofile",
+        traffic_cost=BOUNDED_HTTP_COST,
         skill="http_probe",
         # #208 one-pod reprofile: the pass is ONE pod running ONE httpx exec over
         # the FULL dedup'd endpoint set (no per-endpoint fan-out, O(1) triager
@@ -157,6 +181,7 @@ JOBS: dict[str, JobSpec] = {
     # is withdrawn so the orchestrator no longer schedules it.
     "paramspider": JobSpec(
         tool="paramspider",
+        traffic_cost=NON_TARGET_COST,
         skill="passive_url_harvest",
         command_template="paramspider -d {domain}",
         produces=["BaseURL", "Endpoint", "Parameter"],
@@ -165,6 +190,7 @@ JOBS: dict[str, JobSpec] = {
     ),
     "katana": JobSpec(
         tool="katana",
+        traffic_cost=BOUNDED_HTTP_COST,
         skill="crawl",
         command_template=(
             # AMV-8 ticket 6 (source-side belt to the curator-gate noise filter):
@@ -270,6 +296,22 @@ JOBS: dict[str, JobSpec] = {
     ),
     "ffuf": JobSpec(
         tool="ffuf",
+        traffic_cost=JobTrafficCost(
+            cost_class=TrafficCostClass.REQUEST_INTENSIVE,
+            # The wordlist's non-empty-line cardinality, measured IN the built
+            # Kali image (`wordlist_cardinality`). The image contract reruns
+            # this exact rule and refuses a mismatch (Task 7), so the number is
+            # only correct for the `seclists` package the image currently
+            # installs: the Dockerfile takes it from Kali rolling rather than
+            # pinning a SecLists commit, so a package bump moves this value and
+            # the readiness gate is what catches it. 4750 = the count in the
+            # image built from this commit (seclists 2025.3-0kali1); the
+            # earlier 4752 came from a different package revision. Changing the
+            # wordlist requires updating this constant in the same slice.
+            estimated_requests_per_input=4750,
+            estimation_basis="wordlist_cardinality",
+            cardinality_source="/usr/share/seclists/Discovery/Web-Content/common.txt",
+        ),
         skill="content_discovery",
         command_template=(
             # `-of json` only sets the FORMAT of the file written by `-o`; without
@@ -285,11 +327,12 @@ JOBS: dict[str, JobSpec] = {
             # baseline junk requests so a SPA soft-404 catch-all (every path -> 200,
             # uniform body) is filtered while genuinely-distinct paths like /api
             # still surface.
-            # #243: the steering-fed `{rate_flags}` throttle slot retired with
-            # the mid-run steering machinery (D223-12) - request phases run
-            # unthrottled in the interim (the #238 rate-limit work lands the
-            # profile-driven replacement); arjun's static `--rate-limit 5`
-            # below is the only request cap until then.
+            # #243 removed the steering-fed `{rate_flags}` throttle slot with the
+            # mid-run steering machinery (D223-12). Since the #238 follow-up,
+            # target request traffic is shaped by the run's measured
+            # `TrafficPolicy` at the shared Kali egress governor (rate +
+            # concurrency), and this request-intensive job's admission is decided
+            # before materialization from its declared `traffic_cost`.
             "ffuf -u {target}/FUZZ -w /usr/share/seclists/Discovery/Web-Content/common.txt "
             "-mc 200,403 -ac -o /work/{session}/ffuf.json -of json {auth_flags} "
             ">/dev/null && cat /work/{session}/ffuf.json"
@@ -300,6 +343,7 @@ JOBS: dict[str, JobSpec] = {
     ),
     "kiterunner": JobSpec(
         tool="kiterunner",
+        traffic_cost=BOUNDED_HTTP_COST,
         skill="content_discovery",
         command_template="kr scan {target} -w /opt/localbin/routes-small.kite {auth_flags}",
         produces=["Endpoint"],
@@ -321,6 +365,7 @@ JOBS: dict[str, JobSpec] = {
     ),
     "jsluice": JobSpec(
         tool="jsluice",
+        traffic_cost=BOUNDED_HTTP_COST,
         skill="js_secret_scan",
         # Batched: the per-pod command is built from the pod's bundle batch by
         # polymerhus.recon.control.batching.build_batch_command (fetch + jsluice urls/secrets
@@ -341,6 +386,7 @@ JOBS: dict[str, JobSpec] = {
     ),
     "graphql-cop": JobSpec(
         tool="graphql-cop",
+        traffic_cost=BOUNDED_HTTP_COST,
         skill="graphql_audit",
         command_template="graphql-cop -t {target} -o json {auth_flags}",
         produces=["Endpoint"],
@@ -358,6 +404,7 @@ JOBS: dict[str, JobSpec] = {
     ),
     "steel_crawl": JobSpec(
         tool="steel_crawl",
+        traffic_cost=BOUNDED_HTTP_COST,
         skill="agentic_crawl",
         command_template="",
         produces=["BaseURL", "Endpoint", "Parameter"],
@@ -367,6 +414,11 @@ JOBS: dict[str, JobSpec] = {
     ),
     "arjun": JobSpec(
         tool="arjun",
+        traffic_cost=JobTrafficCost(
+            cost_class=TrafficCostClass.REQUEST_INTENSIVE,
+            estimated_requests_per_input=260,
+            estimation_basis="fixed",
+        ),
         skill="param_discovery",
         command_template=(
             # arjun writes NO `-oJ` file when it discovers zero parameters, so a

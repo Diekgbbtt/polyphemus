@@ -168,11 +168,13 @@ def _build_pod(run_crawl_fn):
 
 
 def _pod_state(url, extra=None):
+    from polymerhus.recon.domain.traffic_admission import BOUNDED_HTTP_COST
     from polymerhus.recon.domain.types import JobSpec
 
     job = JobSpec(
         tool="steel_crawl", skill="agentic_crawl", command_template="",
         produces=["BaseURL"], consumes="BaseURL", configurator_mode="agent",
+        traffic_cost=BOUNDED_HTTP_COST,
     )
     return {
         "job": job,

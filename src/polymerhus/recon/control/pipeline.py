@@ -23,13 +23,18 @@ defaults to the real `polymerhus.recon.control.job_agent.run_job`,
 registry. The auth gateway is the production default
 (feat/stateful-recon-job-auth): the recon-orchestrator runs its ONE gateway
 turn before phase 0 and the typed verdict configures the run (pruned phases,
-the bound account identifier). `orchestrator_factory` builds the actor (tests
-inject the production actor over scripted models and temp stores) - there is
-NO gateway injection seam; tests exercise this real boundary.
+the bound account identifier). The PIPELINE then invokes the controller-owned
+rate mapper directly and persists the profile under
+`recon_runs.stats["rate_limit"]`. Traffic selection/parameterisation belongs to
+the phase Configurator; no runtime TrafficPolicy is forwarded to pods.
+`orchestrator_factory` builds the actor (tests inject the production actor over
+scripted models and temp stores) - there is NO gateway injection seam; tests
+exercise this real boundary.
 """
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import time
 from datetime import datetime, timezone
@@ -53,6 +58,11 @@ from polymerhus.recon.control.scope import (
     resolve_seed,
 )
 from polymerhus.recon.domain.types import AssetDelta
+from polymerhus.recon.domain.redaction import (
+    redact_command,
+    secret_values_from_auth_context,
+)
+from polymerhus.recon.domain.runtime_capabilities import RuntimeCapabilities
 
 logger = logging.getLogger(__name__)
 
@@ -60,9 +70,212 @@ logger = logging.getLogger(__name__)
 # excluded when re-hydrating produced assets from Neo4j for the next phase.
 _NON_IDENTITY_KEYS = {"project_id", "first_seen", "last_seen"}
 
+def _rate_target(settings: dict | None) -> tuple[str, str] | None:
+    """The canonical `(target_key, url)` the rate-mapping turn measures.
+
+    `resolve_seed` names the target; `parse_scope` folds it to the exact host to
+    replay (`seed_host` - never the literal `*.`).
+
+    #238 B5: the transport scheme is taken from an EXPLICIT `target_scheme`
+    setting when present (a DNS-name target may legitimately speak HTTP). Only
+    in its absence does the scheme follow the seed KIND - a bare IP is probed
+    over `http`, a domain over `https` - preserving the legacy inference. A
+    configured value that is neither `http` nor `https` is a loud configuration
+    error, never a silent fallback to a guessed transport; `host` mode denotes a
+    bare-IP scope and cannot be used to coerce an ordinary DNS production target
+    onto HTTP.
+    """
+    seed = resolve_seed(settings)
+    if not seed:
+        return None
+    scope = parse_scope(seed)
+    host = scope["seed_host"]
+    configured = (settings or {}).get("target_scheme")
+    if configured is None:
+        scheme = "http" if scope["mode"] == "host" else "https"
+    else:
+        scheme = str(configured).strip().lower()
+        if scheme not in {"http", "https"}:
+            raise ValueError(
+                f"target_scheme must be 'http' or 'https', got {configured!r}"
+            )
+    return host, f"{scheme}://{host}/"
+
+
+def _rate_request_headers(project_id: str, account_name: str | None, auth_store) -> dict:
+    """The flat request headers the mapping replays (#238, D223-19).
+
+    The gateway's account IDENTIFIER is resolved LAZILY here through the auth
+    feed (never the retired settings blob) and projected by the ONE header
+    projection, so the Vegeta replay carries the same session the request jobs
+    will - and never the login credentials. An unresolvable account leaves the
+    mapping anonymous (the feed warns loudly).
+    """
+    if not account_name:
+        return {}
+    account = resolve_account(project_id, account_name, store=auth_store)
+    if not account:
+        return {}
+    overview = resolve_overview(project_id, store=auth_store)
+    from polymerhus.recon.control.auth_feed import (  # noqa: PLC0415
+        _iter_auth_headers,
+    )
+    return dict(_iter_auth_headers(project_request_auth(account, overview)))
+
+
+async def _default_map_rate_profile(
+    project_id: str,
+    run_id: str,
+    target_key: str,
+    url: str,
+    headers: dict,
+    host_patterns: list[str],
+):
+    """Measure one target directly from the pipeline, without an LLM verdict."""
+    from polymerhus.recon.config import (  # noqa: PLC0415
+        RATE_LIMIT_PROFILE_TTL_S,
+        rate_limit_safety_budget,
+    )
+    from polymerhus.recon.control.rate_limit_runner import (  # noqa: PLC0415
+        RateLimitHarness,
+        build_kali_execute,
+    )
+
+    harness = RateLimitHarness(
+        target_key=target_key,
+        url=url,
+        budget=rate_limit_safety_budget(),
+        execute=build_kali_execute(project_id=project_id, run_id=run_id),
+        project_id=project_id,
+        run_id=run_id,
+        headers=headers,
+        host_patterns=host_patterns,
+        profile_ttl_s=float(RATE_LIMIT_PROFILE_TTL_S),
+    )
+    await harness.map()
+    return harness.build_baseline_profile()
+
+
+async def _rate_profile_for_run(
+    *, project_id: str, run_id: str, settings: dict | None,
+    auth_account: str | None, auth_store, browser_only: bool,
+    capability_error: str | None = None,
+    map_rate_profile=None,
+):
+    """Resolve one run's `RateProfile` through the pipeline-owned mapper.
+
+    This wrapper supplies the canonical target and the lazily resolved request
+    material and guarantees the pipeline ALWAYS gets a `RateProfile` back: a
+    missing target, an incompatible runtime, browser-only non-replayability or
+    a raising mapper all degrade to the loud conservative policy - never to
+    unthrottled traffic.
+    """
+    from polymerhus.recon.config import (  # noqa: PLC0415
+        RATE_LIMIT_PROFILE_TTL_S,
+        rate_limit_safety_budget,
+    )
+    from polymerhus.recon.domain.rate_limit import RateProfile  # noqa: PLC0415
+
+    target = _rate_target(settings)
+    if target is None:
+        logger.warning(
+            "run %s has no target seed; the rate-mapping turn is skipped and the "
+            "conservative policy applies", run_id)
+        return RateProfile.conservative(
+            "", [], rate_limit_safety_budget(),
+            "no target seed configured: the traffic surface was not measured; "
+            "conservative fallback", outcome="inconclusive")
+    target_key, url = target
+    if capability_error:
+        # #238 A9: an incompatible Kali runtime cannot enforce the policy, so the
+        # mapping is SKIPPED rather than measured against a companion that would
+        # later refuse the traffic. The conservative failed profile prunes every
+        # target-facing job (the pipeline records the capability warning).
+        logger.error(
+            "run %s: Kali runtime capability incompatible (%s); skipping the "
+            "rate mapping and pruning target-facing work", run_id, capability_error)
+        return RateProfile.conservative(
+            target_key, [target_key], rate_limit_safety_budget(),
+            f"runtime capability incompatible: {capability_error}",
+            outcome="failed")
+    if browser_only:
+        logger.warning(
+            "run %s is browser-only (not HTTP-replayable); the mapper is "
+            "skipped and the conservative pacing profile applies", run_id)
+        return RateProfile.conservative(
+            target_key, [target_key], rate_limit_safety_budget(),
+            "browser-only target: no semantically equivalent HTTP request "
+            "could be replayed, so the traffic surface is not quantitatively "
+            "mapped; conservative Steel pacing applies",
+            outcome="inconclusive",
+            ttl_s=float(RATE_LIMIT_PROFILE_TTL_S),
+        )
+    try:
+        headers = await asyncio.to_thread(
+            _rate_request_headers, project_id, auth_account, auth_store)
+    except Exception:  # noqa: BLE001 - the store is not worth a failed run
+        logger.warning(
+            "run %s could not resolve the rate mapping's auth material; the "
+            "mapping proceeds anonymously", run_id, exc_info=True)
+        headers = {}
+    try:
+        mapper = map_rate_profile or _default_map_rate_profile
+        return await mapper(
+            project_id, run_id, target_key, url, headers, [target_key]
+        )
+    except Exception:  # noqa: BLE001 - fail-LOUD, conservative
+        logger.warning(
+            "run %s rate mapper raised; the conservative policy applies "
+            "(never unthrottled traffic)", run_id, exc_info=True)
+        return RateProfile.conservative(
+            target_key, [target_key], rate_limit_safety_budget(),
+            "rate mapper raised: conservative fallback", outcome="failed",
+            ttl_s=float(RATE_LIMIT_PROFILE_TTL_S),
+        )
+
+
+async def _persist_rate_profile(registry, run_id: str, profile) -> None:
+    """Persist the public profile through the EXISTING `recon_runs.stats` seam.
+
+    Additive by construction: the payload carries exactly the `rate_limit` key,
+    so a JSONB merge cannot clobber the analysis stats another writer put in the
+    same row. A registry without the seam (or a failing write) warns loudly and
+    lets the run continue - the profile still governs the traffic in-process.
+    """
+    write_stats = getattr(registry, "set_run_stats", None)
+    if write_stats is None:
+        logger.warning(
+            "run %s registry exposes no set_run_stats; the rate profile was not "
+            "persisted", run_id)
+        return
+    try:
+        await asyncio.to_thread(
+            write_stats, run_id, {"rate_limit": profile.model_dump(mode="json")})
+    except Exception:  # noqa: BLE001 - persistence never fails a healthy run
+        logger.warning("run %s could not persist the rate profile (recon "
+                       "continues)", run_id, exc_info=True)
+
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+async def _runtime_capabilities(reader=None) -> RuntimeCapabilities:
+    """Read and validate the Kali companion's runtime capabilities (#238 A9).
+
+    `reader` is injectable (a callable returning the `proxy_status` mapping, sync
+    or async); production passes `kali_mcp.proxy_status`. A raising reader is
+    left to the caller, which treats an unreadable capability surface as
+    INCOMPATIBLE (fail-closed).
+    """
+    if reader is None:
+        from polymerhus.app.clients import kali_mcp  # noqa: PLC0415
+
+        reader = kali_mcp.proxy_status
+    payload = reader()
+    if inspect.isawaitable(payload):
+        payload = await payload
+    return RuntimeCapabilities.from_proxy_status(payload)
 
 
 def _exec_window(t0: float, started_at: str) -> dict:
@@ -316,6 +529,24 @@ def _default_orchestrator_factory(run_id: str):
     return ReconOrchestratorActor(run_id=run_id)
 
 
+def _default_write_posture(project_id: str, profile, run_id: str) -> None:
+    """The pipeline's ONE posture write (#238 follow-up).
+
+    A module-level seam so the unit tier can patch one name (the autouse
+    fixture below) instead of every `run_pipeline` call site.
+    """
+    from polymerhus.app.rate_limit.store import RateLimitPostureStore  # noqa: PLC0415
+
+    RateLimitPostureStore().write(project_id, profile, run_id)
+
+
+def _default_configure_phase(project_id, run_id, phase, target_key, offers):
+    """Resolve the production Configurator lazily at the phase boundary."""
+    from polymerhus.recon.control.configurator import configure_phase  # noqa: PLC0415
+
+    return configure_phase(project_id, run_id, phase, target_key, offers)
+
+
 async def run_pipeline(
     project_id: str,
     *,
@@ -330,6 +561,11 @@ async def run_pipeline(
     feed_mode: str | None = None,
     pass_fn=None,
     with_analysis: bool = True,
+    prepare_inputs=None,
+    fetch_capabilities=None,
+    write_posture=None,
+    map_rate_profile=None,
+    configure_phase=None,
 ) -> None:
     """Drive the full (or subset) phase plan for `project_id` under `run_id`.
 
@@ -354,6 +590,19 @@ async def run_pipeline(
     feed): tests inject a temp store, production resolves the shared bucket
     lazily inside the feed itself.
 
+    `fetch_capabilities` (#238 A9) is the Kali runtime-capability probe. It is
+    `None` by default so the unit tier needs no Kali host; the PRODUCTION launch
+    (`project_management.api`) passes `kali_mcp.proxy_status`, and an
+    incompatible or unreadable surface then skips the mapping and prunes every
+    target-facing job while non-target work continues.
+
+    `write_posture` (#238 follow-up) is the ONE projection of the just-validated
+    `RateProfile` into `data/<project_id>/rate-limit/<target_key>.yaml`, run
+    AFTER `stats["rate_limit"]` and BEFORE any phase. It defaults to
+    `_default_write_posture` (a module-level seam the unit tier patches); a
+    raising write fails the run before a single phase runs - the file is part of
+    the run's durable result, not a best-effort extra.
+
     Best-effort: a job whose pods all fail, or whose `run_job` call raises,
     is marked "degraded" and the pipeline continues - it always reaches a
     terminal `set_run_status(run_id, "complete")`.
@@ -366,6 +615,16 @@ async def run_pipeline(
         from polymerhus.app.clients import pg as registry
     if read_assets is None:
         read_assets = globals()["read_assets"]
+    if prepare_inputs is None:
+        # #238 follow-up: ONE canonical consumption derivation, called ONCE per
+        # candidate job at the Configurator boundary (never inside the job graph).
+        from polymerhus.recon.control.job_agent import (  # noqa: PLC0415
+            prepare_job_inputs as prepare_inputs,
+        )
+    if map_rate_profile is None:
+        map_rate_profile = _default_map_rate_profile
+    if configure_phase is None:
+        configure_phase = _default_configure_phase
 
     orchestrator = None
     # The gateway starts deterministically (D223-8): the actor is ALWAYS
@@ -498,8 +757,61 @@ async def run_pipeline(
         if gateway_verdict is not None and gateway_verdict.replayability_resolved:
             logger.warning("run %s in-loop replayability resolved to %s (persisted to the overview by the loop)",
                            run_id, gateway_verdict.replayability)
+        # #238 A9: negotiate the Kali runtime capabilities BEFORE measuring and
+        # before any target-facing dispatch. An incompatible OR unreadable
+        # surface fails closed: the mapping is skipped and every target-facing
+        # job is pruned while non-target work continues.
+        capability_error: str | None = None
+        if fetch_capabilities is not None:
+            try:
+                capabilities = await _runtime_capabilities(fetch_capabilities)
+                capability_error = capabilities.compatibility_error()
+            except Exception as exc:  # noqa: BLE001 - unreadable is incompatible
+                capability_error = f"capability_probe_failed:{type(exc).__name__}"
+                logger.warning(
+                    "run %s could not read Kali runtime capabilities; refusing "
+                    "target-facing traffic (fail-closed)", run_id, exc_info=True)
+            else:
+                if capability_error:
+                    logger.error(
+                        "run %s: Kali runtime capability incompatible (%s); "
+                        "target-facing work will be refused",
+                        run_id, capability_error)
+        # Measure this target under the authenticated context the gateway just
+        # selected, and persist the public profile before phase 0.
+        rate_profile = await _rate_profile_for_run(
+            project_id=project_id, run_id=run_id, settings=settings,
+            auth_account=auth_account, auth_store=auth_store,
+            browser_only=bool(gateway_verdict is not None
+                              and gateway_verdict.branch == "browser_only"),
+            capability_error=capability_error,
+            map_rate_profile=map_rate_profile,
+        )
+        await _persist_rate_profile(registry, run_id, rate_profile)
+        # #238 follow-up: project the SAME validated profile into the
+        # cross-phase project bucket. Postgres first (just above), then the
+        # file: a file naming a run whose stats never carried the profile
+        # would be an unverifiable claim.
+        try:
+            await asyncio.to_thread(
+                write_posture or _default_write_posture,
+                project_id, rate_profile, run_id,
+            )
+        except Exception:
+            logger.error(
+                "run %s could not project the rate posture into the project "
+                "bucket; failing the run before any phase runs", run_id,
+                exc_info=True,
+            )
+            await asyncio.to_thread(registry.set_run_status, run_id, "failed")
+            return
+        rate_target = _rate_target(settings)
+        target_key = rate_profile.target_key or (rate_target[0] if rate_target else "")
+
         for phase_idx, phase_jobs in enumerate(plan):
-            job_configs: dict[str, tuple] = {}
+            prepared_by_job: dict[str, list[dict]] = {}
+            extra_by_job: dict[str, dict] = {}
+            assets_by_job: dict[str, list[dict]] = {}
             for name in phase_jobs:
                 job = JOBS[name]
                 try:
@@ -603,32 +915,95 @@ async def run_pipeline(
                                 else registrable_domain(seed)
                             )
 
-                    await asyncio.to_thread(
-                        registry.upsert_job, run_id, phase_idx, name, "in_progress"
+                    # The ONE canonical consumption derivation, done here before
+                    # the Configurator offers inputs or any pod exists.
+                    prepared = await asyncio.to_thread(
+                        prepare_inputs, input_assets, job, extra, ""
                     )
                 except Exception as exc:  # best-effort: a setup blip degrades
                     # only this job, it must never leave the run stuck non-terminal.
+                    logger.warning(
+                        "run %s phase %s job %s setup failed (%s: %s); the job "
+                        "is degraded and will not run",
+                        run_id, phase_idx, name, type(exc).__name__, exc,
+                        exc_info=True,
+                    )
                     await asyncio.to_thread(
                         registry.upsert_job, run_id, phase_idx, name, "degraded", error=str(exc)
                     )
                     continue
-                job_configs[name] = (job, input_assets, extra)
+                prepared_by_job[name] = prepared
+                extra_by_job[name] = extra
+                assets_by_job[name] = input_assets
+
+            # The phase Configurator decides which prepared pods exist. Its
+            # output is validated atomically against the canonical offers.
+            from polymerhus.recon.control.configurator import (  # noqa: PLC0415
+                materialize_configurator_decision,
+                offer_phase_inputs,
+            )
+
+            offers = await asyncio.to_thread(
+                offer_phase_inputs,
+                phase_idx,
+                target_key,
+                prepared_by_job,
+                JOBS,
+            )
+            try:
+                decision = await asyncio.to_thread(
+                    configure_phase,
+                    project_id,
+                    run_id,
+                    phase_idx,
+                    target_key,
+                    offers,
+                )
+                materialized = materialize_configurator_decision(decision, offers)
+            except Exception:
+                logger.error(
+                    "run %s phase %s Configurator decision was rejected; "
+                    "failing before any pod starts",
+                    run_id, phase_idx, exc_info=True,
+                )
+                await asyncio.to_thread(registry.set_run_status, run_id, "failed")
+                return
+            job_configs: dict[str, tuple] = {
+                name: (
+                    JOBS[name],
+                    assets_by_job.get(name, []),
+                    pods,
+                    extra_by_job.get(name, {}),
+                )
+                for name, pods in materialized.items()
+            }
 
             async def _run_one(name: str) -> None:
-                job, input_assets, extra = job_configs[name]
+                job, input_assets, prepared, extra = job_configs[name]
+                # The `recon_jobs` row is created only for a job selected by the
+                # Configurator; an omitted candidate has no row, pod or traffic.
+                await asyncio.to_thread(
+                    registry.upsert_job, run_id, phase_idx, name, "in_progress"
+                )
                 # The job's REAL execution window (#34 AST-DEC-09). `recon_jobs.
                 # started_at` cannot serve: `upsert_job` stamps it with now() on
-                # INSERT and leaves it untouched ON CONFLICT, and the phase-setup
-                # loop above already inserted the `in_progress` row for every job in
-                # this phase - so that column measures phase setup, not job start,
-                # and a gap computed from it is meaningless.
+                # INSERT and leaves it untouched ON CONFLICT. The row is now
+                # inserted just above, so that column would measure the insert,
+                # not the execution, and a gap computed from it is meaningless.
                 exec_t0 = time.monotonic()
                 exec_started_at = _utc_now_iso()
                 try:
                     pod_exports = await run_job(
-                        job, input_assets, run_id=run_id, phase=phase_idx, extra=extra
+                        job, input_assets, run_id=run_id, phase=phase_idx,
+                        extra=extra, prepared_pod_inputs=prepared,
                     )
                 except Exception as exc:  # best-effort: never abort the pipeline
+                    logger.warning(
+                        "run %s phase %s job %s run_job raised (%s: %s); the job "
+                        "is degraded and the pipeline continues",
+                        run_id, phase_idx, name, type(exc).__name__, exc,
+                        exc_info=True,
+                    )
                     await asyncio.to_thread(
                         registry.upsert_job, run_id, phase_idx, name, "degraded",
                         stats=_exec_window(exec_t0, exec_started_at), error=str(exc)
@@ -669,7 +1044,16 @@ async def run_pipeline(
                     if e.stats and e.stats.get("command")
                 ]
                 if commands:
-                    job_stats["commands"] = commands
+                    # #238 A6: the command can embed the authenticated header or
+                    # cookie; redact the run's own secret values before it is
+                    # persisted into `recon_jobs.stats` (the store is durable).
+                    secret_values = secret_values_from_auth_context(
+                        (extra or {}).get("auth_context")
+                    )
+                    job_stats["commands"] = [
+                        redact_command(command, secret_values)
+                        for command in commands
+                    ]
                 # #196 capture coverage: the pods already declared whether each
                 # terminal call asked kali for capture and how many artifacts
                 # came back; fold those fragments into the job's own verdict so

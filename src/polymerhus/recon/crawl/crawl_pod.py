@@ -85,7 +85,8 @@ def _coverage_observation(input_asset: dict, reason: str) -> Observation:
     )
 
 
-def default_run_crawl_fn(target: str, *, scope: list[str], auth_cookies=None, steel_profile=None):
+def default_run_crawl_fn(target: str, *, scope: list[str], auth_cookies=None,
+                         steel_profile=None):
     """Real collaborator: run the agentic Steel crawl loop synchronously.
 
     Wraps `crawl_agent.run_crawl` (async) behind `run_coro_blocking`,
@@ -100,7 +101,8 @@ def default_run_crawl_fn(target: str, *, scope: list[str], auth_cookies=None, st
     from polymerhus.recon.control.async_bridge import run_coro_blocking
 
     return run_coro_blocking(crawl_agent.run_crawl(
-        target, scope=scope, auth_cookies=auth_cookies, steel_profile=steel_profile))
+        target, scope=scope, auth_cookies=auth_cookies, steel_profile=steel_profile,
+    ))
 
 
 def _host_of(url: str) -> str:
@@ -221,6 +223,9 @@ def build_crawl_pod(*, run_crawl_fn, parse_fn, triage_fn, curate_fn):
             verdict="success",
             assets_merged=assets_merged,
             observations_merged=observations_merged,
+            # #238 A5: the PRE-curation parser output - a crawl that observed
+            # target responses sets this even when every asset was a duplicate.
+            target_responses=int(bool(assets or observations)),
             # The curated payload the pipeline pushes into the analysis feed (#74).
             assets=merged_assets,
             observations=merged_observations,

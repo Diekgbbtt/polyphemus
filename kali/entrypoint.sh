@@ -14,6 +14,10 @@ STORE_ROOT="${KALI_HTTP_HISTORY_ROOT:-/data}"
 PROXY_HOST="${KALI_HTTP_PROXY_HOST:-127.0.0.1}"
 PROXY_PORT="${KALI_HTTP_PROXY_PORT:-8080}"
 CAPTURE_ENABLED="${KALI_HTTP_CAPTURE_ENABLED:-true}"
+# #238: the egress governor is a SEPARATE switch from capture, but both planes
+# live in the SAME mitmdump process - so the proxy must come up when EITHER is
+# on. Capture-off must never disarm an armed TrafficPolicy.
+GOVERNOR_ENABLED="${KALI_HTTP_GOVERNOR_ENABLED:-true}"
 MITM_CONFDIR="${KALI_HTTP_MITM_CONFDIR:-$STORE_ROOT/mitmproxy}"
 MITMDUMP_BIN="${KALI_HTTP_MITMDUMP_BIN:-/opt/mitmproxy-env/bin/mitmdump}"
 MITMDUMP_LISTEN_HOST="${KALI_HTTP_MITMDUMP_LISTEN_HOST:-0.0.0.0}"
@@ -38,11 +42,15 @@ trap shutdown EXIT TERM INT
 #    never aborts), so a routing hiccup cannot stop the exec server.
 bash /opt/kali/postrun.sh || true
 
-case "$(printf '%s' "$CAPTURE_ENABLED" | tr '[:upper:]' '[:lower:]')" in
-  0|false|no|off)
-    echo "[entrypoint] capture explicitly disabled; mitmdump not started"
-    ;;
-  *)
+PROXY_ENABLED=false
+for _flag in "$CAPTURE_ENABLED" "$GOVERNOR_ENABLED"; do
+  case "$(printf '%s' "$_flag" | tr '[:upper:]' '[:lower:]')" in
+    0|false|no|off) ;;
+    *) PROXY_ENABLED=true ;;
+  esac
+done
+
+if [ "$PROXY_ENABLED" = "true" ]; then
     if [ -x "$MITMDUMP_BIN" ]; then
       # Upstream verification: mitmproxy trusts its own CA source (certifi), NOT
       # the system store, so an operator CA (self-signed lab target) is only
@@ -62,7 +70,7 @@ case "$(printf '%s' "$CAPTURE_ENABLED" | tr '[:upper:]' '[:lower:]')" in
         --set "confdir=$MITM_CONFDIR" \
         --set block_global=false \
         "${MITM_TLS_ARGS[@]}" \
-        -s /opt/kali/http_history/addon_entry.py \
+        -s "${KALI_HTTP_ADDON_ENTRY:-/opt/kali/http_history/addon_entry.py}" \
         >"$MITM_LOG" 2>&1 &
       PROXY_PID="$!"
       # readiness: the proxy port must accept before we serve the MCP surface
@@ -78,10 +86,11 @@ case "$(printf '%s' "$CAPTURE_ENABLED" | tr '[:upper:]' '[:lower:]')" in
       # re-run the idempotent bootstrap so the namespace/NAT rules are current.
       bash /opt/kali/postrun.sh || true
     else
-      echo "[entrypoint] mitmdump not found at $MITMDUMP_BIN; capture degraded"
+      echo "[entrypoint] mitmdump not found at $MITMDUMP_BIN; capture/governance degraded"
     fi
-    ;;
-esac
+else
+  echo "[entrypoint] capture and governance explicitly disabled; mitmdump not started"
+fi
 
 # 2) MCP server. Runs in the foreground lane; the trap owns teardown.
 "$MCP_BIN" /opt/kali/mcp_server.py &

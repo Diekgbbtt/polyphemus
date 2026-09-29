@@ -12,8 +12,12 @@ a run can never look fully captured when it was not.
 """
 from __future__ import annotations
 
+import inspect
+
 from polymerhus.recon.domain import pod
 from polymerhus.recon.domain.types import ExecResult, JobSpec
+from polymerhus.recon.domain.traffic_admission import BOUNDED_HTTP_COST
+from polymerhus.recon.config import MAX_POD_ITERS
 
 HTTPX_JOB = JobSpec(
     tool="httpx",
@@ -21,6 +25,7 @@ HTTPX_JOB = JobSpec(
     command_template="httpx -u {target} -json -silent",
     produces=["BaseURL", "Endpoint"],
     consumes="Subdomain",
+    traffic_cost=BOUNDED_HTTP_COST,
 )
 
 FIX_LINE = (
@@ -151,3 +156,64 @@ def test_export_declares_an_uncaptured_exec_without_pretending():
         "refs": 0,
         "warning": None,
     }
+
+
+# --- Task 7: policy retired, capture retained ------------------------------------
+
+_LEGACY_POLICY = {
+    "target_key": "app.example.com",
+    "host_patterns": ["app.example.com"],
+    "rate_per_s": 2.0,
+    "burst": 1,
+    "max_concurrency": 1,
+    "min_delay_ms": 500.0,
+    "source": "measured-transition",
+    "version": "traffic-policy/v2",
+}
+
+
+def test_pod_does_not_forward_a_legacy_traffic_policy():
+    seen = {}
+
+    def exec_fn(command, session_id, timeout_s, capture_context=None):
+        seen["capture"] = capture_context
+        seen["kwargs"] = {"capture_context": capture_context}
+        return ExecResult(stdout=FIX_LINE, stderr="", returncode=0, duration_ms=1)
+
+    out = _graph(exec_fn).invoke(
+        _state(extra={"traffic_policy": _LEGACY_POLICY})
+    )
+
+    assert out["export"].verdict == "success"
+    assert seen["capture"] is not None
+    assert "traffic_policy" not in seen["kwargs"]
+    assert "traffic" not in out["export"].stats
+
+
+def test_default_exec_seam_no_longer_declares_traffic_policy():
+    parameters = inspect.signature(pod.default_exec_fn).parameters
+    assert "capture_context" in parameters
+    assert "traffic_policy" not in parameters
+
+
+def test_returncode_78_is_no_longer_a_traffic_refusal():
+    def exec_fn(command, session_id, timeout_s, capture_context=None):
+        return ExecResult(stdout="", stderr="refused", returncode=78, duration_ms=1)
+
+    out = _graph(exec_fn).invoke(
+        _state(extra={"traffic_policy": _LEGACY_POLICY}, iteration=MAX_POD_ITERS)
+    )
+
+    assert out["export"].verdict == "failed"
+    assert not hasattr(out["export"], "traffic_refusal")
+    assert "traffic" not in out["export"].stats
+
+
+def test_exec_result_has_no_traffic_warning_field():
+    assert "traffic_warning" not in ExecResult.model_fields
+
+
+def test_pod_export_has_no_traffic_refusal_field():
+    from polymerhus.recon.domain.types import PodExport
+
+    assert "traffic_refusal" not in PodExport.model_fields

@@ -56,7 +56,7 @@ def test_registry_carries_correlation_and_is_retrievable(run_ctx):
     pid, rid = run_ctx
     cid = "corr_" + uuid.uuid4().hex[:8]
 
-    async def fake_run_job(job, input_assets, *, run_id, phase, extra):
+    async def fake_run_job(job, input_assets, *, run_id, phase, extra, prepared_pod_inputs=None):
         assert phase == pg.TARGETED_PHASE  # ran outside the linear phase plan
         return [PodExport(input_asset=input_assets[0] if input_assets else {}, verdict="success",
                           assets_merged=2, observations_merged=1)]
@@ -105,7 +105,7 @@ def test_idempotent_ingest_via_curator_no_duplicate_on_replay(run_ctx):
             init_schema(s)
             s.run("MATCH (n) WHERE n.project_id = $p DETACH DELETE n", p=pid).consume()
 
-        async def fake_run_job(job, input_assets, *, run_id, phase, extra):
+        async def fake_run_job(job, input_assets, *, run_id, phase, extra, prepared_pod_inputs=None):
             # the pod's real work: curate canned deltas through the SANCTIONED L0
             # curator (the only L0 write path) into the real graph.
             merged, _ = curator.curate(

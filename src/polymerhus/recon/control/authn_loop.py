@@ -49,7 +49,7 @@ import json
 import logging
 from typing import Any, Literal, Mapping, TypedDict
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 logger = logging.getLogger(__name__)
 
@@ -574,6 +574,13 @@ class GatewayVerdict(BaseModel):
     validation by design (fail-open): an `authenticated` verdict without an
     account runs the pipeline unauthenticated, loudly, rather than degrading
     the turn."""
+    # #238 follow-up (Task 4): the model-facing verdict is a CLOSED contract. It
+    # carries interpretation only - an injected `rate_per_s`, `max_concurrency`,
+    # `budget`, `candidate_jobs`, or `materialized_phases` key is a wiring defect
+    # (refused at validation), never a silently-ignored field. The controller
+    # computes the materialized phase list; the model never supplies it.
+    model_config = ConfigDict(extra="forbid")
+
     # the D223-2 fail-open default: a degraded turn parses to failed, never anonymous
     outcome: Literal["authenticated", "anonymous", "failed"] = "failed"
     account: str | None = Field(default=None)

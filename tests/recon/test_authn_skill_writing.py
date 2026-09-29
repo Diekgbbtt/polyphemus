@@ -16,6 +16,7 @@ import yaml
 
 from polymerhus.app.auth.records import validate_overview
 from polymerhus.app.llm import skills
+from polymerhus.recon.domain.blocking import BlockingSignal
 
 REPO = Path(__file__).resolve().parents[2]
 SKILL = "meta/authn-skill-writing"
@@ -60,10 +61,14 @@ def test_names_the_two_typed_overview_facts():
 
 
 def test_shares_the_blocking_signature_vocabulary():
+    """The procedure names the SAME typed blocking vocabulary the runtime
+    classifiers emit (#238): one spelling across code, store and prompt, so a
+    rename cannot leave the authn procedure naming a signal no classifier
+    produces. The literals are read from the enum, never re-spelled here."""
     body = _body()
-    assert "waf_protected" in body
-    assert "waf_detection" in body
-    assert "rate_limited" in body
+    for signal in BlockingSignal:
+        assert signal.value in body, signal.value
+    assert len({signal.value for signal in BlockingSignal}) == 3
 
 
 def test_carries_no_dangling_or_in_repo_reference():

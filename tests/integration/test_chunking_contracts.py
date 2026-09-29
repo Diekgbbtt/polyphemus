@@ -19,8 +19,10 @@ from polymerhus.analysis.chunking import (
     chunks_for_job,
 )
 from polymerhus.recon.domain.types import AssetDelta, JobSpec, Observation
+from polymerhus.recon.domain.traffic_admission import BOUNDED_HTTP_COST
 
-JOB = JobSpec(tool="katana", skill="crawl", command_template="t", produces=["BaseURL", "Endpoint"], consumes="BaseURL")
+JOB = JobSpec(tool="katana", skill="crawl", command_template="t", produces=["BaseURL", "Endpoint"], consumes="BaseURL",
+              traffic_cost=BOUNDED_HTTP_COST)
 BU = "https://a"
 BU2 = "https://b"
 

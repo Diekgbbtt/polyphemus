@@ -25,6 +25,10 @@ from polymerhus.recon.control.orchestrator_agent import (
     GatewayStop,
     ReconOrchestratorActor,
 )
+from polymerhus.recon.domain.rate_limit import (
+    RateLimitSafetyBudget,
+    RateProfile,
+)
 
 
 class _FakeRegistry:
@@ -35,6 +39,7 @@ class _FakeRegistry:
     def set_run_status(self, *a, **k):
         self.statuses.append((a + tuple(k.values())) if k else a)
     def upsert_job(self, *a, **k): pass
+    def set_run_stats(self, *a, **k): pass
 
 
 def _script_model(*steps):
@@ -81,7 +86,7 @@ def _harness(tmp_path, *, model_steps, overview=None, accounts=None,
             skill_store=SkillStore(tmp_path / "skills"), kali_tools=[])
         return actor
 
-    async def fake_run_job(job, input_assets, *, run_id, phase, extra):
+    async def fake_run_job(job, input_assets, *, run_id, phase, extra, prepared_pod_inputs=None):
         calls["order"].append(("job", job.tool))
         calls[job.tool] = {"assets": list(input_assets), "extra": dict(extra)}
         return []
@@ -116,12 +121,23 @@ def _account(name="alice"):
 def _run(calls, factory, fake_run_job, fake_read_assets, *, registry=None,
          settings=None, subset=None, auth_store=None, **kw):
     registry = registry or _FakeRegistry()
+
+    async def fake_map_rate_profile(
+        project_id, run_id, target_key, url, headers, host_patterns
+    ):
+        return RateProfile.conservative(
+            target_key, [target_key], RateLimitSafetyBudget(),
+            "pipeline-gateway test mapper",
+        )
+
+    mapper = kw.pop("map_rate_profile", fake_map_rate_profile)
     asyncio.run(pipeline.run_pipeline(
         "p1", run_id="r1", job_subset=subset or ["subfinder", "httpx"],
         run_job=fake_run_job,
         load_settings=lambda pid: settings or {"target_domain": "*.example.com"},
         registry=registry, read_assets=fake_read_assets,
-        orchestrator_factory=factory, auth_store=auth_store, **kw,
+        orchestrator_factory=factory, auth_store=auth_store,
+        map_rate_profile=mapper, **kw,
     ))
     return registry
 

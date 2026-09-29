@@ -67,7 +67,7 @@ def test_contract_anatomy_skill_origin_carries_skill_id():
 def test_sync_roundtrip_runs_one_job_and_returns_observations():
     calls = {"n": 0, "phase": None}
 
-    async def fake_run_job(job, input_assets, *, run_id, phase, extra):
+    async def fake_run_job(job, input_assets, *, run_id, phase, extra, prepared_pod_inputs=None):
         calls["n"] += 1
         calls["phase"] = phase
         calls["job_tool"] = job.tool
@@ -95,7 +95,7 @@ def test_sync_roundtrip_runs_one_job_and_returns_observations():
 
 
 def test_registry_recorded_with_correlation_requester_origin():
-    async def fake_run_job(job, input_assets, *, run_id, phase, extra):
+    async def fake_run_job(job, input_assets, *, run_id, phase, extra, prepared_pod_inputs=None):
         return [PodExport(input_asset={}, verdict="success", assets_merged=1, observations_merged=0)]
 
     reg = _FakeRegistry()
@@ -143,7 +143,7 @@ def test_unknown_tool_is_degraded_not_raised():
 
 
 def test_registry_write_failure_does_not_crash_caller():
-    async def fake_run_job(job, input_assets, *, run_id, phase, extra):
+    async def fake_run_job(job, input_assets, *, run_id, phase, extra, prepared_pod_inputs=None):
         return [PodExport(input_asset={}, verdict="success")]
 
     class ExplodingRegistry:
@@ -157,7 +157,7 @@ def test_registry_write_failure_does_not_crash_caller():
 
 
 def test_all_pods_failed_is_degraded():
-    async def fake_run_job(job, input_assets, *, run_id, phase, extra):
+    async def fake_run_job(job, input_assets, *, run_id, phase, extra, prepared_pod_inputs=None):
         return [PodExport(input_asset={}, verdict="failed"), PodExport(input_asset={}, verdict="failed")]
 
     reg = _FakeRegistry()

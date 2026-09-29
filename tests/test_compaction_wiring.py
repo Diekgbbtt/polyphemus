@@ -76,10 +76,12 @@ def test_all_three_proposers_pass_compaction_middleware(monkeypatch):
 def test_recon_pod_triager_passes_compaction_middleware(monkeypatch):
     from polymerhus.app.llm.session_address import PodSession, SessionContext
     from polymerhus.recon.domain import pod
+    from polymerhus.recon.domain.traffic_admission import BOUNDED_HTTP_COST
     from polymerhus.recon.domain.types import ExecResult, JobSpec
 
     job = JobSpec(tool="httpx", skill="http_probe", command_template="httpx -u {target}",
-                  produces=["BaseURL"], consumes="BaseURL")
+                  produces=["BaseURL"], consumes="BaseURL",
+                  traffic_cost=BOUNDED_HTTP_COST)
     exec_result = ExecResult(stdout="out", stderr="", returncode=0, duration_ms=1)
     seen = {}
 

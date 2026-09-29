@@ -15,9 +15,9 @@ accumulate into `pod_exports` through an `operator.add` reducer so the parallel
 `default_pod_invoke` (wraps Foundation `polymerhus.recon.domain.pod.pod_graph`) and
 `default_preprocess_fn` (deterministic 1:1 asset->pod_input mapping up to the
 MAX_JOB_ASSETS budget, except for batched/reprofile jobs which pack; `extra`
-is threaded through verbatim). The per-pod throttle input retired with the
-mid-run steering machinery (#243, D223-12) - request phases run unthrottled
-until the #238 rate-limit work lands its profile-driven configuration.
+is threaded through verbatim). Traffic selection and parameterisation belong to
+the phase Configurator; the pod executes the resulting command without a
+runtime TrafficPolicy.
 `notify_fn` (optional)
 is the #94 delivery seam: fired after each pod completes so a parent actor can be
 told a pod finished and go READ that pod's session memory; `pod_completion_notify`
@@ -77,13 +77,18 @@ class JobState(TypedDict, total=False):
     run_id: str
     phase: int
     pod_inputs: list[dict]
+    # #238 follow-up: inputs already derived once at the pipeline's admission
+    # chokepoint. When present the graph uses them VERBATIM and never
+    # re-derives; when absent the graph derives through `preprocess_fn`.
+    prepared_pod_inputs: list[dict]
     pod_exports: Annotated[list[PodExport], operator.add]
 
 
-def default_preprocess_fn(
+def prepare_job_inputs(
     input_assets: list[dict], job: JobSpec, extra: dict, asset_context: str
 ) -> list[dict]:
-    """Deterministic fallback: derive the job's pod inputs through the UNIFIED
+    """The SINGLE canonical consumption derivation: derive a job's pod inputs
+    through the UNIFIED
     consumption-set derivation (`batching.derive_consumption_set`, #37 option
     B), capped at the MAX_JOB_ASSETS total-work budget (NOT MAX_PODS, which is
     the concurrency ceiling applied at fan-out time).
@@ -95,14 +100,18 @@ def default_preprocess_fn(
     non-auth pods must never see it, even if the caller passed it in.
     `extra["apex_registrable"]` (the orchestration datum for the batched
     first-party filter) is popped so it never reaches a pod.
-
     Fail-open (P6): a derivation failure degrades to the raw assets wrapped
     in the job's pack shape (so the pod dispatch stays runnable) with a loud
     warning - never a raised exception that kills the phase.
 
-    This is the seam an LLM-driven cleaning/dedup pass (chat_model_for
-    ("job_orchestrator")) would replace for `configurator_mode == "agent"`
-    jobs; kept deterministic for the MVP per the plan's design notes.
+    Since the #238 follow-up (Task 4) the PIPELINE calls this once per candidate
+    job at the admission chokepoint - before `job_configs`, pods, runners or
+    target traffic - and hands the result to `run_job(prepared_pod_inputs=...)`.
+    `default_preprocess_fn` is the thin compatibility wrapper a directly-invoked
+    graph still uses. This is the seam an LLM-driven cleaning/dedup pass
+    (chat_model_for("job_orchestrator")) would replace for
+    `configurator_mode == "agent"` jobs; kept deterministic for the MVP per the
+    plan's design notes.
     """
     # Auth-eligibility is the pipeline's single concern (C1): it injects
     # auth_context into extra ONLY for use_auth jobs, so this preprocess trusts
@@ -154,10 +163,21 @@ def default_preprocess_fn(
     ]
 
 
-# Per-pod throttling retired with the mid-run steering machinery (#243,
-# D223-12): `default_preprocess_fn` threads `extra` through to every pod_input
-# verbatim, and the pod fills its command deterministically. The #238
-# rate-limit work owns the profile-driven replacement.
+def default_preprocess_fn(
+    input_assets: list[dict], job: JobSpec, extra: dict, asset_context: str
+) -> list[dict]:
+    """Thin compatibility wrapper over the canonical `prepare_job_inputs`
+    (#238 follow-up, Task 4).
+
+    Production derives a job's pod inputs ONCE, at the pipeline's admission
+    chokepoint, and passes them into `run_job(prepared_pod_inputs=...)`, so the
+    graph never re-derives. A directly-invoked graph (tests, ad-hoc runs) still
+    derives here - through the same function, never a copy."""
+    return prepare_job_inputs(input_assets, job, extra, asset_context)
+
+
+# `default_preprocess_fn` threads `extra` through to every pod_input verbatim;
+# command choice and traffic parameters are owned by the phase Configurator.
 
 
 def default_pod_invoke(pod_input: dict, job: JobSpec, run_id: str, phase: int) -> PodExport:
@@ -189,6 +209,7 @@ def default_pod_invoke(pod_input: dict, job: JobSpec, run_id: str, phase: int) -
         "extra": extra,
         "session_id": session_id,
         "project_id": project_id,
+        "configured_command": pod_input.get("configured_command"),
         # #94: the pod's run + phase, so the triager node can address its STATEFUL
         # session per concurrent pod instance (PodSession). Absent in tests
         # that invoke the pod graph directly -> the triager stays stateless there.
@@ -219,10 +240,16 @@ def build_job_agent(*, pod_invoke, preprocess_fn, notify_fn=None):
 
     def preprocess_node(state: JobState) -> dict:
         job = state["job"]
-        input_assets = state.get("input_assets") or []
-        extra = state.get("extra") or {}
-        asset_context = state.get("asset_context", "")
-        pod_inputs = preprocess_fn(input_assets, job, extra, asset_context)
+        prepared = state.get("prepared_pod_inputs")
+        if prepared is not None:
+            # #238 follow-up: the pipeline derived these ONCE at the admission
+            # chokepoint - use them verbatim, never re-derive.
+            pod_inputs = prepared
+        else:
+            input_assets = state.get("input_assets") or []
+            extra = state.get("extra") or {}
+            asset_context = state.get("asset_context", "")
+            pod_inputs = preprocess_fn(input_assets, job, extra, asset_context)
         return {"pod_inputs": pod_inputs}
 
     def fan_out(state: JobState) -> list[Send]:
@@ -304,6 +331,7 @@ async def run_job(
     extra: dict,
     agent=None,
     notify_fn=None,
+    prepared_pod_inputs: list[dict] | None = None,
 ) -> list[PodExport]:
     """Convenience async wrapper: invoke the compiled job agent and return
     its collected pod_exports. The Foundation pod subgraph is sync-invokable
@@ -314,7 +342,14 @@ async def run_job(
     via `asyncio.to_thread`. Inside that thread there is no running loop, so
     `run_coro_blocking` (pod exec) cleanly takes its `asyncio.run` path.
     `notify_fn` (a job graph's #94 delivery seam) is threaded into the
-    compiled agent when `agent` is not supplied."""
+    compiled agent when `agent` is not supplied.
+
+    `prepared_pod_inputs` (#238 follow-up, Task 4): when supplied, the graph
+    fans these immutable, already-derived pod inputs out VERBATIM instead of
+    re-running the consumption derivation. The pipeline derives them once, at
+    the admission chokepoint, so admission and execution observe the SAME input
+    count. Test doubles must accept this keyword too (production and tests share
+    one signature)."""
     graph = agent or build_job_agent(
         pod_invoke=default_pod_invoke, preprocess_fn=default_preprocess_fn,
         notify_fn=notify_fn,
@@ -327,6 +362,8 @@ async def run_job(
         "run_id": run_id,
         "phase": phase,
     }
+    if prepared_pod_inputs is not None:
+        initial["prepared_pod_inputs"] = prepared_pod_inputs
     # Langfuse tracing: the job graph (preprocess -> pod fan-out) is the
     # top-level per-job trace; the pod subgraphs nest under it. Empty list
     # (Langfuse unconfigured) is inert.

@@ -1,4 +1,4 @@
-"""Recon-orchestrator agent: the run's auth gateway (#223, T3 #242).
+"""Recon-orchestrator agent: the run's auth gateway (#223).
 
 The orchestrator is the SOLE auth-gateway decider (D223-8): on run start,
 before phase 0, it runs ONE stateful gateway turn - the authn loop - that
@@ -7,11 +7,14 @@ and the project's `authn` skill, then closes with the structured
 `GatewayVerdict`. The pipeline obeys the verdict (prunes what it excludes,
 binds the account identifier); no second decision point exists downstream.
 
+The pipeline owns post-authentication rate measurement directly. This actor
+therefore carries no rate prompt, tools, brief, response variant or harness.
+
 The actor is a MAILBOX ACTOR (#94, feat/async-actor-agents): one persistent
 `run_session_agent` on the `job_orchestrator` session role per recon run
-(`OrchestratorSession(run_id)` thread), fed the single gateway brief via its
-inbox, replying the verdict on the SAME thread. `run_pipeline` drives it
-through `run_gateway` (production default); `stop` reaps it.
+(`OrchestratorSession(run_id)` thread), fed the gateway brief via its inbox and
+replying with the typed verdict on the SAME thread. `run_pipeline` drives it
+through `run_gateway`; `stop` reaps it.
 
 Arming (D223-13): the roster exemption is lifted through the write-capable
 auth binding - the shared `auth_store` tool, the project's `authn` skill,
@@ -198,7 +201,7 @@ def _gateway_human(*, project_id: str, directive: str, candidate: str | None) ->
 # --- the mailbox actor ------------------------------------------------------------
 
 _GATEWAY_KIND = "gateway"
-_REPLY_KIND = "gateway_verdict"
+_REPLY_KIND = "orchestrator_reply"
 _REPLY_SOURCE = "recon-orchestrator"
 
 # The wall-clock bound on the gateway await (D223-10): a hung turn returns
@@ -373,9 +376,9 @@ class ReconOrchestratorActor:
         loop_middleware = build_authn_loop_middleware()
         self._loop_middleware = loop_middleware
         middleware_list = (middleware_list + binding.middleware + [loop_middleware])
-        # A6: the structured verdict is negotiated, not pinned - the gateway
-        # always binds tools, so tools_bound=True; a forced-choice-constrained
-        # profile lands on ToolStrategy over the relaxed model (voluntary).
+        # A6: the gateway always binds tools, so tools_bound=True; a
+        # forced-choice-constrained profile lands on ToolStrategy over the
+        # relaxed model (voluntary).
         from polymerhus.app.llm.session import structured_response_format  # noqa: PLC0415
         response_format = structured_response_format(
             "job_orchestrator", GatewayVerdict, tools_bound=True)
@@ -475,7 +478,8 @@ class ReconOrchestratorActor:
                              "candidate": candidate},
                 )
             )
-            verdict = await self._await_reply()
+            verdict = await self._await_reply(
+                GatewayVerdict, GATEWAY_AWAIT_TIMEOUT_S, "auth gateway")
         except GatewayStop:
             raise
         except Exception:
@@ -494,15 +498,16 @@ class ReconOrchestratorActor:
                 pid, verdict.replayability)
         return verdict
 
-    async def _await_reply(self) -> "GatewayVerdict | None":
-        """Await the gateway turn's verdict, bounded in wall-clock time (D223-10).
+    async def _await_reply(self, expected_type, timeout_s: float, label: str):
+        """Await the gateway's structured reply, bounded in wall-clock time.
 
         Races the reply against the actor task: a dead actor maps to None
         (fail-open) rather than hanging; a live-but-hung turn maps to None at
         the bound WITHOUT cancelling the turn (its harness bounds own turn
         length) and WITHOUT leaving a stale reply (the inbox drains
         best-effort; the actor is per-run, so no later consumer exists). A
-        reply whose content parses to the wrong schema is logged LOUDLY."""
+        reply whose content does not match the schema is logged LOUDLY and
+        treated as no reply."""
         reply_task = asyncio.ensure_future(self._replies.get())
         try:
             # `asyncio.wait` (not `wait_for`) is the precise primitive here:
@@ -513,29 +518,30 @@ class ReconOrchestratorActor:
             # cancelled below, and the inbox drains best-effort.
             done, _pending = await asyncio.wait(
                 {reply_task, self._task},
-                timeout=GATEWAY_AWAIT_TIMEOUT_S,
+                timeout=timeout_s,
                 return_when=asyncio.FIRST_COMPLETED,
             )
             if reply_task in done:
                 message = reply_task.result()
                 payload = message.payload if isinstance(message.payload, dict) else {}
                 content = payload.get("content")
-                if isinstance(content, GatewayVerdict):
+                if isinstance(content, expected_type):
                     return content
                 if content is None:
                     return None  # the degraded no-decision reply: fail-open
                 logger.warning(
-                    "auth gateway wrong-schema reply (expected GatewayVerdict, "
-                    "got %s): %r; fail-open to no verdict",
+                    "%s wrong-schema reply (expected %s, got %s): %r; fail-open "
+                    "to no verdict",
+                    label, getattr(expected_type, "__name__", expected_type),
                     type(content).__name__, str(content)[:500])
                 return None
             if self._task.done():
                 return None  # the actor task finished first: dead actor, fail-open
             logger.warning(
-                "auth gateway await timed out after %.0fs with a live turn; "
-                "fail-open to no verdict (the turn continues under its harness "
-                "bounds; no stale reply is left behind)",
-                GATEWAY_AWAIT_TIMEOUT_S)
+                "%s await timed out after %.0fs with a live turn; fail-open to "
+                "no verdict (the turn continues under its harness bounds; no "
+                "stale reply is left behind)",
+                label, timeout_s)
             return None
         finally:
             if not reply_task.done():

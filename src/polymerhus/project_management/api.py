@@ -189,8 +189,14 @@ def _schedule_pipeline(project_id: str, run_id: str, jobs: list[str] | None,
 
     async def _run() -> None:
         try:
+            # #238 A9: the production launch negotiates the Kali runtime
+            # capabilities before the rate mapping and before any target-facing
+            # dispatch (an unreadable surface refuses target-facing traffic).
+            from polymerhus.app.clients import kali_mcp  # noqa: PLC0415
+
             await run_pipeline(project_id, run_id=run_id, job_subset=jobs,
-                               with_analysis=with_analysis)
+                               with_analysis=with_analysis,
+                               fetch_capabilities=kali_mcp.proxy_status)
         except Exception:  # noqa: BLE001 - best-effort launch, must not crash the loop
             logger.exception("recon pipeline run %s (project %s) failed", run_id, project_id)
 

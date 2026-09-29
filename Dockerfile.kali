@@ -74,11 +74,16 @@ ENV PATH="/opt/localbin:/root/go/bin:/opt/venv/bin:${PATH}"
 #             trail in jobs.py). Falls back to main tip if the pin is pruned.
 #  jsluice  - JS bundle endpoint/secret extraction (CGO needs gcc, above)
 #  subzy    - subdomain-takeover fingerprints
+#  vegeta   - the #238 rate-limit mapping load generator. PINNED, never
+#             `latest`: every experiment's traffic shape must be reproducible
+#             from one image to the next, and the mapping controller invokes it
+#             through Kali's existing exec seam (no new tool surface).
 RUN go install -v github.com/projectdiscovery/httpx/cmd/httpx@latest \
     && (go install -v github.com/projectdiscovery/katana/cmd/katana@7eaa0c2 \
         || go install -v github.com/projectdiscovery/katana/cmd/katana@latest) \
     && CGO_ENABLED=1 go install -v github.com/BishopFox/jsluice/cmd/jsluice@latest \
-    && go install -v github.com/PentestPad/subzy@latest
+    && go install -v github.com/PentestPad/subzy@latest \
+    && go install -v github.com/tsenart/vegeta/v12@v12.13.0
 
 # Login shells (`docker exec ... bash -lc`, and any ssh-style debugging) reset
 # PATH via /etc/profile, dropping the image ENV above. Persist the priming
@@ -91,11 +96,78 @@ RUN echo 'export PATH="/opt/localbin:/root/go/bin:/opt/venv/bin:$PATH"' > /etc/p
 # katana source build, the seclists wordlist path, and the fastmcp import the
 # entrypoint depends on. (massdns/puredns/kr/graphql-cop are intentionally NOT
 # asserted - they live in the persisted volumes, owned by postrun.sh.)
+# The vegeta check reads GO BUILD METADATA, not the human-readable banner: a
+# `go install`-built binary reports empty human version fields while its module
+# record is exact (#238 follow-up, Task 7).
+ARG SOURCE_REVISION=unknown
 RUN for t in subfinder amass whois dnsx naabu httpx katana ffuf arjun paramspider \
-             subzy jsluice nmap masscan curl git go python3 openvpn ip; do \
+             subzy jsluice vegeta nmap masscan curl git go python3 openvpn ip; do \
       command -v $t >/dev/null 2>&1 || { echo "[smoke] MISSING: $t"; exit 1; }; \
     done \
     && katana -h 2>&1 | grep -q "\-pcs" || { echo "[smoke] katana lacks -pcs flags"; exit 1; } \
+    && go version -m "$(command -v vegeta)" | grep 'github.com/tsenart/vegeta/v12' \
+       | grep -q 'v12.13.0' \
+       || { echo "[smoke] vegeta is not the pinned module v12.13.0"; exit 1; } \
+    && mkdir -p /opt/polymerhus \
+    && VEGETA_VERSION="$(go version -m "$(command -v vegeta)" \
+         | awk '$1 == "mod" && $2 == "github.com/tsenart/vegeta/v12" {print $3; exit}')" \
+    && printf '{"revision": "%s", "vegeta_module": "github.com/tsenart/vegeta/v12", "vegeta_version": "%s", "source": "dockerfile-build-smoke"}\n' \
+         "${SOURCE_REVISION}" "${VEGETA_VERSION}" > /opt/polymerhus/build-provenance.json \
+    && cat /opt/polymerhus/build-provenance.json \
     && test -f /usr/share/seclists/Discovery/Web-Content/common.txt \
     && /opt/venv/bin/python -c "from fastmcp import FastMCP" \
     && echo "[smoke] kali exec-node OK" && katana -version 2>&1 | head -n 1
+
+# --- #238 follow-up (Task 13 / A8): the capture + governance runtime ---------
+# This image is SELF-CONTAINED. The #196 HTTP-history capture plane (mitmdump
+# in its OWN isolated Python environment, so /opt/venv never resolves
+# mitmproxy's dependency tree) and the entrypoint live HERE, alongside Vegeta
+# and the pinned ffuf wordlist. The retired `kali/Dockerfile` layered the
+# capture plane on the 17 GB redamon base; with the capture runtime folded in,
+# the compose service builds exactly this Dockerfile and no second image is
+# needed.
+ARG UV_VERSION=0.9.7
+ARG MITMPROXY_VERSION=12.2.3
+ARG MITMPROXY_PYTHON=3.13
+RUN /opt/venv/bin/pip install --no-cache-dir "uv==${UV_VERSION}" \
+      "httpx[http2]==0.28.1" \
+ && /opt/venv/bin/uv python install "${MITMPROXY_PYTHON}" \
+ && /opt/venv/bin/uv venv --python "${MITMPROXY_PYTHON}" /opt/mitmproxy-env \
+ && /opt/venv/bin/uv pip install --python /opt/mitmproxy-env/bin/python \
+      "mitmproxy==${MITMPROXY_VERSION}" "pydantic>=2,<3"
+
+# Source is normally bind-mounted at /opt/kali by compose; copying it here keeps
+# the image usable standalone (and lets the smoke check below prove it).
+COPY kali /opt/kali
+RUN chmod +x /opt/kali/entrypoint.sh /opt/kali/postrun.sh
+
+ENV PYTHONPATH=/opt \
+    KALI_HTTP_HISTORY_ROOT=/data \
+    KALI_HTTP_CAPTURE_ENABLED=true \
+    KALI_HTTP_GOVERNOR_ENABLED=true \
+    KALI_HTTP_MAX_BODY_BYTES=5242880 \
+    KALI_HTTP_NAMESPACE_POOL=8 \
+    KALI_HTTP_LEASE_TTL_S=900 \
+    KALI_HTTP_PROXY_HOST=127.0.0.1 \
+    KALI_HTTP_PROXY_PORT=8080 \
+    KALI_HTTP_REGISTRY_PATH=/run/kali-http/registry.sqlite3
+
+EXPOSE 8000
+HEALTHCHECK --interval=15s --timeout=10s --retries=5 --start-period=40s \
+    CMD /opt/venv/bin/python /opt/kali/healthcheck.py || exit 1
+
+# Build-time smoke: prove BOTH halves coexist in ONE image - mitmdump is
+# executable AND Vegeta is still the pinned module AND the wordlist still has
+# the declared cardinality the readiness gate verifies.
+RUN set -eux; \
+    test -x /opt/mitmproxy-env/bin/mitmdump; \
+    /opt/mitmproxy-env/bin/mitmdump --version >/dev/null; \
+    go version -m "$(command -v vegeta)" | grep 'github.com/tsenart/vegeta/v12' | grep -q 'v12.13.0'; \
+    cd /opt && /opt/venv/bin/python -c \
+      "from kali.http_history.capabilities import FFUF_WORDLIST_PATH, wordlist_cardinality; \
+       count = wordlist_cardinality(FFUF_WORDLIST_PATH); \
+       assert count == 4750, f'wordlist cardinality {count} != 4750'; \
+       print('[smoke] wordlist cardinality', count)"; \
+    echo "[smoke] capture runtime + vegeta + wordlist OK"
+
+ENTRYPOINT ["/opt/kali/entrypoint.sh"]

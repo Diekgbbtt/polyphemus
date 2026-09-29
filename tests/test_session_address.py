@@ -11,6 +11,7 @@ import pytest
 
 from polymerhus.app.llm.session_address import (
     AnalysisSession,
+    ConfiguratorSession,
     HuntSession,
     ModuleScopedSession,
     PodSession,
@@ -46,6 +47,16 @@ def test_hunt_sessions_are_per_hunt_and_per_spec():
     assert p1.thread_id != p2.thread_id
 
 
+def test_configurator_session_is_run_scoped_and_phase_free():
+    """One Configurator session spans every phase of a run; the phase is a turn,
+    never part of the session identity, and concurrent runs stay isolated."""
+    session = ConfiguratorSession("run1")
+    assert session.role_id == "configurator"
+    assert session.thread_id == "run:run1:configurator"
+    assert ConfiguratorSession("run2").thread_id == "run:run2:configurator"
+    assert session.thread_id != ConfiguratorSession("run2").thread_id
+
+
 def test_none_discriminator_is_dropped_not_shifted():
     """A missing discriminator (hunt with no spec) vanishes rather than leaving an empty
     segment that would shift the address."""
@@ -73,6 +84,7 @@ def test_addresses_are_frozen_and_satisfy_the_protocol():
     with pytest.raises(dataclasses.FrozenInstanceError):
         a.run_id = "x"  # type: ignore[misc]
     for addr in (AnalysisSession("r", "assigner"),
+                 ConfiguratorSession("r"),
                  PodSession("r", 1, "httpx", "x", "triager"),
                  HuntSession("r", "h")):
         assert hasattr(addr, "role_id") and isinstance(addr.thread_id, str)
@@ -90,9 +102,11 @@ def test_recon_pod_session_keys_by_the_concurrent_pod_instance():
     url (operator-chosen scheme); a url-less asset falls back to a stable hash rather than
     colliding on an empty discriminator."""
     from polymerhus.recon.domain.pod import pod_session
+    from polymerhus.recon.domain.traffic_admission import BOUNDED_HTTP_COST
     from polymerhus.recon.domain.types import JobSpec
 
-    job = JobSpec(tool="httpx", skill="recon", command_template="", produces=[], consumes="BaseURL")
+    job = JobSpec(tool="httpx", skill="recon", command_template="", produces=[], consumes="BaseURL",
+                  traffic_cost=BOUNDED_HTTP_COST)
     k1 = pod_session("run1", 2, job, {"url": "https://a.example"}, role_id="triager").thread_id
     k2 = pod_session("run1", 2, job, {"url": "https://b.example"}, role_id="triager").thread_id
     assert k1 != k2 and k1.endswith(":triager")

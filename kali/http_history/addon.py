@@ -5,6 +5,14 @@ into mitmproxy. A store failure increments a counter and records the reason so
 ``proxy_status()`` can disclose a degraded capture plane without breaking the
 proxied traffic.
 
+Since #238 the same addon also carries the EGRESS GOVERNOR: an async ``request``
+hook that spends the run's per-target token before the request leaves. The two
+planes are separate switches - ``enabled`` gates capture, ``governor_enabled``
+gates governance - because capture-off must not disarm an armed policy. The
+hooks stay independent: capture is conditional on ``enabled``, governance on a
+VALIDATED policy, and a governor failure is disclosed rather than silently
+releasing traffic.
+
 Correlation is by client source address through an injected resolver (the
 shared namespace registry). A flow that cannot be correlated is still recorded,
 under the reserved ``unscoped`` project, which project-scoped queries refuse to
@@ -12,12 +20,29 @@ read.
 """
 from __future__ import annotations
 
+import json
+import os
 import threading
+import time
+from dataclasses import dataclass, field
+from pathlib import Path
+from urllib.parse import urlsplit
 
+from kali.http_history.governor import (
+    GovernorPermit,
+    TrafficContext,
+    validate_traffic_policy,
+)
 from kali.http_history.normalize import DEFAULT_MAX_BODY_BYTES, normalize_flow
 from kali.http_history.store import HttpHistoryStore
 
 UNSCOPED_PROJECT = "unscoped"
+
+#: How often the addon republishes its governor/addon counters. The MCP process
+#: cannot read the governor's memory, so the runtime view crosses the process
+#: boundary through a small file; a once-a-second cadence is enough to observe a
+#: run's peak without writing on every proxied request.
+_STATUS_PUBLISH_INTERVAL_S = 1.0
 
 
 def source_ip_of(flow) -> str | None:
@@ -30,6 +55,33 @@ def source_ip_of(flow) -> str | None:
     return None
 
 
+def request_host_of(flow) -> str | None:
+    """The hostname a flow's request is FOR, or None when it cannot be named.
+
+    `pretty_host` is authoritative: mitmproxy documents `request.host` as
+    possibly INFERRED FROM THE PROXY MODE - in transparent mode it is the
+    connection's IP - while `pretty_host` prefers the request's own
+    `Host`/`:authority`. A `traffic-policy/v2` `host_patterns` names HOSTS, so
+    matching the inferred IP against it made every governed flow look like
+    another policy's business and leave the governor silently (the #238 live
+    defect, `docs/superpowers/notes/2026-09-25-live-concurrency-verdict.md`).
+    `pretty_host` falls back to `host` itself when there is no authority, so
+    this is the named host when one exists and the inferred one otherwise. The
+    URL is the last fallback (and the only source the unit-tier fakes carry).
+    """
+    request = getattr(flow, "request", None)
+    if request is None:
+        return None
+    for attribute in ("pretty_host", "host"):
+        value = getattr(request, attribute, None)
+        if isinstance(value, str) and value:
+            return value
+    url = getattr(request, "pretty_url", None) or getattr(request, "url", None)
+    if isinstance(url, str) and url:
+        return urlsplit(url).hostname
+    return None
+
+
 def _is_websocket(flow) -> bool:
     return getattr(flow, "websocket", None) is not None
 
@@ -39,6 +91,43 @@ def _is_http3(flow) -> bool:
     return version.startswith("HTTP/3") or version.startswith("h3")
 
 
+PERMIT_METADATA_KEY = "polyphemus_governor_permit"
+
+
+@dataclass
+class _LocalRefusal:
+    """A mitmproxy-free stand-in for the local refusal response, so the unit tier
+    never imports mitmproxy."""
+
+    status_code: int
+    headers: dict = field(default_factory=dict)
+    content: bytes = b""
+
+
+def default_refuse_flow(flow, *, reason_code: str, detail: str) -> None:
+    """The local-refusal adapter: give the flow a 503 response, so the request
+    never reaches the target.
+
+    The mitmproxy import is LAZY: importing this module (the unit tier, the
+    service) must not pull mitmproxy in. In production `addon_entry` injects the
+    eager adapter instead; this is the safe default.
+    """
+    headers = {"X-Polymerhus-Traffic-Refusal": reason_code}
+    try:
+        from mitmproxy import http  # noqa: PLC0415
+
+        response = http.Response.make(
+            503, b"traffic refused by the polyphemus governor",
+            {**headers, "Content-Type": "text/plain"},
+        )
+    except Exception:  # noqa: BLE001 - no mitmproxy (unit tier): duck-typed stub
+        response = _LocalRefusal(
+            status_code=503, headers=dict(headers),
+            content=b"traffic refused by the polyphemus governor",
+        )
+    flow.response = response
+
+
 class HttpHistoryAddon:
     def __init__(
         self,
@@ -46,34 +135,111 @@ class HttpHistoryAddon:
         root,
         resolver=None,
         enabled: bool = True,
+        governor_enabled: bool = True,
+        governor=None,
         max_body_bytes: int = DEFAULT_MAX_BODY_BYTES,
         store_factory=None,
+        refuse_flow=None,
     ):
         self.root = root
         self.resolver = resolver
         self.enabled = enabled
+        self.governor_enabled = governor_enabled
+        self.governor = governor
         self.max_body_bytes = max_body_bytes
+        self.refuse_flow = refuse_flow or default_refuse_flow
         self._store_factory = store_factory or (lambda project: HttpHistoryStore(root, project))
         self._stores: dict[str, HttpHistoryStore] = {}
         self._lock = threading.Lock()
+        self._last_publish = 0.0
         self._status = {
             "recorded": 0,
             "failed": 0,
             "unscoped": 0,
             "excluded_websocket": 0,
             "excluded_http3": 0,
+            "governed": 0,
+            "ungoverned_host": 0,
+            "governor_failed": 0,
+            "governor_refusals": 0,
             "last_error": None,
+            "governor_last_error": None,
+            "last_refusal": None,
+            "last_ungoverned_host": None,
         }
 
     # --- mitmproxy hooks ------------------------------------------------------
 
-    def response(self, flow) -> None:
+    async def request(self, flow) -> None:
+        """Governance hook: reserve a concurrency permit and spend this target's
+        token before the flow egresses.
+
+        Fail-CLOSED for an ARMED flow (one whose lease carries a policy): an
+        unenforceable policy, a missing governor, or any governor exception
+        refuses the flow LOCALLY - a 503 with no upstream request - and is
+        disclosed in `status()`. Capture is irrelevant here: the two switches are
+        independent, so `enabled=False` never disarms governance. An UNARMED flow
+        (a capture-only or legacy lease) is never delayed.
+        """
+        # Publish BEFORE the early returns below: a flow the governor never
+        # governs (an unarmed lease, an unresolvable source) is exactly the case
+        # the #238 diagnosis has to be able to see, and an early `return` would
+        # otherwise leave the snapshot stale or absent.
+        self._publish_runtime_counters()
+        if not self.governor_enabled:
+            return
+        try:
+            registration = self._resolve_registration(flow)
+        except Exception as exc:  # noqa: BLE001 - the proxy must never break
+            self._refuse(flow, "governor_error", type(exc).__name__)
+            return
+        if registration is None or not registration.traffic_policy:
+            return
+        if self.governor is None:
+            self._refuse(flow, "governor_unavailable", "no governor attached")
+            return
+        try:
+            policy = validate_traffic_policy(registration.traffic_policy)
+            if policy is None:
+                self._refuse(
+                    flow, "policy_unenforceable",
+                    "the registered traffic policy could not be validated",
+                )
+                return
+            decision = await self.governor.acquire(
+                registration.project_id,
+                traffic_policy=policy,
+                context=TrafficContext(
+                    source_ip=source_ip_of(flow),
+                    request_host=request_host_of(flow),
+                ),
+            )
+        except Exception as exc:  # noqa: BLE001 - the proxy must never break
+            self._refuse(flow, "governor_error", type(exc).__name__)
+            return
+        if decision.governed and decision.permit is not None:
+            self._attach_permit(flow, decision.permit)
+            with self._lock:
+                self._status["governed"] += 1
+            return
+        # An ARMED lease whose flow is not this policy's business: before the
+        # #238 live fix this was the ONLY silent outcome of the hook, and it is
+        # how a whole run's traffic egressed ungoverned while every counter read
+        # zero. Disclose it: a skip must be countable and nameable.
+        with self._lock:
+            self._status["ungoverned_host"] += 1
+            self._status["last_ungoverned_host"] = request_host_of(flow)
+
+    async def response(self, flow) -> None:
+        await self._release_permit(flow)
         self._capture(flow)
 
-    def error(self, flow) -> None:
+    async def error(self, flow) -> None:
+        await self._release_permit(flow)
         self._capture(flow)
 
     def done(self) -> None:
+        self._publish_runtime_counters(force=True)
         with self._lock:
             for store in self._stores.values():
                 try:
@@ -83,6 +249,96 @@ class HttpHistoryAddon:
             self._stores.clear()
 
     # --- internals ------------------------------------------------------------
+
+    def runtime_counters(self) -> dict:
+        """The live governance counters of THIS proxy process (#238 live fix).
+
+        The MCP service cannot read them across the process boundary, so the
+        addon publishes a snapshot the service re-exposes through
+        `proxy_status()`. The discriminator that separates "the governor never
+        saw the traffic" from "the governor governed it badly" is
+        `governor.peak_inflight` against the fixture's own `max_in_flight`.
+        """
+        governor: dict = {}
+        status = getattr(self.governor, "status", None)
+        if callable(status):
+            try:
+                governor = status()
+            except Exception:  # noqa: BLE001 - diagnostics must never disarm the
+                # hook: an exception raised here would abort `request` and let
+                # the flow egress UNGOVERNED, which is the one outcome this
+                # whole plane exists to prevent.
+                governor = {"error": "status_unavailable"}
+        with self._lock:
+            # The two switches ride with the counters: whether capture and
+            # governance are ON is what makes the counters readable (a
+            # capture-off proxy that governed flows must not look identical to
+            # a capture-on one).
+            addon = {
+                "enabled": self.enabled,
+                "governor_enabled": self.governor_enabled and self.governor is not None,
+                **self._status,
+            }
+        return {"addon": addon, "governor": governor}
+
+    def _publish_runtime_counters(self, *, force: bool = False) -> None:
+        now = time.monotonic()
+        if not force and now - self._last_publish < _STATUS_PUBLISH_INTERVAL_S:
+            return
+        self._last_publish = now
+        try:
+            payload = json.dumps(self.runtime_counters(), sort_keys=True)
+            path = Path(self.root) / "governor-status.json"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(".tmp")
+            tmp.write_text(payload, encoding="utf-8")
+            os.replace(tmp, path)
+        except Exception:  # noqa: BLE001 - same reason as above: a diagnostic
+            # failure is DISCLOSED, never raised into the proxy hook.
+            with self._lock:
+                self._status["governor_failed"] += 1
+                self._status["governor_last_error"] = "status_publish_failed"
+
+    def _refuse(self, flow, reason_code: str, detail: str) -> None:
+        """Disclose and refuse LOCALLY. `detail` must stay secret-safe - it is an
+        exception TYPE or a fixed string, never a message that could carry a URL
+        query, a header value, or a body."""
+        with self._lock:
+            self._status["governor_refusals"] += 1
+            self._status["governor_failed"] += 1
+            self._status["last_refusal"] = reason_code
+            self._status["governor_last_error"] = detail
+        try:
+            self.refuse_flow(flow, reason_code=reason_code, detail=detail)
+        except Exception:  # noqa: BLE001 - refusal must never raise into mitmproxy
+            pass
+
+    def _attach_permit(self, flow, permit: GovernorPermit) -> None:
+        metadata = getattr(flow, "metadata", None)
+        if isinstance(metadata, dict):
+            metadata[PERMIT_METADATA_KEY] = {
+                "key": list(permit.key),
+                "permit_id": permit.permit_id,
+            }
+
+    async def _release_permit(self, flow) -> None:
+        if self.governor is None:
+            return
+        metadata = getattr(flow, "metadata", None)
+        if not isinstance(metadata, dict):
+            return
+        raw = metadata.pop(PERMIT_METADATA_KEY, None)
+        if not isinstance(raw, dict):
+            return
+        try:
+            permit = GovernorPermit(
+                key=tuple(raw.get("key") or ()), permit_id=str(raw.get("permit_id") or "")
+            )
+            await self.governor.release(permit)
+        except Exception:  # noqa: BLE001 - release must never break the proxy
+            with self._lock:
+                self._status["governor_failed"] += 1
+                self._status["governor_last_error"] = "release_error"
 
     def _capture(self, flow) -> None:
         if not self.enabled:
@@ -126,6 +382,20 @@ class HttpHistoryAddon:
                 return project, context
         return UNSCOPED_PROJECT, CaptureContext(source_ip=ip)
 
+    def _resolve_registration(self, flow):
+        """The policy-aware lookup, when the injected resolver offers one.
+
+        A resolver that only implements the legacy `lookup` is capture-only: the
+        governance plane simply does not apply to it.
+        """
+        lookup = getattr(self.resolver, "lookup_registration", None)
+        if lookup is None:
+            return None
+        ip = source_ip_of(flow)
+        if not ip:
+            return None
+        return lookup(ip)
+
     def _store_for(self, project: str) -> HttpHistoryStore:
         with self._lock:
             store = self._stores.get(project)
@@ -140,4 +410,8 @@ class HttpHistoryAddon:
 
     def status(self) -> dict:
         with self._lock:
-            return {"enabled": self.enabled, **self._status}
+            return {
+                "enabled": self.enabled,
+                "governor_enabled": self.governor_enabled and self.governor is not None,
+                **self._status,
+            }

@@ -876,8 +876,10 @@ def build_hunter_tools(
     the persisted config identities from (#199; absent -> the gate degrades to
     convention-only, fail-open); `graph_view_fn`
     / `kb_fn` / `exec_fn` are the injected seam bodies (each absent degrades
-    fail-open). Returns the five tools in the spec's surface order: `hunts_store`
-    / `notes` / `graph_view` / `kb_query` / `exec`. `graph_view` is the ONE
+    fail-open). Returns the tools in the spec's surface order: `hunts_store`
+    / `notes` / `graph_view` / `kb_query` / `exec`. The rate-limit posture read
+    is NOT bound here (operator ruling, 2026-09-28): it lives inside the
+    test-executor pod (Runner + Triager). `graph_view` is the ONE
     shared read-only L0/L1 tool (#197, `graph_view_tool.build_graph_view_tool`)
     whose contract (schema + query-language primitives + guard + return shape +
     example) rides its description - the old local `GraphViewTool` is REMOVED."""

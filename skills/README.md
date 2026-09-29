@@ -74,6 +74,8 @@ Keep frontmatter valid YAML: an unquoted `: ` inside a plain-scalar description 
 |---|---|---|
 | `authorization-pyramid` | **authored** | reverse-engineering a service's role-to-permission structure via the inverse-pyramid probe |
 | `lightrag-query` | **authored** | the hunting agent's methodology-KB query discipline (`query_lightrag` / `kb_query`) |
+| `performing-api-rate-limiting-bypass` | **authored (#238)** | the closed bypass-mutation families, the four evidence gates, and the rule that a confirmed bypass is a FINDING, never applied to recon traffic; retained for explicit future workflows, but not bound to the auth-only `job_orchestrator` |
+| `rate-aware-recon-configuration` | **authored** | syntax and configurable rate, concurrency, thread, depth, and delay controls for katana, arjun, ffuf, and httpx |
 | `steel-browser` | **authored** | the browser operation mechanics over `steel_exec` (session lifecycle, ref flow, batch text entry, waiting, inline eval, bounded reads, one-shot scrape, spidering, profile mounts) |
 | `webapp-clientside-semantic-model` | **authored** | client-side semantic modeling from browser-observable artifacts before security analysis |
 | `webpage-analysis` | **authored** | web-application architectural profiling (navigation x rendering, independent) |

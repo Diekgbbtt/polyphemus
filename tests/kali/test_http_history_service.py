@@ -1,6 +1,8 @@
 """MCP-facing service: project isolation, sanitized views, replay lineage."""
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from kali.http_history.config import HttpHistoryConfig
@@ -21,6 +23,51 @@ from tests.kali.fakes import FakeFlow, FakeMessage
 def _service(tmp_path, **config_overrides) -> HttpHistoryService:
     config = HttpHistoryConfig(store_root=str(tmp_path), **config_overrides)
     return HttpHistoryService(config=config)
+
+
+# --- #238 follow-up (Task 7): the runtime-capability surface ------------------
+
+
+def test_proxy_status_advertises_the_capabilities_the_controller_negotiates(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("POLYPHEMUS_BUILD_PROVENANCE", str(tmp_path / "missing.json"))
+    service = _service(tmp_path, enabled=True, governor_enabled=True)
+    status = service.proxy_status()
+
+    governor = status["traffic_governor"]
+    assert "traffic-policy/v2" in governor["supported_policy_versions"]
+    # Capture and governance are SEPARATE switches.
+    assert governor["capture_enabled"] is True
+    assert governor["governor_enabled"] is True
+    assert set(governor["refusals"]) == {"commands_refused", "last_refusal"}
+    # Build provenance is always reported (degraded when the image file is absent).
+    assert "revision" in status["build"]
+    assert status["build"]["vegeta_module"] == "github.com/tsenart/vegeta/v12"
+    # The pinned ffuf wordlist's cardinality is advertised for cost verification.
+    from kali.http_history.capabilities import FFUF_WORDLIST_PATH
+    assert FFUF_WORDLIST_PATH in status["wordlists"]
+
+
+def test_capture_off_still_advertises_the_governor(tmp_path):
+    service = _service(tmp_path, enabled=False, governor_enabled=True)
+    governor = service.proxy_status()["traffic_governor"]
+    assert governor["capture_enabled"] is False
+    assert governor["governor_enabled"] is True
+
+
+def test_an_exec_refusal_is_counted_and_visible(tmp_path):
+    calls: list = []
+    service = _governed_service(tmp_path, runner_calls=calls)
+    result = service.execute(
+        "httpx -u http://app.example.com", "s1", 5, project_id="p1",
+        traffic_policy={**_POLICY, "version": "traffic-policy/v9"},
+    )
+    assert result["returncode"] == 78
+    refusals = service.proxy_status()["traffic_governor"]["refusals"]
+    assert refusals["commands_refused"] == 1
+    assert "not enforceable" in refusals["last_refusal"]
+    assert calls == []
 
 
 def _quiet_service(tmp_path, **config_overrides) -> HttpHistoryService:
@@ -364,3 +411,287 @@ def test_store_cache_is_bounded(tmp_path, monkeypatch):
         service.store(f"proj-{index}")
     assert len(service._stores) <= 2
     assert "proj-0" not in service._stores
+
+
+def test_execute_forwards_private_stdin_to_a_stdin_aware_runner(tmp_path):
+    """#238: the experiment spec (which carries the authenticated context)
+    travels to the child on private stdin - never argv - and is not echoed
+    back in the service envelope."""
+    seen: dict[str, str] = {}
+
+    def runner(command, session_id, timeout_s, namespace=None, stdin_text=""):
+        seen["stdin_text"] = stdin_text
+        return ExecOutcome(stdout="ok", stderr="", returncode=0, duration_ms=1)
+
+    service = HttpHistoryService(
+        config=HttpHistoryConfig(store_root=str(tmp_path)), runner=runner
+    )
+    result = service.execute(
+        "vegeta attack", "s1", 5, stdin_text='{"Authorization":"Bearer supersecret"}'
+    )
+
+    assert seen["stdin_text"] == '{"Authorization":"Bearer supersecret"}'
+    assert "supersecret" not in json.dumps(result)
+
+
+def test_execute_keeps_a_legacy_runner_working(tmp_path):
+    """Every pre-#238 runner takes four parameters; the new keyword must be
+    forwarded only to a seam that declares it (signature-aware, the same guard
+    `pod._accepts_capture_context` uses)."""
+    seen: list[str] = []
+
+    def legacy_runner(command, session_id, timeout_s, namespace=None):
+        seen.append(command)
+        return ExecOutcome(stdout="ok", stderr="", returncode=0, duration_ms=1)
+
+    service = HttpHistoryService(
+        config=HttpHistoryConfig(store_root=str(tmp_path)), runner=legacy_runner
+    )
+    result = service.execute("true", "s1", 5, stdin_text="ignored by a legacy seam")
+
+    assert seen == ["true"]
+    assert result["returncode"] == 0
+
+
+# --- #238 Task 7: governed execution ---------------------------------------------
+
+_POLICY = {
+    "target_key": "app.example.com",
+    "host_patterns": ["app.example.com"],
+    "rate_per_s": 2.0,
+    "burst": 1,
+    "max_concurrency": 1,
+    "min_delay_ms": 500.0,
+    "source": "measured-transition",
+    "version": "traffic-policy/v2",
+}
+
+
+class _Lease:
+    namespace = "kali-http-0001"
+    source_ip = "172.30.0.2"
+    session_id = "s1"
+    slot = 0
+
+
+class _PolicyLeases:
+    """A lease manager that carries the #238 policy (the production shape)."""
+
+    def __init__(self, *, fail: bool = False):
+        self.acquired: list[dict] = []
+        self.released: list[object] = []
+        self.fail = fail
+
+    def status(self) -> dict:
+        # `proxy_status()` reports the pool's own readiness; the fake mirrors the
+        # production shape so the capability surface can be exercised here.
+        return {"ok": True, "pool_size": 1, "in_use": len(self.acquired) - len(self.released)}
+
+    def acquire(self, *, session_id, project_id, context, traffic_policy=None):
+        if self.fail:
+            raise RuntimeError("pool exhausted")
+        self.acquired.append(
+            {
+                "session_id": session_id,
+                "project_id": project_id,
+                "context": context,
+                "traffic_policy": traffic_policy,
+            }
+        )
+        return _Lease()
+
+    def release(self, lease):
+        self.released.append(lease)
+
+
+class _LegacyLeases:
+    """A pre-#238 lease manager: three kwargs, no policy channel."""
+
+    def acquire(self, *, session_id, project_id, context):
+        return _Lease()
+
+    def release(self, lease):
+        pass
+
+
+def _probe(ok=True, detail="listening"):
+    return lambda: {"ok": ok, "detail": detail}
+
+
+def _governed_service(tmp_path, *, runner_calls, leases=None, proxy_ok=True, **config):
+    def runner(command, session_id, timeout_s, namespace=None):
+        runner_calls.append(command)
+        return ExecOutcome(stdout="ok", stderr="", returncode=0, duration_ms=1)
+
+    return HttpHistoryService(
+        config=HttpHistoryConfig(store_root=str(tmp_path), **config),
+        lease_manager=leases if leases is not None else _PolicyLeases(),
+        runner=runner,
+        proxy_probe=_probe(proxy_ok, "proxy not reachable" if not proxy_ok else "listening"),
+    )
+
+
+def test_an_armed_policy_is_registered_with_the_lease_and_the_command_runs(tmp_path):
+    leases, calls = _PolicyLeases(), []
+    service = _governed_service(tmp_path, runner_calls=calls, leases=leases)
+
+    result = service.execute(
+        "httpx -u http://app.example.com", "s1", 5, project_id="p1",
+        traffic_policy=_POLICY,
+    )
+
+    assert result["returncode"] == 0
+    assert result["traffic_warning"] is None
+    assert calls == ["httpx -u http://app.example.com"]
+    assert leases.acquired[0]["traffic_policy"] == _POLICY
+    assert leases.acquired[0]["project_id"] == "p1"
+    assert leases.acquired[0]["context"].session_id == "s1"
+    assert len(leases.released) == 1
+
+
+def test_a_policy_is_registered_even_with_capture_disabled(tmp_path):
+    """Capture and governance are separate switches: disabling the recording
+    plane must not disarm an armed policy."""
+    leases, calls = _PolicyLeases(), []
+    service = _governed_service(
+        tmp_path, runner_calls=calls, leases=leases, enabled=False
+    )
+
+    result = service.execute(
+        "httpx -u http://app.example.com", "s1", 5, project_id="p1",
+        traffic_policy=_POLICY,
+    )
+
+    assert result["returncode"] == 0
+    assert calls == ["httpx -u http://app.example.com"]
+    assert leases.acquired[0]["traffic_policy"] == _POLICY
+
+
+def test_an_armed_policy_without_a_lease_manager_refuses_without_running(tmp_path):
+    calls: list[str] = []
+    service = _governed_service(tmp_path, runner_calls=calls, leases=None)
+    service.lease_manager = None
+
+    result = service.execute(
+        "httpx -u http://app.example.com", "s1", 5, project_id="p1",
+        traffic_policy=_POLICY,
+    )
+
+    assert result["returncode"] == 78
+    assert result["stdout"] == ""
+    assert calls == [], "an ungovernable policy must not run the command"
+    assert "traffic_policy" not in json.dumps(result)
+    assert "lease manager" in result["traffic_warning"]
+
+
+def test_an_armed_policy_that_cannot_lease_refuses_without_running(tmp_path):
+    calls: list[str] = []
+    service = _governed_service(
+        tmp_path, runner_calls=calls, leases=_PolicyLeases(fail=True)
+    )
+
+    result = service.execute(
+        "httpx -u http://app.example.com", "s1", 5, project_id="p1",
+        traffic_policy=_POLICY,
+    )
+
+    assert result["returncode"] == 78
+    assert calls == []
+    assert "governor unavailable" in result["traffic_warning"]
+
+
+def test_an_armed_policy_with_an_unhealthy_proxy_refuses_and_releases(tmp_path):
+    calls, leases = [], _PolicyLeases()
+    service = _governed_service(
+        tmp_path, runner_calls=calls, leases=leases, proxy_ok=False
+    )
+
+    result = service.execute(
+        "httpx -u http://app.example.com", "s1", 5, project_id="p1",
+        traffic_policy=_POLICY,
+    )
+
+    assert result["returncode"] == 78
+    assert calls == []
+    assert "proxy not reachable" in result["traffic_warning"]
+    assert len(leases.released) == 1, "the namespace must not be leaked"
+
+
+def test_an_armed_policy_with_governance_disabled_refuses(tmp_path):
+    calls: list[str] = []
+    service = _governed_service(
+        tmp_path, runner_calls=calls, governor_enabled=False
+    )
+    result = service.execute(
+        "httpx -u http://app.example.com", "s1", 5, project_id="p1",
+        traffic_policy=_POLICY,
+    )
+    assert result["returncode"] == 78
+    assert calls == []
+    assert "disabled" in result["traffic_warning"]
+
+
+def test_an_unenforceable_policy_refuses_instead_of_running_ungoverned(tmp_path):
+    calls: list[str] = []
+    service = _governed_service(tmp_path, runner_calls=calls)
+    result = service.execute(
+            "httpx -u http://app.example.com", "s1", 5, project_id="p1",
+            traffic_policy={**_POLICY, "version": "traffic-policy/v9"},
+        )
+    assert result["returncode"] == 78
+    assert calls == []
+    assert "not enforceable" in result["traffic_warning"]
+
+
+def test_a_policy_a_legacy_lease_manager_cannot_carry_refuses(tmp_path):
+    calls: list[str] = []
+    service = _governed_service(tmp_path, runner_calls=calls, leases=_LegacyLeases())
+    result = service.execute(
+        "httpx -u http://app.example.com", "s1", 5, project_id="p1",
+        traffic_policy=_POLICY,
+    )
+    assert result["returncode"] == 78
+    assert calls == []
+
+
+def test_no_policy_keeps_the_legacy_fail_open_exec_path(tmp_path):
+    calls: list[str] = []
+    service = _governed_service(tmp_path, runner_calls=calls, leases=None)
+    service.lease_manager = None
+
+    result = service.execute("httpx -u http://app.example.com", "s1", 5, project_id="p1")
+
+    assert result["returncode"] == 0
+    assert result["traffic_warning"] is None
+    assert calls == ["httpx -u http://app.example.com"]
+    assert result["capture_warning"], "capture stays fail-open and loud"
+
+
+def test_capture_without_a_policy_stays_fail_open(tmp_path):
+    calls: list[str] = []
+    service = _governed_service(
+        tmp_path, runner_calls=calls, leases=_PolicyLeases(fail=True)
+    )
+
+    result = service.execute("httpx -u http://app.example.com", "s1", 5, project_id="p1")
+
+    assert result["returncode"] == 0
+    assert result["traffic_warning"] is None
+    assert calls == ["httpx -u http://app.example.com"]
+    assert "capture unavailable" in result["capture_warning"]
+
+
+def test_an_empty_policy_payload_is_not_an_armed_policy(tmp_path):
+    """`{}` is the transport default for "nothing attached", not a malformed
+    budget: it keeps the pre-#238 path instead of refusing every command."""
+    calls: list[str] = []
+    service = _governed_service(tmp_path, runner_calls=calls, leases=None)
+    service.lease_manager = None
+
+    result = service.execute(
+        "httpx -u http://app.example.com", "s1", 5, project_id="p1", traffic_policy={}
+    )
+
+    assert result["returncode"] == 0
+    assert result["traffic_warning"] is None
+    assert calls == ["httpx -u http://app.example.com"]

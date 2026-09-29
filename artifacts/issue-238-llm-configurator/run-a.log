@@ -1,0 +1,22 @@
+[gate:run-a] provider
+................                                                         [100%]
+=============================== warnings summary ===============================
+tests/e2e/test_deterministic_llm_provider.py: 16 warnings
+  <worktree>/.venv/lib/python3.12/site-packages/neo4j/_sync/driver.py:547: DeprecationWarning: Relying on Driver's destructor to close the session is deprecated. Please make sure to close the session. Use it as a context (`with` statement) or make sure to call `.close()` explicitly. Future versions of the driver will not close drivers automatically.
+    _deprecation_warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+16 passed, 16 warnings in 1.87s
+<worktree>/.venv/lib/python3.12/site-packages/neo4j/_sync/driver.py:547: DeprecationWarning: Relying on Driver's destructor to close the session is deprecated. Please make sure to close the session. Use it as a context (`with` statement) or make sure to call `.close()` explicitly. Future versions of the driver will not close drivers automatically.
+[gate:run-a] functional matrix
+...                                                                      [100%]
+=============================== warnings summary ===============================
+tests/e2e/test_llm_rate_aware_recon_configurator_e2e.py::test_high_and_low_posture_change_the_configurator_plan_and_commands
+tests/e2e/test_llm_rate_aware_recon_configurator_e2e.py::test_stats_and_yaml_are_the_same_measured_posture
+tests/e2e/test_llm_rate_aware_recon_configurator_e2e.py::test_an_unreadable_posture_omits_every_target_facing_pod
+  <worktree>/.venv/lib/python3.12/site-packages/neo4j/_sync/driver.py:547: DeprecationWarning: Relying on Driver's destructor to close the session is deprecated. Please make sure to close the session. Use it as a context (`with` statement) or make sure to call `.close()` explicitly. Future versions of the driver will not close drivers automatically.
+    _deprecation_warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+3 passed, 3 warnings in 316.53s (0:05:16)
+<worktree>/.venv/lib/python3.12/site-packages/neo4j/_sync/driver.py:547: DeprecationWarning: Relying on Driver's destructor to close the session is deprecated. Please make sure to close the session. Use it as a context (`with` statement) or make sure to call `.close()` explicitly. Future versions of the driver will not close drivers automatically.

@@ -1,0 +1,33 @@
+[gate:run-a] provider
+......................                                                   [100%]
+=============================== warnings summary ===============================
+tests/e2e/test_deterministic_llm_provider.py: 22 warnings
+  /home/alelxsalc03/Desktop/powerpoint/polyphemus/.worktrees/rate-limit-job-admission-e2e/.venv/lib/python3.12/site-packages/neo4j/_sync/driver.py:547: DeprecationWarning: Relying on Driver's destructor to close the session is deprecated. Please make sure to close the session. Use it as a context (`with` statement) or make sure to call `.close()` explicitly. Future versions of the driver will not close drivers automatically.
+    _deprecation_warn(
+
+tests/e2e/test_deterministic_llm_provider.py::test_the_real_production_client_drives_the_fixture_to_both_verdicts
+  /home/alelxsalc03/Desktop/powerpoint/polyphemus/.worktrees/rate-limit-job-admission-e2e/tests/e2e/test_deterministic_llm_provider.py:597: UserWarning: Parameters {'max_completion_tokens'} should be specified explicitly. Instead they were passed in as part of `model_kwargs` parameter.
+    model = build_chat_model("openai", provider.MODEL_ID)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+22 passed, 23 warnings in 48.59s
+/home/alelxsalc03/Desktop/powerpoint/polyphemus/.worktrees/rate-limit-job-admission-e2e/.venv/lib/python3.12/site-packages/neo4j/_sync/driver.py:547: DeprecationWarning: Relying on Driver's destructor to close the session is deprecated. Please make sure to close the session. Use it as a context (`with` statement) or make sure to call `.close()` explicitly. Future versions of the driver will not close drivers automatically.
+[gate:run-a] functional matrix
+.......s                                                                 [100%]
+=============================== warnings summary ===============================
+tests/e2e/test_rate_limit_admission_e2e.py::test_rate_aware_admission_over_the_posture_matrix[no_limiter]
+tests/e2e/test_rate_limit_admission_e2e.py::test_rate_aware_admission_over_the_posture_matrix[high_limit]
+tests/e2e/test_rate_limit_admission_e2e.py::test_rate_aware_admission_over_the_posture_matrix[low_limit]
+tests/e2e/test_rate_limit_admission_e2e.py::test_rate_aware_admission_over_the_posture_matrix[false_bypass]
+tests/e2e/test_rate_limit_admission_e2e.py::test_rate_aware_admission_over_the_posture_matrix[burst_inconclusive]
+tests/e2e/test_rate_limit_admission_e2e.py::test_rate_aware_admission_over_the_posture_matrix[rate_stage_error]
+tests/e2e/test_rate_limit_admission_e2e.py::test_the_functional_module_never_scripts_the_production_seams
+tests/e2e/test_rate_limit_admission_e2e.py::test_a_stale_profile_never_re_admits_an_intensive_runner
+  /home/alelxsalc03/Desktop/powerpoint/polyphemus/.worktrees/rate-limit-job-admission-e2e/.venv/lib/python3.12/site-packages/neo4j/_sync/driver.py:547: DeprecationWarning: Relying on Driver's destructor to close the session is deprecated. Please make sure to close the session. Use it as a context (`with` statement) or make sure to call `.close()` explicitly. Future versions of the driver will not close drivers automatically.
+    _deprecation_warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+SKIPPED [1] tests/e2e/test_rate_limit_admission_e2e.py:353: bring the #238 stack up with a short RATE_LIMIT_PROFILE_TTL_S (<= 5s) to exercise the stale-profile gate; the TTL is an agent-environment knob (saw '3600')
+7 passed, 1 skipped, 8 warnings in 397.50s (0:06:37)
+/home/alelxsalc03/Desktop/powerpoint/polyphemus/.worktrees/rate-limit-job-admission-e2e/.venv/lib/python3.12/site-packages/neo4j/_sync/driver.py:547: DeprecationWarning: Relying on Driver's destructor to close the session is deprecated. Please make sure to close the session. Use it as a context (`with` statement) or make sure to call `.close()` explicitly. Future versions of the driver will not close drivers automatically.

@@ -21,6 +21,7 @@ import asyncio
 from polymerhus.recon.control import pipeline
 from polymerhus.recon.crawl import crawl_agent, crawl_pod
 from polymerhus.recon.domain.types import JobSpec, PodExport
+from polymerhus.recon.domain.traffic_admission import BOUNDED_HTTP_COST
 
 AUTH_JOB = JobSpec(
     tool="steel_crawl",
@@ -29,6 +30,7 @@ AUTH_JOB = JobSpec(
     produces=["BaseURL", "Endpoint", "Parameter"],
     consumes="BaseURL",
     use_auth=True,
+    traffic_cost=BOUNDED_HTTP_COST,
     configurator_mode="agent",
 )
 
@@ -39,6 +41,7 @@ NON_AUTH_JOB = JobSpec(
     produces=["BaseURL", "Endpoint", "Parameter"],
     consumes="BaseURL",
     use_auth=False,
+    traffic_cost=BOUNDED_HTTP_COST,
     configurator_mode="agent",
 )
 
@@ -186,6 +189,8 @@ class FakeRegistry:
             {"run_id": run_id, "phase": phase, "job": job, "status": status, "stats": stats, "error": error}
         )
 
+    def set_run_stats(self, run_id, stats):
+        pass
 
 def test_pipeline_binds_steel_profile_and_cookies_to_crawl(tmp_path):
     from polymerhus.app.auth.store import AuthStore
@@ -210,7 +215,7 @@ def test_pipeline_binds_steel_profile_and_cookies_to_crawl(tmp_path):
 
     seen = {}
 
-    async def run_job(job, input_assets, *, run_id, phase, extra):
+    async def run_job(job, input_assets, *, run_id, phase, extra, prepared_pod_inputs=None):
         seen[job.tool] = extra
         return [PodExport(input_asset={}, verdict="success")]
 
@@ -234,7 +239,7 @@ def test_pipeline_binds_steel_profile_and_cookies_to_crawl(tmp_path):
 
 
 def test_pipeline_carries_no_viewer_url_into_crawl_job_stats():
-    async def run_job(job, input_assets, *, run_id, phase, extra):
+    async def run_job(job, input_assets, *, run_id, phase, extra, prepared_pod_inputs=None):
         if job.tool == "steel_crawl":
             return [PodExport(input_asset={}, verdict="success")]
         return [PodExport(input_asset={}, verdict="success")]

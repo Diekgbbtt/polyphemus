@@ -146,6 +146,20 @@ def test_every_repo_skill_conforms_to_data_section():
     assert not bad, f"non-conforming skills: {bad}"
 
 
+def test_rate_aware_recon_configuration_skill_documents_tool_controls():
+    """The Configurator's product skill teaches tool syntax/capabilities only;
+    the workflow and posture policy live in the role system prompt."""
+    name = "rate-aware-recon-configuration"
+    assert name in skills.list_skills()
+    assert skills.validate_skill(name) == []
+
+    body = skills.skill_for(name).lower()
+    for tool in ("katana", "arjun", "ffuf", "httpx"):
+        assert tool in body
+    for control in ("rate", "thread", "concurr", "delay"):
+        assert control in body
+
+
 # --- AST-222-07: a session agent loads a skill at runtime through the tool ---
 
 def test_session_agent_loads_skill_through_tool_at_phase_entry(tmp_path, monkeypatch):

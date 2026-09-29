@@ -249,3 +249,63 @@ def skip_reason() -> str | None:
                 "docker-compose.dev.yml up -d agent`) before the gateway live "
                 "tier")
     return None
+
+
+# --- the #238 E2E overlay: the gateway IS the deterministic fixture -------------
+#
+# The rate-limit E2E must not depend on the operator's upstream providers, so
+# `docker-compose.e2e.yml` routes BOTH long-horizon recon roles at a local
+# OpenAI-compatible fixture (`rate-limit-llm`) through the SAME production seam
+# this module exercises - `LLM_GATEWAY_URL` selects gateway mode, the role's
+# `openai:<model>` string selects the registered model. The helpers below are
+# what the functional tier uses to decide whether it can run and where the
+# control plane answers; they never reach the fixture's internals.
+
+E2E_COMPOSE = ["docker", "compose", "-f", "docker-compose.yml",
+               "-f", "docker-compose.e2e.yml"]
+
+CONTROL_PLANE_URL = (
+    f"http://127.0.0.1:{os.environ.get('POLYPHEMUS_API_PORT', '8080')}"
+)
+
+
+def e2e_compose_ps(service: str = AGENT_SERVICE) -> list[dict]:
+    """`docker compose ps` rows under the E2E OVERLAY ([] when down)."""
+    result = _run(E2E_COMPOSE + ["ps", "--format", "json", service])
+    if result.returncode != 0:
+        return []
+    rows = []
+    for line in result.stdout.strip().splitlines():
+        try:
+            rows.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return rows
+
+
+def e2e_agent_is_up() -> bool:
+    """True when the agent container of the E2E overlay is running."""
+    return any(row.get("State") == "running" for row in e2e_compose_ps())
+
+
+def e2e_gateway_is_the_fixture() -> bool:
+    """True when the RENDERED agent config routes the recon roles at the local
+    fixture - the property the functional tier depends on."""
+    result = _run(E2E_COMPOSE + ["config"])
+    if result.returncode != 0:
+        return False
+    return ("LLM_GATEWAY_URL: http://rate-limit-llm:8080/v1" in result.stdout
+            and "LLM_JOB_ORCHESTRATOR: openai:rate-admission-fixture" in result.stdout)
+
+
+def e2e_skip_reason() -> str | None:
+    """Why the #238 functional tier must skip, or None when it can run."""
+    if not e2e_agent_is_up():
+        return ("the E2E agent container is not running - bring the #238 stack up "
+                "(`docker compose -f docker-compose.yml -f docker-compose.e2e.yml "
+                "up -d postgres neo4j kali agent rate-limit-llm`)")
+    if not e2e_gateway_is_the_fixture():
+        return ("the E2E overlay does not route the recon roles at the local "
+                "fixture; the functional tier would call the operator's real "
+                "providers")
+    return None

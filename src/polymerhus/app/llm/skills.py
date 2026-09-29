@@ -209,12 +209,10 @@ ROLE_SKILLS: dict[str, tuple[str, ...]] = {
     # observations; classifying a page's rendering and architectural shape is
     # exactly what the two anatomy skills state.
     "triager": ("webpage-analysis", "webpage-profile"),
-    # The configurator role is reserved for the #238 profile-driven
-    # rate-limit configuration (its steering-fed throttle turn retired with
-    # the mid-run steering machinery, #243), and the control-plane
-    # orchestrator routes jobs over assets and phases - both are coverage
-    # bookkeeping over signals, not target knowledge.
-    "configurator": (),
+    # The Configurator decides which phase pods exist and how their tools are
+    # parameterised from the measured posture. Its product knowledge is the
+    # bounded syntax/capability guide for the configurable tools.
+    "configurator": ("rate-aware-recon-configuration",),
     "job_orchestrator": (),
     # -- analysis (exempt: local-context reasoning only) ------------------------
     # The three proposers reason over the published L0/L1 substrate into typed

@@ -165,7 +165,9 @@ async def default_triager_fn(spec: dict, observation: RawObservation,
                 "no bound pod session/harness for the stateful triager turn (D84-14)")
         tools = triager_react_tools(hc.memory_store, hc.spec_id,
                                     log=hc.log, variant_ref=hc.variant_ref or "",
-                                    graph_view_fn=hc.graph_view_fn)
+                                    graph_view_fn=hc.graph_view_fn,
+                                    project_id=getattr(
+                                        hc.capture_context, "project_id", "") or "")
         delta = _dicts_to_lc(list(messages))
         from polymerhus.app.auth.seams import auth_capable_binding  # noqa: PLC0415
 
@@ -225,6 +227,8 @@ def runner_react_tools(exec_fn, memory_store, spec_id, log, variant_ref, *,
     lightrag branch (always-bound as of #197 - the `HUNTING_LIGHTRAG_TOOL` gate
     is REMOVED, fail-open to a degraded bundle), and the ONE shared `graph_view`
     read-only L0/L1 tool (#197) the runner uses to locate the target's surface.
+    The read-only `rate_limit_posture` tool (#238 follow-up) is bound here too:
+    an advisory read of the measured per-target limit, never enforcement.
     The T3 (#179) `KbObservation` recording is bound to the SAME log + variant
     the exec tool records into. The former `kb_retrieve` symptom-technique typed
     seam (surface B) is retired. Constructed PER STRETCH because `exec` carries
@@ -239,6 +243,7 @@ def runner_react_tools(exec_fn, memory_store, spec_id, log, variant_ref, *,
     ]
     tools += [KbQueryTool(log=log, variant_ref=variant_ref)]
     tools += _graph_view_tools(graph_view_fn)
+    tools.append(_posture_tool(project_id))
     if replay_fn is not None:
         # The description is the canonical contract (#196) imported from
         # `http_history_contract` - the pod and the hunter's read pair teach the
@@ -252,19 +257,26 @@ def runner_react_tools(exec_fn, memory_store, spec_id, log, variant_ref, *,
 
 
 def triager_react_tools(memory_store, spec_id, *, kb_fn=None, kb_lookup=None,
-                        log=None, variant_ref="", graph_view_fn=None):
+                        log=None, variant_ref="", graph_view_fn=None,
+                        project_id=""):
     """The Triager's bound-tool set (D84-27): note read + the always-bound
     `query_lightrag` KB tool + the shared `graph_view` L0/L1 tool (#197) - NEVER
     exec (the critic never touches the target). The triager's KB reads are
     CONTEXT reads (D84-27), so `log`/`variant_ref` may be unbound - a logless KB
     tool records nothing (fail-open); when the harness provides them, the reads
-    are recorded against the current variant (T3/#179)."""
+    are recorded against the current variant (T3/#179).
+
+    The read-only `rate_limit_posture` tool (#238 follow-up) is bound here too
+    (operator ruling, 2026-09-28): the posture is readable ONLY inside the
+    test-executor pod - the Runner, which decides the traffic, and the Triager,
+    which judges what the Runner did. The Hunter does NOT bind it."""
     from polymerhus.attack.hunting.pod.note_tool import PodNoteTool  # noqa: PLC0415
     from polymerhus.attack.hunting.pod.tools import KbQueryTool  # noqa: PLC0415
 
     tools = [PodNoteTool(store=memory_store, spec_id=spec_id)]
     tools += [KbQueryTool(log=log, variant_ref=variant_ref)]
     tools += _graph_view_tools(graph_view_fn)
+    tools.append(_posture_tool(project_id))
     return tools
 
 
@@ -277,3 +289,15 @@ def _graph_view_tools(graph_view_fn=None) -> list:
     )
 
     return [build_graph_view_tool(graph_view_fn)]
+
+
+def _posture_tool(project_id: str):
+    """The read-only rate-limit posture tool (#238 follow-up). ADVISORY: the pod
+    roles read the known limit; nothing here throttles their traffic. Bound ONLY
+    to the test-executor pod's Runner and Triager (operator ruling, 2026-09-28) -
+    never the Hunter."""
+    from polymerhus.app.rate_limit.tool import (  # noqa: PLC0415
+        build_rate_limit_posture_tool,
+    )
+
+    return build_rate_limit_posture_tool(project_id or None)

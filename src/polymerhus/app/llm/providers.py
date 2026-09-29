@@ -362,8 +362,8 @@ class Role:
 # like the hunter (D84-1). These are TUNABLE
 # baselines; #99 makes them capability-adaptive and fail-safe per model.
 # `agent_mode="session"` marks the roles that run STATEFUL per instance (#94): the
-# per-pod triager and configurator (their own pod session thread each), the
-# per-run orchestrator actor, and the analysis proposers (per-pass stateful turns).
+# per-pod triager, the run-scoped phase Configurator, the per-run orchestrator
+# actor, and the analysis proposers (per-pass stateful turns).
 ROLES: tuple[Role, ...] = (
     Role("configurator",     "LLM_CONFIGURATOR",     "session"),
     Role("triager",          "LLM_TRIAGER",          "session",  "low"),

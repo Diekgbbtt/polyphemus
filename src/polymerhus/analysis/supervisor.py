@@ -550,9 +550,11 @@ async def analyse_chunked(
     # chunk IS one job's curated output - so the job name rides through, keeping
     # `chunk_id` (and the dispatch ids derived from it) deterministic per pushed
     # job, which is what makes a replayed run dedup rather than double.
+    from polymerhus.recon.domain.traffic_admission import NON_TARGET_COST
     from polymerhus.recon.domain.types import JobSpec
     pseudo_job = JobSpec(tool=chunk.job or f"stream-{chunk.run_id}", skill="analysis",
-                         command_template="", produces=[], consumes="BaseURL")
+                         command_template="", produces=[], consumes="BaseURL",
+                         traffic_cost=NON_TARGET_COST)
     chunks = chunks_for_job(pseudo_job, assets, observations)
     if not chunks:
         # Valid empty: nothing in this payload to judge (the terminal drain marker

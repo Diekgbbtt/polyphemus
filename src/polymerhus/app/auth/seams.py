@@ -10,14 +10,17 @@ reimplementation of either the tool or the skill surface.
 
 Scope rules (operator rulings): the analysis-domain agents never bind
 authentication capability; since #223 the recon orchestrator (`job_orchestrator`)
-arms the write-capable auth surface (the roster still declares it exempt - no
-catalogue skill bears - so the arming rides `with_write_skill`, never the roster,
-D223-13); the recon job-specific agents bind only the read-only surface (the pod
+arms the write-capable auth surface (D223-13). It remains roster-exempt, so the
+write-capable exempt path below supplies `load_skill` + `write_skill` +
+`auth_store` and the project `authn` skill; the explicit `project_id` is
+threaded through both the skill binding and the `auth_store` tool - never
+silently falling back to the deployment-wide `config.PROJECT_ID` when a caller
+passed one. Recon job-specific agents bind only the read-only surface (the pod
 triager's `auth_capable_binding("triager")`, no `write_skill`; D223-5 forbids the
 authenticate/write capability, not the read-only `auth_store` binding); every
-other stateful agent (the roster's bound roles) binds the
-read-only surface. Project scope is tool-owned (`config.AUTH_STORE`-independent -
-the tools read `config.PROJECT_ID` themselves), so no agent harness threads identity.
+other stateful agent in the roster binds the read-only surface. Callers with an
+explicit project thread it through the binding; omitted scope falls back lazily
+to the deployment-wide `config.PROJECT_ID`.
 
 Import performs no I/O and touches no env (CODING_STANDARD section 6): the
 collaborators resolve lazily inside the call.
@@ -49,8 +52,8 @@ def auth_capable_binding(
     (it appends `write_skill` there); no caller passes it today except the
     gateway. `store`/`skill_store` are the injectable seams (tests);
     `project_id` scopes the armed surface explicitly (default: the tool-owned
-    project, resolved lazily), production resolves the project scope
-    tool-owned, so neither the site nor the harness passes an identity.
+    project, resolved lazily). The gateway passes its run's project explicitly;
+    callers without a project retain the deployment-wide fallback.
     """
     from polymerhus.app.auth.tool import build_auth_store_tool  # noqa: PLC0415
     from polymerhus.app.llm.skills import (  # noqa: PLC0415
@@ -61,7 +64,12 @@ def auth_capable_binding(
         skill_index_middleware,
     )
 
-    binding = skill_agent_binding(role_id, store=skill_store)
+    # The explicit project scope is threaded into the skill binding itself
+    # (not only into the tool factories below): on the BOUND path the binding
+    # resolves the project ONCE and carries it in its context, so the
+    # project-authored `authn` procedure and the `write_skill`/`auth_store`
+    # bindings can never disagree about which project's bundles they address.
+    binding = skill_agent_binding(role_id, project_id=project_id, store=skill_store)
     if not binding.tools:
         if not with_write_skill:
             # An exempt role binds no skill surface: no auth capability either.
@@ -92,7 +100,7 @@ def auth_capable_binding(
         tools.append(build_write_skill_tool(context.get("project_id"), store=skill_store))
     return replace(
         binding,
-        tools=[*tools, build_auth_store_tool(store=store)],
+        tools=[*tools, build_auth_store_tool(project_id=project_id, store=store)],
         context=context,
     )
 

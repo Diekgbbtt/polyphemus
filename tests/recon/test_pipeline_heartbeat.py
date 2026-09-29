@@ -10,6 +10,7 @@ def test_heartbeat_tick_fires_and_is_cancelled(monkeypatch):
         def create_run(self, *a, **k): pass
         def upsert_job(self, *a, **k): pass
         def set_run_status(self, *a, **k): pass
+        def set_run_stats(self, *a, **k): pass
 
     monkeypatch.setattr(pipeline.config, "HEARTBEAT_TICK_SECONDS", 0.01, raising=False)
     monkeypatch.setattr(pipeline, "_touch_heartbeat", lambda rid: ticks.append(rid))

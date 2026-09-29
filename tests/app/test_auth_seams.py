@@ -31,19 +31,17 @@ def test_analysis_role_gains_no_auth_capability() -> None:
 
 
 def test_exempt_role_gains_no_auth_capability() -> None:
-    # configurator is signal-only (exempt); it waits for #223 for its binding.
-    binding = auth_capable_binding("configurator")
+    # assigner is an analysis proposer with local-context-only reasoning.
+    binding = auth_capable_binding("assigner")
 
     assert binding.tools == []
     assert binding.context == {}
 
 
 def test_orchestrator_arms_the_write_capable_auth_surface() -> None:
-    """#223 D223-13: the recon orchestrator's roster exemption is lifted
-    through the write-capable binding - `auth_store`, `load_skill`,
-    `write_skill`, and the per-project `authn` procedure in the bounded set.
-    The catalogue roster still declares it exempt (no catalogue skill bears),
-    so the arming rides `with_write_skill`, never the roster."""
+    """The auth-only gateway carries `auth_store`, `load_skill`, `write_skill`
+    and only the project `authn` procedure. The dormant bypass procedure is
+    not in its skill context."""
     binding = auth_capable_binding(
         "job_orchestrator", project_id="p1", with_write_skill=True)
 

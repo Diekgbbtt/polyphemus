@@ -57,7 +57,11 @@ def _build_service():
     config = load_config()
     registry = None
     lease_manager = None
-    if config.enabled:
+    # #238: capture and governance are separate switches, but the GOVERNOR runs
+    # inside the proxy process and needs the same namespace/registry plumbing the
+    # capture plane uses - a capture-off deployment must still be able to lease
+    # and register an armed policy.
+    if config.enabled or config.governor_enabled:
         registry = SourceRegistry(config.registry_path)
         # Leased namespaces cannot reach Docker's resolver (`127.0.0.11` is the
         # CONTAINER's loopback); the forwarder serves it on each lease gateway,
@@ -108,12 +112,23 @@ def execute_command(
     variant_ref: str = "",
     derived_from: str = "",
     replay_kind: str = "",
+    stdin_text: str | None = None,
+    traffic_policy: dict | None = None,
 ) -> dict:
     """Run a shell command in /work/{session_id}.
 
     Returns the legacy {stdout, stderr, returncode, duration_ms} plus exec_id,
     http_artifact_refs and capture_warning. Older callers that pass only
     (command, session_id) keep working unchanged.
+
+    `stdin_text` (#238) is the private channel for a secret-bearing payload -
+    the rate-limit experiment spec. It reaches the child's stdin and is never
+    echoed back in this envelope.
+
+    `traffic_policy` (#238 Task 7) is the measured per-target budget, and it is
+    INDEPENDENT of the capture context: a governed command is refused
+    (returncode 78 + traffic_warning, nothing executed) when the namespace or
+    the proxy cannot enforce it, and the refusal never carries the policy back.
     """
     try:
         result = _get_service().execute(
@@ -126,6 +141,8 @@ def execute_command(
             variant_ref=variant_ref,
             derived_from=derived_from,
             replay_kind=replay_kind,
+            stdin_text=stdin_text or "",
+            traffic_policy=traffic_policy,
         )
     except Exception as exc:  # noqa: BLE001 - never take the exec server down
         return {
@@ -187,7 +204,9 @@ def replay_http_request(
 
 
 def proxy_status() -> dict:
-    """Per-component health: MCP, proxy, routing, namespace pool and store."""
+    """Per-component health: MCP, proxy, routing, namespace pool and store, PLUS
+    the #238 runtime-capability surface (`traffic_governor`, `build`,
+    `wordlists`) the controller negotiates against before any target traffic."""
     try:
         return _get_service().proxy_status()
     except Exception as exc:  # noqa: BLE001
@@ -199,6 +218,13 @@ def proxy_status() -> dict:
             "namespaces": {"ok": False, "detail": f"status error: {exc}"},
             "store": {"ok": False, "detail": f"status error: {exc}"},
             "capture": {"enabled": False},
+            "traffic_governor": {
+                "governor_enabled": False, "capture_enabled": False,
+                "supported_policy_versions": [],
+                "refusals": {"commands_refused": 0, "last_refusal": None},
+            },
+            "build": {"revision": "unknown", "vegeta_module": None, "vegeta_version": None},
+            "wordlists": {},
         }
 
 

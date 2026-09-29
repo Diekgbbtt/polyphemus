@@ -34,6 +34,11 @@ def _env_float(name: str, default: float) -> float:
 class HttpHistoryConfig:
     store_root: str = "/data"
     enabled: bool = True
+    # #238: the egress governor is a SEPARATE switch from capture. Capture-off
+    # must not disarm an armed policy, so the proxy and the governor have their
+    # own knob; both default ON (an unenforceable policy must be refused, never
+    # silently run unthrottled).
+    governor_enabled: bool = True
     max_body_bytes: int = 5 * 1024 * 1024
     pool_size: int = 8
     ttl_s: int = 900
@@ -54,6 +59,7 @@ def load_config() -> HttpHistoryConfig:
     return HttpHistoryConfig(
         store_root=os.environ.get("KALI_HTTP_HISTORY_ROOT", "/data"),
         enabled=_env_bool("KALI_HTTP_CAPTURE_ENABLED", True),
+        governor_enabled=_env_bool("KALI_HTTP_GOVERNOR_ENABLED", True),
         max_body_bytes=_env_int("KALI_HTTP_MAX_BODY_BYTES", 5 * 1024 * 1024),
         pool_size=max(1, min(256, _env_int("KALI_HTTP_NAMESPACE_POOL", 8))),
         ttl_s=_env_int("KALI_HTTP_LEASE_TTL_S", 900),

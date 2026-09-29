@@ -35,6 +35,12 @@ class FakeRegistry:
             }
         )
 
+    def set_run_stats(self, run_id, stats):
+        # #238 follow-up: the pipeline persists the traffic-admission envelope
+        # through this additive seam before any runner starts.
+        self.run_stats = getattr(self, "run_stats", {})
+        self.run_stats.update(stats)
+
 
 def make_load_settings(settings):
     return lambda project_id: settings
@@ -64,7 +70,7 @@ def test_phases_run_in_order_behind_a_barrier():
     phase0_started = asyncio.Event()
     phase0_gate = asyncio.Event()
 
-    async def run_job(job, input_assets, *, run_id, phase, extra):
+    async def run_job(job, input_assets, *, run_id, phase, extra, prepared_pod_inputs=None):
         call_order.append((phase, job.tool))
         if phase == 0:
             phase0_started.set()
@@ -114,7 +120,7 @@ def test_same_phase_jobs_run_sequentially_not_concurrently():
     max_running = 0
     order = []
 
-    async def run_job(job, input_assets, *, run_id, phase, extra):
+    async def run_job(job, input_assets, *, run_id, phase, extra, prepared_pod_inputs=None):
         nonlocal running, max_running
         running += 1
         max_running = max(max_running, running)
@@ -146,7 +152,7 @@ def test_same_phase_jobs_run_sequentially_not_concurrently():
 
 
 def test_job_with_all_pods_failed_is_degraded_and_run_completes():
-    async def run_job(job, input_assets, *, run_id, phase, extra):
+    async def run_job(job, input_assets, *, run_id, phase, extra, prepared_pod_inputs=None):
         return [PodExport(input_asset={}, verdict="failed", error="boom")]
 
     registry = FakeRegistry()
@@ -198,7 +204,7 @@ def test_feed_projects_store_material_only_to_use_auth_jobs(tmp_path):
 
     seen_extra = {}
 
-    async def run_job(job, input_assets, *, run_id, phase, extra):
+    async def run_job(job, input_assets, *, run_id, phase, extra, prepared_pod_inputs=None):
         seen_extra[job.tool] = extra
         return [PodExport(input_asset={}, verdict="success")]
 
@@ -247,7 +253,7 @@ def test_feed_absent_without_a_verdict_account():
 
     seen_extra = {}
 
-    async def run_job(job, input_assets, *, run_id, phase, extra):
+    async def run_job(job, input_assets, *, run_id, phase, extra, prepared_pod_inputs=None):
         seen_extra[job.tool] = extra
         return [PodExport(input_asset={}, verdict="success")]
 
@@ -267,11 +273,17 @@ def test_feed_absent_without_a_verdict_account():
         )
     )
 
-    assert seen_extra["httpx"] == {"project_id": "proj1", "scope_domain": "t.com"}
+    # Task 7 retired runtime policy forwarding: an HTTP job carries no
+    # `traffic_policy` in `extra` (auth keys also stay absent on an anonymous run).
+    assert set(seen_extra["httpx"]) == {
+        "project_id", "scope_domain"}
+    assert seen_extra["httpx"]["project_id"] == "proj1"
+    assert seen_extra["httpx"]["scope_domain"] == "t.com"
+    assert "auth_account" not in seen_extra["httpx"]
 
 
 def test_run_job_exception_marks_job_degraded_and_pipeline_still_completes():
-    async def run_job(job, input_assets, *, run_id, phase, extra):
+    async def run_job(job, input_assets, *, run_id, phase, extra, prepared_pod_inputs=None):
         raise RuntimeError("boom")
 
     registry = FakeRegistry()
@@ -295,7 +307,7 @@ def test_run_job_exception_marks_job_degraded_and_pipeline_still_completes():
 
 
 def test_no_pod_exports_marks_job_skipped():
-    async def run_job(job, input_assets, *, run_id, phase, extra):
+    async def run_job(job, input_assets, *, run_id, phase, extra, prepared_pod_inputs=None):
         return []
 
     registry = FakeRegistry()
@@ -322,7 +334,7 @@ def test_read_assets_raising_degrades_only_that_job_and_run_still_completes():
     best-effort per job too, not just `run_job` - a registry/Neo4j blip on
     one job's setup must not leave the whole run stuck non-terminal."""
 
-    async def run_job(job, input_assets, *, run_id, phase, extra):
+    async def run_job(job, input_assets, *, run_id, phase, extra, prepared_pod_inputs=None):
         return [PodExport(input_asset={}, verdict="success")]
 
     def flaky_read_assets(node_type, project_id):
@@ -358,7 +370,7 @@ def test_read_assets_raising_degrades_only_that_job_and_run_still_completes():
 def test_phase0_uses_seed_assets_later_phases_use_read_assets():
     seen_inputs = {}
 
-    async def run_job(job, input_assets, *, run_id, phase, extra):
+    async def run_job(job, input_assets, *, run_id, phase, extra, prepared_pod_inputs=None):
         seen_inputs[job.tool] = input_assets
         return [PodExport(input_asset={}, verdict="success")]
 
@@ -392,7 +404,7 @@ def test_job_stats_records_consumed_and_produced_lineage():
 
     Uses a wildcard target so discovery runs under the D14 scope gate; the
     D11 apex-prepend means dnsx consumes the apex plus the read_assets nodes."""
-    async def run_job(job, input_assets, *, run_id, phase, extra):
+    async def run_job(job, input_assets, *, run_id, phase, extra, prepared_pod_inputs=None):
         # Two pods, producing 3+2 assets and 1+4 observations merged.
         return [
             PodExport(input_asset={}, verdict="success",
@@ -441,7 +453,7 @@ def test_reprofile_job_stats_surface_endpoints_total():
     `endpoints_total` (the probe-set size) must surface into recon_jobs.stats
     so the phase's lineage is verifiable from persisted state (the D12
     `consumed` count is the pre-dedup endpoint population)."""
-    async def run_job(job, input_assets, *, run_id, phase, extra):
+    async def run_job(job, input_assets, *, run_id, phase, extra, prepared_pod_inputs=None):
         if job.tool == "httpx_reprofile":
             return [PodExport(
                 input_asset={"endpoints": [{"url": "https://h/a"}, {"url": "https://h/b"}]},
@@ -484,7 +496,7 @@ def test_batched_jsluice_job_gets_filtered_read_and_apex_for_downstream_batching
     seen_extra = {}
     where_seen = {}
 
-    async def run_job(job, input_assets, *, run_id, phase, extra):
+    async def run_job(job, input_assets, *, run_id, phase, extra, prepared_pod_inputs=None):
         seen_inputs[job.tool] = input_assets
         seen_extra[job.tool] = extra
         return [PodExport(input_asset={}, verdict="success")]
@@ -537,7 +549,7 @@ def _run_and_capture(settings, *, job_subset=None):
     call_order = []
     seen_inputs = {}
 
-    async def run_job(job, input_assets, *, run_id, phase, extra):
+    async def run_job(job, input_assets, *, run_id, phase, extra, prepared_pod_inputs=None):
         call_order.append(job.tool)
         seen_inputs[job.tool] = input_assets
         return [PodExport(input_asset={}, verdict="success")]
@@ -674,8 +686,9 @@ def test_job_stats_include_per_pod_commands(monkeypatch):
         def upsert_job(self, run_id, phase, job, status, stats=None, error=None):
             if status not in ("in_progress",):
                 captured[job] = stats
+        def set_run_stats(self, run_id, stats): pass
 
-    async def fake_run_job(job, input_assets, *, run_id, phase, extra):
+    async def fake_run_job(job, input_assets, *, run_id, phase, extra, prepared_pod_inputs=None):
         return [
             PodExport(input_asset=input_assets[0], verdict="success",
                       stats={"command": "subfinder -d example.com -all -json -silent"}),
@@ -692,6 +705,71 @@ def test_job_stats_include_per_pod_commands(monkeypatch):
     ))
 
     assert captured["subfinder"]["commands"] == ["subfinder -d example.com -all -json -silent"]
+
+
+def test_job_stats_redact_header_and_cookie_values(tmp_path):
+    """#238 A6: the persisted per-job command must NOT carry the authenticated
+    credential. The command is redacted before it reaches `recon_jobs.stats`."""
+    import asyncio
+
+    from polymerhus.app.auth.store import AuthStore
+    from polymerhus.recon.control import pipeline
+    from polymerhus.recon.control.authn_loop import GatewayVerdict
+    from polymerhus.recon.domain.types import PodExport
+
+    # Assembled from fragments: the sentinel never appears literally in source,
+    # and a failure names the surface rather than the value.
+    sentinel = "e2e" + "-persisted-secret"
+
+    store = AuthStore(tmp_path)
+    store.replace_operator_state(
+        "p1",
+        overview={"required_headers": ["X-Api-Key"]},
+        accounts={"alice": {
+            "origin": "operator",
+            "tokens": {"X-Api-Key": {"value": sentinel, "location": "header"}},
+            "snapshot": {"cookies": [{"name": "session", "value": sentinel}]},
+        }},
+    )
+
+    class _Gateway:
+        async def run_gateway(self, **kw):
+            return GatewayVerdict(outcome="authenticated", account="alice",
+                                  branch="request", rationale="t")
+
+        async def stop(self): pass
+
+    captured: dict = {}
+
+    class R(FakeRegistry):
+        def upsert_job(self, run_id, phase, job, status, stats=None, error=None):
+            super().upsert_job(run_id, phase, job, status, stats=stats, error=error)
+            if status != "in_progress" and job == "httpx":
+                captured["stats"] = stats
+
+    async def run_job(job, input_assets, *, run_id, phase, extra, prepared_pod_inputs=None):
+        command = (
+            "httpx -u https://x "
+            f"-H 'X-Api-Key: {sentinel}' "
+            f"-H 'Cookie: session={sentinel}'"
+        )
+        return [PodExport(input_asset={"name": "t.com"}, verdict="success",
+                          stats={"command": command}, target_responses=1)]
+
+    asyncio.run(pipeline.run_pipeline(
+        "p1", run_id="r1", job_subset=["httpx"],
+        run_job=run_job,
+        load_settings=make_load_settings({"target_domain": "*.t.com"}),
+        registry=R(),
+        read_assets=make_read_assets(),
+        orchestrator_factory=lambda run_id: _Gateway(),
+        auth_store=store,
+    ))
+
+    commands = captured["stats"]["commands"]
+    serialized = " ".join(commands)
+    assert sentinel not in serialized, "the credential leaked into job stats"
+    assert "[redacted]" in serialized
 
 
 def test_capture_job_stats_folds_every_pod_fragment():
@@ -756,7 +834,7 @@ def test_job_stats_surface_pod_capture_coverage(monkeypatch):
             if status not in ("in_progress",):
                 captured.setdefault(job, stats)
 
-    async def fake_run_job(job, input_assets, *, run_id, phase, extra):
+    async def fake_run_job(job, input_assets, *, run_id, phase, extra, prepared_pod_inputs=None):
         capture = (
             {"sent": True, "refs": 2, "warning": None}
             if job.tool == "subfinder"
@@ -799,7 +877,7 @@ def test_no_mid_run_steering_inputs_pass_unfiltered_and_no_steering_key(monkeypa
     captured_inputs = {}
     captured_extras = {}
 
-    async def fake_run_job(job, input_assets, *, run_id, phase, extra):
+    async def fake_run_job(job, input_assets, *, run_id, phase, extra, prepared_pod_inputs=None):
         captured_inputs[job.tool] = [a.get("url") or a.get("name") for a in input_assets]
         captured_extras[job.tool] = dict(extra)
         return []
@@ -808,6 +886,7 @@ def test_no_mid_run_steering_inputs_pass_unfiltered_and_no_steering_key(monkeypa
         def create_run(self, *a, **k): pass
         def set_run_status(self, *a, **k): pass
         def upsert_job(self, *a, **k): pass
+        def set_run_stats(self, *a, **k): pass
 
     class _Gateway:
         async def run_gateway(self, **kw):
@@ -854,7 +933,7 @@ def test_pipeline_default_seam_is_the_gateway_actor_and_reaps_it(monkeypatch, tm
 
     captured_extras = {}
 
-    async def fake_run_job(job, input_assets, *, run_id, phase, extra):
+    async def fake_run_job(job, input_assets, *, run_id, phase, extra, prepared_pod_inputs=None):
         captured_extras[job.tool] = dict(extra)
         return []
 
@@ -862,6 +941,7 @@ def test_pipeline_default_seam_is_the_gateway_actor_and_reaps_it(monkeypatch, tm
         def create_run(self, *a, **k): pass
         def set_run_status(self, *a, **k): pass
         def upsert_job(self, *a, **k): pass
+        def set_run_stats(self, *a, **k): pass
 
     from langchain_core.language_models import BaseChatModel
     from langchain_core.messages import AIMessage
@@ -945,7 +1025,7 @@ def test_pipeline_terminal_runs_the_shared_run_scoped_flush(monkeypatch):
         )[1],
     )
 
-    async def run_job(job, input_assets, *, run_id, phase, extra):
+    async def run_job(job, input_assets, *, run_id, phase, extra, prepared_pod_inputs=None):
         return [PodExport(input_asset={}, verdict="success")]
 
     asyncio.run(pipeline.run_pipeline(

@@ -7,6 +7,7 @@ live network namespace.
 """
 from __future__ import annotations
 
+import inspect
 import os
 import socket
 import subprocess
@@ -19,6 +20,7 @@ from typing import Callable
 
 from kali.http_history.addon import UNSCOPED_PROJECT
 from kali.http_history.config import HttpHistoryConfig, load_config
+from kali.http_history.governor import validate_traffic_policy
 from kali.http_history.ids import new_ulid
 from kali.http_history.models import CaptureContext
 from kali.http_history.replay import apply_overrides
@@ -26,6 +28,11 @@ from kali.http_history.sanitize import sanitize_artifact, sanitize_summary
 from kali.http_history.store import HttpHistoryStore
 
 RESERVED_PROJECTS = frozenset({UNSCOPED_PROJECT})
+
+#: The stable refusal code for "an armed TrafficPolicy could not be enforced".
+#: 78 is EX_CONFIG ("configuration error") - distinguishable from a tool's own
+#: non-zero exit, and non-zero so the pod's gate treats the command as failed.
+TRAFFIC_REFUSAL_RETURNCODE = 78
 
 #: Open SQLite handles kept per MCP process (LRU; one process serves many
 #: projects, and an unbounded cache leaks a connection per project seen).
@@ -40,6 +47,20 @@ class BodyUnavailableError(ValueError):
     """The recorded request declares a body whose bytes are not in the store."""
 
 
+def _runner_accepts_stdin(runner) -> bool:
+    """True only when a runner seam explicitly declares `stdin_text`.
+
+    The seam is polymorphic (`default_runner` takes the kwarg; every pre-#238
+    test fake takes four positional parameters), so the payload is forwarded by
+    signature inspection rather than by convention - the same guard
+    `pod._accepts_capture_context` uses. A legacy fake keeps working untouched.
+    """
+    try:
+        return "stdin_text" in inspect.signature(runner).parameters
+    except (TypeError, ValueError):
+        return False
+
+
 @dataclass
 class ExecOutcome:
     stdout: str
@@ -49,8 +70,19 @@ class ExecOutcome:
 
 
 def default_runner(
-    command: str, session_id: str, timeout_s: int, namespace: str | None = None
+    command: str,
+    session_id: str,
+    timeout_s: int,
+    namespace: str | None = None,
+    stdin_text: str = "",
 ) -> ExecOutcome:
+    """Run `command` in a non-login shell.
+
+    `stdin_text` is the PRIVATE channel a caller uses to hand a child a payload
+    that must not appear in argv (the #238 rate-limit experiment spec carries
+    the authenticated context). An empty/absent value keeps the pre-#238
+    behaviour exactly: `subprocess.run(input=None)`.
+    """
     workdir = f"/work/{session_id}"
     os.makedirs(workdir, exist_ok=True)
     # NON-login shell, deliberately. `bash -lc` makes the login profile
@@ -70,7 +102,12 @@ def default_runner(
     start = time.time()
     try:
         proc = subprocess.run(
-            argv, cwd=workdir, capture_output=True, text=True, timeout=timeout_s
+            argv,
+            cwd=workdir,
+            capture_output=True,
+            text=True,
+            timeout=timeout_s,
+            input=stdin_text or None,
         )
         return ExecOutcome(
             stdout=proc.stdout,
@@ -109,6 +146,10 @@ class HttpHistoryService:
         self._stores: OrderedDict[str, HttpHistoryStore] = OrderedDict()
         self._lock = threading.RLock()
         self._limits_checked_at: dict[str, float] = {}
+        # #238 follow-up (Task 7): the exec-seam refusal counters `proxy_status()`
+        # reports under `traffic_governor.refusals`.
+        self._refusal_count = 0
+        self._last_refusal: str | None = None
         self._proxy_probe = proxy_probe or self._default_proxy_probe
         self._routing_probe = routing_probe or self._default_routing_probe
 
@@ -234,16 +275,52 @@ class HttpHistoryService:
         variant_ref: str = "",
         derived_from: str = "",
         replay_kind: str = "",
+        stdin_text: str = "",
+        traffic_policy: dict | None = None,
     ) -> dict:
+        """Run a command, optionally feeding `stdin_text` to the child.
+
+        `stdin_text` is NEVER echoed back in the returned envelope: it is the
+        private channel for secret-bearing payloads (the #238 experiment spec).
+        It is forwarded only to a runner that declares the parameter, so every
+        pre-#238 runner keeps working unchanged.
+
+        `traffic_policy` (#238 Task 7) is INDEPENDENT of the capture context. A
+        present-and-readable policy arms the egress governor: the command only
+        runs once this service holds a namespace AND the recording/ governing
+        proxy is proven ready, and that policy is registered against the lease's
+        source address so the proxy enforces the SAME bucket for every
+        concurrent pod of this target. Anything that prevents enforcement
+        returns `TRAFFIC_REFUSAL_RETURNCODE` with a `traffic_warning` and runs
+        NOTHING - the pipeline may continue degraded, but target traffic must
+        never escape unthrottled.
+        """
+        if isinstance(traffic_policy, dict) and not traffic_policy:
+            # The transport default for "nothing attached" - not a malformed
+            # budget. It keeps the pre-#238 path exactly.
+            traffic_policy = None
+        armed = traffic_policy is not None
+        validated = validate_traffic_policy(traffic_policy) if armed else None
         exec_id = new_ulid()
         lease = None
         capture_warning: str | None = None
-        if self.config.enabled and project_id and self.lease_manager is not None:
+        refusal: str | None = None
+        if armed and validated is None:
+            # A policy was demanded that this process cannot interpret: enforce
+            # nothing, run nothing.
+            refusal = "traffic policy not enforceable: unrecognised traffic-policy payload"
+        elif armed and not self.config.governor_enabled:
+            refusal = "traffic governor disabled (KALI_HTTP_GOVERNOR_ENABLED=false)"
+
+        wants_lease = (
+            (self.config.enabled or armed) and bool(project_id) and self.lease_manager is not None
+        )
+        if refusal is None and wants_lease:
             try:
-                lease = self.lease_manager.acquire(
-                    session_id=session_id,
-                    project_id=project_id,
-                    context=CaptureContext(
+                acquire_kwargs = {
+                    "session_id": session_id,
+                    "project_id": project_id,
+                    "context": CaptureContext(
                         session_id=session_id,
                         run_id=run_id,
                         spec_id=spec_id,
@@ -252,27 +329,79 @@ class HttpHistoryService:
                         derived_from=derived_from or None,
                         replay_kind=replay_kind or None,
                     ),
-                )
+                }
+                if armed:
+                    # Only the governed path asks for the policy channel: a
+                    # pre-#238 lease manager keeps working untouched, and an
+                    # ARMED policy it cannot carry becomes a loud refusal.
+                    acquire_kwargs["traffic_policy"] = validated
+                lease = self.lease_manager.acquire(**acquire_kwargs)
             except Exception as exc:  # noqa: BLE001 - capture is fail-open
-                capture_warning = f"capture unavailable: {type(exc).__name__}: {exc}"
-        elif self.config.enabled and project_id and self.lease_manager is None:
+                if armed:
+                    refusal = f"governor unavailable: {type(exc).__name__}: {exc}"
+                else:
+                    capture_warning = f"capture unavailable: {type(exc).__name__}: {exc}"
+
+        if refusal is None and armed and lease is None:
+            # An armed policy with no namespace to attach it to has nowhere to
+            # be enforced from: refuse rather than release raw traffic.
+            if self.lease_manager is None:
+                refusal = "governor unavailable: no namespace lease manager configured"
+            elif not project_id:
+                refusal = (
+                    "governor unavailable: no project identity to register the policy against"
+                )
+            else:
+                refusal = "governor unavailable: no namespace lease available"
+
+        if (
+            refusal is None
+            and not armed
+            and self.config.enabled
+            and project_id
+            and self.lease_manager is None
+        ):
             capture_warning = "capture unavailable: no namespace lease manager configured"
 
+        if refusal is None and armed:
+            # The command is about to egress through the proxy, so the proxy has
+            # to answer RIGHT NOW: a namespace that exists but is not actually
+            # redirected is exactly the unthrottled case the spec forbids.
+            probe = self._proxy_probe()
+            if not probe.get("ok"):
+                refusal = f"governor unavailable: {probe.get('detail', 'proxy not ready')}"
+
         namespace = lease.namespace if lease is not None else None
+        if refusal is not None:
+            # #238 follow-up (Task 7): a refusal is structured and VISIBLE.
+            with self._lock:
+                self._refusal_count += 1
+                self._last_refusal = refusal
         try:
-            outcome = self._runner(command, session_id, timeout_s, namespace)
+            if refusal is not None:
+                # NOTHING runs: no raw traffic for an ungoverned target.
+                outcome = None
+            elif stdin_text and _runner_accepts_stdin(self._runner):
+                outcome = self._runner(
+                    command, session_id, timeout_s, namespace, stdin_text=stdin_text
+                )
+            else:
+                outcome = self._runner(command, session_id, timeout_s, namespace)
         finally:
             refs: list[str] = []
             if lease is not None and project_id:
-                try:
-                    refs = self._refs_for_exec(project_id, exec_id)
-                except Exception as exc:  # noqa: BLE001
-                    capture_warning = f"capture lookup failed: {type(exc).__name__}: {exc}"
-                finally:
+                if refusal is None:
                     try:
-                        self.lease_manager.release(lease)
-                    except Exception:  # noqa: BLE001 - never break the command result
-                        pass
+                        refs = self._refs_for_exec(project_id, exec_id)
+                    except Exception as exc:  # noqa: BLE001
+                        capture_warning = f"capture lookup failed: {type(exc).__name__}: {exc}"
+                # The lease is ALWAYS returned - a refused command may have
+                # leased a namespace (that is how readiness was proven), and
+                # leaking it would exhaust the pool for the next pod.
+                try:
+                    self.lease_manager.release(lease)
+                except Exception:  # noqa: BLE001 - never break the command result
+                    pass
             # Storage cap (§5.C). The exec path is the only place that sees every
             # project, so it is where the store is trimmed - throttled per project
             # and completely best-effort: a trim failure must never reach the
@@ -280,6 +409,17 @@ class HttpHistoryService:
             if project_id:
                 self._enforce_limits_throttled(project_id)
 
+        if refusal is not None:
+            return {
+                "stdout": "",
+                "stderr": refusal,
+                "returncode": TRAFFIC_REFUSAL_RETURNCODE,
+                "duration_ms": 0,
+                "exec_id": exec_id,
+                "http_artifact_refs": [],
+                "capture_warning": capture_warning,
+                "traffic_warning": refusal,
+            }
         return {
             "stdout": outcome.stdout,
             "stderr": outcome.stderr,
@@ -288,6 +428,7 @@ class HttpHistoryService:
             "exec_id": exec_id,
             "http_artifact_refs": refs,
             "capture_warning": capture_warning,
+            "traffic_warning": None,
         }
 
     def _enforce_limits_throttled(self, project_id: str) -> None:
@@ -353,6 +494,31 @@ class HttpHistoryService:
         store = self._store_status()
         mcp = {"ok": True, "detail": "mcp server responding"}
         capture = {"enabled": self.config.enabled, "store_root": self.config.store_root}
+        # #238 follow-up (Task 7): the runtime-capability negotiation surface -
+        # what this process can ENFORCE and PROVE, so the controller can refuse an
+        # incompatible companion before any target traffic. Capture and governance
+        # are reported as SEPARATE switches.
+        from kali.http_history.capabilities import (  # noqa: PLC0415
+            build_provenance,
+            governance_capabilities,
+            wordlist_capabilities,
+        )
+
+        traffic_governor = governance_capabilities(
+            capture_enabled=self.config.enabled,
+            governor_enabled=self.config.governor_enabled,
+        )
+        traffic_governor["refusals"] = {
+            "commands_refused": self._refusal_count,
+            "last_refusal": self._last_refusal,
+        }
+        # #238 live fix (Task 1): the governor lives in the mitmdump process, so
+        # its live counters arrive through the addon's published snapshot. None
+        # when the proxy has not published one (a fresh or non-governing proxy):
+        # absence is reported as absence, never as a zeroed governor.
+        runtime = self._read_governor_status()
+        if runtime is not None:
+            traffic_governor["runtime"] = runtime
         ok = bool(proxy.get("ok") and routing.get("ok") and store.get("ok"))
         return {
             "ok": ok,
@@ -362,7 +528,22 @@ class HttpHistoryService:
             "namespaces": namespaces,
             "store": store,
             "capture": capture,
+            "traffic_governor": traffic_governor,
+            "build": build_provenance(),
+            "wordlists": wordlist_capabilities(),
         }
+
+    def _read_governor_status(self) -> dict | None:
+        """The addon's published snapshot, or None when it is absent/unreadable.
+        Absence is not an error: a fresh proxy has not published yet."""
+        from pathlib import Path  # noqa: PLC0415
+        import json  # noqa: PLC0415
+
+        path = Path(self.config.store_root) / "governor-status.json"
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
 
     def _default_proxy_probe(self) -> dict:
         try:

@@ -194,7 +194,7 @@ def _run_host(settings, *, service_nodes=None):
     driver) and returns (call_order, seen_inputs, curate_calls)."""
     call_order, seen_inputs, curate_calls = [], {}, []
 
-    async def run_job(job, input_assets, *, run_id, phase, extra):
+    async def run_job(job, input_assets, *, run_id, phase, extra, prepared_pod_inputs=None):
         call_order.append(job.tool)
         seen_inputs[job.tool] = input_assets
         from polymerhus.recon.control.job_agent import PodExport

@@ -1,13 +1,18 @@
 import re
 
 from polymerhus.recon.domain.types import JobSpec, ExecResult, Observation
+from polymerhus.recon.domain.traffic_admission import (
+    BOUNDED_HTTP_COST,
+    NON_TARGET_COST,
+)
 from polymerhus.recon.domain import pod
 from polymerhus.recon.domain.curator import curate
 from polymerhus.recon.control.jobs import JOBS
 
 HTTPX_JOB = JobSpec(tool="httpx", skill="http_probe",
                     command_template="httpx -u {target} -json -silent",
-                    produces=["BaseURL", "Endpoint"], consumes="Subdomain")
+                    produces=["BaseURL", "Endpoint"], consumes="Subdomain",
+                    traffic_cost=BOUNDED_HTTP_COST)
 
 FIX_LINE = '{"url":"https://app.example.com","input":"app.example.com","status_code":200,"scheme":"https","host":"1.2.3.4","tech":["nginx"]}'
 
@@ -370,6 +375,45 @@ def test_pod_real_parser_to_curator_seam():
     assert any(":Certificate" in cy for cy in captured_cypher)
 
 
+def test_pod_export_records_target_responses_from_parser_output():
+    """#238 A5: a pod whose parser produced output records a real target
+    observation, regardless of how the curator merged it."""
+    def exec_fn(cmd, sid, t):
+        return ExecResult(stdout=FIX_LINE_FULL, stderr="", returncode=0, duration_ms=5)
+
+    g = pod.build_pod_graph(
+        exec_fn=exec_fn,
+        curate_fn=lambda assets, obs, pid: (0, 0, [], []),  # a total duplicate
+        triage_fn=lambda er, assets, job: [],
+    )
+    out = g.invoke({"job": HTTPX_JOB, "input_asset": {"name": "app.example.com"},
+                    "asset_context": "", "extra": {}, "session_id": "run-obs",
+                    "iteration": 0, "project_id": "proj-obs"})
+
+    # The parser answered the target, even though every merge was a duplicate.
+    assert out["export"].verdict == "success"
+    assert out["export"].target_responses == 1
+    assert out["export"].assets_merged == 0 and out["export"].observations_merged == 0
+
+
+def test_pod_export_with_no_parser_output_records_no_target_responses():
+    """A pod that reached nothing (empty output) must NOT claim an observation."""
+    def exec_fn(cmd, sid, t):
+        return ExecResult(stdout="", stderr="", returncode=0, duration_ms=1)
+
+    g = pod.build_pod_graph(
+        exec_fn=exec_fn,
+        curate_fn=lambda assets, obs, pid: (len(assets), len(obs), assets, obs),
+        triage_fn=lambda er, assets, job: [],
+    )
+    out = g.invoke({"job": HTTPX_JOB, "input_asset": {"name": "app.example.com"},
+                    "asset_context": "", "extra": {}, "session_id": "run-noobs",
+                    "iteration": 0, "project_id": "proj-noobs"})
+
+    assert out["export"].verdict == "success"
+    assert out["export"].target_responses == 0
+
+
 TAKEOVER_JSON = (
     '[{"subdomain":"old.example.com","vulnerable":true,'
     '"service":"aws/s3","cname":"dangling-bucket.s3.amazonaws.com"}]'
@@ -627,6 +671,124 @@ def test_reprofile_configurator_builds_single_exec_over_full_endpoint_list():
     assert out["export"].stats.get("endpoints_total") == 2
 
 
+def test_build_pod_command_prefers_the_configured_template():
+    configured = pod.build_pod_command(
+        HTTPX_JOB,
+        {"name": "app.example.com"},
+        {},
+        "sess-1",
+        command_template="httpx -u {target} -rate-limit 2 -session {session}",
+    )
+    assert configured == (
+        "httpx -u app.example.com -rate-limit 2 -session sess-1"
+    )
+
+    fallback = pod.build_pod_command(
+        HTTPX_JOB, {"name": "app.example.com"}, {}, "sess-1"
+    )
+    assert fallback == "httpx -u app.example.com -json -silent"
+
+
+def test_configured_command_reaches_exec_and_retries_unchanged():
+    commands: list[str] = []
+    attempts = {"n": 0}
+    proposed = (
+        "httpx -u {target} -rate-limit 2 -threads 1 "
+        "-session {session} {auth_flags}"
+    )
+    assert "SECRET-COOKIE" not in proposed
+
+    def exec_fn(cmd, sid, t):
+        commands.append(cmd)
+        attempts["n"] += 1
+        rc = 1 if attempts["n"] == 1 else 0
+        return ExecResult(stdout=FIX_LINE, stderr="retry", returncode=rc)
+
+    g = pod.build_pod_graph(
+        exec_fn=exec_fn,
+        curate_fn=lambda a, o, p: (len(a), len(o), a, o),
+        triage_fn=lambda er, a, j: [],
+    )
+    out = g.invoke({
+        "job": HTTPX_JOB,
+        "input_asset": {"name": "app.example.com"},
+        "extra": {"auth_context": {"cookies": [
+            {"name": "sid", "value": "SECRET-COOKIE"}
+        ]}},
+        "configured_command": proposed,
+        "session_id": "sess-1",
+        "iteration": 0,
+        "project_id": "proj1",
+    })
+
+    assert out["export"].verdict == "success"
+    assert len(commands) == 2
+    assert commands[0] == commands[1]
+    assert "SECRET-COOKIE" in commands[0]
+    assert "{auth_flags}" not in commands[0]
+    assert "{session}" not in commands[0]
+    assert "-session sess-1" in commands[0]
+
+
+def test_configured_command_overrides_a_batch_job():
+    captured = {}
+
+    def exec_fn(cmd, sid, t):
+        captured["cmd"] = cmd
+        return ExecResult(stdout="", stderr="", returncode=0, duration_ms=1)
+
+    g = pod.build_pod_graph(
+        exec_fn=exec_fn,
+        curate_fn=lambda a, o, p: (len(a), len(o), a, o),
+        triage_fn=lambda er, a, j: [],
+    )
+    g.invoke({
+        "job": JOBS["jsluice"],
+        "input_asset": {"batch": ["https://h/app.js"]},
+        "extra": {},
+        "configured_command": "jsluice-batch {session}",
+        "session_id": "batch-s",
+        "iteration": 0,
+        "project_id": "proj1",
+    })
+
+    assert captured["cmd"] == "jsluice-batch batch-s"
+    assert "python3 -" not in captured["cmd"]
+
+
+def test_configured_command_overrides_one_pod_reprofile_and_fills_endpoints():
+    captured = {}
+
+    def exec_fn(cmd, sid, t):
+        captured["cmd"] = cmd
+        return ExecResult(stdout=_REPROFILE_STDOUT, stderr="", returncode=0, duration_ms=1)
+
+    g = pod.build_pod_graph(
+        exec_fn=exec_fn,
+        curate_fn=lambda a, o, p: (len(a), len(o), a, o),
+        triage_fn=lambda er, a, j: [],
+    )
+    g.invoke({
+        "job": REPROFILE_JOB,
+        "input_asset": {"endpoints": REPROFILE_ENDPOINTS},
+        "extra": {},
+        "configured_command": (
+            "httpx -l /work/{session}/custom.txt -rl 2 {endpoints}"
+        ),
+        "session_id": "reprofile-s",
+        "iteration": 0,
+        "project_id": "proj1",
+    })
+
+    cmd = captured["cmd"]
+    assert cmd.startswith(
+        "httpx -l /work/reprofile-s/custom.txt -rl 2 "
+    )
+    assert "https://h/api/v1/orders" in cmd
+    assert "https://h/" in cmd
+    assert "{endpoints}" not in cmd
+
+
 def test_reprofile_pod_without_endpoints_raises_not_silently_probes_nothing():
     """The one-pod dispatch seam is TOTAL: an endpoint_profiling pod MUST arrive
     with its packed `endpoints` set. A mis-shaped dispatch (no endpoints key)
@@ -721,7 +883,8 @@ def test_pod_export_records_executed_command():
         triage_fn=lambda exec_result, assets, job: [],
     )
     job = JobSpec(tool="whois", skill="whois_lookup",
-                  command_template="whois {domain}", produces=["Domain"], consumes="Domain")
+                  command_template="whois {domain}", produces=["Domain"], consumes="Domain",
+                  traffic_cost=NON_TARGET_COST)
     state = {"job": job, "input_asset": {"name": "example.com"}, "extra": {},
              "session_id": "s1", "project_id": "p1"}
     export = graph.invoke(state)["export"]
@@ -746,5 +909,7 @@ def test_no_per_pod_throttle_input_rate_profile_is_ignored():
          "auth_context": {"cookies": [{"name": "s", "value": "v"}]}},
         tool="ffuf",
     )
-    assert "-rate" not in cmd  # unthrottled interim posture until #238
+    # The retired `_RATE_FLAGS` slot stays retired: pacing never rides the
+    # command anymore, it rides the measured policy into Kali's governor.
+    assert "-rate" not in cmd
     assert "-H 'Cookie: s=v'" in cmd  # the feed projection still applies

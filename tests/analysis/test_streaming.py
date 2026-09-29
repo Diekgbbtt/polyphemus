@@ -8,10 +8,39 @@ passes, and the pipeline hook with the existing injected-fakes style.
 """
 import asyncio
 
+import pytest
+
 from polymerhus.recon.control import pipeline
+from polymerhus.recon.control import configurator as C
 from polymerhus.analysis import streaming
 from polymerhus.analysis.pod import AnalyserExport
 from polymerhus.recon.domain.types import PodExport
+
+
+@pytest.fixture(autouse=True)
+def _deterministic_phase_configurator(monkeypatch):
+    def configure_phase(project_id, run_id, phase, target_key, offers):
+        return C.ConfiguratorDecision(
+            phase=phase,
+            target_key=target_key,
+            posture_status="known_target",
+            pods=[
+                C.ReconPodProposal(
+                    job_name=offer.job_name,
+                    input_id=offer.input_id,
+                    command=(
+                        None
+                        if offer.configurator_mode == "agent"
+                        else (offer.command_template or "true")
+                    ),
+                    rationale="streaming-test default",
+                )
+                for offer in offers.offers
+            ],
+            rationale="streaming-test default",
+        )
+
+    monkeypatch.setattr(pipeline, "_default_configure_phase", configure_phase)
 
 
 # --- stream_analyser_step (the batch invocatiaon, kept for non-feed callers) ---
@@ -63,9 +92,15 @@ class FakeRegistry:
     def upsert_job(self, run_id, phase, job, status, stats=None, error=None):
         self.upsert_job_calls.append({"phase": phase, "job": job, "status": status})
 
+    def set_run_stats(self, run_id, stats):
+        # #238 follow-up: the pipeline persists the traffic-admission envelope
+        # through this additive seam before any runner starts.
+        self.run_stats = getattr(self, "run_stats", {})
+        self.run_stats.update(stats)
+
 
 def _run(settings, pass_calls):
-    async def _run_job(job, input_assets, *, run_id, phase, extra):
+    async def _run_job(job, input_assets, *, run_id, phase, extra, prepared_pod_inputs=None):
         # a producing pod: one asset merged so the streaming gate fires
         return [PodExport(input_asset={}, verdict="success", assets_merged=1,
                           observations_merged=1)]
@@ -139,7 +174,7 @@ def _run_queued(settings, pass_fn, registry=None, monkeypatch=None):
             pg, "set_analysis_run_status",
             lambda arid, status, stats=None: captured.update(status=status, stats=stats or {}))
 
-    async def _run_job(job, input_assets, *, run_id, phase, extra):
+    async def _run_job(job, input_assets, *, run_id, phase, extra, prepared_pod_inputs=None):
         return [PodExport(input_asset={}, verdict="success", assets_merged=1,
                           observations_merged=1)]
 
@@ -324,7 +359,7 @@ def test_endpoint_reprofile_job_does_not_advance_the_analyser(monkeypatch):
     # consumer (we only care about WHICH jobs push).
     monkeypatch.setattr(feed_mod, "get_or_create_feed", lambda *a, **k: recording)
 
-    async def _run_job(job, input_assets, *, run_id, phase, extra):
+    async def _run_job(job, input_assets, *, run_id, phase, extra, prepared_pod_inputs=None):
         return [PodExport(input_asset={}, verdict="success", assets_merged=1,
                           observations_merged=1)]
 

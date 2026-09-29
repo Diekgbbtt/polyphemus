@@ -3,6 +3,9 @@ import operator
 from typing import Annotated, Literal, TypedDict
 from pydantic import BaseModel, Field, model_validator
 
+from polymerhus.recon.domain.traffic_admission import JobTrafficCost
+
+
 class Edge(BaseModel):
     rel: str
     dir: Literal["in", "out"]
@@ -132,6 +135,13 @@ class JobSpec(BaseModel):
     use_auth: bool = False
     configurator_mode: Literal["deterministic", "agent"] = "deterministic"
     eval_criteria: str = "returncode_zero_nonempty"
+    # #238 follow-up: the job's MANDATORY, closed relationship to the measured
+    # target's traffic. No default: a job that does not declare its cost cannot
+    # be constructed, so a new or renamed request-intensive job can never escape
+    # admission by omission. This field - not a sparse name list - is the single
+    # source of truth for whether the job needs an enforced traffic policy and
+    # how its request volume is projected at the phase-materialization boundary.
+    traffic_cost: JobTrafficCost
 
     # --- legacy dispatch-shape views (#37 option B) ---------------------------
     # Read-only views over `consumption.pack` for the seams that switch on the
@@ -157,6 +167,13 @@ class PodExport(BaseModel):
     verdict: Literal["success", "failed"]
     assets_merged: int = 0
     observations_merged: int = 0
+    # #238 follow-up (Task 9): whether the pod's pre-curation parser produced
+    # ANY output - i.e. the target actually answered. For a target-facing pod
+    # this is the honest "we observed the target" fact: a pod that ran, exited 0
+    # and merged nothing (every connection refused) leaves it 0, so the pipeline
+    # never records `target_observed` for a target it never reached. A graph
+    # DUPLICATE still leaves it 1 (the response arrived, it just merged nothing).
+    target_responses: int = Field(default=0, ge=0)
     # #74: the CURATED (post-gate, actually-merged) deltas this pod wrote, so
     # the pipeline can push them into the analysis feed as an `L0Chunk` without
     # a graph re-read. Populated by the pod's curator node; empty for a failed
@@ -166,7 +183,6 @@ class PodExport(BaseModel):
     iterations: int = 0
     error: str | None = None
     stats: dict | None = None
-
 class PodState(TypedDict, total=False):
     job: JobSpec
     input_asset: dict
@@ -179,6 +195,7 @@ class PodState(TypedDict, total=False):
     # directly-invoked pod graph (tests) omits them and the triager stays stateless.
     run_id: str
     phase: int
+    configured_command: str | None
     invocation: ToolInvocation
     exec_result: ExecResult
     iteration: int

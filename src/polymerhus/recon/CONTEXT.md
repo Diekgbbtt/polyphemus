@@ -117,9 +117,14 @@ STATEFUL as of #94: it runs on a per-concurrent-pod session (`PodSession`, `reco
 _Avoid_: analyst, classifier.
 
 **Configurator**:
-The role that resolves a Job's command for a target; a `deterministic` template fill by default, or an `agent` mode (the Steel crawl).
-The per-pod steering-fed throttle turn retired with the mid-run steering machinery (#243, D223-12): the configurator node fills the command deterministically and no `rate_profile` input exists - request phases run unthrottled in the interim until the #238 rate-limit work lands its profile-driven configuration, which the still-registered `configurator` session role (`LLM_CONFIGURATOR`) is reserved for.
-_Status_: registered `session` (`LLM_CONFIGURATOR`).
+One run-scoped, stateful LLM role (`LLM_CONFIGURATOR`) invoked at every phase
+boundary. It sees only the canonical job/input offers, resolves the target's
+`rate_limit_posture`, chooses which pods to create, and returns a closed
+`ConfiguratorDecision` containing one command per selected pod. Its session is
+`run:<run_id>:configurator`; phase is a turn, never session identity.
+The old deterministic pod node with the same name is only the technical command
+assembler: it expands configured commands and runtime placeholders, never calls
+an LLM and never decides which pods exist.
 _Avoid_: planner; mid-run routing.
 
 **Job orchestrator**:
@@ -128,7 +133,8 @@ Since #223 (T3 #242) it runs as the per-run AUTH GATEWAY
 (`orchestrator_agent.py::ReconOrchestratorActor`): one `run_session_agent` on the
 run's `OrchestratorSession` thread taking exactly ONE gateway turn before phase 0 -
 the authn loop over the armed surface - closing with the structured
-`GatewayVerdict`. `run_pipeline` constructs the actor deterministically on run start
+`GatewayVerdict`. It takes exactly one gateway turn; rate measurement belongs to
+the pipeline. `run_pipeline` constructs the actor deterministically on run start
 (never lazily, never behind a signal gate), awaits the verdict under heartbeat and a
 wall-clock bound, then configures from it: browser-only prunes the plan to the Steel
 crawl, and the selected account's identifier rides the pipeline state (`extra`
@@ -224,6 +230,50 @@ The pre-loop branch directive follows the four-way overview contract (`request` 
 An empty store with no authenticated surface is the expected shape with its own path - loop skipped, pipeline run anonymously, verdict records it; the structural marker is `overview.notes` carrying "no authenticated surface" (D223-17, settled #242); a declared surface with no accounts fail-closes by stopping.
 _Avoid_: a per-job auth loop (the job-specialised agents never authenticate, D223-5); a "coverage exhausted" verdict state (exhaustion is a failed authentication, D223-3); re-adding mid-run auth steering.
 
+## LLM rate-aware pod configuration
+
+The vocabulary the run's pod/traffic configuration is made in. Operator runbook:
+`docs/design/rate-limit-job-admission-operations.md`.
+
+**Rate profile** (`RateProfile`, `rate-profile/v2`):
+The measured limiter record persisted per run and projected into the advisory
+per-target YAML. It includes tested bounds, scope, confidence, evidence
+references, budget usage, bypass evidence, and the advisory `TrafficPolicy`.
+`safe_rate_per_s` equals the policy rate; neither is derived from model prose.
+The recon execution path no longer forwards the policy to pods.
+
+**Posture store**:
+`data/<project_id>/rate-limit/<target_key>.yaml` under the app data root. The
+pipeline is the only writer. Agents read through the one read-only
+`rate_limit_posture` tool. Missing, stale, unreadable and unavailable are
+distinct states; unreadable is never treated as absent.
+
+**Configurator offer** (`ConfiguratorOffer` / `PhaseOffers`):
+One prepared `(canonical job, prepared input)` pair presented at a phase
+boundary. The id is stable (`<job_name>:<zero-based-index>`), and the model
+sees metadata/template/input preview but never auth context or source pod input.
+
+**Configurator decision** (`ConfiguratorDecision`):
+The Configurator's closed phase plan: phase, target, posture status, zero or
+more `ReconPodProposal` rows, and rationale. A proposal selects one offered
+input and supplies its `configured_command` (`None` only for agentic jobs).
+`pods=[]` is valid.
+
+**Materialization** (`materialize_configurator_decision`):
+Pure technical validation and copying. It checks phase/target, canonical job,
+offered input, duplicate id and command shape, then attaches
+`configured_command` to copies of the prepared pod inputs. It never compares
+rate, threads, concurrency, delay or duration with the posture.
+
+**Configured command**:
+The command chosen by the Configurator. The pod expands only runtime
+placeholders (`{target}`, `{domain}`, `{baseurl}`, `{endpoints}`, `{session}`,
+`{auth_flags}`) and executes it. No runtime TrafficPolicy correction follows.
+
+**Bypass finding**:
+Evidence-only output of a future explicit bypass workflow. It is never bound to
+the baseline auth gateway or Configurator and never changes backend execution.
+
 ## Prompts, skills, and the loader
 
 **Role prompt**:
@@ -312,3 +362,31 @@ Every LLM construction (`app/llm/providers.py::build_chat_model`) sends a genero
 **asset_context**:
 The context string threaded end-to-end into every pod for the designed-not-built context-memory scaffold; today always the empty string.
 _Status_: scaffolded, not built.
+
+**Atomic Configurator materialization**:
+A phase runs only after the whole `ConfiguratorDecision` has passed technical
+validation against the offered jobs/inputs. One invalid proposal rejects the
+phase; no valid subset is executed. `pods=[]` is a valid empty phase.
+_Avoid_: partial acceptance or unioning candidates with model output.
+
+**Runtime validates executability, not prudence**:
+The runtime checks canonical references and command shape only. It does not
+compare chosen rate, threads, concurrency, delay or duration with the posture,
+and no TrafficPolicy is forwarded to correct/refuse a configured pod command.
+_Avoid_: a hidden numeric checker presented as prompt guidance.
+
+**Advisory posture**:
+`stats["rate_limit"]` and the per-target YAML are read-only evidence for the
+Configurator and later evaluation. A corrupt file is `unreadable`, never
+equivalent to absence. Only the controller writes the file.
+_Avoid_: treating the posture as runtime-enforced truth.
+
+**Auth Gateway and Configurator are distinct authorities**:
+`ReconOrchestratorActor` ends at `GatewayVerdict`; it owns no Vegeta mapping or
+pod plan. The phase Configurator owns pod selection and command parameters.
+_Avoid_: a second rate turn on the auth actor.
+
+**Bypass is dormant evidence**:
+Baseline mapping performs no bypass probing. Bypass primitives remain catalogue
+knowledge for a future explicit workflow and are bound to no baseline role.
+_Avoid_: interpreting a bypass as permission to increase recon traffic.

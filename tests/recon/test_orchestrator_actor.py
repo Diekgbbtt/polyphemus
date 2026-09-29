@@ -95,7 +95,8 @@ def _actor(run_id="run1", *, store, model_factory, tmp_path, **kw):
     return ReconOrchestratorActor(
         run_id, project_id="p1", checkpointer=InMemorySaver(),
         model_factory=model_factory, observe=False, compaction=False,
-        auth_store=store, skill_store=SkillStore(tmp_path),
+        auth_store=store,
+        skill_store=kw.pop("skill_store", None) or SkillStore(tmp_path),
         kali_tools=list(kw.pop("kali_tools", ())), **kw,
     )
 
@@ -135,10 +136,41 @@ def test_gateway_arming_binds_the_full_auth_surface(tmp_path):
     assert isinstance(verdict, GatewayVerdict)
     assert verdict.account == "alice"
     assert seen["bound"], "the model never saw a bound surface"
-    # the response-format tool rides the binding too (standard ToolStrategy
-    # shape); the turn's own surface is the five armed names
-    assert [n for n in seen["bound"][0] if n != "GatewayVerdict"] == [
-        "auth_store", "execute_command", "load_skill", "steel_exec", "write_skill"]
+    # The response-format tool rides the binding too (standard ToolStrategy
+    # shape); the turn's own surface is auth + Kali only.
+    assert [n for n in seen["bound"][0]
+            if n != "GatewayVerdict"] == [
+        "auth_store", "execute_command", "load_skill",
+        "steel_exec", "write_skill"]
+
+
+def test_gateway_binds_only_the_project_authn_skill(
+    tmp_path, monkeypatch
+):
+    """The Auth Gateway owns authentication only: exactly one `load_skill` +
+    one `write_skill` + `auth_store`, with only the project `authn` procedure
+    advertised. The dormant bypass skills are not bound to any role."""
+    import polymerhus.app.llm.actor as _A
+
+    seen = {}
+
+    async def _fake_run(*args, **kwargs):
+        seen.update(kwargs)
+        return None
+
+    monkeypatch.setattr(_A, "run_session_agent", _fake_run)
+    make, _ = _script_model([_verdict_call()])
+    actor = _actor("r1", store=_seeded_store(tmp_path, accounts=_account()),
+                   model_factory=make, tmp_path=tmp_path, kali_tools=[])
+
+    asyncio.run(actor._ensure_started())
+    asyncio.run(actor.stop())
+
+    names = [getattr(t, "name", None) for t in seen["tools"]]
+    assert names.count("load_skill") == 1
+    assert names.count("write_skill") == 1
+    assert names.count("auth_store") == 1
+    assert seen["context"]["skills"] == ["authn"]
 
 
 # --- the gateway turn ------------------------------------------------------------
@@ -363,6 +395,7 @@ def test_gateway_wrong_schema_reply_is_loud(tmp_path, caplog):
     """D223-10: a reply whose content parses to the wrong schema is logged
     loudly (never a silent None)."""
     from polymerhus.app.llm.actor import AgentMessage
+    from polymerhus.recon.control.orchestrator_agent import GATEWAY_AWAIT_TIMEOUT_S
 
     actor = _actor("r1", store=_seeded_store(tmp_path, accounts=_account()),
                    model_factory=_script_model([_verdict_call()])[0],
@@ -371,13 +404,14 @@ def test_gateway_wrong_schema_reply_is_loud(tmp_path, caplog):
     async def _drive():
         await actor._ensure_started()
         await actor._replies.post(AgentMessage(
-            kind="gateway_verdict",
+            kind="orchestrator_reply",
             payload={"content": {"not": "a verdict"}, "messages": [],
                      "thread_id": actor.thread_id},
             source="test",
         ))
         with caplog.at_level("WARNING"):
-            out = await actor._await_reply()
+            out = await actor._await_reply(
+                GatewayVerdict, GATEWAY_AWAIT_TIMEOUT_S, "auth gateway")
         assert out is None
         await actor.stop()
 
@@ -416,10 +450,9 @@ def _a6_negotiated_tool_strategy(monkeypatch):
 
 
 def test_a6_gateway_verdict_uses_the_negotiated_strategy(monkeypatch, tmp_path):
-    """A6: the gateway turn computes `response_format` AFTER the tool binding
-    via `structured_response_format("job_orchestrator", GatewayVerdict,
-    tools_bound=True)` - the gateway always binds tools - and passes its
-    result through to the session agent (no raw pin)."""
+    """A6: the actor computes `response_format` AFTER the tool binding via
+    `structured_response_format("job_orchestrator", GatewayVerdict,
+    tools_bound=True)` and passes its result through to the session agent."""
     import polymerhus.app.llm.actor as _A
     import polymerhus.app.llm.session as _S
 
@@ -445,6 +478,57 @@ def test_a6_gateway_verdict_uses_the_negotiated_strategy(monkeypatch, tmp_path):
                    kali_tools=[])
     asyncio.run(actor._ensure_started())
     asyncio.run(actor.stop())
-    assert calls == {"role_id": "job_orchestrator", "schema": GatewayVerdict,
+    assert calls == {"role_id": "job_orchestrator",
+                     "schema": GatewayVerdict,
                      "tools_bound": True}
     assert seen["response_format"] is sentinel
+
+
+# --- gateway-only boundary -------------------------------------------------------
+
+
+def test_gateway_has_no_rate_mapping_surface_or_messages(tmp_path):
+    """The actor owns auth only: no rate method, slot, brief, inbox kind or
+    prompt loader survives."""
+    import polymerhus.recon.control.orchestrator_agent as OA
+
+    actor = _actor("r1", store=_seeded_store(tmp_path, accounts=_account()),
+                   model_factory=_script_model([_verdict_call()])[0],
+                   tmp_path=tmp_path)
+
+    assert not hasattr(actor, "run_rate_limit")
+    assert not hasattr(OA, "_RateHarnessSlot")
+    assert not hasattr(OA, "_rate_human")
+    assert not hasattr(OA, "_load_rate_limit_prompt")
+    assert not hasattr(OA, "_RATE_KIND")
+
+
+def test_gateway_system_prompt_contains_no_rate_mapping_discipline(
+    tmp_path, monkeypatch
+):
+    import polymerhus.app.llm.actor as _A
+
+    seen: dict = {}
+
+    async def _fake_run(*args, **kwargs):
+        seen.update(kwargs)
+        return None
+
+    monkeypatch.setattr(_A, "run_session_agent", _fake_run)
+    actor = _actor("r1", store=_seeded_store(tmp_path, accounts=_account()),
+                   model_factory=_script_model([_verdict_call()])[0],
+                   tmp_path=tmp_path, kali_tools=[])
+
+    asyncio.run(actor._ensure_started())
+    asyncio.run(actor.stop())
+
+    prompt = seen["system_prompt"].lower()
+    for forbidden in (
+        "rate-limit",
+        "rate_limit",
+        "map_rate_limit",
+        "test_rate_limit_variant",
+        "rateloopverdict",
+        "performing-api-rate-limiting-bypass",
+    ):
+        assert forbidden not in prompt

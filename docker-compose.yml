@@ -93,12 +93,20 @@ services:
       start_period: 60s
 
   kali:
-    # Base image built in-repo from Dockerfile.kali (slim recon-tools image,
-    # ~3-5 GB): it replaces the lost prebuilt redamon-kali-sandbox, and the tag
-    # is kept so docs/tests referencing it keep working.
-    # This service layers the #196 capture plane on top of that base
-    # (kali/Dockerfile) and starts the capture entrypoint (mitmdump + MCP).
-    build: { context: ., dockerfile: kali/Dockerfile }
+    # ONE self-contained image built from Dockerfile.kali (#238 A8): the slim
+    # recon-tools base (it replaces the lost prebuilt redamon-kali-sandbox) PLUS
+    # the #196 capture plane (mitmdump, the addon/governor, the entrypoint). The
+    # old split built two half-images - one with Vegeta but no mitmdump, one
+    # with mitmdump but no Vegeta - so tagging either as `:latest` degraded the
+    # other. This service starts the capture entrypoint (mitmdump + MCP).
+    build:
+      context: .
+      dockerfile: Dockerfile.kali
+      # #238 follow-up (Task 7): stamp the source revision so the image's
+      # build provenance (read by `proxy_status()["build"]`) names the commit it
+      # was built from. Empty default keeps a clean clone building.
+      args:
+        SOURCE_REVISION: ${SOURCE_REVISION:-unknown}
     image: polymerhus-kali:latest
     entrypoint: ["/opt/kali/entrypoint.sh"]
     ports: ["8000:8000"]
@@ -112,6 +120,10 @@ services:
       PYTHONPATH: /opt
       KALI_HTTP_HISTORY_ROOT: /data
       KALI_HTTP_CAPTURE_ENABLED: ${KALI_HTTP_CAPTURE_ENABLED:-true}
+      # #238: the per-target egress governor. SEPARATE from capture on purpose:
+      # disabling HTTP-history recording must not disarm an armed TrafficPolicy
+      # (the proxy process serves both planes and starts when either is on).
+      KALI_HTTP_GOVERNOR_ENABLED: ${KALI_HTTP_GOVERNOR_ENABLED:-true}
       KALI_HTTP_MAX_BODY_BYTES: ${KALI_HTTP_MAX_BODY_BYTES:-5242880}
       KALI_HTTP_NAMESPACE_POOL: ${KALI_HTTP_NAMESPACE_POOL:-8}
       KALI_HTTP_LEASE_TTL_S: ${KALI_HTTP_LEASE_TTL_S:-900}
@@ -136,6 +148,12 @@ services:
       # The cap is enforced from the exec path at most once per project per
       # interval (never per command: that would scan the store on every pod).
       KALI_HTTP_LIMIT_ENFORCE_INTERVAL_S: ${KALI_HTTP_LIMIT_ENFORCE_INTERVAL_S:-60}
+      # #238 rate-limit artifacts (the raw Vegeta per-hit streams). Age
+      # retention stays 0 on purpose (same reasoning as HTTP history), and the
+      # 256 MiB per-project cap evicts the OLDEST complete experiment directory
+      # once a new one has been published.
+      RATE_LIMIT_ARTIFACT_RETENTION_S: ${RATE_LIMIT_ARTIFACT_RETENTION_S:-0}
+      RATE_LIMIT_ARTIFACT_MAX_BYTES: ${RATE_LIMIT_ARTIFACT_MAX_BYTES:-268435456}
     # VPN-in-container (D-HS e2e): OpenVPN needs to create a tun interface so
     # recon pods can reach a target that lives only on a VPN route. Least
     # privilege - NET_ADMIN + SYS_ADMIN (the latter is required by `ip netns

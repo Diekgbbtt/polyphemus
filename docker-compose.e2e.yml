@@ -13,8 +13,27 @@
 # Usage (from this worktree):
 #   docker compose -f docker-compose.yml -f docker-compose.dev.yml \
 #     -f docker-compose.e2e.yml up -d postgres neo4j kali agent
+# #238 B2: the E2E tier gets its OWN isolated bridge network. The operator's
+# main-tree stack already owns 172.28.0.0/16 (the base `polymerhus-net`), so a
+# colliding subnet would refuse to create; this private name + subnet leaves the
+# operator's network untouched. The static fixture addresses below match it.
+networks:
+  polymerhus-net:
+    name: polyphemus-238-e2e-net
+    ipam:
+      config:
+        - subnet: 172.29.0.0/16
+
 services:
   agent:
+    # #238 B2: a PROJECT-PRIVATE tag. The E2E rebuilds the agent from the
+    # worktree source; using the shared `:latest` would clobber the operator's
+    # image, and being clobbered by it would silently test the wrong code.
+    image: polymerhus-agent:issue-238-e2e
+    # #238: publish the API on 18080. `!override` REPLACES the base mapping
+    # (compose otherwise APPENDS), so an unrelated stack holding 8080 on the
+    # host cannot block the gate and the base file keeps its production port.
+    ports: !override ["18080:8080"]
     env_file:
       # Overridable so the overlay is not tied to one machine's absolute path;
       # `required: false` keeps a worktree that has its own `.env` symlink
@@ -22,6 +41,77 @@ services:
       # when neither the symlink nor the main-tree file exists.
       - path: ${POLYPHEMUS_MAIN_ENV:-../../.env}
         required: false
+    # --- #238 (Task 9): the deterministic LOCAL model provider --------------
+    # The functional E2E must traverse the real actor loop, so only model
+    # INFERENCE is replaced: EVERY boot-required recon role is routed at the
+    # local fixture through the production provider-selection seam
+    # (`LLM_GATEWAY_URL` = gateway mode, `openai:<model>` = the role's model).
+    # The key is inert by construction - the fixture authenticates nothing.
+    #
+    # `depends_on` MERGES with the base service's postgres/neo4j dependency, so
+    # the agent cannot start a run before the fixture answers its healthcheck.
+    environment:
+      # The Kali the agent talks to. Defaults to the production-shaped `kali`
+      # service; the enforcement-property gate re-points it at
+      # `kali-failing-governor` / `kali-capture-off` (both defined below) to
+      # certify the fault paths from the TARGET's point of view. Overridable so
+      # no unversioned hand-edit is needed.
+      KALI_MCP_URL: ${E2E_KALI_MCP_URL:-http://kali:8000/mcp}
+      LLM_GATEWAY_URL: http://rate-limit-llm:8080/v1
+      # #238 A7: the agent refuses to boot without all five roles.
+      LLM_CONFIGURATOR: openai:rate-admission-fixture
+      LLM_CRAWLER: openai:rate-admission-fixture
+      LLM_JOB_ORCHESTRATOR: openai:rate-admission-fixture
+      LLM_TRIAGER: openai:rate-admission-fixture
+      LLM_ANALYSER: openai:rate-admission-fixture
+      API_KEY_OPENAI: e2e-inert-key
+      # The #238 profile freshness knob. The DEFAULT is long so the posture
+      # matrix's request-intensive jobs (later phases) stay fresh; the stale
+      # gate brings the stack up with `RATE_LIMIT_PROFILE_TTL_S=2` - a value
+      # committed in the stack script, never an unversioned manual edit.
+      RATE_LIMIT_PROFILE_TTL_S: ${RATE_LIMIT_PROFILE_TTL_S:-3600}
+      # The admission duration ceiling. The E2E's `high_limit` posture brackets
+      # its transition at 10-15 rps, so the mapped safe rate (~8-12 rps) admits
+      # ffuf's 4750-request cost only above the 300 s production default. The
+      # MECHANISM (both gates, inclusive) is what the gate certifies; the
+      # ceiling is a fixture-scale operator knob, kept overridable.
+      RATE_LIMIT_INTENSIVE_MAX_PROJECTED_DURATION_S: ${RATE_LIMIT_INTENSIVE_MAX_PROJECTED_DURATION_S:-900}
+      # The minimum safe rate gate (spec default 2.0 req/s), pinned explicitly so
+      # the committed gate is reproducible rather than implicitly defaulted.
+      RATE_LIMIT_INTENSIVE_MIN_SAFE_RATE_PER_S: ${RATE_LIMIT_INTENSIVE_MIN_SAFE_RATE_PER_S:-2.0}
+      # The pod's per-exec window. Before the #238 live fix NOTHING was
+      # governed, so the `high_limit` fixture's 4,750-request ffuf finished in
+      # ~20 s; paced at the measured rate with `max_concurrency = 1` the same
+      # command is latency-bound (~4 req/s, ~20 min) and would be killed by the
+      # 300 s production default - which is what the gate must exercise, not
+      # avoid. The MECHANISM is what this tier certifies; the window is a
+      # fixture-scale operator knob, kept overridable.
+      EXEC_TIMEOUT_S: ${EXEC_TIMEOUT_S:-1800}
+    depends_on:
+      rate-limit-llm:
+        condition: service_healthy
+  # #238 B2: the E2E tier builds/tags the Kali image privately, so the
+  # operator's shared `polymerhus-kali:latest` is never rebuilt or recreated.
+  kali:
+    image: polymerhus-kali:issue-238-e2e
+  # The deterministic OpenAI-compatible provider (Task 9). One process, no
+  # state beyond its request counters; it answers from the conversation state
+  # alone and refuses any state it does not implement with a content-free 422.
+  rate-limit-llm:
+    image: python:3.12-alpine
+    command: ["python", "/srv/deterministic_llm_provider.py"]
+    environment:
+      RATE_LLM_HOST: "0.0.0.0"
+      RATE_LLM_PORT: "8080"
+    volumes:
+      - ./tests/e2e/deterministic_llm_provider.py:/srv/deterministic_llm_provider.py:ro
+    networks: [polymerhus-net]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=2).read()"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 3s
   # --- WAF fixtures (#196) -------------------------------------------------
   # Two shapes of "the target defends itself", both on port 80 so the lease's
   # REDIRECT (tcp/80 and tcp/443) captures them:
@@ -57,7 +147,7 @@ services:
       - ./tests/e2e/tcp_forwarder.py:/srv/tcp_forwarder.py:ro
     networks:
       polymerhus-net:
-        ipv4_address: 172.28.0.21
+        ipv4_address: 172.29.0.21
   challenge-e2e-target:
     image: python:3.12-alpine
     command: ["python", "/srv/http_challenge_target.py"]
@@ -68,7 +158,7 @@ services:
       - ./tests/e2e/http_challenge_target.py:/srv/http_challenge_target.py:ro
     networks:
       polymerhus-net:
-        ipv4_address: 172.28.0.22
+        ipv4_address: 172.29.0.22
   http-e2e-target:
     image: python:3.12-alpine
     command: ["python", "/srv/http_e2e_target.py"]
@@ -79,10 +169,185 @@ services:
       - ./tests/e2e/http_e2e_target.py:/srv/http_e2e_target.py:ro
     networks:
       polymerhus-net:
-        ipv4_address: 172.28.0.20
+        ipv4_address: 172.29.0.20
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:80/?q=health', timeout=2).read()"]
       interval: 5s
       timeout: 3s
       retries: 20
       start_period: 5s
+  # --- rate-limit fixture (#238 Task 8) ------------------------------------
+  # The DETERMINISTIC limiter the rate-mapping E2E measures: a known token
+  # bucket on /canonical (stable 429 fingerprint), a route-normalization
+  # variant on the unlimited /canonical/ that serves the SAME resource, and
+  # per-request counters for the aggregate-load assertions. Local by design -
+  # a mapping gate must never aim the load generator at the internet.
+  rate-limit-e2e-target:
+    image: python:3.12-alpine
+    command: ["python", "/srv/rate_limit_e2e_target.py"]
+    environment:
+      PORT: "80"
+      # Capacity 1 at 1 rps: a sustained 1 rps step fits (with the fixture's
+      # documented scheduling tolerance), and 2 rps refuses even in the
+      # mapper's one-second boundary probe. That is the transition the mapper
+      # has to bracket.
+      RATE_PER_S: "1.0"
+      RATE_JITTER_S: "0.15"
+    volumes:
+      - ./tests/e2e/rate_limit_e2e_target.py:/srv/rate_limit_e2e_target.py:ro
+    networks:
+      polymerhus-net:
+        ipv4_address: 172.29.0.23
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:80/counters', timeout=2).read()"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 3s
+  # --- #238 follow-up (Task 8): the deterministic posture matrix --------------
+  # ONE application, five isolated instances: identical route logic, a different
+  # `RATE_FIXTURE_POSTURE` each, and never shared counters. Each is reachable by
+  # its Compose DNS alias from the agent/Kali (no host ports needed), and each
+  # control endpoint bypasses limiter accounting.
+  rate-matrix-no-limiter:
+    image: python:3.12-alpine
+    command: ["python", "/srv/rate_limit_matrix_target.py"]
+    environment:
+      PORT: "80"
+      RATE_FIXTURE_POSTURE: "no_limiter"
+    volumes:
+      - ./tests/e2e/rate_limit_matrix_target.py:/srv/rate_limit_matrix_target.py:ro
+    networks:
+      polymerhus-net:
+        # A DOTTED alias: the shape a real target has. httpx (the production
+        # probe) mis-parses a single-label Compose name
+        # (`unsupported protocol scheme ""`), so the fixture advertises the
+        # FQDN the run seeds and the pods probe.
+        aliases: ["no-limiter.e2e.local"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:80/health', timeout=2).read()"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 3s
+  rate-matrix-high-limit:
+    image: python:3.12-alpine
+    command: ["python", "/srv/rate_limit_matrix_target.py"]
+    environment:
+      PORT: "80"
+      RATE_FIXTURE_POSTURE: "high_limit"
+    volumes:
+      - ./tests/e2e/rate_limit_matrix_target.py:/srv/rate_limit_matrix_target.py:ro
+    networks:
+      polymerhus-net:
+        aliases: ["high-limit.e2e.local"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:80/health', timeout=2).read()"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 3s
+  rate-matrix-low-limit:
+    image: python:3.12-alpine
+    command: ["python", "/srv/rate_limit_matrix_target.py"]
+    environment:
+      PORT: "80"
+      RATE_FIXTURE_POSTURE: "low_limit"
+    volumes:
+      - ./tests/e2e/rate_limit_matrix_target.py:/srv/rate_limit_matrix_target.py:ro
+    networks:
+      polymerhus-net:
+        aliases: ["low-limit.e2e.local"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:80/health', timeout=2).read()"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 3s
+  rate-matrix-false-bypass:
+    image: python:3.12-alpine
+    command: ["python", "/srv/rate_limit_matrix_target.py"]
+    environment:
+      PORT: "80"
+      RATE_FIXTURE_POSTURE: "false_bypass"
+    volumes:
+      - ./tests/e2e/rate_limit_matrix_target.py:/srv/rate_limit_matrix_target.py:ro
+    networks:
+      polymerhus-net:
+        aliases: ["false-bypass.e2e.local"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:80/health', timeout=2).read()"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 3s
+  rate-matrix-burst-inconclusive:
+    image: python:3.12-alpine
+    command: ["python", "/srv/rate_limit_matrix_target.py"]
+    environment:
+      PORT: "80"
+      RATE_FIXTURE_POSTURE: "burst_inconclusive"
+    volumes:
+      - ./tests/e2e/rate_limit_matrix_target.py:/srv/rate_limit_matrix_target.py:ro
+    networks:
+      polymerhus-net:
+        aliases: ["burst-inconclusive.e2e.local"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:80/health', timeout=2).read()"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 3s
+  # --- #238 (Task 11): the E2E-only FAILING governor ------------------------
+  # The adversarial gate needs a Kali whose armed governor actually throws.
+  # Production has no fault switch for that (a switch would be a second way to
+  # arm the very failure the feature prevents), so the fault lives in the test
+  # tier: this service starts the SAME image and entrypoint with mitmdump
+  # loading `tests/e2e/failing_governor_addon_entry.py`, which imports the
+  # production addon and injects an exploding governor. Everything else -
+  # capture, namespaces, MCP surface - is the shipped code path.
+  kali-failing-governor:
+    image: polymerhus-kali:issue-238-e2e
+    entrypoint: ["/opt/kali/entrypoint.sh"]
+    environment:
+      PYTHONPATH: /opt
+      KALI_HTTP_HISTORY_ROOT: /data
+      KALI_HTTP_CAPTURE_ENABLED: "true"
+      KALI_HTTP_GOVERNOR_ENABLED: "true"
+      KALI_HTTP_ADDON_ENTRY: /opt/kali-e2e/failing_governor_addon_entry.py
+      KALI_HTTP_PROXY_HOST: 127.0.0.1
+      KALI_HTTP_PROXY_PORT: "8080"
+      KALI_HTTP_REGISTRY_PATH: /run/kali-http/registry.sqlite3
+    cap_add:
+      - NET_ADMIN
+      - SYS_ADMIN
+    security_opt:
+      - seccomp:unconfined
+      - apparmor:unconfined
+    volumes:
+      - ./kali:/opt/kali:ro
+      - ./tests/e2e/failing_governor_addon_entry.py:/opt/kali-e2e/failing_governor_addon_entry.py:ro
+    networks: [polymerhus-net]
+  # Task 11 also proves capture-off does NOT disarm the governor: the shipped
+  # entrypoint starts mitmdump when EITHER plane is on, and this service turns
+  # capture off while governance stays armed.
+  kali-capture-off:
+    image: polymerhus-kali:issue-238-e2e
+    entrypoint: ["/opt/kali/entrypoint.sh"]
+    environment:
+      PYTHONPATH: /opt
+      KALI_HTTP_HISTORY_ROOT: /data
+      KALI_HTTP_CAPTURE_ENABLED: "false"
+      KALI_HTTP_GOVERNOR_ENABLED: "true"
+      KALI_HTTP_PROXY_HOST: 127.0.0.1
+      KALI_HTTP_PROXY_PORT: "8080"
+      KALI_HTTP_REGISTRY_PATH: /run/kali-http/registry.sqlite3
+    cap_add:
+      - NET_ADMIN
+      - SYS_ADMIN
+    security_opt:
+      - seccomp:unconfined
+      - apparmor:unconfined
+    volumes:
+      - ./kali:/opt/kali:ro
+    networks: [polymerhus-net]

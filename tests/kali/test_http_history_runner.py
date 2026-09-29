@@ -108,3 +108,26 @@ def test_default_runner_maps_timeout_to_124(monkeypatch, _no_workdir_io):
     assert outcome.returncode == 124
     assert outcome.stderr == "timeout after 7s"
     assert outcome.stdout == "partial\n"
+
+
+def test_default_runner_sends_private_stdin_and_keeps_the_legacy_shape(
+    monkeypatch, _no_workdir_io
+):
+    """#238: the rate-limit runner reads its experiment spec from stdin. An
+    omitted/empty value must behave exactly as before (`input=None`)."""
+    seen = _fake_run(monkeypatch, stdout="ok\n")
+
+    default_runner(
+        "python -m kali.rate_limit.runner",
+        session_id="s5",
+        timeout_s=30,
+        stdin_text='{"experiment_id":"exp-1"}',
+    )
+
+    assert seen["kwargs"]["input"] == '{"experiment_id":"exp-1"}'
+    assert seen["argv"] == ["bash", "-c", "python -m kali.rate_limit.runner"]
+
+    # The legacy call (no stdin at all) is byte-for-byte the old behaviour.
+    seen = _fake_run(monkeypatch, stdout="ok\n")
+    default_runner("echo ok", session_id="s6", timeout_s=30)
+    assert seen["kwargs"]["input"] is None

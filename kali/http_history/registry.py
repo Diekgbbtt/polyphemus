@@ -3,9 +3,16 @@
 Written by the MCP process that leases a namespace; read by the mitmproxy addon
 to correlate a flow with the execution that produced it. Deliberately ordered
 by ``source_ip`` (unique) rather than a time window or command order.
+
+Since #238 the same row also carries the run's serialized ``TrafficPolicy``: the
+governor lives in the PROXY process, so the policy has to cross that process
+boundary through the one channel that already identifies a lease's traffic - its
+source address. ``lookup()`` keeps returning the pre-#238 two-tuple;
+``lookup_registration()`` is the additive, policy-aware form.
 """
 from __future__ import annotations
 
+import json
 import sqlite3
 import threading
 import time
@@ -42,6 +49,19 @@ class LeaseRecord:
     expires_at: float
 
 
+@dataclass(frozen=True)
+class SourceRegistration:
+    """Everything the proxy knows about one leased source address.
+
+    `traffic_policy` is the canonical `traffic-policy/v2` payload (already
+    validated at the exec boundary), or None for a capture-only lease.
+    """
+
+    project_id: str
+    capture_context: CaptureContext
+    traffic_policy: dict | None = None
+
+
 class SourceRegistry:
     def __init__(self, path: str | Path):
         self.path = Path(path)
@@ -60,7 +80,7 @@ class SourceRegistry:
             row["name"]
             for row in self._conn.execute("PRAGMA table_info(leases)").fetchall()
         }
-        for column in ("derived_from", "replay_kind"):
+        for column in ("derived_from", "replay_kind", "traffic_policy"):
             if column not in columns:
                 self._conn.execute(f"ALTER TABLE leases ADD COLUMN {column} TEXT")
 
@@ -70,16 +90,19 @@ class SourceRegistry:
         project_id: str,
         context: CaptureContext,
         *,
+        traffic_policy: dict | None = None,
         ttl_s: int = DEFAULT_TTL_S,
         now: float | None = None,
     ) -> None:
         now = time.time() if now is None else now
+        policy_json = json.dumps(traffic_policy) if traffic_policy is not None else None
         with self._lock, self._conn:
             self._conn.execute(
                 "INSERT OR REPLACE INTO leases "
                 "(source_ip, project_id, session_id, run_id, spec_id, variant_ref,"
-                " exec_id, derived_from, replay_kind, created_at, expires_at) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                " exec_id, derived_from, replay_kind, traffic_policy, created_at,"
+                " expires_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     source_ip,
                     project_id,
@@ -90,10 +113,61 @@ class SourceRegistry:
                     context.exec_id,
                     context.derived_from,
                     context.replay_kind,
+                    policy_json,
                     now,
                     now + max(0, ttl_s),
                 ),
             )
+
+    def lookup_registration(
+        self, source_ip: str, *, now: float | None = None
+    ) -> SourceRegistration | None:
+        """The #238 form of `lookup`: project, capture context AND policy.
+
+        Returns None for an unknown or expired source, exactly like `lookup`.
+        A row whose stored policy is unreadable is still returned, with
+        `traffic_policy=None`: the capture correlation is independent of it, and
+        the governor refuses to enforce anything it cannot parse.
+        """
+        now = time.time() if now is None else now
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM leases WHERE source_ip=?", (source_ip,)
+            ).fetchone()
+        if row is None:
+            return None
+        if row["expires_at"] <= now:
+            self.release(source_ip)
+            return None
+        return SourceRegistration(
+            project_id=row["project_id"],
+            capture_context=self._context_from_row(row, source_ip=source_ip),
+            traffic_policy=self._policy_from_row(row),
+        )
+
+    @staticmethod
+    def _context_from_row(row, *, source_ip: str | None = None) -> CaptureContext:
+        return CaptureContext(
+            session_id=row["session_id"] or "",
+            run_id=row["run_id"] or "",
+            spec_id=row["spec_id"] or "",
+            variant_ref=row["variant_ref"] or "",
+            exec_id=row["exec_id"] or "",
+            derived_from=row["derived_from"],
+            replay_kind=row["replay_kind"],
+            source_ip=source_ip,
+        )
+
+    @staticmethod
+    def _policy_from_row(row) -> dict | None:
+        raw = row["traffic_policy"]
+        if not raw:
+            return None
+        try:
+            parsed = json.loads(raw)
+        except (TypeError, ValueError):
+            return None
+        return parsed if isinstance(parsed, dict) else None
 
     def lookup(self, source_ip: str, *, now: float | None = None):
         now = time.time() if now is None else now
@@ -106,16 +180,7 @@ class SourceRegistry:
         if row["expires_at"] <= now:
             self.release(source_ip)
             return None
-        context = CaptureContext(
-            session_id=row["session_id"] or "",
-            run_id=row["run_id"] or "",
-            spec_id=row["spec_id"] or "",
-            variant_ref=row["variant_ref"] or "",
-            exec_id=row["exec_id"] or "",
-            derived_from=row["derived_from"],
-            replay_kind=row["replay_kind"],
-            source_ip=source_ip,
-        )
+        context = self._context_from_row(row, source_ip=source_ip)
         return row["project_id"], context
 
     def release(self, source_ip: str) -> None:
@@ -133,15 +198,7 @@ class SourceRegistry:
             LeaseRecord(
                 source_ip=row["source_ip"],
                 project_id=row["project_id"],
-                context=CaptureContext(
-                    session_id=row["session_id"] or "",
-                    run_id=row["run_id"] or "",
-                    spec_id=row["spec_id"] or "",
-                    variant_ref=row["variant_ref"] or "",
-                    exec_id=row["exec_id"] or "",
-                    derived_from=row["derived_from"],
-                    replay_kind=row["replay_kind"],
-                ),
+                context=self._context_from_row(row),
                 created_at=row["created_at"],
                 expires_at=row["expires_at"],
             )
