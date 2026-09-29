@@ -114,27 +114,12 @@ JWT/OIDC failures often enable token forgery, token confusion, cross-service acc
 5. **Mutate components** - Headers (alg, kid, jku/x5u/jwk), claims (iss/aud/azp/sub/exp), signatures
 6. **Verify enforcement** - What is actually checked vs assumed
 
-## Validation
-
-1. Show forged or cross-context token acceptance (wrong alg, wrong audience/issuer, or attacker-signed JWKS)
-2. Demonstrate access token vs ID token confusion at an API
-3. Prove refresh token reuse without rotation detection or revocation
-4. Confirm header abuse (kid/jku/x5u/jwk) leading to key selection under attacker control
-5. Provide owner vs non-owner evidence with identical requests differing only in token context
-
 ## False Positives
 
 - Token rejected due to strict audience/issuer enforcement
 - Key pinning with JWKS whitelist and TLS validation
 - Short-lived tokens with rotation and revocation on logout
 - ID token not accepted by APIs that require access tokens
-
-## Impact
-
-- Account takeover and durable session persistence
-- Privilege escalation via claim manipulation or cross-service acceptance
-- Cross-tenant or cross-application data access
-- Token minting by attacker-controlled keys or endpoints
 
 ## Pro Tips
 

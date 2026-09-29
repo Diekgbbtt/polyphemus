@@ -123,40 +123,6 @@ Keep a compact set tuned per context:
 - **JS string**: `"-alert(1)-"`
 - **URL**: `javascript:alert(1)`
 
-## Framework-Specific
-
-### React
-
-- Primary sink: `dangerouslySetInnerHTML`
-- Secondary: setting event handlers or URLs from untrusted input
-- Bypass patterns: unsanitized HTML through libraries; custom renderers using innerHTML
-
-### Vue
-
-- Sinks: `v-html` and dynamic attribute bindings
-- SSR hydration mismatches can re-interpret content
-
-### Angular
-
-- Legacy expression injection (pre-1.6)
-- `$sce` trust APIs misused to whitelist attacker content
-
-### Svelte
-
-- Sinks: `{@html}` and dynamic attributes
-
-### Markdown/Richtext
-
-- Renderers often allow HTML passthrough; plugins may re-enable raw HTML
-- Sanitize post-render; forbid inline HTML or restrict to safe whitelist
-
-## Post-Exploitation
-
-- Session/token exfiltration: prefer fetch/XHR over image beacons for reliability
-- Real-time control: WebSocket C2 with strict command set
-- Persistence: service worker registration; localStorage/script gadget re-injection
-- Impact: role hijack, CSRF chaining, internal port scan via fetch, credential phishing overlays
-
 ## Testing Methodology
 
 1. **Identify sources** - URL/query/hash/referrer, postMessage, storage, WebSocket, server JSON
@@ -166,27 +132,12 @@ Keep a compact set tuned per context:
 5. **Craft payloads** - Minimal payloads per context with encoding/whitespace/casing variants
 6. **Multi-channel** - Test across REST, GraphQL, WebSocket, SSE, service workers
 
-## Validation
-
-1. Provide minimal payload and context (sink type) with before/after DOM or network evidence
-2. Demonstrate cross-browser execution where relevant or explain parser-specific behavior
-3. Show bypass of stated defenses (sanitizer settings, CSP/Trusted Types) with proof
-4. Quantify impact beyond alert: data accessed, action performed, persistence achieved
-
 ## False Positives
 
 - Reflected content safely encoded in the exact context
 - CSP with nonces/hashes and no inline/event handlers
 - Trusted Types enforced on sinks; DOMPurify in strict mode with URI allowlists
 - Scriptable contexts disabled (no HTML pass-through, safe URL schemes enforced)
-
-## Impact
-
-- Session hijacking and credential theft
-- Account takeover via token exfiltration
-- CSRF chaining for state-changing actions
-- Malware distribution and phishing
-- Persistent compromise via service workers
 
 ## Filter Bypass Techniques
 

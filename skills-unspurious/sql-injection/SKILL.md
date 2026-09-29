@@ -150,27 +150,12 @@ SQLi remains one of the most durable and impactful vulnerability classes. Modern
 6. **Pivot to metadata** - version, current user, database name
 7. **Target high-value tables** - auth bypass, role changes, filesystem access if feasible
 
-## Validation
-
-1. Show a reliable oracle (error/boolean/time/OAST) and prove control by toggling predicates
-2. Extract verifiable metadata (version, current user, database name) using the established channel
-3. Retrieve or modify a non-trivial target (table rows, role flag) within legal scope
-4. Provide reproducible requests that differ only in the injected fragment
-5. Where applicable, demonstrate defense-in-depth bypass (WAF on, still exploitable via variant)
-
 ## False Positives
 
 - Generic errors unrelated to SQL parsing or constraints
 - Static response sizes due to templating rather than predicate truth
 - Artificial delays from network/CPU unrelated to injected function calls
 - Parameterized queries with no string concatenation, verified by code review
-
-## Impact
-
-- Direct data exfiltration and privacy/regulatory exposure
-- Authentication and authorization bypass via manipulated predicates
-- Server-side file access or command execution (platform/privilege dependent)
-- Persistent supply-chain impact via modified data, jobs, or procedures
 
 ## Pro Tips
 

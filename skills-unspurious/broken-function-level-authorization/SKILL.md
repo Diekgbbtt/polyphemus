@@ -113,25 +113,11 @@ mutation Promote($id:ID!){
 4. **Vary headers and selectors** - Org/tenant/project; test behind gateway vs direct-to-service
 5. **Include background flows** - Job creation/finalization, webhooks, queues; confirm re-validation
 
-## Validation
-
-1. Show a lower-privileged principal successfully invokes a restricted action (same inputs) while the proper role succeeds and another lower role fails
-2. Provide evidence across at least two transports or encodings demonstrating inconsistent enforcement
-3. Demonstrate that removing/altering client-side gates (buttons/flags) does not affect backend success
-4. Include durable state change proof: before/after snapshots, audit logs, and authoritative sources
-
 ## False Positives
 
 - Read-only endpoints mislabeled as admin but publicly documented
 - Feature toggles intentionally open to all roles for preview/beta with clear policy
 - Simulated environments where admin endpoints are stubbed with no side effects
-
-## Impact
-
-- Privilege escalation to admin/staff actions
-- Monetary/state impact: refunds/credits/approvals without authorization
-- Tenant-wide configuration changes, impersonation, or data deletion
-- Compliance and audit violations due to bypassed approval workflows
 
 ## Pro Tips
 

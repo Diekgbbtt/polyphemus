@@ -142,27 +142,12 @@ Improper file path handling and dynamic inclusion enable sensitive file disclosu
 4. **Compare behaviors** - Web server vs application behavior
 5. **Escalate** - From disclosure (read) to influence (write/extract/include), then to execution (wrapper/engine chains)
 
-## Validation
-
-1. Show a minimal traversal read proving out-of-root access (e.g., `/etc/hosts`) with a same-endpoint in-root control
-2. For LFI, demonstrate inclusion of a benign local file or harmless wrapper output (`php://filter` base64 of index.php)
-3. For RFI, prove remote fetch by OAST or controlled output; avoid destructive payloads
-4. For Zip Slip, create an archive with `../` entries and show write outside target (e.g., marker file read back)
-5. Provide before/after file paths, exact requests, and content hashes/lengths for reproducibility
-
 ## False Positives
 
 - In-app virtual paths that do not map to filesystem; content comes from safe stores (DB/object storage)
 - Canonicalized paths constrained to an allowlist/root after normalization
 - Wrappers disabled and includes using constant templates only
 - Archive extractors that sanitize paths and enforce destination directories
-
-## Impact
-
-- Sensitive configuration/source disclosure → credential and key compromise
-- Code execution via inclusion of attacker-controlled content or overwritten templates
-- Persistence via dropped files in served directories; lateral movement via revealed secrets
-- Supply-chain impact when report/template engines execute attacker-influenced files
 
 ## Pro Tips
 

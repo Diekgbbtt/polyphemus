@@ -95,25 +95,6 @@ Open redirects enable phishing, OAuth/OIDC code and token theft, and allowlist b
 - Server-side fetchers (web previewers, link unfurlers) follow 3xx
 - Combine with an open redirect on an allowlisted domain to pivot to internal targets (169.254.169.254, localhost)
 
-## Exploitation Scenarios
-
-### OAuth Code Interception
-
-1. Set redirect_uri to `https://trusted.example/out?url=https://attacker.tld/cb`
-2. IdP sends code to trusted.example which redirects to attacker.tld
-3. Exchange code for tokens; demonstrate account access
-
-### Phishing Flow
-
-1. Send link on trusted domain: `/login?next=https://attacker.tld/fake`
-2. Victim authenticates; browser navigates to attacker page
-3. Capture credentials/tokens via cloned UI
-
-### Internal Evasion
-
-1. Server-side link unfurler fetches `https://trusted.example/out?u=http://169.254.169.254/latest/meta-data`
-2. Redirect follows to metadata; confirm via timing/headers
-
 ## Testing Methodology
 
 1. **Inventory surfaces** - Login/logout, password reset, SSO/OAuth flows, payment gateways, email links
@@ -122,26 +103,12 @@ Open redirects enable phishing, OAuth/OIDC code and token theft, and allowlist b
 4. **Multi-hop testing** - Trusted-domain → redirector → external
 5. **Prove impact** - Credential phishing, OAuth code interception, internal egress
 
-## Validation
-
-1. Produce a minimal URL that navigates to an external domain via the vulnerable surface; include the full address bar capture
-2. Show bypass of the stated validation (regex/allowlist) using canonicalization variants
-3. Test multi-hop: prove only first hop is validated and second hop escapes constraints
-4. For OAuth/SAML, demonstrate code/RelayState delivery to an attacker-controlled endpoint
-
 ## False Positives
 
 - Redirects constrained to relative same-origin paths with robust normalization
 - Exact pre-registered OAuth redirect_uri with strict verifier
 - Validators using a single canonical parser and comparing post-IDNA host and scheme
 - User prompts that show the exact final destination before navigating
-
-## Impact
-
-- Credential and token theft via phishing and OAuth/OIDC interception
-- Internal data exposure when server fetchers follow redirects
-- Policy bypass where allowlists are enforced only on the first hop
-- Cross-application trust erosion and brand abuse
 
 ## Pro Tips
 

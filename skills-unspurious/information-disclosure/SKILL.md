@@ -74,14 +74,6 @@ Information leaks accelerate exploitation by revealing code, configuration, iden
 4. **Enumerate artifacts** - DVCS folders, backups, config endpoints, source maps, client bundles, API docs
 5. **Correlate to impact** - Versions→CVE, paths→LFI/RCE, keys→cloud access, schemas→auth bypass
 
-## Validation
-
-1. Provide raw evidence (headers/body/artifact) and explain exact data revealed
-2. Determine intent: cross-check docs/UX; classify per triage rubric
-3. Attempt minimal, reversible exploitation or present a concrete step-by-step chain
-4. Show reproducibility and minimal request set
-5. Bound scope (user, tenant, environment) and data sensitivity classification
-
 ## False Positives
 
 - Intentional public docs or non-sensitive metadata with no exploit path
@@ -89,13 +81,6 @@ Information leaks accelerate exploitation by revealing code, configuration, iden
 - Redacted fields that do not change differential oracles
 - Version banners with no exposed vulnerable surface and no chain
 - Owner-visible-only details that do not cross identity/tenant boundaries
-
-## Impact
-
-- Accelerated exploitation of RCE/LFI/SSRF via precise versions and paths
-- Credential/secret exposure leading to persistent external compromise
-- Cross-tenant data disclosure through exports, caches, or mis-scoped signed URLs
-- Privacy/regulatory violations and business intelligence leakage
 
 ## Pro Tips
 

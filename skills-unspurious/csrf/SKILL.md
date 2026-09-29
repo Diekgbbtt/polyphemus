@@ -151,25 +151,11 @@ Cross-site request forgery abuses ambient authority (cookies, HTTP auth) across 
 6. **Test navigation** - Top-level GET navigation
 7. **Cross-browser validation** - Behavior differs by SameSite and navigation context
 
-## Validation
-
-1. Demonstrate a cross-origin page that triggers a state change without user interaction beyond visiting
-2. Show that removing the anti-CSRF control (token/header) is accepted, or that Origin/Referer are not verified
-3. Prove behavior across at least two browsers or contexts (top-level nav vs XHR/fetch)
-4. Provide before/after state evidence for the same account
-5. If defenses exist, show the exact condition under which they are bypassed (content-type, method override, null Origin)
-
 ## False Positives
 
 - Token verification present and required; Origin/Referer enforced consistently
 - No cookies sent on cross-site requests (SameSite=Strict, no HTTP auth) and no state change via simple requests
 - Only idempotent, non-sensitive operations affected
-
-## Impact
-
-- Account state changes (email/password/MFA), session hijacking via login CSRF
-- Financial operations, administrative actions
-- Durable authorization changes (role/permission flips, key rotations) and data loss
 
 ## Pro Tips
 

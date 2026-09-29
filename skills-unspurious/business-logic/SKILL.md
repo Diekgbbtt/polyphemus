@@ -127,25 +127,11 @@ Business logic flaws exploit intended functionality to violate domain invariants
 4. **Introduce variance** - Time, concurrency, channel (mobile/web/API/GraphQL), content-types
 5. **Validate persistence boundaries** - All services, queues, and jobs re-enforce invariants
 
-## Validation
-
-1. Show an invariant violation (e.g., two refunds for one charge, negative inventory, exceeding quotas)
-2. Provide side-by-side evidence for intended vs abused flows with the same principal
-3. Demonstrate durability: the undesired state persists and is observable in authoritative sources (ledger, emails, admin views)
-4. Quantify impact per action and at scale (unit loss × feasible repetitions)
-
 ## False Positives
 
 - Promotional behavior explicitly allowed by policy (documented free trials, goodwill credits)
 - Visual-only inconsistencies with no durable or exploitable state change
 - Admin-only operations with proper audit and approvals
-
-## Impact
-
-- Direct financial loss (fraud, arbitrage, over-refunds, unpaid consumption)
-- Regulatory/contractual violations (billing accuracy, consumer protection)
-- Denial of inventory/services to legitimate users through resource exhaustion
-- Privilege retention or unauthorized access to premium features
 
 ## Pro Tips
 

@@ -158,15 +158,6 @@ The `X-Forwarded-*` family is informational - there is no protocol guarantee abo
 7. **Test request smuggling pairs** - conflicting `Content-Length` and `Transfer-Encoding`, two `Content-Length` headers, malformed chunked encoding, against any frontend → backend pair
 8. **Cross-protocol** - replay payloads over HTTP/1.1 and HTTP/2; diff behavior
 
-## Validation
-
-1. Show two distinct users (or sessions) receiving content keyed on attacker-supplied header - proves cache poisoning
-2. Capture a password-reset / OAuth link pointing at attacker-controlled host - proves Host injection
-3. Demonstrate the same endpoint returning different auth decisions with and without a forged forwarding header
-4. For response splitting: show a downstream cache or proxy serving the injected second response to an unrelated request
-5. For request smuggling: show one victim request seeing data from a different request appended (not just timing or single-shot anomaly)
-6. All findings should produce a durable artifact (cached response, sent email, log entry, session change) - transient anomalies are not validation
-
 ## False Positives
 
 - Headers that vary by input but are correctly keyed in the cache (intentional personalization, Vary set correctly)
@@ -174,16 +165,6 @@ The `X-Forwarded-*` family is informational - there is no protocol guarantee abo
 - Browsers blocking `Location: javascript:` or `Location: data:` - capability exists in the protocol but most modern browsers refuse to navigate
 - CRLF appearing in response headers but stripped by an outer proxy before reaching any client or cache
 - Request smuggling indicators that turn out to be normal pipelining or keep-alive behavior
-
-## Impact
-
-- Cross-user cache poisoning (defacement, XSS, account takeover via cached auth response)
-- Account takeover via Host-confused password-reset / OAuth flows
-- Auth bypass on endpoints trusting forwarding headers
-- Session fixation and cookie tossing leading to account hijack
-- Open redirect for phishing / OAuth `redirect_uri` abuse
-- Request smuggling - one victim's request reads another victim's response, including auth headers and cookies
-- WAF / detection bypass via header-name and encoding tricks
 
 ## Pro Tips
 

@@ -135,14 +135,6 @@ com.app://callback  (mobile custom scheme)
 5. **Token exchange** - Swap codes/tokens between clients; test cross-audience acceptance
 6. **Mobile/deep links** - Custom schemes, intent filters, universal links hijacking
 
-## Validation
-
-1. Demonstrate stolen authorization code or token via redirect manipulation or Referer leak
-2. Show account takeover or access to victim resources with attacker's OAuth session
-3. Prove CSRF: victim completes login into attacker's linked session without consent UI bypass where applicable
-4. Document exact validation gap (redirect binding, PKCE, state, audience)
-5. Provide full authorize → callback → token request chain with before/after evidence
-
 ## False Positives
 
 - Redirect URI rejected consistently across all bypass attempts
@@ -150,13 +142,6 @@ com.app://callback  (mobile custom scheme)
 - `state`/`nonce` enforced and bound; CSRF test fails as expected
 - Token audience/issuer correctly validated at resource server
 - Custom scheme redirects require app ownership proof (verified Android/iOS app links)
-
-## Impact
-
-- Full account takeover via stolen authorization codes or tokens
-- Persistent access through refresh token theft
-- Cross-tenant or cross-client data access via token confusion
-- PII exposure from userinfo or ID token claim leakage
 
 ## Pro Tips
 

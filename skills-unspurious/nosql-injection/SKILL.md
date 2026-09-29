@@ -242,28 +242,12 @@ DoS surface (use only with explicit authorization scope):
 9. **Test non-MongoDB stores** - Elasticsearch `query_string`, Redis command construction, DynamoDB PartiQL, CouchDB Mango selectors, Neo4j Cypher concatenation, Cassandra CQL
 10. **Test GraphQL resolvers** - submit operator objects via variables on any input type that reaches a NoSQL filter; use `__schema` introspection to enumerate candidates
 
-## Validation
-
-1. Demonstrate authentication bypass: send operator payload, confirm login succeeds for any/first account
-2. Extract a verifiable secret (password hash, reset token, API key) via `$regex` blind extraction
-3. Show at least two distinct operator payloads working to rule out coincidence
-4. Provide before/after: normal request returns 401, injected request returns 200
-5. For `$where`: show timing differential with/without `sleep()`
-
 ## False Positives
 
 - Framework-level query builder that casts input to string before constructing the query (Mongoose `strict` mode on)
 - Input sanitization stripping operator keys before they reach the driver
 - Endpoints that accept JSON but cast the `password` field to string - operator object becomes `[object Object]`
 - Response differences caused by validation errors, not actual operator execution
-
-## Impact
-
-- Authentication bypass granting access to arbitrary or all accounts
-- Full extraction of sensitive fields (tokens, hashed passwords, PII) via blind regex enumeration
-- Privilege escalation by querying admin/superuser records directly
-- Data exfiltration at scale via widened `$ne`/`$regex`/`$gt` filters
-- Server-side JavaScript execution via `$where` on unpatched MongoDB instances
 
 ## Pro Tips
 

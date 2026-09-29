@@ -121,25 +121,11 @@ TLS clues: certificate CN/SAN referencing provider default host instead of the c
 5. **Attempt claim** (with authorization) - Create missing resource with exact required name
 6. **Validate control** - Serve minimal unique payload; confirm over HTTPS
 
-## Validation
-
-1. Before: record DNS chain, HTTP response (status/body length/fingerprint), and TLS details
-2. After claim: serve unique content and verify over HTTPS at the target subdomain
-3. Optional: issue a DV certificate (legal scope) and reference CT entry as evidence
-4. Demonstrate impact chains (CSP/script-src trust, OAuth redirect acceptance, cookie Domain scoping)
-
 ## False Positives
 
 - "Unknown domain" pages that are not claimable due to enforced TXT/ownership checks
 - Provider-branded default pages for valid, owned resources (not a takeover)
 - Soft 404s from your own infrastructure or catch-all vhosts
-
-## Impact
-
-- Content injection under trusted subdomain: phishing, malware delivery, brand damage
-- Cookie and CORS pivot: if parent site sets Domain-scoped cookies or allows subdomain origins
-- OAuth/SSO abuse via whitelisted redirect URIs
-- Email delivery manipulation for subdomain
 
 ## Pro Tips
 

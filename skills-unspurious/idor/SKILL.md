@@ -174,14 +174,6 @@ Do this **before** any IDOR probe, and do not conclude “not vulnerable” from
 5. **Transport variation** - Test across web, mobile, API, GraphQL, WebSocket, gRPC
 6. **Consistency check** - Same rule must hold regardless of transport, content-type, serialization, or gateway
 
-## Validation
-
-1. Demonstrate access to an object not owned by the caller (content or metadata)
-2. Show the same request fails with appropriately enforced authorization when corrected
-3. Prove cross-channel consistency: same unauthorized access via at least two transports (e.g., REST and GraphQL)
-4. Document tenant boundary violations (if applicable)
-5. Provide reproducible steps and evidence (requests/responses for owner vs non-owner)
-
 ## False Positives
 
 - Public/anonymous resources by design
@@ -189,13 +181,6 @@ Do this **before** any IDOR probe, and do not conclude “not vulnerable” from
 - Idempotent metadata lookups that do not reveal sensitive content
 - Correct row-level checks enforced across all channels
 - Empty array / null returned for another user's resource - silent enforcement, not exposure; compare against the owner's view to confirm the data is actually missing rather than just hidden from the response shape
-
-## Impact
-
-- Cross-account data exposure (PII/PHI/PCI)
-- Unauthorized state changes (transfers, role changes, cancellations)
-- Cross-tenant data leaks violating contractual and regulatory boundaries
-- Regulatory risk (GDPR/HIPAA/PCI), fraud, reputational damage
 
 ## Pro Tips
 

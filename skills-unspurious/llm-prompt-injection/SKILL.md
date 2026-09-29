@@ -74,57 +74,6 @@ Applications that pass untrusted input into an LLM prompt are vulnerable to prom
 - Role-play, hypothetical framing, "for a security test", instruction laundering across turns
 - Splitting a blocked request across multiple messages or encodings
 
-## Framework-Specific
-
-### LangChain / LangGraph
-
-- `AgentExecutor` and tool-calling agents parse model output into tool calls - injected content can steer **which** tool runs and **what arguments** it receives
-- Sinks to grep: custom `Tool`/`@tool` functions (shell, SQL, HTTP, file), `initialize_agent`, `create_react_agent`, output parsers
-- Untrusted documents flowing through chains (retrieval → prompt) are a prime indirect-injection path
-
-### OpenAI Assistants / Function Calling
-
-- The model chooses the function and its arguments from untrusted text - validate arguments server-side; never treat them as sanitized
-- Assistants `file_search`/retrieval ingests uploaded files → indirect injection via document content
-- Code Interpreter is a code-execution sink reachable from model output
-- `tool_choice`/forced tools do not prevent argument injection
-
-### Anthropic Tool Use
-
-- `tool_use` blocks carry model-chosen input; schema and result handling differ from OpenAI
-- Check how `tool_result` is fed back and whether untrusted tool output re-enters the prompt unbounded
-
-### LlamaIndex / RAG Pipelines
-
-- Injection rides inside indexed documents; retrieval hooks (node post-processors, query engines, `response_synthesizer`) and agent tools change the surface
-- Grep: data loaders ingesting untrusted sources, `QueryEngineTool`, sub-question/agent query engines
-
-### Guardrail Layers (NeMo Guardrails, LLM Guard, etc.)
-
-- If the guard is the same model or otherwise in-band, it is bypassable by the same injection
-- Confirm the guard inspects the **final merged prompt** (including retrieved/ingested content), not just the user message
-
-## Exploitation Scenarios
-
-### Indirect Injection → Data Exfiltration
-
-1. Attacker plants hidden instructions in a page/doc the victim will ask the assistant about
-2. Victim asks the assistant to summarize it
-3. Injected text instructs the model to embed secrets in a markdown image URL or call a tool
-4. Data leaves via the rendered request or tool action
-
-### RAG Poisoning
-
-1. Upload/seed a document containing an injected instruction tuned to a common query
-2. Another user's query retrieves it
-3. The model follows the injected instruction in that user's privileged context
-
-### LLM-to-XSS
-
-1. Get the model to emit `<img src=x onerror=alert(document.domain)>`
-2. App renders model output as HTML without encoding
-3. Confirm script execution → stored XSS if the conversation is persisted
-
 ## Testing Methodology
 
 1. **Map trust boundaries** - input sources, model capabilities/tools, output sinks
@@ -135,14 +84,6 @@ Applications that pass untrusted input into an LLM prompt are vulnerable to prom
 6. **Output-handling probes** - emit HTML/markdown/SQL-bearing output and check the sink
 7. **Guardrail probes** - test whether moderation is in-band and bypassable
 
-## Validation
-
-1. Show a concrete, repeatable payload that changes model behavior against the developer's intent
-2. For indirect injection, demonstrate the trigger via normal user action (e.g., "summarize this URL")
-3. Prove real impact, not just words: a tool call performed, data exfiltrated, XSS executed, or secrets/system prompt disclosed
-4. Capture the rendered sink (DOM, outbound request, tool invocation log) as evidence
-5. Confirm reproducibility across retries - account for model non-determinism
-
 ## False Positives
 
 - The model *saying* it will do something without a privileged sink or tool to actually do it
@@ -150,13 +91,6 @@ Applications that pass untrusted input into an LLM prompt are vulnerable to prom
 - Output that is properly encoded/sanitized before reaching HTML/SQL/shell sinks
 - Behavior not reproducible across runs (non-determinism, not a real bypass)
 - Sandboxed tools with no access to sensitive data or actions
-
-## Impact
-
-- Exfiltration of secrets, system prompts, and cross-tenant data
-- Unauthorized privileged actions via tool/agent abuse (send/delete/modify)
-- Stored XSS and downstream injection through unescaped model output
-- Bypass of content policy and business rules; reputational and compliance harm
 
 ## Pro Tips
 

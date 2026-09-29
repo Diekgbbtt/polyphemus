@@ -119,26 +119,11 @@ Mass assignment binds client-supplied fields directly into models/DTOs without f
 5. **Compare state** - Before/after diffs across roles
 6. **Test variations** - Nested objects, arrays, alternative shapes, duplicate keys, batch operations
 
-## Validation
-
-1. Show a minimal request where adding a sensitive field changes persisted state for a non-privileged caller
-2. Provide before/after evidence (response body, subsequent GET, or GraphQL query) proving the forbidden attribute value
-3. Demonstrate consistency across at least two encodings or channels
-4. For nested/bulk, show that protected fields are written within child objects or array elements
-5. Quantify impact (e.g., role flip, cross-tenant move, quota increase) and reproducibility
-
 ## False Positives
 
 - Server recomputes derived fields (plan/price/role) ignoring client input
 - Fields marked read-only and enforced consistently across encodings
 - Only UI-side changes with no persisted effect
-
-## Impact
-
-- Privilege escalation and admin feature access
-- Cross-tenant or cross-account resource takeover
-- Financial/billing manipulation and quota abuse
-- Policy/approval bypass by toggling verification or status flags
 
 ## Pro Tips
 

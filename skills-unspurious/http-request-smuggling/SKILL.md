@@ -59,7 +59,6 @@ Transfer-Encoding: chunked
 SMUGGLED
 0
 
-
 ```
 
 ### H2.CL - HTTP/2 Front-end Downgrades to HTTP/1.1, Injects Content-Length
@@ -209,28 +208,12 @@ Transfer-Encoding: chunked<CRLF>Transfer-Encoding: x  # TE twice - inject actual
 7. **Attempt capture** - poison with a partial POST pointing to a reflective endpoint; wait for a follow-up request to fill the buffer
 8. **Test H2.CL/H2.TE** - repeat the same probes over HTTP/2 connections if the target supports HTTP/2
 
-## Validation
-
-1. Show a timing differential of 10+ seconds on the CL.TE or TE.CL probe and explain the mechanism
-2. Demonstrate a bypass: smuggle a request to `/admin` and receive a 200 response where a direct request returns 403
-3. For capture: show a subsequent user's `Cookie` or `Authorization` header appearing in the response of a controlled endpoint
-4. Confirm with a unique marker string in the smuggled prefix to rule out timing noise
-5. Provide the exact raw bytes of the smuggled request
-
 ## False Positives
 
 - General network latency or server-side processing delays unrelated to smuggling
 - Server consistently close connection after first request (no connection reuse, no socket sharing)
 - HTTP/2 with full end-to-end HTTP/2 to back-end (no HTTP/1.1 downgrade, no desync surface)
 - WAF or proxy that normalizes TE/CL headers before forwarding (removes the ambiguity)
-
-## Impact
-
-- Authentication and authorization bypass by smuggling requests past front-end access controls
-- Cross-user session hijacking by capturing requests containing session tokens
-- Cache poisoning affecting all users of a cached resource
-- Internal service access bypassing IP-based restrictions enforced at the front-end
-- XSS delivery via response queue poisoning in shared connection contexts
 
 ## Pro Tips
 

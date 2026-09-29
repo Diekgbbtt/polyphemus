@@ -186,18 +186,6 @@ pop graphic-context
 - Windows variations (PowerShell vs CMD)
 - Constrained language bypasses
 
-## Post-Exploitation
-
-**Privilege Escalation**
-- `sudo -l`; SUID binaries; capabilities (`getcap -r / 2>/dev/null`)
-
-**Persistence**
-- cron/systemd/user services; web shell behind auth
-- Plugin hooks; supply chain in CI/CD
-
-**Lateral Movement**
-- SSH keys, cloud metadata credentials, internal service tokens
-
 ## Testing Methodology
 
 1. **Identify sinks** - Command wrappers, template rendering, deserialization, file converters, report generators, plugin hooks
@@ -206,26 +194,12 @@ pop graphic-context
 4. **Map boundaries** - Read/write locations, outbound egress
 5. **Progress to control** - File write, scheduled execution, service restart hooks
 
-## Validation
-
-1. Provide a minimal, reliable oracle (DNS/HTTP/timing) proving code execution
-2. Show command context (uid, gid, cwd, env) and controlled output
-3. Demonstrate persistence or file write under application constraints
-4. If containerized, prove boundary crossing attempts (host files, kube APIs) and whether they succeed
-5. Keep PoCs minimal and reproducible across runs and transports
-
 ## False Positives
 
 - Only crashes or timeouts without controlled behavior
 - Filtered execution of a limited command subset with no attacker-controlled args
 - Sandboxed interpreters executing in a restricted VM with no IO or process spawn
 - Simulated outputs not derived from executed commands
-
-## Impact
-
-- Remote system control under application user; potential privilege escalation to root
-- Data theft, encryption/signing key compromise, supply-chain insertion, lateral movement
-- Cluster compromise when combined with container/Kubernetes misconfigurations
 
 ## Pro Tips
 

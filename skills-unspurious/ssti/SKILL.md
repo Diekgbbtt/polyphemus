@@ -267,14 +267,6 @@ Handlebars itself is harder (default helpers are restricted), but custom helpers
 - Unsafe deserialization gadget invoked through template (Java `ObjectInputStream`, Python `pickle`, PHP `unserialize`)
 - DNS / HTTP exfiltration when shell exec produces no observable output
 
-## Post-Exploitation
-
-- Environment dump (`env`, `os.environ`, `System.getenv`) - credentials, cloud metadata tokens, internal URLs
-- Cloud metadata fetch (`http://169.254.169.254/latest/meta-data/`, `http://metadata.google.internal/`) - IAM tokens
-- Read filesystem secrets (`.env`, `.aws/credentials`, `~/.ssh/`, `/proc/self/environ`)
-- Lateral via internal HTTP - service mesh endpoints reachable from the rendering host
-- Persistence: cron, scheduled task, systemd unit, `~/.ssh/authorized_keys`, web shell in webroot
-
 ## Testing Methodology
 
 1. **Find templated input** - anywhere a server clearly templated user input (preview panes, email previews, dynamic dashboards, custom fields)
@@ -285,14 +277,6 @@ Handlebars itself is harder (default helpers are restricted), but custom helpers
 6. **Reach RCE** - pick the shortest gadget chain to a shell-equivalent primitive
 7. **Validate side effects** - DNS callback, file write, sleep - anything observable that proves execution
 
-## Validation
-
-1. Show evaluated output for two distinct expressions (`{{7*7}}` → `49` and `{{7*8}}` → `56`) to rule out coincidence or hard-coded reflection
-2. Demonstrate object access (`{{self.__class__}}`, `${T(java.lang.Class)}`) confirming runtime reflection
-3. Demonstrate side effect - DNS lookup to attacker-controlled domain, sleep with measurable delta, file written to a known path
-4. For RCE: command output captured in response, file written, or OAST callback containing command output
-5. Provide minimal payload - the simplest expression that reaches RCE, not the kitchen-sink polyglot
-
 ## False Positives
 
 - Template syntax reflected literally (`{{7*7}}` rendered as `{{7*7}}`) - that's XSS-shaped, not SSTI
@@ -300,15 +284,6 @@ Handlebars itself is harder (default helpers are restricted), but custom helpers
 - Client-side template engines (Vue, Angular, Mustache running in the browser) - that's client-side template injection, different impact (XSS, not RCE)
 - Markdown / static-site generators that template at build time only, with no user input reaching the build
 - Engines where the output is HTML-escaped before display, masking evaluation as XSS-like reflection - verify with a non-HTML probe (`{{7*7}}` numeric)
-
-## Impact
-
-- Remote code execution on the rendering host (the default outcome - almost every engine leaks a path to it)
-- Server-side data exfiltration via gadget chains (filesystem, env vars, internal HTTP)
-- Cloud credential theft via metadata service access from the compromised host
-- Lateral movement into internal services reachable from the renderer
-- Persistent backdoor via web shell or service-account key planting
-- Build / supply-chain compromise when the templated content is a build artifact
 
 ## Pro Tips
 

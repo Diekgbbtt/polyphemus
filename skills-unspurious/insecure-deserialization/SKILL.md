@@ -124,14 +124,6 @@ When `TypeNameHandling` != `None`.
 5. **Minimal PoC** - Demonstrate code execution or critical logic bypass with least destructive command
 6. **Session/cookie focus** - Deserialize server-side session stores (Java, PHP) early
 
-## Validation
-
-1. Demonstrate attacker-controlled object graph reaches dangerous sink (unmarshal/readObject)
-2. Show impact: RCE (bounded command), auth bypass object, or privilege field manipulation
-3. Provide encoded payload and exact injection point (cookie name, parameter, header)
-4. Confirm on fixed version or alternate instance that identical payload fails safely
-5. Document library/version and gadget chain class names for remediation
-
 ## False Positives
 
 - Base64 data is encrypted or signed with verified HMAC before deserialization
@@ -147,13 +139,6 @@ When `TypeNameHandling` != `None`.
 - Switch content-type or parameter location (GET vs POST vs cookie)
 - Type confusion: JSON array vs object hitting different deserializer branches
 - Unicode/UTF-7 smuggling in PHP serialized strings (legacy contexts)
-
-## Impact
-
-- Remote code execution on application servers
-- Authentication bypass via forged session objects
-- Privilege escalation through manipulated role/admin fields in deserialized classes
-- Full application compromise in Java/PHP/.NET stacks with known gadget libraries
 
 ## Pro Tips
 

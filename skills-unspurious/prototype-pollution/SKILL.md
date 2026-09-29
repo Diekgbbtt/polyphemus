@@ -88,14 +88,6 @@ Gadget availability depends on package versions - enumerate `node_modules` in wh
 5. **Gadget hunting (Node.js)** - Map polluted keys to sinks in dependency tree (ejs, pug, handlebars, child_process wrappers)
 6. **Client-side** - Check if polluted properties affect routing, auth UI, or DOM sinks
 
-## Validation
-
-1. Demonstrate a property on `Object.prototype` (or relevant prototype) affecting behavior on unrelated objects
-2. Show security impact: auth bypass, XSS execution, or server-side command execution with minimal PoC
-3. Prove pollution persists across requests (server) or page lifetime (client) as applicable
-4. Document exact merge function and input path (parameter name, content-type)
-5. Confirm fix: null-prototype objects, `Object.create(null)`, or key blocklists on `__proto__`/`constructor`/`prototype`
-
 ## False Positives
 
 - Parser strips `__proto__` before merge - marker property never appears on prototype
@@ -111,13 +103,6 @@ Gadget availability depends on package versions - enumerate `node_modules` in wh
 - Content-type switching: JSON vs `application/x-www-form-urlencoded` vs multipart
 - Split pollution across multiple parameters merged sequentially
 - Second-order pollution: store payload, trigger merge in background job or export pipeline
-
-## Impact
-
-- Authentication/authorization bypass via polluted flag checks
-- DOM XSS and session compromise in browsers
-- Remote code execution on Node.js through known gadget chains
-- Denial of service via polluting widely read prototype properties
 
 ## Pro Tips
 

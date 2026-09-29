@@ -147,26 +147,11 @@ Upload surfaces are high risk: server-side execution (RCE), stored XSS, malware 
 4. **Exercise bypass families** - Extension games, MIME/content-type, magic bytes, polyglots, metadata payloads, archive structure
 5. **Validate execution** - Can uploaded content execute on server or client?
 
-## Validation
-
-1. Demonstrate execution or rendering of active content: web shell reachable, or SVG/HTML executing JS when viewed
-2. Show filter bypass: upload accepted despite restrictions with evidence on retrieval
-3. Prove header weaknesses: inline rendering without nosniff or missing attachment
-4. Show race or pipeline gap: access before AV/CDR; extraction outside intended directory
-5. Provide reproducible steps: request/response for upload and subsequent access
-
 ## False Positives
 
 - Upload stored but never served back; or always served as attachment with strict nosniff
 - Converters run in locked-down sandboxes with no external IO and no script engines
 - AV/CDR blocks the payload and quarantines; access before scan is impossible by design
-
-## Impact
-
-- Remote code execution on application stack or media toolchain host
-- Persistent cross-site scripting and session/token exfiltration via served uploads
-- Malware distribution via public storage/CDN; brand/reputation damage
-- Data loss or corruption via overwrite/zip slip; service degradation via zip bombs
 
 ## Pro Tips
 

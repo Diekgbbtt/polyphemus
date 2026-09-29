@@ -129,27 +129,12 @@ Concurrency bugs enable duplicate state changes, quota bypass, financial abuse, 
 6. **Cross-channel** - Test across web, API, GraphQL, WebSocket
 7. **Confirm durability** - Verify state changes persist and are reproducible
 
-## Validation
-
-1. Single request denied; N concurrent requests succeed where only 1 should
-2. Durable state change proven (ledger entries, inventory counts, role/flag changes)
-3. Reproducible under controlled synchronization (HTTP/2, last-byte sync) across multiple runs
-4. Evidence across channels (e.g., REST and GraphQL) if applicable
-5. Include before/after state and exact request set used
-
 ## False Positives
 
 - Truly idempotent operations with enforced ETag/version checks or unique constraints
 - Serializable transactions or correct advisory locks/queues
 - Visual-only glitches without durable state change
 - Rate limits that reject excess with atomic counters
-
-## Impact
-
-- Financial loss (double spend, over-issuance of credits/refunds)
-- Policy/limit bypass (quotas, single-use tokens, seat counts)
-- Data integrity corruption and audit trail inconsistencies
-- Privilege or role errors due to concurrent updates
 
 ## Pro Tips
 

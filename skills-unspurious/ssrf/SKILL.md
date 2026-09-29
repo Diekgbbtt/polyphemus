@@ -110,13 +110,6 @@ Server-Side Request Forgery enables the server to reach networks and services th
 7. **Header/method control** - Can you influence request headers or HTTP method?
 8. **High-value targets** - Metadata, kubelet, Redis, FastCGI, Docker, Vault, internal admin panels
 
-## Validation
-
-1. Prove an outbound server-initiated request occurred (OAST interaction or internal-only response differences)
-2. Show access to non-public resources (metadata, internal admin, service ports) from the vulnerable service
-3. Where possible, demonstrate minimal-impact credential access (short-lived token) or a harmless internal data read
-4. Confirm reproducibility and document request parameters that control scheme/host/headers/method and redirect behavior
-
 ## False Positives
 
 - Client-side fetches only (no server request)
@@ -124,13 +117,6 @@ Server-Side Request Forgery enables the server to reach networks and services th
 - SSRF simulators/mocks returning canned responses without real egress
 - Blocked egress confirmed by uniform errors across all targets and protocols
 - OAST callbacks where the source IP matches the tester's machine, not the server - the browser or a client-side fetch made the request, not the backend
-
-## Impact
-
-- Cloud credential disclosure with subsequent control-plane/API access
-- Access to internal control panels and data stores not exposed publicly
-- Lateral movement into Kubernetes, service meshes, and CI/CD
-- RCE via protocol abuse (FCGI, Redis), Docker daemon access, or scriptable admin interfaces
 
 ## Pro Tips
 

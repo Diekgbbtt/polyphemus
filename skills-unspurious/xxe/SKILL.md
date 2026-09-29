@@ -165,27 +165,12 @@ Targets: transform endpoints, reporting engines (XSLT/Jasper/FOP), xml-styleshee
 4. **Escalate** - Targeted file/SSRF payloads
 5. **Validate parity** - Same parser options must hold across REST, SOAP, SAML, file uploads, and background jobs
 
-## Validation
-
-1. Provide a minimal payload proving parser capability (DOCTYPE/XInclude/XSLT)
-2. Demonstrate controlled access (file path or internal URL) with reproducible evidence
-3. Confirm blind channels with OAST and correlate to the triggering request
-4. Show cross-channel consistency (e.g., same behavior in upload and SOAP paths)
-5. Bound impact: exact files/data reached or internal targets proven
-
 ## False Positives
 
 - DOCTYPE accepted but entities not resolved and no transclusion reachable
 - Filters or sandboxes that emit entity strings literally (no IO performed)
 - Mocks/stubs that simulate success without network/file access
 - XML processed only client-side (no server parse)
-
-## Impact
-
-- Disclosure of credentials/keys/configs, code, and environment secrets
-- Access to cloud metadata/token services and internal admin panels
-- Denial of service via entity expansion or slow external resources
-- Code execution via XSLT/expect:// in insecure stacks
 
 ## Pro Tips
 

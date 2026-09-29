@@ -159,17 +159,6 @@ Try each of these if the first POST JSON fails:
 7. Light depth/amount/alias probes for missing limits. Batching on login/OTP if present.
 8. Record stack traces / SQL in `errors`.
 
-## Validation
-
-A GraphQL finding needs:
-
-- The exact `POST` path, operation (`Query.user` / `Mutation.login`), and GraphQL document
-- Cookie or token used
-- Two responses: authorized vs unauthorized principal, or injected vs clean input
-- Impact in the JSON `data` (foreign `apiKey`, extra rows, delay), not just “it returned 200”
-
-Do not report CSRF/CORS without a cookie-auth GraphQL request that changes state. Do not report introspection on a deliberately public schema unless it exposes private/deprecated fields.
-
 ## False positives
 
 - `Cannot query field "X"` - field does not exist
