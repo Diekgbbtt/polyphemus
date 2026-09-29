@@ -22,7 +22,7 @@ A multi-instance eval harness rooted at `eval/` (brought up one layer from `tool
 - runs an `EvalSetup` over one or more `PolyphemusInstance`s, each a full polymerhus stack, each running from its own git worktree off the read-only `eval` branch;
 - gives every `Trial` a fresh target instance and a fresh project, routed by a unique synthetic Host, able to enter at recon, analysis, or hunting behind persisted-state predicates;
 - chains the setup outcome directly into execution: the orchestrator fixes configuration-layer failures or starts the eval;
-- enforces a per-`Target` hunting cap counted from the consumed directory, and supports pre-mined hunting artifacts mounted before a run;
+- enforces a per-`Target`-declared hunting cap, counted trial-scoped from the consumed directory against a persisted baseline, and supports pre-mined hunting artifacts mounted before a run;
 - produces evidence-chained `verdicts.yaml` through an asynchronous assessment subagent, with an eval-close verification phase, then a diagnoser subagent writes `diagnoses.yaml` for every `missed` and `partial` vuln, root-causing into code **and** the persisted data layer;
 - pins the evaluated version: GitHub Actions delivers to `dev`, a systemd sync daemon advances the `eval` branch only when all instances are idle, emitting a stack manifest and fingerprint, and the orchestrator decides and executes the alignment action, escalating to the operator when a jump is not alignable without a decision;
 - keeps a durable artifact store through a one-way continuous sync, one self-contained directory per trial.
@@ -43,7 +43,7 @@ A multi-instance eval harness rooted at `eval/` (brought up one layer from `tool
 12. As an eval orchestrator, I want `Trial`s to enter at recon, analysis, or hunting with persisted-state predicates, so that partial re-runs are possible.
 13. As an eval orchestrator, I want the recon-entry predicate to include the project-specific `authn` skill and the seeded `AuthContext` (overview and credentials), so that authenticated targets are exercised.
 14. As an eval orchestrator, I want to chain the setup outcome into execution, fixing configuration-layer failures or starting the eval, so that setup and run are one coherent procedure.
-15. As an operator, I want a hunting cap per `Target`, counted from the consumed hunt-config directory with mounted files included, so that budget is enforced consistently.
+15. As an operator, I want a hunting cap declared per `Target` and counted per `Trial` from the consumed hunt-config directory against a persisted baseline, so that a prior run's configs never satisfy a new trial's budget while a resumed trial keeps counting.
 16. As an operator, I want pre-mined hunting artifacts mounted before a run and consumed lazily by the pipeline, so that prior work can seed a trial.
 17. As a surfer loop, I want to assert instance state in the background and prompt the orchestrator on cap-reached or failed state, so that stuck or credit-exhausted runs are handled.
 18. As the eval orchestrator, I want to decide between terminate, destroy, and fix-and-restart on a failed instance, bounded to configuration and data-layer repairs, so that recovery is deliberate.
@@ -127,8 +127,8 @@ A single failed recon job is note-and-continue.
 
 ### Hunting cap and pre-mined artifacts
 
-The cap is per `Target`, counted as files present in the consumed hunt-configs directory (mounted files included).
-Enforcement is symbolic: at the cap the orchestrator stops the hunting run and records the overshoot margin.
+The cap is declared per `Target` but enforced per `Trial`: it counts the hunt configs consumed during the trial, against a baseline of the consumed names already present at the trial's first hunting poll. The baseline is persisted in the trial record and carried across a resume, so files consumed by a prior run (or mounted before the trial started) are baseline, not count; a new trial id snapshots a fresh baseline.
+Enforcement is symbolic: at the cap the orchestrator stops the hunting run and records the trial-scoped overshoot margin.
 
 ### Vesting schemas
 

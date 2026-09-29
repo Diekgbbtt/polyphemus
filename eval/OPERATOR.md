@@ -383,10 +383,14 @@ no import/seed API and the trial never fabricates an artifact through the API.
   fails setup validation loud.
 
 The legacy single-string form is still accepted and means `configs` only:
-`preloaded_hunting_artifacts: /mnt/premined-configs`. Pre-mined files count
-toward the hunting cap exactly like produced ones, and a setup that declares
-`preloaded_hunting_artifacts` does not enter hunting until at least one artifact
-is present on disk.
+`preloaded_hunting_artifacts: /mnt/premined-configs`. The cap is **trial-scoped**:
+it counts only the configs the pipeline consumes during the trial, against a
+baseline of the consumed names already present at the trial's first hunting poll
+(persisted as `cap_baseline` in the trial record and carried across a resume). A
+pre-mined config the pipeline consumes during the run therefore counts toward the
+cap; one already in `consumed/` before the trial starts does not. A setup that
+declares `preloaded_hunting_artifacts` does not enter hunting until at least one
+artifact is present on disk.
 
 **The seeded hunting entry** (`existing_project_id`, #277). A trial may hunt
 directly against a pre-recon'd project whose L0/L1 already exists on the
@@ -471,7 +475,7 @@ grows.
 | File | What it tells you |
 |---|---|
 | `verdicts.yaml` | The oracle's per-vuln rows: `identified / partial / missed`, confidence, evidence refs with quoted passages |
-| `trial.yaml` | The trial record (#270): `trial_id`, `instance_id`/`target_id`/`target_run_id`, `start_phase`, `terminal`, the per-phase rows (`entered`, `status`, `run_id`, `blocks`, `notes`, `failure`), timings, the cap accounting (`cap`/`stop_count`/`final_count`/`overshoot`), the aggregated `notes`, the version identity (`eval_sha`/`stack_fingerprint`/`trace_id`), and the `assessment`/`diagnosis` state |
+| `trial.yaml` | The trial record (#270): `trial_id`, `instance_id`/`target_id`/`target_run_id`, `start_phase`, `terminal`, the per-phase rows (`entered`, `status`, `run_id`, `blocks`, `notes`, `failure`), timings, the cap accounting (`cap`/`stop_count`/`final_count`/`overshoot`, all trial-scoped, and the `cap_baseline` it counted against), the aggregated `notes`, the version identity (`eval_sha`/`stack_fingerprint`/`trace_id`), and the `assessment`/`diagnosis` state |
 | `manifest.json` | What `ev.py` collected and what was absent (per-store `present` flags, statuses, KB files) |
 | `operator_kb.md` / `research-notes.md` | What the pipeline was told the deployed application is (per-target, precomputed in `eval/kbs/<target>/`), and the reverse-engineering source ledger |
 | `surface-map.md` (in `eval/kbs/<target>/`) | The reverse-engineered endpoint inventory the KB was derived from - judge's reference only, never piped |

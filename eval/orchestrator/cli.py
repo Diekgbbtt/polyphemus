@@ -1350,7 +1350,14 @@ def _resume_trial(args, setup: EvalSetup, config: OrchestratorConfig,
         dry_run=False,
     )
     cfg, _paths, _run = _trial_config(resume_args, setup, config)
-    cfg = replace(cfg, start_phase=plan.start_phase, intervention=plan.intervention)
+    cfg = replace(
+        cfg,
+        start_phase=plan.start_phase,
+        intervention=plan.intervention,
+        # A resumed trial keeps its recorded trial-scoped baseline; only a new
+        # trial snapshots a fresh one (D8/D16).
+        cap_baseline=plan.cap_baseline,
+    )
     runner = runner_factory()
     api_runner = (api_factory or (lambda base: api.HttpApiRunner(base)))(args.api)
     probe = trial.make_reachability_probe(paths, runner, trial.front_url(cfg))
