@@ -2,7 +2,7 @@
 name: authn-skill-writing
 description: Use when executing authentication against a target project by hand and authoring that target's per-project authentication skill from verified state.
 metadata:
-  version: '2.6'
+  version: '2.7'
 ---
 # Authn skill writing
 
@@ -153,6 +153,7 @@ Gate: no procedure prose landed in the store and no secret value landed in the s
 ## P5 - Write the procedure (HOW)
 
 Write the authn skill as replayable ordered steps, with sign-up and sign-in as separate named procedures.
+Every sign-up procedure carries this line verbatim, so every target mints new accounts the same way: "New accounts are minted with synthetic identity data - a fake email address and fake personal details - never real personal data; the exact values used are recorded in the account's `credentials`."
 Cite for EVERY step the tool it uses AND why it uses it (request-based because no blocking defence was observed, steel because a named WAF, anti-bot, or fingerprinting signal forced it).
 When `http-client-replayability` is `true`, the procedure carries the replay steps and the static/dynamic element lists: which headers, cookies, parameters, and token locations to send as-is, and which values must be re-minted or are browser-bound.
 When it is `false`, the procedure carries the browser steps instead, and says plainly that a plain-client replay cannot reach the authenticated state.

@@ -71,12 +71,15 @@ def _strip_nulls(obj):
 
 
 def _apply_target_settings(settings: dict) -> dict:
+    """Project the eval target's `settings` onto the settings PUT body.
+
+    #243: `auth_context` is NOT a settings field - the settings face refuses it.
+    These contract tests do not exercise the authenticated surface, so the auth
+    block is dropped here; a real mechanical eval seeds it via
+    `PUT /projects/{id}/auth` (ledger V-6)."""
     out = _strip_nulls(settings)
     assert isinstance(out, dict)
-    auth = out.get("auth_context") or {}
-    creds = auth.get("credentials")
-    if isinstance(creds, dict) and not (creds.get("username") and creds.get("password")):
-        auth.pop("credentials", None)
+    out.pop("auth_context", None)
     return out
 
 

@@ -1,0 +1,22 @@
+{
+ "analysis_run_id": "08c3e2f0-cbdc-46c0-803a-8fb6f0b796fb:4197af2d",
+ "run_id": "08c3e2f0-cbdc-46c0-803a-8fb6f0b796fb",
+ "project_id": "12da8565-a266-4610-9968-9ebfb86dd563",
+ "status": "drained",
+ "started_at": "2026-08-25T00:45:38.612950Z",
+ "finished_at": "2026-08-25T01:37:36.386734Z",
+ "stats": {
+  "mode": "queued",
+  "passes": 4,
+  "status": "drained",
+  "advanced": 3,
+  "consumer": "finished",
+  "l0_assets_read": 2240,
+  "analysis_drained": true,
+  "pass_seconds_max": 1084.114,
+  "dispatches_entered": 69,
+  "pass_seconds_total": 2076.315,
+  "advance_blocked_s_max": 0.001,
+  "advance_blocked_s_total": 0.002
+ }
+}

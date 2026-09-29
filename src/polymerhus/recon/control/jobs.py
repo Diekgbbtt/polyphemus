@@ -278,7 +278,7 @@ JOBS: dict[str, JobSpec] = {
             # katana_parser into the same Technology/Header nodes httpx_parser
             # produces, so this is free signal instead of being discarded.
             # `-d` is ASSEMBLED BY CONCATENATION, not an f-string: the template
-            # is later `.replace()`-filled for `{target}`/`{auth_header}` (see
+            # is later `.replace()`-filled for `{target}`/`{auth_flags}` (see
             # pod.fill_template), and an f-string would need every literal brace
             # doubled to survive. `KATANA_DEPTH` is read from the environment
             # once, at import (recon/config.py) - the depth knob a deep-crawl

@@ -13,7 +13,7 @@
 *Superseded in part (operator ruling, 2026-09-18, carried by the workflow-overview pass and D223-8 / D223-13): no new role id is minted.*
 *The auth-gateway duty attaches to the existing `job_orchestrator` role, so the `LLM_RECON_PHASE_SPECIALIST` key does not apply - the gateway uses the orchestrator's model key.*
 *The global MODEL-infix-drop env-key rename below stands unchanged.*
-*Landed 2026-09-18 (#240, `feat/223-stateful-recon-job-auth`): the rename is complete - every role record, caller, test, compose file, and environment document uses the infix-free `LLM_<NAME>` spelling; the migration-window fallback is removed and no legacy-infix reference remains.*
+*Landed 2026-09-18 (#240, `feat/223-stateful-recon-job-auth`): the role-identity half is complete - every role record and production caller uses the infix-free `LLM_<NAME>` spelling, and no new role id was minted. Correction (2026-09-25): the sweep is NOT total - legacy `LLM_MODEL_<ROLE>` spellings survive in `tests/e2e/harness/compose.authn-e2e.yml:52-65` (an explicit migration fallback), `docker-compose.sibling.yml:61`, and several e2e tests (`test_arjun_consumption_walkthrough.py`, the `blackloop` walkthroughs), so "the migration-window fallback is removed and no legacy-infix reference remains" overstates the landed state.*
 
 A new role id is minted for the stateful recon phase specialist; the existing `job_orchestrator` id is NOT reused.
 Capability and policy attach to the role id (model, turn mode, `ROLE_SKILLS` surface, compaction, trace tags), so two different agents sharing one id would share one capability set - and sharing would arm the run-level macro-router with the specialist's surface.
@@ -348,6 +348,7 @@ mid-command slots in the ffuf/arjun chains) are preserved. The reserved set keep
 still threads caller-supplied flat credential maps through the same
 serialiser. A repo-wide search finds no `{auth_header}` in any live template, pod, or
 feed reference, no `select_auth_context`, no settings-blob auth path.
+Correction (2026-09-25): the live templates/pod/feed are clean, but non-live references survive - a stale comment at `control/jobs.py:255` names `{auth_header}`, and `tests/e2e/test_recon_crawl_katana_depth.py:524,547` still does `.replace("{auth_header}", "")` - so "no reference anywhere" is too strong.
 
 ### IR-11 - The crawl mounts the persisted profile through the SDK
 
@@ -358,9 +359,8 @@ native `profile_id` session-create kwarg, no `persist_profile` write-back,
 so concurrent pods never race on one profile's last-writer state; a mount
 the platform rejects falls back to the unprofiled session ladder). The
 feed-projected cookies still seed the browser context beside the mount.
-No interactive path, no credentialed login, no operator prompt (`notify.py`,
-the viewer-URL surfacing, the pipeline pass-through, and the provider's
-`steel_await_auth` tool with its detection predicates are all removed).
+No interactive path, no credentialed login, no operator prompt (`notify.py`, the `steel_await_auth` tool with its detection predicates, and the pipeline pass-through are all removed).
+Correction (2026-09-25): the agentic crawl provider still returns a `viewer_url` on its start payload (`crawl/steel_provider.py:425`) and the crawl prompt references it - that viewer URL belongs to the agentic crawl, not the retired interactive auth prompt, so "the viewer-URL surfacing ... removed" is imprecise.
 The D23 autonomous credentialed login retires with the crawl path for one
 reason: its only credential source was the settings blob, and the ticket
 makes the crawl profile-mount only - post-gateway auth is established and
@@ -463,16 +463,13 @@ established never runs silently anonymous (D223-17).
 
 ### V-5 - Integration outcome
 
-`feat/223-stateful-recon-job-auth` pushed to origin per D223-7. `dev` was
-NOT fast-forwarded here: `origin/dev` does not contain this branch's base
-(`c126f86`), so a true fast-forward is impossible - the lineage conflict is
-surfaced, not forced, and `main` was never touched.
+`feat/223-stateful-recon-job-auth` pushed to origin per D223-7. At the time of this record `dev` was NOT fast-forwarded here: `origin/dev` did not contain this branch's base (`c126f86`), so a true fast-forward was impossible - the lineage conflict was surfaced, not forced, and `main` was never touched.
+Correction (2026-09-25): the work has since reached `dev` by merge - `origin/dev` now contains `efa3826 merge(workstream): forward dev with the #223 auth-gateway workstream`; `main` remains untouched.
 
 ### V-6 - Integration precondition: the eval-target e2e tier is unverified on-branch
 
-`tests/e2e/fixtures/eval-targets.yaml` does not exist on this branch, and
-the copy outside it still describes the retired settings-blob
-`auth_context` input (V-4). The T5 runs above therefore prove the gateway
+`tests/e2e/fixtures/eval-targets.yaml` is not committed on this branch (it is gitignored/untracked), though an on-disk working-tree copy exists, and that copy still describes the retired settings-blob `auth_context` input (V-4) - so it remains an active precondition risk, not merely a historical note.
+The T5 runs above therefore prove the gateway
 live through the current faces, but the mechanical eval-target e2e
 assertion tier for the gateway is unverified on-branch: the dataset must be
 brought current (seed faces plus the `skills/authn` bundle, no blob auth)

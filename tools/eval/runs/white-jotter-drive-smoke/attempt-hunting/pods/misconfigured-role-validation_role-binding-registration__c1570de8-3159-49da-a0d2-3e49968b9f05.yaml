@@ -1,0 +1,75 @@
+verdict: unsuccessful
+evidence:
+  terminal_reason: technical-infeasibility
+  iterations: 1
+  clean: false
+  interpretations: []
+  init_validation:
+  - "spec is not a valid TestImplementationSpec: 1 validation error for TestImplementationSpec\n\
+    payload_vector_space\n  Input should be a valid dictionary [type=dict_type, input_value=[{'method':\
+    \ 'POST', 'targ...', 'password': '<pw>'}}], input_type=list]\n    For further\
+    \ information visit https://errors.pydantic.dev/2.13/v/dict_type"
+  variant_specs:
+  - ref: v0
+    parent_ref: null
+    declined_attribute: ''
+    spec:
+      status: specified
+      candidate: H2
+      target_identity: Service:account-registration
+      verification_symptoms:
+      - a registration request carrying an unknown/garbage role identifier is rejected
+        (role validation exists), while a registration carrying a privileged role
+        identifier (sysadmin/contentmanager) is accepted and results in an account
+        bound to that privileged role - i.e. validation exists but is misconfigured
+        to permit privileged roles
+      testing_pattern: 'role-validation granularity probe: submit a registration with
+        an unknown/garbage role identifier (expect rejection if any validation exists);
+        submit a registration with a privileged role identifier (expect acceptance
+        if the accepted set includes privileged roles); compare against a baseline
+        no-roles registration'
+      assumptions:
+      - unauthenticated network access to the public registration surface
+      - the registration endpoint accepts a client-supplied roles parameter
+      - role validation exists on the registration endpoint
+      - the accepted role set includes privileged roles (sysadmin/contentmanager)
+      - the account is enabled immediately
+      payload_vector_space:
+      - method: POST
+        target: <registration endpoint>
+        body:
+          username: <unique>
+          password: <pw>
+          roles:
+          - nonexistent_role_xyz
+      - method: POST
+        target: <registration endpoint>
+        body:
+          username: <unique>
+          password: <pw>
+          roles:
+          - sysadmin
+      - method: POST
+        target: <registration endpoint>
+        body:
+          username: <unique>
+          password: <pw>
+          roles:
+          - contentmanager
+      - method: POST
+        target: <registration endpoint>
+        body:
+          username: <unique>
+          password: <pw>
+      rationale: 'H2 (misconfigured role validation, CAPEC-180): the orchestrator
+        rationale frames the access-control enforcement at this locus as ''too coarse-grained
+        to express the intended policy''. If the endpoint validates roles but against
+        a permissive set that includes privileged roles, an unauthenticated actor
+        can still self-assign a privileged role. The unknown-role probe discriminates
+        H2 (validation exists, misconfigured) from H1 (no validation at all).'
+      interpretation_guidance: 'Symptom present: unknown role rejected AND privileged
+        role accepted and bound to the created account. Symptom absent: unknown role
+        accepted (no validation -> H1 territory), or privileged role rejected (allow-list
+        excludes privileged roles -> no fault). A WAF/transport block is the pod''s
+        call, not this spec''s.'
+  raw_observations: []

@@ -81,6 +81,26 @@ def test_put_settings_nested_partial_dict_persisted_verbatim_200(monkeypatch):
     assert saved and saved[0]["scope"] == {"mode": "exact"}
 
 
+def test_put_settings_rejects_the_retired_auth_context_key_400(monkeypatch):
+    """#243 retired the settings-blob auth footprint; this disarms the last
+    receptacle. A PUT carrying `auth_context` is refused (nothing lands) with a
+    pointer to the live seed face `PUT /projects/{id}/auth`."""
+    monkeypatch.setattr(pg, "project_exists", lambda pid: True)
+    saved = []
+    monkeypatch.setattr(pg, "save_settings", lambda pid, recon: saved.append((pid, recon)))
+
+    resp = client.put(
+        "/projects/p1/settings",
+        json={"recon": {"auth_context": {"cookies": [{"name": "s", "value": "v"}]}}},
+    )
+
+    assert resp.status_code == 400
+    detail = resp.json()["detail"]
+    assert "auth_context" in detail
+    assert "/auth" in detail
+    assert saved == []
+
+
 def test_post_recon_unknown_project_404(monkeypatch):
     monkeypatch.setattr(pg, "project_exists", lambda pid: False)
 

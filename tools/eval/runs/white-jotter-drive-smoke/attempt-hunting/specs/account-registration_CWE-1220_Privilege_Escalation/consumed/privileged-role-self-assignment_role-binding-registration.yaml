@@ -1,0 +1,57 @@
+status: specified
+candidate: H1
+target_identity: Service:account-registration
+verification_symptoms:
+- a registration request carrying a privileged role identifier (sysadmin / contentmanager)
+  in the roles field results in a newly created account bound to that privileged role
+- the role bound to the roles-submitted account differs from a baseline registration
+  without a roles field (client-influenced binding, not server-derived)
+testing_pattern: 'privileged-role self-assignment via public registration: submit
+  a registration carrying a privileged role in the roles field; run a baseline registration
+  without a roles field and compare the bound role; exercise a privileged surface
+  (user-administration / role-editing) with the created account to confirm the self-assigned
+  role grants elevated access'
+assumptions:
+- unauthenticated network access to the public registration surface (an HTTP client
+  able to submit a registration request)
+- the registration endpoint accepts a client-supplied roles parameter and binds it
+  to the new account (per contract)
+- privileged role identifiers sysadmin / contentmanager are valid identifiers the
+  system accepts
+- no server-side allow-list restricts self-assignable roles to non-privileged ones
+- the account is enabled immediately, so a self-assigned privileged role is usable
+  without further approval
+payload_vector_space:
+- method: POST
+  target: <registration endpoint>
+  body:
+    username: <unique>
+    password: <pw>
+    roles:
+    - sysadmin
+- method: POST
+  target: <registration endpoint>
+  body:
+    username: <unique>
+    password: <pw>
+    roles:
+    - contentmanager
+- method: POST
+  target: <registration endpoint>
+  body:
+    username: <unique>
+    password: <pw>
+rationale: 'H1 (missing ACL on role binding, CAPEC-1): the service contract binds
+  ''any roles submitted with the registration'' to the new account and enables it
+  immediately; the AuthorizationSystem card shows privileged roles (sysadmin, contentmanager)
+  exist; no evidence of server-side role filtering exists. An unauthenticated actor
+  submitting a privileged role identifier in the roles field should obtain an account
+  bound to that privileged role, usable at once. The baseline no-roles registration
+  discriminates client-influenced binding (H1/H2) from a server-derived privileged
+  default (H3).'
+interpretation_guidance: 'Symptom present: the created account is bound to the submitted
+  privileged role (the roles-submitted account''s role differs from the baseline no-roles
+  registration, and/or the account can exercise a privileged surface). Symptom absent:
+  the roles field is ignored or filtered server-side (the roles-submitted account
+  is bound to the same non-privileged role as the baseline), or the registration is
+  rejected. A WAF/transport block is the pod''s call, not this spec''s.'

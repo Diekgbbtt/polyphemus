@@ -1,7 +1,10 @@
 # Statefulness Pattern Matrix
 
 *Status: RATIFIED 2026-08-10 (feat/async-actor-agents). Living reference for every
-agent's execution model and statefulness mechanism.*
+agent's execution model and statefulness mechanism.
+Refreshed 2026-09-29: #238 activates `configurator` as the stateful phase-boundary
+LLM, `decide_routing` remains retired (#223 D223-12), and the recon `File:line`
+anchors reflect the current layout.*
 
 ## Matrix
 
@@ -19,13 +22,13 @@ and the thread identity (how concurrent instances avoid collision).
 
 | Agent | Execution | Statefulness | Invocation | Thread identity | File:line |
 |---|---|---|---|---|---|
-| `triager` (pod) | sync leaf | ContextVar + stateful_turn | `_pod_ctx().get()` -> `stateful_turn` or `invoke_role` | `PodSession(run, phase, tool, asset)` via ContextVar | `pod.py:647-653` |
-| `configurator` (phase boundary) | sync leaf | checkpointer (`stateful_turn`) | `configure_phase(...)` -> `stateful_turn("configurator", ConfiguratorSession(...), ...)` | `ConfiguratorSession(run_id)` -> `run:<run_id>:configurator`; phase is a turn, never identity | `configurator.py` |
-| `pod_graph` | StateGraph (sync `graph.invoke`) | **StateGraph (no checkpointer)** | `pod_graph.invoke(state)` | N/A (runs in worker thread per pod) | `job_agent.py:187` |
-| `job_agent` | StateGraph (sync `graph.invoke`) | **StateGraph (no checkpointer)** | `job_agent.invoke(state)` | N/A (runs in worker thread per job) | `job_agent.py:187` |
-| `ReconOrchestratorActor` (Auth Gateway) | async actor | checkpointer (create_agent) | one `run_session_agent` gateway turn -> `GatewayVerdict` | `OrchestratorSession(run_id)` | `orchestrator_agent.py` |
-| `decide_routing` (legacy) | sync leaf | invoke_role | `invoke_role("job_orchestrator", ...)` | N/A (one-shot) | `orchestrator_agent.py:110-113` |
-| `crawl_agent` | async (vendored ReAct) | stateless | `_run_agentic_crawl` loop | N/A | `crawl_agentic.py:60` |
+| `configurator` (phase boundary) | sync leaf | checkpointer (`stateful_turn`) | `configure_phase(...)` -> `stateful_turn("configurator", ConfiguratorSession(...), ...)` | `ConfiguratorSession(run_id)` -> `run:<run_id>:configurator`; phase is a turn, never identity | `configurator.py:258-307` |
+| `triager` (pod) | sync leaf | ContextVar + stateful_turn | `_pod_ctx().get()` -> `stateful_turn` or `invoke_role` | `PodSession(run, phase, tool, asset)` via ContextVar | `pod.py:802-860` |
+| `pod_graph` | StateGraph (sync `graph.invoke`) | **StateGraph (no checkpointer)** | `pod_graph.invoke(state)` | N/A (runs in worker thread per pod) | `pod.py:347-385`, `job_agent.py:224` |
+| `job_agent` | StateGraph (sync `graph.invoke`) | **StateGraph (no checkpointer)** | `run_job` -> `build_job_agent().invoke(state)` | N/A (runs in worker thread per job) | `job_agent.py:232-352` |
+| `ReconOrchestratorActor` (Auth Gateway) | async actor | checkpointer (create_agent) | one `run_session_agent` gateway turn -> `GatewayVerdict` | `OrchestratorSession(run_id)` | `orchestrator_agent.py:243-562` |
+| `decide_routing` (RETIRED) | - | - | removed by #223 D223-12 (mid-run steering retired) | - | - |
+| `crawl_agent` | async (vendored ReAct) | stateless | `_run_agentic_crawl` loop | N/A | `crawl_agentic.py:242` |
 
 ### Analysis
 
@@ -61,7 +64,7 @@ and the thread identity (how concurrent instances avoid collision).
 
 ### OUTLIER-1: `pod_graph` and `job_agent` have no StateGraph checkpoint
 
-**Location**: `recon/domain/pod.py:443`, `recon/control/job_agent.py:254`
+**Location**: `src/polymerhus/recon/domain/pod.py:543`, `src/polymerhus/recon/control/job_agent.py:270`
 
 Both graphs return `g.compile()` with no checkpointer argument. This means:
 - A pod crash mid-execution cannot resume from the last successful super-step.
@@ -93,19 +96,14 @@ The future full conversion of the supervisor into an async-native
 actor-with-mailbox (pooled checkpointer + `create_agent`) is ticketed:
 https://github.com/Diekgbbtt/polyphemus/issues/102.
 
-### OUTLIER-3: `decide_routing` / `build_gate_reason_fn` / `build_rematch_fn` are legacy sync seams
+### OUTLIER-3: the legacy sync orchestrator seams (one retired, two hunting-only)
 
-**Location**: `orchestrator_agent.py:99`, `llm.py:226,248`
+**Location**: `attack/hunting/llm.py:226,248` (`build_gate_reason_fn` / `build_rematch_fn`)
 
-These are the pre-actor sync one-shot seams that the actor versions
-(`ReconOrchestratorActor`, `HuntOrchestratorActor`) supersede. They remain as
-thin compatibility wrappers for tests and rollback. The production default is the
-actor path.
+The recon `decide_routing` seam has been **removed** (#223 D223-12 retired mid-run steering); no `decide_routing` symbol survives in `recon/`.
+The hunting `build_gate_reason_fn` / `build_rematch_fn` remain injectable sync one-shot seams that the `HuntOrchestratorActor` supersedes; the production callers pass `None` to use the actor path, and the sync versions are retained only for test injection.
 
-**Status**: Superseded. Both `decide_routing` and `build_gate_reason_fn` /
-`build_rematch_fn` are wired as injectable seams; the production callers pass
-`None` to use the actor path. The sync versions are retained only for test
-injection and sync rollback.
+**Status**: `decide_routing` retired; hunting seams superseded.
 
 ### OUTLIER-4: `_hunter_turn` dual-path (ContextVar or invoke_role)
 

@@ -1,0 +1,2214 @@
+{
+  "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+  "nodes": [
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1573",
+      "name": "account-registration",
+      "type": "L1Service",
+      "properties": {
+        "first_seen": "2026-08-24T22:14:04.067000+00:00",
+        "last_seen": "2026-08-24T22:14:04.067000+00:00",
+        "exposure": "public",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "prov_job": "scaffold",
+        "business_function_slug": "account-registration",
+        "service_contract": "Creates a new user account from the submitted credentials and profile details, hashing the password with a freshly generated salt and enabling the account immediately. The flow rejects empty credentials and duplicate usernames, and binds any roles submitted with the registration to the new account."
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1574",
+      "name": "account-sign-in",
+      "type": "L1Service",
+      "properties": {
+        "first_seen": "2026-08-24T22:14:04.311000+00:00",
+        "last_seen": "2026-08-24T22:14:04.311000+00:00",
+        "exposure": "public",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "prov_job": "scaffold",
+        "business_function_slug": "account-sign-in",
+        "service_contract": "Authenticates a visitor against the user store with username and password, keeps the signed-in identity across visits, signs the subject out again, and reports the current authentication status of the request."
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1575",
+      "name": "user-administration",
+      "type": "L1Service",
+      "properties": {
+        "first_seen": "2026-08-24T22:14:04.388000+00:00",
+        "last_seen": "2026-08-24T22:14:04.388000+00:00",
+        "exposure": "authenticated",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "prov_job": "scaffold",
+        "business_function_slug": "user-administration",
+        "service_contract": "Lists all user accounts together with the roles bound to each account, for the back-office user management screen."
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1576",
+      "name": "user-profile-editing",
+      "type": "L1Service",
+      "properties": {
+        "first_seen": "2026-08-24T22:14:04.482000+00:00",
+        "last_seen": "2026-08-24T22:14:04.482000+00:00",
+        "exposure": "authenticated",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "prov_job": "scaffold",
+        "business_function_slug": "user-profile-editing",
+        "service_contract": "Updates an account's profile contact details and rebinds the roles assigned to that account."
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1577",
+      "name": "user-status-control",
+      "type": "L1Service",
+      "properties": {
+        "first_seen": "2026-08-24T22:14:04.518000+00:00",
+        "last_seen": "2026-08-24T22:14:04.518000+00:00",
+        "exposure": "authenticated",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "prov_job": "scaffold",
+        "business_function_slug": "user-status-control",
+        "service_contract": "Enables or disables a user account; an account that is disabled is refused at sign-in."
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1578",
+      "name": "user-password-reset",
+      "type": "L1Service",
+      "properties": {
+        "first_seen": "2026-08-24T22:14:04.552000+00:00",
+        "last_seen": "2026-08-24T22:14:04.552000+00:00",
+        "exposure": "authenticated",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "prov_job": "scaffold",
+        "business_function_slug": "user-password-reset",
+        "service_contract": "Resets an account's password to a fixed default value, re-salting the stored credential so the new password is recorded."
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1579",
+      "name": "role-catalog",
+      "type": "L1Service",
+      "properties": {
+        "first_seen": "2026-08-24T22:14:04.619000+00:00",
+        "last_seen": "2026-08-24T22:14:04.619000+00:00",
+        "exposure": "authenticated",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "prov_job": "scaffold",
+        "business_function_slug": "role-catalog",
+        "service_contract": "Lists the role records together with the permissions and menus each role carries, for the back-office role management screen."
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1580",
+      "name": "role-editing",
+      "type": "L1Service",
+      "properties": {
+        "first_seen": "2026-08-24T22:14:04.678000+00:00",
+        "last_seen": "2026-08-24T22:14:04.678000+00:00",
+        "exposure": "authenticated",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "prov_job": "scaffold",
+        "business_function_slug": "role-editing",
+        "service_contract": "Creates a new role or updates an existing role record, and rebinds the role's permission set to the submitted permissions."
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1581",
+      "name": "role-status-control",
+      "type": "L1Service",
+      "properties": {
+        "first_seen": "2026-08-24T22:14:04.709000+00:00",
+        "last_seen": "2026-08-24T22:14:04.709000+00:00",
+        "exposure": "authenticated",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "prov_job": "scaffold",
+        "business_function_slug": "role-status-control",
+        "service_contract": "Enables or disables a role."
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1582",
+      "name": "permission-catalog",
+      "type": "L1Service",
+      "properties": {
+        "first_seen": "2026-08-24T22:14:04.740000+00:00",
+        "last_seen": "2026-08-24T22:14:04.740000+00:00",
+        "exposure": "authenticated",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "prov_job": "scaffold",
+        "business_function_slug": "permission-catalog",
+        "service_contract": "Publishes the permission records the role editor draws on, each naming a protected management surface."
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1583",
+      "name": "role-menu-assignment",
+      "type": "L1Service",
+      "properties": {
+        "first_seen": "2026-08-24T22:14:04.756000+00:00",
+        "last_seen": "2026-08-24T22:14:04.756000+00:00",
+        "exposure": "authenticated",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "prov_job": "scaffold",
+        "business_function_slug": "role-menu-assignment",
+        "service_contract": "Rebinds a role's menu set, replacing the previous assignments with the submitted menu identifiers."
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1584",
+      "name": "menu-provisioning",
+      "type": "L1Service",
+      "properties": {
+        "first_seen": "2026-08-24T22:14:04.799000+00:00",
+        "last_seen": "2026-08-24T22:14:04.799000+00:00",
+        "exposure": "authenticated",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "prov_job": "scaffold",
+        "business_function_slug": "menu-provisioning",
+        "service_contract": "Serves the navigation menu tree for the currently signed-in user and the menu set belonging to a role, used to build the back-office navigation."
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1585",
+      "name": "book-catalog-browsing",
+      "type": "L1Service",
+      "properties": {
+        "first_seen": "2026-08-24T22:14:04.824000+00:00",
+        "last_seen": "2026-08-24T22:14:04.824000+00:00",
+        "exposure": "public",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "prov_job": "scaffold",
+        "business_function_slug": "book-catalog-browsing",
+        "service_contract": "Lists the book catalog either in full or filtered to the books of a chosen category, newest records first."
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1586",
+      "name": "book-search",
+      "type": "L1Service",
+      "properties": {
+        "first_seen": "2026-08-24T22:14:04.886000+00:00",
+        "last_seen": "2026-08-24T22:14:04.886000+00:00",
+        "exposure": "public",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "prov_job": "scaffold",
+        "business_function_slug": "book-search",
+        "service_contract": "Finds books whose title or author matches a submitted keyword and returns them newest first."
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1587",
+      "name": "book-record-management",
+      "type": "L1Service",
+      "properties": {
+        "first_seen": "2026-08-24T22:14:04.932000+00:00",
+        "last_seen": "2026-08-24T22:14:04.932000+00:00",
+        "exposure": "authenticated",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "prov_job": "scaffold",
+        "business_function_slug": "book-record-management",
+        "service_contract": "Creates or updates a book record carrying title, author, publication date, press, abstract, cover reference and category."
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1588",
+      "name": "book-record-removal",
+      "type": "L1Service",
+      "properties": {
+        "first_seen": "2026-08-24T22:14:04.949000+00:00",
+        "last_seen": "2026-08-24T22:14:04.949000+00:00",
+        "exposure": "authenticated",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "prov_job": "scaffold",
+        "business_function_slug": "book-record-removal",
+        "service_contract": "Removes a book record by its identifier."
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1589",
+      "name": "book-cover-upload",
+      "type": "L1Service",
+      "properties": {
+        "first_seen": "2026-08-24T22:14:04.975000+00:00",
+        "last_seen": "2026-08-24T22:14:04.975000+00:00",
+        "exposure": "authenticated",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "prov_job": "scaffold",
+        "business_function_slug": "book-cover-upload",
+        "service_contract": "Receives an uploaded cover image, stores it under the workspace image folder under a randomized file name, and returns the file reference used to display it."
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1590",
+      "name": "book-cover-serving",
+      "type": "L1Service",
+      "properties": {
+        "first_seen": "2026-08-24T22:14:05.009000+00:00",
+        "last_seen": "2026-08-24T22:14:05.009000+00:00",
+        "exposure": "public",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "prov_job": "scaffold",
+        "business_function_slug": "book-cover-serving",
+        "service_contract": "Serves a stored cover image file back to the browser for inline display."
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1591",
+      "name": "article-publishing",
+      "type": "L1Service",
+      "properties": {
+        "first_seen": "2026-08-24T22:14:05.044000+00:00",
+        "last_seen": "2026-08-24T22:14:05.044000+00:00",
+        "exposure": "authenticated",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "prov_job": "scaffold",
+        "business_function_slug": "article-publishing",
+        "service_contract": "Saves a jotter article with its title, markdown source, rendered html, abstract, cover reference and date."
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1592",
+      "name": "article-removal",
+      "type": "L1Service",
+      "properties": {
+        "first_seen": "2026-08-24T22:14:05.088000+00:00",
+        "last_seen": "2026-08-24T22:14:05.088000+00:00",
+        "exposure": "authenticated",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "prov_job": "scaffold",
+        "business_function_slug": "article-removal",
+        "service_contract": "Removes a jotter article by its identifier."
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1593",
+      "name": "article-browsing",
+      "type": "L1Service",
+      "properties": {
+        "first_seen": "2026-08-24T22:14:05.124000+00:00",
+        "last_seen": "2026-08-24T22:14:05.124000+00:00",
+        "exposure": "public",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "prov_job": "scaffold",
+        "business_function_slug": "article-browsing",
+        "service_contract": "Lists jotter articles newest first in pages and serves a single article by its identifier for reading."
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1594",
+      "name": "sign-in",
+      "type": "L1Service",
+      "properties": {
+        "first_seen": "2026-08-24T22:14:05.140000+00:00",
+        "last_seen": "2026-08-24T22:14:05.140000+00:00",
+        "exposure": "public",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "prov_job": "scaffold",
+        "business_function_slug": "sign-in",
+        "service_contract": "Authenticate an existing account holder and start their session. Deals in credentials, login, sign-in, single sign-on and session start."
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1595",
+      "name": "register",
+      "type": "L1Service",
+      "properties": {
+        "first_seen": "2026-08-24T22:14:05.184000+00:00",
+        "last_seen": "2026-08-24T22:14:05.184000+00:00",
+        "exposure": "public",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "prov_job": "scaffold",
+        "business_function_slug": "register",
+        "service_contract": "Create a new account from user-supplied details and verify it. Deals in registration, sign-up, account creation and verification."
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1596",
+      "name": "password-recovery",
+      "type": "L1Service",
+      "properties": {
+        "first_seen": "2026-08-24T22:14:05.202000+00:00",
+        "last_seen": "2026-08-24T22:14:05.202000+00:00",
+        "exposure": "public",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "prov_job": "scaffold",
+        "business_function_slug": "password-recovery",
+        "service_contract": "Let a locked-out account holder prove identity without a password and set a new one. Deals in forgotten passwords, reset tokens and links, security questions and password change."
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1597",
+      "name": "AuthenticationMechanism",
+      "type": "L1System",
+      "properties": {
+        "first_seen": "2026-08-24T22:14:05.213000+00:00",
+        "last_seen": "2026-08-24T22:31:07.978000+00:00",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "kind": "AuthenticationMechanism",
+        "prov_job": "analyser:62f50080-b895-4ce8-892b-5b813900b549",
+        "description": "The White Jotter SPA exposes a same-origin authentication and self-registration surface via client-side routes /login, /register, and /authentication, reconfirmed by repeated references in the JS bundle. Because the origin is served over cleartext HTTP, credential submission to these routes is exposed to network interception unless HTTPS is enforced. Registration may permit unauthenticated account creation, and the login/register flows are prime targets for credential stuffing and account enumeration. The actual server-side authentication flow \u2014 session issuance, token handling, or password reset \u2014 is still not witnessed; only the client-side route map is confirmed.",
+        "discriminator": "__singleton__"
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1598",
+      "name": "AuthorizationSystem",
+      "type": "L1System",
+      "properties": {
+        "first_seen": "2026-08-24T22:14:05.229000+00:00",
+        "last_seen": "2026-08-24T22:14:05.229000+00:00",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "kind": "AuthorizationSystem",
+        "roles": [
+          "sysadmin (system administrator)",
+          "contentmanager (content administrator)",
+          "visitor",
+          "test",
+          "seeded accounts"
+        ],
+        "prov_job": "scaffold",
+        "discriminator": "__singleton__"
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1599",
+      "name": "WebPresentation:vue single page application",
+      "type": "L1System",
+      "properties": {
+        "first_seen": "2026-08-24T22:14:05.248000+00:00",
+        "last_seen": "2026-08-24T22:14:05.248000+00:00",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "kind": "WebPresentation",
+        "prov_job": "scaffold",
+        "discriminator": "vue single page application"
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1600",
+      "name": "IdentificationSystem",
+      "type": "L1System",
+      "properties": {
+        "first_seen": "2026-08-24T22:14:05.461000+00:00",
+        "last_seen": "2026-08-24T22:14:05.461000+00:00",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "kind": "IdentificationSystem",
+        "prov_job": "scaffold",
+        "discriminator": "__singleton__"
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1601",
+      "name": "dj-viscon-workshop-1.vsos.ethz.ch",
+      "type": "Domain",
+      "properties": {
+        "first_seen": "2026-08-24T22:14:06.889000+00:00",
+        "last_seen": "2026-08-24T22:14:06.889000+00:00",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "name": "dj-viscon-workshop-1.vsos.ethz.ch"
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "name": "http://dj-viscon-workshop-1.vsos.ethz.ch",
+      "type": "BaseURL",
+      "properties": {
+        "server": "nginx/1.30.1",
+        "first_seen": "2026-08-24T22:14:41.037000+00:00",
+        "status_code": 404,
+        "final_url": "http://dj-viscon-workshop-1.vsos.ethz.ch/admin/content/editor",
+        "scheme": "http",
+        "last_seen": "2026-08-24T22:48:06.030000+00:00",
+        "content_type": "text/html",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "profile": "webapp",
+        "host": "dj-viscon-workshop-1.vsos.ethz.ch",
+        "title": "\u767d\u5377 - White Jotter",
+        "url": "http://dj-viscon-workshop-1.vsos.ethz.ch"
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1653",
+      "name": "missing_security_headers",
+      "type": "Observation",
+      "properties": {
+        "severity": "low",
+        "observed_at": "2026-08-24T22:29:32.363000+00:00",
+        "macro_kind": "missing_security_headers",
+        "evidence": "The probed response for http://dj-viscon-workshop-1.vsos.ethz.ch/bpg includes only accept_ranges, content_length, content_type, date, and server headers; no HSTS, CSP, X-Frame-Options, or X-Content-Type-Options are present.",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "source_tool": "httpx_reprofile",
+        "id": "edc6055853a11b161749fe8f71fa653263f61e76",
+        "source_job": "httpx_reprofile",
+        "rationale": "The origin does not emit standard hardening headers, so browsers will not enforce protections such as framing restrictions, MIME sniffing prevention, or HTTPS-related policies for content served from this host."
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1684",
+      "name": "application_fingerprint",
+      "type": "Observation",
+      "properties": {
+        "severity": "info",
+        "observed_at": "2026-08-24T22:40:20.020000+00:00",
+        "macro_kind": "application_fingerprint",
+        "evidence": "Page title '\u767d\u5377 - White Jotter' on 404 response identifies the application as White Jotter.",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "source_tool": "httpx_reprofile",
+        "id": "4a775931db082b2bf409897356074b3cf7629635",
+        "source_job": "httpx_reprofile",
+        "rationale": "Application fingerprint narrows the attack surface to a known codebase; prioritize enumeration of its article/note functionality."
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1683",
+      "name": "missing_security_headers",
+      "type": "Observation",
+      "properties": {
+        "severity": "low",
+        "observed_at": "2026-08-24T22:40:19.984000+00:00",
+        "macro_kind": "missing_security_headers",
+        "evidence": "404 response for /jotter/article returned only accept_ranges, content_length, content_type, date, server; no CSP, X-Frame-Options, HSTS, X-Content-Type-Options.",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "source_tool": "httpx_reprofile",
+        "id": "fd0075a034b82203a712d80167292d389a7ad216",
+        "source_job": "httpx_reprofile",
+        "rationale": "Absence of standard security headers is a hygiene signal; may matter more on authenticated or state-changing endpoints."
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1682",
+      "name": "missing_security_headers",
+      "type": "Observation",
+      "properties": {
+        "severity": "low",
+        "observed_at": "2026-08-24T22:40:14.264000+00:00",
+        "macro_kind": "missing_security_headers",
+        "evidence": "The HTTP response for http://dj-viscon-workshop-1.vsos.ethz.ch/echarts/theme/macarons.js includes only accept_ranges, content_length, content_type, date, and server headers; no X-Content-Type-Options, X-Frame-Options, or Content-Security-Policy were observed.",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "source_tool": "httpx_reprofile",
+        "id": "990d8b30797fa1ca22d43e0a90d6ca79f72eeb3e",
+        "source_job": "httpx_reprofile",
+        "rationale": "Absence of standard hardening headers on the web origin is a hygiene signal; if consistent across the application it may increase exposure to clickjacking, MIME sniffing, or other client-side abuse."
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1681",
+      "name": "version_disclosure",
+      "type": "Observation",
+      "properties": {
+        "severity": "low",
+        "observed_at": "2026-08-24T22:40:14.246000+00:00",
+        "macro_kind": "version_disclosure",
+        "evidence": "Server header and technology fingerprint disclose nginx/1.30.1 on http://dj-viscon-workshop-1.vsos.ethz.ch (observed on response to /echarts/theme/macarons.js).",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "source_tool": "httpx_reprofile",
+        "id": "ba36a2a8ddbab002ffdaf403005d31dc98bc862b",
+        "source_job": "httpx_reprofile",
+        "rationale": "The exact nginx version is exposed in the response, giving an analyst a precise fingerprint for follow-up checks against known nginx behaviors and configuration patterns."
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1680",
+      "name": "missing_security_headers",
+      "type": "Observation",
+      "properties": {
+        "severity": "low",
+        "observed_at": "2026-08-24T22:39:50.631000+00:00",
+        "macro_kind": "missing_security_headers",
+        "evidence": "Response headers observed: accept_ranges, content_length, content_type, date, server. No CSP, X-Frame-Options, X-Content-Type-Options, or HSTS headers were present.",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "source_tool": "httpx_reprofile",
+        "id": "3ceed07e21310255352167e6cc39dd63de35a0ac",
+        "source_job": "httpx_reprofile",
+        "rationale": "The probed response lacks standard security headers, which is a hygiene signal indicating weaker clickjacking and MIME-sniffing protections if representative of the application."
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1679",
+      "name": "auth_surface",
+      "type": "Observation",
+      "properties": {
+        "severity": "info",
+        "observed_at": "2026-08-24T22:39:50.603000+00:00",
+        "macro_kind": "auth_surface",
+        "evidence": "GET /admin/dashboard returned 404, but the page title '\u767d\u5377 - White Jotter' identifies a known web application whose admin interface is commonly exposed under /admin.",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "source_tool": "httpx_reprofile",
+        "id": "32132c2cbc9968fe00604d4f4f94d2fac723816e",
+        "source_job": "httpx_reprofile",
+        "rationale": "The 404 on /admin/dashboard does not prove the absence of an admin panel; the application fingerprint suggests a likely /admin login surface worth verifying."
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1678",
+      "name": "version_disclosure",
+      "type": "Observation",
+      "properties": {
+        "severity": "low",
+        "observed_at": "2026-08-24T22:40:19.470000+00:00",
+        "macro_kind": "version_disclosure",
+        "evidence": "Server header and tech detection disclose nginx/1.30.1 on http://dj-viscon-workshop-1.vsos.ethz.ch",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "source_tool": "httpx_reprofile",
+        "id": "006fa0b00545553dbde073762ba5e6c71eeed0fb",
+        "source_job": "httpx_reprofile",
+        "rationale": "Exact web server version is exposed, allowing targeted fingerprinting; no exploitability asserted."
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1677",
+      "name": "missing_security_headers",
+      "type": "Observation",
+      "properties": {
+        "severity": "low",
+        "observed_at": "2026-08-24T22:39:46.504000+00:00",
+        "macro_kind": "missing_security_headers",
+        "evidence": "Response headers for /home include only accept_ranges, content_length, content_type, date, and server; no X-Content-Type-Options, X-Frame-Options, Content-Security-Policy, or Strict-Transport-Security were observed.",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "source_tool": "httpx_reprofile",
+        "id": "cf820f0b846110644d297cde5da987af18191e62",
+        "source_job": "unknown",
+        "rationale": "The HTTP response lacks common hardening headers, indicating minimal web response hardening. This is a hygiene signal rather than an exploit finding."
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1676",
+      "name": "version_disclosure",
+      "type": "Observation",
+      "properties": {
+        "severity": "low",
+        "observed_at": "2026-08-24T22:39:46.477000+00:00",
+        "macro_kind": "version_disclosure",
+        "evidence": "Server header and technology fingerprint disclose nginx/1.30.1 on the HTTP response for /home.",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "source_tool": "httpx_reprofile",
+        "id": "c5c392191d3bab983ac2fc1d159d7a0db10c6c80",
+        "source_job": "unknown",
+        "rationale": "Exact nginx version is exposed in the Server header, enabling targeted fingerprinting and known-issue matching. No exploitability is asserted."
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1675",
+      "name": "missing_security_headers",
+      "type": "Observation",
+      "properties": {
+        "severity": "low",
+        "observed_at": "2026-08-24T22:39:39.396000+00:00",
+        "macro_kind": "missing_security_headers",
+        "evidence": "HTTP response for http://dj-viscon-workshop-1.vsos.ethz.ch/register (404) returned only accept_ranges, content_length, content_type, date, and server headers; no X-Content-Type-Options, X-Frame-Options, Content-Security-Policy, or Referrer-Policy.",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "source_tool": "httpx_reprofile",
+        "id": "2903657dbbd13323aa60cd4ebed4013c80127024",
+        "source_job": "httpx_reprofile",
+        "rationale": "The origin does not emit standard hardening headers on its responses, increasing exposure to clickjacking and MIME-sniffing if user-facing content is served from this host."
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1674",
+      "name": "version_disclosure",
+      "type": "Observation",
+      "properties": {
+        "severity": "low",
+        "observed_at": "2026-08-24T22:39:39.212000+00:00",
+        "macro_kind": "version_disclosure",
+        "evidence": "Server response header on http://dj-viscon-workshop-1.vsos.ethz.ch discloses nginx/1.30.1 (also fingerprinted as Nginx:1.30.1).",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "source_tool": "httpx_reprofile",
+        "id": "8ebe0865937a38bc25b98b7e51b907e55a87fc8f",
+        "source_job": "httpx_reprofile",
+        "rationale": "The exact nginx version is exposed to unauthenticated clients on the base URL, narrowing the attack surface for known nginx issues. Version banners should be suppressed unless needed."
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1673",
+      "name": "missing_security_headers",
+      "type": "Observation",
+      "properties": {
+        "severity": "low",
+        "observed_at": "2026-08-24T22:37:51.524000+00:00",
+        "macro_kind": "missing_security_headers",
+        "evidence": "HTTP response for /index lacks standard security headers: no X-Content-Type-Options, X-Frame-Options, Content-Security-Policy, or Referrer-Policy; only accept_ranges, content_length, content_type, date, and server are returned.",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "source_tool": "httpx_reprofile",
+        "id": "6671016afcf49ed676b7beedf453650d8636164f",
+        "source_job": "httpx_reprofile",
+        "rationale": "The web surface does not set common hardening headers, increasing exposure to clickjacking, MIME sniffing, and other client-side abuse. This is a low-severity hardening signal directly evidenced by the response headers."
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1672",
+      "name": "version_disclosure",
+      "type": "Observation",
+      "properties": {
+        "severity": "low",
+        "observed_at": "2026-08-24T22:37:51.350000+00:00",
+        "macro_kind": "version_disclosure",
+        "evidence": "Server response header exposes exact nginx version: 'nginx/1.30.1' on http://dj-viscon-workshop-1.vsos.ethz.ch",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "source_tool": "httpx_reprofile",
+        "id": "875e67504811b23d076384c9e8c82940dcedfaf6",
+        "source_job": "httpx_reprofile",
+        "rationale": "The exact web server version is disclosed in the Server header, giving an attacker a precise fingerprint for targeting known nginx issues. This is a low-severity hygiene finding, not a confirmed vulnerability."
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1671",
+      "name": "missing_security_headers",
+      "type": "Observation",
+      "properties": {
+        "severity": "low",
+        "observed_at": "2026-08-24T22:34:18.307000+00:00",
+        "macro_kind": "missing_security_headers",
+        "evidence": "Response headers for /ocq: accept_ranges, content_length, content_type, date, server; no X-Content-Type-Options, X-Frame-Options, Content-Security-Policy, or Strict-Transport-Security.",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "source_tool": "httpx_reprofile",
+        "id": "7b5e98cfeeb5c30f0178150d61a48f8b00453837",
+        "source_job": "httpx_reprofile",
+        "rationale": "The web surface does not set common browser-enforced security headers, reducing defense-in-depth; worth confirming whether this is consistent across the application."
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1670",
+      "name": "version_disclosure",
+      "type": "Observation",
+      "properties": {
+        "severity": "low",
+        "observed_at": "2026-08-24T22:34:16.497000+00:00",
+        "macro_kind": "version_disclosure",
+        "evidence": "Server header: nginx/1.30.1; technology detection: Nginx:1.30.1.",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "source_tool": "httpx_reprofile",
+        "id": "27621ff8fd8772723ac5058e59af041c59ef1a7c",
+        "source_job": "httpx_reprofile",
+        "rationale": "The exact nginx version is advertised in the Server header, giving attackers a precise fingerprint for targeting known issues."
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1669",
+      "name": "information_disclosure",
+      "type": "Observation",
+      "properties": {
+        "severity": "info",
+        "observed_at": "2026-08-24T22:34:08.297000+00:00",
+        "macro_kind": "information_disclosure",
+        "evidence": "The 404 page title is '\u767d\u5377 - White Jotter', identifying the application as the White Jotter open-source project.",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "source_tool": "httpx_reprofile",
+        "id": "11889251b1e5502783be59b423dbe5f5543ed467",
+        "source_job": "httpx_reprofile",
+        "rationale": "The title provides an application fingerprint, allowing an analyst to consult the project's known routes, default configuration, and sample data when planning further enumeration."
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1668",
+      "name": "missing_security_headers",
+      "type": "Observation",
+      "properties": {
+        "severity": "low",
+        "observed_at": "2026-08-24T22:34:08.279000+00:00",
+        "macro_kind": "missing_security_headers",
+        "evidence": "GET /library 404 response headers contain only accept-ranges, content-length, content-type, date, and server; no X-Content-Type-Options, X-Frame-Options, CSP, or Referrer-Policy are set.",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "source_tool": "httpx_reprofile",
+        "id": "ec45d5ab9dd77b9fd8fbb6bc347599a36b3acc71",
+        "source_job": "httpx_reprofile",
+        "rationale": "The origin is not setting common hardening headers, leaving any user-facing content potentially exposed to MIME sniffing or clickjacking. The absence of these headers is not represented by the parsed header nodes."
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1667",
+      "name": "version_disclosure",
+      "type": "Observation",
+      "properties": {
+        "severity": "low",
+        "observed_at": "2026-08-24T22:34:06.845000+00:00",
+        "macro_kind": "version_disclosure",
+        "evidence": "Server header and tech fingerprint on http://dj-viscon-workshop-1.vsos.ethz.ch disclose nginx/1.30.1 in the GET /library response.",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "source_tool": "httpx_reprofile",
+        "id": "56a6eae81e2ea18c055f0b880dfff3087553cbba",
+        "source_job": "httpx_reprofile",
+        "rationale": "The exact nginx version is exposed to unauthenticated clients, allowing targeted matching against known issues for that version. This is a surface/hygiene observation, not an exploit claim."
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1666",
+      "name": "missing_security_headers",
+      "type": "Observation",
+      "properties": {
+        "severity": "low",
+        "observed_at": "2026-08-24T22:33:22.249000+00:00",
+        "macro_kind": "missing_security_headers",
+        "evidence": "Response headers for http://dj-viscon-workshop-1.vsos.ethz.ch/jotter include only accept_ranges, content_length, content_type, date, and server; no HSTS, CSP, X-Content-Type-Options, or X-Frame-Options are present.",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "source_tool": "httpx_reprofile",
+        "id": "48584199695f6c6b31fbb272049ac6ac9569ce46",
+        "source_job": "unknown",
+        "rationale": "The origin is missing common security headers, a low-severity hygiene signal worth addressing before user-facing functionality is exposed."
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1665",
+      "name": "version_disclosure",
+      "type": "Observation",
+      "properties": {
+        "severity": "low",
+        "observed_at": "2026-08-24T22:33:22.202000+00:00",
+        "macro_kind": "version_disclosure",
+        "evidence": "Server header and tech fingerprint disclose nginx/1.30.1 on http://dj-viscon-workshop-1.vsos.ethz.ch (probe of /jotter returned 404).",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "source_tool": "httpx_reprofile",
+        "id": "edcafb5ec49598a4eeeec4734301fc932b38a854",
+        "source_job": "unknown",
+        "rationale": "Exact nginx version is exposed in the Server header and technology fingerprint, giving an attacker a precise target for known issues. This is a surface/hygiene observation, not an exploit claim."
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1664",
+      "name": "missing_security_headers",
+      "type": "Observation",
+      "properties": {
+        "severity": "low",
+        "observed_at": "2026-08-24T22:32:57.435000+00:00",
+        "macro_kind": "missing_security_headers",
+        "evidence": "Response for http://dj-viscon-workshop-1.vsos.ethz.ch/menu includes only accept_ranges, content_length, content_type, date, and server headers; no Content-Security-Policy, X-Content-Type-Options, X-Frame-Options, or Strict-Transport-Security were observed.",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "source_tool": "httpx_reprofile",
+        "id": "b84fadc1872bdb37ac0026abf5d293e098dc7f2e",
+        "source_job": "httpx_reprofile",
+        "rationale": "Absence of standard hardening headers on the web origin reduces defense-in-depth. This may be limited to the observed 404 response, but it is a useful hygiene signal for the origin."
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1663",
+      "name": "version_disclosure",
+      "type": "Observation",
+      "properties": {
+        "severity": "low",
+        "observed_at": "2026-08-24T22:32:57.348000+00:00",
+        "macro_kind": "version_disclosure",
+        "evidence": "HTTP response for http://dj-viscon-workshop-1.vsos.ethz.ch/menu discloses the exact web server version via the Server header and tech fingerprint: nginx/1.30.1.",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "source_tool": "httpx_reprofile",
+        "id": "d1a0594f5eeec8b734d7f37a799bef2d33af49c7",
+        "source_job": "httpx_reprofile",
+        "rationale": "The exact nginx version banner is exposed, which aids attacker fingerprinting. This is a surface/hygiene observation, not an exploitability verdict."
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1662",
+      "name": "missing_security_headers",
+      "type": "Observation",
+      "properties": {
+        "severity": "low",
+        "observed_at": "2026-08-24T22:32:20.437000+00:00",
+        "macro_kind": "missing_security_headers",
+        "evidence": "Response headers for /authentication include only accept_ranges, content_length, content_type, date, and server; no X-Content-Type-Options, X-Frame-Options, or Content-Security-Policy are present.",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "source_tool": "httpx_reprofile",
+        "id": "57c3b5b2c2c28ad05a9cb78d1bc5b448c97ae8d5",
+        "source_job": "httpx_reprofile",
+        "rationale": "Absence of standard hardening headers on the web origin is a hygiene signal and may increase exposure to framing or MIME-sniffing attacks if content is rendered."
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1661",
+      "name": "version_disclosure",
+      "type": "Observation",
+      "properties": {
+        "severity": "low",
+        "observed_at": "2026-08-24T22:32:20.067000+00:00",
+        "macro_kind": "version_disclosure",
+        "evidence": "Server header and tech detection report nginx/1.30.1 on http://dj-viscon-workshop-1.vsos.ethz.ch/authentication (404 response).",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "source_tool": "httpx_reprofile",
+        "id": "3cfc0c063acee383fb6b98de1cfefebfca27e36e",
+        "source_job": "httpx_reprofile",
+        "rationale": "The exact nginx version is disclosed in response headers, giving a precise fingerprint for matching known issues; no exploitability is asserted."
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1660",
+      "name": "missing_security_headers",
+      "type": "Observation",
+      "properties": {
+        "severity": "low",
+        "observed_at": "2026-08-24T22:31:16.479000+00:00",
+        "macro_kind": "missing_security_headers",
+        "evidence": "Response for /login lacks standard security headers such as X-Content-Type-Options, X-Frame-Options, and Content-Security-Policy; only accept-ranges, content-length, content-type, date, and server are present.",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "source_tool": "httpx",
+        "id": "185d2bd40d3ceae728fb05fd602caeeb1b91ae55",
+        "source_job": "httpx_reprofile",
+        "rationale": "Absence of common hardening headers on a web origin leaves room for clickjacking and MIME-sniffing abuse; this is a low-severity hardening gap."
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1659",
+      "name": "version_disclosure",
+      "type": "Observation",
+      "properties": {
+        "severity": "low",
+        "observed_at": "2026-08-24T22:31:09.931000+00:00",
+        "macro_kind": "version_disclosure",
+        "evidence": "Server header and technology fingerprint disclose exact nginx version 1.30.1 on the web origin.",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "source_tool": "httpx",
+        "id": "277960cfb5bfd2ec55e5da1cd5a96bd1c1d0fa14",
+        "source_job": "httpx_reprofile",
+        "rationale": "Exact server version banner is a hygiene signal that helps an attacker target version-specific issues; no exploitability is asserted."
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1658",
+      "name": "missing_security_headers",
+      "type": "Observation",
+      "properties": {
+        "severity": "low",
+        "observed_at": "2026-08-24T22:31:15.514000+00:00",
+        "macro_kind": "missing_security_headers",
+        "evidence": "Response headers for /admin lack Content-Security-Policy, X-Content-Type-Options, and X-Frame-Options; only accept_ranges, content_length, content_type, date, and server are present.",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "source_tool": "httpx_reprofile",
+        "id": "ae0401087b0e98eeb9fc647e8a3a10dc60e1ab23",
+        "source_job": "httpx_reprofile",
+        "rationale": "The web origin does not emit common hardening headers on the probed response, a low-severity hygiene signal for the application surface."
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1657",
+      "name": "missing_security_headers",
+      "type": "Observation",
+      "properties": {
+        "severity": "low",
+        "observed_at": "2026-08-24T22:30:54.788000+00:00",
+        "macro_kind": "missing_security_headers",
+        "evidence": "HTTP response for /api lacks standard security headers: no Content-Security-Policy, X-Content-Type-Options, X-Frame-Options, or Referrer-Policy observed.",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "source_tool": "httpx_reprofile",
+        "id": "5b15cab3cf2a4cee7c2eb2e02a3d43e88ff2ba35",
+        "source_job": "httpx_reprofile",
+        "rationale": "The web origin does not emit common hardening headers, leaving the application more exposed to clickjacking, MIME sniffing, and other client-side abuse. No exploit is asserted."
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1656",
+      "name": "version_disclosure",
+      "type": "Observation",
+      "properties": {
+        "severity": "low",
+        "observed_at": "2026-08-24T22:30:54.608000+00:00",
+        "macro_kind": "version_disclosure",
+        "evidence": "HTTP response for /api exposes exact web server version in both the Server header and technology fingerprint: nginx/1.30.1.",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "source_tool": "httpx_reprofile",
+        "id": "09e6af4d8cbd6bb2fb78acd6303aa597b5902979",
+        "source_job": "httpx_reprofile",
+        "rationale": "The exact nginx version is disclosed to unauthenticated clients, which aids attacker fingerprinting of known issues. This is a hygiene signal, not a confirmed vulnerability."
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1655",
+      "name": "missing_security_headers",
+      "type": "Observation",
+      "properties": {
+        "severity": "low",
+        "observed_at": "2026-08-24T22:30:14.305000+00:00",
+        "macro_kind": "missing_security_headers",
+        "evidence": "HTTP response headers contain only accept_ranges, content_length, content_type, date, and server; no HSTS, X-Content-Type-Options, X-Frame-Options, or CSP headers observed.",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "source_tool": "httpx_reprofile",
+        "id": "c5dc74cb3035bfd3e67b25e31059fa3ad7c4d5d3",
+        "source_job": "unknown",
+        "rationale": "Absence of standard security headers reduces browser-enforced protections such as MIME sniffing prevention, clickjacking defense, and mixed-content blocking for this web surface."
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1654",
+      "name": "version_disclosure",
+      "type": "Observation",
+      "properties": {
+        "severity": "low",
+        "observed_at": "2026-08-24T22:29:38.301000+00:00",
+        "macro_kind": "version_disclosure",
+        "evidence": "Server header and tech fingerprint disclose nginx/1.30.1 on http://dj-viscon-workshop-1.vsos.ethz.ch",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "source_tool": "httpx_reprofile",
+        "id": "2b96a021b630904265b2094947436b0bca52c86d",
+        "source_job": "unknown",
+        "rationale": "The exact nginx version is exposed in the HTTP response, allowing an attacker to fingerprint the server and target known issues for that version."
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1612",
+      "name": "missing_security_headers",
+      "type": "Observation",
+      "properties": {
+        "severity": "low",
+        "observed_at": "2026-08-24T22:14:44.983000+00:00",
+        "macro_kind": "missing_security_headers",
+        "evidence": "Root response headers include only accept_ranges, content_language, content_length, content_type, date, last_modified, and server; no Strict-Transport-Security, X-Content-Type-Options, Content-Security-Policy, or X-Frame-Options were returned.",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "source_tool": "httpx",
+        "id": "773e0b24b97c23661ae386b2604238e055e57357",
+        "source_job": "httpx",
+        "rationale": "The web application root is served without standard hardening headers, so browser-enforced protections such as HSTS, MIME sniffing prevention, framing restrictions, and CSP are absent. This is a hygiene signal for the HTTP surface."
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1613",
+      "name": "version_disclosure",
+      "type": "Observation",
+      "properties": {
+        "severity": "low",
+        "observed_at": "2026-08-24T22:14:45.602000+00:00",
+        "macro_kind": "version_disclosure",
+        "evidence": "Server header and technology fingerprint report nginx/1.30.1 on the root response.",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "source_tool": "httpx",
+        "id": "5299feb0886f8072fec47afb38301ee31b01a04e",
+        "source_job": "httpx",
+        "rationale": "The exact nginx version is disclosed in the Server header, allowing precise stack fingerprinting. No exploit is asserted; this is a version-disclosure hygiene observation."
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1623",
+      "name": "version_disclosure",
+      "type": "Observation",
+      "properties": {
+        "severity": "low",
+        "observed_at": "2026-08-24T22:20:39.451000+00:00",
+        "macro_kind": "version_disclosure",
+        "evidence": "Server response header on the root page and static assets reports nginx/1.30.1.",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "source_tool": "katana",
+        "id": "fd1eceb33e998743442da92740e02066871c3872",
+        "source_job": "katana",
+        "rationale": "The exact nginx version is disclosed in cleartext, allowing an attacker to target known issues for that specific build. This is a hygiene signal, not a confirmed vulnerability."
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1624",
+      "name": "missing_security_headers",
+      "type": "Observation",
+      "properties": {
+        "severity": "low",
+        "observed_at": "2026-08-24T22:20:39.476000+00:00",
+        "macro_kind": "missing_security_headers",
+        "evidence": "Root HTML response lacks Content-Security-Policy, X-Content-Type-Options, X-Frame-Options, and Strict-Transport-Security headers.",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "source_tool": "katana",
+        "id": "c9f5e86a2e39bda4af876f780dc04bf90be5ed7e",
+        "source_job": "katana",
+        "rationale": "The SPA is served without standard hardening headers, increasing exposure to clickjacking, MIME sniffing, and missing CSP constraints if any injected content is present."
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1625",
+      "name": "information_disclosure",
+      "type": "Observation",
+      "properties": {
+        "severity": "info",
+        "observed_at": "2026-08-24T22:20:39.506000+00:00",
+        "macro_kind": "information_disclosure",
+        "evidence": "HTML title is '\u767d\u5377 - White Jotter' and the page is a webpack-built SPA.",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "source_tool": "katana",
+        "id": "24455779d148538de7c13e7068d2513be2303e90",
+        "source_job": "katana",
+        "rationale": "The response identifies the application as White Jotter, a Spring Boot/Vue blog project. This narrows the attack surface to its known admin/content-management API routes and should guide further enumeration."
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1646",
+      "name": "auth_surface",
+      "type": "Observation",
+      "properties": {
+        "severity": "info",
+        "observed_at": "2026-08-24T22:26:29.405000+00:00",
+        "macro_kind": "auth_surface",
+        "evidence": "Client-side JS bundle references /login, /register, and /authentication on the same origin.",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "source_tool": "jsluice",
+        "id": "20b0aeeff9c6ca33bca8b391a5b6bbcf506a6b87",
+        "source_job": "jsluice",
+        "rationale": "Authentication and self-registration endpoints are a primary target for credential attacks and account enumeration; registration may allow unauthenticated account creation."
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1647",
+      "name": "exposed_admin",
+      "type": "Observation",
+      "properties": {
+        "severity": "low",
+        "observed_at": "2026-08-24T22:26:29.429000+00:00",
+        "macro_kind": "exposed_admin",
+        "evidence": "JS bundle references /admin, /admin/dashboard, and /admin/content/editor.",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "source_tool": "jsluice",
+        "id": "4bfbc2b19bfc55e332ab5bd03491bf1cb1a3bdcd",
+        "source_job": "jsluice",
+        "rationale": "A distinct admin/control surface is reachable on the same origin; client-side route presence does not enforce access control, so server-side authorization on all admin routes should be verified."
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1648",
+      "name": "separate_api_surface",
+      "type": "Observation",
+      "properties": {
+        "severity": "info",
+        "observed_at": "2026-08-24T22:26:29.438000+00:00",
+        "macro_kind": "separate_api_surface",
+        "evidence": "JS bundle references /api as a distinct path.",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "source_tool": "jsluice",
+        "id": "9e15ba0c148e7bec564b33aaf778d97030a43e74",
+        "source_job": "jsluice",
+        "rationale": "An API root is exposed separately from page routes; API endpoints often have different authentication and rate-limiting behavior, so /api subpaths should be enumerated and tested for object-level authorization."
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1649",
+      "name": "cleartext_auth",
+      "type": "Observation",
+      "properties": {
+        "severity": "low",
+        "observed_at": "2026-08-24T22:26:29.450000+00:00",
+        "macro_kind": "cleartext_auth",
+        "evidence": "Discovered origin and JS bundle are served over http://, and the application exposes /login and /register endpoints.",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "source_tool": "jsluice",
+        "id": "77c66ea5f56136a42abdf814866bb7652679deac",
+        "source_job": "jsluice",
+        "rationale": "Authentication traffic to this origin may be transmitted in cleartext unless HTTPS is enforced, allowing credential interception on the network path."
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1650",
+      "name": "version_disclosure",
+      "type": "Observation",
+      "properties": {
+        "severity": "low",
+        "observed_at": "2026-08-24T22:31:15.481000+00:00",
+        "macro_kind": "version_disclosure",
+        "evidence": "Server header and technology fingerprint disclose nginx/1.30.1 on http://dj-viscon-workshop-1.vsos.ethz.ch",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "source_tool": "httpx_reprofile",
+        "id": "2f66a5ae52e9b1993e9f80809fe83412893d51ce",
+        "source_job": "httpx_reprofile",
+        "rationale": "Exact web server version is exposed in the response. This is a surface/hygiene signal for matching known issues, not an exploitability verdict."
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1651",
+      "name": "missing_security_headers",
+      "type": "Observation",
+      "properties": {
+        "severity": "low",
+        "observed_at": "2026-08-24T22:29:23.568000+00:00",
+        "macro_kind": "missing_security_headers",
+        "evidence": "Response header set contains only accept_ranges, content_language, content_length, content_type, date, last_modified, and server; no HSTS, X-Content-Type-Options, X-Frame-Options, or CSP observed.",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "source_tool": "httpx_reprofile",
+        "id": "14f117cca44eed7d9f41ff4bb8864dac5213c983",
+        "source_job": "unknown",
+        "rationale": "The origin is served over cleartext HTTP and lacks common hardening headers, so browser-enforced protections such as HSTS, framing restrictions, and MIME sniffing protections are absent. This is a low-severity hygiene signal for the web surface."
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1652",
+      "name": "version_disclosure",
+      "type": "Observation",
+      "properties": {
+        "severity": "low",
+        "observed_at": "2026-08-24T22:29:28.224000+00:00",
+        "macro_kind": "version_disclosure",
+        "evidence": "The Server response header and technology fingerprint expose 'nginx/1.30.1' on http://dj-viscon-workshop-1.vsos.ethz.ch.",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "source_tool": "httpx_reprofile",
+        "id": "3783a78e0e922037e23d2ee8f52a8c2df0cc6176",
+        "source_job": "httpx_reprofile",
+        "rationale": "The exact nginx version is disclosed to unauthenticated clients, providing precise stack information for targeted reconnaissance."
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1603",
+      "name": "http://dj-viscon-workshop-1.vsos.ethz.ch",
+      "type": "Endpoint",
+      "properties": {
+        "server": "nginx/1.30.1",
+        "first_seen": "2026-08-24T22:14:42.234000+00:00",
+        "status_code": 200,
+        "method": "GET",
+        "last_seen": "2026-08-24T22:29:19.762000+00:00",
+        "profile": "webapp",
+        "source": "httpx",
+        "title": "\u767d\u5377 - White Jotter",
+        "url": "http://dj-viscon-workshop-1.vsos.ethz.ch",
+        "path": "/",
+        "baseurl": "http://dj-viscon-workshop-1.vsos.ethz.ch",
+        "content_type": "text/html",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "content_length": 662
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1620",
+      "name": "http://dj-viscon-workshop-1.vsos.ethz.ch/static/js/app.3b9f53020f8b93d23449.js",
+      "type": "Endpoint",
+      "properties": {
+        "path": "/static/js/app.3b9f53020f8b93d23449.js",
+        "baseurl": "http://dj-viscon-workshop-1.vsos.ethz.ch",
+        "first_seen": "2026-08-24T22:20:38.121000+00:00",
+        "status_code": 200,
+        "method": "GET",
+        "content_type": "application/javascript",
+        "last_seen": "2026-08-24T22:20:38.121000+00:00",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "profile": "webapp",
+        "source": "katana",
+        "url": "http://dj-viscon-workshop-1.vsos.ethz.ch/static/js/app.3b9f53020f8b93d23449.js"
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1622",
+      "name": "http://dj-viscon-workshop-1.vsos.ethz.ch/static/js/manifest.847c1a77e1df892a8f1a.js",
+      "type": "Endpoint",
+      "properties": {
+        "path": "/static/js/manifest.847c1a77e1df892a8f1a.js",
+        "baseurl": "http://dj-viscon-workshop-1.vsos.ethz.ch",
+        "first_seen": "2026-08-24T22:20:39.074000+00:00",
+        "status_code": 200,
+        "method": "GET",
+        "content_type": "application/javascript",
+        "last_seen": "2026-08-24T22:20:39.074000+00:00",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "profile": "webapp",
+        "source": "katana",
+        "url": "http://dj-viscon-workshop-1.vsos.ethz.ch/static/js/manifest.847c1a77e1df892a8f1a.js"
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1626",
+      "name": "http://dj-viscon-workshop-1.vsos.ethz.ch/.js",
+      "type": "Endpoint",
+      "properties": {
+        "server": "nginx/1.30.1",
+        "first_seen": "2026-08-24T22:20:56.185000+00:00",
+        "status_code": 404,
+        "last_seen": "2026-08-24T22:39:01.368000+00:00",
+        "method": "GET",
+        "profile": "webapp",
+        "source": "httpx",
+        "title": "\u767d\u5377 - White Jotter",
+        "url": "http://dj-viscon-workshop-1.vsos.ethz.ch/.js",
+        "path": "/.js",
+        "baseurl": "http://dj-viscon-workshop-1.vsos.ethz.ch",
+        "content_type": "text/html",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "content_length": 662
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1628",
+      "name": "http://dj-viscon-workshop-1.vsos.ethz.ch/I4U",
+      "type": "Endpoint",
+      "properties": {
+        "server": "nginx/1.30.1",
+        "first_seen": "2026-08-24T22:26:27.687000+00:00",
+        "status_code": 404,
+        "last_seen": "2026-08-24T22:29:33.697000+00:00",
+        "method": "GET",
+        "profile": "webapp",
+        "source": "httpx",
+        "title": "\u767d\u5377 - White Jotter",
+        "url": "http://dj-viscon-workshop-1.vsos.ethz.ch/I4U",
+        "path": "/I4U",
+        "baseurl": "http://dj-viscon-workshop-1.vsos.ethz.ch",
+        "content_type": "text/html",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "content_length": 662
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1629",
+      "name": "http://dj-viscon-workshop-1.vsos.ethz.ch/bpg",
+      "type": "Endpoint",
+      "properties": {
+        "server": "nginx/1.30.1",
+        "first_seen": "2026-08-24T22:26:27.908000+00:00",
+        "status_code": 404,
+        "last_seen": "2026-08-24T22:29:27.989000+00:00",
+        "method": "GET",
+        "profile": "webapp",
+        "source": "httpx",
+        "title": "\u767d\u5377 - White Jotter",
+        "url": "http://dj-viscon-workshop-1.vsos.ethz.ch/bpg",
+        "path": "/bpg",
+        "baseurl": "http://dj-viscon-workshop-1.vsos.ethz.ch",
+        "content_type": "text/html",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "content_length": 662
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1630",
+      "name": "http://dj-viscon-workshop-1.vsos.ethz.ch/i/W",
+      "type": "Endpoint",
+      "properties": {
+        "server": "nginx/1.30.1",
+        "first_seen": "2026-08-24T22:26:27.935000+00:00",
+        "status_code": 404,
+        "last_seen": "2026-08-24T22:39:01.438000+00:00",
+        "method": "GET",
+        "profile": "webapp",
+        "source": "httpx",
+        "title": "\u767d\u5377 - White Jotter",
+        "url": "http://dj-viscon-workshop-1.vsos.ethz.ch/i/W",
+        "path": "/i/W",
+        "baseurl": "http://dj-viscon-workshop-1.vsos.ethz.ch",
+        "content_type": "text/html",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "content_length": 662
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1631",
+      "name": "http://dj-viscon-workshop-1.vsos.ethz.ch/api",
+      "type": "Endpoint",
+      "properties": {
+        "server": "nginx/1.30.1",
+        "first_seen": "2026-08-24T22:26:28.049000+00:00",
+        "status_code": 404,
+        "last_seen": "2026-08-24T22:30:53.496000+00:00",
+        "method": "GET",
+        "profile": "webapp",
+        "source": "httpx",
+        "title": "\u767d\u5377 - White Jotter",
+        "url": "http://dj-viscon-workshop-1.vsos.ethz.ch/api",
+        "path": "/api",
+        "baseurl": "http://dj-viscon-workshop-1.vsos.ethz.ch",
+        "content_type": "text/html",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "content_length": 662
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1632",
+      "name": "http://dj-viscon-workshop-1.vsos.ethz.ch/admin",
+      "type": "Endpoint",
+      "properties": {
+        "server": "nginx/1.30.1",
+        "first_seen": "2026-08-24T22:26:28.066000+00:00",
+        "status_code": 404,
+        "last_seen": "2026-08-24T22:31:15.168000+00:00",
+        "method": "GET",
+        "profile": "webapp",
+        "source": "httpx",
+        "title": "\u767d\u5377 - White Jotter",
+        "url": "http://dj-viscon-workshop-1.vsos.ethz.ch/admin",
+        "path": "/admin",
+        "baseurl": "http://dj-viscon-workshop-1.vsos.ethz.ch",
+        "content_type": "text/html",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "content_length": 662
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1633",
+      "name": "http://dj-viscon-workshop-1.vsos.ethz.ch/login",
+      "type": "Endpoint",
+      "properties": {
+        "server": "nginx/1.30.1",
+        "first_seen": "2026-08-24T22:26:28.261000+00:00",
+        "status_code": 404,
+        "last_seen": "2026-08-24T22:31:09.660000+00:00",
+        "method": "GET",
+        "profile": "webapp",
+        "source": "httpx",
+        "title": "\u767d\u5377 - White Jotter",
+        "url": "http://dj-viscon-workshop-1.vsos.ethz.ch/login",
+        "path": "/login",
+        "baseurl": "http://dj-viscon-workshop-1.vsos.ethz.ch",
+        "content_type": "text/html",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "content_length": 662
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1634",
+      "name": "http://dj-viscon-workshop-1.vsos.ethz.ch/authentication",
+      "type": "Endpoint",
+      "properties": {
+        "server": "nginx/1.30.1",
+        "first_seen": "2026-08-24T22:26:28.346000+00:00",
+        "status_code": 404,
+        "last_seen": "2026-08-24T22:32:17.496000+00:00",
+        "method": "GET",
+        "profile": "webapp",
+        "source": "httpx",
+        "title": "\u767d\u5377 - White Jotter",
+        "url": "http://dj-viscon-workshop-1.vsos.ethz.ch/authentication",
+        "path": "/authentication",
+        "baseurl": "http://dj-viscon-workshop-1.vsos.ethz.ch",
+        "content_type": "text/html",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "content_length": 662
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1635",
+      "name": "http://dj-viscon-workshop-1.vsos.ethz.ch/menu",
+      "type": "Endpoint",
+      "properties": {
+        "server": "nginx/1.30.1",
+        "first_seen": "2026-08-24T22:26:28.412000+00:00",
+        "status_code": 404,
+        "last_seen": "2026-08-24T22:32:56.928000+00:00",
+        "method": "GET",
+        "profile": "webapp",
+        "source": "httpx",
+        "title": "\u767d\u5377 - White Jotter",
+        "url": "http://dj-viscon-workshop-1.vsos.ethz.ch/menu",
+        "path": "/menu",
+        "baseurl": "http://dj-viscon-workshop-1.vsos.ethz.ch",
+        "content_type": "text/html",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "content_length": 662
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1636",
+      "name": "http://dj-viscon-workshop-1.vsos.ethz.ch/index",
+      "type": "Endpoint",
+      "properties": {
+        "server": "nginx/1.30.1",
+        "first_seen": "2026-08-24T22:26:28.438000+00:00",
+        "status_code": 404,
+        "last_seen": "2026-08-24T22:37:50.784000+00:00",
+        "method": "GET",
+        "profile": "webapp",
+        "source": "httpx",
+        "title": "\u767d\u5377 - White Jotter",
+        "url": "http://dj-viscon-workshop-1.vsos.ethz.ch/index",
+        "path": "/index",
+        "baseurl": "http://dj-viscon-workshop-1.vsos.ethz.ch",
+        "content_type": "text/html",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "content_length": 662
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1637",
+      "name": "http://dj-viscon-workshop-1.vsos.ethz.ch/jotter",
+      "type": "Endpoint",
+      "properties": {
+        "server": "nginx/1.30.1",
+        "first_seen": "2026-08-24T22:26:28.445000+00:00",
+        "status_code": 404,
+        "last_seen": "2026-08-24T22:33:21.988000+00:00",
+        "method": "GET",
+        "profile": "webapp",
+        "source": "httpx",
+        "title": "\u767d\u5377 - White Jotter",
+        "url": "http://dj-viscon-workshop-1.vsos.ethz.ch/jotter",
+        "path": "/jotter",
+        "baseurl": "http://dj-viscon-workshop-1.vsos.ethz.ch",
+        "content_type": "text/html",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "content_length": 662
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1638",
+      "name": "http://dj-viscon-workshop-1.vsos.ethz.ch/library",
+      "type": "Endpoint",
+      "properties": {
+        "server": "nginx/1.30.1",
+        "first_seen": "2026-08-24T22:26:28.454000+00:00",
+        "status_code": 404,
+        "last_seen": "2026-08-24T22:34:06.719000+00:00",
+        "method": "GET",
+        "profile": "webapp",
+        "source": "httpx",
+        "title": "\u767d\u5377 - White Jotter",
+        "url": "http://dj-viscon-workshop-1.vsos.ethz.ch/library",
+        "path": "/library",
+        "baseurl": "http://dj-viscon-workshop-1.vsos.ethz.ch",
+        "content_type": "text/html",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "content_length": 662
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1639",
+      "name": "http://dj-viscon-workshop-1.vsos.ethz.ch/ocq",
+      "type": "Endpoint",
+      "properties": {
+        "server": "nginx/1.30.1",
+        "first_seen": "2026-08-24T22:26:28.505000+00:00",
+        "status_code": 404,
+        "last_seen": "2026-08-24T22:34:16.050000+00:00",
+        "method": "GET",
+        "profile": "webapp",
+        "source": "httpx",
+        "title": "\u767d\u5377 - White Jotter",
+        "url": "http://dj-viscon-workshop-1.vsos.ethz.ch/ocq",
+        "path": "/ocq",
+        "baseurl": "http://dj-viscon-workshop-1.vsos.ethz.ch",
+        "content_type": "text/html",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "content_length": 662
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1640",
+      "name": "http://dj-viscon-workshop-1.vsos.ethz.ch/home",
+      "type": "Endpoint",
+      "properties": {
+        "server": "nginx/1.30.1",
+        "first_seen": "2026-08-24T22:26:28.530000+00:00",
+        "status_code": 404,
+        "last_seen": "2026-08-24T22:39:46.397000+00:00",
+        "method": "GET",
+        "profile": "webapp",
+        "source": "httpx",
+        "title": "\u767d\u5377 - White Jotter",
+        "url": "http://dj-viscon-workshop-1.vsos.ethz.ch/home",
+        "path": "/home",
+        "baseurl": "http://dj-viscon-workshop-1.vsos.ethz.ch",
+        "content_type": "text/html",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "content_length": 662
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1641",
+      "name": "http://dj-viscon-workshop-1.vsos.ethz.ch/jotter/article",
+      "type": "Endpoint",
+      "properties": {
+        "server": "nginx/1.30.1",
+        "first_seen": "2026-08-24T22:26:28.593000+00:00",
+        "status_code": 404,
+        "last_seen": "2026-08-24T22:40:19.392000+00:00",
+        "method": "GET",
+        "profile": "webapp",
+        "source": "httpx",
+        "title": "\u767d\u5377 - White Jotter",
+        "url": "http://dj-viscon-workshop-1.vsos.ethz.ch/jotter/article",
+        "path": "/jotter/article",
+        "baseurl": "http://dj-viscon-workshop-1.vsos.ethz.ch",
+        "content_type": "text/html",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "content_length": 662
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1642",
+      "name": "http://dj-viscon-workshop-1.vsos.ethz.ch/admin/content/editor",
+      "type": "Endpoint",
+      "properties": {
+        "server": "nginx/1.30.1",
+        "first_seen": "2026-08-24T22:26:28.728000+00:00",
+        "status_code": 404,
+        "last_seen": "2026-08-24T22:48:06.259000+00:00",
+        "method": "GET",
+        "profile": "webapp",
+        "source": "httpx",
+        "title": "\u767d\u5377 - White Jotter",
+        "url": "http://dj-viscon-workshop-1.vsos.ethz.ch/admin/content/editor",
+        "path": "/admin/content/editor",
+        "baseurl": "http://dj-viscon-workshop-1.vsos.ethz.ch",
+        "content_type": "text/html",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "content_length": 662
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1643",
+      "name": "http://dj-viscon-workshop-1.vsos.ethz.ch/register",
+      "type": "Endpoint",
+      "properties": {
+        "server": "nginx/1.30.1",
+        "first_seen": "2026-08-24T22:26:28.808000+00:00",
+        "status_code": 404,
+        "last_seen": "2026-08-24T22:39:39.041000+00:00",
+        "method": "GET",
+        "profile": "webapp",
+        "source": "httpx",
+        "title": "\u767d\u5377 - White Jotter",
+        "url": "http://dj-viscon-workshop-1.vsos.ethz.ch/register",
+        "path": "/register",
+        "baseurl": "http://dj-viscon-workshop-1.vsos.ethz.ch",
+        "content_type": "text/html",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "content_length": 662
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1644",
+      "name": "http://dj-viscon-workshop-1.vsos.ethz.ch/admin/dashboard",
+      "type": "Endpoint",
+      "properties": {
+        "server": "nginx/1.30.1",
+        "first_seen": "2026-08-24T22:26:28.853000+00:00",
+        "status_code": 404,
+        "last_seen": "2026-08-24T22:39:49.903000+00:00",
+        "method": "GET",
+        "profile": "webapp",
+        "source": "httpx",
+        "title": "\u767d\u5377 - White Jotter",
+        "url": "http://dj-viscon-workshop-1.vsos.ethz.ch/admin/dashboard",
+        "path": "/admin/dashboard",
+        "baseurl": "http://dj-viscon-workshop-1.vsos.ethz.ch",
+        "content_type": "text/html",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "content_length": 662
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1645",
+      "name": "http://dj-viscon-workshop-1.vsos.ethz.ch/echarts/theme/macarons.js",
+      "type": "Endpoint",
+      "properties": {
+        "server": "nginx/1.30.1",
+        "first_seen": "2026-08-24T22:26:29.002000+00:00",
+        "status_code": 404,
+        "last_seen": "2026-08-24T22:40:14.133000+00:00",
+        "method": "GET",
+        "profile": "webapp",
+        "source": "httpx",
+        "title": "\u767d\u5377 - White Jotter",
+        "url": "http://dj-viscon-workshop-1.vsos.ethz.ch/echarts/theme/macarons.js",
+        "path": "/echarts/theme/macarons.js",
+        "baseurl": "http://dj-viscon-workshop-1.vsos.ethz.ch",
+        "content_type": "text/html",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "content_length": 662
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1604",
+      "name": "accept_ranges",
+      "type": "Header",
+      "properties": {
+        "first_seen": "2026-08-24T22:14:42.618000+00:00",
+        "baseurl": "http://dj-viscon-workshop-1.vsos.ethz.ch",
+        "last_seen": "2026-08-24T22:48:06.274000+00:00",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "name": "accept_ranges",
+        "value": "bytes"
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1605",
+      "name": "content_language",
+      "type": "Header",
+      "properties": {
+        "baseurl": "http://dj-viscon-workshop-1.vsos.ethz.ch",
+        "first_seen": "2026-08-24T22:14:43.354000+00:00",
+        "last_seen": "2026-08-24T22:29:19.949000+00:00",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "name": "content_language",
+        "value": "en-US"
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1606",
+      "name": "content_length",
+      "type": "Header",
+      "properties": {
+        "first_seen": "2026-08-24T22:14:43.369000+00:00",
+        "baseurl": "http://dj-viscon-workshop-1.vsos.ethz.ch",
+        "last_seen": "2026-08-24T22:48:06.293000+00:00",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "name": "content_length",
+        "value": "662"
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1607",
+      "name": "content_type",
+      "type": "Header",
+      "properties": {
+        "first_seen": "2026-08-24T22:14:43.388000+00:00",
+        "baseurl": "http://dj-viscon-workshop-1.vsos.ethz.ch",
+        "last_seen": "2026-08-24T22:48:06.297000+00:00",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "name": "content_type",
+        "value": "text/html"
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1608",
+      "name": "date",
+      "type": "Header",
+      "properties": {
+        "first_seen": "2026-08-24T22:14:43.426000+00:00",
+        "baseurl": "http://dj-viscon-workshop-1.vsos.ethz.ch",
+        "last_seen": "2026-08-24T22:48:06.307000+00:00",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "name": "date",
+        "value": "Mon, 24 Aug 2026 22:38:03 GMT"
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1609",
+      "name": "last_modified",
+      "type": "Header",
+      "properties": {
+        "first_seen": "2026-08-24T22:14:44.184000+00:00",
+        "baseurl": "http://dj-viscon-workshop-1.vsos.ethz.ch",
+        "last_seen": "2026-08-24T22:29:20.189000+00:00",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "name": "last_modified",
+        "value": "Mon, 24 Aug 2026 21:44:36 GMT"
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1610",
+      "name": "server",
+      "type": "Header",
+      "properties": {
+        "baseurl": "http://dj-viscon-workshop-1.vsos.ethz.ch",
+        "first_seen": "2026-08-24T22:14:44.202000+00:00",
+        "last_seen": "2026-08-24T22:48:06.335000+00:00",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "name": "server",
+        "value": "nginx/1.30.1"
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1614",
+      "name": "accept-ranges",
+      "type": "Header",
+      "properties": {
+        "first_seen": "2026-08-24T22:20:37.689000+00:00",
+        "baseurl": "http://dj-viscon-workshop-1.vsos.ethz.ch",
+        "last_seen": "2026-08-24T22:20:39.376000+00:00",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "name": "accept-ranges",
+        "value": "bytes"
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1615",
+      "name": "connection",
+      "type": "Header",
+      "properties": {
+        "baseurl": "http://dj-viscon-workshop-1.vsos.ethz.ch",
+        "first_seen": "2026-08-24T22:20:37.877000+00:00",
+        "last_seen": "2026-08-24T22:20:39.387000+00:00",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "name": "connection",
+        "value": "keep-alive"
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1616",
+      "name": "content-language",
+      "type": "Header",
+      "properties": {
+        "baseurl": "http://dj-viscon-workshop-1.vsos.ethz.ch",
+        "first_seen": "2026-08-24T22:20:37.913000+00:00",
+        "last_seen": "2026-08-24T22:20:37.913000+00:00",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "name": "content-language",
+        "value": "en-US"
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1617",
+      "name": "content-length",
+      "type": "Header",
+      "properties": {
+        "first_seen": "2026-08-24T22:20:37.925000+00:00",
+        "baseurl": "http://dj-viscon-workshop-1.vsos.ethz.ch",
+        "last_seen": "2026-08-24T22:20:37.925000+00:00",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "name": "content-length",
+        "value": "662"
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1618",
+      "name": "content-type",
+      "type": "Header",
+      "properties": {
+        "first_seen": "2026-08-24T22:20:37.951000+00:00",
+        "baseurl": "http://dj-viscon-workshop-1.vsos.ethz.ch",
+        "last_seen": "2026-08-24T22:20:39.396000+00:00",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "name": "content-type",
+        "value": "application/javascript"
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1619",
+      "name": "last-modified",
+      "type": "Header",
+      "properties": {
+        "first_seen": "2026-08-24T22:20:38.034000+00:00",
+        "baseurl": "http://dj-viscon-workshop-1.vsos.ethz.ch",
+        "last_seen": "2026-08-24T22:20:39.416000+00:00",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "name": "last-modified",
+        "value": "Mon, 24 Aug 2026 21:44:36 GMT"
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1621",
+      "name": "vary",
+      "type": "Header",
+      "properties": {
+        "first_seen": "2026-08-24T22:20:38.953000+00:00",
+        "baseurl": "http://dj-viscon-workshop-1.vsos.ethz.ch",
+        "last_seen": "2026-08-24T22:20:39.428000+00:00",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "name": "vary",
+        "value": "accept-encoding"
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1611",
+      "name": "Nginx:1.30.1",
+      "type": "Technology",
+      "properties": {
+        "first_seen": "2026-08-24T22:14:44.226000+00:00",
+        "last_seen": "2026-08-24T22:48:06.397000+00:00",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "name": "Nginx:1.30.1",
+        "version": ""
+      }
+    },
+    {
+      "id": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1627",
+      "name": "WebPresentation",
+      "type": "L1System",
+      "properties": {
+        "first_seen": "2026-08-24T22:22:46.245000+00:00",
+        "pages": [
+          "/"
+        ],
+        "last_seen": "2026-08-24T22:31:08.389000+00:00",
+        "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+        "kind": "WebPresentation",
+        "prov_job": "analyser:62f50080-b895-4ce8-892b-5b813900b549",
+        "description": "Vue single-page application served as the root HTML shell for the White Jotter service. The root page is a webpack-built SPA, and the application is identifiable as a Spring Boot/Vue blog project, which hints at known admin/content-management API routes for later enumeration. The client-side route map includes /login, /register, /authentication, /admin, /admin/dashboard, /admin/content/editor, /api, /menu, /index, /jotter, /jotter/article, /library, and /home; these are client-side routes, not confirmed server-rendered pages, and their presence does not enforce access control. The root response remains unhardened \u2014 no Content-Security-Policy, no X-Frame-Options, no X-Content-Type-Options, no Strict-Transport-Security \u2014 so browser-enforced protections against XSS payload loading, clickjacking, MIME sniffing, and cleartext downgrade are absent. The Server: nginx/1.30.1 header discloses the exact web server version, enabling precise stack fingerprinting.",
+        "discriminator": "__singleton__"
+      }
+    }
+  ],
+  "links": [
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1653",
+      "type": "HAS_OBSERVATION"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1684",
+      "type": "HAS_OBSERVATION"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1683",
+      "type": "HAS_OBSERVATION"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1682",
+      "type": "HAS_OBSERVATION"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1681",
+      "type": "HAS_OBSERVATION"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1680",
+      "type": "HAS_OBSERVATION"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1679",
+      "type": "HAS_OBSERVATION"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1678",
+      "type": "HAS_OBSERVATION"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1677",
+      "type": "HAS_OBSERVATION"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1676",
+      "type": "HAS_OBSERVATION"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1675",
+      "type": "HAS_OBSERVATION"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1674",
+      "type": "HAS_OBSERVATION"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1673",
+      "type": "HAS_OBSERVATION"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1672",
+      "type": "HAS_OBSERVATION"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1671",
+      "type": "HAS_OBSERVATION"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1670",
+      "type": "HAS_OBSERVATION"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1669",
+      "type": "HAS_OBSERVATION"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1668",
+      "type": "HAS_OBSERVATION"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1667",
+      "type": "HAS_OBSERVATION"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1666",
+      "type": "HAS_OBSERVATION"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1665",
+      "type": "HAS_OBSERVATION"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1664",
+      "type": "HAS_OBSERVATION"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1663",
+      "type": "HAS_OBSERVATION"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1662",
+      "type": "HAS_OBSERVATION"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1661",
+      "type": "HAS_OBSERVATION"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1660",
+      "type": "HAS_OBSERVATION"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1659",
+      "type": "HAS_OBSERVATION"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1658",
+      "type": "HAS_OBSERVATION"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1657",
+      "type": "HAS_OBSERVATION"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1656",
+      "type": "HAS_OBSERVATION"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1655",
+      "type": "HAS_OBSERVATION"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1654",
+      "type": "HAS_OBSERVATION"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1612",
+      "type": "HAS_OBSERVATION"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1613",
+      "type": "HAS_OBSERVATION"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1623",
+      "type": "HAS_OBSERVATION"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1624",
+      "type": "HAS_OBSERVATION"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1625",
+      "type": "HAS_OBSERVATION"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1646",
+      "type": "HAS_OBSERVATION"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1647",
+      "type": "HAS_OBSERVATION"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1648",
+      "type": "HAS_OBSERVATION"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1649",
+      "type": "HAS_OBSERVATION"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1650",
+      "type": "HAS_OBSERVATION"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1651",
+      "type": "HAS_OBSERVATION"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1652",
+      "type": "HAS_OBSERVATION"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1601",
+      "type": "BELONGS_TO"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1603",
+      "type": "HAS_ENDPOINT"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1620",
+      "type": "HAS_ENDPOINT"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1622",
+      "type": "HAS_ENDPOINT"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1626",
+      "type": "HAS_ENDPOINT"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1628",
+      "type": "HAS_ENDPOINT"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1629",
+      "type": "HAS_ENDPOINT"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1630",
+      "type": "HAS_ENDPOINT"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1631",
+      "type": "HAS_ENDPOINT"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1632",
+      "type": "HAS_ENDPOINT"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1633",
+      "type": "HAS_ENDPOINT"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1634",
+      "type": "HAS_ENDPOINT"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1635",
+      "type": "HAS_ENDPOINT"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1636",
+      "type": "HAS_ENDPOINT"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1637",
+      "type": "HAS_ENDPOINT"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1638",
+      "type": "HAS_ENDPOINT"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1639",
+      "type": "HAS_ENDPOINT"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1640",
+      "type": "HAS_ENDPOINT"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1641",
+      "type": "HAS_ENDPOINT"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1642",
+      "type": "HAS_ENDPOINT"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1643",
+      "type": "HAS_ENDPOINT"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1644",
+      "type": "HAS_ENDPOINT"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1645",
+      "type": "HAS_ENDPOINT"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1604",
+      "type": "HAS_HEADER"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1605",
+      "type": "HAS_HEADER"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1606",
+      "type": "HAS_HEADER"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1607",
+      "type": "HAS_HEADER"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1608",
+      "type": "HAS_HEADER"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1609",
+      "type": "HAS_HEADER"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1610",
+      "type": "HAS_HEADER"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1614",
+      "type": "HAS_HEADER"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1615",
+      "type": "HAS_HEADER"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1616",
+      "type": "HAS_HEADER"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1617",
+      "type": "HAS_HEADER"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1618",
+      "type": "HAS_HEADER"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1619",
+      "type": "HAS_HEADER"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1621",
+      "type": "HAS_HEADER"
+    },
+    {
+      "source": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1602",
+      "target": "4:be9118ce-ef5a-4c56-a20f-5c81009e266c:1611",
+      "type": "USES_TECHNOLOGY"
+    }
+  ]
+}

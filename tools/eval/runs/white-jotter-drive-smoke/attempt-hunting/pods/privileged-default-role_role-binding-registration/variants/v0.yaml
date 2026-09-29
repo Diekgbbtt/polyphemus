@@ -1,0 +1,44 @@
+ref: v0
+parent_ref: null
+declined_attribute: ''
+spec:
+  status: specified
+  candidate: H3
+  target_identity: Service:account-registration
+  verification_symptoms:
+  - a baseline registration without a roles field results in a newly created account
+    bound to a privileged role (server-derived privileged default), independent of
+    any client-supplied roles
+  testing_pattern: 'baseline default-role probe: submit a registration without a roles
+    field; inspect the role bound to the created account; if privileged, the default
+    role for new accounts is privileged. Cross-check with a registration carrying
+    a non-privileged role (visitor) to confirm whether client influence exists at
+    all'
+  assumptions:
+  - unauthenticated network access to the public registration surface
+  - the server filters or ignores the client-supplied roles field
+  - the default role for new accounts is privileged
+  - the account is enabled immediately
+  payload_vector_space:
+  - method: POST
+    target: <registration endpoint>
+    body:
+      username: <unique>
+      password: <pw>
+  - method: POST
+    target: <registration endpoint>
+    body:
+      username: <unique>
+      password: <pw>
+      roles:
+      - visitor
+  rationale: 'H3 (privileged default/derived role): the competing prune reading holds
+    that the server filters client-supplied roles; if so, privilege escalation could
+    still occur if new accounts default to a privileged role. The baseline no-roles
+    registration is the minimal discriminating experiment: a privileged bound role
+    on the baseline confirms H3; a non-privileged baseline role refutes it and points
+    back to client-influenced binding (H1/H2).'
+  interpretation_guidance: 'Symptom present: the baseline (no roles field) account
+    is bound to a privileged role (sysadmin/contentmanager). Symptom absent: the baseline
+    account is bound to a non-privileged role (visitor/test) - H3 refuted. A WAF/transport
+    block is the pod''s call, not this spec''s.'
