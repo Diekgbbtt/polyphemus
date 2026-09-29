@@ -89,6 +89,6 @@ The landed set additionally pairs `ObservableSignal`, `AttackGoal`, `PayloadPatt
 
 ## Pending register
 
-- `client_side_js_architecture`: intended entity, not built; integration tracking ticket pending.
-- the rate-limit posture redesign: absent from the shortened dev, pending; integration tracking ticket pending.
+- `client_side_js_architecture`: intended entity, not built; integration tracking ticket [#282](https://github.com/Diekgbbtt/polyphemus/issues/282).
+- the rate-limit posture redesign: absent from the shortened dev, pending; integration tracking ticket [#283](https://github.com/Diekgbbtt/polyphemus/issues/283).
 - the hunt-orchestrator's HTTP-history read surface and its skill description-only surface (`load_skill` all-or-regex listing): granted in the skills-plumbing stream, pending; the hunt-orchestrator reasons to them as read-only and never reaches skill bodies or lesson writing.
