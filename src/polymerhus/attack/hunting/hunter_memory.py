@@ -79,7 +79,12 @@ import yaml
 
 from polymerhus.app.data_root import DATA_ROOT, project_dir
 
-from .hunt_store import ProjectMemoryStore, parse_config_file_name, semantic_key
+from .hunt_store import (
+    ProjectMemoryStore,
+    parse_config_file_name,
+    semantic_key,
+    split_semantic_key,
+)
 from .hunter_state import FAULT_STATUSES
 
 logger = logging.getLogger(__name__)
@@ -142,25 +147,19 @@ def config_key_from_fault_key(fault_key: str) -> str:
     conversion, home of the physical-folder -> logical-config_key
     normalisation (`_validate_fault_key`'s folder rule, reused here). The
     2-part revival key is NOT a config_key and is refused."""
-    if "::" in fault_key:
-        # The `::` semantic-key form: must be the full 3-part key (the 2-part
-        # revival key is a PREFIX of it, not a config_key - refused).
-        parts = fault_key.split("::")
-        if len(parts) != 3 or not parts[0] or not parts[1]:
-            raise ValueError(
-                f"hunter store: fault_key {fault_key!r} is not the 3-part "
-                f"config key <unit_id>::<CWE_ID>::<vulnerability_class> (or "
-                f"its `_`-joined form); the 2-part revival key is NOT accepted"
-            )
-        return fault_key
     parsed = parse_config_file_name(f"{fault_key}.yaml")
-    if parsed is None:
-        raise ValueError(
-            f"hunter store: fault_key {fault_key!r} is not the 3-part config "
-            f"key <unit_id>::<CWE_ID>::<vulnerability_class> (or its `_`-joined "
-            f"form); the 2-part revival key is NOT a config_key"
-        )
-    return semantic_key(*parsed)
+    if parsed is not None:
+        return semantic_key(*parsed)
+    # The `::` semantic-key form: must be the full 3-part key (the 2-part
+    # revival key is a PREFIX of it, not a config_key - refused). Anchored on
+    # the CWE token, so a System unit id containing `::` round-trips.
+    if "::" in fault_key and split_semantic_key(fault_key) is not None:
+        return fault_key
+    raise ValueError(
+        f"hunter store: fault_key {fault_key!r} is not the 3-part config "
+        f"key <unit_id>::<CWE_ID>::<vulnerability_class> (or its `_`-joined "
+        f"form); the 2-part revival key is NOT accepted"
+    )
 
 
 def _validate_spec_file(spec_file: str) -> None:
@@ -279,24 +278,21 @@ class HunterMemoryStore:
         config key - a fault_key for the wrong (revival) grain is a caller
         defect and is rejected."""
         HunterMemoryStore._validate_component(fault_key, "fault_key")
-        if "::" not in fault_key:
-            # The canonical `_`-joined form: parse it as the config file-name
-            # convention (the last-two-underscores + `CWE-\\d+` middle), so a
-            # 2-part `_`-joined key (no class segment) is rejected too.
-            if parse_config_file_name(f"{fault_key}.yaml") is None:
-                raise ValueError(
-                    f"hunter store: fault_key {fault_key!r} is not the 3-part "
-                    f"config key <unit_id>::<CWE_ID>::<vulnerability_class> (or "
-                    f"its `_`-joined form); the 2-part revival key is NOT accepted"
-                )
+        # The canonical `_`-joined form first: parse it as the config file-name
+        # convention (the last-two-underscores + `CWE-\\d+` middle), so a
+        # 2-part `_`-joined key (no class segment) is rejected too - and a
+        # unit id containing `::` round-trips through this branch.
+        if parse_config_file_name(f"{fault_key}.yaml") is not None:
             return
-        parts = fault_key.split("::")
-        if len(parts) != 3 or not parts[0] or not parts[1]:
-            raise ValueError(
-                f"hunter store: fault_key {fault_key!r} is not the 3-part "
-                f"config key <unit_id>::<CWE_ID>::<vulnerability_class> (or "
-                f"its `_`-joined form); the 2-part revival key is NOT accepted"
-            )
+        # The `::` semantic-key form, anchored on the CWE token (a System unit
+        # id containing `::` has more than three segments and must still pass).
+        if "::" in fault_key and split_semantic_key(fault_key) is not None:
+            return
+        raise ValueError(
+            f"hunter store: fault_key {fault_key!r} is not the 3-part "
+            f"config key <unit_id>::<CWE_ID>::<vulnerability_class> (or "
+            f"its `_`-joined form); the 2-part revival key is NOT accepted"
+        )
 
     @classmethod
     def _sanitise_keyword(cls, keyword: str) -> str:

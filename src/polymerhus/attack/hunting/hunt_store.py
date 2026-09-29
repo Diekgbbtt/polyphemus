@@ -123,6 +123,35 @@ def semantic_key(unit_id: str, fault_class: str, vulnerability_class: str) -> st
     return KEY_SEPARATOR.join((unit_id, fault_class, vulnerability_class))
 
 
+# The semantic key's CWE anchor: the same discipline as the file name's
+# (`_CONFIG_FILE_RE`). A unit id is a kind-qualified identity and MAY itself
+# contain `::` (a System's `kind::discriminator`, e.g.
+# `System:AuthorizationSystem::__singleton__`), so the split is anchored on
+# the CWE token, never a naive 3-way split.
+_SEMANTIC_KEY_RE = re.compile(r"::(CWE-\d+)::")
+_CWE_TOKEN_RE = re.compile(r"CWE-\d+")
+
+
+def split_semantic_key(key: str) -> tuple[str, str, str] | None:
+    """Parse a `::` semantic key back to
+    `(unit_id, fault_class, vulnerability_class)`. A CWE fault class is
+    anchored on its token, so a unit id containing `::` (a System's
+    `kind::discriminator`) round-trips with MORE than three segments; a
+    non-CWE fault class keeps the plain 3-part split (the historical form).
+    The empty-class (carried-bare) degrade is tolerated. None when the key is
+    not the 3-part form (e.g. a 2-part revival key)."""
+    match = _SEMANTIC_KEY_RE.search(key)
+    if match is not None:
+        unit_id = key[: match.start()]
+        if not unit_id:
+            return None
+        return unit_id, match.group(1), key[match.end():]
+    parts = key.split(KEY_SEPARATOR)
+    if len(parts) == 3 and parts[0] and parts[1] and not _CWE_TOKEN_RE.fullmatch(parts[2]):
+        return parts[0], parts[1], parts[2]
+    return None
+
+
 def parse_config_file_name(name: str) -> tuple[str, str, str] | None:
     """Parse a config file name back to
     `(unit_id, fault_class, vulnerability_class)`. The CWE token anchors the
@@ -157,15 +186,12 @@ def _fault_key_to_config_key(fault_key: str) -> str | None:
     `parse_config_file_name` + `semantic_key`; a folder stored in the `::`
     semantic-key form is returned as-is. None when the folder is not a 3-part
     config key (a 2-part revival key is never a config key)."""
-    if "::" in fault_key:
-        parts = fault_key.split(KEY_SEPARATOR)
-        if len(parts) == 3 and parts[0] and parts[1]:
-            return fault_key
-        return None
     parsed = parse_config_file_name(f"{fault_key}.yaml")
-    if parsed is None:
-        return None
-    return semantic_key(*parsed)
+    if parsed is not None:
+        return semantic_key(*parsed)
+    if "::" in fault_key:
+        return fault_key if split_semantic_key(fault_key) is not None else None
+    return None
 
 
 def _prior_spec_insight(spec: dict) -> dict:
@@ -428,11 +454,12 @@ class HuntStore:
         per name; a store where BOTH hold the same name is corrupted, and the
         move refuses to clobber the consumed record (at-least-once: a moved
         message is never lost to a re-write)."""
-        parts = key.split(KEY_SEPARATOR)
-        if len(parts) != 3:
+        parts = split_semantic_key(key)
+        if parts is None:
             raise ValueError(
                 f"consume_config needs the full 3-part semantic key; "
-                f"a {len(parts)}-part key {key!r} names several configs"
+                f"{key!r} is not one (a revival-key prefix names several "
+                f"configs - ambiguous, refused)"
             )
         name = config_file_name(*parts)
         with _lock_for(project_id):

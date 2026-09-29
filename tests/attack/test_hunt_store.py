@@ -97,6 +97,47 @@ def test_semantic_key_is_the_canonical_internal_identity():
     assert semantic_key(UNIT, CWE, CLASS) == "Service:catalogue-and-discovery::CWE-639::IDOR"
 
 
+def test_semantic_key_round_trips_a_system_unit_containing_double_colon(tmp_path):
+    # G4 regression (live e2e eval): a System unit id is a kind-qualified
+    # identity containing `::` (`System:AuthorizationSystem::__singleton__`),
+    # so its semantic key has MORE than three `::` segments. The split must
+    # anchor on the CWE token, or the mover's produced->consumed move refuses
+    # the key and the run hangs in `running` (the live symptom: `mover: move
+    # ... failed (consume_config needs the full 3-part semantic key; a 4-part
+    # key ... names several configs)`).
+    unit = "System:AuthorizationSystem::__singleton__"
+    key = semantic_key(unit, CWE, CLASS)
+    assert key == f"{unit}::CWE-639::IDOR"
+    store = HuntStore(tmp_path)
+    store.write_config(PROJECT, _config(unit_id=unit))
+    assert [k for k, _ in store.read_produced_configs(PROJECT)] == [key]
+    assert store.consume_config(PROJECT, key) is True
+    assert store.read_produced_configs(PROJECT) == []
+    # at-least-once: the repeated move is a no-op success
+    assert store.consume_config(PROJECT, key) is True
+
+
+def test_consume_config_still_refuses_a_two_part_revival_key(tmp_path):
+    # the revival key (`<unit>::<fault_class>`) is a PREFIX of a semantic key,
+    # never a config identity: the anchored split must not accept it.
+    store = HuntStore(tmp_path)
+    store.write_config(PROJECT, _config())
+    with pytest.raises(ValueError):
+        store.consume_config(PROJECT, f"{UNIT}::{CWE}")
+
+
+def test_fault_key_to_config_key_accepts_a_system_unit_folder(tmp_path):
+    # The hunter-memory bucket folder carries the same identity; the `::` form
+    # of a System unit must normalise to its canonical config key (and the
+    # 2-part revival key must still be refused).
+    from polymerhus.attack.hunting.hunt_store import _fault_key_to_config_key
+    unit = "System:AuthorizationSystem::__singleton__"
+    key = semantic_key(unit, CWE, CLASS)
+    assert _fault_key_to_config_key(key) == key
+    assert _fault_key_to_config_key(config_file_name(unit, CWE, CLASS)[:-5]) == key
+    assert _fault_key_to_config_key(f"{unit}::{CWE}") is None
+
+
 # --- topology: the store writes files, the app scaffold owns directories -----
 
 def test_write_lands_its_file_without_scaffolding_the_rest(tmp_path):
