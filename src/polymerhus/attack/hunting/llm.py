@@ -184,14 +184,18 @@ _REMATCH_SKILL: str | None = None
 
 def _gate_skill() -> str:
     """The hunt-orchestrator's REASON system prompt, read directly from this
-    module's `prompts/` dir. Memoized on first call; FAIL-CLOSED."""
+    module's `prompts/` dir and carrying the shared cortex (C1) appended by the
+    one composition helper. Memoized on first call; FAIL-CLOSED."""
     global _GATE_SKILL
     if _GATE_SKILL is None:
         from pathlib import Path  # noqa: PLC0415
 
-        _GATE_SKILL = (
-            Path(__file__).resolve().parent / "prompts" / "hunt-orchestrator.md"
-        ).read_text(encoding="utf-8")
+        from polymerhus.attack.hunting.cortex import with_cortex  # noqa: PLC0415
+
+        _GATE_SKILL = with_cortex(
+            (Path(__file__).resolve().parent / "prompts" / "hunt-orchestrator.md")
+            .read_text(encoding="utf-8")
+        )
     return _GATE_SKILL
 
 

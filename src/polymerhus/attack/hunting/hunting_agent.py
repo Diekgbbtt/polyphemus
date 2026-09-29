@@ -131,14 +131,18 @@ _HUNTING_AGENT_SKILL: str | None = None
 
 def _load_hunting_agent_skill() -> str:
     """The stable system prompt, read directly from this module's `prompts/`
-    dir: memoized in-process, FAIL-CLOSED on a missing file (raise)."""
+    dir and carrying the shared cortex (C1) appended by the one composition
+    helper: memoized in-process, FAIL-CLOSED on a missing file (raise)."""
     global _HUNTING_AGENT_SKILL
     if _HUNTING_AGENT_SKILL is None:
         from pathlib import Path  # noqa: PLC0415
 
-        _HUNTING_AGENT_SKILL = (
-            Path(__file__).resolve().parent / "prompts" / "hunting-agent.md"
-        ).read_text(encoding="utf-8")
+        from polymerhus.attack.hunting.cortex import with_cortex  # noqa: PLC0415
+
+        _HUNTING_AGENT_SKILL = with_cortex(
+            (Path(__file__).resolve().parent / "prompts" / "hunting-agent.md")
+            .read_text(encoding="utf-8")
+        )
     return _HUNTING_AGENT_SKILL
 
 

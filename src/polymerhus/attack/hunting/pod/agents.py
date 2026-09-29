@@ -39,6 +39,8 @@ from polymerhus.attack.hunting.pod.llm import POD_RUNNER_ROLE, POD_TRIAGER_ROLE
 from polymerhus.attack.hunting.pod.prompts import (
     POD_RUNNER_SYSTEM,
     POD_TRIAGER_SYSTEM,
+    runner_system_prompt,
+    triager_system_prompt,
 )
 from polymerhus.attack.hunting.pod.types import RawObservation, RunnerStep
 
@@ -133,7 +135,7 @@ async def default_runner_step_fn(spec: dict, messages: list, tool_calls: int) ->
         ctx.address.role_id, ctx.address, list(messages),
         checkpointer=ctx.checkpointer, tools=tools + binding.tools, middleware=mw,
         context=binding.context,
-        system_prompt=RUNNER_SYSTEM, model_factory=hc.model_factory)
+        system_prompt=runner_system_prompt(), model_factory=hc.model_factory)
     new_obs = len(hc.log.raw_observations) - before_obs
     content = str(getattr(turn, "content", None) or "")
     return RunnerStep(action="conclude", exhausted=new_obs == 0,
@@ -174,7 +176,7 @@ async def default_triager_fn(spec: dict, observation: RawObservation,
             ctx.address.role_id, ctx.address, delta,
             checkpointer=ctx.checkpointer, schema=TriagerDecision,
             tools=tools + binding.tools, context=binding.context,
-            system_prompt=TRIAGER_SYSTEM,
+            system_prompt=triager_system_prompt(),
             middleware=list(pod_middleware()) + binding.middleware,
             model_factory=hc.model_factory)
         if result is None:
