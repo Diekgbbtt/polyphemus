@@ -51,7 +51,9 @@ seam resolves lazily on first call (CODING_STANDARD section 6).
 """
 from __future__ import annotations
 
+import asyncio
 import logging
+import os
 import re
 import threading
 import uuid
@@ -69,6 +71,7 @@ from polymerhus.attack.hunting.hunt_store import (
     KEY_SEPARATOR,
     semantic_key,
 )
+from polymerhus.attack.hunting.orchestrator_graph import PhaseAbort
 from polymerhus.recon.control.targeted import (
     AnalyserReconRequest,
     ReconScope,
@@ -134,6 +137,118 @@ _ORCHESTRATOR_LOCK = threading.Lock()
 # The default targeted job a park/resume back-edge runs (a re-witness of the
 # unit's surface).
 _DEFAULT_BACK_EDGE_JOB = "httpx_reprofile"
+
+
+# --- #280 Part 2: the consecutive-degradation circuit breaker ----------------
+#
+# The coupled gap to the parsing-error recovery (#280 Part 1): when the phase
+# turns keep returning a no-decision (None) outcome - the signature of a
+# poisoned thread before the fix, or any sustained provider outage - the pass
+# used to fail-open each pair and move on at full speed (a hot loop). The
+# breaker counts CONSECUTIVE no-decision turn outcomes across the phase's pairs
+# (reset on any real decision), applies a bounded exponential backoff once a
+# small threshold is crossed, and aborts the pass with a typed, operator-visible
+# failure after K. Below the threshold it stays per-pair fail-open, and it never
+# silently prunes a pair (D67-11). All four knobs are env-backed with sane
+# defaults: HUNT_TURN_DEGRADED_STREAK_WARN, HUNT_TURN_DEGRADED_STREAK_ABORT,
+# HUNT_TURN_DEGRADED_BACKOFF_BASE_S, HUNT_TURN_DEGRADED_BACKOFF_MAX_S.
+
+_DEFAULT_DEGRADED_WARN_STREAK = 2
+_DEFAULT_DEGRADED_ABORT_STREAK = 5
+_DEFAULT_DEGRADED_BACKOFF_BASE_S = 1.0
+_DEFAULT_DEGRADED_BACKOFF_MAX_S = 30.0
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        value = int(os.environ.get(name, "") or "")
+        return value
+    except (TypeError, ValueError):
+        return default
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        value = float(os.environ.get(name, "") or "")
+        return value if value >= 0 else default
+    except (TypeError, ValueError):
+        return default
+
+
+class HuntOrchestrationDegradedError(PhaseAbort):
+    """The pass ABORTED after a run of consecutive no-decision phase turns
+    (#280 Part 2). Typed and operator-visible: it is raised out of
+    `arun_orchestration`, so the runtime logs it and lands the run failed
+    instead of grinding through the remaining pairs against a dead thread."""
+
+    def __init__(self, *, phase: str, streak: int, threshold: int) -> None:
+        self.phase = phase
+        self.streak = streak
+        self.threshold = threshold
+        super().__init__(
+            f"hunting pass aborted: {streak} consecutive no-decision phase "
+            f"turn(s) (last phase {phase!r}, abort threshold {threshold})")
+
+
+class DegradedTurnBreaker:
+    """The pass-scoped counter + backoff + abort for no-decision phase turns.
+
+    `before_turn` sleeps the current backoff (0 until the warn threshold is
+    crossed); `record_outcome` resets on a real decision, counts a `None`
+    outcome, and raises `HuntOrchestrationDegradedError` at the abort
+    threshold. `abort_streak <= 0` disables the abort (the backoff still
+    applies)."""
+
+    def __init__(self, *, backoff_base_s: float, backoff_max_s: float,
+                 warn_streak: int, abort_streak: int, sleep=None) -> None:
+        self._base = backoff_base_s
+        self._max = backoff_max_s
+        self._warn = warn_streak
+        self._abort = abort_streak
+        self._sleep = sleep or asyncio.sleep
+        self.streak = 0
+
+    @classmethod
+    def from_env(cls) -> "DegradedTurnBreaker":
+        return cls(
+            backoff_base_s=_env_float(
+                "HUNT_TURN_DEGRADED_BACKOFF_BASE_S",
+                _DEFAULT_DEGRADED_BACKOFF_BASE_S),
+            backoff_max_s=_env_float(
+                "HUNT_TURN_DEGRADED_BACKOFF_MAX_S",
+                _DEFAULT_DEGRADED_BACKOFF_MAX_S),
+            warn_streak=_env_int(
+                "HUNT_TURN_DEGRADED_STREAK_WARN",
+                _DEFAULT_DEGRADED_WARN_STREAK),
+            abort_streak=_env_int(
+                "HUNT_TURN_DEGRADED_STREAK_ABORT",
+                _DEFAULT_DEGRADED_ABORT_STREAK),
+        )
+
+    def delay_for(self, streak: int) -> float:
+        """The bounded exponential delay for the given consecutive-failure
+        streak: 0 below the warn threshold, else base * 2^(streak - warn),
+        capped at the max."""
+        if streak < self._warn or self._base <= 0:
+            return 0.0
+        return min(self._base * (2 ** (streak - self._warn)), self._max)
+
+    async def before_turn(self, phase: str) -> None:
+        delay = self.delay_for(self.streak)
+        if delay > 0:
+            logger.warning(
+                "hunting pass degraded: %d consecutive no-decision turn(s); "
+                "backing off %.2fs before the %s turn", self.streak, delay, phase)
+            await self._sleep(delay)
+
+    def record_outcome(self, phase: str, outcome: Any) -> None:
+        if outcome is not None:
+            self.streak = 0
+            return
+        self.streak += 1
+        if self._abort > 0 and self.streak >= self._abort:
+            raise HuntOrchestrationDegradedError(
+                phase=phase, streak=self.streak, threshold=self._abort)
 
 # The config status lifecycle (ADR G5/G6): hypothesised -> ratified | dropped.
 # `noted` is a LOOP state, never a config status; `consumed` is tautological in
@@ -859,6 +974,26 @@ async def arun_orchestration(
             return await out
         return out
 
+    breaker = DegradedTurnBreaker.from_env()
+
+    async def _phase_turn(fn, *args, phase: str):
+        """Run ONE phase turn through the breaker (#280 Part 2): backoff before
+        the call once the streak is past the warn threshold, per-turn fail-open
+        for a raising/sync seam, then count a `None` (no-decision) outcome -
+        which may abort the pass with a typed failure."""
+        if fn is None:
+            return None
+        await breaker.before_turn(phase)
+        try:
+            out = await _await_seam(fn, *args)
+        except PhaseAbort:
+            raise
+        except Exception as exc:  # noqa: BLE001 - fail-open: the turn is a no-decision
+            logger.warning("%s turn failed (%s)", phase, exc)
+            out = None
+        breaker.record_outcome(phase, out)
+        return out
+
     if hypothesise_fn is None:
         # The hypothesise turn rides the run's orchestration thread. The
         # actor's `hypothesise` is `async def`, so the default seam must be an
@@ -1183,9 +1318,10 @@ async def arun_orchestration(
             "kb_degraded": kb_degraded,
         })
         if hypothesise_fn is not None:
-            try:
-                decision = await _await_seam(hypothesise_fn, gate_input)
-                directions = list(getattr(decision, "directions", None) or [])
+            decision = await _phase_turn(hypothesise_fn, gate_input,
+                                         phase="hypothesise")
+            directions = list(getattr(decision, "directions", None) or [])
+            if decision is not None:
                 trace_gate_step("gate-decision", run_id=run_id, tags=_gate_tags, output={
                     "directions": [{
                         "pair": revival_key(d.unit_id, d.fault_class),
@@ -1197,9 +1333,6 @@ async def arun_orchestration(
                     } for d in directions],
                     "prior_minted_keys": list(gate_input.prior_minted_keys),
                 })
-            except Exception as exc:  # noqa: BLE001 - fail-open: skip the pair
-                logger.warning("hypothesise turn failed for %s, skipping (%s)",
-                               key, exc)
         # #186 anti-fabrication: an empty decision (a failed/None turn) NEVER
         # mints a harness-fabricated fully-empty draft - the pair flows to the
         # skip branch below (counted `units_skipped`). Only a direction the
@@ -1275,11 +1408,9 @@ async def arun_orchestration(
 
         decision = RatifyDecision()
         if ratify_fn is not None:
-            try:
-                out = await _await_seam(ratify_fn, _phase_input(pair, drafts, state))
-                decision = out if isinstance(out, RatifyDecision) else RatifyDecision()
-            except Exception as exc:  # noqa: BLE001 - fail-open: keep serving
-                logger.warning("ratify turn failed for %s (%s)", key, exc)
+            out = await _phase_turn(ratify_fn, _phase_input(pair, drafts, state),
+                                    phase="ratify")
+            decision = out if isinstance(out, RatifyDecision) else RatifyDecision()
 
         # #201 (Q3 ruling): the surface_context is a deterministic typed assembly
         # owned by the harness - the ratify upsert re-injects the minted shape
@@ -1356,11 +1487,9 @@ async def arun_orchestration(
 
         decision = NoteDecision()
         if note_fn is not None:
-            try:
-                out = await _await_seam(note_fn, _phase_input(pair, ratified, state))
-                decision = out if isinstance(out, NoteDecision) else NoteDecision()
-            except Exception as exc:  # noqa: BLE001 - fail-open: keep serving
-                logger.warning("note turn failed for %s (%s)", key, exc)
+            out = await _phase_turn(note_fn, _phase_input(pair, ratified, state),
+                                    phase="note")
+            decision = out if isinstance(out, NoteDecision) else NoteDecision()
 
         ledger = _ledger(state)
         trail: list[dict] = []
