@@ -496,7 +496,9 @@ class Trial:
     ) -> TrialRecord:
         cfg = self.config
         started = self._now()
-        if bring_up is not None:
+        # #277: a seeded trial reuses the operator's pre-existing instance and
+        # project as-is; the harness must not create or bring up either.
+        if bring_up is not None and cfg.existing_project_id is None:
             self.chain(bring_up, repair)
 
         project_id = cfg.project_id or ""

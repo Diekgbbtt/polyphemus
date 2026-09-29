@@ -147,6 +147,19 @@ def test_seeded_trial_enters_hunting_without_creating_or_mutating(tmp_path) -> N
     assert ("GET", f"/projects/{SEED}/graph") in api_runner.methods_paths
 
 
+def test_seeded_trial_does_not_bring_up_the_instance(tmp_path) -> None:
+    calls: list[str] = []
+
+    def bring_up() -> None:
+        calls.append("bring_up")
+        raise AssertionError("a seeded trial must not bring up the instance")
+
+    record = _trial(tmp_path, RecordingApi(_seeded_routes())).run(bring_up=bring_up)
+
+    assert record.terminal == "complete"
+    assert calls == []
+
+
 def test_seeded_trial_records_the_reused_project_and_seeded_marker(tmp_path) -> None:
     record = _trial(tmp_path, RecordingApi(_seeded_routes())).run()
 
