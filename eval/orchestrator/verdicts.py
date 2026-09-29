@@ -51,11 +51,13 @@ class VerdictError(ValueError):
 
 @dataclass(frozen=True)
 class Matched:
-    """The unit/fault-class/symptom triple a verdict reconciles to."""
+    """The unit/fault-class/symptom triple a verdict reconciles to. A `missed`
+    row has no match to describe: its fields are None (the positive verdicts
+    are the ones that must name all three - the same rule as the chain)."""
 
-    unit: str
-    fault_class: str
-    symptom: str
+    unit: str | None
+    fault_class: str | None
+    symptom: str | None
 
 
 @dataclass(frozen=True)
@@ -101,7 +103,7 @@ def parse_verdict(
             f"{', '.join(VERDICT_VALUES)}, got {identified!r}"
         )
     confidence = _confidence(row["confidence"], vuln_id)
-    matched = _matched(row["matched"], vuln_id)
+    matched = _matched(row["matched"], vuln_id, identified)
     subagents.check_identity(
         row["eval_sha"], eval_sha, "eval_sha", error=VerdictError, noun="verdict"
     )
@@ -244,13 +246,21 @@ def _parse_chain(
     return chain
 
 
-def _matched(raw: object, vuln_id: str) -> Matched:
+def _matched(raw: object, vuln_id: str, identified: str) -> Matched:
     if not isinstance(raw, Mapping):
         raise VerdictError(f"verdict row {vuln_id}: matched must be a mapping")
     unknown = sorted(set(raw) - set(_MATCHED_FIELDS))
     if unknown:
         raise VerdictError(
             f"verdict row {vuln_id}: matched unknown field(s): {', '.join(unknown)}"
+        )
+    if identified == "missed":
+        # A missed row describes no match: null/empty subfields are the honest
+        # shape; a positive verdict is the one that must name all three.
+        return Matched(
+            unit=_optional(raw.get("unit")),
+            fault_class=_optional(raw.get("fault_class")),
+            symptom=_optional(raw.get("symptom")),
         )
     return Matched(
         unit=_non_empty(raw.get("unit"), "matched.unit"),
@@ -270,3 +280,9 @@ def _confidence(raw: object, vuln_id: str) -> float:
 
 def _non_empty(raw: object, label: str) -> str:
     return subagents.non_empty(raw, label, error=VerdictError)
+
+
+def _optional(raw: object) -> str | None:
+    if raw is None or (isinstance(raw, str) and not raw.strip()):
+        return None
+    return str(raw)

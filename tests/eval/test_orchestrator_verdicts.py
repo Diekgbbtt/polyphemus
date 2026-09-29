@@ -113,6 +113,43 @@ def test_accepts_missed_without_a_chain(tmp_path) -> None:
 # --- rejection ----------------------------------------------------------------
 
 
+def test_accepts_a_missed_row_with_null_matched(tmp_path) -> None:
+    # A missed row describes no match: null/empty matched subfields are the
+    # honest shape (the same rule as the chain - required only for positive
+    # verdicts). Live e2e regression: the first assessment wrote nulls and the
+    # strict validator rejected the whole file.
+    payload = row(identified="missed")
+    payload["matched"] = {"unit": None, "fault_class": None, "symptom": ""}
+
+    parsed = verdicts.validate_verdicts(
+        [payload],
+        data_root=tmp_path,
+        files=FileStore(),
+        eval_sha=SHA,
+        stack_fingerprint=FINGERPRINT,
+    )
+
+    assert parsed[0].identified == "missed"
+    assert parsed[0].matched.unit is None
+    assert parsed[0].matched.fault_class is None
+    assert parsed[0].matched.symptom is None
+
+
+def test_rejects_a_null_matched_on_an_identified_row(tmp_path) -> None:
+    files, root, chain = seed_chain(tmp_path)
+    payload = row(chain=chain)
+    payload["matched"] = {"unit": None, "fault_class": "CWE-22", "symptom": "file read"}
+
+    with pytest.raises(verdicts.VerdictError):
+        verdicts.validate_verdicts(
+            [payload],
+            data_root=root,
+            files=files,
+            eval_sha=SHA,
+            stack_fingerprint=FINGERPRINT,
+        )
+
+
 def test_rejects_a_bad_enum(tmp_path) -> None:
     files, root, _chain = seed_chain(tmp_path)
 
