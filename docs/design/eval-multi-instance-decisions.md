@@ -28,6 +28,7 @@
 
 ### D8 - Hunting cap: per `Target`, counted from the consumed directory
 *2026-09-25.* The cap is a per-`Target` integer. It counts files present in the consumed hunt-configs directory; every file moved there counts, including mounted/pre-mined ones.
+*2026-09-29 (operator-ratified amendment).* The cap is enforced **trial-scoped**: it counts only the configs consumed during the trial, against a baseline of the consumed names already present at the trial's first hunting poll. The baseline is persisted in the trial record (`cap_baseline`) and carried across a resume, so a config consumed by a previous run - or a mounted/pre-mined file already in `consumed/` - no longer satisfies a new trial's cap. A new trial id snapshots a fresh baseline; a resumed trial keeps its own and its count does not reset.
 
 ### D9 - Target agnosticity: strategy-typed lifecycle
 *2026-09-25.* A strategy-typed lifecycle (`targetctl` for WebExploitBench, `image`/`compose` for pullable containers) behind one interface, selected by the target descriptor. Accepted provisionally; see **R2**.
@@ -52,6 +53,7 @@
 
 ### D16 - Cap enforcement is symbolic and timer-side
 *2026-09-28.* The symbolic layer counts files in the consumed directory and stops the hunting run via the existing stop verb at the cap, recording the overshoot margin (R7). No runtime knob is added.
+*2026-09-29.* The count is the trial-scoped count (the present consumed names minus the trial's persisted baseline, D8); `stop_count`, `final_count`, and `overshoot` in the trial record are all trial-scoped. A resumed trial threads the record's baseline into the new trial, so its count continues rather than resetting.
 
 ### D17 - Evidence chain includes observability reasoning references
 *2026-09-28.* Extends N13: beyond the artifact FS chain, each qualifying verdict may reference observability-platform reasoning details - reasoning logs citing state assertions, decision nodes, taken branches with rationale - mapped to the agent workflow phases.

@@ -239,6 +239,68 @@ def test_cap_reached_is_detected_from_the_trial_cap_accounting(tmp_path) -> None
     assert state.triggers[0].run_id == "h1"
 
 
+def test_the_cap_trigger_carries_the_record_baseline() -> None:
+    """The resume path reads the persisted baseline off the cap record."""
+    record = {
+        "instance_id": "arm-a",
+        "target_id": "t1",
+        "project_id": "pid",
+        "terminal": "stopped",
+        "start_phase": "hunting",
+        "phases": [{"phase": "hunting", "status": "stopped", "run_id": "h1"}],
+        "cap": 2,
+        "stop_count": 2,
+        "final_count": 3,
+        "overshoot": 1,
+        "cap_baseline": ["old.yaml", "older.yaml"],
+    }
+
+    triggers = surfer.cap_triggers(record)
+
+    assert triggers[0].cap_baseline == ("old.yaml", "older.yaml")
+
+
+def test_a_malformed_cap_baseline_is_ignored() -> None:
+    record = {
+        "instance_id": "arm-a",
+        "target_id": "t1",
+        "project_id": "pid",
+        "phases": [{"phase": "hunting", "status": "stopped", "run_id": "h1"}],
+        "cap": 2,
+        "stop_count": 2,
+        "cap_baseline": "not-a-list",
+    }
+
+    assert surfer.cap_triggers(record)[0].cap_baseline is None
+
+
+def test_a_failed_hunting_resume_plan_carries_the_record_baseline(tmp_path) -> None:
+    """A resumed hunting trial keeps the record's trial-scoped baseline."""
+    record = {
+        "instance_id": "arm-a",
+        "target_id": "t1",
+        "project_id": "pid",
+        "terminal": "failed",
+        "start_phase": "hunting",
+        "phases": [
+            {"phase": "hunting", "status": "failed", "run_id": "h1", "failure": None}
+        ],
+        "cap_baseline": ["old.yaml"],
+    }
+    trigger = surfer.failed_run_trigger(record)
+    assert trigger is not None and trigger.cap_baseline == ("old.yaml",)
+    asserter = StaticAsserter(state_with(trigger))
+    decider = StaticDecider(surfer.SurferDecision(surfer.FIX, repair=surfer.REPAIR_ENV))
+    kit = FakeRepairKit(supported=("env",))
+    resumer = RecordingResumer()
+
+    make_surfer(
+        asserter, decider, tmp_path=tmp_path, repair_kit=kit, resumer=resumer
+    ).cycle()
+
+    assert resumer.plans[0].cap_baseline == ("old.yaml",)
+
+
 def test_a_failed_run_is_detected_from_the_record_phase(tmp_path) -> None:
     record = {
         "instance_id": "arm-a",

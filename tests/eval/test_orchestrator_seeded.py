@@ -65,15 +65,29 @@ class FakeClock:
         self.t += seconds
 
 
-class SeqFileStore(FileStore):
-    """A `FileStore` whose consumed-count reads pop a scripted sequence."""
+class SeqListFileStore(FileStore):
+    """A `FileStore` whose consumed-hunt-config listing pops a scripted sequence.
 
-    def __init__(self, counts):
+    The trial-scoped poll reads the consumed listing once per iteration; every
+    other directory (and `count_files`, the entry gate's pre-mined presence
+    check) reads the real tree. See `test_orchestrator_trial.py` for the same
+    seam.
+    """
+
+    def __init__(self, listings, consumed_dir):
         super().__init__()
-        self._counts = list(counts)
+        self._listings = [list(names) for names in listings]
+        self._consumed = Path(consumed_dir)
+
+    def list_files(self, directory):
+        if Path(directory) != self._consumed:
+            return FileStore.list_files(self, directory)
+        if self._listings:
+            return [Path(name) for name in self._listings.pop(0)]
+        return []
 
     def count_files(self, directory) -> int:
-        return self._counts.pop(0) if self._counts else 0
+        return len(FileStore.list_files(self, directory))
 
 
 def _config(tmp_path, **overrides) -> trial.TrialConfig:
@@ -214,10 +228,13 @@ def test_seeded_trial_runs_the_cap_and_places_premined_artifacts(tmp_path) -> No
     routes = _seeded_routes(hunting_status="running")
     routes[f"POST /projects/{SEED}/hunting/h1/stop"] = {"stopping": True}
     api_runner = RecordingApi(routes)
-    # The first two counts are the hunting-entry gate's produced/consumed
-    # presence check (the pre-mined file is present); the last three are the
-    # poll: below the cap, at the cap (observed at stop), then the final count.
-    files = SeqFileStore([1, 0, 0, 1, 1])
+    # The poll's consumed listing: the empty baseline snapshot, then the
+    # pre-mined config appears in consumed (the pipeline's lazy read), then the
+    # re-read after the stop. The pre-mined presence check reads the real tree.
+    files = SeqListFileStore(
+        [[], ["unit_CWE-1_sqli.yaml"], ["unit_CWE-1_sqli.yaml"]],
+        hunt_configs_dir(tmp_path / "data", SEED, "consumed"),
+    )
 
     record = _trial(
         tmp_path,

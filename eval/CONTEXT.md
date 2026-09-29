@@ -67,7 +67,8 @@ An eval-wide pre-eval data dependency (auth bootstrap, L1 surface, hunting artif
 _Avoid_: prerequisite, checklist
 
 **Hunting cap**:
-The per-Target bound on hunting, counted as the number of files in the consumed hunt-configs directory (including mounted/pre-mined files).
+The per-`Target`-declared bound on hunting, enforced per `Trial`: it counts the hunt configs consumed during the trial, i.e. the files present in the consumed hunt-configs directory whose name is not in the trial's baseline.
+The baseline is the set of consumed names already present at the trial's first hunting poll; it is persisted in the trial record (`cap_baseline`) and carried across a resume, so a config consumed by a prior run (or a mounted/pre-mined file already in `consumed/`) never satisfies a new trial's cap, while a stopped trial resumed keeps counting without resetting.
 _Avoid_: budget, limit
 
 **Pre-mined hunting artifacts**:

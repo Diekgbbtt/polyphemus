@@ -16,7 +16,7 @@ import time
 from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, Mapping, Protocol
+from typing import Callable, Mapping, Protocol, Sequence
 
 from orchestrator import api, instances, predicates, routing, subagents
 from orchestrator.commands import Command, CommandRunner, require_ok
@@ -183,6 +183,11 @@ class TrialConfig:
     auth_surface: bool = False
     preloaded_hunting_artifacts: PreloadedArtifacts | None = None
     hunt_config_budget: int | None = None
+    # The trial-scoped cap baseline: the consumed-config names already present
+    # when this trial started. None means "snapshot it at the first hunting
+    # poll" (a fresh trial); a resumed trial carries its record's baseline so
+    # its count continues rather than resetting on the prior run's configs.
+    cap_baseline: Sequence[str] | None = None
     data_root: Path = Path("data")
     runs_root: Path = Path("eval/runs")
     trial_id: str | None = None
@@ -320,6 +325,12 @@ class TrialRecord:
     stop_count: int | None = None
     final_count: int | None = None
     overshoot: int | None = None
+    # The trial-scoped cap baseline this trial counted against (the consumed
+    # config names already present at its first poll, or the resumed trial's
+    # carried-over baseline). Persisted so a resume keeps counting from it; a
+    # new trial id snapshots a fresh one. Additive, defaults None, old records
+    # still load.
+    cap_baseline: list[str] | None = None
     notes: list[str] = field(default_factory=list)
     trial_dir: str | None = None
     # #273: the target-run grouping level of the artifact store (defaults to
@@ -383,6 +394,11 @@ class Trial:
         self._sleep = sleep or time.sleep
         self._reachable = reachable
         self._now = now or subagents.utcnow
+        # The trial-scoped cap baseline. A resumed trial arrives with one on the
+        # config; a fresh trial has none and snapshots it at its first poll.
+        self._cap_baseline: tuple[str, ...] | None = (
+            tuple(config.cap_baseline) if config.cap_baseline is not None else None
+        )
 
     # --- plan mode ------------------------------------------------------------
 
@@ -760,13 +776,28 @@ class Trial:
         deadline = self._clock() + cfg.budget_s
         consumed = hunt_configs_dir(cfg.data_root, project_id, "consumed")
         while True:
+            # Trial-scoped cap: count only the configs consumed during this
+            # trial. On the first poll, snapshot the names already there as the
+            # baseline, so a prior run's configs never satisfy a new trial's
+            # cap. The baseline is a name set, not a count, so a baseline file
+            # removed mid-run cannot skew the count.
+            names = [path.name for path in self._files.list_files(consumed)]
+            if self._cap_baseline is None:
+                self._cap_baseline = tuple(sorted(set(names)))
+            baseline = set(self._cap_baseline)
             status = api.status_of(self._call(api.hunting_status(project_id, run_id)))
             if status in api.HUNTING_TERMINAL:
                 return PollResult(status)
-            count = self._files.count_files(consumed)
+            count = sum(1 for name in names if name not in baseline)
             if cfg.hunt_config_budget is not None and count >= cfg.hunt_config_budget:
                 self._call(api.stop_hunting(project_id, run_id))
-                final = self._files.count_files(consumed)
+                # Re-read after the stop: the in-flight mover may have added
+                # more configs, which is the recorded overshoot (R7).
+                final = sum(
+                    1
+                    for path in self._files.list_files(consumed)
+                    if path.name not in baseline
+                )
                 return PollResult(
                     "stopped",
                     stop_count=count,
@@ -809,6 +840,9 @@ class Trial:
             stop_count=cap.stop_count if cap else None,
             final_count=cap.final_count if cap else None,
             overshoot=cap.overshoot if cap else None,
+            cap_baseline=(
+                list(self._cap_baseline) if self._cap_baseline is not None else None
+            ),
             notes=aggregated,
             trial_dir=str(trial_dir),
             target_run_id=cfg.target_run_id or cfg.instance_id,

@@ -265,6 +265,9 @@ class Trigger:
     signal: str | None = None
     eval_sha: str | None = None
     stack_fingerprint: str | None = None
+    # The trial-scoped cap baseline the record counted against, carried into a
+    # resumed trial so its count continues rather than resetting (D8/D16).
+    cap_baseline: tuple[str, ...] | None = None
 
     def to_dict(self) -> dict:
         return {key: value for key, value in asdict(self).items() if value is not None}
@@ -473,8 +476,21 @@ def cap_triggers(record: Mapping) -> list[Trigger]:
             run_kind="hunting",
             run_id=_hunting_run_id(record),
             start_phase="hunting",
+            cap_baseline=_cap_baseline(record),
         )
     ]
+
+
+def _cap_baseline(record: Mapping) -> tuple[str, ...] | None:
+    """The record's persisted trial-scoped baseline, when it is well-formed.
+
+    A missing or malformed baseline is treated as absent (the resumed trial
+    snapshots a fresh one), never as a crash (I3).
+    """
+    value = record.get("cap_baseline")
+    if not isinstance(value, list) or not all(isinstance(name, str) for name in value):
+        return None
+    return tuple(value)
 
 
 def failed_run_trigger(record: Mapping) -> Trigger | None:
@@ -492,6 +508,7 @@ def failed_run_trigger(record: Mapping) -> Trigger | None:
                 run_kind=name,
                 run_id=phase.get("run_id"),
                 start_phase=resume_phase(record),
+                cap_baseline=_cap_baseline(record),
             )
     if record.get("terminal") == "failed":
         return _trigger(
@@ -499,6 +516,7 @@ def failed_run_trigger(record: Mapping) -> Trigger | None:
             record,
             detail="trial terminal failed",
             start_phase=resume_phase(record),
+            cap_baseline=_cap_baseline(record),
         )
     return None
 
@@ -779,6 +797,9 @@ class ResumePlan:
     start_phase: str
     intervention: str
     recon_run_id: str | None = None
+    # The resumed trial's carried-over cap baseline (D8/D16): both the trial
+    # engine and the CLI thread it into the new `TrialConfig`.
+    cap_baseline: tuple[str, ...] | None = None
 
 
 class TrialResumer(Protocol):
@@ -1032,6 +1053,7 @@ class Surfer:
             project_id=primary.project_id or "",
             start_phase=start_phase,
             recon_run_id=primary.recon_run_id,
+            cap_baseline=primary.cap_baseline,
             intervention=(
                 f"surfer: fix {repair} on trigger {primary.kind}; resumed at {start_phase}"
             ),
