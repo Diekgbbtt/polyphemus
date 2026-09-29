@@ -16,11 +16,12 @@ from __future__ import annotations
 import asyncio
 
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, RemoveMessage, ToolMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_core.tools import tool
 from langchain_openai.chat_models.base import _convert_message_to_dict
 from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.graph.message import REMOVE_ALL_MESSAGES
 
 from polymerhus.app.llm.session import arun_session_turn, run_session_turn
 
@@ -93,6 +94,47 @@ def _pairing_ok(messages) -> bool:
     wired = [tc["id"] for d in payload for tc in (d.get("tool_calls") or [])]
     tool_ids = [d.get("tool_call_id") for d in payload if d.get("role") == "tool"]
     return all(i in tool_ids for i in wired) and bool(wired)
+
+
+def _valid_call(call_id: str = "valid-1") -> AIMessage:
+    """An assistant tool call that ToolNode would answer - except the run was
+    interrupted before it could run, so the checkpoint left it unanswered."""
+    return AIMessage(content="", tool_calls=[{
+        "name": "seed_echo", "args": {"x": "hi"}, "id": call_id}])
+
+
+@tool
+def seed_echo(x: str) -> str:
+    """Echo a string (the tool the pending-thread fixture binds)."""
+    return f"echo:{x}"
+
+
+def _spy_middleware(record: list):
+    """A pass-through middleware that records the metadata `get_config()` carried
+    into `before_model`, so a test can prove the seam set the resumption signal."""
+    from langchain.agents.middleware import AgentMiddleware
+    from langgraph.config import get_config
+
+    class _Spy(AgentMiddleware):
+        def before_model(self, state, runtime=None):
+            record.append(dict(get_config().get("metadata") or {}))
+            return None
+
+    return _Spy()
+
+
+def _resumed_middleware(monkeypatch, pending=("tools",)):
+    """The recovery middleware with the seam's resumption signal faked, exactly as
+    the session seam delivers it (config metadata `session_pending_next`)."""
+    import langgraph.config as langconfig
+
+    from polymerhus.app.llm.parsing_recovery import parsing_recovery_middleware
+
+    monkeypatch.setattr(
+        langconfig, "get_config",
+        lambda: {"metadata": {"session_pending_next": list(pending)}})
+    return parsing_recovery_middleware()
+
 
 
 # --- the wire contract -------------------------------------------------------
@@ -223,33 +265,172 @@ def test_valid_tool_loop_is_unchanged_single_answer():
     assert _pairing_ok(turn.messages)
 
 
-# --- legacy checkpointed repair ---------------------------------------------
+# --- the gated reconciliation (#280) -----------------------------------------
 
-def test_legacy_repair_answers_a_seeded_unanswered_invalid_call(monkeypatch):
-    """A checkpointed trail that already carries an unanswered invalid call (a
-    thread poisoned before the fix) is repaired by `before_model` before the
-    next request is built."""
-    monkeypatch.setenv("LLM_PARSING_RECOVERY_MAX_ANSWERS", "3")
+def test_session_turn_marks_a_pending_thread_as_resumed():
+    """The seam reads `StateSnapshot.next` BEFORE invoking and passes it as config
+    metadata only when the thread's prior run left pending tasks. A completed
+    thread carries no signal. This is the gate that keeps completed-turn poison
+    untouched while a genuine resumption still reconciles."""
     from langchain.agents import create_agent
 
+    # A thread interrupted before the tools node: `next == ('tools',)`.
     saver = InMemorySaver()
-    cfg = {"configurable": {"thread_id": "legacy"}}
-    # Seed the poisoned checkpoint directly (the pre-fix state).
-    seed_agent = create_agent(_Scripted(replies=[AIMessage(content="x")],
-                                        idx={}, received=[]),
-                              tools=[], checkpointer=saver)
-    seed_agent.update_state(cfg, {"messages": [
-        HumanMessage(content="go"), _poison()]})
+    cfg = {"configurable": {"thread_id": "pending"}}
+    seed_agent = create_agent(
+        _Scripted(replies=[_valid_call()], idx={}, received=[]),
+        tools=[seed_echo], checkpointer=saver, interrupt_before=["tools"])
+    seed_agent.invoke({"messages": [HumanMessage(content="go")]}, cfg)
+    assert seed_agent.get_state(cfg).next == ("tools",)
 
-    factory = _factory(AIMessage(content="healed"))
-    turn = run_session_turn("assigner", "legacy", [HumanMessage(content="continue")],
-                            checkpointer=saver, model_factory=factory, observe=False)
+    seen: list = []
+    turn = run_session_turn("assigner", "pending", [HumanMessage(content="continue")],
+                            checkpointer=saver, tools=[seed_echo],
+                            model_factory=_factory(AIMessage(content="resumed")),
+                            middleware=[_spy_middleware(seen)], observe=False)
+    assert any(r.get("session_pending_next") == ["tools"] for r in seen), seen
+    # The resumed turn reconciled the interrupted valid call positionally.
     assert _pairing_ok(turn.messages)
-    assert any(isinstance(m, ToolMessage) and m.tool_call_id == POISON_ID
-               for m in factory.state["model"].received[0])
-    answers = [m for m in turn.messages
-               if isinstance(m, ToolMessage) and m.tool_call_id == POISON_ID]
-    assert len(answers) == 1
+    interrupted = [m for m in turn.messages
+                   if isinstance(m, ToolMessage) and m.tool_call_id == "valid-1"]
+    assert len(interrupted) == 1 and interrupted[0].status == "error"
+
+    # A completed thread carries no `next`: the signal must be absent.
+    saver2 = InMemorySaver()
+    cfg2 = {"configurable": {"thread_id": "done"}}
+    create_agent(_Scripted(replies=[AIMessage(content="ok")], idx={}, received=[]),
+                 tools=[seed_echo], checkpointer=saver2).invoke(
+        {"messages": [HumanMessage(content="go")]}, cfg2)
+    seen2: list = []
+    run_session_turn("assigner", "done", [HumanMessage(content="more")],
+                     checkpointer=saver2, model_factory=_factory(AIMessage(content="ok2")),
+                     middleware=[_spy_middleware(seen2)], observe=False)
+    assert seen2 and all("session_pending_next" not in r for r in seen2), seen2
+
+
+def test_before_model_reconciles_positionally_on_a_resumed_turn(monkeypatch):
+    """On a resumed turn the reconciliation inserts the answering ToolMessage
+    IMMEDIATELY after each unanswered AI tool call (valid OR invalid), so the
+    wire positional-adjacency contract holds. The update is a full replacement
+    (RemoveMessage(REMOVE_ALL) + the repaired trail)."""
+    mw = _resumed_middleware(monkeypatch)
+    trail = [
+        HumanMessage(content="go"),
+        _poison(),                       # invalid call, unanswered
+        HumanMessage(content="continue"),
+        _valid_call("valid-1"),          # valid call, interrupted before tools
+        HumanMessage(content="more"),
+    ]
+    update = mw.before_model({"messages": trail}, None)
+    assert update is not None
+    repaired = update["messages"]
+    assert isinstance(repaired[0], RemoveMessage)
+    assert repaired[0].id == REMOVE_ALL_MESSAGES
+    msgs = repaired[1:]
+    # Positional: the answer sits between the AI call and the following Human.
+    assert isinstance(msgs[1], AIMessage)
+    assert isinstance(msgs[2], ToolMessage) and msgs[2].tool_call_id == POISON_ID
+    assert "bad json" in msgs[2].content
+    assert isinstance(msgs[3], HumanMessage)
+    assert isinstance(msgs[4], AIMessage)
+    assert isinstance(msgs[5], ToolMessage) and msgs[5].tool_call_id == "valid-1"
+    assert "interrupted" in msgs[5].content.lower()
+    assert isinstance(msgs[6], HumanMessage)
+    # Every wire tool_call id is answered - valid and invalid alike.
+    assert _pairing_ok(msgs)
+
+
+def test_before_model_skips_without_the_resumption_signal(monkeypatch):
+    """No resumption signal -> no reconciliation. A COMPLETED turn whose trail
+    already carries pre-existing unanswered poison is deliberately NOT repaired
+    (the old unconditional legacy repair is gone)."""
+    import langgraph.config as langconfig
+
+    from polymerhus.app.llm.parsing_recovery import parsing_recovery_middleware
+
+    monkeypatch.setattr(langconfig, "get_config", lambda: {"metadata": {}})
+    mw = parsing_recovery_middleware()
+    trail = [HumanMessage(content="go"), _poison(), HumanMessage(content="continue")]
+    assert mw.before_model({"messages": trail}, None) is None
+
+
+def test_reconciliation_is_idempotent(monkeypatch):
+    """An already-answered trail reconciles to nothing - never a second answer."""
+    mw = _resumed_middleware(monkeypatch)
+    answered = [HumanMessage(content="go"), _poison(), ToolMessage(
+        content="Error: bad json. Please fix your mistakes.",
+        tool_call_id=POISON_ID, name="RatifyDecision", status="error")]
+    assert mw.before_model({"messages": answered}, None) is None
+
+
+def test_reconciliation_is_fail_open(monkeypatch):
+    """A state or config that explodes never raises into the turn."""
+    import langgraph.config as langconfig
+
+    from polymerhus.app.llm.parsing_recovery import parsing_recovery_middleware
+
+    monkeypatch.setattr(
+        langconfig, "get_config",
+        lambda: {"metadata": {"session_pending_next": ["tools"]}})
+    mw = parsing_recovery_middleware()
+
+    class _Boom(dict):
+        def get(self, key, default=None):
+            raise RuntimeError("boom")
+
+    assert mw.before_model(_Boom(), None) is None
+
+    def _explode():
+        raise RuntimeError("config boom")
+
+    monkeypatch.setattr(langconfig, "get_config", _explode)
+    assert mw.before_model({"messages": [HumanMessage(content="go"), _poison()]},
+                           None) is None
+
+
+def test_resumption_signal_read_is_fail_open():
+    """A state read that explodes degrades to 'no signal' and never raises, for
+    both the sync and the async seam."""
+    from polymerhus.app.llm.session import (
+        _aread_pending_resumption,
+        _read_pending_resumption,
+    )
+
+    class _ExplodingSync:
+        def get_state(self, config):
+            raise RuntimeError("state boom")
+
+    class _ExplodingAsync:
+        async def aget_state(self, config):
+            raise RuntimeError("state boom")
+
+    sync_config = {"configurable": {"thread_id": "t"}}
+    _read_pending_resumption(_ExplodingSync(), sync_config)
+    assert "session_pending_next" not in sync_config.get("metadata", {})
+
+    async def _run():
+        async_config = {"configurable": {"thread_id": "t"}}
+        await _aread_pending_resumption(_ExplodingAsync(), async_config)
+        assert "session_pending_next" not in async_config.get("metadata", {})
+
+    asyncio.run(_run())
+
+
+def test_async_before_model_reconciles_symmetrically(monkeypatch):
+    """`abefore_model` delegates to the same reconciliation, so the async seam
+    reconciles too."""
+    mw = _resumed_middleware(monkeypatch)
+    trail = [HumanMessage(content="go"), _poison(), HumanMessage(content="continue")]
+
+    async def _run():
+        return await mw.abefore_model({"messages": trail}, None)
+
+    update = asyncio.run(_run())
+    assert update is not None
+    msgs = update["messages"][1:]
+    assert isinstance(msgs[2], ToolMessage) and msgs[2].tool_call_id == POISON_ID
+    assert isinstance(msgs[3], HumanMessage)
+    assert _pairing_ok(msgs)
 
 
 def test_recovery_middleware_is_wired_into_every_session_turn(monkeypatch):

@@ -18,8 +18,12 @@ CONTRACT-VALID and the next request pairs every wired tool call.
 - `after_model` / `aafter_model` inspect the trail, answer new invalid calls, and
   jump back to the model for a BOUNDED in-turn retry; valid `tool_calls` are never
   touched (ToolNode owns those and runs after `after_model`).
-- `before_model` / `abefore_model` repair an already-poisoned historical trail
-  (the no-migration recovery path for checkpoints written before the fix).
+- `before_model` / `abefore_model` reconcile a RESUMED turn positionally: only when
+  the session seam saw pending `next` nodes before invoking (#280) does it insert
+  each missing answer immediately after its assistant call, because the upstream
+  requires the tool answer to directly follow the call. A completed turn carries no
+  signal and is left untouched, so pre-existing completed-turn poison is not
+  auto-repaired.
 - Fail-open: any surprise calls the model unchanged and is logged, never raised.
 
 The middleware is wired FIRST in `session._build_agent` (the one shared
@@ -35,13 +39,20 @@ import logging
 import os
 from typing import Any, Sequence
 
-from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
+from langchain_core.messages import AIMessage, BaseMessage, RemoveMessage, ToolMessage
 
 logger = logging.getLogger(__name__)
 
 # Mirrors langchain's STRUCTURED_OUTPUT_ERROR_TEMPLATE ("Error: {error}. Please
 # fix your mistakes.") so the model sees one consistent parse-failure voice.
 PARSING_ERROR_TEMPLATE = "Error: {error}. Please fix your mistakes."
+
+# The answer for a VALID tool call whose run stopped before ToolNode could execute
+# it (an interrupted/resumed turn): the call must still be paired on the wire.
+INTERRUPTED_TOOL_TEMPLATE = (
+    "Error: the tool call was interrupted before it could be executed. "
+    "Re-issue it if it is still needed."
+)
 
 # The bound on jump-retries for ONE turn: a model that poisons every attempt is
 # bounced back at most this many times, then the final answer is appended without
@@ -115,13 +126,65 @@ def build_parsing_error_answers(messages: Sequence[BaseMessage]) -> list[ToolMes
     ]
 
 
+def reconcile_pending_tool_calls(
+    messages: Sequence[BaseMessage],
+) -> list[BaseMessage] | None:
+    """The positionally repaired trail for a RESUMED turn, or None if no change.
+
+    For every `AIMessage` carrying a tool call - VALID (`tool_calls`, interrupted
+    before ToolNode ran) or INVALID (`invalid_tool_calls`) - whose id has no
+    answering `ToolMessage` anywhere in the trail, an error `ToolMessage` is
+    inserted IMMEDIATELY after that assistant message. Positional adjacency is the
+    upstream contract: a `tool` answer must directly follow the assistant call it
+    answers, so appending at the tail (after a later user message) is rejected.
+    Idempotent: an id already answered is never answered twice. The trail order of
+    every original message is preserved. Valid calls are only touched here because
+    the gate ("the run was interrupted") guarantees ToolNode never got to them;
+    `after_model` never touches them."""
+    answered = _answered_ids(messages)
+    seen: set[str] = set()
+    repaired: list[BaseMessage] = []
+    changed = False
+    for message in messages:
+        repaired.append(message)
+        if not isinstance(message, AIMessage):
+            continue
+        answers: list[ToolMessage] = []
+        for call in getattr(message, "invalid_tool_calls", None) or ():
+            call_id = _call_field(call, "id")
+            if not call_id or call_id in answered or call_id in seen:
+                continue
+            seen.add(call_id)
+            changed = True
+            answers.append(ToolMessage(
+                content=PARSING_ERROR_TEMPLATE.format(
+                    error=_call_field(call, "error") or "the tool call arguments "
+                                                       "could not be parsed"),
+                tool_call_id=call_id,
+                name=_call_field(call, "name") or "",
+                status="error"))
+        for call in getattr(message, "tool_calls", None) or ():
+            call_id = _call_field(call, "id")
+            if not call_id or call_id in answered or call_id in seen:
+                continue
+            seen.add(call_id)
+            changed = True
+            answers.append(ToolMessage(
+                content=INTERRUPTED_TOOL_TEMPLATE,
+                tool_call_id=call_id,
+                name=_call_field(call, "name") or "",
+                status="error"))
+        repaired.extend(answers)
+    return repaired if changed else None
+
+
 def parsing_recovery_middleware():
     """Build the recovery `AgentMiddleware`.
 
     `after_model` answers new invalid calls and jumps back to the model for a
     bounded retry; once the bound is reached it still answers (keeping the trail
-    valid) but stops jumping so the turn ends. `before_model` repairs any
-    historical unanswered invalid call once, before the next request is built.
+    valid) but stops jumping so the turn ends. `before_model` reconciles a RESUMED
+    turn positionally, only when the seam passed the pending-`next` signal.
     """
     from langchain.agents.middleware import AgentMiddleware
     from langchain.agents.middleware.types import hook_config
@@ -170,18 +233,33 @@ def parsing_recovery_middleware():
 
         @hook_config(can_jump_to=["model"])
         def before_model(self, state, runtime=None):
-            """Legacy repair: answer any historical unanswered invalid call once,
-            before the next request is built. Never jumps and never touches the
-            in-turn retry counter."""
+            """Gated positional reconciliation for a RESUMED turn (#280).
+
+            Fires ONLY when the session seam marked this turn as resuming a thread
+            whose prior run left pending `next` nodes (`session_pending_next` in the
+            config metadata). A normal, completed turn carries no signal and is left
+            untouched - so pre-existing completed-turn poison is deliberately NOT
+            auto-repaired. Never jumps and never touches the in-turn retry counter."""
             try:
-                answers = self._detect(state)
-                if not answers:
+                from langgraph.config import get_config
+
+                pending = (get_config().get("metadata") or {}).get(
+                    "session_pending_next")
+                if not pending:
                     return None
+                messages = state.get("messages") if isinstance(state, dict) else None
+                if not isinstance(messages, list):
+                    return None
+                repaired = reconcile_pending_tool_calls(messages)
+                if repaired is None:
+                    return None
+                from langgraph.graph.message import REMOVE_ALL_MESSAGES
+
                 logger.warning(
-                    "parsing-error recovery (legacy repair): answering %d "
-                    "historical unanswered invalid tool call(s) %s", len(answers),
-                    [a.tool_call_id for a in answers])
-                return {"messages": answers}
+                    "parsing-error recovery (resumed turn): reconciling the trail "
+                    "with %d positional answer(s) before the next request",
+                    len(repaired) - len(messages))
+                return {"messages": [RemoveMessage(id=REMOVE_ALL_MESSAGES), *repaired]}
             except Exception:  # noqa: BLE001 - fail-open, never into the turn
                 logger.warning("parsing-error recovery before_model failed; "
                                "calling the model unchanged", exc_info=True)

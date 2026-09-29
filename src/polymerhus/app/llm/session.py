@@ -218,6 +218,34 @@ def _turn_config(role_id: str, thread_id: str, observe: bool,
                            extra_tags=extra_tags) if observe else config
 
 
+# #280: the resumption gate. The upstream enforces POSITIONAL adjacency between an
+# assistant tool call and its answers, and the module checkpointer prunes to the
+# LATEST checkpoint per thread, so the interrupted parent tuple is gone the moment
+# the new input is written. Read the pending `next` nodes HERE, at the seam, BEFORE
+# invoking; when non-empty hand the fact to `before_model` through the config
+# metadata. Fail-open: any read failure degrades to "no signal", never raises.
+def _mark_pending_resumption(config: dict, snapshot) -> None:
+    pending = list(getattr(snapshot, "next", None) or ())
+    if pending:
+        config.setdefault("metadata", {})["session_pending_next"] = pending
+
+
+def _read_pending_resumption(agent, config: dict) -> None:
+    try:
+        _mark_pending_resumption(config, agent.get_state(config))
+    except Exception:  # noqa: BLE001 - fail-open: no signal, never into the turn
+        logger.warning("pending-resumption read failed; treating the turn as "
+                       "non-resuming", exc_info=True)
+
+
+async def _aread_pending_resumption(agent, config: dict) -> None:
+    try:
+        _mark_pending_resumption(config, await agent.aget_state(config))
+    except Exception:  # noqa: BLE001 - fail-open: no signal, never into the turn
+        logger.warning("pending-resumption read failed; treating the turn as "
+                       "non-resuming", exc_info=True)
+
+
 # --- T1 (#213): streamed generation as the default session mode --------------
 
 # The default blackloop detection bound: accumulated reasoning past this many
@@ -481,6 +509,8 @@ def run_session_turn(
             model_factory=model_factory, read_timeout_s=read_timeout_s,
         )
         config = _turn_config(role_id, thread_id, observe, extra_tags=extra_tags)
+        if checkpointer is not None:
+            _read_pending_resumption(agent, config)
         if observe and checkpointer is not None:
             _attach_readability_metadata(
                 config, _read_thread_state(checkpointer, thread_id))
@@ -568,6 +598,8 @@ async def arun_session_turn(
             model_factory=model_factory, read_timeout_s=read_timeout_s,
         )
         config = _turn_config(role_id, thread_id, observe, extra_tags=extra_tags)
+        if checkpointer is not None:
+            await _aread_pending_resumption(agent, config)
         if observe and checkpointer is not None:
             _attach_readability_metadata(
                 config, await _aread_thread_state(checkpointer, thread_id))
