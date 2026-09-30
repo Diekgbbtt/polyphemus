@@ -453,3 +453,47 @@ def test_recovery_middleware_is_wired_into_every_session_turn(monkeypatch):
                      observe=False)
     nodes = set(captured["agent"].get_graph().nodes)
     assert "ParsingRecoveryMiddleware.after_model" in nodes
+
+
+# --- the tail-request guard (#280 follow-up) ---------------------------------
+
+def _no_orphan_answer(messages) -> bool:
+    """No `tool` message on the wire without a matching assistant `tool_calls` entry
+    (the second 400 invariant, distinct from `_pairing_ok`'s call->answer one)."""
+    payload = _wire_payload(messages)
+    wired = {tc["id"] for d in payload for tc in (d.get("tool_calls") or [])}
+    tool_ids = [d.get("tool_call_id") for d in payload if d.get("role") == "tool"]
+    return all(t in wired for t in tool_ids)
+
+
+def test_answer_is_never_written_unless_the_request_is_the_last_element():
+    """#280 follow-up (the post-turn-stop orphan): the answer is appended at the tail,
+    so it may only be written when the tool-call request IS the last element. A stale
+    unanswered invalid call whose message is not the tail must be left alone - the old
+    whole-trail scan answered it, producing an orphan `tool` message with no adjacent
+    call, which the upstream rejects with HTTP 400 ("Messages with role 'tool' must be
+    a response to a preceding message with 'tool_calls'")."""
+    from polymerhus.app.llm.parsing_recovery import (
+        build_parsing_error_answers,
+        parsing_recovery_middleware,
+    )
+
+    trail = [
+        HumanMessage(content="go"),
+        _poison(),                                       # stale, NOT the tail
+        AIMessage(content="plain reply, no tool call"),  # the last element
+    ]
+    assert build_parsing_error_answers(trail) == []
+    assert parsing_recovery_middleware().after_model({"messages": trail}, None) is None
+    assert _no_orphan_answer(trail)
+
+
+def test_answer_is_written_when_the_request_is_the_last_element():
+    """The guard keeps the prevention: a poison that IS the tail (the model's own
+    reply) is still answered, and the wire stays orphan-free."""
+    from polymerhus.app.llm.parsing_recovery import build_parsing_error_answers
+
+    trail = [HumanMessage(content="go"), _poison()]
+    answers = build_parsing_error_answers(trail)
+    assert len(answers) == 1 and answers[0].tool_call_id == POISON_ID
+    assert _no_orphan_answer([*trail, *answers])

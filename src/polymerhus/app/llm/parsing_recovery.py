@@ -15,9 +15,14 @@ langchain algorithm (`AgentExecutor.handle_parsing_errors`, never ported to
 error `ToolMessage` and routes back to the model, so the checkpoint trail is
 CONTRACT-VALID and the next request pairs every wired tool call.
 
-- `after_model` / `aafter_model` inspect the trail, answer new invalid calls, and
-  jump back to the model for a BOUNDED in-turn retry; valid `tool_calls` are never
-  touched (ToolNode owns those and runs after `after_model`).
+- `after_model` / `aafter_model` inspect the LAST message - the model's just-produced
+  reply - and answer its invalid calls ONLY when that message IS the tool-call request,
+  then jump back to the model for a BOUNDED in-turn retry; valid `tool_calls` are never
+  touched (ToolNode owns those and runs after `after_model`). The answer is appended at
+  the tail, so answering a call that is not the tail request would append a `tool`
+  message with no adjacent call - an orphan answer the upstream rejects with HTTP 400
+  (#280 follow-up: the old whole-trail scan crossed a stop boundary and did exactly
+  that).
 - `before_model` / `abefore_model` reconcile a RESUMED turn positionally: only when
   the session seam saw pending `next` nodes before invoking (#280) does it insert
   each missing answer immediately after its assistant call, because the upstream
@@ -86,35 +91,46 @@ def _answered_ids(messages: Sequence[BaseMessage]) -> set[str]:
 
 
 def unanswered_invalid_tool_calls(messages: Sequence[BaseMessage]) -> list[dict]:
-    """The invalid tool calls in the trail that have NO answering `ToolMessage`.
+    """The unanswered invalid tool calls of the LAST message - and ONLY when that last
+    message IS the tool-call request (the model's just-produced reply).
 
-    Only `invalid_tool_calls` are considered: valid `tool_calls` belong to
-    ToolNode, which runs after `after_model` and owns their answers. A call with
-    no id cannot be answered and is skipped. Scanning the WHOLE trail (not just
-    the newest message) is what lets `before_model` repair a legacy checkpoint."""
+    The answer is APPENDED at the tail, so it may only be written for a request that
+    is itself the tail. Answering a call carried by an EARLIER message appends a `tool`
+    message with no adjacent call - an orphan answer, which the upstream rejects with
+    HTTP 400 ("Messages with role 'tool' must be a response to a preceding message
+    with 'tool_calls'"). That post-turn-stop orphan is the #280 follow-up: the old
+    whole-trail scan crossed a stop boundary and answered a call that was no longer the
+    tail. Only `invalid_tool_calls` are considered (valid `tool_calls` belong to
+    ToolNode, which runs after `after_model`); a call with no id cannot be answered and
+    is skipped."""
+    if not messages:
+        return []
+    last = messages[-1]
+    if not isinstance(last, AIMessage):
+        return []
     answered = _answered_ids(messages)
     pending: list[dict] = []
     seen: set[str] = set()
-    for message in messages:
-        if not isinstance(message, AIMessage):
+    for call in getattr(last, "invalid_tool_calls", None) or ():
+        call_id = _call_field(call, "id")
+        if not call_id or call_id in answered or call_id in seen:
             continue
-        for call in getattr(message, "invalid_tool_calls", None) or ():
-            call_id = _call_field(call, "id")
-            if not call_id or call_id in answered or call_id in seen:
-                continue
-            seen.add(call_id)
-            pending.append({
-                "id": call_id,
-                "name": _call_field(call, "name") or "",
-                "error": _call_field(call, "error") or "the tool call arguments "
-                                                        "could not be parsed",
-            })
+        seen.add(call_id)
+        pending.append({
+            "id": call_id,
+            "name": _call_field(call, "name") or "",
+            "error": _call_field(call, "error") or "the tool call arguments "
+                                                    "could not be parsed",
+        })
     return pending
 
 
 def build_parsing_error_answers(messages: Sequence[BaseMessage]) -> list[ToolMessage]:
-    """The error `ToolMessage`s that repair every unanswered invalid call in the
-    trail. Empty when the trail is clean or already answered (idempotent)."""
+    """The error `ToolMessage`s that repair the LAST message's unanswered invalid
+    calls - the model's just-produced (tail) request, and only it. Empty when the last
+    message is not a tool-call request, or the trail is clean or already answered
+    (idempotent); an answer is never appended against a non-tail request (the orphan
+    answer the upstream rejects)."""
     return [
         ToolMessage(
             content=PARSING_ERROR_TEMPLATE.format(error=call["error"]),
@@ -205,9 +221,10 @@ def parsing_recovery_middleware():
 
         @hook_config(can_jump_to=["model"])
         def after_model(self, state, runtime=None):
-            """Answer new invalid calls and jump back to the model for a bounded
-            retry; once the bound is reached, answer without jumping so the turn
-            ends on a valid trail."""
+            """Answer the LAST message's (the tail request's) new invalid calls and
+            jump back to the model for a bounded retry; once the bound is reached,
+            answer without jumping so the turn ends on a valid trail. A request that
+            is not the tail is never answered."""
             try:
                 answers = self._detect(state)
                 if answers is None:
