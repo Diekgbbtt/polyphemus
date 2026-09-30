@@ -11,7 +11,7 @@ amended ticket - an in-process test against the real proxy ASGI with a stub
 openai-compatible upstream. litellm is NOT a dependency of the dev venv
 (gateway-only, ADR D10); this file therefore runs under the dedicated
 verification venv `~/.cache/polymerhus-gateway-verify-venv` which carries
-the exact requirements-gateway.txt pin set (`litellm[proxy]==1.96.0`,
+the exact `gateway/requirements.txt` pin set (`litellm[proxy]==1.96.0`,
 `fastapi==0.140.6`, `httpx==0.28.1`). Reproduce with:
 
     ~/.cache/polymerhus-gateway-verify-venv/bin/pip install \

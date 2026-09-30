@@ -11,7 +11,7 @@ remaining deployment contracts against the repo tree:
   database, `LITELLM_MASTER_KEY`), the published/unpublished ports, and the
   Dockerfile entrypoint wiring (`CONFIG_FILE_PATH`, `CMD python -m
   polymerhus.app.gateway_entrypoint`).
-- C3: `requirements-gateway.txt` pins `litellm[proxy]==1.96.0`,
+- C3: `gateway/requirements.txt` pins `litellm[proxy]==1.96.0`,
   `fastapi==0.140.6`, `httpx==0.28.1` exactly.
 - C4: the dev overlay keeps the two ASGI processes' reload policies
   INDEPENDENT (ADR D1): the agent gains `--reload`, the proxy command NEVER
@@ -34,7 +34,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 COMPOSE_BASE = REPO_ROOT / "docker-compose.yml"
 COMPOSE_DEV = REPO_ROOT / "docker-compose.dev.yml"
 DOCKERFILE = REPO_ROOT / "Dockerfile"
-REQUIREMENTS_GATEWAY = REPO_ROOT / "requirements-gateway.txt"
+REQUIREMENTS_GATEWAY = REPO_ROOT / "gateway" / "requirements.txt"
 
 
 @pytest.fixture(scope="module")
@@ -99,12 +99,12 @@ def test_c1_dockerfile_entrypoint_contract():
 
 
 # ---------------------------------------------------------------------------
-# C3 - requirements-gateway.txt pinning (D10 one-file review) ---------------
+# C3 - gateway/requirements.txt pinning (D10 one-file review) ---------------
 # ---------------------------------------------------------------------------
 
 def test_c3_gateway_requirements_are_pinned():
     if not REQUIREMENTS_GATEWAY.exists():
-        pytest.fail("requirements-gateway.txt missing - required by C3")
+        pytest.fail("gateway/requirements.txt missing - required by C3")
     pinned: dict[str, str] = {}
     for line in REQUIREMENTS_GATEWAY.read_text().splitlines():
         line = line.strip()

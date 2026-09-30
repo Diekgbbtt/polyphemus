@@ -1,27 +1,74 @@
-# E2E overlay for the #206 live tier from the merged tree.
+# The ONE e2e compose for a side worktree.
 #
-# The base `docker-compose.yml` reads `env_file: .env` (missing in a
-# worktree - .env is gitignored and lives only in the main checkout), so
-# without this overlay the agent would boot without API keys or Langfuse.
-# This file points the service at the MAIN tree .env (`../../.env` from a
-# `.worktrees/<name>` checkout, or whatever `POLYPHEMUS_MAIN_ENV` names):
-# same credentials, same components as production. Test knobs
-# (detection bound, threshold, model override, output budget) are NOT set
-# here - they ride `docker compose exec -e` on the driven snippets only,
-# so the agent/gateway processes themselves run the production env.
+# A side worktree runs its own `agent` (built from THIS tree, live-mounted) as a
+# sibling of the main-worktree stack: the same shared network, service DNS
+# identical to production, and the MAIN tree `.env` (gateway keys, Langfuse,
+# thresholds). The base services (postgres/neo4j/kali/lightrag) stay owned by
+# the base `polymerhus` project - bring them up from the main tree FIRST (that
+# creates the shared `polymerhus_polymerhus-net`), then from this worktree:
 #
-# Usage (from this worktree):
-#   docker compose -f docker-compose.yml -f docker-compose.dev.yml \
-#     -f docker-compose.e2e.yml up -d postgres neo4j kali agent
+#   docker compose -f docker-compose.e2e.yml up -d --build agent
+#
+# `name:` gives this sibling its OWN project so it never clobbers the main
+# `polymerhus-agent-1` container (the base `docker-compose.yml` pins
+# `name: polymerhus`, which every worktree would otherwise reuse).
+#
+# This file also carries the e2e fixtures (the WAF / challenge / plain HTTP
+# targets) on the same shared network, so the single side-worktree overlay is
+# the whole e2e surface. The agent's loopback-bound gateway (ADR D1) is exposed
+# for host-side probing through 127.0.0.1:14000, relayed in-container by
+# `tools/gateway_relay.py`.
+#
+# The main-tree `.env` is gitignored and lives only in the main checkout, so it
+# is pointed at relatively by default (`../../.env`, i.e. `<main>/.env` from a
+# `<main>/.worktrees/<name>` checkout) and overridable through
+# `POLYPHEMUS_MAIN_ENV`. `required: false` keeps a worktree that carries its own
+# `.env` working.
+name: polymerhus-e2e
+
 services:
   agent:
+    build: { context: ., dockerfile: Dockerfile }
+    image: polymerhus-agent-e2e:latest
+    environment:
+      # In-network view - identical to the base agent's defaults.
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USER: neo4j
+      NEO4J_PASSWORD: polymerhus
+      POSTGRES_DSN: postgresql://polymerhus:polymerhus@postgres:5432/polymerhus
+      KALI_MCP_URL: http://kali:8000/mcp
+      PROJECT_ID: e2e
+      LIGHTRAG_API_URL: http://lightrag:9621
+      LIGHTRAG_BASE_API_URL: http://lightrag:9621
+      INGESTION_ROOT: /data/ingestion
+      INGESTION_NORMALIZED_DIR: /data/ingestion/normalized
+      # The co-located litellm proxy (#100) gets its OWN database on the SHARED
+      # postgres instance (ADR D1): litellm owns its schema and refuses/destroys
+      # a shared one (P3005, verified 2026-08-17). Created by db/postgres/init.sql.
+      DATABASE_URL: postgresql://polymerhus:polymerhus@postgres:5432/polymerhus_gateway
+      LITELLM_MASTER_KEY: sk-polymerhus-dev-gateway
+      LITELLM_LOCAL_MODEL_COST_MAP: "True"
+      # Live source: edits apply without a rebuild (the tier tests the edited
+      # tree, never the baked image layer). The proxy never reloads (ADR D1).
+      AGENT_UVICORN_ARGS: "--reload --reload-dir /srv/src --reload-dir /srv/lightrag"
     env_file:
-      # Overridable so the overlay is not tied to one machine's absolute path;
-      # `required: false` keeps a worktree that has its own `.env` symlink
-      # working, and degrades to "agent boots without the overlay keys" only
-      # when neither the symlink nor the main-tree file exists.
       - path: ${POLYPHEMUS_MAIN_ENV:-../../.env}
         required: false
+    # 8081: the side-worktree agent's published port, kept distinct from the main
+    # agent's 8080. 14000: the in-container gateway relay (tools/gateway_relay.py
+    # rebinds 0.0.0.0:14000 -> 127.0.0.1:4000) so a host-side probe can reach it.
+    ports: ["8081:8080", "127.0.0.1:14000:14000"]
+    volumes:
+      - ./src:/srv/src
+      - ./data:/srv/data   # app-owned data root (#234): skills + hunting memory
+      - ./lightrag:/srv/lightrag
+      - ./db:/srv/db
+      - ./skills:/srv/skills
+      - ./gateway:/srv/gateway
+      - ./lightrag/data/ingestion:/data/ingestion
+    networks:
+      - polymerhus-net
+
   # --- WAF fixtures (#196) -------------------------------------------------
   # Two shapes of "the target defends itself", both on port 80 so the lease's
   # REDIRECT (tcp/80 and tcp/443) captures them:
@@ -86,3 +133,8 @@ services:
       timeout: 3s
       retries: 20
       start_period: 5s
+
+networks:
+  polymerhus-net:
+    external: true
+    name: polymerhus_polymerhus-net

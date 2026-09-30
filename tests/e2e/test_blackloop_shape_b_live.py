@@ -31,9 +31,7 @@ from pathlib import Path
 import pytest
 
 WORKTREE = Path(__file__).resolve().parents[2]
-COMPOSE = ["docker", "compose", "-f", "docker-compose.yml",
-           "-f", "docker-compose.dev.yml", "-f", "docker-compose.e2e.yml",
-           "-f", "docker-compose.probe.yml"]
+COMPOSE = ["docker", "compose", "-f", "docker-compose.e2e.yml"]
 SERVICE = "agent"
 
 KNOBS = {

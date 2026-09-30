@@ -80,8 +80,8 @@ entity_types_guidance: |
   by the surrounding sentence, extract only that concrete weakness class and
   not the taxonomy title.
 
-  Classify SQL Injection, NoSQL Injection, LDAP Injection, XML Injection, XSS,
-  path traversal, SSRF, and similar weakness-family names as
+  Classify SQL Injection, BOLA, SSRF, XXE, XSS,
+  path traversal, and similar weakness-family names as
   VulnerabilityClass when the text describes a weakness, flaw, vulnerability,
   or vulnerability class. Classify a concrete action performed by the tester as
   AttackTechnique, such as "single quote probe", "union-based extraction", or

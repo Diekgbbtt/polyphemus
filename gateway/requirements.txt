@@ -1,8 +1,9 @@
 # Gateway dependencies (#100 LLM API gateway - litellm + models.dev glue).
 #
-# Layered on top of the redamon-agent base image in the Dockerfile like
-# requirements-observability.txt: a litellm version bump is a ONE-FILE review,
-# never a base-image rebuild (ADR D10).
+# Module-owned manifest: it lives with the gateway module it describes. The
+# Dockerfile layers it on top of the base image like the observability module's
+# manifest; a litellm version bump is a ONE-FILE review here, never a
+# base-image rebuild (ADR D10).
 #
 # - `litellm`: the proxy ASGI (`litellm.proxy.proxy_server:app`) co-located
 #   inside the agent container as a second ASGI process on the internal port

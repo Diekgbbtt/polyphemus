@@ -391,15 +391,15 @@ def test_e2e_e1_per_fault_fanout(tmp_path):
     assert hunt_ids[0] != hunt_ids[1]  # base vs base-1 for Service:slug:a
 
 
-# --- E2: runtime bootstrap via the sibling agent-1 REST surface --------------
+# --- E2: runtime bootstrap via the sibling agent REST surface ---------------
 
 def test_e2e_e2_bootstrap_post_persists(session):
-    """E2 - POST /projects/{id}/hunting against the SIBLING agent-1 (this
+    """E2 - POST /projects/{id}/hunting against the SIBLING agent (this
     worktree's tree running inside the polymerhus-agent container) persists
     hunting_runs complete and the HuntStore trail.
 
     The fundamental-fault correction (operator 2026-08-22): the walking tier
-    MUST drive a sibling ``agent-1`` container built from THIS worktree
+    MUST drive a sibling ``agent`` container built from THIS worktree
     (docker-compose.e2e.yml) - never the main-repo ``dev`` agent. This predicate
     seeds the recovered moodique L1 scaffold for the project, then POSTs a real
     candidate batch over HTTP and polls the status row to ``complete``.
@@ -417,7 +417,7 @@ def test_e2e_e2_bootstrap_post_persists(session):
     if not _pg_available():
         pytest.skip("sibling container not reachable - hunting e2e blocked (PG not reachable via POSTGRES_DSN)")
     if not ensure_sibling_agent():
-        pytest.skip("sibling agent-1 not reachable - hunting e2e blocked (worktree agent-1 container)")
+        pytest.skip("sibling agent not reachable - hunting e2e blocked (worktree agent container)")
 
     base = agent_http_url()
 
@@ -445,7 +445,7 @@ def test_e2e_e2_bootstrap_post_persists(session):
         assert st == 200, f"project create returned {st}: {body}"
         pid = body["project_id"]
     except Exception as exc:  # noqa: BLE001
-        pytest.skip(f"sibling agent-1 unreachable for project bootstrap: {exc}")
+        pytest.skip(f"sibling agent unreachable for project bootstrap: {exc}")
     # the project exists iff the graph route answers (there is no bare GET /projects/{id})
     assert _get(f"/projects/{pid}/graph") == 200, f"sibling cannot read project {pid}"
     # seed the recovered moodique L1 so the sibling's gate grounds non-empty

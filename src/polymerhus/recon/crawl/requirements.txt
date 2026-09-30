@@ -1,5 +1,8 @@
 # Agentic-crawl (Steel) runtime dependencies (forward decision D6).
 #
+# Module-owned manifest: it lives with the crawl module it describes, and the
+# Dockerfile layers it on top of the app runtime.
+#
 # steel_provider.py drives a steel.dev CLOUD browser over CDP
 # (wss://connect.steel.dev), so only the Python client libraries are needed -
 # NO local browser binaries, i.e. `playwright install` is NOT required.

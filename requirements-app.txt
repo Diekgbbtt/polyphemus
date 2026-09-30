@@ -10,7 +10,7 @@
 # Version alignment: pins mirror the python:3.11 base's original wheel set
 # (redamon/agentic/requirements.txt: python 3.11-slim + the langchain family)
 # and the repo's own pinned requirements (requirements-dev.txt /
-# requirements-gateway.txt). A bump is a one-file review here, never a
+# gateway/requirements.txt). A bump is a one-file review here, never a
 # base-image rebuild (ADR D10 discipline).
 #
 # The langchain family:

@@ -67,7 +67,7 @@ LANGFUSE_HOST=https://cloud.langfuse.com
 Get the keys from your Langfuse project under Settings -> API Keys.
 The keys live in `.env` (not committed); `.env.example` documents them as commented placeholders.
 
-The `langfuse` Python package (pinned `langfuse==4.13.0` in `agent/requirements-observability.txt`) is baked into the agent image at build time.
+The `langfuse` Python package (pinned `langfuse==4.13.0` in `src/polymerhus/app/observability/requirements.txt`) is baked into the agent image at build time.
 If it is somehow absent at runtime, tracing still degrades to a no-op rather than crashing.
 
 ## How to view traces
