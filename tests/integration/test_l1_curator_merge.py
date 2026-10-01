@@ -171,7 +171,12 @@ def test_l1_constraints_present_and_enforced(session, project):
     from neo4j.exceptions import ClientError
 
     names = {r["name"] for r in session.run("SHOW CONSTRAINTS YIELD name")}
-    assert {"l1service_unique", "l1system_unique", "systemkind_unique"} <= names
+    # The SystemKind catalogue constraint (`systemkind_unique`) was RETIRED by
+    # the operator correction 2026-07-20: a System's `kind` is a plain identity
+    # attribute, not a `:SystemKind` catalogue node, so both catalogue-node
+    # constraints are gone (`db/neo4j/l1_schema.py:14-19`). The DataItem identity
+    # constraint (`l1dataitem_unique`, FR-ENRICH) is the current third key.
+    assert {"l1service_unique", "l1system_unique", "l1dataitem_unique"} <= names
     # enforcement (not just presence): a direct duplicate CREATE — which, unlike
     # MERGE, does not dedup — must be rejected by the uniqueness constraint. This
     # fails loudly if a constraint is ever dropped/disabled (MERGE tests alone
