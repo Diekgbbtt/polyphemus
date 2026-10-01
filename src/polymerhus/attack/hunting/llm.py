@@ -47,6 +47,13 @@ import json
 import logging
 from typing import Callable
 
+# The conciseness directive + appender are re-exported here for their public
+# home; the env-free definition lives in `conciseness.py` so the tool modules
+# import at module top without pulling `app.config` (#292).
+from polymerhus.attack.hunting.conciseness import (
+    HUNTING_CONCISENESS_DIRECTIVE,
+    append_conciseness_directive,
+)
 from polymerhus.attack.hunting.hunt_orchestrator import (
     GateDecision,
     GateInput,
@@ -171,29 +178,6 @@ L1_ONTOLOGY_PRIMER = (
     "authoritative classification - so an absent or unknown facet is missing "
     "evidence, never evidence of absence."
 )
-
-# The single-sourced surgical-conciseness directive (#292): the binding cap on
-# the load-bearing prose a hunting agent writes. Rendered verbatim in the four
-# role prompts and concatenated into every store/notes/note tool description by
-# its owner module, so the discipline cannot drift (the #207 single-description
-# pattern). It is a WRITING directive only - there is deliberately no
-# validation-time length enforcement.
-HUNTING_CONCISENESS_DIRECTIVE = (
-    "Hunting-artifact conciseness (binding): cap every config `rationale` and "
-    "every note body (`note` / `body`) at roughly 500 characters, and write "
-    "assertive, specific prose carrying only the essential information in "
-    "meaningful concrete language - no filler, no restated context, no "
-    "hedging, no narrative around the load-bearing fact."
-)
-
-
-def append_conciseness_directive(description: str) -> str:
-    """Append the single-sourced conciseness directive to a store/notes/note
-    tool description (#292), so no caller ever hand-copies the text. The tool
-    modules import THIS lazily, never at module top, to stay env-free
-    (CODING_STANDARD section 6)."""
-    return f"{description}\n\n{HUNTING_CONCISENESS_DIRECTIVE}"
-
 
 # The gate role prompt, memoized on first call (no import-time I/O, CODING
 # STANDARD section 6). A missing prompt file is a defect: FAIL-CLOSED (raise),

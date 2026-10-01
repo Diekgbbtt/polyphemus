@@ -37,6 +37,8 @@ import asyncio
 import logging
 from collections.abc import Sequence
 
+from polymerhus.attack.hunting.conciseness import append_conciseness_directive
+
 logger = logging.getLogger(__name__)
 
 # Message kinds the orchestrator/inbox handler routes on.
@@ -448,13 +450,8 @@ def build_orchestrator_tool_surface(tools, *, run_id: str, project_id: str | Non
                 return {"error": f"notes {option} degraded: {exc}"}
         return {"error": f"unknown cmd {cmd!r}; known: read, write"}
 
-    # The single-sourced conciseness directive (#292) is appended to the two
-    # store descriptions, never hand-copied. The import stays HERE (not module
-    # top) so importing this module requires no env var (CODING_STANDARD
-    # section 6; `llm` pulls `app.config`).
-    from polymerhus.attack.hunting.llm import (  # noqa: PLC0415
-        append_conciseness_directive,
-    )
+    # The single-sourced conciseness directive (#292) rides the two store
+    # descriptions verbatim; the env-free appender is imported at module top.
     hunts_store.description = append_conciseness_directive(hunts_store.description)
     notes.description = append_conciseness_directive(notes.description)
 
