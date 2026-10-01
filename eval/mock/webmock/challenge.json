@@ -1,0 +1,8 @@
+{
+  "target": "webmock",
+  "target_ports": {"web": 80},
+  "application_service_keys": ["web"],
+  "agent_input": {
+    "application_targets": "http://web:80/"
+  }
+}
