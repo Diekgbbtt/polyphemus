@@ -797,9 +797,12 @@ class SurfaceContextStore:
 
     The projection is per-unit (the current pair's projection), so the pass
     threads it per turn via `set_projection`; the surface is the pass's
-    read-only index-card view. Every other store method (reads, notes, sibling
-    reads, `consume_config`) is proxied unchanged, so the `hunts_store` /
-    `notes` tools bind to this wrapper exactly as they bind to the store.
+    read-only index-card view. Every read method (reads, sibling reads) and the
+    mover's `consume_config` are proxied unchanged; the note WRITE verbs
+    (`append_note` / `update_note` / `delete_note`) are counted too, so
+    `store_write_failures` keeps its meaning for every agent store write, not
+    just the config writes. The `hunts_store` / `notes` tools bind to this
+    wrapper exactly as they bind to the store.
 
     Fail-open canon preserved: a write that raises propagates to the caller
     (the tool degrades it fail-open, never into the turn); the wrapper only
@@ -837,9 +840,11 @@ class SurfaceContextStore:
         amended.surface_context = context
         return amended
 
-    def write_config(self, project_id, config, **kwargs):
+    def _counted(self, method, *args, **kwargs):
+        """Call one inner store write, counting an observed failure (O3) and
+        re-raising it to the caller (the tool degrades it fail-open)."""
         try:
-            return self._inner.write_config(project_id, self._inject(config), **kwargs)
+            return method(*args, **kwargs)
         except DuplicateConfigError:
             self.write_failures += 1
             self.duplicate_config_writes += 1
@@ -848,12 +853,25 @@ class SurfaceContextStore:
             self.write_failures += 1
             raise
 
+    def write_config(self, project_id, config, **kwargs):
+        return self._counted(
+            self._inner.write_config, project_id, self._inject(config), **kwargs)
+
     def update_config(self, project_id, config, **kwargs):
-        try:
-            return self._inner.update_config(project_id, self._inject(config), **kwargs)
-        except Exception:
-            self.write_failures += 1
-            raise
+        return self._counted(
+            self._inner.update_config, project_id, self._inject(config), **kwargs)
+
+    # The note write verbs are counted too, so `store_write_failures` covers
+    # every agent store write (not only the config writes); the reads stay
+    # proxied through `__getattr__`.
+    def append_note(self, project_id, key, note, **kwargs):
+        return self._counted(self._inner.append_note, project_id, key, note, **kwargs)
+
+    def update_note(self, project_id, note_id, note, **kwargs):
+        return self._counted(self._inner.update_note, project_id, note_id, note, **kwargs)
+
+    def delete_note(self, project_id, note_id, **kwargs):
+        return self._counted(self._inner.delete_note, project_id, note_id, **kwargs)
 
     def __getattr__(self, name):
         return getattr(self._inner, name)
@@ -1253,9 +1271,10 @@ async def arun_orchestration(
         """The deterministic fan-out mint (D3/spec 3.5): ONE hypothesised
         `HuntConfig` draft per distinct elicited `vulnerability_class` (a
         class-less direction degrades to a single carried-bare draft), each
-        config's hunt_id derived from one base. Runs at the HYPOTHESISE phase
-        (the mint is called here, via the `hunts_store` tool) - the emitted set
-        is the model's authoritative submission. The surface context is
+        config's hunt_id derived from one base. Runs at the HYPOTHESISE phase to
+        build the in-memory drafts the phase flow/report reason over (#294: the
+        agent's `hunts_store(write)` tool call is the sole writer, so these
+        drafts are NEVER persisted by the harness). The surface context is
         transformed at the mint: a Service card's edge_degree counts become the
         detailed connected DataItems from the unit's rich projection when the
         projection resolved them; an absent projection degrades to the counts
@@ -1309,15 +1328,18 @@ async def arun_orchestration(
 
     async def _hypothesise_node(state) -> dict:
         """The HYPOTHESISE phase (Q8/spec 3.2): the pair's elicitation turn on
-        the run's orchestration thread, then the mint fan-out (called at this
-        phase) writes the status="hypothesised" drafts into produced/. The
-        `hunts_store` tool's write response carried the NEXT_RATIFY_HINT
-        constant (G1/G3); the loop state HYPOTHESISED is the graph's own (the
-        wrapper sets it, G2). Fail-open (amended #186): a raising/empty turn
-        SKIPS the pair (counted `units_skipped`) instead of minting a
-        fully-empty draft - the actor-death fabrication is dead; a GENUINE
-        carried-bare direction (the model emitted it: rationale present, class
-        absent) still fans out to the carried-bare draft."""
+        the run's orchestration thread, then the deterministic mint fan-out
+        builds the IN-MEMORY status="hypothesised" drafts that drive the phase
+        flow and report. Under the agent-sole write model (#294) the agent's
+        `hunts_store(write, status="hypothesised")` tool call is the sole
+        writer - the harness never persists these drafts. The `hunts_store`
+        tool's write response carried the NEXT_RATIFY_HINT constant (G1/G3); the
+        loop state HYPOTHESISED is the graph's own (the wrapper sets it, G2).
+        Fail-open (amended #186): a raising/empty turn SKIPS the pair (counted
+        `units_skipped`) instead of minting a fully-empty draft - the
+        actor-death fabrication is dead; a GENUINE carried-bare direction (the
+        model emitted it: rationale present, class absent) still fans out to the
+        carried-bare draft."""
         pair = state.get("current_pair")
         if pair is None:
             return {"trail": []}

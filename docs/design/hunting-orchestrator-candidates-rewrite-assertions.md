@@ -290,21 +290,21 @@
 ### E14 - store write failure still completes (fail-open O3/O4/O5); the KB seam is retired
 - **grounds:** spec 5 O3/O4/O5 + 3.6 fail-open discipline
 - **entry seam:** `arun_orchestration` with flaky HuntStore
-- **input:** `candidates=[DeliveredCandidate("Service:slug:a","CWE-352",Witness(llm="form Z"),"applies")]`, `HuntStore.write_config`/`update_config`/`append_note` fail the first 2 writes then succeed. The gate's `kb_retrieve_fn` duplicate seam is RETIRED (the gate grounds via the direct `load_materialisation` read, so `kb_degraded` is always `False`).
+- **input:** `candidates=[DeliveredCandidate("Service:slug:a","CWE-352",Witness(llm="form Z"),"applies")]`, `HuntStore.write_config`/`update_config`/`append_note` fail the first write then succeed. The gate's `kb_retrieve_fn` duplicate seam is RETIRED (the gate grounds via the direct `load_materialisation` read, so `kb_degraded` is always `False`).
 - **live edge:** none
-- **path:** the flaky store fails the pass's first two store writes (the hypothesise create + the ratify upsert) `store_write_failures==2` -> the phase machine keeps serving and the third write (the note) lands (O3 - warned + counted, never a crash)
-- **terminal:** `pairs_processed==1`; `report.store_write_failures==2`; `report.ledger.units_done==1`; the failed config writes landed nothing - `read_configs("proj-e14")==[]`
-- **observed:** GateInput kb_degraded flag (False - the direct materialisation read is the gate's grounding); the pass's write-failure count
+- **path:** under the agent-sole write model (#294) the writes are the AGENT's store-tool calls; the flaky store fails the first one (the hypothesise create), the seam degrades it fail-open (the tool's O3 behaviour: warned + counted, never a crash into the turn) and the LATER writes succeed - the ratify upsert creates the ratified config, the note append lands
+- **terminal:** `pairs_processed==1`; `report.store_write_failures==1`; `report.ledger.units_done==1`; the failed create landed nothing but the later ratify write created the config (`len(read_configs("proj-e14"))==1`, status ratified) and the note landed (`len(read_notes("proj-e14"))==1`)
+- **observed:** GateInput kb_degraded flag (False - the direct materialisation read is the gate's grounding); the pass's write-failure count observed on the wrapped store seam
 - **yields:** `test_e2e_e14_fail_open_store_kb_graph`
 
-### E15 - concurrency barrier, duplicate-idempotent reads, malformed hypothesise output degrades to carry-bare
+### E15 - concurrency barrier, duplicate-idempotent reads, malformed hypothesise output skips the pair (#186)
 - **grounds:** spec 5 duplicate-idempotent + ordering + degradation, spec 3.8 graph last-write serialisation
 - **entry seam:** `arun_orchestration` with concurrent pair schedule + `hunts_store(read)` spy + stub hypothesise raising
 - **input:** a) concurrency: 2 pairs `CWE-352` (Service:slug:a) and `CWE-639` (Service:slug:b) run concurrently via `asyncio.gather` over two `arun_orchestration` calls on the same `run_id` with a shared HuntStore; b) duplicate-idempotent: same `read_configs_by_key("Service:slug:a::CWE-352")` called twice; c) malformed: `hypothesise_fn` raises `ValueError` (unparseable GateDecision)
 - **live edge:** none (concurrency via in-process gather, blocked when real worker loop required)
-- **criterion/metric:** a) store writes serialised: `HuntStore produced/` rows 2 distinct revival keys, not 1 lost update (the store's per-project lock + the graph's last-write channels serialise; the gather may queue serially on a shared loop, in which case >=1 rows with no corruption still holds); b) duplicate reads: second read returns an identical list without extra side effect, count stays 1 config per key; c) malformed hypothesise: the harness degrades to carry the pair bare with 1 HuntConfig (not a crash), `report.store_write_failures` counts only store failures not parse failures
-- **terminal:** a) produced/ configs 2 rows, distinct revival keys; b) duplicate read count 2 but HuntStore rows unchanged 1; c) `pairs_processed==1` with the carried-bare draft (`configs_hypothesised==1`)
-- **observed:** store counts, spy call logs, the hypothesise exception caught and logged `hypothesise turn failed ... carrying`
+- **criterion/metric:** a) store writes serialised: `HuntStore produced/` rows 2 distinct revival keys, not 1 lost update (the store's per-project lock + the graph's last-write channels serialise; the gather may queue serially on a shared loop, in which case >=1 rows with no corruption still holds); b) duplicate reads: second read returns an identical list without extra side effect, count stays 1 config per key; c) malformed hypothesise: the raising turn SKIPS the pair (the #186 anti-fabrication canon - no fully-empty draft is minted, not a crash), so nothing is persisted; `report.store_write_failures` counts only store write failures observed on the wrapped seam, never parse failures
+- **terminal:** a) produced/ configs 2 rows, distinct revival keys; b) duplicate read count 2 but HuntStore rows unchanged 1; c) `pairs_processed==1`, the pair is skipped (`ledger.units_skipped==1`, `configs_hypothesised==0`) and no config lands (`read_configs==[]`)
+- **observed:** store counts, spy call logs, the hypothesise exception caught and logged `hypothesise turn failed` (the pair skips, never a fabricated draft)
 - **yields:** `test_e2e_e15_concurrency_duplicate_malformed`
 
 ### E16 - the recovered moodique L1 scaffold yields a valid rich projection

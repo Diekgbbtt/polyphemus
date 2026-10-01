@@ -14,6 +14,8 @@ tier's red/green loop.
 """
 import uuid
 
+import pytest
+
 from polymerhus.attack.hunting.hunt_orchestrator import (
     DeliveredCandidate,
     EnvisionedDirection,
@@ -745,7 +747,8 @@ def test_agent_write_failure_degrades_without_crashing():
                   ratify=_agent_ratify(tools),
                   note=_agent_note(tools))
     assert report.pairs_processed == 1
-    assert report.store_write_failures >= 1
+    assert report.store_write_failures == 1  # exactly the failed hypothesise create
+    assert report.ledger.units_skipped == 1  # the pair degrades fail-open
     assert store.read_configs("project-1") == []
 
 
@@ -769,6 +772,28 @@ def test_surface_context_store_injects_the_deterministic_context():
     configs = store.read_configs("project-1")
     assert len(configs) == 1
     assert configs[0]["surface_context"] == {"cards": []}
+
+
+def test_surface_context_store_counts_note_write_failures():
+    """#294 #6: the wrapper counts a failed `append_note` too, so
+    `store_write_failures` covers every agent store write, not just the config
+    writes; a successful write does not count."""
+    from polymerhus.attack.hunting.hunt_orchestrator import SurfaceContextStore
+
+    class _RaisingNotes(_MemoryStore):
+        def append_note(self, project_id, key, note):
+            raise OSError("notes disk full (fixture)")
+
+    store = _RaisingNotes()
+    wrapper = SurfaceContextStore(store, surface=[])
+    with pytest.raises(OSError):
+        wrapper.append_note("project-1", "Service:slug:a::fault-x", "note")
+    assert wrapper.write_failures == 1
+    wrapper.write_config("project-1", {
+        "hunt_id": "h1", "unit_id": SERVICE_A, "fault_class": FAULT_X,
+        "vulnerability_class": "csrf",
+    })
+    assert wrapper.write_failures == 1  # a successful write does not count
 
 
 # --- Seam behaviours: fail-open degradations ----------------------------------

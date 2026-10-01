@@ -11,6 +11,7 @@ tool-surface contract (the three tools `hunts_store` / `notes` / `graph_view`,
 G3) is asserted here too. Expected values are taken from the spec, never
 recomputed the way the code computes them.
 """
+import logging
 import uuid
 
 import pytest
@@ -33,6 +34,8 @@ from polymerhus.attack.hunting.hunt_orchestrator import (
     run_orchestration,
 )
 from polymerhus.attack.hunting.hunt_store import HuntStore
+
+logger = logging.getLogger(__name__)
 
 SERVICE_A = "Service:slug:a"
 SYSTEM_B = "System:key:b"
@@ -66,7 +69,16 @@ def _agent_seams(tools, *, project_id: str = "project-1"):
     """The fixture phase turns under the agent-sole write model (#294): each
     emulates the AGENT's store tool call - hypothesise writes the drafts,
     ratify upserts the terminal status, note appends - through the pass's
-    wrapped store seam, so the harness never persists anything itself."""
+    wrapped store seam, so the harness never persists anything itself. Each
+    write catches a store failure per call (the tool's fail-open O3) so a later
+    write can still land; the failure is still counted on the wrapped seam."""
+    def _safe_write(method, *args):
+        try:
+            return method(*args)
+        except Exception as exc:  # noqa: BLE001 - the tool degrades fail-open (O3)
+            logger.warning("agent store write degraded (tool fail-open): %s", exc)
+            return None
+
     def hypothesise(inp):
         directions = [_carry(c) for c in inp.candidates]
         for direction in directions:
@@ -77,7 +89,7 @@ def _agent_seams(tools, *, project_id: str = "project-1"):
             for config in mint_hunt_config(
                     direction, candidate, uuid.uuid4().hex, surface_context={},
                     prior_hunt_insights=[]):
-                tools.store_reads.write_config(project_id, config)
+                _safe_write(tools.store_reads.write_config, project_id, config)
         return GateDecision(directions=directions)
 
     def ratify(inp):
@@ -87,14 +99,14 @@ def _agent_seams(tools, *, project_id: str = "project-1"):
             amended.status = "ratified"
             amended.preconditions = ["an authenticated session is obtainable"]
             amended.observed_defences = ["WAF blocks XSS payloads"]
-            tools.store_reads.update_config(project_id, amended)
+            _safe_write(tools.store_reads.update_config, project_id, amended)
             configs.append(amended)
         return RatifyDecision(configs=configs)
 
     def note(inp):
         key = revival_key(inp.pair.unit_id, inp.pair.fault_class)
-        tools.store_reads.append_note(
-            project_id, key, "fixture note walking the reasoning")
+        _safe_write(tools.store_reads.append_note, project_id, key,
+                    "fixture note walking the reasoning")
         return NoteDecision(notes=[NoteRecord(
             key=key, note="fixture note walking the reasoning")])
 
@@ -263,15 +275,19 @@ class _FlakyStore(HuntStore):
 
 
 def test_store_write_failure_degrades_to_warning(tmp_path, caplog):
-    """O3 fail-open under the agent-sole model (#294): a raising agent tool
-    write degrades the turn fail-open - the pass keeps serving and the wrapped
-    store seam counts the observed failure; the harness no longer writes a
-    fallback copy."""
+    """O3 fail-open under the agent-sole model (#294): the agent's store-tool
+    writes are the pass's writes; the flaky store fails the FIRST one (the
+    hypothesise create) and the seam degrades it fail-open (warned + counted),
+    so the LATER writes still succeed - the ratify upsert creates the ratified
+    config and the note lands. The harness writes no fallback copy. This keeps
+    the 'later write succeeds after earlier failures' coverage."""
     flaky = _FlakyStore(tmp_path, fail_first=1)
     report = _run(flaky, [_candidate(SERVICE_A, FAULT_X)], tools=_tools(flaky))
-    assert report.store_write_failures >= 1
+    assert report.store_write_failures == 1  # exactly the failed create
     assert report.pairs_processed == 1
-    assert flaky.read_configs("project-1") == []  # the agent write did not land
+    configs = flaky.read_configs("project-1")
+    assert len(configs) == 1 and configs[0]["status"] == "ratified"
+    assert len(flaky.read_notes("project-1")) == 1  # later writes succeeded
     assert "warning" in caplog.text.lower()
 
 
