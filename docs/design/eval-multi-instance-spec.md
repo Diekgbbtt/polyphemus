@@ -78,7 +78,7 @@ A multi-instance eval harness rooted at `eval/` (brought up one layer from `tool
 
 ### Vocabulary
 
-The eval glossary (`eval/CONTEXT.md`) is the canonical vocabulary: `PolyphemusInstance`, `EvalSetup`, `InstanceConfiguration`, `Target`, `TargetRun`, `TargetConfig`, `AuthContext`, `Trial`, `Phase`, `Target lifecycle strategy`, `Hunting cap`, `Pre-mined hunting artifacts`, `Artifact store`, `Assessment`, `Evidence chain`, `Diagnosis`, `Failure mode`, `Root cause type`, `Eval branch`, `Version advance`, `Stack fingerprint`, `Alignment action`, `Eval compose overlay`, `Surfer loop`.
+The eval glossary (`eval/CONTEXT.md`) is the canonical vocabulary: `PolyphemusInstance`, `EvalSetup`, `InstanceConfiguration`, `Target`, `TargetDataset`, `TargetRun`, `TargetConfig`, `Target image provisioning`, `AuthContext`, `Trial`, `Phase`, `Target lifecycle strategy`, `Hunting cap`, `Pre-mined hunting artifacts`, `Artifact store`, `Assessment`, `Evidence chain`, `Diagnosis`, `Failure mode`, `Root cause type`, `Eval branch`, `Version advance`, `Stack fingerprint`, `Alignment action`, `Eval compose overlay`, `Surfer loop`.
 
 ### Restructure
 

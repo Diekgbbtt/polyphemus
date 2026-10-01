@@ -32,6 +32,7 @@
 
 ### D9 - Target agnosticity: strategy-typed lifecycle
 *2026-09-25.* A strategy-typed lifecycle (`targetctl` for WebExploitBench, `image`/`compose` for pullable containers) behind one interface, selected by the target descriptor. Accepted provisionally; see **R2**.
+*2026-10-01 (amended by D43).* The lifecycle interface gains an image-provisioning seam with a strict precedence (build > pull > present > fail-hard); the strategy still selects by the target descriptor, but how the image is obtained is decided by the target's build recipe and the dataset registry, not by the strategy alone.
 
 ### D10 - No machine resource limits; one instance at a time
 *2026-09-28.* Co-located instances are **not** cgroup-capped. Normally only one instance runs, and the operator accepts the contention in the exceptional case. Host-published port offsets remain necessary (R3) so host-side tooling addresses the right instance.
@@ -215,3 +216,22 @@ Per-instance clones (D11) multiplied by the `eval` branch (D23) means N checkout
 - Q41 alignment handoff -> confirmed: daemon does the mechanical advance and enforces the fail-closed gate; the orchestrator decides and executes everything else.
 - New **R17 - env-schema drift**: a locally sourced `.env` can fall behind the compose interpolation schema; mitigated by D41 (overlay + preflight + keyset check); renames are reported, not auto-removed.
 - Grill closed 2026-09-28. Carried into the spec: R2 (target agnosticity), R16, R17, the ADR's still-open items (alert threshold, manifest review discipline, env-rename reporting, PR-contract note), and D33's analysis-layer failure-mode extension.
+
+## Round-6 decisions (multi-target chain and image provisioning, 2026-10-01)
+
+### D42 - The orchestrator is the control plane; the chain advances through `next_target`
+*2026-10-01.* The eval orchestrator agent governs the run end to end through exactly two tools. `next_target` advances the target chain one target at a time: it tears the active target down, reclaims its image, provisions the next target's image, brings it up, and verifies its health. `eval_monitor` remains the post-execution workflow tick (D6/D15). The symbolic layer still runs the phases and owns state; the agent never runs a phase and never polls the API (D5). One instance runs its targets serially; the chain position is persisted (`ChainState`) so a later tick resumes at the right target. A failed `next_target` surfaces its full trace (step log, command error, traceback) and the run moves on to the next target, so one unprovisionable target never aborts the chain.
+
+### D43 - Target image provisioning precedence: build > pull > present > fail-hard
+*2026-10-01.* Amends D9. Before a target starts, its image is provisioned by a strict precedence:
+1. **build** - a Dockerfile declared on the target config (`dockerfile`, with `dockerfile_context` for the build context) builds the app image, overwriting any pull; the Dockerfile's `FROM` supplies its base.
+2. **pull** - otherwise a configured dataset registry (`TargetDataset.registry`) pulls each image (qualified by the registry, verified present).
+3. **present** - otherwise the image must already be present locally; a missing image is a hard failure for that target, and the chain moves on (D42).
+Build and pull are confirmed with `docker image inspect`; present is confirmed by tag only, so it is the weakest tier.
+**Critical reliability evaluation.** (a) *Build context*: a bare Dockerfile path is insufficient - a Dockerfile that `COPY`s sibling files needs the real context, so `dockerfile_context` is a first-class field; defaulting to the Dockerfile's parent is a documented footgun. (b) *Tag vs content identity*: build and pull can both yield an image under the same tag with different content (base digest, source revision), so the provisioning path and the resolved image id are recorded on the step; comparability across paths is not assumed. (c) *Pull drift*: a tag can be repointed, so a tag-pull is not drift-free; digest pinning is the intended hardening (carried as an open item). (d) *Present is unverified*: it confirms a tag exists, not that it is the expected image - acceptable only as an explicit operator opt-in, recorded as the weakest tier. (e) *Multi-image targets*: one `dockerfile` builds one image, so a target needing several built images (e.g. jetlinks' app + attacker-stage) can express only the primary build; the rest fall to pull/present. A per-image build map is the future extension. (f) *Security*: building an untrusted Dockerfile runs its build steps as root; acceptable on the isolated eval host, noted here.
+
+### D44 - `TargetDataset` owns the shared location addressing
+*2026-10-01.* The registry host + URL path, the remote repo, and the ground-truth root are one fact per dataset, not per target. A `TargetDataset` (`name`, `repo`, `registry`, `ground_truth`) parents the targets and their ground truth; `EvalSetup` references it, and `TargetRun` carries each target's image identifier **as-is**. The pull reference is `dataset.registry` joined to the identifier; an empty registry means the dataset publishes no images, so targets are built (D43). This keeps a shared fact in one place and out of the external `challenge.json`, which is WebExploitBench's artifact, not polymerhus's domain.
+
+### Rejected: the environment-affordance check
+*2026-10-01.* An environment-affordance gate (disk/docker/registry probing that chose prebuild-all vs on-demand before any pull) was implemented and then removed. It existed only in uncommitted code, so no prior decision is amended; the durable decisions are D42/D43. The operator's ruling: the chain defaults to reclaim-then-provision per target, and the image precedence (D43) is the gate - not a separate affordance probe.

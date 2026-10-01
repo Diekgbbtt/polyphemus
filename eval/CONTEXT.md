@@ -22,16 +22,28 @@ _Avoid_: instance config, env
 The evaluated application a trial runs against; WebExploitBench's unit is called a `challenge`.
 _Avoid_: challenge, app
 
+**TargetDataset**:
+The benchmark dataset the targets and their ground truth come from: its remote repo (the challenge definitions and per-vuln ground truth), the image registry that hosts the target images (a host/domain plus a URL path prefix), and where the ground truth is checked out.
+These are shared by every target in the set, so they live here once rather than repeated per target: the `EvalSetup` references one dataset, and a target's bare image identifier is qualified by the dataset's registry to form a pull reference.
+_Avoid_: benchmark, corpus, repo
+
 **TargetRun**:
-The evaluation of one Target on one instance: its linked target configuration, the phase it starts at, its hunting cap, any pre-mined artifacts, its optional `target_run_id` identity, and its optional `existing_project_id`.
+The evaluation of one Target on one instance: its linked target configuration, its image identifier(s) as-is (qualified by the dataset registry for a pull), the phase it starts at, its hunting cap, any pre-mined artifacts, its optional `target_run_id` identity, and its optional `existing_project_id`.
 That identity names the artifact store's middle level and is resolved CLI override > setup `target_run_id` > instance id; when set it must be path-safe and unique within the setup.
 `existing_project_id` names a pre-recon'd project whose L0/L1 were transferred onto the instance (#277): the trial then enters at hunting, skips creation/settings/scaffold, and asserts the project and its L1; it must be path-safe and unique within the setup, and it forces `start_phase: hunting`.
 _Avoid_: job, task
 
 **TargetConfig**:
-The linked configuration of a Target: lifecycle strategy, seed, operator KB, auth context, and bootstrapped L1 surface.
+The linked configuration of a Target: lifecycle strategy, seed, operator KB, auth context, bootstrapped L1 surface, and the optional image build recipe.
 The seed is the bare Synthetic Host; when a setup leaves it unset the harness derives it from the target-run identity, so routing and scope cannot disagree.
+The build recipe is `dockerfile` plus `dockerfile_context`: when set, the target's app image is built from that Dockerfile instead of pulled.
 _Avoid_: target definition
+
+**Target image provisioning**:
+How the chain obtains one target's image before it starts, by a strict precedence: a declared `dockerfile` **builds** it (overwriting the pull path), otherwise a configured dataset `registry` **pulls** it (qualified by the registry and verified present), otherwise the image must already be **present** locally and a missing image fails that target hard - the run moves on to the next target.
+Build and pull are verified with `docker image inspect`; present is confirmed by tag only, so it is the weakest, unverified tier.
+Each provisioning is recorded on the step (`build`/`pull`/`present`) and reclaims the same local reference.
+_Avoid_: prebuild, pre-pull, on-demand
 
 **AuthContext**:
 The externally bootstrapped authentication state seeded into the store (overview + accounts), plus the project `authn` skill capturing the sign-in/sign-up procedure.
