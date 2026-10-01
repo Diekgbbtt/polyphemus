@@ -57,6 +57,17 @@ from langgraph.types import Command
 logger = logging.getLogger(__name__)
 
 
+class PhaseAbort(RuntimeError):
+    """A phase node raised this to ABORT the pass (a typed, operator-visible
+    failure) instead of being swallowed by the fail-open wrapper.
+
+    The graph's phase wrapper degrades every other exception to "skip this
+    phase's side effect and keep serving" (the O1-O10 canon). The consecutive-
+    degradation circuit breaker (#280 Part 2) needs a deliberate abort to escape
+    that fail-open, so it raises a `PhaseAbort` subclass and the wrapper
+    re-raises it unchanged."""
+
+
 class LoopState(enum.Enum):
     """The harness loop-state machine (G2/G5): NOTED is a LOOP state, never a
     config status - the config lifecycle `hypothesised -> ratified | dropped`
@@ -188,6 +199,9 @@ def _make_phase_node(loop_state: LoopState, name: str) -> Callable[[Callable | N
                 if out is not None:
                     return {**out, "loop_state": transition,
                             "loop_states": [transition]}
+            except PhaseAbort:
+                # a deliberate pass abort (#280 Part 2): never swallowed
+                raise
             except Exception as exc:  # noqa: BLE001 - fail-open: keep serving
                 logger.warning("%s phase failed for %s (%s)", name,
                                _pair_label(state.get("current_pair")), exc)
@@ -269,6 +283,7 @@ def build_hunting_graph(
 __all__ = [
     "HuntOrchestrationState",
     "LoopState",
+    "PhaseAbort",
     "build_hunting_graph",
     "_supervisor",
     "_HYPOTHESISE",

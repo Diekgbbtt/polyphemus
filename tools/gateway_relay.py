@@ -1,12 +1,11 @@
 """In-container TCP relay: 0.0.0.0:14000 -> 127.0.0.1:4000 (the gateway).
 
-Stdlib only. Runs detached inside the agent container so the scaffolded
-port forwarding (docker-compose.probe.yml, host 14000 -> container 14000)
-reaches the loopback-bound gateway. Dies with the container; re-run after
-any recreate:
+Stdlib only. Runs detached inside the agent container so the forwarding
+baked into docker-compose.e2e.yml (host 14000 -> container 14000) reaches
+the loopback-bound gateway. Dies with the container; re-run after any
+recreate:
 
-    docker compose -f docker-compose.yml -f docker-compose.dev.yml \\
-      -f docker-compose.e2e.yml -f docker-compose.probe.yml \\
+    docker compose -f docker-compose.e2e.yml \\
       exec -d agent python -c \"$(cat tools/gateway_relay.py)\"
 """
 

@@ -7,7 +7,7 @@ It is explicitly not a bounded-context glossary: the meaning of what these modul
 
 ## Sub-modules
 
-- `llm/` - the LLM client layer: the provider table and client construction (`providers.py`), the role registry and the one-shot/session seams (`roles.py`, `session.py`, `actor.py`), capability negotiation (`capability.py`, `negotiation.py`), reasoning replay (`reasoning.py`), context compaction (`compaction.py`), the product-skill loader (`skills.py`), the gateway sync (`sync.py`, `sync_mapping.py`), and the conversation scope (`conversation.py`).
+- `llm/` - the LLM client layer: the provider table and client construction (`providers.py`), the role registry and the one-shot/session seams (`roles.py`, `session.py`, `actor.py`), parsing-error recovery at the session seam (`parsing_recovery.py`), capability negotiation (`capability.py`, `negotiation.py`), reasoning replay (`reasoning.py`), context compaction (`compaction.py`), the product-skill loader (`skills.py`), the gateway sync (`sync.py`, `sync_mapping.py`), and the conversation scope (`conversation.py`).
 - `auth/` - the per-project shared auth store and its agent tool (`store.py`, `tool.py`, `records.py`); the operator seed face is a thin adapter over the same seam (`project_management/api.py`).
 - `data_root.py` - the one layout owner for the app-owned data root (`<repo>/data/`): every store resolves its bucket through `project_dir`, so no module hand-builds a path.
 - `runtime.py` - the module runtime/registry: run holds and the session lifecycle.
@@ -25,6 +25,16 @@ It is explicitly not a bounded-context glossary: the meaning of what these modul
 - **Ambient context is scoped, not global.** Cross-cutting identity travels in ContextVars (`conversation_scope`, the checkpoints module context, the runtime run hold); each is set for a bounded scope and restored on exit, so nothing leaks between turns or sessions.
 - **Bind at the native layer before wrapping.** Where the stack already has the mechanism, use it: client request headers ride `ChatOpenAI.default_headers` (the SDK threads them into the httpx client), never hand-rolled request mutation. The reasoning-passthrough subclass is the one justified wrapper, and its SDK-internal seams are pinned by contract tests that turn red on a version bump.
 - **Durability is per-record, not per-file.** Every store write is atomic (same-directory temp file + `os.replace`) and serialised per project (one lock per id covering the whole check-then-write), so concurrent writers converge instead of forking records.
+- **A checkpointed trail must satisfy the tool-call/response pairing contract.**
+  The upstream now enforces pairing only - a valid or malformed assistant tool call with no answering `tool` message is rejected with HTTP 400, and symmetrically a `tool` message with no preceding assistant call is rejected too, so the pairing contract must hold in BOTH directions - while the arguments' JSON validity is irrelevant, so an error `ToolMessage` answer is a complete, contract-valid repair; the pinned wire serializer (`langchain_openai.chat_models.base._convert_message_to_dict`) emits both `tool_calls` and `invalid_tool_calls` as `tool_calls`, which is why a checkpointed parse failure poisons every later request.
+  `create_agent` never ported `AgentExecutor.handle_parsing_errors` (langchain issue #33504, PR #35818 closed unmerged), so the session seam owns the recovery: `app/llm/parsing_recovery.py` is wired FIRST in `session._build_agent`.
+  Its `after_model` answers the LAST message's unanswered `invalid_tool_calls` entries with an error `ToolMessage`, jumping back to the model for a bounded in-turn retry - but ONLY when that last message IS the tool-call request (the model's just-produced reply).
+  The answer is appended at the tail, so answering a call that is not the tail request would append a `tool` message with no adjacent call (an orphan answer, rejected symmetrically), which is the #280 follow-up: the old whole-trail scan crossed a stop boundary and answered a stale call.
+  Valid `tool_calls` are never touched - ToolNode owns those and runs after `after_model`.
+  Its `before_model` reconciles a RESUMED turn positionally: the seam reads the framework's pending-next variable (`StateSnapshot.next`) before invoking and passes it as `session_pending_next` metadata, and only then does `before_model` insert each missing answer immediately after the assistant call it answers, because the upstream requires the tool answer to directly follow the call.
+  The read sits at the seam because the module checkpointer prunes to the latest checkpoint per thread, so the interrupted parent tuple is gone once the new input is written.
+  A normal, completed turn carries no signal and is left untouched, so pre-existing completed-turn poison is deliberately not auto-repaired.
+  Recovery never drops or rewrites a message to hide the violation from the wire (#280).
 
 ## Patterns to repeat
 

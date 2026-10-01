@@ -27,8 +27,8 @@ documented rationale in a code comment or design doc, it is given.
 
 The agent runs from the `redamon-agent:latest` base image (`agent/Dockerfile`),
 which already ships the orchestration and LLM libraries; the Dockerfile layers
-only two thin `pip install` steps on top — `requirements-observability.txt`
-(Langfuse) and `requirements-crawl.txt` (Steel/Playwright) — because "the base
+only two thin `pip install` steps on top — `src/polymerhus/app/observability/requirements.txt`
+(Langfuse) and `src/polymerhus/recon/crawl/requirements.txt` (Steel/Playwright) — because "the base
 image was assumed to provide these but does not" for crawl, and because baking
 Langfuse in "lets operators enable tracing purely via `LANGFUSE_*` env vars." The
 container entrypoint is `uvicorn agent.app.main:app --host 0.0.0.0 --port 8080`.
@@ -39,7 +39,7 @@ platform-stack implementation plan (`docs/design/plans/2026-07-02-platform-stack
 documents the base image as **Python 3.11** and enumerates what it provides;
 the host dev/test toolchain, by contrast, runs Python 3.13 (its `pytest` bytecode
 artifacts are `cpython-313`). Only three files pin versions directly:
-`requirements-observability.txt`, `requirements-crawl.txt`, and the host-only
+`src/polymerhus/app/observability/requirements.txt`, `src/polymerhus/recon/crawl/requirements.txt`, and the host-only
 `requirements-dev.txt`.
 
 | Purpose | Component | Version | Source |
@@ -53,10 +53,10 @@ artifacts are `cpython-313`). Only three files pin versions directly:
 | Tool transport | `langchain-mcp-adapters` (`MultiServerMCPClient`) | unpinned (base image) | `pod.py::default_exec_fn` |
 | Graph data | `neo4j` driver | 5.27.0 (dev); server `neo4j:5.26-community` | `requirements-dev.txt`; platform plan |
 | Checkpoint / registry | `psycopg[binary]` + `AsyncPostgresSaver` | psycopg 3.2.3 (dev); saver from base image | `requirements-dev.txt`; `main.py` startup |
-| Observability | `langfuse` | **4.13.0** | `requirements-observability.txt` |
+| Observability | `langfuse` | **4.13.0** | `src/polymerhus/app/observability/requirements.txt` |
 | Observability | OpenTelemetry OTLP HTTP exporter | unpinned (langfuse dep) | `langfuse_tracing.py` |
-| Crawl | `steel-sdk` | unpinned | `requirements-crawl.txt` |
-| Crawl | `playwright` (async, over CDP) | unpinned | `requirements-crawl.txt` |
+| Crawl | `steel-sdk` | unpinned | `src/polymerhus/recon/crawl/requirements.txt` |
+| Crawl | `playwright` (async, over CDP) | unpinned | `src/polymerhus/recon/crawl/requirements.txt` |
 | MCP server (Kali) | `fastmcp` | ≥2.14,<3 (host) | `requirements-dev.txt` |
 | Test | `pytest`, `httpx` | 8.3.4, 0.28.1 | `requirements-dev.txt` |
 

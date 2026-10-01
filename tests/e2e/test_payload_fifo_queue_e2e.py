@@ -72,8 +72,8 @@ def _load_target(name: str) -> dict:
 
 def _strip_nulls(obj):
     """The eval-targets contract: a `null` attribute means "not supplied" and
-    the driving agent omits it rather than PUTting it (a null username would
-    fail auth_context validation with a misleading 400)."""
+    the driving agent omits it rather than PUTting it (a null credential field
+    means "not supplied", not an empty string)."""
     if isinstance(obj, dict):
         return {k: _strip_nulls(v) for k, v in obj.items() if v is not None}
     if isinstance(obj, list):
@@ -82,14 +82,16 @@ def _strip_nulls(obj):
 
 
 def _apply_target_settings(settings: dict) -> dict:
+    """Project the eval target's `settings` onto the settings PUT body.
+
+    #243: `auth_context` is NOT a settings field - the settings face refuses it
+    (see repository.save_project_settings). These contract tests do not exercise
+    the authenticated surface, so the auth block is dropped here. A real
+    mechanical eval seeds it via `PUT /projects/{id}/auth` instead (the ledger
+    V-6 modernization: seed faces plus the skills/authn bundle)."""
     out = _strip_nulls(settings)
     assert isinstance(out, dict)
-    auth = out.get("auth_context") or {}
-    creds = auth.get("credentials")
-    if isinstance(creds, dict) and not (creds.get("username") and creds.get("password")):
-        # juice-shop-remote's credentials are all-null: agentic login is not
-        # supplied, so drop the block and use the cookies/header path instead.
-        auth.pop("credentials", None)
+    out.pop("auth_context", None)
     return out
 
 

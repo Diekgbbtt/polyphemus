@@ -1,7 +1,7 @@
 """Probe the context window of every model group registered on the gateway.
 
 A simple LLM client against the in-container gateway (reached from the host
-through the scaffolded forwarding in docker-compose.probe.yml): for each
+through the forwarding baked into docker-compose.e2e.yml): for each
 model group it reports whether it serves, its total context window, and
 whether its stream carries reasoning deltas.
 
@@ -11,8 +11,7 @@ message states the limit (e.g. max_total_tokens=22000). Only the small
 serve/reasoning checks execute the model.
 
 Usage:
-    docker compose -f docker-compose.yml -f docker-compose.dev.yml \\
-      -f docker-compose.e2e.yml -f docker-compose.probe.yml up -d --force-recreate agent
+    docker compose -f docker-compose.e2e.yml up -d --force-recreate agent
     LITELLM_MASTER_KEY=<key> python tools/probe_model_windows.py \\
       --gateway http://127.0.0.1:14000
 

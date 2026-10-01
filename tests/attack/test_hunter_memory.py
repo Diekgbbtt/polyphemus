@@ -132,3 +132,20 @@ def test_consumed_side_write_is_unaffected(tmp_path):
     assert store.read_spec(PROJECT, FAULT_KEY, side="consumed",
                            **k)["test"] == "t2"
     assert not _spec_file(tmp_path, "produced").exists()
+
+
+def test_config_key_from_fault_key_accepts_a_system_unit_with_double_colon():
+    # G4 regression (live e2e eval): the `::` semantic-key form of a System
+    # unit id (which itself contains `::`) must normalise to the same key, and
+    # the `_` folder form must round-trip to it too.
+    from polymerhus.attack.hunting.hunter_memory import config_key_from_fault_key
+
+    unit = "System:AuthorizationSystem::__singleton__"
+    key = f"{unit}::CWE-1220::Broken Function Level Authorization (BFLA)"
+    assert config_key_from_fault_key(key) == key
+    folder = (
+        "System:AuthorizationSystem::__singleton__"
+        "_CWE-1220_Broken Function Level Authorization (BFLA)"
+    )
+    assert config_key_from_fault_key(folder) == key
+    HunterMemoryStore._validate_fault_key(key)

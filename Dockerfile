@@ -24,7 +24,10 @@ COPY gateway/ /srv/gateway/
 # the loader fails closed without it. Everything else under /srv/data is runtime
 # memory the app creates (the dev compose mounts the host's ./data over this).
 COPY data/ /srv/data/
-COPY requirements-app.txt requirements-observability.txt requirements-crawl.txt requirements-gateway.txt /srv/
+# The app-wide manifest stays at the repo root; each module-owned manifest rides
+# inside its own module under src/ or gateway/ (already copied above), so the
+# owning module and its dependency set move together.
+COPY requirements-app.txt /srv/
 # The FULL app runtime (previously baked into the removed `redamon-agent` base):
 # the langchain family, langgraph + its postgres checkpointer, the data-store
 # clients (psycopg/neo4j), the agent ASGI surface (fastapi/httpx), pydantic and
@@ -34,18 +37,20 @@ RUN pip install --no-cache-dir -r /srv/requirements-app.txt
 # Optional lightweight tracing dependency (Langfuse). Layered on top of the
 # base image; the agent runs fine without it (tracing fail-open no-op), but
 # baking it in lets operators enable tracing purely via LANGFUSE_* env vars.
-RUN pip install --no-cache-dir -r /srv/requirements-observability.txt
+# Owned by the observability module (`app/observability/`).
+RUN pip install --no-cache-dir -r /srv/src/polymerhus/app/observability/requirements.txt
 # Agentic-crawl (Steel) client libs - the base image was assumed to provide
 # these but does not, so steel_crawl degraded to empty manifests. Cloud browser
-# over CDP, so no `playwright install` (local browsers) is needed.
-RUN pip install --no-cache-dir -r /srv/requirements-crawl.txt
+# over CDP, so no `playwright install` (local browsers) is needed. Owned by the
+# crawl module (`recon/crawl/`).
+RUN pip install --no-cache-dir -r /srv/src/polymerhus/recon/crawl/requirements.txt
 # LLM API gateway (#100) - the co-located litellm proxy (#104 T1) layered on
 # top of the base image like the observability/crawl layers. A litellm version
-# bump is a one-file review of `requirements-gateway.txt` (ADR D10). httpx is
+# bump is a one-file review of `gateway/requirements.txt` (ADR D10). httpx is
 # pinned for the models.dev fetch (no separate client package; plain JSON
 # endpoint). The agent normally uses litellm transitively only; the gateway
 # subprocess is the only direct consumer.
-RUN pip install --no-cache-dir -r /srv/requirements-gateway.txt
+RUN pip install --no-cache-dir -r /srv/gateway/requirements.txt
 # Generate the Prisma client Python code from litellm's own schema.prisma. The
 # `prisma` pip package ships NO generated client - without this step the proxy
 # crashes at boot with "The Client hasn't been generated yet, you must run

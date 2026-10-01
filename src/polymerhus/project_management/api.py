@@ -112,6 +112,31 @@ def list_runs(status: str | None = None) -> dict:
     return repository.running_runs()
 
 
+@router.get("/app-state")
+def get_app_state(project_id: str | None = None) -> dict:
+    """Instance-wide running state: per-project in-flight runs plus the
+    top-level idle flag. Read-only - no mutation surface. `project_id`
+    narrows the scope (unknown -> 404); `idle` reflects the returned scope.
+
+    Postgres fallback (same rows, for when this API is unreachable):
+
+        SELECT 'recon' AS kind, run_id AS id, project_id
+          FROM recon_runs WHERE status = 'running'
+        UNION ALL
+        SELECT 'analysis', analysis_run_id, project_id
+          FROM analysis_runs WHERE status = 'draining'
+        UNION ALL
+        SELECT 'hunting', hunting_run_id, project_id
+          FROM hunting_runs WHERE status = 'running';
+
+    Idle iff the fallback returns no rows.
+    """
+    try:
+        return repository.app_state(project_id)
+    except ProjectNotFound:
+        raise HTTPException(status_code=404, detail="unknown project")
+
+
 @router.put("/projects/{project_id}/settings")
 def update_settings(project_id: str, body: SettingsUpdate) -> dict:
     try:

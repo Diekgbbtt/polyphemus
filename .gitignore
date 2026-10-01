@@ -41,6 +41,10 @@ docs/.DS_Store
 # worktrees (never nest those in a commit); the lock is per-machine runtime.
 .claude/*
 .agents/*
+# Harness-resident skills (vendored langfuse/lightrag skill installs) are
+# machine state, never project source; explicit so the rule survives any
+# narrowing of `.agents/*`.
+.agents/skills/
 .control-plane/*
 
 # Recon run artifacts (multi-MB per-target graph dumps), reproducible by re-running.
@@ -67,3 +71,7 @@ uv.lock
 # Editor swap files (stray vim buffers on tracked markdown).
 *.swp
 *.swo
+
+# The eval alignment state (#274): hold markers and applied actions, written by
+# `orchestrator align`; per-machine runtime, never source.
+eval/state/

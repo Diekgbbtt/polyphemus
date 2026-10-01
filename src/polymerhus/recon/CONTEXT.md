@@ -206,7 +206,7 @@ _Avoid_: a second tool face (one implementation, bound per project).
 
 **Auth-capable binding** (`auth_capable_binding`, `app/auth/seams.py`):
 The auth-capable extension of `skill_agent_binding`: the same L1 index middleware, skill tools, and invocation context, plus the `auth_store` tool and the per-project `authn` procedure in the bounded skill set.
-The analysis-domain agents never bind it; since #223 it arms the recon orchestrator write-capable in one step (the roster still declares it exempt - no catalogue skill bears - so the arming rides `with_write_skill`, never the roster: `auth_store`, `authn`, `load_skill`, `write_skill`, kali `exec`, `steel_exec`, D223-13) - and the recon job-specialised agents deliberately never take it (D223-5).
+The analysis-domain agents never bind it; since #223 it arms the recon orchestrator write-capable in one step (the roster still declares it exempt - no catalogue skill bears - so the arming rides `with_write_skill`, never the roster: `auth_store`, `authn`, `load_skill`, `write_skill`, kali `exec`, `steel_exec`, D223-13) - and the recon job-specialised agents bind only the read-only form (the pod triager's `auth_capable_binding("triager")`, no `write_skill`; D223-5 forbids the authenticate/write capability, not the read-only `auth_store` binding).
 _Avoid_: a per-site auth binding (one seam, attached through `tools=` / `middleware=` / `context=` like every other capability).
 
 **`authn` (per-project authentication procedure)**:

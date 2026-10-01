@@ -1,0 +1,52 @@
+# Usage (from the instance worktree root, where the per-instance `.env` lives):
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml -f eval/docker-compose.eval.yml up
+#
+# Eval overlay (D41): turns env drift from a silent default into a loud startup
+# failure. It makes the instance `.env` mandatory (`required: true`) and
+# re-declares every variable the app reads without a fallback with fail-loud
+# required-variable interpolation, so a stale `.env` fails `config`/`up`
+# naming the variable instead of booting on a fallback.
+#
+# Required set, from the real contract rather than by guess:
+# - `NEO4J_URI`, `NEO4J_USER`, `NEO4J_PASSWORD`, `POSTGRES_DSN`, `KALI_MCP_URL`:
+#   hard `os.environ[...]` reads in `src/polymerhus/app/config.py`.
+# - The nine `LLM_<ROLE>` model keys: `src/polymerhus/app/llm/providers.py`
+#   `resolve_role` raises unless the role's key holds `<provider>:<model>`
+#   (the `LLM_<ROLE>` contract, #240); one key per distinct `model_key`
+#   across `ROLES` and `HUNTING_ROLES`.
+# - Provider `API_KEY_<PROVIDER>` vars are deliberately NOT listed: which key
+#   is needed depends on the provider each role selects, which compose cannot
+#   express, and app boot (`validate_llm_config`) already fails naming the
+#   missing key for every provider actually referenced.
+# The `eval/env_preflight.py` preflight keeps the instance `.env` aligned with
+# `.env.example` before this overlay is ever rendered.
+services:
+  lightrag:
+    env_file:
+      - path: .env
+        required: true
+
+  agent:
+    env_file:
+      - path: .env
+        required: true
+    environment:
+      NEO4J_URI: ${NEO4J_URI:?NEO4J_URI is required - run eval/env_preflight.py, then set it in the instance .env}
+      NEO4J_USER: ${NEO4J_USER:?NEO4J_USER is required - run eval/env_preflight.py, then set it in the instance .env}
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:?NEO4J_PASSWORD is required - run eval/env_preflight.py, then set it in the instance .env}
+      POSTGRES_DSN: ${POSTGRES_DSN:?POSTGRES_DSN is required - run eval/env_preflight.py, then set it in the instance .env}
+      KALI_MCP_URL: ${KALI_MCP_URL:?KALI_MCP_URL is required - run eval/env_preflight.py, then set it in the instance .env}
+      LLM_CONFIGURATOR: ${LLM_CONFIGURATOR:?LLM_CONFIGURATOR is required - '<provider>:<model>' in the instance .env}
+      LLM_TRIAGER: ${LLM_TRIAGER:?LLM_TRIAGER is required - '<provider>:<model>' in the instance .env}
+      LLM_JOB_ORCHESTRATOR: ${LLM_JOB_ORCHESTRATOR:?LLM_JOB_ORCHESTRATOR is required - '<provider>:<model>' in the instance .env}
+      LLM_CRAWLER: ${LLM_CRAWLER:?LLM_CRAWLER is required - '<provider>:<model>' in the instance .env}
+      LLM_ANALYSER: ${LLM_ANALYSER:?LLM_ANALYSER is required - '<provider>:<model>' in the instance .env}
+      LLM_HUNTING_ORCHESTRATOR: ${LLM_HUNTING_ORCHESTRATOR:?LLM_HUNTING_ORCHESTRATOR is required - '<provider>:<model>' in the instance .env}
+      LLM_HUNTING_HUNTER: ${LLM_HUNTING_HUNTER:?LLM_HUNTING_HUNTER is required - '<provider>:<model>' in the instance .env}
+      LLM_POD_RUNNER: ${LLM_POD_RUNNER:?LLM_POD_RUNNER is required - '<provider>:<model>' in the instance .env}
+      LLM_POD_TRIAGER: ${LLM_POD_TRIAGER:?LLM_POD_TRIAGER is required - '<provider>:<model>' in the instance .env}
+
+  tests:
+    env_file:
+      - path: .env
+        required: true

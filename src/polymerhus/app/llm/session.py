@@ -41,6 +41,7 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 
 from polymerhus.app.llm.capability import resolve_capability
 from polymerhus.app.llm.conversation import conversation_scope
+from polymerhus.app.llm.session_address import SessionAddress
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +50,7 @@ logger = logging.getLogger(__name__)
 # address that yields one); it never hand-builds one.
 
 
-def _as_thread_id(thread) -> str:
+def _as_thread_id(thread: SessionAddress | str) -> str:
     """Accept either a raw `thread_id` string or a `SessionAddress` (any object exposing
     `.thread_id`), so a caller can pass the typed address directly."""
     return getattr(thread, "thread_id", thread)
@@ -187,6 +188,8 @@ def _build_agent(
     turn entry points can never drift."""
     from langchain.agents import create_agent
 
+    from polymerhus.app.llm.parsing_recovery import parsing_recovery_middleware
+
     if model_factory is not None:
         model = model_factory(role_id)
     elif read_timeout_s is not None:
@@ -198,8 +201,11 @@ def _build_agent(
         kwargs["system_prompt"] = system_prompt
     if response_format is not None:
         kwargs["response_format"] = response_format
-    if middleware:
-        kwargs["middleware"] = list(middleware)
+    # #280: parsing-error recovery is wired FIRST so it is the after_model
+    # loop-exit node - every caller after_model hook (the compaction ledger)
+    # runs before it, and its `jump_to="model"` is honoured by the model-to-tools
+    # routing. Always present: an unanswered invalid call poisons the thread.
+    kwargs["middleware"] = [parsing_recovery_middleware(), *list(middleware or ())]
     if store is not None:
         kwargs["store"] = store
     return create_agent(model, **kwargs)
@@ -210,6 +216,34 @@ def _turn_config(role_id: str, thread_id: str, observe: bool,
     config: dict = {"configurable": {"thread_id": thread_id}}
     return _observe_config(config, role_id, thread_id,
                            extra_tags=extra_tags) if observe else config
+
+
+# #280: the resumption gate. The upstream enforces POSITIONAL adjacency between an
+# assistant tool call and its answers, and the module checkpointer prunes to the
+# LATEST checkpoint per thread, so the interrupted parent tuple is gone the moment
+# the new input is written. Read the pending `next` nodes HERE, at the seam, BEFORE
+# invoking; when non-empty hand the fact to `before_model` through the config
+# metadata. Fail-open: any read failure degrades to "no signal", never raises.
+def _mark_pending_resumption(config: dict, snapshot) -> None:
+    pending = list(getattr(snapshot, "next", None) or ())
+    if pending:
+        config.setdefault("metadata", {})["session_pending_next"] = pending
+
+
+def _read_pending_resumption(agent, config: dict) -> None:
+    try:
+        _mark_pending_resumption(config, agent.get_state(config))
+    except Exception:  # noqa: BLE001 - fail-open: no signal, never into the turn
+        logger.warning("pending-resumption read failed; treating the turn as "
+                       "non-resuming", exc_info=True)
+
+
+async def _aread_pending_resumption(agent, config: dict) -> None:
+    try:
+        _mark_pending_resumption(config, await agent.aget_state(config))
+    except Exception:  # noqa: BLE001 - fail-open: no signal, never into the turn
+        logger.warning("pending-resumption read failed; treating the turn as "
+                       "non-resuming", exc_info=True)
 
 
 # --- T1 (#213): streamed generation as the default session mode --------------
@@ -423,7 +457,7 @@ async def _areplay_reasoning(agent, config: dict, result: dict, role_id: str,
 
 def run_session_turn(
     role_id: str,
-    thread_id: str,
+    thread_id: SessionAddress | str,
     new_messages: Sequence[BaseMessage],
     *,
     checkpointer,
@@ -459,7 +493,11 @@ def run_session_turn(
     recovery turn's material, never lost (fail-open: the cut never raises).
 
     `extra_tags` appends caller-owned join keys (the bare run id) to the recorded
-    `langfuse_tags` (default None = today's tags, unchanged)."""
+    `langfuse_tags` (default None = today's tags, unchanged).
+    `thread_id` is a typed `SessionAddress` (`session_address.py`) - or, for
+    back-compat, a raw thread-id string - so a caller can pass the address directly;
+    the composed id reaches the conversation scope and every config/metadata seam."""
+    thread_id = _as_thread_id(thread_id)
     # D12: the conversation scope - every client built inside the turn (the
     # turn's own, and any a middleware builds, e.g. the summariser) binds the
     # thread id as the provider's conversation request primitive.
@@ -471,6 +509,8 @@ def run_session_turn(
             model_factory=model_factory, read_timeout_s=read_timeout_s,
         )
         config = _turn_config(role_id, thread_id, observe, extra_tags=extra_tags)
+        if checkpointer is not None:
+            _read_pending_resumption(agent, config)
         if observe and checkpointer is not None:
             _attach_readability_metadata(
                 config, _read_thread_state(checkpointer, thread_id))
@@ -510,7 +550,7 @@ def run_session_turn(
 
 async def arun_session_turn(
     role_id: str,
-    thread_id: str,
+    thread_id: SessionAddress | str,
     new_messages: Sequence[BaseMessage],
     *,
     checkpointer,
@@ -539,7 +579,15 @@ async def arun_session_turn(
     absent means no context-carried bindings for this turn.
 
     T1 (#213): streamed generation is the DEFAULT mode here too - same blackloop
-    cut + reasoning capture as the sync turn, driven on the event loop."""
+    cut + reasoning capture as the sync turn, driven on the event loop.
+
+    `thread_id` is a typed `SessionAddress` (`session_address.py`) - or, for
+    back-compat, a raw thread-id string - exactly as `stateful_turn` accepts: the
+    composed thread id is derived BEFORE it is bound as the conversation and used
+    for the checkpoint config. A raw address in the opencode-go `x-opencode-session`
+    header fails the provider client's `default_headers` validation (the live e2e
+    defect: every pod turn degraded to `technical-infeasibility`, 0 iterations)."""
+    thread_id = _as_thread_id(thread_id)
     # D12: the conversation scope - the async turn binds the same thread id the
     # sync turn does, so both entry points emit identical request primitives.
     with conversation_scope(thread_id):
@@ -550,6 +598,8 @@ async def arun_session_turn(
             model_factory=model_factory, read_timeout_s=read_timeout_s,
         )
         config = _turn_config(role_id, thread_id, observe, extra_tags=extra_tags)
+        if checkpointer is not None:
+            await _aread_pending_resumption(agent, config)
         if observe and checkpointer is not None:
             _attach_readability_metadata(
                 config, await _aread_thread_state(checkpointer, thread_id))
@@ -723,7 +773,7 @@ def _structured_response_format(
 
 def stateful_turn(
     role_id: str,
-    thread,
+    thread: SessionAddress | str,
     new_messages: Sequence[BaseMessage],
     *,
     checkpointer,
@@ -1092,7 +1142,7 @@ def _turn_from_state(values: dict, thread_id: str) -> "SessionTurn | None":
 # memory" TOOL would call - generic, because every stateful child lives in the same
 # store under its `SessionAddress` thread.
 
-def read_session_memory(checkpointer, thread) -> SessionTurn | None:
+def read_session_memory(checkpointer, thread: SessionAddress | str) -> SessionTurn | None:
     """Read a child session's PERSISTED memory (its latest checkpoint) without making a
     turn: returns the last `SessionTurn`'s worth of state, or None when the thread has no
     checkpoint yet (or the store cannot be read). Use this - NOT a tool round-trip - to
@@ -1106,7 +1156,7 @@ def read_session_memory(checkpointer, thread) -> SessionTurn | None:
     return _turn_from_state(values, thread_id)
 
 
-async def aread_session_memory(checkpointer, thread) -> SessionTurn | None:
+async def aread_session_memory(checkpointer, thread: SessionAddress | str) -> SessionTurn | None:
     """Async-native variant for a parent running on the event loop (the async actor's
     `on_message` path). Same contract as `read_session_memory`."""
     thread_id = _as_thread_id(thread)

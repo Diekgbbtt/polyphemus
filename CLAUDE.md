@@ -28,7 +28,7 @@ Provisional terms not yet ratified by the operator (currently the phase-3 `fault
 ### E2E eval targets
 
 The eval dataset is `tests/e2e/fixtures/eval-targets.yaml` - the registry of live targets for end-to-end runs.
-Each target's fields map onto `settings.recon` (`target_seed`, `auth_context`, `operator_kb`, feature toggles) plus the `POST /recon` job subset; the eval agent applies one target's `settings`/`launch` mechanically and asserts against its `expected_recon` ground truth.
+Each target's `settings` map onto `settings.recon` (`target_seed`, `operator_kb`, feature toggles) plus the `POST /recon` job subset, and its `auth_context` seeds the shared auth store via `PUT /projects/{id}/auth` (the settings blob carries no auth, #243); the eval agent applies one target mechanically and asserts against its `expected_recon` ground truth.
 
 ### Work authority
 

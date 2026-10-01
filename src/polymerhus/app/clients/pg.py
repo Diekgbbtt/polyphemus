@@ -525,6 +525,44 @@ def list_running_runs() -> list[dict]:
     return out
 
 
+def list_running_analysis_runs() -> list[dict]:
+    """Every analysis run in its only live state (`draining`), all projects.
+    The read half of the app-state surface; terminal states (drained,
+    withheld, stopped, interrupted) never appear here."""
+    with psycopg.connect(config.POSTGRES_DSN) as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT analysis_run_id, run_id, project_id, status, started_at "
+            "FROM analysis_runs WHERE status = 'draining' "
+            "ORDER BY started_at NULLS LAST",
+        )
+        return [
+            {
+                "analysis_run_id": r[0], "run_id": r[1], "project_id": r[2],
+                "status": r[3], "started_at": r[4],
+            }
+            for r in cur.fetchall()
+        ]
+
+
+def list_running_hunting_runs() -> list[dict]:
+    """Every hunting run in its only live state (`running`), all projects.
+    The read half of the app-state surface; terminal states (complete,
+    stopped, failed, interrupted) never appear here."""
+    with psycopg.connect(config.POSTGRES_DSN) as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT hunting_run_id, project_id, status, started_at, finished_at "
+            "FROM hunting_runs WHERE status = 'running' "
+            "ORDER BY started_at NULLS LAST",
+        )
+        return [
+            {
+                "hunting_run_id": r[0], "project_id": r[1], "status": r[2],
+                "started_at": r[3], "finished_at": r[4],
+            }
+            for r in cur.fetchall()
+        ]
+
+
 def reap_stale_runs(ttl_seconds: int) -> int:
     """Flip running runs whose heartbeat is older than ttl_seconds (or NULL)
     to failed, stamping finished_at. Returns the number reaped.

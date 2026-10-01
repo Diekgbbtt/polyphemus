@@ -1,10 +1,8 @@
 """Live e2e (#206 E1 Shape A + T3/T4) - the recovery capability against the REAL
 runtime, with minimal mocking.
 
-Runner: the standard polymerhus agent container (docker-compose.yml +
-docker-compose.dev.yml + docker-compose.e2e.yml) built from the SAME
-polymerhus-agent:latest image, with this merged tree bind-mounted live by
-the dev overlay - no sibling image, no second build. The container runs the
+Runner: the worktree sibling agent container (docker-compose.e2e.yml) built
+from this tree and bind-mounted live - no second build. The container runs the
 production env (main-tree .env); the test knobs below ride `exec -e` on the
 driven snippets only, so the agent/gateway processes are unperturbed.
 Knobs: LLM_BLACKLOOP_REASONING_BUDGET=12000 (measured on the run model:
@@ -28,8 +26,7 @@ from pathlib import Path
 import pytest
 
 WORKTREE = Path(__file__).resolve().parents[2]
-COMPOSE = ["docker", "compose", "-f", "docker-compose.yml",
-           "-f", "docker-compose.dev.yml", "-f", "docker-compose.e2e.yml"]
+COMPOSE = ["docker", "compose", "-f", "docker-compose.e2e.yml"]
 SERVICE = "agent"
 
 # Snippet-only knobs (see module docstring); the container env is production.
@@ -143,10 +140,9 @@ def require_upstream():
 @pytest.fixture(scope="module")
 def thread_id() -> str:
     assert sibling_running(), (
-        "the polymerhus agent is not running - bring the stack up from "
-        "this worktree (`docker compose -f docker-compose.yml -f "
-        "docker-compose.dev.yml -f docker-compose.e2e.yml up -d postgres "
-        "neo4j kali agent`) before the live tier")
+        "the worktree sibling agent is not running - bring it up from "
+        "this worktree (`docker compose -f docker-compose.e2e.yml up -d "
+        "--build agent`) after the main stack is up, before the live tier")
     return f"live206-{int(time.time())}:triager"
 
 
