@@ -18,8 +18,9 @@ from typing import Callable, Sequence, TextIO
 
 import yaml
 
-from orchestrator import api, assessment, diagnosis, evidence, instances, monitor, routing, store, subagents, surfer, trial, verdicts
+from orchestrator import api, assessment, chain as chain_mod, diagnosis, evidence, instances, monitor, routing, store, subagents, surfer, trial, verdicts
 from orchestrator import alignment
+from orchestrator.targets import build_strategy
 from orchestrator.commands import LocalRunner
 from orchestrator.files import FileStore
 from orchestrator.instances import InstanceError
@@ -214,6 +215,24 @@ def _parser() -> argparse.ArgumentParser:
         default=float(os.environ.get("EVAL_MONITOR_BUDGET_S", 3600.0)),
         help="the wait between a node's dispatch and its re-dispatch/escalation "
         "decision",
+    )
+
+    # --- the target chain (multi-target scaffold) -----------------------------
+    chain_parser = sub.add_parser(
+        "next-target",
+        help="advance the chain: reclaim the previous image, pull the next, "
+        "bring it up, verify health",
+    )
+    _common_args(chain_parser)
+    chain_parser.add_argument("--instance", required=True, help="the instance id")
+    chain_parser.add_argument(
+        "--target", required=True, help="the target_id to advance the chain to"
+    )
+    chain_parser.add_argument(
+        "--chain-state",
+        default=os.environ.get("EVAL_CHAIN_STATE"),
+        help="the chain position file (default: "
+        "<instances-root>/<instance_id>/chain-state.yaml)",
     )
 
     # --- the diagnosis verbs (#272) -------------------------------------------
@@ -1283,6 +1302,69 @@ def _run_monitor(
     return 1 if escalated else 0
 
 
+# --- the target chain (multi-target scaffold) ---------------------------------
+
+
+def _run_next_target(
+    args,
+    setup: EvalSetup,
+    config: OrchestratorConfig,
+    out: TextIO,
+    err: TextIO,
+    runner_factory: RunnerFactory,
+) -> int:
+    """Advance one instance's chain by one target; print the step or the trace."""
+    instance = _find_instance(setup, args.instance)
+    paths = instances.instance_paths(
+        instance,
+        config.instances_root,
+        repo=config.repo,
+        branch=config.branch,
+        compose_files=config.compose_files,
+    )
+    registry = setup.dataset.registry if setup.dataset else ""
+    state_path = (
+        Path(args.chain_state)
+        if args.chain_state
+        else Path(args.instances_root) / instance.instance_id / "chain-state.yaml"
+    )
+    chain = chain_mod.Chain(
+        instance=instance,
+        paths=paths,
+        strategy_for=lambda run: build_strategy(
+            run, paths, registry=registry, env=os.environ
+        ),
+        runner=runner_factory(),
+        files=FileStore(),
+        state_path=state_path,
+    )
+    try:
+        step = chain.next_target(args.target)
+    except chain_mod.TargetFailure as failure:
+        # The full inspectable trace: the step log, the command error, and the
+        # Python traceback, so the orchestrator sees exactly what failed.
+        print(json.dumps(failure.report(), indent=2), file=err)
+        return 1
+    print(
+        json.dumps(
+            {
+                "target_id": step.target_id,
+                "previous": step.previous,
+                "images": list(step.images),
+                "reclaimed": list(step.reclaimed),
+                "pulled": list(step.pulled),
+                "host": step.up.host,
+                "front_url": step.up.front_url,
+                "backend": step.up.backend,
+                "health": step.health,
+            },
+            indent=2,
+        ),
+        file=out,
+    )
+    return 0
+
+
 # --- artifact store (#273) ----------------------------------------------------
 
 
@@ -1807,6 +1889,8 @@ def main(
                 args, setup, out, err, runner_factory, dispatch_factory,
                 diagnose_dispatch_factory,
             )
+        if args.verb == "next-target":
+            return _run_next_target(args, setup, config, out, err, runner_factory)
 
         dry_run = args.verb == "plan" or getattr(args, "dry_run", False)
         if dry_run:

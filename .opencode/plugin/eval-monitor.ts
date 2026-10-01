@@ -105,6 +105,69 @@ export const EvalMonitor: Plugin = async ({ $, directory }) => {
           }
         },
       }),
+      next_target: tool({
+        description:
+          "Advance the multi-target chain by one target on one instance: reclaim " +
+          "the previous target's image, pull the next target's image (verified " +
+          "present), bring it up, and check its health. On success returns the " +
+          "target's image identifiers, the reclaimed/pulled references, and the up " +
+          "result; on failure returns the full inspectable trace (step log, command " +
+          "error, and traceback) with exit 1.",
+        args: {
+          setup: tool.schema.string().describe("path to the EvalSetup YAML"),
+          instance: tool.schema.string().describe("the instance id"),
+          target: tool.schema
+            .string()
+            .describe("the target_id to advance the chain to"),
+          repo: tool.schema
+            .string()
+            .optional()
+            .describe("the canonical eval checkout"),
+          instances_root: tool.schema
+            .string()
+            .optional()
+            .describe("where per-instance worktrees live"),
+          branch: tool.schema
+            .string()
+            .optional()
+            .describe("the read-only eval branch"),
+          chain_state: tool.schema
+            .string()
+            .optional()
+            .describe("the chain position file"),
+        },
+        async execute(args) {
+          const argv: string[] = [
+            "python3",
+            "-m",
+            "orchestrator",
+            "next-target",
+            args.setup,
+            "--instance",
+            args.instance,
+            "--target",
+            args.target,
+          ]
+          const flag = (name: string, value?: string) => {
+            if (value !== undefined && value !== "") argv.push(name, value)
+          }
+          flag("--repo", args.repo)
+          flag("--instances-root", args.instances_root)
+          flag("--branch", args.branch)
+          flag("--chain-state", args.chain_state)
+
+          const result = await $`${argv}`
+            .cwd(directory)
+            .env({ ...process.env, PYTHONPATH: "eval" })
+            .nothrow()
+            .quiet()
+          return {
+            title: `next_target ${args.instance} -> ${args.target}`,
+            output: result.stdout.toString() + result.stderr.toString(),
+            metadata: { exitCode: result.exitCode, argv },
+          }
+        },
+      }),
     },
   }
 }
