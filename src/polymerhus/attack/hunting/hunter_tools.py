@@ -380,6 +380,17 @@ class ExecArgs(BaseModel):
 # --- the tools ----------------------------------------------------------------
 
 
+def _with_conciseness_directive(description: str) -> str:
+    """Append the single-sourced hunting conciseness directive (#292) to a
+    store/notes tool description, never hand-copied. The import is lazy so
+    importing this module requires no env var (CODING_STANDARD section 6;
+    `attack/hunting/llm.py` pulls `app.config`)."""
+    from polymerhus.attack.hunting.llm import (  # noqa: PLC0415
+        append_conciseness_directive,
+    )
+    return append_conciseness_directive(description)
+
+
 class HuntsStoreTool(BaseTool):
     """The status-bearing write/read seam over `HunterMemoryStore` (spec 5): the
     transition verbatim lives here (`status` on the write). A duplicate `create`
@@ -422,6 +433,7 @@ class HuntsStoreTool(BaseTool):
         self._store = store
         self._project_id = project_id
         self._hunt_store = hunt_store
+        self.description = _with_conciseness_directive(self.description)
 
     def invoke(self, input, config=None, **kwargs):
         """#209: translate the known schema drift (missing `command` with
@@ -549,6 +561,7 @@ class NotesTool(BaseTool):
         self._store = store
         self._project_id = project_id
         self._hunt_store = hunt_store
+        self.description = _with_conciseness_directive(self.description)
 
     def invoke(self, input, config=None, **kwargs):
         """#209: translate the known schema drift (missing `command` with

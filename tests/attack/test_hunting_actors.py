@@ -585,3 +585,21 @@ def test_a6_hunt_verdict_uses_the_negotiated_strategy(monkeypatch):
         GateDecision, RatifyDecision, NoteDecision}
     assert calls["tools_bound"] is False  # no tool surface in this drive
     assert seen["response_format"] is sentinel
+
+
+# --- #292: the conciseness directive in the orchestrator tool descriptions ----
+
+def test_orchestrator_store_tool_descriptions_carry_the_conciseness_directive():
+    """The orchestrator's `hunts_store` / `notes` tool descriptions carry the
+    single-sourced conciseness directive verbatim (#292), so the model reads the
+    writing cap wherever it decides what to write."""
+    from types import SimpleNamespace
+
+    from polymerhus.attack.hunting.actors import build_orchestrator_tool_surface
+    from polymerhus.attack.hunting.llm import HUNTING_CONCISENESS_DIRECTIVE
+
+    tools = SimpleNamespace(graph_view=None, store_reads=None, phase_context=None)
+    surface = {t.name: t for t in build_orchestrator_tool_surface(
+        tools, run_id="run1", project_id="proj-1")}
+    for name in ("hunts_store", "notes"):
+        assert HUNTING_CONCISENESS_DIRECTIVE in surface[name].description, name

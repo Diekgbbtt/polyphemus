@@ -48,6 +48,17 @@ NOTES_NO_STORE = "NOTES_NO_STORE: no pod memory store is bound"
 NOTE_KINDS_DECLARED = list(POD_NOTE_KINDS)
 
 
+def _with_conciseness_directive(description: str) -> str:
+    """Append the single-sourced hunting conciseness directive (#292) to the
+    note tool description. The import is lazy so importing this module requires
+    no env var (CODING_STANDARD section 6; `attack/hunting/llm.py` pulls
+    `app.config`)."""
+    from polymerhus.attack.hunting.llm import (  # noqa: PLC0415
+        append_conciseness_directive,
+    )
+    return append_conciseness_directive(description)
+
+
 class NoteToolSpec(BaseModel):
     """The `note` tool's contract (D84-32, T1): `operation` discriminates
     write/read.
@@ -100,6 +111,7 @@ class PodNoteTool(BaseTool):
         super().__init__(**kwargs)
         self.__store = store
         self.__spec_id = spec_id
+        self.description = _with_conciseness_directive(self.description)
 
     # ------------------------------------------------------------------
     # the rejections carry the semantic + the machine code (D84-22)

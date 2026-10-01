@@ -9,6 +9,8 @@ model (CODING_STANDARD sections 6, 10).
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from polymerhus.app.llm import providers as P
@@ -363,3 +365,25 @@ def test_parse_json_object_passthrough_and_empty():
     assert HL._parse_json_object({"ok": True}) == {"ok": True}
     assert HL._parse_json_object("") is None
     assert HL._parse_json_object(None) is None
+
+
+# --- #292: the single-sourced surgical-conciseness directive ------------------
+
+def test_conciseness_directive_is_single_sourced_and_names_the_cap():
+    """The canonical directive (#292) lives once in `llm.py` and names the
+    ~500-char cap while covering the config `rationale` and note bodies."""
+    d = HL.HUNTING_CONCISENESS_DIRECTIVE
+    assert "500" in d
+    assert "rationale" in d
+    assert "note" in d and "body" in d
+
+
+def test_conciseness_directive_appears_verbatim_in_every_role_prompt():
+    """Drift guard: the exact constant text is present in each of the four
+    hunting role prompts, so the writing discipline reaches every agent that
+    decides what to write."""
+    prompts_dir = Path(HL.__file__).resolve().parent / "prompts"
+    for name in ("hunt-orchestrator.md", "hunting-agent.md",
+                 "pod-runner.md", "pod-triager.md"):
+        text = (prompts_dir / name).read_text(encoding="utf-8")
+        assert HL.HUNTING_CONCISENESS_DIRECTIVE in text, name

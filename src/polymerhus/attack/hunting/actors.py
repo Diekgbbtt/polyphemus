@@ -448,6 +448,16 @@ def build_orchestrator_tool_surface(tools, *, run_id: str, project_id: str | Non
                 return {"error": f"notes {option} degraded: {exc}"}
         return {"error": f"unknown cmd {cmd!r}; known: read, write"}
 
+    # The single-sourced conciseness directive (#292) is appended to the two
+    # store descriptions, never hand-copied. The import stays HERE (not module
+    # top) so importing this module requires no env var (CODING_STANDARD
+    # section 6; `llm` pulls `app.config`).
+    from polymerhus.attack.hunting.llm import (  # noqa: PLC0415
+        append_conciseness_directive,
+    )
+    hunts_store.description = append_conciseness_directive(hunts_store.description)
+    notes.description = append_conciseness_directive(notes.description)
+
     surface.extend([hunts_store, notes, graph_view])
     return surface
 
