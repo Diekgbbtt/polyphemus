@@ -63,6 +63,12 @@ The tracker records and specifies work; it does not schedule it.
 - The handoff point is the PR.
   Up to it, `loop-constraints.md` governs; at it, the tracker and a human reviewer take over.
 
+## The commit gate: decisions and documentation
+
+Before a commit is ready, the work runs a documentation pass - recorded in `CLAUDE.md` under "Decision records (the commit gate)":
+record the design decisions taken as ADRs under `docs/design/` (or amend the owning design doc), amend any decision the change supersedes, and update every impacted document (the owning `CONTEXT.md` glossaries, `docs/design/domain-model.md`, and any spec or ADR the change touches).
+This is a gate on the commit, on par with lint and tests, not a follow-up.
+
 ## Pull requests as the integration instrument
 
 Every change reaches production through a pull request.

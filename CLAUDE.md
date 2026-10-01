@@ -25,6 +25,16 @@ When you introduce, rename, or sharpen a domain term while implementing, update 
 When a change alters the reasoned model (a new primitive, a corrected relationship, a resolved open question), update `docs/design/domain-model.md` too.
 Provisional terms not yet ratified by the operator (currently the phase-3 `fault-hypothesis` / `testing technique` / `probe` / `vulnerability` vocabulary and the "escalating epistemic ladder" framing) stay marked as such until ratified. The fault-hypothesis is a phase-3 testing primitive, not a graph node or edge.
 
+### Decision records (the commit gate)
+
+Every change ends with a documentation pass, **before the commit, not after** - on par with lint and tests:
+
+- **Record the design decisions** the work took as an ADR under `docs/design/` (or amend the owning design doc), so the reasoning is durable and reviewable.
+- **Refine or amend superseded decisions.** When a change contradicts an earlier decision, update that record or mark it superseded in the same change; never leave two contradicting decisions live.
+- **Update every impacted document** - the owning `CONTEXT.md` glossaries, `docs/design/domain-model.md`, and any spec or ADR the change touches.
+
+A change is not ready to commit until this pass is done and the impacted docs land with it (a dedicated documentation commit in the same change is fine).
+
 ### E2E eval targets
 
 The eval dataset is `tests/e2e/fixtures/eval-targets.yaml` - the registry of live targets for end-to-end runs.
