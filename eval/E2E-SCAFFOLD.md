@@ -85,8 +85,10 @@ export EVAL_WEB_DIR=~/WebExploitBench
 export PH_API=http://localhost:8080
 export EVAL_SHA=$(git -C "$EVAL_REPO" rev-parse eval)
 export EVAL_STACK_FINGERPRINT=<daemon heartbeat decision.fingerprints.dev>
-export EVAL_ASSESS_COMMAND='opencode run --prompt {prompt} --trial {trial_record} --ground-truth {ground_truth} --data-root {data_root} --out {destination}'
-export EVAL_DIAGNOSE_COMMAND='opencode run --prompt {prompt} --trial {trial_record} --verdicts {verdicts} --data-root {data_root} --out {destination}'
+export EVAL_ASSESS_COMMAND="opencode run --agent eval-assessor --dir $EVAL_REPO \"Follow {prompt}. trial_record={trial_record}; ground_truth={ground_truth}; data_root={data_root}; destination={destination}; trace_id={trace_id}. Write only {destination}.\""
+export EVAL_DIAGNOSE_COMMAND="opencode run --agent eval-diagnoser --dir $EVAL_REPO \"Follow {prompt}. trial_record={trial_record}; verdicts={verdicts}; ground_truth={ground_truth}; data_root={data_root}; vulns={vulns}; destination={destination}; trace_id={trace_id}. Write only {destination}.\""
+export EVAL_ALIGN_COMMAND="opencode run --agent eval-aligner --dir $EVAL_REPO \"Follow {prompt}. input={input}; destination={destination}. Write only {destination}.\""
+export EVAL_SURFER_COMMAND="opencode run --agent eval-surfer --dir $EVAL_REPO \"Follow {prompt}. input={input}; destination={destination}. Write only {destination}.\""
 ```
 
 `EVAL_STACK_FINGERPRINT` is always the fingerprint of the running (post-advance) tree, so it matches the current `EVAL_SHA`.

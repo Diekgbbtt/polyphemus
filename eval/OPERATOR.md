@@ -704,8 +704,10 @@ Dispatch never blocks the next target; the eval-close phase is the presence
 check (D15).
 
 Configure the assessment agent command once, as `EVAL_ASSESS_COMMAND` (or
-`--command` per invocation). It is a shell line whose placeholders the
-orchestrator substitutes before running it:
+`--command` per invocation). It is a command line whose placeholders the
+orchestrator substitutes before running it; the line is split with `shlex` and
+executed directly (no shell), so the placeholders are substituted into, not by,
+the command:
 
 | Placeholder | Substituted with |
 |---|---|
@@ -716,11 +718,17 @@ orchestrator substitutes before running it:
 | `{destination}` | the trial's `verdicts.yaml`. |
 | `{trace_id}` | the trial's Langfuse trace id, when one was recorded (empty otherwise). |
 
-Example:
+Example (`eval-assessor` is the role agent at `.opencode/agent/eval-assessor.md`;
+replace `<canonical-checkout>` with the absolute path of the eval repo checkout,
+a literal since the line is not shell-evaluated):
 
 ```
-EVAL_ASSESS_COMMAND='opencode run --prompt {prompt} --trial {trial_record} --ground-truth {ground_truth} --data-root {data_root} --out {destination}'
+EVAL_ASSESS_COMMAND='opencode run --agent eval-assessor --dir <canonical-checkout> "Follow {prompt}. trial_record={trial_record}; ground_truth={ground_truth}; data_root={data_root}; destination={destination}; trace_id={trace_id}. Write only {destination}."'
 ```
+
+`opencode run` takes the prompt as a message; the role agent reads the contract
+file named in `{prompt}` itself, so the launcher never has to know opencode's
+flags beyond `--agent` and `--dir`.
 
 The prompt tells the subagent to read the trial record, the ground truth
 (`python3 eval/gt.py <dir> --json`), and the persisted evidence under the data
@@ -760,7 +768,7 @@ Configure the diagnoser command once, as `EVAL_DIAGNOSE_COMMAND` (or `--diagnose
 Example:
 
 ```
-EVAL_DIAGNOSE_COMMAND='opencode run --prompt {prompt} --trial {trial_record} --verdicts {verdicts} --data-root {data_root} --out {destination}'
+EVAL_DIAGNOSE_COMMAND='opencode run --agent eval-diagnoser --dir <canonical-checkout> "Follow {prompt}. trial_record={trial_record}; verdicts={verdicts}; ground_truth={ground_truth}; data_root={data_root}; vulns={vulns}; destination={destination}; trace_id={trace_id}. Write only {destination}."'
 ```
 
 #### The issue bank is read-only
@@ -876,7 +884,7 @@ orchestrator substitutes before running it:
 Example:
 
 ```
-EVAL_ALIGN_COMMAND='opencode run --prompt {prompt} --input {input} --out {destination}'
+EVAL_ALIGN_COMMAND='opencode run --agent eval-aligner --dir <canonical-checkout> "Follow {prompt}. input={input}; destination={destination}. Write only {destination}."'
 ```
 
 The impact map is DATA the prompt receives; the code contains no per-class
@@ -970,7 +978,7 @@ substitutes before running it:
 Example:
 
 ```
-EVAL_SURFER_COMMAND='opencode run --prompt {prompt} --input {input} --out {destination}'
+EVAL_SURFER_COMMAND='opencode run --agent eval-surfer --dir <canonical-checkout> "Follow {prompt}. input={input}; destination={destination}. Write only {destination}."'
 ```
 
 ## 3. KB authoring
