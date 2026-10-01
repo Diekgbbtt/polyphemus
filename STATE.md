@@ -1,6 +1,22 @@
 # Loop State — polymerhus L1-MVP
 
-Last run: 2026-10-01 (**#286 diagnosis + three sub-issue fixes (#292/#293/#294) merged into `dev`; see the amendment directly below.** Before: #208 follow-ups - typed Profile literal + swissai empty-tools fix, E1 re-run. Before: #208 - httpx_reprofile one pod. Before: #210 - compaction summariser robustness. Before: #104 - Gateway container. Before: #94 - Session agents.)
+Last run: 2026-10-01 (**#298 - the #294 write seam derived identity symbols from an unvalidated payload; fixed by validating the identity and deriving the symbols (#298), with the value/symbol boundary recorded. Branch `fix/298-derived-symbols-write-contract` off `dev`.)** Before: #286 diagnosis + sub-issues #292/#293/#294 merged into `dev`; #295 obsolete-test fix. Before: #208 follow-ups - typed Profile literal + swissai empty-tools fix, E1 re-run. Before: #208 - httpx_reprofile one pod. Before: #210 - compaction summariser robustness. Before: #104 - Gateway container. Before: #94 - Session agents.)
+
+## AMENDMENT 2026-10-01 (b) - #298: the write seam validated + derived symbols (branch `fix/298-derived-symbols-write-contract`)
+
+**Failure.** A delivered produced config `_CWE-1220_.yaml` carried `fault_class`, `hunt_id`, `prompt_template`, `status: ratified`, `surface_context` - but no `unit_id` and no `vulnerability_class`. `HuntStore.write_config` derived the file name from `data.get("unit_id"/"fault_class"/"vulnerability_class")` with NO validation and silently acknowledged, so the degenerate name landed; validation ran only on the read path, so the surfer refused it every tick and `run_work_remaining` still saw `status: ratified` (never quiesced). Root: the #294 agent-sole-write model made the agent author identity SYMBOLS the symbolic layer must own, and left the write seam unvalidated.
+
+**Fix (ratified boundary).** The value/symbol boundary and the derived-symbol store contract are recorded in `docs/design/hunting-store-write-decisions.md`.
+- **Validated identity + derived symbols.** `HuntStore.write_config` / `update_config` now refuse a payload missing `unit_id` / `fault_class` with a typed `ConfigIdentityError` (`require_config_identity`; `vulnerability_class` may be empty - the carried-bare degrade); the orchestrator `hunts_store` tool pre-validates and returns a coded `hunts_store_write_rejected` naming the field. The file name / semantic key are derived from the identity; never a silent degenerate name.
+- **`hunt_id` deterministic** from `(unit_id, fault_class, vulnerability_class)` (`hunt_id_for`); the `uuid4` base + `-i` fan-out order element is removed.
+- **`prompt_template.l0_evidence` removed**; the candidate's applies-witness is folded into the harness-owned `surface_context` as `fault_evidence`.
+- **`HuntConfig.sub_fault_ids` removed** (bare folded CWE ids the hunter cannot resolve); the fold family still feeds the orchestrator's gate reasoning only.
+- **`vulnerability_class` stays agent-authored; `prior_hunt_insights` stays orchestrator-owned.**
+- Prompts (`hunt-orchestrator.md`), the `llm.py` phase prompt, and the `hunts_store` tool description teach the required identity attributes.
+
+**Verification (branch).** `tests/attack` + the hunting-domain integration set: 787 passed / 29 skipped; hunting API: 28 passed; `compileall` clean. Commits: `7621f15` (validate seam), `0a21b98` (derive id + field removals), `b37430a` (docs/prompts).
+
+**Remaining (decision 5 - the universal pattern across the other agent seams).** The hunter `hunts_store` requests `fault_key` / `fault_keyword` / `strategy_keyword` for the produced spec file name; the harness already holds the parent config key, so `fault_key` should be bound (Rule 3) and the file name derived from the spec's validated identity. OPEN GREY POINT for the operator: whether `fault_keyword` / `strategy_keyword` are semantic file-name attributes (authored, like `vulnerability_class`) or symbols to derive - the orchestrator analogy says keep them. The pod `note` seam already binds `spec_id` (conformant). Tracked as the next increment on #298.
 
 ## AMENDMENT 2026-10-01 - #286 hunting tool-contract diagnosis + sub-issues #292/#293/#294 (merged into `dev`, tip `2cdd1e0`)
 
