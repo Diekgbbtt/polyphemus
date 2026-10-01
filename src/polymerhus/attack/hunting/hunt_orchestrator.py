@@ -137,6 +137,16 @@ def pair_frame(unit_id: str, fault_class: str) -> dict:
 _ORCHESTRATOR_ACTORS: dict[str, "HuntOrchestratorActor"] = {}
 _ORCHESTRATOR_LOCK = threading.Lock()
 
+# The per-run store-seam wrappers (#294 requirement 2): ONE
+# `SurfaceContextStore` per run_id, RETARGETED each pass. The actor's tool
+# surface captures the store seam ONCE (`actors.build_orchestrator_tool_surface`
+# binds `tools.store_reads` at first `_ensure_started`), so a fresh wrapper per
+# pass would leave the actor writing through the previous pass's wrapper (stale
+# `surface_context`, and counters the report never reads). Keeping one wrapper
+# per run and retargeting it keeps the captured seam current for every pass.
+# Reaped alongside the actor by the module's stop path.
+_SURFACE_STORES: dict[str, "SurfaceContextStore"] = {}
+
 # The default targeted job a park/resume back-edge runs (a re-witness of the
 # unit's surface).
 _DEFAULT_BACK_EDGE_JOB = "httpx_reprofile"
@@ -804,6 +814,11 @@ class SurfaceContextStore:
     just the config writes. The `hunts_store` / `notes` tools bind to this
     wrapper exactly as they bind to the store.
 
+    The wrapper is STABLE per run (`_SURFACE_STORES`) and `retarget`ed each pass
+    to the current pass's raw store/surface, because the actor's tool surface
+    captures the store seam only once; a fresh wrapper per pass would strand the
+    actor on a stale seam.
+
     Fail-open canon preserved: a write that raises propagates to the caller
     (the tool degrades it fail-open, never into the turn); the wrapper only
     counts the observed failures for the report. A `DuplicateConfigError` is
@@ -816,6 +831,16 @@ class SurfaceContextStore:
         self._projection: object | None = None
         self.write_failures = 0
         self.duplicate_config_writes = 0
+
+    def retarget(self, *, inner, surface) -> None:
+        """Point the stable per-run wrapper at the CURRENT pass's raw store and
+        surface (#294 requirement 2). A `SurfaceContextStore` passed as `inner`
+        is unwrapped, so the seam always delegates to the raw store; the
+        per-pass counters and the per-turn projection reset."""
+        self._inner = inner._inner if isinstance(inner, SurfaceContextStore) else inner
+        self.surface = surface
+        self._projection = None
+        self.reset_counters()
 
     def set_projection(self, projection) -> None:
         """Thread the current pair's rich projection onto the seam for the next
@@ -877,18 +902,23 @@ class SurfaceContextStore:
         return getattr(self._inner, name)
 
 
-def _wrap_surface_context_store(store, *, surface):
-    """Wrap the pass's store seam with the agent-sole `surface_context` injector
-    (#294). An already-wrapped seam is reused (its surface refreshed and its
-    counters reset for the pass); `None` stays `None` (a store-less pass)."""
+def _surface_store_for(run_id: str, store, *, surface):
+    """The STABLE per-run `SurfaceContextStore` for the pass's store seam
+    (#294 requirement 2). ONE wrapper per `run_id` is created and `retarget`ed
+    each pass to the current raw store/surface (counters/projection reset), so
+    the actor's once-captured seam is always the current pass's. `None` stays
+    `None` (a store-less pass)."""
     if store is None:
         return None
-    if isinstance(store, SurfaceContextStore):
-        store.surface = surface
-    else:
-        store = SurfaceContextStore(store, surface=surface)
-    store.reset_counters()
-    return store
+    with _ORCHESTRATOR_LOCK:
+        wrapper = _SURFACE_STORES.get(run_id)
+        if wrapper is None:
+            inner = store._inner if isinstance(store, SurfaceContextStore) else store
+            wrapper = SurfaceContextStore(inner, surface=surface)
+            _SURFACE_STORES[run_id] = wrapper
+        else:
+            wrapper.retarget(inner=store, surface=surface)
+        return wrapper
 
 
 def mint_hunt_config(
@@ -980,10 +1010,12 @@ def build_back_edge_request(
 
 async def _reap_orchestrator(run_id: str) -> None:
     """The module's stop path for the per-run orchestration actor (#110): reap
-    and drop the actor the registry holds for `run_id`, if any. Called by the
-    runtime teardown (Task 6) - never by a pass's `finally`."""
+    and drop the actor AND the stable store-seam wrapper (#294) the registries
+    hold for `run_id`, if any. Called by the runtime teardown (Task 6) - never
+    by a pass's `finally`."""
     with _ORCHESTRATOR_LOCK:
         actor = _ORCHESTRATOR_ACTORS.pop(run_id, None)
+        _SURFACE_STORES.pop(run_id, None)
     if actor is not None:
         try:
             await actor.stop()
@@ -1009,13 +1041,20 @@ async def arun_orchestration(
     engine as reworked by #167: intake -> KB evidence -> surface read -> ONE
     supervisor-state schedule loop over the accepted FAULTS where every (unit,
     fault) pair runs the node-per-phase REASON stretch (`hypothesise -> ratify
-    -> note`, G2). The hypothesise phase elicits the vulnerability classes and
-    WRITES the status="hypothesised" drafts (the deterministic mint is called
-    at this phase, via the `hunts_store` tool); the ratify phase persists the
-    configs at their final status (ratified or dropped - G6, dropped stays on
-    disk); the note phase appends the notes. The graph ENDs at the REASON
-    stretch - the dispatch node is REMOVED (G12) and the O9 budget stage is
-    REMOVED (G7). Fail-open on every collaborator.
+    -> note`, G2). Under the agent-sole write model (#294) the harness does
+    NOT persist configs or notes: the AGENT's `hunts_store(write)` /
+    `notes(write, option="append")` tool calls are the sole writers (the
+    hypothesise phase elicits the vulnerability classes and its tool write
+    creates the status="hypothesised" drafts; the ratify phase's tool write
+    upserts the final status - ratified or dropped, G6 dropped stays on disk;
+    the note phase's tool write appends the notes). The deterministic mint still
+    runs at the hypothesise phase to build the IN-MEMORY drafts that drive the
+    phase flow and the report, but those drafts are never persisted by the
+    harness. The #201 carve-out is preserved: the harness-owned deterministic
+    `surface_context` is injected on the wrapped store seam before any agent
+    write, so the agent never authors it. The graph ENDs at the REASON stretch
+    - the dispatch node is REMOVED (G12) and the O9 budget stage is REMOVED
+    (G7). Fail-open on every collaborator.
 
     The hunt-orchestrator is the async-native parent of the hunting effort
     (feat/async-actor-agents): when the phase seams are None (the production
@@ -1151,7 +1190,9 @@ async def arun_orchestration(
     # are the sole writers. The #201 carve-out is preserved by wrapping the
     # store seam so every agent write carries the harness-assembled
     # deterministic `surface_context` (the projection is threaded per turn).
-    store_seam = _wrap_surface_context_store(tools.store_reads, surface=surface)
+    # The wrapper is STABLE per run and retargeted here to THIS pass's raw
+    # store/surface, so the actor's once-captured seam is always current.
+    store_seam = _surface_store_for(run_id, tools.store_reads, surface=surface)
     tools.store_reads = store_seam
 
     # The #135 symbolic render's shared facets: the materialisation and
@@ -1242,7 +1283,10 @@ async def arun_orchestration(
         for record in records or []:
             try:
                 configs.append(HuntConfig.model_validate(record))
-            except Exception:  # noqa: BLE001 - a malformed record degrades per record
+            except Exception as exc:  # noqa: BLE001 - a malformed record degrades per record
+                logger.warning(
+                    "hunt store persisted config skipped for %s (unparseable "
+                    "record): %s", key, exc)
                 continue
         return configs
 
