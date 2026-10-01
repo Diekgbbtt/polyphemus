@@ -342,6 +342,14 @@ def produced_config_keys(project_id: str) -> list[str]:
     return [k for k, _ in HuntStore().read_produced_configs(project_id)]
 
 
+def produced_config_body(project_id: str, semantic_key: str) -> dict:
+    """The persisted config BODY for a semantic key (produced/ then consumed/),
+    a real store read - never the code's return."""
+    from polymerhus.attack.hunting.hunt_store import HuntStore
+    configs = HuntStore().read_configs_by_key(project_id, semantic_key)
+    return configs[0] if configs else {}
+
+
 def produced_spec_files(project_id: str, fault_key: str) -> list[str]:
     from polymerhus.attack.hunting.hunter_memory import HunterMemoryStore
     return HunterMemoryStore().produced_spec_files(project_id, fault_key)

@@ -315,6 +315,38 @@ def test_hunt_launch_enqueues_via_the_launcher_seam(monkeypatch):
     assert config.prompt_template.research_direction == "rd"
 
 
+def test_hunt_launch_derives_hunt_id_ignoring_caller_fields(monkeypatch):
+    """#300: `hunt_id` is DERIVED from the identity (never a caller field), so a
+    caller-supplied `hunt_id` cannot diverge from the store-derived id; the
+    #202-removed slots (`adversarial_capabilities` / `assumptions` /
+    `technique_primitives`) are gone from the wire model."""
+    monkeypatch.setattr(pg, "project_exists", lambda pid: True)
+    from polymerhus.attack.hunting import runtime as hunting_runtime
+    from polymerhus.attack.hunting.hunt_orchestrator import hunt_id_for
+    from polymerhus.project_management.api import HuntingHuntLaunch
+
+    recorded: list = []
+    monkeypatch.setattr(
+        hunting_runtime, "enqueue_hunt_config",
+        lambda pid, config: recorded.append(config) or "k",
+    )
+
+    # a stale caller body: a fabricated `hunt_id` plus the removed #202 slots
+    resp = client.post("/projects/p1/hunting/hunt", json={
+        "unit_id": "Service:slug:a", "fault_class": "CWE-352",
+        "vulnerability_class": "CSRF", "hunt_id": "caller-supplied",
+        "adversarial_capabilities": ["x"], "assumptions": ["y"],
+        "technique_primitives": ["z"],
+    })
+
+    assert resp.status_code == 202, resp.text
+    config = recorded[0]
+    assert config.hunt_id == hunt_id_for("Service:slug:a", "CWE-352", "CSRF")
+    for gone in ("hunt_id", "adversarial_capabilities", "assumptions",
+                 "technique_primitives"):
+        assert gone not in HuntingHuntLaunch.model_fields
+
+
 def test_pod_launch_resumes_via_the_launcher_seam(monkeypatch):
     """Pod-only launch (identity-based refactor, 2026-08-25 operator ruling)
     routes through the launcher seam `resume_pod_session` (the recording stub):

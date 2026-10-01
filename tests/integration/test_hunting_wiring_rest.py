@@ -303,13 +303,18 @@ def test_C12_hunt_enqueue_canonical(client):
     """C12: POST .../hunting/hunt canonical `{unit_id, fault_class,
     vulnerability_class}` -> 202 `{component: hunt, enqueued: True,
     enqueued_key, dispatched_asynchronously}`; the enqueued config EXISTS under
-    produced/ with `status == ratified` (real store read, never the return)."""
+    produced/ with `status == ratified` (real store read, never the return).
+    #300: a caller-supplied `hunt_id` (and the removed #202 slots) cannot
+    diverge - the persisted config's `hunt_id` is the DERIVED identity."""
     _need_pg()
     p = _new_project(client)
     r = client.post(
         f"/projects/{p}/hunting/hunt",
         json={"unit_id": UNIT, "fault_class": FAULT,
-              "vulnerability_class": CLASS})
+              "vulnerability_class": CLASS,
+              "hunt_id": "caller-supplied",
+              "adversarial_capabilities": ["x"], "assumptions": ["y"],
+              "technique_primitives": ["z"]})
     assert r.status_code == 202, r.text
     body = r.json()
     assert body["component"] == "hunt"
@@ -319,6 +324,7 @@ def test_C12_hunt_enqueue_canonical(client):
     assert key == f"{UNIT}::{FAULT}::{CLASS}"
     produced = stack.produced_config_keys(p)
     assert key in produced
+    assert stack.produced_config_body(p, key)["hunt_id"] == key
 
 
 def test_C13_hunt_enqueue_replay_409(client):
@@ -409,7 +415,7 @@ def test_C19_pod_resume_no_control_plane_503_or_404(client):
     bogus = f"nope-{uuid.uuid4().hex[:8]}"
     r = client.post(
         f"/projects/{bogus}/hunting/pod",
-        json={"session_id": f"hunting:x:pod:y:z"})
+        json={"session_id": "hunting:x:pod:y:z"})
     assert r.status_code == 404, r.text
     assert "unknown project" in r.text
 

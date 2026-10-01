@@ -77,7 +77,7 @@ States: `registered` -> `executing` (`arun_pod`) -> `settled` (export persisted 
 ### REST perimeter - singular component launches
 - C10 - `POST /projects/{p}/hunting/orchestrator` canonical `{candidates:[...]}` -> 202 `{component: "orchestrator", run_id, dispatched_asynchronously}`; a later read of the HuntStore produced family shows the ratified configs the pass wrote (fixture-driven).
 - C11 - orchestrator launch on unknown project -> 404; control plane absent -> 503.
-- C12 - `POST /projects/{p}/hunting/hunt` canonical: `{unit_id, fault_class, vulnerability_class}` -> 202 `{component: "hunt", enqueued: True, enqueued_key, dispatched_asynchronously}`; enqueued config file exists under `hunt_configs/produced/` with `status == "ratified"`.
+- C12 - `POST /projects/{p}/hunting/hunt` canonical: `{unit_id, fault_class, vulnerability_class}` -> 202 `{component: "hunt", enqueued: True, enqueued_key, dispatched_asynchronously}`; enqueued config file exists under `hunt_configs/produced/` with `status == "ratified"`. The body carries only the identity triple + orientation prose (`research_direction` / `rationale`): the persisted config's `hunt_id` is DERIVED from the identity (#298/#300), never a caller field, and the #202-removed slots (`adversarial_capabilities` / `assumptions` / `technique_primitives`) are not part of the wire model - a caller value cannot diverge.
 - C13 - hunt enqueue replayed (same identity) -> 409 `this hunt config is already enqueued (at-most-once)`; produced count stays ONE (novelty gate, idempotent).
 - C14 - hunt enqueue with malformed/empty `unit_id`/`fault_class` -> 422; nothing written.
 - C15 - hunt enqueue unknown project -> 404.
