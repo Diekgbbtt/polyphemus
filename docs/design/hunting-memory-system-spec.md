@@ -45,8 +45,25 @@ knowledge under one project folder:
   that drove the rationale, refusal reasons, and forward-useful insights. One `memory.yaml` notes file per project.
 
 The store is per-project (folder keyed by `project_id`, lazily created at the first write). Both bodies live in one
-project folder. Note-taking is a **phase of the workflow graph** (the `note` node), so it is always reached, never
-dependent on the model remembering to write.
+project folder. Note-taking is a **phase of the workflow graph** (the `note` node), so the phase is always reached
+and the pair loop always closes.
+
+**The agent-sole write model (#294).** The agent's own store tool calls
+(`hunts_store(write)` / `notes(write, option="append")`) are the **sole initiator** of config and note
+persistence; the harness stops initiating writes. The structured phase decisions
+(`GateDecision` / `RatifyDecision` / `NoteDecision`) drive the phase transitions and the report counts, but the
+harness never re-persists them - so the earlier double-write (the tool call plus the harness's re-persist of the
+same decision) is gone, and two differing renderings can no longer land duplicate notes at one revival key. The
+phase flow that follows a phase (the ratify drafts, the note frame, the note ledger) **reads the persisted state**
+through the store seam rather than trusting the harness's own writes; an absent tool write means an absent artifact
+(fail-open, never a backfill).
+
+**The #201 carve-out (preserved).** `surface_context` is a deterministic typed assembly OWNED BY THE HARNESS
+(`hunt_orchestrator._surface_context_for`); the agent never authors it. Under the agent-sole model the harness
+applies it by wrapping the orchestrator's store seam: `write_config` / `update_config` inject
+`config.surface_context = _surface_context_for(surface, projection)` before persisting, with the per-unit
+projection threaded per phase turn. The ratify upsert's re-injection still happens (a model-authored
+`surface_context` is overwritten), so removing the carve-out would reintroduce the #201 defect.
 
 ## 3. The topology
 
@@ -131,10 +148,12 @@ Contract: `read` / `write` cmds over the produced/consumed config files.
   `hunter/test-specs/<config_key>/` TestImplementationSpecs + the Q16 durable PodExport notes) - the prior-hunt
   insights of a config read those downstream records by the `::` `config_key`, shallow-projected (I3), never the
   orchestrator's own prior configs. The tool description carries this extended capability.
-- **`write`** takes the hunt config object. Any attribute specification is optional; internal schema validation
+- **`write`** takes the hunt config object, and this tool call is the **sole writer** (#294): the harness never
+  re-persists the structured decision. Any attribute specification is optional; internal schema validation
   never rejects on missing attributes (the hypothesised draft has only `rationale` + `research_direction`). The
   `status` attribute (`hypothesised | ratified | dropped`) is carried BY the config object (operator correction:
-  it must be explicit on the config, not an out-of-band harness token).
+  it must be explicit on the config, not an out-of-band harness token). The harness-owned `surface_context` is
+  injected by the wrapped store seam (#201 carve-out) - the agent never authors it.
 - A duplicate-id write (a file name that already exists) FAILS with a denoted error - the model interprets it as
   the deduplication signal (G4). `dropped` configs stay on disk statused `dropped`, never deleted (G6).
 
@@ -187,13 +206,17 @@ The memory + status lifecycle is synergistic in two directions:
    their environment lifecycles differ: `hypothesised -> ratified | dropped` here; the hunter's own lifecycle
    (`hypothesised | dropped | verified | draft | ratified`) stays per #164.
 
-## 9. Degradation (unchanged canon)
+## 9. Degradation
 
 - A read failure degrades to an empty set and the harness keeps serving (O4).
-- A write failure raises to the caller, which warns and counts `store_write_failures` (O3) - never a silent
-  corruption.
+- A write failure raises to the caller. Under the agent-sole model (#294) the caller is the AGENT's store tool: the
+  `hunts_store` / `notes` tool catches it and degrades fail-open (a denoted error object, never into the turn), and
+  the harness counts the failure it observes on the wrapped store seam (`store_write_failures`, O3) - never a
+  silent corruption, never a second fallback write.
 - Every tool seam degrades fail-open when the seam body is absent (C18) - a denoted error object, never a raise
   into the turn.
+- An absent tool write means an absent artifact: the harness does NOT backfill a config or a note the agent did not
+  write, and the note frame/ledger read whatever persisted (empty degrades the phase, never a crash).
 
 ## 10. Persistence and process-lifetime semantics
 

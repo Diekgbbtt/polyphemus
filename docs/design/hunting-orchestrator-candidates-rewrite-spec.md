@@ -108,26 +108,32 @@ reasoning, in order:
    sub-classes the fault (the concrete-fault stretch is the #164 hunter's DECOMPOSE/GENERATE ownership, never the
    orchestrator's). At this phase the model calls `hunts_store(write, config, status="hypothesised")` - the mint is
    **anticipated here** (Q14/Q15 correction): the config is a draft with only `rationale` and `research_direction`
-   filled; the fields owned by the ratification phase are empty. The harness records the write, sets the loop state
-   to HYPOTHESISED, and the tool-call response carries the constant hint: reason on proximity and too-near
-   same-class merging, then the capabilities / assumptions / technique-primitives analysis.
+   filled; the fields owned by the ratification phase are empty. This tool call is the **sole persist** (#294): the
+   harness records the loop state (HYPOTHESISED) but does NOT re-persist the structured decision. The tool-call
+   response carries the constant hint: reason on proximity and too-near same-class merging, then the capabilities /
+   assumptions / technique-primitives analysis.
 5. **Ratification phase.** The model reasons on the mentioned properties (proximity merge, capabilities, assumptions,
    technique primitives) and **may do multiple tool calls to update/delete/create configs**, which must always be
    **ended by a tool call carrying `status="ratified"`** and, very likely, the filled
-   `adversarial_capabilities` / `assumptions` / `technique_primitives`. The harness sets the loop state to RATIFIED,
-   and the tool-call response carries the constant verbatim that **strongly instructs note-taking** (G1: nothing
-   else; the next pair is NOT fed here).
+   `adversarial_capabilities` / `assumptions` / `technique_primitives`. That tool call is the **sole persist**
+   (#294): the harness sets the loop state to RATIFIED but never writes a second copy of the decision. The tool-call
+   response carries the constant verbatim that **strongly instructs note-taking** (G1: nothing else; the next pair
+   is NOT fed here).
 6. **Note phase.** The model reasons on the rationale of the decision taken and calls `notes(write)` - potentially
    multiple times, for different decisions. One note per config covering ALL decisions that concern that config
    (G8): mostly the observations drawn from tool calls (graph_view or memory reads) that drove the rationale, plus
    anything potentially insightful moving forward; it must be MORE detailed than the config's `rationale` and walk
-   through the reasoning that yielded it. The harness sets the loop state to NOTED at this call - the pair's loop
-   ends, and **the note tool's response carries the next pair's data plus the "start the next iteration" verbatim**
-   (G1 correction). The iteration restarts at the next pair.
+   through the reasoning that yielded it. That tool call is the **sole note writer** (#294): the harness never
+   appends the structured decision's note, so two differing renderings can no longer land duplicate notes at one
+   revival key. The harness sets the loop state to NOTED at this call - the pair's loop ends, and **the note tool's
+   response carries the next pair's data plus the "start the next iteration" verbatim** (G1 correction). The
+   iteration restarts at the next pair.
 
 All tool calls are optional (Q9): a prior-hunt lookup may be skipped when the previous unit already yielded it in the
 same context; the sufficiency decision points gate the loops. The model owns every call; the harness owns the state
-machine and the phase verbatims.
+machine and the phase verbatims. **The phase flow reads, not writes (#294):** the note frame and the note ledger are
+built by reading the persisted configs/notes through the store seam, and an absent tool write means an absent
+artifact (fail-open, never a backfill); the in-memory phase decisions still drive the graph transitions.
 
 ### 3.3 Loop-state tracking - a status lifecycle, collocated with the tool-call responses (amended 2026-08-23)
 
@@ -198,7 +204,10 @@ accumulated set.
 The mint is **anticipated to the hypothesis-elicitation phase** (G-operator): the model calls `hunts_store(write,
 config, status="hypothesised")` at elicitation, producing a **draft config** with only `rationale` and
 `research_direction` filled; the ratification-phase fields are empty. The draft is then edited through further
-`hunts_store` writes during ratification, ending with a `status="ratified"` call.
+`hunts_store` writes during ratification, ending with a `status="ratified"` call. Under the **agent-sole write
+model (#294)** those tool calls are the ONLY persistence: the harness mints deterministically *in memory* to drive
+the phase flow and the report, but never writes the minted drafts itself - an absent agent write means no artifact
+on disk (fail-open, never a backfill).
 
 - **N configs per pass** (Q2/Q12): one `HuntConfig` per distinct **vulnerability class** the model elicited for that
   unit-fault locus, after the (LLM-owned) same-class merge. The vulnerability class is the config's identity axis -
@@ -233,7 +242,10 @@ config, status="hypothesised")` at elicitation, producing a **draft config** wit
     L0 Headers are out of scope (they ride the BaseURLs linked to endpoints, never `AGGREGATES`).
     The `surface_context` is a **deterministic typed assembly**: the renamed `service_card_projection` renders the
     typed cards (spine + connected DataItems + aggregated endpoints + linked systems), the ratified config carries
-    them, and the ratify upsert re-injects the minted shape (the model stops re-authoring it).
+    them, and the ratify upsert re-injects the minted shape (the model stops re-authoring it). Under the agent-sole
+    write model (#294) the harness applies it by wrapping the orchestrator's store seam: `write_config` /
+    `update_config` inject `config.surface_context = _surface_context_for(surface, projection)` before persisting,
+    with the per-unit projection threaded per phase turn.
     The L0 expansion fires ONLY for the config's target unit - `index_cards` stays the L1-only token-light surface
     (DD-4), and an unbound L1 (zero `AGGREGATES` edges, the #200 interaction) degrades to the card unchanged, never
     a raise, never a prune signal (C16).
@@ -375,6 +387,13 @@ The O1-O10 canon, fail-open/honour clauses, and report shape are unchanged. Ever
 projection stays silent-and-counted; every tool seam degrades fail-open. The mint is no longer a deterministic
 fan-out - it is the model-driven hypothesise/ratify writes under harness state tracking, and the O9 envelope BUDGET
 stage is REMOVED (G7): budget and the hard stop are the runtime plane's and the pod's (D67-09).
+
+**Agent-sole writes (#294).** The harness stops initiating config/note persistence: the agent's
+`hunts_store(write)` / `notes(write)` tool calls are the sole writers, the harness never re-persists the structured
+decisions, and the #201 `surface_context` carve-out is preserved by injecting it on the wrapped store seam. A failed
+or absent tool write degrades the phase without raising into the turn; the harness counts the failure it observes on
+the seam and the pass keeps serving. The note frame and ledger read the persisted configs/notes, never the harness's
+own writes.
 
 **Anti-fabrication (amended by #186, 2026-08-25).** A raising/empty hypothesise decision NEVER fabricates a
 fully-empty draft: the pair is SKIPPED and counted on the ledger (`units_skipped`), so an actor-runtime turn

@@ -45,6 +45,7 @@ from polymerhus.attack.hunting.hunt_orchestrator import (
     RatifyDecision,
     ReadOnlyGraphView,
     Witness,
+    mint_hunt_config,
     revival_key,
 )
 from polymerhus.attack.hunting.hunt_store import HuntStore
@@ -95,50 +96,80 @@ def _tools(store) -> OrchestratorTools:
     )
 
 
-def _single_class_seams():
-    """The fixture phase seams: one candidate, ONE elicited CSRF class, the
-    draft ratified, one note written - the minimal pipeline driver."""
+def _write_agent_drafts(tools, inp, directions):
+    """Emulate the AGENT's `hunts_store(write, status='hypothesised')` tool call
+    for each carried direction (#294: the agent's tool call is the sole writer;
+    the harness never backfills)."""
+    import uuid
+
+    for direction in directions:
+        candidate = next(
+            c for c in inp.candidates
+            if (c.unit_id, c.fault_class) == (direction.unit_id, direction.fault_class))
+        for config in mint_hunt_config(
+                direction, candidate, uuid.uuid4().hex, surface_context={},
+                prior_hunt_insights=[]):
+            tools.store_reads.write_config(PROJECT, config)
+
+
+def _single_class_seams(store):
+    """The fixture phase seams under the agent-sole model (#294): one candidate,
+    ONE elicited CSRF class, the draft written and then ratified by the agent's
+    store tool calls, one note appended - the minimal pipeline driver."""
+    tools = _tools(store)
+
     def hypothesise(inp):
-        return GateDecision(directions=[EnvisionedDirection(
+        directions = [EnvisionedDirection(
             unit_id=c.unit_id, fault_class=c.fault_class, carried=True,
             rationale="r", research_direction="rd",
-            vulnerability_classes=[CLASS]) for c in inp.candidates])
+            vulnerability_classes=[CLASS]) for c in inp.candidates]
+        _write_agent_drafts(tools, inp, directions)
+        return GateDecision(directions=directions)
 
     def ratify(inp):
         configs = []
         for draft in inp.configs:
             amended = draft.model_copy(deep=True)
             amended.status = "ratified"
+            tools.store_reads.update_config(PROJECT, amended)
             configs.append(amended)
         return RatifyDecision(configs=configs)
 
     def note(inp):
-        return NoteDecision(notes=[NoteRecord(
-            key=revival_key(inp.pair.unit_id, inp.pair.fault_class),
-            note="fixture note")])
+        key = revival_key(inp.pair.unit_id, inp.pair.fault_class)
+        tools.store_reads.append_note(PROJECT, key, "fixture note")
+        return NoteDecision(notes=[NoteRecord(key=key, note="fixture note")])
 
     return hypothesise, ratify, note
 
 
-def _fanout_seams(classes=("CSRF", "IDOR", "XSS")):
-    """The fan-out fixture: ONE candidate eliciting THREE distinct classes, so
-    the mint fans out one config per class (AC2's N-config fan-out)."""
+def _fanout_seams(store, classes=("CSRF", "IDOR", "XSS")):
+    """The fan-out fixture under the agent-sole model (#294): ONE candidate
+    eliciting THREE distinct classes, so the agent writes one config per class
+    (AC2's N-config fan-out)."""
+    tools = _tools(store)
+
     def hypothesise(inp):
-        return GateDecision(directions=[EnvisionedDirection(
+        directions = [EnvisionedDirection(
             unit_id=c.unit_id, fault_class=c.fault_class, carried=True,
             rationale="r", research_direction="rd",
-            vulnerability_classes=list(classes)) for c in inp.candidates])
+            vulnerability_classes=list(classes)) for c in inp.candidates]
+        _write_agent_drafts(tools, inp, directions)
+        return GateDecision(directions=directions)
 
     def ratify(inp):
-        return RatifyDecision(configs=[
-            draft.model_copy(deep=True).model_copy(update={"status": "ratified"})
-            for draft in inp.configs
-        ])
+        configs = []
+        for draft in inp.configs:
+            amended = draft.model_copy(deep=True).model_copy(
+                update={"status": "ratified"})
+            tools.store_reads.update_config(PROJECT, amended)
+            configs.append(amended)
+        return RatifyDecision(configs=configs)
 
     def note(inp):
-        return NoteDecision(notes=[NoteRecord(
-            key=revival_key(inp.pair.unit_id, inp.pair.fault_class),
-            note="fan-out note")])
+        key = revival_key(inp.pair.unit_id, inp.pair.fault_class)
+        tools.store_reads.append_note(PROJECT, key, "fan-out note")
+        return NoteDecision(notes=[NoteRecord(key=key, note="fan-out note")])
 
     return hypothesise, ratify, note
 
@@ -257,7 +288,7 @@ def test_bootstrap_schedules_orchestrator_and_surfer_sessions(stores, monkeypatc
     monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
     hunt, hunter, pod = stores
     control = _FakeControl()
-    h, r, n = _single_class_seams()
+    h, r, n = _single_class_seams(hunt)
 
     hid = asyncio.run(hunting_runtime.start_hunting(
         PROJECT, candidates=[_candidate()], tools=_tools(hunt),
@@ -336,7 +367,7 @@ def test_guard_lets_the_runs_own_pinned_row_through(stores, monkeypatch):
     monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
     hunt, hunter, pod = stores
     control = _FakeControl()
-    h, r, n = _single_class_seams()
+    h, r, n = _single_class_seams(hunt)
 
     hid = asyncio.run(hunting_runtime.start_hunting(
         PROJECT, run_id=RUN, candidates=[_candidate()], tools=_tools(hunt),
@@ -358,7 +389,7 @@ def test_ratified_config_dispatches_one_hunter_and_moves(stores, monkeypatch):
     monkeypatch.setattr("polymerhus.app.clients.pg.create_hunting_run", fake.create_hunting_run)
     monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_status", fake.set_hunting_run_status)
     monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
-    h, r, n = _single_class_seams()
+    h, r, n = _single_class_seams(hunt)
     control = _FakeControl()
 
     asyncio.run(hunting_runtime.start_hunting(
@@ -383,7 +414,7 @@ def test_n_configs_fan_out_but_the_gate_caps_concurrent_hunters(stores, monkeypa
     monkeypatch.setattr("polymerhus.app.clients.pg.create_hunting_run", fake.create_hunting_run)
     monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_status", fake.set_hunting_run_status)
     monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
-    h, r, n = _fanout_seams()
+    h, r, n = _fanout_seams(hunt)
     control = _FakeControl(gate=asyncio.Semaphore(2))
     tracking = {"now": 0, "max": 0, "sees": []}
 
@@ -420,7 +451,7 @@ def test_specified_spec_dispatches_one_pod_through_the_same_mover(stores, monkey
     monkeypatch.setattr("polymerhus.app.clients.pg.create_hunting_run", fake.create_hunting_run)
     monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_status", fake.set_hunting_run_status)
     monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
-    h, r, n = _single_class_seams()
+    h, r, n = _single_class_seams(hunt)
     control = _FakeControl()
     pod_calls: list[tuple[str, str]] = []
 
@@ -472,13 +503,17 @@ def test_unratified_config_is_refused_and_stays_produced(stores, monkeypatch):
     monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_status", fake.set_hunting_run_status)
     monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
 
-    # The pass ends with the draft HYPOTHESISED (the ratify seam returns
-    # nothing ratified): no hunter may ever dispatch for it.
+    # The pass ends with the draft HYPOTHESISED (the agent writes the draft but
+    # the ratify seam returns nothing ratified): no hunter may ever dispatch.
+    tools = _tools(hunt)
+
     def hypothesise(inp):
-        return GateDecision(directions=[EnvisionedDirection(
+        directions = [EnvisionedDirection(
             unit_id=c.unit_id, fault_class=c.fault_class, carried=True,
             rationale="r", research_direction="rd",
-            vulnerability_classes=[CLASS]) for c in inp.candidates])
+            vulnerability_classes=[CLASS]) for c in inp.candidates]
+        _write_agent_drafts(tools, inp, directions)
+        return GateDecision(directions=directions)
 
     def ratify(inp):
         return RatifyDecision(configs=[])
@@ -488,7 +523,7 @@ def test_unratified_config_is_refused_and_stays_produced(stores, monkeypatch):
 
     control = _FakeControl()
     asyncio.run(hunting_runtime.start_hunting(
-        PROJECT, candidates=[_candidate()], tools=_tools(hunt),
+        PROJECT, candidates=[_candidate()], tools=tools,
         hypothesise_fn=hypothesise, ratify_fn=ratify, note_fn=note,
         control=control, tick_interval=0.001,
         hunt_store=hunt, hunter_store=hunter, pod_store=pod,
@@ -532,7 +567,7 @@ def test_idle_loop_consumes_and_records_a_delivered_pod_export(stores, monkeypat
     monkeypatch.setattr("polymerhus.app.clients.pg.create_hunting_run", fake.create_hunting_run)
     monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_status", fake.set_hunting_run_status)
     monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
-    h, r, n = _single_class_seams()
+    h, r, n = _single_class_seams(hunt)
     control = _FakeControl()
     export = {"verdict": "successful", "terminal_reason": "symptom-confirmed",
               "evidence": {"trail": []}, "clean": True, "iterations": 1,
@@ -662,7 +697,7 @@ def test_run_does_not_complete_while_a_session_is_live(stores, monkeypatch):
     monkeypatch.setattr("polymerhus.app.clients.pg.create_hunting_run", fake.create_hunting_run)
     monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_status", fake.set_hunting_run_status)
     monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
-    h, r, n = _single_class_seams()
+    h, r, n = _single_class_seams(hunt)
     control = _FakeControl()
     release = asyncio.Event()
 
@@ -718,7 +753,7 @@ def test_run_does_not_complete_while_produced_is_non_empty(stores, monkeypatch):
     monkeypatch.setattr("polymerhus.app.clients.pg.create_hunting_run", fake.create_hunting_run)
     monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_status", fake.set_hunting_run_status)
     monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
-    h, r, n = _single_class_seams()
+    h, r, n = _single_class_seams(hunt)
     hunt_refuse = hunter_session_id(RUN, f"{UNIT}_{FAULT}_{CLASS}")
     control = _FakeControl(refuse={hunt_refuse})
 
@@ -753,7 +788,7 @@ def test_stop_cancels_every_session_and_leaves_the_registry_empty(stores, monkey
     monkeypatch.setattr("polymerhus.app.clients.pg.create_hunting_run", fake.create_hunting_run)
     monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_status", fake.set_hunting_run_status)
     monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
-    h, r, n = _single_class_seams()
+    h, r, n = _single_class_seams(hunt)
 
     def block_hunts(*, run_id, project_id, hunt_store, hunter_store, **kw):
         async def dispatch(config):
@@ -823,7 +858,7 @@ def test_undispatchable_statuses_never_block_quiesce(stores, monkeypatch):
     monkeypatch.setattr("polymerhus.app.clients.pg.create_hunting_run", fake.create_hunting_run)
     monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_status", fake.set_hunting_run_status)
     monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
-    h, r, n = _single_class_seams()
+    h, r, n = _single_class_seams(hunt)
 
     def draft_hunts(*, run_id, project_id, hunt_store, hunter_store, **kw):
         async def dispatch(config):

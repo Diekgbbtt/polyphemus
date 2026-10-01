@@ -17,6 +17,7 @@ Seam map (catalogue section 3):
 from __future__ import annotations
 
 import asyncio
+import uuid
 from pathlib import Path
 
 import pytest
@@ -439,37 +440,47 @@ def test_integration_c6_supervisor_only_router():
 
 # --- C7: ledger accumulates per pair across the faults ------------------------
 
-def _ratify_drafts(inp) -> RatifyDecision:
-    """The fixture ratify seam: every draft ends ratified."""
-    configs = []
-    for draft in inp.configs:
-        amended = draft.model_copy(deep=True)
-        amended.status = "ratified"
-        configs.append(amended)
-    return RatifyDecision(configs=configs)
+def _agent_seams(tools, *, project_id: str = "project-1"):
+    """The fixture phase turns under the agent-sole write model (#294): each
+    emulates the AGENT's store tool call (hypothesise writes the drafts, ratify
+    upserts the terminal status, note appends) through the pass's wrapped store
+    seam - the harness never persists anything itself."""
+    def hypothesise(inp):
+        directions = [_carry(c) for c in inp.candidates]
+        for direction in directions:
+            candidate = next(
+                c for c in inp.candidates
+                if (c.unit_id, c.fault_class)
+                == (direction.unit_id, direction.fault_class))
+            for config in mint_hunt_config(
+                    direction, candidate, uuid.uuid4().hex, surface_context={},
+                    prior_hunt_insights=[]):
+                tools.store_reads.write_config(project_id, config)
+        return GateDecision(directions=directions)
 
+    def ratify(inp):
+        configs = []
+        for draft in inp.configs:
+            amended = draft.model_copy(deep=True)
+            amended.status = "ratified"
+            tools.store_reads.update_config(project_id, amended)
+            configs.append(amended)
+        return RatifyDecision(configs=configs)
 
-def _note_pair(inp) -> NoteDecision:
-    """The fixture note seam: one note for the pair."""
-    return NoteDecision(notes=[NoteRecord(
-        key=revival_key(inp.pair.unit_id, inp.pair.fault_class),
-        note="fixture note",
-    )])
+    def note(inp):
+        key = revival_key(inp.pair.unit_id, inp.pair.fault_class)
+        tools.store_reads.append_note(project_id, key, "fixture note")
+        return NoteDecision(notes=[NoteRecord(key=key, note="fixture note")])
+
+    return hypothesise, ratify, note
 
 
 def test_integration_c7_ledger_last_write_per_pair(tmp_path):
     """C7 - ledger accumulates per pair (units_done, minted keys, notes) with
     last-write semantics, across the faults the supervisor pops."""
     store = HuntStore(tmp_path)
-
-    def hypothesise_fn(inp: GateInput) -> GateDecision:
-        # one carried direction per pair, distinct vulnerability classes
-        return GateDecision(directions=[
-            EnvisionedDirection(
-                unit_id=c.unit_id, fault_class=c.fault_class, carried=True,
-                rationale="r", assumptions=["a"],
-                vulnerability_classes=[f"CSRF-{c.unit_id}"],
-            ) for c in inp.candidates])
+    tools = _tools(store)
+    agent_hypothesise, agent_ratify, agent_note = _agent_seams(tools)
 
     c_a = _candidate(SERVICE_A, FAULT_352)
     c_b = _candidate(SERVICE_B, FAULT_352)
@@ -477,10 +488,10 @@ def test_integration_c7_ledger_last_write_per_pair(tmp_path):
     report = run_orchestration(
         project_id="project-1", run_id="run-c7",
         candidates=[c_a, c_b, c_c],
-        tools=_tools(store),
-        hypothesise_fn=hypothesise_fn,
-        ratify_fn=_ratify_drafts,
-        note_fn=_note_pair,
+        tools=tools,
+        hypothesise_fn=agent_hypothesise,
+        ratify_fn=agent_ratify,
+        note_fn=agent_note,
     )
     # after fault1 (CWE-352): 2 pairs, after fault2 (CWE-639): 1 more -> total 3
     assert report.pairs_processed == 3
@@ -501,20 +512,16 @@ def test_integration_c8_budget_stage_removed(tmp_path):
     direction is ever cut (spending is the runtime plane's and the pod's), the
     report has no budget-cut field, and the ledger has no budget-remaining."""
     store = HuntStore(tmp_path)
-
-    def hypothesise_fn(inp: GateInput) -> GateDecision:
-        return GateDecision(directions=[
-            EnvisionedDirection(unit_id=c.unit_id, fault_class=c.fault_class,
-                                carried=True, rationale="r")
-            for c in inp.candidates])
+    tools = _tools(store)
+    agent_hypothesise, agent_ratify, agent_note = _agent_seams(tools)
 
     report = run_orchestration(
         project_id="project-1", run_id="run-c8",
         candidates=[_candidate(SERVICE_A, FAULT_352), _candidate(SERVICE_B, FAULT_352), _candidate(SYSTEM_CACHE, FAULT_639)],
-        tools=_tools(store),
-        hypothesise_fn=hypothesise_fn,
-        ratify_fn=_ratify_drafts,
-        note_fn=_note_pair,
+        tools=tools,
+        hypothesise_fn=agent_hypothesise,
+        ratify_fn=agent_ratify,
+        note_fn=agent_note,
     )
     assert report.pairs_processed == 3
     assert report.configs_ratified == 3
@@ -571,17 +578,15 @@ def test_integration_c10_store_read_degrades_empty(tmp_path, caplog):
             raise OSError("disk (fixture)")
 
     store = _RaisingStore(tmp_path)
+    tools = _tools(store)
+    agent_hypothesise, agent_ratify, agent_note = _agent_seams(tools)
     report = run_orchestration(
         project_id="project-1", run_id="run-c10",
         candidates=[_candidate(SERVICE_A, FAULT_352)],
-        tools=_tools(store),
-        hypothesise_fn=lambda inp: GateDecision(
-            directions=[EnvisionedDirection(
-                unit_id=c.unit_id, fault_class=c.fault_class, carried=True,
-                rationale="r", research_direction="rd",
-                vulnerability_classes=["CSRF"]) for c in inp.candidates]),
-        ratify_fn=_ratify_drafts,
-        note_fn=_note_pair,
+        tools=tools,
+        hypothesise_fn=agent_hypothesise,
+        ratify_fn=agent_ratify,
+        note_fn=agent_note,
     )
     assert report.pairs_processed == 1
     assert report.configs_ratified == 1
@@ -716,13 +721,25 @@ def test_integration_c12b_surface_context_shows_connected_data_items(tmp_path):
         return []  # the data-relationship and adjacency reads: empty
 
     store = HuntStore(tmp_path)
+    tools = OrchestratorTools(
+        store_reads=store,
+        graph_view=ReadOnlyGraphView("project-1", read_fn=read_fn),
+    )
+    agent_hypothesise, agent_ratify, agent_note = _agent_seams(tools)
 
     def reason_fn(inp: GateInput) -> GateDecision:
-        return GateDecision(directions=[EnvisionedDirection(
+        direction = EnvisionedDirection(
             unit_id=unit_id, fault_class=FAULT_352, carried=True,
             rationale="r", research_direction="probe CSRF",
             vulnerability_classes=["CSRF"],
-        )])
+        )
+        # the agent's hunts_store(write) - the #201 carve-out injects the
+        # deterministic surface_context on the wrapped seam
+        for config in mint_hunt_config(
+                direction, inp.candidates[0], uuid.uuid4().hex,
+                surface_context={}, prior_hunt_insights=[]):
+            tools.store_reads.write_config("project-1", config)
+        return GateDecision(directions=[direction])
 
     report = run_orchestration(
         project_id="project-1", run_id="run-c12b",
@@ -730,13 +747,10 @@ def test_integration_c12b_surface_context_shows_connected_data_items(tmp_path):
             unit_id=unit_id, fault_class=FAULT_352,
             applies_witnesses=Witness(llm="x"), match_verdict="applies",
         )],
-        tools=OrchestratorTools(
-            store_reads=store,
-            graph_view=ReadOnlyGraphView("project-1", read_fn=read_fn),
-        ),
+        tools=tools,
         hypothesise_fn=reason_fn,
-        ratify_fn=_ratify_drafts,
-        note_fn=_note_pair,
+        ratify_fn=agent_ratify,
+        note_fn=agent_note,
     )
     assert report.pairs_processed == 1
     assert report.configs_ratified == 1
