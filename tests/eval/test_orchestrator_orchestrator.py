@@ -58,7 +58,7 @@ def test_up_drives_the_instance_and_target(
     runner = recording_runner(
         routes={
             "scripts/targetctl up": fake_result(0, "UI: http://127.0.0.1:32768/\n"),
-            "hostname -I": fake_result(0, "10.0.0.5 \n"),
+            "getent hosts": fake_result(0, "172.17.0.1 host.docker.internal\n"),
             "curl": fake_result(0, "200"),
         }
     )
@@ -185,20 +185,23 @@ def test_up_ensures_the_shared_front_before_a_local_target(
     assert any("nginx -s reload" in t for t in texts)
 
 
-def test_up_does_not_create_the_front_without_local_targets(
+def test_up_creates_the_front_for_a_targetctl_target(
     sample_setup, tmp_path, recording_runner, fake_result
 ) -> None:
+    """D45: `targetctl` is local now, so it too is fronted by the shared container."""
     runner = recording_runner(
         routes={
             "scripts/targetctl up": fake_result(0, "UI: http://127.0.0.1:32768/\n"),
-            "hostname -I": fake_result(0, "10.0.0.5 \n"),
+            "getent hosts": fake_result(0, "172.17.0.1 host.docker.internal\n"),
             "curl": fake_result(0, "200"),
         }
     )
 
     _orchestrator(sample_setup, tmp_path, runner=runner).up()
 
-    assert not any("ph-eval-front" in t for t in runner.argv_texts)
+    texts = runner.argv_texts
+    assert any("docker run -d --name ph-eval-front" in t for t in texts)
+    assert any("ph-eval-front" in t and "nginx -s reload" in t for t in texts)
 
 
 def test_plan_lists_the_front_container_for_local_targets(

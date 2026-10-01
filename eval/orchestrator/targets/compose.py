@@ -14,6 +14,7 @@ and always clears the alias.
 from __future__ import annotations
 
 import time
+from dataclasses import replace
 
 from orchestrator import docker as docker_images
 from orchestrator import front, routing
@@ -56,7 +57,18 @@ class ComposeStrategy:
         self.ready_path = str(params.get("ready_path", "/"))
         self.project = str(params.get("project") or f"ph-target-{short_id(context.host)}")
         self.cwd = str(params.get("cwd") or context.paths.worktree)
+        # An amd64-only stack on an aarch64 host needs an explicit platform so
+        # the build/run is emulated rather than "no matching manifest" (D46).
+        # Empty keeps docker's native default.
+        self.platform = str(params.get("platform") or "")
         self._sleep = sleep or time.sleep
+
+    def _env(self) -> dict[str, str]:
+        return {"DOCKER_DEFAULT_PLATFORM": self.platform} if self.platform else {}
+
+    def _wrap(self, command: Command) -> Command:
+        """Run a docker primitive locally, selecting the target platform (D46)."""
+        return replace(command, env={**(command.env or {}), **self._env()})
 
     @property
     def backend(self) -> str:
@@ -76,7 +88,12 @@ class ComposeStrategy:
             self.compose_file,
             *verbs,
         )
-        return Command(argv=argv, cwd=self.cwd, description=f"target compose {' '.join(verbs)}")
+        return Command(
+            argv=argv,
+            cwd=self.cwd,
+            env=self._env() or None,
+            description=f"target compose {' '.join(verbs)}",
+        )
 
     def _probe_cmd(self) -> Command:
         return Command(
@@ -182,6 +199,7 @@ class ComposeStrategy:
                 dockerfile=self.dockerfile,
                 context=self.dockerfile_context,
                 registry=self.registry,
+                wrap=self._wrap,
                 error=ComposeTargetError,
             )
             return tuple(outcome.detail for outcome in outcomes)

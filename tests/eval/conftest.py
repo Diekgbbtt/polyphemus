@@ -30,7 +30,7 @@ class RecordingRunner:
 
     `routes` is an ordered mapping `needle -> FakeResult`: the first needle
     contained in the joined argv wins, else `default`. This is enough to model
-    read commands (targetctl output, `curl` status codes, `hostname -I`) while
+    read commands (targetctl output, `curl` status codes, `getent hosts`) while
     asserting the emitted command sequence.
     """
 

@@ -97,9 +97,14 @@ class Orchestrator:
         return self._runner
 
     def _needs_front(self) -> bool:
-        """True when any target is local, so the shared :80 front is required."""
+        """True when any target is local, so the shared :80 front is required.
+
+        Every lifecycle is local (D45): `targetctl` runs on the eval host like
+        `image` and `compose`, so all three are fronted by the shared container
+        on :80 rather than a per-host nginx reached over ssh.
+        """
         return any(
-            run.target_config.lifecycle in ("image", "compose")
+            run.target_config.lifecycle in ("targetctl", "image", "compose")
             for instance in self.setup.instances
             for run in instance.targets
         )

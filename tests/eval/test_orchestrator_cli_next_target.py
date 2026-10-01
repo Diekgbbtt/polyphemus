@@ -54,7 +54,7 @@ def test_next_target_reports_the_step(tmp_path, sample_setup, recording_runner, 
     runner = recording_runner(
         {
             "targetctl up": fake_result(0, stdout="UI: http://127.0.0.1:4321"),
-            "hostname -I": fake_result(0, stdout="10.0.0.5"),
+            "getent hosts": fake_result(0, stdout="172.17.0.1 host.docker.internal\n"),
             "curl": fake_result(0, stdout="200"),
             "docker build": fake_result(0),
             "image inspect": fake_result(0, stdout="sha256:built"),

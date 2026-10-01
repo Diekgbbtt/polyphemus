@@ -59,6 +59,10 @@ class ImageStrategy:
         self.internal_port = int(params.get("internal_port", DEFAULT_INTERNAL_PORT))
         self.ready_path = str(params.get("ready_path", "/"))
         self.name = str(params.get("name") or f"ph-target-{short_id(context.host)}")
+        # An amd64-only image on an aarch64 host needs an explicit platform so
+        # the run is emulated rather than "no matching manifest" (D46). Empty
+        # keeps docker's native default.
+        self.platform = str(params.get("platform") or "")
         self._sleep = sleep or time.sleep
 
     @property
@@ -70,22 +74,18 @@ class ImageStrategy:
         return f"http://{self.host}/"
 
     def _run_cmd(self) -> Command:
-        return Command(
-            argv=(
-                "docker",
-                "run",
-                "-d",
-                "--name",
-                self.name,
-                "--publish",
-                # No host IP: docker's default binds all interfaces, including
-                # the bridge gateway `host.docker.internal` resolves to. A
-                # `127.0.0.1:` prefix would be unreachable from kali (Linux).
-                f"{self.port}:{self.internal_port}",
-                self.image,
-            ),
-            description=f"run image {self.image}",
+        argv: tuple[str, ...] = ("docker", "run", "-d", "--name", self.name)
+        if self.platform:
+            argv += ("--platform", self.platform)
+        argv += (
+            "--publish",
+            # No host IP: docker's default binds all interfaces, including
+            # the bridge gateway `host.docker.internal` resolves to. A
+            # `127.0.0.1:` prefix would be unreachable from kali (Linux).
+            f"{self.port}:{self.internal_port}",
+            self.image,
         )
+        return Command(argv=argv, description=f"run image {self.image}")
 
     def _remove_cmd(self) -> Command:
         return Command(

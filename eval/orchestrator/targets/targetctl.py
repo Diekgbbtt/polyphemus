@@ -1,10 +1,18 @@
-"""The `targetctl` strategy: WebExploitBench on the REMOTE workshop host.
+"""The `targetctl` strategy: WebExploitBench on the LOCAL eval host.
 
-Deployment is issued over ssh (operator directive) and fronted by that host's
-nginx on the synthetic Host: `targetctl` publishes on a random host port, so
-nginx is both the stable bare-domain face and the TLS-capable front. One conf
-file per synthetic Host means concurrent instances never overwrite each other's
-front. The inner-kali alias makes resolution deterministic for the recon fleet.
+WebExploitBench targets run on the same host as the eval orchestrator (D45):
+the platform scaffold - the dataset checkout, `scripts/targetctl`, and the
+target images - was moved off the remote workshop host onto the eval server, so
+deployment is a local command and no ssh is involved. Each target is fronted on
+`http://<synthetic-host>/` (port 80) by the shared host-level nginx container
+(`orchestrator/front.py`), exactly like the `image` and `compose` strategies,
+and the instance kali aliases the synthetic Host to the Docker host gateway
+resolved to a NUMERIC address. `targetctl` publishes on a random host port, so
+the front is both the stable bare-domain face and the port discriminator.
+
+On an aarch64 eval host the targets are still amd64 (WebExploitBench is defined
+for amd64 base images), so every target command runs with
+`DOCKER_DEFAULT_PLATFORM=linux/amd64` and the host's qemu binfmt emulation (D46).
 """
 from __future__ import annotations
 
@@ -12,12 +20,13 @@ import os
 import re
 import shlex
 import time
+from dataclasses import replace
 from pathlib import Path
 from typing import Mapping
 from urllib.parse import urlparse
 
 from orchestrator import docker as docker_images
-from orchestrator import routing
+from orchestrator import front, routing
 from orchestrator.commands import Command, CommandRunner, require_ok
 from orchestrator.targets.base import (
     Sleep,
@@ -28,18 +37,19 @@ from orchestrator.targets.base import (
     wait_ready,
 )
 
-DEFAULT_SSH_HOST = "ubuntu@dj-viscon-workshop-1.vsos.ethz.ch"
-DEFAULT_REMOTE_DIR = "~/WebExploitBench"
+# The local platform scaffold: the dataset checkout the target is built from.
+DEFAULT_WEB_DIR = "~/WebExploitBench"
 DEFAULT_REPO_URL = "https://github.com/AgentCyberRange/WebExploitBench.git"
-DEFAULT_NGINX_CONF_DIR = "/etc/nginx/conf.d"
 DEFAULT_READY_RETRIES = 60
 DEFAULT_READY_INTERVAL_S = 5.0
+# WebExploitBench is defined for amd64 base images; the eval host emulates them
+# (D46), so every target command selects the amd64 platform explicitly.
+DEFAULT_PLATFORM = "linux/amd64"
 PLAN_PORT = "<published-port>"
 PLAN_IP = "<target-ip>"
 
 _UI_URL_RE = re.compile(r"UI:\s*(https?://\S+)")
 _ANY_URL_RE = re.compile(r"https?://\S+")
-_LOOPBACK_HOSTS = ("0.0.0.0", "127.0.0.1", "localhost")
 
 
 class TargetctlError(TargetError):
@@ -63,13 +73,6 @@ def parse_targetctl_url(output: str) -> str:
     raise TargetctlError("targetctl output carries no accessible URL")
 
 
-def rewrite_public_host(url: str, public_host: str) -> str:
-    """Rewrite a loopback/bind-all host in `url` to the workshop public host."""
-    for loopback in _LOOPBACK_HOSTS:
-        url = url.replace(f"http://{loopback}:", f"http://{public_host}:")
-    return url
-
-
 def url_port(url: str) -> str:
     port = urlparse(url).port
     if port is None:
@@ -78,7 +81,7 @@ def url_port(url: str) -> str:
 
 
 class TargetctlStrategy:
-    """One WebExploitBench target run on the remote workshop host."""
+    """One WebExploitBench target run on the local eval host."""
 
     def __init__(
         self,
@@ -98,19 +101,16 @@ class TargetctlStrategy:
         self.dockerfile_context = context.run.target_config.dockerfile_context
         self._sleep = sleep or time.sleep
         self.target = str(params["target"])
-        self.ssh_host = str(
-            params.get("ssh_host") or environment.get("EVAL_SSH_HOST") or DEFAULT_SSH_HOST
-        )
-        self.remote_dir = str(
-            params.get("remote_dir")
-            or environment.get("EVAL_REMOTE_DIR")
-            or DEFAULT_REMOTE_DIR
+        self.web_dir = str(
+            params.get("web_dir")
+            or environment.get("EVAL_WEB_DIR")
+            or DEFAULT_WEB_DIR
         )
         self.repo_url = str(params.get("repo_url") or DEFAULT_REPO_URL)
-        self.nginx_conf_dir = str(
-            params.get("nginx_conf_dir")
-            or environment.get("EVAL_NGINX_CONF_DIR")
-            or DEFAULT_NGINX_CONF_DIR
+        self.platform = str(
+            params.get("platform")
+            or environment.get("EVAL_TARGET_PLATFORM")
+            or DEFAULT_PLATFORM
         )
         self.ready_retries = int(
             params.get("ready_retries")
@@ -124,46 +124,52 @@ class TargetctlStrategy:
         )
 
     @property
-    def public_host(self) -> str:
-        return self.ssh_host.rsplit("@", 1)[-1]
-
-    @property
-    def front_conf(self) -> Path:
-        return routing.front_conf_path(self.nginx_conf_dir, self.host)
-
-    @property
     def front_url(self) -> str:
         return f"http://{self.host}/"
 
     # --- command builders (shared by plan and execute) ------------------------
 
-    def _ssh(self, remote_command: str, *, description: str) -> Command:
-        return routing.ssh_command(self.ssh_host, remote_command, description=description)
+    def _env(self) -> dict[str, str]:
+        return {"DOCKER_DEFAULT_PLATFORM": self.platform}
 
     def _checkout_cmd(self) -> Command:
-        # S5: quote interpolated config; remote_dir/repo_url may carry spaces or
+        # S5: quote interpolated config; web_dir/repo_url may carry spaces or
         # shell metacharacters and are operator-supplied.
-        remote_dir = shlex.quote(self.remote_dir)
-        remote = (
-            f"test -d {remote_dir}/.git || "
-            f"(git clone --depth 1 {shlex.quote(self.repo_url)} {remote_dir})"
+        web_dir = shlex.quote(self.web_dir)
+        script = (
+            f"test -d {web_dir}/.git || "
+            f"(git clone --depth 1 {shlex.quote(self.repo_url)} {web_dir})"
         )
-        return self._ssh(remote, description=f"ensure {self.remote_dir}")
+        return Command(
+            argv=("sh", "-c", script),
+            description=f"ensure {self.web_dir}",
+        )
 
     def _targetctl(self, *args: str) -> Command:
-        quoted = " ".join(shlex.quote(arg) for arg in args)
-        remote = f"cd {shlex.quote(self.remote_dir)} && scripts/targetctl {quoted}"
-        return self._ssh(remote, description=f"targetctl {' '.join(args)}")
-
-    def _ip_cmd(self) -> Command:
-        return self._ssh("hostname -I | awk '{print $1}'", description="target ip")
+        script = str(Path(self.web_dir) / "scripts" / "targetctl")
+        return Command(
+            argv=(script, *args),
+            env=self._env(),
+            description=f"targetctl {' '.join(args)}",
+        )
 
     def _probe_cmd(self, port: int | str) -> Command:
-        remote = (
-            "curl -sS -o /dev/null -w '%{http_code}' --max-time 10 "
-            f"-H 'Host: {self.host}' http://127.0.0.1:{port}/"
+        return Command(
+            argv=(
+                "curl",
+                "-sS",
+                "-o",
+                "/dev/null",
+                "-w",
+                "%{http_code}",
+                "--max-time",
+                "10",
+                "-H",
+                f"Host: {self.host}",
+                f"http://{routing.LOOPBACK}:{port}/",
+            ),
+            description=f"probe {self.host}",
         )
-        return self._ssh(remote, description=f"probe {self.host}")
 
     # --- lifecycle ------------------------------------------------------------
 
@@ -172,9 +178,9 @@ class TargetctlStrategy:
             self._checkout_cmd(),
             self._targetctl("build", self.target),
             self._targetctl("up", self.target),
-            routing.plan_front_apply(self.ssh_host, self.front_conf, self.host, PLAN_PORT),
+            front.plan_conf_apply(self.host, PLAN_PORT),
             self._probe_cmd(PLAN_PORT),
-            self._ip_cmd(),
+            routing.plan_gateway_resolve(self.paths),
             routing.kali_alias_command(self.paths, self.host, PLAN_IP),
         ]
 
@@ -186,11 +192,11 @@ class TargetctlStrategy:
 
         up_cmd = self._targetctl("up", self.target)
         output = require_ok(run(up_cmd), up_cmd, error=TargetctlError).stdout
-        backend = rewrite_public_host(parse_targetctl_url(output), self.public_host)
-        port = url_port(backend)
+        port = url_port(parse_targetctl_url(output))
+        backend = f"http://{routing.LOOPBACK}:{port}"
 
-        front = routing.plan_front_apply(self.ssh_host, self.front_conf, self.host, port)
-        require_ok(run(front), front, error=TargetctlError)
+        front_conf = front.plan_conf_apply(self.host, port)
+        require_ok(run(front_conf), front_conf, error=TargetctlError)
 
         ready = wait_ready(
             run,
@@ -205,36 +211,23 @@ class TargetctlStrategy:
                 f"after {self.ready_retries} probes"
             )
 
-        alias = routing.kali_alias_command(self.paths, self.host, self._resolve_ip(run))
+        alias = routing.kali_alias_command(self.paths, self.host, self._gateway_address(run))
         require_ok(run(alias), alias, error=TargetctlError)
         return TargetUpResult(
             host=self.host, front_url=self.front_url, backend=backend, ready=True
         )
 
-    def _resolve_ip(self, run: CommandRunner) -> str:
-        """The workshop host's numeric IP, or a loud failure.
-
-        The alias is written into kali's `/etc/hosts`, whose address column has
-        no resolver: a hostname (e.g. `public_host`) would silently point
-        nowhere. If `hostname -I` yields no numeric address the up path aborts
-        here, before any alias command is built.
-        """
-        ip_cmd = self._ip_cmd()
-        result = run(ip_cmd)
-        remote_ip = result.stdout.strip().split()[0] if result.stdout.strip() else ""
-        if not routing.is_numeric_address(remote_ip):
-            detail = result.stderr.strip() or result.stdout.strip()
-            raise TargetctlError(
-                f"target {self.target!r}: no numeric IP for {self.host} from "
-                f"`hostname -I` (got {detail!r}); refusing to write a non-numeric "
-                "alias into kali /etc/hosts"
-            )
-        return remote_ip
+    def _gateway_address(self, run: CommandRunner) -> str:
+        """Resolve the Docker host gateway to a numeric address, failing loudly (SP1)."""
+        try:
+            return routing.resolve_gateway(run, self.paths)
+        except routing.RoutingError as exc:
+            raise TargetctlError(str(exc)) from exc
 
     def plan_down(self) -> list[Command]:
         return [
             self._targetctl("down", self.target),
-            routing.plan_front_remove(self.ssh_host, self.front_conf),
+            front.plan_conf_remove(self.host),
             routing.kali_clear_command(self.paths, self.host),
         ]
 
@@ -245,8 +238,8 @@ class TargetctlStrategy:
         # cleanup has run, so the orchestrator can report and continue.
         down_cmd = self._targetctl("down", self.target)
         down_result = run(down_cmd)
-        front = routing.plan_front_remove(self.ssh_host, self.front_conf)
-        front_result = run(front)
+        front_conf = front.plan_conf_remove(self.host)
+        front_result = run(front_conf)
         clear = routing.kali_clear_command(self.paths, self.host)
         clear_result = run(clear)
         errors: list[str] = []
@@ -276,17 +269,16 @@ class TargetctlStrategy:
     # --- image lifecycle (the chain's build/pull/present/reclaim seam) --------
 
     def _wrap(self, command: Command) -> Command:
-        """Run a local docker primitive over ssh on the workshop host."""
-        return self._ssh(shlex.join(command.argv), description=command.description)
+        """Run a docker primitive locally, selecting the target platform (D46)."""
+        return replace(command, env={**(command.env or {}), **self._env()})
 
     def provision(self, run: CommandRunner) -> tuple[str, ...]:
-        """Provision this target's images by the precedence, over ssh.
+        """Provision this target's images by the precedence, locally.
 
-        A declared Dockerfile builds the app image on the workshop host, a
-        configured registry pulls the images, and otherwise the images must
-        already be present there. Without declared images the idempotent
-        `targetctl build` still builds them (`--force` is never used: a forced
-        rebuild is drift, not freshness).
+        A declared Dockerfile builds the app image, a configured registry pulls
+        the images, and otherwise the images must already be present. Without
+        declared images the idempotent `targetctl build` still builds them
+        (`--force` is never used: a forced rebuild is drift, not freshness).
         """
         if not self.images:
             build = self._targetctl("build", self.target)
@@ -315,11 +307,15 @@ class TargetctlStrategy:
         """
         if not self.images:
             pattern = f"pentestbench-{self.target}"
-            remote = (
+            script = (
                 "docker image ls --format '{{.Repository}}:{{.Tag}}' "
                 f"| grep -F {shlex.quote(pattern)} | xargs -r docker image rm"
             )
-            command = self._ssh(remote, description=f"reclaim {pattern}*")
+            command = Command(
+                argv=("sh", "-c", script),
+                env=self._env(),
+                description=f"reclaim {pattern}*",
+            )
             result = run(command)
             if result.returncode != 0:
                 detail = result.stderr.strip() or result.stdout.strip()

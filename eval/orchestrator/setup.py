@@ -29,15 +29,14 @@ WORK_ITEM_STATUSES = ("complete", "pending", "incomplete")
 LIFECYCLE_PARAMS: Mapping[str, tuple[str, ...]] = {
     "targetctl": (
         "target",
-        "ssh_host",
-        "remote_dir",
+        "web_dir",
         "repo_url",
-        "nginx_conf_dir",
+        "platform",
         "ready_retries",
         "ready_interval_s",
     ),
-    "image": ("image", "port", "internal_port", "name", "ready_path"),
-    "compose": ("compose_file", "port", "project", "cwd", "ready_path"),
+    "image": ("image", "port", "internal_port", "name", "platform", "ready_path"),
+    "compose": ("compose_file", "port", "project", "cwd", "platform", "ready_path"),
 }
 REQUIRED_LIFECYCLE_PARAMS: Mapping[str, tuple[str, ...]] = {
     "targetctl": ("target",),

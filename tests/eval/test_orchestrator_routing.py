@@ -53,28 +53,6 @@ def test_front_conf_path_is_per_host(tmp_path) -> None:
     assert str(a).startswith("/etc/nginx/conf.d/")
 
 
-def test_front_apply_carries_the_block_on_stdin() -> None:
-    command = routing.plan_front_apply(
-        "ubuntu@workshop", "/etc/nginx/conf.d/eval-target-t-aaaa.target.conf",
-        "t-aaaa.target", 32768,
-    )
-
-    assert command.argv[0] == "ssh"
-    assert "ubuntu@workshop" in command.argv
-    assert "sudo tee /etc/nginx/conf.d/eval-target-t-aaaa.target.conf" in " ".join(
-        command.argv
-    )
-    assert "server_name t-aaaa.target;" in command.stdin
-
-
-def test_front_remove_deletes_the_per_host_conf() -> None:
-    conf = "/etc/nginx/conf.d/eval-target-t-aaaa.target.conf"
-    command = routing.plan_front_remove("ubuntu@workshop", conf)
-
-    assert command.argv[0] == "ssh"
-    assert f"sudo rm -f {conf}" in " ".join(command.argv)
-
-
 def test_kali_alias_targets_the_instance_compose_project(tmp_path) -> None:
     paths = _paths(tmp_path)
 
@@ -110,15 +88,6 @@ def test_kali_hosts_command_reads_the_instance_hosts_file(tmp_path) -> None:
     assert "cat /etc/hosts" in script
     assert paths.compose_project in script
     assert command.cwd == str(paths.worktree)
-
-
-def test_ssh_builder_is_the_shared_shape() -> None:
-    command = routing.ssh_command("ubuntu@workshop", "echo hi", description="d")
-
-    assert command.argv[0] == "ssh"
-    assert all(opt in command.argv for opt in routing.SSH_OPTS)
-    assert "ubuntu@workshop" in command.argv
-    assert command.argv[-1] == "echo hi"
 
 
 def test_is_numeric_address_distinguishes_ips_from_hosts() -> None:

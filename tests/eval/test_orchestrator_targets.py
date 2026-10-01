@@ -3,8 +3,8 @@
 One interface (`plan_up`/`up`/`plan_down`/`down`/`plan_status`/`status`) behind
 three strategies:
 
-  * `targetctl` - the WebExploitBench lifecycle on the REMOTE workshop host,
-    deployed over ssh and fronted by that host's nginx on the synthetic Host;
+  * `targetctl` - the WebExploitBench lifecycle on the LOCAL eval host (D45),
+    run locally and fronted by the shared container nginx on the synthetic Host;
   * `image` and `compose` - local pullable containers, published on the host and
     aliased to `host.docker.internal` (the Docker host gateway) in the instance
     kali, so a loopback-only publish would be unreachable.
@@ -65,10 +65,10 @@ def test_all_strategies_expose_the_same_interface(tmp_path) -> None:
             assert callable(getattr(strategy, name)), (lifecycle, name)
 
 
-# --- targetctl (remote workshop host) ----------------------------------------
+# --- targetctl (local eval host) ---------------------------------------------
 
 
-def test_targetctl_up_deploys_remotely_and_registers_routing(
+def test_targetctl_up_deploys_locally_and_registers_routing(
     tmp_path, recording_runner, fake_result
 ) -> None:
     strategy, paths = _strategy(tmp_path)
@@ -77,7 +77,7 @@ def test_targetctl_up_deploys_remotely_and_registers_routing(
             "scripts/targetctl up": fake_result(
                 0, "Accessible URLs:\nUI: http://127.0.0.1:32768/\n"
             ),
-            "hostname -I": fake_result(0, "10.0.0.5 \n"),
+            "getent hosts": fake_result(0, GATEWAY_LINE),
             "curl": fake_result(0, "200"),
         }
     )
@@ -91,11 +91,24 @@ def test_targetctl_up_deploys_remotely_and_registers_routing(
     assert result.ready is True
 
     texts = runner.argv_texts
-    assert any("worktree" not in t and "test -d" in t and "git clone" in t for t in texts)
+    # The checkout and the deploy run locally; no ssh anywhere.
+    assert not any(t.startswith("ssh") or " ssh " in t for t in texts)
+    assert any("test -d" in t and "git clone" in t for t in texts)
     assert any("scripts/targetctl build jetlinks" in t for t in texts)
     assert any("scripts/targetctl up jetlinks" in t for t in texts)
+    # The front conf is added to the shared container, not a host nginx.
+    assert any("ph-eval-front" in t and "nginx -s reload" in t for t in texts)
     assert any(f"server_name {result.host};" in (c.stdin or "") for c in runner.calls)
     assert any("docker exec" in t for t in texts)
+
+
+def test_targetctl_commands_select_the_amd64_platform(tmp_path) -> None:
+    """D46: an aarch64 host emulates the amd64 target via the platform env."""
+    strategy, _ = _strategy(tmp_path)
+
+    for command in strategy.plan_up():
+        if "targetctl" in " ".join(command.argv):
+            assert command.env == {"DOCKER_DEFAULT_PLATFORM": "linux/amd64"}
 
 
 def test_targetctl_plan_up_lists_every_command_without_a_runner(
@@ -122,7 +135,7 @@ def test_targetctl_readiness_failure_is_fatal(
             "scripts/targetctl up": fake_result(
                 0, "UI: http://127.0.0.1:32768/\n"
             ),
-            "hostname -I": fake_result(0, "10.0.0.5 \n"),
+            "getent hosts": fake_result(0, GATEWAY_LINE),
             "curl": fake_result(0, "502"),
         }
     )
@@ -141,24 +154,23 @@ def test_targetctl_up_without_a_url_is_fatal(tmp_path, recording_runner, fake_re
         strategy.up(runner)
 
 
-def test_targetctl_up_without_a_numeric_ip_is_fatal(
+def test_targetctl_gateway_resolution_failure_is_fatal(
     tmp_path, recording_runner, fake_result
 ) -> None:
-    """SP1: no numeric IP means abort before any alias command is issued."""
+    """SP1: no numeric gateway means abort before any alias command is issued."""
     strategy, _ = _strategy(tmp_path)
     runner = recording_runner(
         routes={
             "scripts/targetctl up": fake_result(0, "UI: http://127.0.0.1:32768/\n"),
-            "hostname -I": fake_result(0, "  \n"),
+            "getent hosts": fake_result(1, stderr="Name or service not known"),
             "curl": fake_result(0, "200"),
         }
     )
 
-    with pytest.raises(targetctl.TargetctlError, match="numeric IP"):
+    with pytest.raises(targetctl.TargetctlError, match="host.docker.internal"):
         strategy.up(runner)
 
-    # The up path aborted before touching kali: no docker-exec alias command.
-    assert not any("docker exec" in t for t in runner.argv_texts)
+    # The up path aborted before touching kali: no alias write.
     assert not any("alias" in (c.description or "") for c in runner.calls)
 
 
@@ -172,7 +184,8 @@ def test_targetctl_down_removes_target_front_and_alias(
 
     texts = runner.argv_texts
     assert any("scripts/targetctl down jetlinks" in t for t in texts)
-    assert any("sudo rm -f" in t for t in texts)
+    # The front conf is removed from the shared container, not a host nginx.
+    assert any("ph-eval-front" in t and "rm -f" in t for t in texts)
     assert any("docker exec" in t for t in texts)
 
 
@@ -181,9 +194,8 @@ def test_targetctl_down_front_failure_is_best_effort_and_clears_alias(
 ) -> None:
     """SP3: a failed front removal must not abort the alias clear."""
     strategy, _ = _strategy(tmp_path)
-    runner = recording_runner(
-        routes={"sudo rm -f": fake_result(1, stderr="nginx conf busy")}
-    )
+    conf = str(routing.front_conf_path("/etc/nginx/conf.d", strategy.host))
+    runner = recording_runner(routes={conf: fake_result(1, stderr="nginx conf busy")})
 
     with pytest.raises(targetctl.TargetctlError, match="front removal"):
         strategy.down(runner)
@@ -204,14 +216,14 @@ def test_targetctl_status_reads_targetctl_ps(
 
 
 def test_targetctl_quotes_interpolated_config(tmp_path) -> None:
-    """S5: remote_dir/repo_url/target are operator config and must be quoted."""
+    """S5: web_dir/repo_url are interpolated into a shell line and must be quoted."""
     run = setup_mod.TargetRun(
         target_id="t-1",
         target_config=setup_mod.TargetConfig(
             lifecycle="targetctl",
             params={
                 "target": "a b",
-                "remote_dir": "/opt/a b",
+                "web_dir": "/opt/a b",
                 "repo_url": "https://example.invalid/a b.git",
             },
         ),
@@ -224,13 +236,12 @@ def test_targetctl_quotes_interpolated_config(tmp_path) -> None:
 
     plan = strategy.plan_up()
     checkout = " ".join(plan[0].argv)
-    targetctl_up = " ".join(
-        " ".join(c.argv) for c in plan if "targetctl" in " ".join(c.argv)
-    )
+    targetctl_cmds = [c for c in plan if "targetctl" in " ".join(c.argv)]
 
     assert shlex.quote("/opt/a b") in checkout
     assert shlex.quote("https://example.invalid/a b.git") in checkout
-    assert shlex.quote("a b") in targetctl_up
+    # The targetctl argv is an argv list: the target stays one unquoted element.
+    assert any("a b" in c.argv for c in targetctl_cmds)
 
 
 def test_routing_constants_are_single_sourced() -> None:

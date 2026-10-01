@@ -18,7 +18,8 @@ from typing import Callable
 
 import yaml
 
-from orchestrator.commands import CommandRunner
+from orchestrator import front
+from orchestrator.commands import CommandRunner, require_ok
 from orchestrator.docker import ImagePrimitiveError
 from orchestrator.files import FileStore
 from orchestrator.instances import InstancePaths
@@ -161,6 +162,7 @@ class Chain:
                 reclaimed = self._teardown(previous)
             pulled = self._pull(run)
             strategy = self._strategy(run)
+            self._front()
             self._step = f"up {target_id}"
             self._trace.append(self._step)
             up = strategy.up(self.runner)
@@ -189,6 +191,19 @@ class Chain:
         self._step = f"pull {run.target_id}"
         self._trace.append(self._step)
         return tuple(self._strategy(run).provision(self.runner))
+
+    def _front(self) -> None:
+        """Ensure the shared front container before a local target starts (D45).
+
+        The chain is the control plane (D42), so `next_target` must be
+        self-contained: every lifecycle is now local and fronted by
+        `ph-eval-front`, so the container is created (idempotently) here rather
+        than relying on the orchestrator's separate `up` path.
+        """
+        self._step = "front"
+        self._trace.append("front")
+        command = front.plan_container_up()
+        require_ok(self.runner(command), command, error=TargetError)
 
     def _health(self, strategy: TargetStrategy) -> str:
         self._step = "health"

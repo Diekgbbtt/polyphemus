@@ -1,7 +1,7 @@
 """The single external-effect seam: a command, its result, and its runner.
 
 Every effect the orchestrator performs - `git worktree`, the env preflight,
-`docker compose`, `ssh` to the workshop host, `docker exec` into kali - is a
+`docker compose`, the local `scripts/targetctl`, `docker exec` into kali - is a
 `Command`. The real runner is deliberately thin; tests inject a recording fake
 and plan mode never constructs one.
 """

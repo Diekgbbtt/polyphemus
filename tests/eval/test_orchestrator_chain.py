@@ -10,6 +10,7 @@ from __future__ import annotations
 import pytest
 
 from orchestrator import chain as chain_mod
+from orchestrator.commands import CommandResult
 from orchestrator.files import FileStore
 from orchestrator.instances import InstancePaths
 from orchestrator.setup import Instance, TargetConfig, TargetRun
@@ -89,7 +90,7 @@ def _build(tmp_path, target_ids, *, fail_up=None):
         instance=instance,
         paths=_paths(tmp_path, instance),
         strategy_for=factory,
-        runner=lambda command: None,
+        runner=lambda command: CommandResult(0),
         files=FileStore(),
         state_path=tmp_path / "chain-state.yaml",
     )
@@ -119,6 +120,24 @@ def test_second_target_reclaims_previous_then_pulls(tmp_path):
     assert strategies["b"].calls == ["pull", "up", "status"]
     assert chain.state.active_target == "b"
     assert chain.state.completed == ("a", "b")
+
+
+def test_next_target_ensures_the_shared_front(tmp_path):
+    """D45: every lifecycle is local, so the chain creates `ph-eval-front` itself."""
+    seen: list = []
+    instance = _instance(["a"])
+    chain = chain_mod.Chain(
+        instance=instance,
+        paths=_paths(tmp_path, instance),
+        strategy_for=lambda run: FakeStrategy(run.target_id),
+        runner=lambda command: seen.append(" ".join(command.argv)) or CommandResult(0),
+        files=FileStore(),
+        state_path=tmp_path / "chain-state.yaml",
+    )
+
+    chain.next_target("a")
+
+    assert any("ph-eval-front" in text for text in seen)
 
 
 def test_unknown_target_is_a_failure(tmp_path):

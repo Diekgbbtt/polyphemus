@@ -18,7 +18,6 @@ from orchestrator.ids import short_id
 from orchestrator.instances import InstancePaths
 
 SYNTHETIC_SUFFIX = ".target"
-SSH_OPTS = ("-o", "BatchMode=yes", "-o", "ConnectTimeout=15")
 
 # Single-sourced (S1/S2): the host loopback the host-side readiness probes use,
 # and the Docker host gateway kali reaches host-published ports through. Kali is
@@ -57,9 +56,8 @@ def synthetic_host(identity: str) -> str:
 def nginx_front_block(host: str, port: int | str, *, backend_host: str = LOOPBACK) -> str:
     """The nginx server block: `server_name <host>` -> `backend_host:port`.
 
-    `backend_host` defaults to loopback (the remote workshop host, where nginx
-    and the target share a network namespace) and is the Docker host gateway
-    for the local front container, which reaches host-published ports that way.
+    `backend_host` defaults to loopback and is the Docker host gateway for the
+    shared front container, which reaches host-published target ports that way.
     """
     return (
         "server {\n"
@@ -79,44 +77,6 @@ def nginx_front_block(host: str, port: int | str, *, backend_host: str = LOOPBAC
 def front_conf_path(conf_dir: str | Path, host: str) -> Path:
     """One conf file per synthetic Host, so concurrent fronts never collide."""
     return Path(conf_dir) / f"eval-target-{host}.conf"
-
-
-def ssh_command(
-    ssh_host: str,
-    remote_command: str,
-    *,
-    stdin: str | None = None,
-    description: str = "",
-) -> Command:
-    """The one ssh command builder shared by `routing` and `targetctl` (S2)."""
-    return Command(
-        argv=("ssh", *SSH_OPTS, ssh_host, remote_command),
-        stdin=stdin,
-        description=description,
-    )
-
-
-def plan_front_apply(ssh_host: str, conf_path: str | Path, host: str, port: int | str) -> Command:
-    """Write the per-host front block remotely and reload nginx."""
-    quoted = shlex.quote(str(conf_path))
-    remote = (
-        f"sudo tee {quoted} >/dev/null && sudo nginx -t && sudo systemctl reload nginx"
-    )
-    return ssh_command(
-        ssh_host,
-        remote,
-        stdin=nginx_front_block(host, port),
-        description=f"front {host} -> {LOOPBACK}:{port}",
-    )
-
-
-def plan_front_remove(ssh_host: str, conf_path: str | Path) -> Command:
-    """Remove the per-host front block remotely and reload nginx."""
-    quoted = shlex.quote(str(conf_path))
-    remote = f"sudo rm -f {quoted} && sudo nginx -t && sudo systemctl reload nginx"
-    return ssh_command(
-        ssh_host, remote, stdin=None, description=f"remove front {conf_path}"
-    )
 
 
 def _compose_ps_kali(paths: InstancePaths) -> str:
