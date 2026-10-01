@@ -91,6 +91,16 @@ _Avoid_: judging, scoring run
 The eval-close phase that checks every trial's `verdicts.yaml` presence and schema and, once present, the `diagnoses.yaml` pairing (exactly one entry per `missed`/`partial` verdict); it re-dispatches a missing/invalid/unpaired trial at most twice, then micro-diagnoses a bounded configuration-layer repair or a named escalation (D15/D28).
 _Avoid_: final check, audit
 
+**Tick control plane**:
+The eval orchestrator's post-execution workflow driver (#289): one tick verifies every trial's execution state and advances a single node, from a successful execution to the background assessment and then to the diagnosis.
+It is one CLI tick (`orchestrator monitor`) wrapped as the `eval_monitor` custom tool, and it is the only automated path that dispatches the assessment and diagnoser subagents (the manual `assess`/`diagnose` verbs remain); a failed, blocked, or timed-out execution is deferred to the surfer loop.
+_Avoid_: monitor loop, watcher, scheduler
+
+**Workflow node**:
+One step of the post-execution workflow (`execution`, `assessment`, `diagnosis`), driven by the tick control plane.
+Each node has its own prompt under `eval/prompts/` (`orchestrator.md` for the graph, `assessor-workflow.md` and `diagnoser-workflow.md` for the two dispatched nodes), distinct from the subagent role prompt it dispatches.
+_Avoid_: stage, step, phase
+
 **Assessment attempt**:
 One dispatch or verification step of the assessment subagent, recorded on the trial record with its outcome and, on escalation, a named failure.
 _Avoid_: retry, poll

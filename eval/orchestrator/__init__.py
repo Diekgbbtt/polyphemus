@@ -10,7 +10,12 @@ subagent and run the eval-close presence/schema verification with
 re-dispatch and a bounded micro-diagnosis; `diagnose` (#272) dispatches the
 diagnoser subagent and `issue-search` exposes the read-only issue bank;
 `store render-sync`/`store materialize` (#273) render the one-way artifact
-sync and assemble the self-contained per-trial tree. `align` (#274) asserts the
+sync and assemble the self-contained per-trial tree. `monitor` (#289) is the
+tick-based post-execution control plane (`orchestrator.monitor`): one sweep
+verifies every trial's execution state and advances the workflow one node - a
+successful execution dispatches the assessment, a present `verdicts.yaml`
+dispatches the diagnoser, and a present, paired `diagnoses.yaml` completes the
+trial. `align` (#274) asserts the
 advance delta the daemon emitted, decides the alignment action through an agent
 turn (`orchestrator.alignment`), executes it, or escalates and writes a hold
 that blocks `up`/`trial` until `alignment resolve` records the operator's

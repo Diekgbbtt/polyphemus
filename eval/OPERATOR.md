@@ -783,7 +783,55 @@ Every dispatch and verification attempt is recorded under `diagnosis` in
 `trial.yaml` (`status`, `attempts[]`, `diagnoses_path`, `entries_written`,
 `issues_matched`, `issues_proposed`, `failure`).
 
-### 2.11. Version-advance alignment and holds
+### 2.11. The tick control plane and the orchestrator workflow
+
+After a trial's execution finishes, its chain into assessment and diagnosis is
+driven by a tick-based control plane rather than by hand.
+Each tick verifies every trial's execution state and advances one node of the
+post-execution workflow:
+
+1. **execution** - `orchestrator trial` runs the phases and writes `trial.yaml`.
+2. **assessment** - a successful execution (terminal `complete`, or `stopped` at
+   the hunting cap) dispatches the assessment subagent; `verdicts.yaml` lands in
+   the trial directory.
+3. **diagnosis** - once the verdicts are present, the diagnoser subagent writes
+   `diagnoses.yaml` for every `missed`/`partial` verdict.
+
+A trial whose execution is not a success (terminal `failed`, `timeout`, or
+`blocked`) is `deferred`: the surfer loop owns recovery and a failed run is
+never assessed.
+
+The control plane is one CLI tick:
+
+```
+PYTHONPATH=eval python3 -m orchestrator monitor <setup.yaml> \
+  --data-root "$EVAL_DATA_ROOT" --ground-truth <dir> \
+  --command "$EVAL_ASSESS_COMMAND" --diagnose-command "$EVAL_DIAGNOSE_COMMAND"
+```
+
+It sweeps every trial record under the runs root and reports each trial's
+state (`deferred`, `assessment_dispatched`, `awaiting_assessment`,
+`diagnosis_dispatched`, `awaiting_diagnosis`, `complete`, `escalated`).
+A node whose output has not landed is `awaiting`; it is not re-dispatched every
+tick, and a node that stays absent past `--budget-s` is re-dispatched up to
+twice and then escalates with a named failure (`empty_file`, `schema_invalid`,
+`unpaired`, `dispatcher_process`, or `..._no_command`) recorded on the trial
+record. Exit 1 means at least one node escalated. `--dry-run` reports the state
+and dispatches nothing.
+
+The eval orchestrator agent (`eval/prompts/orchestrator.md`) is the automated
+driver: it calls the `eval_monitor` tool - the custom opencode tool in
+`.opencode/plugin/eval-monitor.ts` - once per tick, and stops when every trial
+is `complete`, `deferred`, or `escalated`.
+The per-node prompts are `eval/prompts/assessor-workflow.md` and
+`eval/prompts/diagnoser-workflow.md`; the subagent role prompts they dispatch
+are `eval/prompts/assessment.md` and `eval/prompts/diagnoser.md`.
+
+| Primitive | Contract |
+|---|---|
+| `PYTHONPATH=eval python3 -m orchestrator monitor <setup.yaml> [--budget-s N] [--dry-run]` | One tick of the post-execution control plane: verify every trial's execution state and advance one node (assessment then diagnosis). `--dry-run` reports the state and dispatches nothing. |
+
+### 2.12. Version-advance alignment and holds
 
 The sync daemon fast-forwards `eval` to `dev` when every instance is idle and
 records a stack manifest diff (the `decision` payload of its heartbeat). It
@@ -830,7 +878,7 @@ branch that chooses an action. The executor only honours the decision and
 resolves a declared migration/rebuild command by artifact class; an action with
 no declaration fails loud rather than inventing one.
 
-### 2.12. The surfer loop (background state assertion and recovery)
+### 2.13. The surfer loop (background state assertion and recovery)
 
 The symbolic layer owns lifecycle (D5); the trial engine enforces the hunting cap
 and stops a run at a failed terminal. The surfer loop is the background

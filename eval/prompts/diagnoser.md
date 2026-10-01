@@ -28,7 +28,8 @@ Neither fits the eval verbatim - this is an out-of-band diagnosis, not a live fi
 
 1. **Observe.** Reproduce the miss from persisted evidence only, per vuln.
    Read the ground truth with `python3 eval/gt.py <ground-truth-dir> --json`.
-   Read the produced hunting artifacts under the data root: the hunt configs under `hunting/orchestration/hunt_configs/{produced,consumed}/`, the `TestImplementationSpec` files under `hunting/hunter/test-specs/<fault_key>/`, and the pod artifacts under `hunting/test-executor-pod/<spec_id>/` (the `variants/`, the `experiment-log/*.yaml` slices, and the terminal `PodExport` `<run_id>.yaml`).
+   Read the produced hunting artifacts under the data root, rooted at the trial's project directory `<data_root>/<project_id>/`: the hunt configs under `<data_root>/<project_id>/hunting/orchestration/hunt_configs/{produced,consumed}/`, the `TestImplementationSpec` files under `<data_root>/<project_id>/hunting/hunter/test-specs/<fault_key>/`, and the pod artifacts under `<data_root>/<project_id>/hunting/test-executor-pod/<spec_id>/` (the `variants/`, the `experiment-log/*.yaml` slices, and the terminal `PodExport` `<run_id>.yaml`).
+   Every one of those paths is parametrised on `<project_id>`, which you read from the `project_id` field of the trial record named in your launch command; `<data_root>` is the data root you were given.
    Reason mostly over observability: read the Langfuse traces for the trial's runs and search the observability platform for the exact decision nodes where the pipeline turned away.
    Establish what actually happened, not what should have happened.
 2. **Hypothesise.** For each vuln write down the candidate failure modes from the taxonomy below, each with the evidence that would confirm or falsify it.

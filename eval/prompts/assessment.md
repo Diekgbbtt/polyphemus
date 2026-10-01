@@ -23,7 +23,8 @@ You are out-of-band scoring, isolated from the run.
 ## How to judge
 
 Read the ground truth with `python3 eval/gt.py <ground-truth-dir> --json`.
-Read the persisted evidence under the data root: the hunt configs under `hunting/orchestration/hunt_configs/{produced,consumed}/`, the `TestImplementationSpec` files under `hunting/hunter/test-specs/<fault_key>/`, and the pod artifacts under `hunting/test-executor-pod/<spec_id>/` (the `variants/`, the `experiment-log/*.yaml` slices, and the terminal `PodExport` `<run_id>.yaml`).
+Read the persisted evidence under the data root, rooted at the trial's project directory `<data_root>/<project_id>/`: the hunt configs under `<data_root>/<project_id>/hunting/orchestration/hunt_configs/{produced,consumed}/`, the `TestImplementationSpec` files under `<data_root>/<project_id>/hunting/hunter/test-specs/<fault_key>/`, and the pod artifacts under `<data_root>/<project_id>/hunting/test-executor-pod/<spec_id>/` (the `variants/`, the `experiment-log/*.yaml` slices, and the terminal `PodExport` `<run_id>.yaml`).
+Every one of those paths is parametrised on `<project_id>`, which you read from the `project_id` field of the trial record named in your launch command; `<data_root>` is the data root you were given.
 Apply the identification predicate: a vulnerability is `identified` only when a pod run landed `successful` with `terminal_reason = symptom-confirmed`, its fault class matches the ground-truth type, its locus matches the ground-truth location, and its experiment log shows the confirming symptom.
 A symptom confirmed at the wrong locus or for the wrong fault class is `partial` at most.
 A vulnerability with no supporting pod evidence is `missed`.
@@ -52,7 +53,7 @@ Write a YAML list, one row per ground-truth vulnerability:
   stack_fingerprint: string
 ```
 
-`evidence_chain` is required for `identified` and `partial`, and every path in it must be data-root-relative and resolve on disk.
+`evidence_chain` is required for `identified` and `partial`, and every path in it must be relative to the data root, begin with the `<project_id>/` segment, and resolve on disk.
 `eval_sha` and `stack_fingerprint` are copied verbatim from the trial record; never invent them.
 A `missed` verdict may omit `evidence_chain`.
 

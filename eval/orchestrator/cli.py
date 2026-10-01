@@ -12,13 +12,13 @@ import json
 import os
 import shlex
 import sys
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Callable, TextIO
+from typing import Callable, Sequence, TextIO
 
 import yaml
 
-from orchestrator import api, assessment, diagnosis, evidence, instances, routing, store, subagents, surfer, trial, verdicts
+from orchestrator import api, assessment, diagnosis, evidence, instances, monitor, routing, store, subagents, surfer, trial, verdicts
 from orchestrator import alignment
 from orchestrator.commands import LocalRunner
 from orchestrator.files import FileStore
@@ -199,6 +199,22 @@ def _parser() -> argparse.ArgumentParser:
     _common_args(close_parser)
     _assessment_args(close_parser)
     _diagnosis_args(close_parser)
+
+    # --- the tick control plane (#289) ----------------------------------------
+    monitor_parser = sub.add_parser(
+        "monitor",
+        help="one tick of the post-execution workflow control plane",
+    )
+    _common_args(monitor_parser)
+    _assessment_args(monitor_parser)
+    _diagnosis_args(monitor_parser)
+    monitor_parser.add_argument(
+        "--budget-s",
+        type=float,
+        default=float(os.environ.get("EVAL_MONITOR_BUDGET_S", 3600.0)),
+        help="the wait between a node's dispatch and its re-dispatch/escalation "
+        "decision",
+    )
 
     # --- the diagnosis verbs (#272) -------------------------------------------
     diag_parser = sub.add_parser(
@@ -1003,6 +1019,270 @@ def _run_close_verify(args, setup: EvalSetup, out: TextIO, err: TextIO,
     return 1 if escalated else 0
 
 
+# --- the tick control plane (#289) --------------------------------------------
+
+
+def _attempt_views(attempts) -> tuple[monitor.AttemptView, ...]:
+    return tuple(monitor.AttemptView(at=a.at, outcome=a.outcome) for a in attempts)
+
+
+def _node_view(state: str, status: str | None, attempts: Sequence) -> monitor.NodeView:
+    return monitor.NodeView(
+        state=state, status=status, attempts=_attempt_views(attempts)
+    )
+
+
+@dataclass(frozen=True)
+class _MonitorContext:
+    """A trial's tick view plus the requests a dispatch at that tick would use."""
+
+    view: monitor.TrialView
+    payload: dict
+    assessment_request: assessment.AssessmentRequest
+    diagnosis_request: diagnosis.DiagnosisRequest | None
+
+
+def _monitor_trial(args, run: TargetRun, trial_dir: Path, files: FileStore):
+    """Build one trial's tick view; None when the trial cannot be read."""
+    record_path = trial_dir / "trial.yaml"
+    try:
+        payload = assessment.load_trial_record(record_path, files=files)
+    except assessment.AssessmentError:
+        return None
+    terminal = str(payload.get("terminal") or "")
+    target_id = str(payload.get("target_id") or run.target_id)
+    trace_id = _trace_id_of(payload)
+    try:
+        sha, fingerprint = assessment.trial_identity(record_path, files=files)
+    except assessment.AssessmentError:
+        sha = fingerprint = None
+    try:
+        assessment_request = _assessment_request(args, run, trial_dir, trace_id=trace_id)
+    except assessment.AssessmentError:
+        # No resolvable ground truth: the close verification owns that failure.
+        return None
+
+    a_state = assessment.check_verdicts(
+        assessment_request, files=files, eval_sha=sha, stack_fingerprint=fingerprint
+    )
+    a_status = (payload.get("assessment") or {}).get("status")
+    a_view = _node_view(a_state, a_status, _prior_attempts(payload))
+
+    diagnosis_request = None
+    diagnosis_view = None
+    if a_state == "present":
+        try:
+            verdict_rows = _load_verdicts(args, run, trial_dir, files, sha, fingerprint)
+        except (verdicts.VerdictError, OSError):
+            verdict_rows = ()
+        vulns = diagnosis.required_vulns(verdict_rows)
+        if not vulns:
+            diagnosis_view = monitor.NodeView(state="present")
+        else:
+            diagnosis_request = _diagnosis_request(
+                args, run, trial_dir, vulns, trace_id=trace_id
+            )
+            d_state = diagnosis.check_diagnoses(
+                diagnosis_request,
+                files=files,
+                verdicts=verdict_rows,
+                eval_sha=sha,
+                stack_fingerprint=fingerprint,
+            )
+            d_status = (payload.get("diagnosis") or {}).get("status")
+            diagnosis_view = _node_view(
+                d_state, d_status, _prior_diagnosis_attempts(payload)
+            )
+
+    view = monitor.TrialView(
+        trial_dir=trial_dir,
+        target_id=target_id,
+        terminal=terminal,
+        assessment=a_view,
+        diagnosis=diagnosis_view,
+    )
+    return _MonitorContext(view, payload, assessment_request, diagnosis_request)
+
+
+def _escalate_assessment(context: _MonitorContext, cause: str, files: FileStore) -> str:
+    failure = f"assessment_{cause}"
+    record = trial.AssessmentRecord(
+        "escalated",
+        list(_prior_attempts(context.payload)),
+        str(context.assessment_request.destination),
+        failure=failure,
+    )
+    assessment.record_assessment(
+        context.view.trial_dir / "trial.yaml", record, files=files
+    )
+    return failure
+
+
+def _escalate_diagnosis(context: _MonitorContext, cause: str, files: FileStore) -> str:
+    failure = f"diagnosis_{cause}"
+    request = context.diagnosis_request
+    destination = (
+        request.destination
+        if request is not None
+        else context.view.trial_dir / diagnosis.DIAGNOSES_FILENAME
+    )
+    record = trial.DiagnosisRecord(
+        "escalated",
+        list(_prior_diagnosis_attempts(context.payload)),
+        str(destination),
+        failure=failure,
+    )
+    diagnosis.record_diagnosis(
+        context.view.trial_dir / "trial.yaml", record, files=files
+    )
+    return failure
+
+
+def _assessment_error_record(
+    context: _MonitorContext, exc: BaseException
+) -> trial.AssessmentRecord:
+    """Record a raised assessment command as an `error` attempt.
+
+    A command that raises is a dispatch failure, not a missing output: the
+    attempt is appended (so the next tick re-dispatches within the bound and
+    the eventual escalation names `dispatcher_process`), never escalated here.
+    """
+    attempts = list(_prior_attempts(context.payload))
+    attempts.append(
+        trial.AssessmentAttempt(
+            len(attempts) + 1, "error", str(exc), subagents.utcnow()
+        )
+    )
+    return trial.AssessmentRecord(
+        "dispatched", attempts, str(context.assessment_request.destination)
+    )
+
+
+def _diagnosis_error_record(
+    context: _MonitorContext, exc: BaseException
+) -> trial.DiagnosisRecord:
+    """Record a raised diagnoser command as an `error` attempt (see above)."""
+    attempts = list(_prior_diagnosis_attempts(context.payload))
+    attempts.append(
+        trial.DiagnosisAttempt(
+            len(attempts) + 1, "error", str(exc), subagents.utcnow()
+        )
+    )
+    request = context.diagnosis_request
+    destination = (
+        request.destination
+        if request is not None
+        else context.view.trial_dir / diagnosis.DIAGNOSES_FILENAME
+    )
+    return trial.DiagnosisRecord("dispatched", attempts, str(destination))
+
+
+def _apply_monitor(
+    args,
+    context: _MonitorContext,
+    decision: monitor.TrialDecision,
+    *,
+    files: FileStore,
+    runner_factory: RunnerFactory,
+    dispatch_factory: DispatchFactory | None,
+    diagnose_dispatch_factory: DiagnoseDispatchFactory | None,
+) -> str | None:
+    """Apply one tick's decision: dispatch a node, or record its escalation.
+
+    Returns the named failure when the tick escalated the node (including a
+    dispatch that could not construct its command), else None.
+    """
+    record_path = context.view.trial_dir / "trial.yaml"
+    if decision.action == monitor.DISPATCH and decision.node == monitor.NODE_ASSESSMENT:
+        try:
+            dispatcher = _make_dispatcher(args, runner_factory, dispatch_factory)
+        except assessment.AssessmentError:
+            return _escalate_assessment(context, "no_command", files)
+        try:
+            record = assessment.dispatch(
+                context.assessment_request,
+                dispatcher=dispatcher,
+                prior=_prior_attempts(context.payload),
+            )
+        except Exception as exc:  # noqa: BLE001 - the dispatcher outcome is arbitrary
+            record = _assessment_error_record(context, exc)
+        assessment.record_assessment(record_path, record, files=files)
+        return None
+    if decision.action == monitor.DISPATCH and decision.node == monitor.NODE_DIAGNOSIS:
+        try:
+            dispatcher = _make_diagnosis_dispatcher(
+                args, runner_factory, diagnose_dispatch_factory
+            )
+        except diagnosis.DiagnosisError:
+            return _escalate_diagnosis(context, "no_command", files)
+        try:
+            record = diagnosis.dispatch(
+                context.diagnosis_request,
+                dispatcher=dispatcher,
+                prior=_prior_diagnosis_attempts(context.payload),
+            )
+        except Exception as exc:  # noqa: BLE001 - the dispatcher outcome is arbitrary
+            record = _diagnosis_error_record(context, exc)
+        diagnosis.record_diagnosis(record_path, record, files=files)
+        return None
+    if decision.action == monitor.ESCALATE:
+        if decision.cause is None:
+            # Already escalated on a prior tick: leave its named failure intact.
+            return None
+        if decision.node == monitor.NODE_ASSESSMENT:
+            return _escalate_assessment(context, decision.cause, files)
+        return _escalate_diagnosis(context, decision.cause, files)
+    return None
+
+
+def _run_monitor(
+    args,
+    setup: EvalSetup,
+    out: TextIO,
+    err: TextIO,
+    runner_factory: RunnerFactory,
+    dispatch_factory: DispatchFactory | None,
+    diagnose_dispatch_factory: DiagnoseDispatchFactory | None,
+) -> int:
+    """One sweep of the control plane: verify state and advance one node per trial."""
+    files = FileStore()
+    now = subagents.utcnow()
+    tally: dict[str, int] = {}
+    escalated = 0
+    for instance in setup.instances:
+        for run in instance.targets:
+            for trial_dir in files.list_dirs(Path(args.runs_root) / run.target_id):
+                if not files.exists(trial_dir / "trial.yaml"):
+                    continue
+                context = _monitor_trial(args, run, trial_dir, files)
+                if context is None:
+                    continue
+                decision = monitor.decide(context.view, now=now, budget_s=args.budget_s)
+                tally[decision.state] = tally.get(decision.state, 0) + 1
+                label = f"{run.target_id}/{trial_dir.name}"
+                if args.dry_run:
+                    print(f"{label}: {decision.state} ({decision.node})", file=out)
+                    continue
+                failure = _apply_monitor(
+                    args,
+                    context,
+                    decision,
+                    files=files,
+                    runner_factory=runner_factory,
+                    dispatch_factory=dispatch_factory,
+                    diagnose_dispatch_factory=diagnose_dispatch_factory,
+                )
+                detail = f": {decision.detail}" if decision.detail else ""
+                print(f"{label}: {decision.state} ({decision.node}){detail}", file=out)
+                if failure is not None or decision.state == monitor.STATE_ESCALATED:
+                    escalated += 1
+                    note = failure or decision.detail or "already escalated"
+                    print(f"monitor: {label}: escalated: {note}", file=err)
+    summary = ", ".join(f"{state}={count}" for state, count in sorted(tally.items()))
+    print(f"monitor tick: {summary or 'no trials'}", file=out)
+    return 1 if escalated else 0
+
+
 # --- artifact store (#273) ----------------------------------------------------
 
 
@@ -1519,6 +1799,11 @@ def main(
             )
         if args.verb == "close-verify":
             return _run_close_verify(
+                args, setup, out, err, runner_factory, dispatch_factory,
+                diagnose_dispatch_factory,
+            )
+        if args.verb == "monitor":
+            return _run_monitor(
                 args, setup, out, err, runner_factory, dispatch_factory,
                 diagnose_dispatch_factory,
             )
