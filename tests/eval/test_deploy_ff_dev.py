@@ -11,7 +11,9 @@ Covered, per ticket #268:
   (b) a later upstream commit is fast-forwarded;
   (c) a diverged `dev` fails loudly and leaves the working tree untouched;
   (d) an `eval` branch in the origin is never checked out or modified;
-  (e) a missing required env var names the variable in the failure.
+  (e) a missing required env var names the variable in the failure;
+  (f) a checkout whose `origin` is a stale URL is repointed to the configured
+      origin, so the pushed commit is delivered instead of a no-op.
 """
 from __future__ import annotations
 
@@ -186,6 +188,37 @@ def test_second_run_is_idempotent_when_already_current(tmp_path: Path, origin) -
     assert result.returncode == 0, result.stderr
     assert rev(dev_dir, "HEAD") == sha
     assert sha in result.stdout
+
+
+def test_repoints_a_stale_origin_and_delivers_the_pushed_commit(
+    tmp_path: Path, origin
+) -> None:
+    seed, bare = origin
+    dev_dir = tmp_path / "server" / "dev"
+
+    # The checkout is first cloned from a *stale* origin (a bare copy of the
+    # real origin made before the new commit)...
+    stale = tmp_path / "stale.git"
+    git("clone", "-q", "--bare", str(bare), str(stale), cwd=tmp_path)
+    git(
+        "clone", "-q", "--single-branch", "--branch", "dev",
+        str(stale), str(dev_dir), cwd=tmp_path,
+    )
+    old_sha = rev(dev_dir, "HEAD")
+    assert git("remote", "get-url", "origin", cwd=dev_dir).strip() == str(stale)
+
+    # ...and the real upstream `dev` gains a commit the stale origin lacks.
+    new_sha = bump_dev(seed, "v2\n", "v2")
+    assert new_sha != old_sha
+
+    result = run_ff(bare, dev_dir)
+
+    assert result.returncode == 0, result.stderr
+    # The remote was repointed to the configured origin and the commit delivered
+    # (without the repoint this would have fast-forwarded stale -> itself).
+    assert git("remote", "get-url", "origin", cwd=dev_dir).strip() == str(bare)
+    assert "repointing origin" in result.stdout
+    assert rev(dev_dir, "HEAD") == new_sha
 
 
 def test_refuses_a_checkout_not_on_dev(tmp_path: Path, origin) -> None:

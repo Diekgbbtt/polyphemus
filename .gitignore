@@ -75,3 +75,8 @@ uv.lock
 # The eval alignment state (#274): hold markers and applied actions, written by
 # `orchestrator align`; per-machine runtime, never source.
 eval/state/
+# The per-instance worktrees and their `.env` secrets, created by `orchestrator
+# up`/`trial` under --instances-root (default eval/instances); per-machine
+# runtime, never source. Without this an unguarded `git add -A` in the canonical
+# server checkout would commit live instance state and credentials.
+eval/instances/

@@ -6,6 +6,10 @@ set -euo pipefail
 # Owns exactly one reference: bring the canonical server checkout's local `dev`
 # branch up to `origin/dev` with a fast-forward. It clones the checkout from
 # the public HTTPS origin when absent, then fetches and ff-merges `dev`. It is
+# also the convergence point for the checkout's `origin` URL: an existing
+# checkout whose remote names anything but the configured origin is repointed
+# first, so a fetch can never silently read a stale origin (a leftover bundle or
+# a moved mirror) and report a no-op fast-forward as a successful delivery. It is
 # the remote half of `.github/workflows/deploy-eval.yml`, which pipes this file
 # over SSH (`bash -s`); keeping it a plain local script is what makes it
 # testable against local git repositories.
@@ -47,6 +51,21 @@ fi
 
 CURRENT="$(git -C "${EVAL_DEV_DIR}" symbolic-ref --short -q HEAD || true)"
 [ "${CURRENT}" = "${BRANCH}" ] || die "checkout ${EVAL_DEV_DIR} is on '${CURRENT:-detached HEAD}', expected '${BRANCH}'; refusing to switch branches"
+
+# Converge the checkout's `origin` onto the configured origin before fetching.
+# A checkout previously cloned from another URL (a stale local bundle, a moved
+# mirror) would otherwise fetch that other `dev` and fast-forward to the same
+# commit it already has, reporting success while the pushed commit is never
+# delivered. Repointing is idempotent and touches no branch.
+CURRENT_ORIGIN="$(git -C "${EVAL_DEV_DIR}" remote get-url origin 2>/dev/null || true)"
+if [ "${CURRENT_ORIGIN}" != "${ORIGIN}" ]; then
+    echo "ff_dev.sh: repointing origin ${CURRENT_ORIGIN:-<absent>} -> ${ORIGIN}"
+    if [ -n "${CURRENT_ORIGIN}" ]; then
+        git -C "${EVAL_DEV_DIR}" remote set-url origin "${ORIGIN}"
+    else
+        git -C "${EVAL_DEV_DIR}" remote add origin "${ORIGIN}"
+    fi
+fi
 
 # Fetch only the `dev` refspec: no --prune, so no other remote-tracking ref is
 # ever added or removed.

@@ -669,6 +669,12 @@ delivery is owned by `.github/workflows/deploy-eval.yml`, which pipes
 never the `eval` branch or any instance worktree (`dev` -> `eval` is the sync
 daemon's job).
 
+Before fetching, the script converges the checkout's `origin` onto the
+configured origin: a checkout previously cloned from another URL (a leftover
+local bundle, a moved mirror) is repointed, so the fetch can never silently read
+a stale origin and report a no-op fast-forward as a successful delivery. Any
+other `dev` divergence still fails loudly and leaves the working tree untouched.
+
 Configure once, in the repository's Actions secrets (Settings -> Secrets and
 variables -> Actions):
 
