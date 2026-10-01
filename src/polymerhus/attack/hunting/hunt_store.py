@@ -212,6 +212,35 @@ class DuplicateConfigError(ValueError):
     fail-open (warn + count), never a silent duplicate."""
 
 
+class ConfigIdentityError(ValueError):
+    """A config write whose payload does not carry the identity the file name
+    is DERIVED from (#298): `unit_id` and `fault_class` must be present and
+    non-empty; `vulnerability_class` may be empty (the carried-bare degrade is
+    legal). The write seam raises this rather than composing a degenerate file
+    name no reader can ratify (the `_CWE-1220_.yaml` regression). The tool
+    translates it into a coded teaching rejection the agent can correct."""
+
+
+def require_config_identity(data: dict) -> tuple[str, str, str]:
+    """The `(unit_id, fault_class, vulnerability_class)` the file name and the
+    semantic key are DERIVED from (#298). `unit_id` and `fault_class` are
+    REQUIRED - a missing or empty one is a `ConfigIdentityError`, never a
+    silently-composed degenerate name; the vulnerability class may be empty
+    (the carried-bare degrade)."""
+    unit_id = str(data.get("unit_id") or "")
+    fault_class = str(data.get("fault_class") or "")
+    vulnerability_class = str(data.get("vulnerability_class") or "")
+    missing = [name for name, value in (("unit_id", unit_id),
+                                        ("fault_class", fault_class)) if not value]
+    if missing:
+        raise ConfigIdentityError(
+            f"hunt config write needs the identity attribute(s) "
+            f"{', '.join(missing)} to derive the file name; the payload did "
+            f"not carry them"
+        )
+    return unit_id, fault_class, vulnerability_class
+
+
 class HuntStore:
     """The per-project hunt-config + notes memory store (memory-system spec)."""
 
@@ -274,9 +303,7 @@ class HuntStore:
                 f"unknown config directory {directory!r}; known: {_CONFIG_DIRECTORIES}")
         with _lock_for(project_id):
             data = config.model_dump() if not isinstance(config, dict) else dict(config)
-            unit_id = str(data.get("unit_id") or "")
-            fault_class = str(data.get("fault_class") or "")
-            vulnerability_class = str(data.get("vulnerability_class") or "")
+            unit_id, fault_class, vulnerability_class = require_config_identity(data)
             name = config_file_name(unit_id, fault_class, vulnerability_class)
             produced = self._produced_dir(project_id) / name
             consumed = self._consumed_dir(project_id) / name
@@ -320,9 +347,7 @@ class HuntStore:
                 f"unknown config directory {directory!r}; known: {_CONFIG_DIRECTORIES}")
         with _lock_for(project_id):
             data = config.model_dump() if not isinstance(config, dict) else dict(config)
-            unit_id = str(data.get("unit_id") or "")
-            fault_class = str(data.get("fault_class") or "")
-            vulnerability_class = str(data.get("vulnerability_class") or "")
+            unit_id, fault_class, vulnerability_class = require_config_identity(data)
             name = config_file_name(unit_id, fault_class, vulnerability_class)
             produced = self._produced_dir(project_id)
             consumed = self._consumed_dir(project_id)

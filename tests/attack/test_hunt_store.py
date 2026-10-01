@@ -14,6 +14,7 @@ import threading
 import pytest
 
 from polymerhus.attack.hunting.hunt_store import (
+    ConfigIdentityError,
     DuplicateConfigError,
     HuntStore,
     config_file_name,
@@ -43,6 +44,58 @@ def _config(**overrides) -> dict:
     }
     data.update(overrides)
     return data
+
+
+# --- the derived-symbol identity contract (#298) ----------------------------
+
+def test_write_config_refuses_a_missing_unit_id(tmp_path):
+    # #298: the file name is DERIVED from the identity attributes. A payload
+    # missing one must be a TYPED refusal, never a silent `_CWE-1220_.yaml`
+    # (the delivered regression: `write_config` returned `::CWE-1220::` and
+    # landed a file the surfer could never ratify).
+    store = HuntStore(tmp_path)
+    body = _config()
+    del body["unit_id"]
+    with pytest.raises(ConfigIdentityError):
+        store.write_config(PROJECT, body)
+    assert list(store._produced_dir(PROJECT).glob("*.yaml")) == []
+
+
+def test_write_config_refuses_a_missing_fault_class(tmp_path):
+    store = HuntStore(tmp_path)
+    body = _config()
+    del body["fault_class"]
+    with pytest.raises(ConfigIdentityError):
+        store.write_config(PROJECT, body)
+    assert list(store._produced_dir(PROJECT).glob("*.yaml")) == []
+
+
+def test_write_config_refuses_an_empty_unit_id(tmp_path):
+    # a present-but-empty identity attribute is as degenerate as an absent one:
+    # it would compose a leading-underscore name that must never land.
+    store = HuntStore(tmp_path)
+    with pytest.raises(ConfigIdentityError):
+        store.write_config(PROJECT, _config(unit_id=""))
+    assert list(store._produced_dir(PROJECT).glob("*.yaml")) == []
+
+
+def test_write_config_accepts_the_carried_bare_empty_class(tmp_path):
+    # the carried-bare degrade (no elicited class) is LEGAL: the class may be
+    # empty; only the unit and fault identity are required to derive the name.
+    store = HuntStore(tmp_path)
+    key = store.write_config(PROJECT, _config(vulnerability_class=""))
+    assert key == f"{UNIT}::{CWE}::"
+    assert [n for _, n in store.read_produced_configs(PROJECT)] == \
+        [f"{UNIT}_{CWE}_.yaml"]
+
+
+def test_update_config_refuses_an_incomplete_identity(tmp_path):
+    store = HuntStore(tmp_path)
+    body = _config(status="ratified")
+    del body["fault_class"]
+    with pytest.raises(ConfigIdentityError):
+        store.update_config(PROJECT, body)
+    assert list(store._produced_dir(PROJECT).glob("*.yaml")) == []
 
 
 # --- naming + the semantic key round-trip (G4) ------------------------------

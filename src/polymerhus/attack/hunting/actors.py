@@ -446,6 +446,20 @@ class _OrchestratorHuntsStoreTool(StoreToolBase):
         if status not in ("hypothesised", "ratified", "dropped"):
             return {"error": f"unknown config status {status!r}; known: "
                              "hypothesised, ratified, dropped"}
+        # #298: the file name is DERIVED from the identity attributes, so the
+        # payload MUST carry `unit_id` and `fault_class` (the class may be empty
+        # - the carried-bare degrade). A missing one is a coded contract
+        # rejection the agent corrects, never a silent degenerate-name write.
+        from polymerhus.attack.hunting.hunt_store import (  # noqa: PLC0415
+            ConfigIdentityError,
+            require_config_identity,
+        )
+        try:
+            require_config_identity(hunt_config)
+        except ConfigIdentityError as exc:
+            logger.warning("hunts_store write rejected: %s", exc)
+            return {"error": f"hunts_store_write_rejected: {exc}",
+                    "rejected": True, "status": status}
         store = self._store_seam
         if store is None:
             return {"error": "no hunt store configured; config not written",

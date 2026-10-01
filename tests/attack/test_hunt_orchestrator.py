@@ -869,6 +869,42 @@ def test_hunts_store_tool_over_the_wrapped_seam_injects_surface_context_and_coun
     assert failing_wrapper.write_failures == 1
 
 
+def test_hunts_store_write_rejects_a_payload_missing_the_identity():
+    """#298: the file name is DERIVED from the identity attributes, so the tool
+    must feed back a coded contract error naming the missing attribute and
+    persist NOTHING - the surrogate of the live `_CWE-1220_.yaml` regression
+    (a silent degenerate-name write the surfer could never ratify)."""
+    from polymerhus.attack.hunting.actors import build_orchestrator_tool_surface
+    from polymerhus.attack.hunting.hunt_orchestrator import SurfaceContextStore
+
+    cards = [{"kind": "Service", "key": {"business_function_slug": "slug:a"}}]
+    store = _MemoryStore()
+    wrapper = SurfaceContextStore(store, surface=cards)
+    wrapper.set_projection(None)
+    tools = OrchestratorTools(
+        store_reads=wrapper,
+        graph_view=ReadOnlyGraphView("project-1", read_fn=lambda cy, p: []),
+    )
+    by_name = {t.name: t for t in build_orchestrator_tool_surface(
+        tools, run_id="run-reject", project_id="project-1")}
+
+    out = by_name["hunts_store"].invoke({"cmd": "write", "hunt_config": {
+        "hunt_id": "h1", "fault_class": FAULT_X, "vulnerability_class": "csrf",
+        "status": "ratified",
+    }})
+    assert out.get("rejected") is True
+    assert "unit_id" in out["error"]
+    assert store.write_calls == 0 and store.update_calls == 0
+    assert store.read_configs("project-1") == []
+
+    # a valid payload still lands (the class is present here)
+    ok = by_name["hunts_store"].invoke({"cmd": "write", "hunt_config": {
+        "hunt_id": "h1", "unit_id": SERVICE_A, "fault_class": FAULT_X,
+        "vulnerability_class": "csrf", "status": "ratified",
+    }})
+    assert ok["acknowledged"] is True
+
+
 def test_surface_store_is_stable_across_passes_on_one_run():
     """#294 requirement 2: the actor's tool surface captures the store seam
     ONCE. A second pass on the SAME run_id with a fresh OrchestratorTools/store
