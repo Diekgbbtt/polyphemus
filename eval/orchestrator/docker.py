@@ -20,8 +20,8 @@ in-use image does not abort the chain, and the outcome is reported through the
 returned label.
 
 Every primitive builds a local `docker ...` command and accepts a `wrap` that
-turns it into the command actually run (`ssh host docker ...` for the remote
-workshop host).
+turns it into the command actually run; the default runs it as-is on the local
+eval host (D45), and a wrap adds the target's platform env (D46).
 """
 from __future__ import annotations
 
