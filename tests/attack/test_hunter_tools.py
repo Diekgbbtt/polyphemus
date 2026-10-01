@@ -27,11 +27,11 @@ FAULT_KEY = "Service:account-registration_CWE-266_Privilege Escalation"
 
 
 def _notes(store, **kwargs):
-    return NotesTool(store=store, project_id=PROJECT).invoke(kwargs)
+    return NotesTool(store=store, project_id=PROJECT, fault_key=FAULT_KEY).invoke(kwargs)
 
 
 def _hunts(store, **kwargs):
-    return HuntsStoreTool(store=store, project_id=PROJECT).invoke(kwargs)
+    return HuntsStoreTool(store=store, project_id=PROJECT, fault_key=FAULT_KEY).invoke(kwargs)
 
 
 # --- #209: the coded teaching rejection --------------------------------------
@@ -42,7 +42,7 @@ def test_notes_missing_command_with_write_intent_is_a_teaching_rejection(tmp_pat
     The tool must NOT raise - it returns a coded rejection teaching `command`.
     """
     store = HunterMemoryStore(root_dir=tmp_path)
-    out = json.loads(_notes(store, action="append", fault_key=FAULT_KEY,
+    out = json.loads(_notes(store, action="append",
                             note_name="n", kind="freeform", body="b"))
     assert out["ok"] is False
     assert out["error"] == "notes_args_rejected"
@@ -56,7 +56,7 @@ def test_notes_dict_evidence_is_a_teaching_rejection(tmp_path):
     """
     store = HunterMemoryStore(root_dir=tmp_path)
     out = json.loads(_notes(store, command="write", action="append",
-                            fault_key=FAULT_KEY, note_name="n", kind="freeform",
+                            note_name="n", kind="freeform",
                             body="b", evidence={"probe_refs": ["exec:SPA shell"],
                                                 "fault_key": FAULT_KEY}))
     assert out["ok"] is False
@@ -71,7 +71,7 @@ def test_notes_valid_write_with_typed_provenance_lands(tmp_path):
     fields verbatim."""
     store = HunterMemoryStore(root_dir=tmp_path)
     out = json.loads(_notes(store, command="write", action="append",
-                            fault_key=FAULT_KEY, note_name="n", kind="freeform",
+                            note_name="n", kind="freeform",
                             body="decision trail",
                             evidence="prose evidence",
                             provenance={"source": "pod-export", "run_id": "r1",
@@ -107,7 +107,7 @@ def test_note_provenance_is_extra_forbid(tmp_path):
     could - the contract stays the validator."""
     store = HunterMemoryStore(root_dir=tmp_path)
     out = json.loads(_notes(store, command="write", action="append",
-                            fault_key=FAULT_KEY, note_name="n", kind="freeform",
+                            note_name="n", kind="freeform",
                             body="b", provenance={"source": "x",
                                                   "stray": True}))
     assert out["ok"] is False
@@ -119,7 +119,7 @@ def test_hunts_store_missing_command_with_write_intent_is_a_teaching_rejection(t
     """The same required-`command` pattern on `hunts_store` (uniform contract):
     write-intent fields without `command` -> coded teaching rejection."""
     store = HunterMemoryStore(root_dir=tmp_path)
-    out = json.loads(_hunts(store, mode="create", fault_key=FAULT_KEY,
+    out = json.loads(_hunts(store, mode="create",
                             fault_keyword="f1", strategy_keyword="probe",
                             spec={"fault_id": "F1", "status": "hypothesised"}))
     assert out["ok"] is False
@@ -138,12 +138,12 @@ def test_unknown_parameter_still_raises_the_rejected_call(tmp_path):
     notes = NotesTool(store=store, project_id=PROJECT)
     with pytest.raises(ValidationError):
         notes.invoke({"command": "write", "action": "append",
-                      "fault_key": FAULT_KEY, "note_name": "n",
+                      "note_name": "n",
                       "kind": "freeform", "body": "b", "bogus": 1})
     hunts = HuntsStoreTool(store=store, project_id=PROJECT)
     with pytest.raises(ValidationError):
         hunts.invoke({"command": "write", "mode": "create",
-                      "fault_key": FAULT_KEY, "fault_keyword": "f1",
+                      "fault_keyword": "f1",
                       "strategy_keyword": "probe",
                       "spec": {"status": "hypothesised"}, "bogus": 1})
 

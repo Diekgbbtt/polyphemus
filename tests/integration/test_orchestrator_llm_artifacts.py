@@ -569,7 +569,10 @@ def test_hunts_store_read_returns_service_keys_only(tmp_path):
     out = by_name["hunts_store"].invoke(
         {"cmd": "read", "key": revival_key(SERVICE_A, "CWE-352")})
     assert out["key"] == revival_key(SERVICE_A, "CWE-352")
-    assert [r["hunt_id"] for r in out["configs"]] == ["h1"]
+    # #298: hunt_id is DERIVED from the identity on the write, never the
+    # caller's value
+    assert [r["hunt_id"] for r in out["configs"]] == [
+        f"{SERVICE_A}::CWE-352::CSRF"]
     assert all("surface_context" not in r for r in out["configs"])
     # specific attributes ride the projection, surface_context never does
     out2 = by_name["hunts_store"].invoke(
@@ -1061,11 +1064,9 @@ def test_structured_schemas_and_tool_surface_unchanged():
     assert dumped["directions"][0]["vulnerability_classes"] == ["CSRF"]
 
     config = mint_hunt_config(
-        direction, _candidate(SERVICE_A, "CWE-352"), "hunt-1",
+        direction,
         surface_context={}, prior_hunt_insights=[],
-        sub_fault_ids=["CWE-520", "CWE-9"],
-    )[0]
-    assert config.sub_fault_ids == ["CWE-520", "CWE-9"]
+        )[0]
     assert config.status == "hypothesised"
     assert config.vulnerability_class == "CSRF"
     assert config.prompt_template.rationale == "r"

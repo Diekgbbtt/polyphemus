@@ -236,7 +236,13 @@ _HUNTS_STORE_DESCRIPTION = (
     "('hypothesised' | 'ratified' | 'dropped') drives the write - hypothesised "
     "creates the draft (a duplicate identity FAILS as the deduplication "
     "signal, G4), ratified / dropped upsert the config in place (dropped "
-    "stays on disk, G6)."
+    "stays on disk, G6). The payload MUST carry the identity attributes "
+    "`unit_id` and `fault_class`, plus `vulnerability_class` (which MAY be "
+    "empty for a carried-bare draft): the config file name and hunt id are "
+    "DERIVED from them, never authored as a file name. A payload missing "
+    "`unit_id` or `fault_class` is rejected with a coded "
+    "`hunts_store_write_rejected` error naming the missing attribute - correct "
+    "it and retry."
 )
 
 _ORCH_NOTES_DESCRIPTION = (
@@ -446,6 +452,25 @@ class _OrchestratorHuntsStoreTool(StoreToolBase):
         if status not in ("hypothesised", "ratified", "dropped"):
             return {"error": f"unknown config status {status!r}; known: "
                              "hypothesised, ratified, dropped"}
+        # #298: the file name is DERIVED from the identity attributes, so the
+        # payload MUST carry `unit_id` and `fault_class` (the class may be empty
+        # - the carried-bare degrade). A missing one is a coded contract
+        # rejection the agent corrects, never a silent degenerate-name write.
+        from polymerhus.attack.hunting.hunt_store import (  # noqa: PLC0415
+            ConfigIdentityError,
+            require_config_identity,
+        )
+        try:
+            require_config_identity(hunt_config)
+        except ConfigIdentityError as exc:
+            logger.warning("hunts_store write rejected: %s", exc)
+            # the CODED contract rejection (the `coded_teaching_rejection`
+            # convention): a machine error code + the missing field names the
+            # agent must supply, never a prose-only error.
+            return {"error": "hunts_store_write_rejected",
+                    "fields": list(exc.fields),
+                    "detail": str(exc),
+                    "rejected": True, "status": status}
         store = self._store_seam
         if store is None:
             return {"error": "no hunt store configured; config not written",
@@ -499,9 +524,12 @@ def build_orchestrator_tool_surface(tools, *, run_id: str, project_id: str | Non
       full semantic key `<unit>::<CWE>::<class>`) and accepts optionally
       specific `attributes`; the WHOLE projected surface context is NEVER
       readable through it - only the service keys (which may later be inspected
-      with `graph_view`, G3). `write` takes the hunt config object (any
-      attribute specification is optional; schema validation never rejects on
-      missing attributes); the `status` attribute rides the config object
+      with `graph_view`, G3). `write` takes the hunt config object carrying the
+      identity attributes `unit_id` + `fault_class` (`vulnerability_class` may
+      be empty); the file name, the semantic key, and `hunt_id` are DERIVED
+      from them (#298), so a missing/empty `unit_id`/`fault_class` is a coded
+      contract rejection and every other attribute is optional. The `status`
+      attribute rides the config object
       itself and drives the write: `hypothesised` creates the draft (a
       duplicate identity FAILS with the G4 deduplication signal), `ratified`
       upserts the config in place, `dropped` marks the orphan on disk (G6,

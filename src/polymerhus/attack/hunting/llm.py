@@ -516,8 +516,12 @@ def _compose_gate_prompt(inp: GateInput) -> str:
         "only fundamentally discriminable classes survive as distinct configs. "
         "Pure LLM reflection - no module-side parsing.",
         "  The hypothesise write (spec 3.3): call hunts_store(write, config, "
-        "status='hypothesised') with ONE draft per surviving class, carrying "
-        "rationale + research_direction ONLY. The preconditions / "
+        "status='hypothesised') with ONE draft per surviving class, carrying the "
+        "identity attributes unit_id + fault_class + vulnerability_class (the "
+        "class may be empty for a carried-bare draft) and rationale + "
+        "research_direction ONLY - the file name and hunt_id are DERIVED by the "
+        "harness from the identity, never authored. A payload missing unit_id or "
+        "fault_class is rejected with a coded error. The preconditions / "
         "observed-defences analysis is the RATIFICATION phase's work (the next "
         "phase) - never filled at this hypothesise turn.",
         "",
@@ -720,7 +724,7 @@ def build_actor_judge_fn(registry):
 
 
 def build_actor_hunting_agent(*, run_id, project_id="", memory_store=None,
-                              hunt_store=None, graph_view_fn=None, kb_fn=None,
+                              graph_view_fn=None, kb_fn=None,
                               exec_fn=None, checkpointer=None, model_factory=None,
                               observe: bool = True,
                               http_search_fn=None, http_get_fn=None):
@@ -745,7 +749,7 @@ def build_actor_hunting_agent(*, run_id, project_id="", memory_store=None,
                                     model_factory=model_factory, observe=observe)
     dispatch_fn = build_hunting_agent(
         run_id=run_id, project_id=project_id,
-        memory_store=memory_store, hunt_store=hunt_store,
+        memory_store=memory_store,
         graph_view_fn=graph_view_fn, kb_fn=kb_fn, exec_fn=exec_fn,
         http_search_fn=http_search_fn, http_get_fn=http_get_fn,
         checkpointer=checkpointer, model_factory=model_factory, observe=observe,

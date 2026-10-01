@@ -82,12 +82,8 @@ def _agent_seams(tools, *, project_id: str = "project-1"):
     def hypothesise(inp):
         directions = [_carry(c) for c in inp.candidates]
         for direction in directions:
-            candidate = next(
-                c for c in inp.candidates
-                if (c.unit_id, c.fault_class)
-                == (direction.unit_id, direction.fault_class))
             for config in mint_hunt_config(
-                    direction, candidate, uuid.uuid4().hex, surface_context={},
+                    direction, surface_context={},
                     prior_hunt_insights=[]):
                 _safe_write(tools.store_reads.write_config, project_id, config)
         return GateDecision(directions=directions)
@@ -354,9 +350,8 @@ def test_hypothesise_turn_is_invoked_per_pair_with_one_candidate(tmp_path):
         seen.append([(c.unit_id, c.fault_class) for c in inp.candidates])
         directions = [_carry(c) for c in inp.candidates]
         for direction in directions:
-            candidate = inp.candidates[0]
             for config in mint_hunt_config(
-                    direction, candidate, uuid.uuid4().hex, surface_context={},
+                    direction, surface_context={},
                     prior_hunt_insights=[]):
                 tools.store_reads.write_config("project-1", config)
         return GateDecision(directions=directions)

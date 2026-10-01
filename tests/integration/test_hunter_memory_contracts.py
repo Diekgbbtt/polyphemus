@@ -15,11 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from polymerhus.attack.hunting.hunt_store import (
-    HuntStore,
-    config_file_name,
-    semantic_key,
-)
+from polymerhus.attack.hunting.hunt_store import semantic_key
 from polymerhus.attack.hunting.hunter_memory import (
     DuplicateSpecError,
     HunterMemoryStore,
@@ -309,15 +305,15 @@ def _tool_store(tmp_path):
     store = HunterMemoryStore(root_dir=tmp_path)
     return (
         store,
-        HuntsStoreTool(store=store, project_id=PROJECT),
-        NotesTool(store=store, project_id=PROJECT),
+        HuntsStoreTool(store=store, project_id=PROJECT, fault_key=FAULT_KEY),
+        NotesTool(store=store, project_id=PROJECT, fault_key=FAULT_KEY),
     )
 
 
 def test_C16_hunts_store_write_create(tmp_path):
     _, tool, _ = _tool_store(tmp_path)
     out = json.loads(tool.invoke({
-        "command": "write", "fault_key": FAULT_KEY, "mode": "create",
+        "command": "write", "mode": "create",
         "fault_keyword": "f1", "strategy_keyword": "probe",
         "spec": _fault("F1", status="hypothesised"),
     }))
@@ -330,7 +326,7 @@ def test_C16_hunts_store_write_create(tmp_path):
 def test_C17_duplicate_create_denoted_signal(tmp_path):
     _, tool, _ = _tool_store(tmp_path)
     write = {
-        "command": "write", "fault_key": FAULT_KEY, "mode": "create",
+        "command": "write", "mode": "create",
         "fault_keyword": "f1", "strategy_keyword": "probe",
         "spec": _fault("F1", status="hypothesised"),
     }
@@ -344,30 +340,31 @@ def test_C17_duplicate_create_denoted_signal(tmp_path):
 def test_C18_hunts_store_invalid_args(tmp_path):
     _, tool, _ = _tool_store(tmp_path)
     out = json.loads(tool.invoke({
-        "command": "write", "fault_key": FAULT_KEY, "mode": "create",
+        "command": "write", "mode": "create",
         "fault_keyword": "", "strategy_keyword": "",
         "spec": _fault("F1", status="hypothesised"),
     }))
     assert out["ok"] is False and out["error"] == "invalid_args"
     out = json.loads(tool.invoke({
-        "command": "write", "fault_key": FAULT_KEY, "mode": "create",
+        "command": "write", "mode": "create",
         "fault_keyword": "f1", "strategy_keyword": "probe",
         "spec": {"fault_id": "F1", "status": "open"},
     }))
     assert out["ok"] is False and out["error"] == "invalid_args"
+    # a read needs no key: it is bound to the hunt's own config (#298)
     out = json.loads(tool.invoke({"command": "read"}))
-    assert out["specs"] == [] and out["error"] == "invalid_args"
+    assert out["specs"] == [] and "error" not in out
 
 
 def test_C19_tool_read_filters_produce_projection(tmp_path):
     _, tool, _ = _tool_store(tmp_path)
     tool.invoke({
-        "command": "write", "fault_key": FAULT_KEY, "mode": "create",
+        "command": "write", "mode": "create",
         "fault_keyword": "f1", "strategy_keyword": "probe",
         "spec": _spec("F1", "S1", status="specified"),
     })
     out = json.loads(tool.invoke({
-        "command": "read", "fault_key": FAULT_KEY,
+        "command": "read",
         "statuses": ["specified"], "attributes": ["status", "spec_id"],
     }))
     assert len(out["specs"]) == 1
@@ -378,7 +375,7 @@ def test_C19_tool_read_filters_produce_projection(tmp_path):
 def test_C20_notes_tool_denoted_missing(tmp_path):
     _, _, tool = _tool_store(tmp_path)
     out = json.loads(tool.invoke({
-        "command": "write", "action": "update", "fault_key": FAULT_KEY,
+        "command": "write", "action": "update",
         "note_name": "nope", "kind": "freeform", "body": "x",
     }))
     assert out["ok"] is False
@@ -388,16 +385,16 @@ def test_C20_notes_tool_denoted_missing(tmp_path):
 
 
 def test_C21_absent_store_degrades_fail_open(tmp_path):
-    store_tool = HuntsStoreTool(store=None, project_id=PROJECT)
-    notes_tool = NotesTool(store=None, project_id=PROJECT)
+    store_tool = HuntsStoreTool(store=None, project_id=PROJECT, fault_key=FAULT_KEY)
+    notes_tool = NotesTool(store=None, project_id=PROJECT, fault_key=FAULT_KEY)
     out = json.loads(store_tool.invoke({
-        "command": "write", "fault_key": FAULT_KEY, "mode": "create",
+        "command": "write", "mode": "create",
         "fault_keyword": "f1", "strategy_keyword": "probe",
         "spec": _fault("F1", status="hypothesised"),
     }))
     assert out["error"] == "store_unavailable" and out["degraded"] is True
     out = json.loads(notes_tool.invoke({
-        "command": "write", "action": "append", "fault_key": FAULT_KEY,
+        "command": "write", "action": "append",
         "note_name": "n", "kind": "freeform", "body": "x",
     }))
     assert out["error"] == "store_unavailable" and out["degraded"] is True
@@ -406,21 +403,24 @@ def test_C21_absent_store_degrades_fail_open(tmp_path):
 def test_C22_read_failure_degrades_to_empty_set(tmp_path):
     _, tool, _ = _tool_store(tmp_path)
     tool.invoke({
-        "command": "write", "fault_key": FAULT_KEY, "mode": "create",
+        "command": "write", "mode": "create",
         "fault_keyword": "f1", "strategy_keyword": "probe",
         "spec": _fault("F1", status="hypothesised"),
     })
     f = tmp_path / PROJECT / "hunting" / "hunter" / "test-specs" / FAULT_KEY / "produced" / "f1_probe.yaml"
     f.write_text("{{{{{{{{")
-    out = json.loads(tool.invoke({"command": "read", "fault_key": FAULT_KEY}))
+    out = json.loads(tool.invoke({"command": "read"}))
     assert out["specs"] == []
     assert out["error"] == "read_failed"
 
 
-# --- the fault_key validation gate (C23-C24, #199) -----------------------------
+# --- the harness-BOUND config identity (C23-C24, #298) -------------------------
 
-# The canonical dispatched config the gate validates against: the production
-# `_`-joined fault_key form and its `::`-semantic twin (G4/ADR Q13).
+# The hunt's own config identity is BOUND at construction (#298), superseding
+# the #199 request-field gate: the model cannot choose a config, so there is no
+# request key to validate. These tests assert the binding - reads and writes
+# land only under the bound key, the key is never a request field, and an
+# UNBOUND tool degrades instead of fabricating a degenerate folder.
 _CANON_UNIT = "Service:account-registration"
 _CANON_FAULT = "CWE-1220"
 _CANON_CLASS = "Privilege Escalation"
@@ -428,84 +428,69 @@ _CANON_KEY = f"{_CANON_UNIT}_{_CANON_FAULT}_{_CANON_CLASS}"
 _CANON_TWIN = semantic_key(_CANON_UNIT, _CANON_FAULT, _CANON_CLASS)
 
 
-def _gate_store(tmp_path):
-    """A hunter store + a hunt store whose produced config is the canonical
-    (Service:account-registration, CWE-1220, Privilege Escalation) identity -
-    the persisted config the tool's harness-owned gate validates against."""
+def test_C23_config_key_is_bound_not_a_request_field(tmp_path):
+    """#298: `fault_key` is NOT in the `hunts_store` args schema; the bound key
+    decides the destination folder, and an UNBOUND tool writes nothing (never a
+    degenerate `_CWE-...` file)."""
+    assert "fault_key" not in HuntsStoreTool(store=None).args_schema.model_fields
     store = HunterMemoryStore(root_dir=tmp_path)
-    hunt = HuntStore(root_dir=tmp_path)
-    hunt.write_config(PROJECT, {
-        "unit_id": _CANON_UNIT, "fault_class": _CANON_FAULT,
-        "vulnerability_class": _CANON_CLASS, "status": "ratified",
-    })
-    return store, hunt
+    bound = HuntsStoreTool(store=store, project_id=PROJECT, fault_key=_CANON_KEY)
+    out = json.loads(bound.invoke({
+        "command": "write", "mode": "create",
+        "fault_keyword": "f1", "strategy_keyword": "probe",
+        "spec": _fault("F1", status="hypothesised"),
+    }))
+    assert out["ok"] is True, out
+    assert out["path"].endswith(
+        f"{PROJECT}/hunting/hunter/test-specs/{_CANON_KEY}/produced/f1_probe.yaml")
+    assert Path(out["path"]).is_file()
+    # an unbound tool (a harness wiring defect) degrades; no folder is created
+    unbound = HuntsStoreTool(store=HunterMemoryStore(root_dir=tmp_path / "u"),
+                             project_id=PROJECT)
+    out = json.loads(unbound.invoke({
+        "command": "write", "mode": "create",
+        "fault_keyword": "f1", "strategy_keyword": "probe",
+        "spec": _fault("F1", status="hypothesised"),
+    }))
+    assert out["ok"] is False and out["error"] == "invalid_args"
+    assert not (tmp_path / "u" / PROJECT / "hunting" / "hunter" / "test-specs").exists()
 
 
-def test_C23_fault_key_gate_rejects_a_non_canonical_identity(tmp_path):
-    """The harness-owned gate (write AND read, #199): a model-emitted fault_key
-    that follows the naming convention but does not `:`-split-match a persisted
-    hunt-config identity is rejected with the denoted `fault_key_mismatch`
-    error - never a raise, never a fabricated folder."""
-    store, hunt = _gate_store(tmp_path)
-    tool = HuntsStoreTool(store=store, hunt_store=hunt, project_id=PROJECT)
-    for bad in (
-        # space STRIPPED out of the class name
-        "Service:account-registration_CWE-1220_PrivilegeEscalation",
-        # space replaced with `_` in the class name
-        "Service:account-registration_CWE-1220_Privilege_Escalation",
-        # the `Service:` kind prefix dropped
-        "account-registration_CWE-1220_Privilege Escalation",
-    ):
-        out = json.loads(tool.invoke({
-            "command": "write", "fault_key": bad, "mode": "create",
-            "fault_keyword": "f1", "strategy_keyword": "probe",
-            "spec": _fault("F1", status="hypothesised"),
-        }))
-        assert out["ok"] is False
-        assert out["error"] == "fault_key_mismatch"
-        assert out["fault_key"] == bad
-        # reads reject the same way
-        out = json.loads(tool.invoke({"command": "read", "fault_key": bad}))
-        assert out["specs"] == []
-        assert out["error"] == "fault_key_mismatch"
-    # NO folder was fabricated for any rejected identity
-    assert not (tmp_path / PROJECT / "hunting" / "hunter" / "test-specs").exists()
-
-
-def test_C24_fault_key_gate_accepts_the_canonical_identity(tmp_path):
-    """The gate accepts the canonical `_`-joined form and its `::`-semantic
-    twin (both split `:`-wise to the persisted config identity, #199), writes
-    the spec under the emitted key, and a read by the canonical returns it."""
-    store, hunt = _gate_store(tmp_path)
-    tool = HuntsStoreTool(store=store, hunt_store=hunt, project_id=PROJECT)
-    for good, folder in ((_CANON_KEY, _CANON_KEY), (_CANON_TWIN, _CANON_TWIN)):
-        out = json.loads(tool.invoke({
-            "command": "write", "fault_key": good, "mode": "create",
-            "fault_keyword": "f1", "strategy_keyword": "probe",
-            "spec": _fault("F1", status="hypothesised"),
-        }))
-        assert out["ok"] is True, out
-        assert out["path"].endswith(
-            f"{PROJECT}/hunting/hunter/test-specs/{folder}/produced/f1_probe.yaml")
-        assert Path(out["path"]).is_file()
-    out = json.loads(tool.invoke({"command": "read", "fault_key": _CANON_KEY}))
+def test_C24_binding_accepts_the_semantic_twin(tmp_path):
+    """The bound key may be the `_`-joined canonical or its `::`-semantic twin
+    (#298, the store's own two forms); the spec lands under the bound form and a
+    bound read returns it (no request key)."""
+    store = HunterMemoryStore(root_dir=tmp_path)
+    tool = HuntsStoreTool(store=store, project_id=PROJECT, fault_key=_CANON_TWIN)
+    out = json.loads(tool.invoke({
+        "command": "write", "mode": "create",
+        "fault_keyword": "f1", "strategy_keyword": "probe",
+        "spec": _fault("F1", status="hypothesised"),
+    }))
+    assert out["ok"] is True, out
+    assert out["path"].endswith(
+        f"{PROJECT}/hunting/hunter/test-specs/{_CANON_TWIN}/produced/f1_probe.yaml")
+    out = json.loads(tool.invoke({"command": "read"}))
     assert len(out["specs"]) == 1
     assert out["specs"][0]["fault_id"] == "F1"
 
 
-def test_C24b_notes_tool_gate_rejects_a_non_canonical_identity(tmp_path):
-    """The same harness-owned gate rides the `notes` write (the fault_key the
-    note is scoped to must match a persisted config identity, #199)."""
-    store, hunt = _gate_store(tmp_path)
-    tool = NotesTool(store=store, hunt_store=hunt, project_id=PROJECT)
+def test_C24b_notes_tool_is_bound_to_its_own_config(tmp_path):
+    """The same binding rides the `notes` write/read (#298): the note lands only
+    under the bound config, and the key is not a request field."""
+    assert "fault_key" not in NotesTool(store=None).args_schema.model_fields
+    store = HunterMemoryStore(root_dir=tmp_path)
+    tool = NotesTool(store=store, project_id=PROJECT, fault_key=_CANON_KEY)
     out = json.loads(tool.invoke({
         "command": "write", "action": "append",
-        "fault_key": "Service:account-registration_CWE-1220_PrivilegeEscalation",
         "note_name": "decision", "kind": "freeform", "body": "x",
     }))
-    assert out["ok"] is False
-    assert out["error"] == "fault_key_mismatch"
-    assert store.read_notes(PROJECT) == []
+    assert out["ok"] is True
+    read = json.loads(tool.invoke({"command": "read"}))
+    assert [n["body"] for n in read["notes"]] == ["x"]
+    # a second tool bound elsewhere shares nothing
+    other = NotesTool(store=store, project_id=PROJECT, fault_key=_CANON_TWIN)
+    assert json.loads(other.invoke({"command": "read"}))["notes"] == []
 
 
 # --- #209: the coded teaching rejection + typed provenance (C25-C26) -----------
@@ -515,9 +500,9 @@ def test_C25_notes_missing_command_is_a_coded_teaching_rejection(tmp_path):
     the coded `notes_args_rejected` teaching rejection (never a bare raise into
     the turn), nothing is persisted, and the corrected shape lands."""
     store = HunterMemoryStore(root_dir=tmp_path)
-    tool = NotesTool(store=store, project_id=PROJECT)
+    tool = NotesTool(store=store, project_id=PROJECT, fault_key=FAULT_KEY)
     out = json.loads(tool.invoke({
-        "action": "append", "fault_key": FAULT_KEY,
+        "action": "append",
         "note_name": "decision", "kind": "freeform", "body": "x",
     }))
     assert out["ok"] is False
@@ -526,7 +511,7 @@ def test_C25_notes_missing_command_is_a_coded_teaching_rejection(tmp_path):
     assert store.read_notes(PROJECT) == []
     # the corrected shape lands: command + prose evidence + typed provenance
     out = json.loads(tool.invoke({
-        "command": "write", "action": "append", "fault_key": FAULT_KEY,
+        "command": "write", "action": "append",
         "note_name": "decision", "kind": "freeform", "body": "x",
         "evidence": "prose", "provenance": {"source": "pod-export",
                                             "probe_refs": ["exec:probe"]},
@@ -543,9 +528,9 @@ def test_C26_dict_evidence_is_a_coded_teaching_rejection(tmp_path):
     coded teaching rejection naming `provenance` - the structured slot - and
     never persists."""
     store = HunterMemoryStore(root_dir=tmp_path)
-    tool = NotesTool(store=store, project_id=PROJECT)
+    tool = NotesTool(store=store, project_id=PROJECT, fault_key=FAULT_KEY)
     out = json.loads(tool.invoke({
-        "command": "write", "action": "append", "fault_key": FAULT_KEY,
+        "command": "write", "action": "append",
         "note_name": "decision", "kind": "freeform", "body": "x",
         "evidence": {"probe_refs": ["exec:SPA shell"]},
     }))

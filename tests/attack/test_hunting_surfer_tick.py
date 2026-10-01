@@ -73,7 +73,7 @@ def _config(**overrides) -> dict:
         "status": "ratified",
         "vulnerability_class": CLASS,
         "prompt_template": {
-            "rationale": "r", "l0_evidence": [], "research_direction": "rd",
+            "rationale": "r", "research_direction": "rd",
         },
     }
     data.update(overrides)
@@ -154,7 +154,7 @@ def _write_spec(hunter, *, fault_key=FAULT_KEY, keyword="sqli", strategy="blind"
 # recorder) and the control plane. `pod_store` is None (it reaches the pod
 # builder only when a pod session is awaited, which the recorder never does).
 
-def _hunter_builder_fake(*, run_id, project_id, hunt_store, hunter_store, **kw):
+def _hunter_builder_fake(*, run_id, project_id, hunter_store, **kw):
     """The agent-seam hunter builder: returns a no-op dispatch (never run by
     the recording control plane) + no registry - the ONLY fake."""
     async def _dispatch(config):

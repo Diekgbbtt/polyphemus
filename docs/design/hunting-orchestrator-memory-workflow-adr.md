@@ -29,7 +29,8 @@ The operator's investigation (2026-08-23) established four defects:
    DECOMPOSE/GENERATE hypothesis formulation; the production hunter prompt consumes
    none of the candidates-rewrite slots (`concrete_fault_candidates`,
    `research_direction`, `blocking_constraints`, `sub_fault_ids` are minted and
-   never read). The orchestrator must own only the higher stretch: sub-classing the
+   never read; #298 later REMOVED `sub_fault_ids` as bare folded ids the hunter
+   cannot resolve). The orchestrator must own only the higher stretch: sub-classing the
    fault into vulnerability classes that could characterise the application itself.
 3. **The phase-transition verbatims are mislocated.** The next-reasoning-phase
    hints are embedded in the agent system prompt; they must be injected on-the-fly
@@ -66,9 +67,11 @@ state machine per config: `hypothesised -> ratified | dropped`.
 1. **`hunts_store`** - contract: `read` / `write` cmds. `read` needs the config
    identifier and accepts optionally specific attributes; the whole surface context
    of a projected unit may NEVER be read through it - only service keys, which may
-   later be inspected with `graph_view`. `write` takes the hunt config object; any
-   attribute specification is optional and internal schema validation never rejects
-   on missing attributes.
+   later be inspected with `graph_view`. `write` takes the hunt config object
+   carrying the identity attributes `unit_id` + `fault_class` (`vulnerability_class`
+   may be empty); the file name, semantic key, and `hunt_id` are DERIVED from them
+   (#298), so a missing/empty identity is a coded rejection and every other
+   attribute is optional.
 2. **`notes`** - contract: `read` / `write` cmds, same data contract as
    `hunts_store`. `write` options: `append`, `update`, `delete`.
 3. **`graph_view`** - as-is (read-only L0/L1 view, write-shaped calls rejected).
@@ -101,9 +104,11 @@ back-edge-to-recon tool (standing operator ruling 2026-08-22).
   in the config's surface context, a Service's `edge_degree` counts are replaced by
   the detailed specification of the DataItems it is connected to (name, type,
   sensitivity, fields, notes), mirroring the rich projection.
-- `sub_fault_ids` (fold family) keeps feeding each class-config (#66
-  non-conflation, G14); `kb_degraded` / materialisation / fold-family preloads are
-  unchanged (G14).
+- the fold family keeps feeding the gate's per-class non-conflation reasoning
+  (#66, G14); `kb_degraded` / materialisation / fold-family preloads are
+  unchanged (G14). `sub_fault_ids` (the bare folded CWE ids carried on each
+  class-config) was REMOVED (#298: the hunter has no tool to resolve them, so
+  they were noise for test-implementation authoring).
 
 ### Memory topology (per project)
 

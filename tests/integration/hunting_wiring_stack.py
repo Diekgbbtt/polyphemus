@@ -231,7 +231,7 @@ def seed_hunt_config(project_id: str, *, unit_id: str, fault_class: str,
         "unit_id": unit_id, "fault_class": fault_class,
         "vulnerability_class": vulnerability_class, "status": status,
         "prompt_template": {
-            "rationale": "seeded", "l0_evidence": [], "research_direction": "",
+            "rationale": "seeded", "research_direction": "",
         },
         "surface_context": {
             "cards": [

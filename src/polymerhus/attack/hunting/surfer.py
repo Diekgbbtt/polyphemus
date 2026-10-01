@@ -329,7 +329,6 @@ def build_run_dispatch(
             project_id=project_id,
             run_id=run_id,
             config_key=item.config_key,
-            hunt_store=hunt_store,
             hunter_store=hunter_store,
             state=state,
             gate=gate,
@@ -372,7 +371,6 @@ async def run_hunter_session(
     project_id: str,
     run_id: str,
     config_key: str,
-    hunt_store: HuntStore,
     hunter_store: HunterMemoryStore,
     state: RunDispatchState,
     gate: Any,
@@ -386,7 +384,7 @@ async def run_hunter_session(
     try:
         dispatch_fn, registry = hunter_builder(
             run_id=run_id, project_id=project_id,
-            hunt_store=hunt_store, hunter_store=hunter_store,
+            hunter_store=hunter_store,
         )
     except Exception as exc:  # noqa: BLE001 - a failing builder degrades the session
         logger.warning("surfer: hunter builder failed for %s (%s)", config_key, exc)
