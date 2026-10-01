@@ -35,14 +35,16 @@ Select `HuntCandidate`s, configure and dispatch hunts so that every dispatched h
 
 ### 1.4 Tools (D67-04)
 
-The admitted tool surface is exactly three tools:
+The admitted tool surface is exactly three tools (the earlier back-edge-to-recon tool was removed by the standing operator ruling 2026-08-22; the target-knowledge loop rides `graph_view`):
 
-1. The hunt back-edge: targeted-recon requests through `recon/control/targeted.py::request_targeted_recon` with `origin="hunting"` (IA-6).
-2. The hunt-store reads: candidates, configs, hunts, results, memory.
-3. A read-only view over the live L0/L1 graph.
+1. `hunts_store`: read/write cmds over the produced/consumed config files, the `status` attribute riding the config object (`hypothesised | ratified | dropped`).
+2. `notes`: read/write cmds over the project's `memory.yaml`, write options `append` / `update` / `delete`.
+3. `graph_view`: a read-only view over the live L0/L1 graph.
 
 The graph view is read-only: a write attempt through the view is rejected (assertion C5).
 The orchestrator never writes L0/L1.
+
+**As of #293** the store surface is typed and single-sourced (`attack/hunting/tool_contract.py`): both tools are `BaseTool`s over pydantic `extra="forbid"` args schemas with every field described and the discriminators as `Literal` enums, and a call omitting the discriminator returns a CODED teaching rejection naming the required field and the known commands - never a bare pydantic error (#286). The `notes` implementation is shared with the hunting agent through a caller-bound store handle, so the `memory.yaml` destination is derived from the handle and is never a request field. The behaviour described in §3.4 of `hunting-orchestrator-candidates-rewrite-spec.md` remains authoritative for the read/write semantics.
 
 ### 1.5 Context
 

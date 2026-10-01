@@ -27,9 +27,7 @@ CANONICAL set (the D84-30/31 removals applied; `_seq`/`_ref` gone).
 from __future__ import annotations
 
 import json
-from typing import Any
 
-from langchain_core.tools import BaseTool
 from pydantic import BaseModel, ConfigDict, Field
 
 from polymerhus.attack.hunting.pod.pod_memory import (
@@ -37,6 +35,7 @@ from polymerhus.attack.hunting.pod.pod_memory import (
     PodMemoryStore,
     note_key,
 )
+from polymerhus.attack.hunting.tool_contract import StoreToolBase
 
 # The coded contract rejections (D84-22: the error explains the semantic
 # explicitly; the prefix is the short machine code).
@@ -78,10 +77,14 @@ class NoteToolSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class PodNoteTool(BaseTool):
+class PodNoteTool(StoreToolBase):
     """Write/read the pod's experiment-memory notes (D84-20/27). `store=None`
     fails open (O10): writes are a coded rejection, reads return an empty
-    result, and the loop never raises."""
+    result, and the loop never raises.
+
+    The pod keeps its OWN data contract (`NoteToolSpec`); it rides the shared
+    `tool_contract.StoreToolBase` for the read/write dispatch and the D84-22
+    rejected-call canon (a foreign parameter still raises before `_run`)."""
 
     name: str = "note"
     description: str = (
@@ -95,6 +98,10 @@ class PodNoteTool(BaseTool):
         "filters, each note's body verbatim."
     )
     args_schema: type[BaseModel] = NoteToolSpec
+    _discriminator: str = "operation"
+    _rejection_name: str = "note"
+    _require_write_intent: bool = False
+    _as_json: bool = True
 
     def __init__(self, *, store: PodMemoryStore | None, spec_id: str, **kwargs):
         super().__init__(**kwargs)
@@ -200,23 +207,9 @@ class PodNoteTool(BaseTool):
             blocks.append(block)
         return "\n\n---\n\n".join(blocks)
 
-    # ------------------------------------------------------------------
-
-    def _run(self, **kwargs: Any) -> str:
-        # The args schema already validated the call (extra="forbid", D84-22);
-        # `_run` reconstructs the spec from the validated kwargs, defending the
-        # coded rejection for a malformed call that somehow leaks past it.
-        try:
-            spec = NoteToolSpec(**kwargs)
-        except Exception:  # noqa: BLE001 - defensive coded rejection
-            return NOTES_ARGS_REJECTED
-        if spec.operation == "read":
-            return self._read(spec)
-        return self._write(spec)
-
-    # The tools' args go through pydantic (extra="forbid") before `_run`, so the
-    # tool node's ToolMessage carries the pydantic detail verbatim - the harness
-    # does not re-validate (D84-22).
+    # The pod's args go through pydantic (extra="forbid") before `_run` (the
+    # shared base), so the tool node's ToolMessage carries the pydantic detail
+    # verbatim - the harness does not re-validate (D84-22).
 
 
 def note_tool_for(store: PodMemoryStore | None, spec_id: str) -> PodNoteTool:
