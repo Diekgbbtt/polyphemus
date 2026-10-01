@@ -211,8 +211,8 @@ Seams, confirmed with the operator:
 
 Config-level verification replaces live runs only where a live run is impossible: `docker compose -f base -f dev -f eval config` rendering for the overlay, and schema validation for `verdicts.yaml` and `diagnoses.yaml` as integration tests.
 
-Walkthroughs run live: the whole eval harness up with the polymerhus stack(s), the workshop target host real, LLM providers, Steel, and Langfuse real.
-Every walkthrough's bootstrap data that only the operator can supply (target checkout, eval server key, workshop key, per-instance `.env` values, seeded credentials) is named and requested by name before it is mechanised; a walkthrough whose bootstrap is unanswered is carried as blocked, never substituted with a double.
+Walkthroughs run live: the whole eval harness up with the polymerhus stack(s), the targets running locally on the eval host (D45), LLM providers, Steel, and Langfuse real.
+Every walkthrough's bootstrap data that only the operator can supply (the target checkout, the eval server key, amd64 binfmt emulation on an aarch64 host (D46), per-instance `.env` values, seeded credentials) is named and requested by name before it is mechanised; a walkthrough whose bootstrap is unanswered is carried as blocked, never substituted with a double.
 
 Prior art: the live e2e suite (`tests/e2e/`), the eval playbook runs (`eval/runs/` historical, the juice-shop-remote run), and the analysis evaluation harness.
 

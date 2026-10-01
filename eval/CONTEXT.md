@@ -59,7 +59,8 @@ One of the three discovery stages a trial can start at: recon, analysis, or hunt
 _Avoid_: stage, step
 
 **Target lifecycle strategy**:
-How a target is brought up on the remote host: `targetctl` (WebExploitBench), `image`, or `compose`.
+How a target is brought up on the eval host: `targetctl` (WebExploitBench), `image`, or `compose`.
+All three run locally on the eval server (D45); none reaches a remote host.
 _Avoid_: target kind, deployment
 
 **Synthetic Host**:
@@ -70,8 +71,9 @@ _Avoid_: alias, virtual host, domain
 
 **Target front**:
 What serves every target on `http://<synthetic-host>/` - the bare domain on the standard web port the platform scope gate requires.
-For `targetctl` it is the remote workshop host's nginx; for local `image`/`compose` it is the shared host-level `ph-eval-front` nginx container bound to host port 80, carrying one conf per synthetic Host that proxies to the target's published port over the Docker host gateway.
-The container is created before the first local target and removed after the last.
+It is the shared host-level `ph-eval-front` nginx container bound to host port 80, carrying one conf per synthetic Host that proxies to the target's published port over the Docker host gateway.
+`targetctl`, `image`, and `compose` all use it (D45): no host nginx and no ssh.
+The container is created before the first target and removed after the last.
 _Avoid_: proxy, reverse proxy, gateway
 
 **Work item**:

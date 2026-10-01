@@ -32,7 +32,7 @@ Evaluate the WebExploitBench target <TARGET> with pass@k=<K>:
 - report at the end: Pass@1 / Pass@3 (Avg) / Pass@3 (Max), the per-vuln-class
   and per-locus breakdowns, and the trial.yaml health rows
 
-Env if the defaults do not hold: PH_API, EVAL_SSH_HOST, EVAL_WEB_DIR.
+Env if the defaults do not hold: PH_API, EVAL_WEB_DIR, EVAL_TARGET_PLATFORM.
 ```
 
 Knobs: `<TARGET>` in `comfyui, jetlinks, prestashop, siyucms, white-jotter`;
@@ -59,16 +59,17 @@ All commands run from the polymerhus repo root.
 | Primitive | Contract |
 |---|---|
 | `PYTHONPATH=eval python3 -m orchestrator plan <setup.yaml>` | Print every instance, target, and routing command for an `EvalSetup` without executing anything (`up --dry-run` is the same). |
-| `PYTHONPATH=eval python3 -m orchestrator up <setup.yaml>` | Gate the eval-wide work items, then bring up each instance stack (worktree off `eval`, `.env` preflight, compose overlay) and its targets (the `targetctl` strategy deploys to the REMOTE workshop host; `image`/`compose` are local). |
+| `PYTHONPATH=eval python3 -m orchestrator up <setup.yaml>` | Gate the eval-wide work items, then bring up each instance stack (worktree off `eval`, `.env` preflight, compose overlay) and its targets. Every lifecycle runs locally on the eval host (D45): `targetctl` builds/starts WebExploitBench there, and `image`/`compose` start local containers. |
 | `PYTHONPATH=eval python3 -m orchestrator down <setup.yaml>` | Tear every target down (front, kali alias, target containers) and then every instance project (`docker compose down -v`, worktree removed). |
 | `PYTHONPATH=eval python3 -m orchestrator status <setup.yaml>` | Per-instance stack status, live kali aliases, and each target's synthetic host, front URL, and status. |
 
 The former `eval/target.sh` and `eval/hosts.sh` primitives are replaced by the
 orchestrator's target strategies (`eval/orchestrator/targets/`) and routing
-module (`eval/orchestrator/routing.py`): the `targetctl` strategy is the
-parametrized remote deployment over ssh plus the per-Host nginx front, and the
-routing module writes the unique synthetic Host into the instance kali. See
-section 1.5 for the `EvalSetup` shape.
+module (`eval/orchestrator/routing.py`): the `targetctl` strategy is the local
+WebExploitBench deployment (`scripts/targetctl` run on the eval host, D45) plus
+the shared per-Host front container, and the routing module writes the unique
+synthetic Host into the instance kali. See section 1.5 for the `EvalSetup`
+shape.
 
 | Primitive | Contract |
 |---|---|
@@ -88,8 +89,8 @@ section 1.5 for the `EvalSetup` shape.
 
 Env: `PH_API` (default `http://localhost:8080`); for the orchestrator
 `EVAL_REPO` (canonical checkout), `EVAL_INSTANCES_ROOT`, `EVAL_BRANCH`
-(default `eval`), `EVAL_SSH_HOST`, `EVAL_REMOTE_DIR` (default
-`~/WebExploitBench`), and `EVAL_NGINX_CONF_DIR`.
+(default `eval`), `EVAL_WEB_DIR` (the local WebExploitBench checkout, default
+`~/WebExploitBench`), and `EVAL_TARGET_PLATFORM` (default `linux/amd64`, D46).
 
 ### 1.2. The recon configuration contract (VERBATIM - do not improvise)
 
@@ -149,35 +150,29 @@ URL with a scheme or port: the platform's domain-mode scope is exact on the raw
 seed string and the fleet probes the default web port (80). A scheme/port-bearing
 seed breaks the scope gate (assets dropped, crawl chain skipped) - a dev-side
 defect, tracked separately, NOT worked around here. Every target is therefore
-fronted on :80 and `front_url=http://<host>/`; the front mechanism differs by
-where the target runs:
+fronted on :80 and `front_url=http://<host>/`; every target now runs locally on
+the eval host (D45), so one mechanism fronts all three lifecycles:
 
-- `targetctl` (remote workshop host): that host's own nginx (a system service).
-  The strategy writes one server block per synthetic Host proxying
-  `http://<host>/` to the target's actual published port and reloads nginx.
-- `image`/`compose` (local, host-published): a SHARED host-level nginx
-  container, `ph-eval-front` (SP2). It binds the host's port 80 and carries one
-  conf per synthetic Host, each proxying `http://<host>/` to the target's
-  published port over the Docker host gateway
+- `targetctl`, `image`, `compose` (all local, host-published): a SHARED
+  host-level nginx container, `ph-eval-front` (SP2). It binds the host's port 80
+  and carries one conf per synthetic Host, each proxying `http://<host>/` to the
+  target's published port over the Docker host gateway
   (`proxy_pass http://host.docker.internal:<port>`). The orchestrator creates
-  the container before the first local target and removes it after the last;
-  confs are added and removed per target with `nginx -t` + reload, so several
-  local targets and instances share the one :80 binding without colliding.
-  Creating it on first up keeps a single target's bring-up self-contained; the
-  up command is idempotent, so a crashed run can be re-run or torn down safely.
+  the container before the first target and removes it after the last; confs are
+  added and removed per target with `nginx -t` + reload, so several targets and
+  instances share the one :80 binding without colliding. Creating it on first up
+  keeps a single target's bring-up self-contained; the up command is idempotent,
+  so a crashed run can be re-run or torn down safely.
 
 The routing module aliases the synthetic Host inside that instance's kali
 `/etc/hosts` (runtime-only): belt-and-braces deterministic resolution for the
-recon fleet. The alias target depends on where the target runs:
-
-- `targetctl` (remote workshop host): the workshop host's public IP (already
-  numeric).
-- `image`/`compose` (local, host-published): the Docker host gateway, resolved
-  to a NUMERIC address at run time (`getent hosts host.docker.internal` inside
-  that instance's kali, SP1). `/etc/hosts` does NOT resolve a hostname in its
-  address column, so the literal `host.docker.internal` is never written; a
-  resolution failure is fatal. Kali is NOT on the host network, so `127.0.0.1`
-  would resolve to kali itself, and the front is reached through the resolved
+recon fleet. Every target is local, so the alias target is always the Docker
+host gateway, resolved to a NUMERIC address at run time (`getent hosts
+host.docker.internal` inside that instance's kali, SP1). `/etc/hosts` does NOT
+resolve a hostname in its address column, so the literal `host.docker.internal`
+is never written; a resolution failure is fatal. Kali is NOT on the host
+network, so `127.0.0.1` would resolve to kali itself, and the front is reached
+through the resolved
   gateway on port 80.
   The gateway is a host interface, so a local target must publish on an
   interface the gateway can reach: `image` uses docker's default all-interfaces
@@ -336,7 +331,7 @@ target run gets a unique synthetic Host (`t-<short>.target`), written into the
 target front and aliased in that instance's kali.
 
 The first committed setup is `eval/setups/first.yaml` (one instance, the
-`comfyui` workshop target); the operator bootstrap and the per-step acceptance
+`comfyui` target); the operator bootstrap and the per-step acceptance
 criteria for running it live are in `eval/E2E-SCAFFOLD.md`.
 
 ```yaml

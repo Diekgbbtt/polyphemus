@@ -25,7 +25,7 @@ The committed example is `eval/setups/comfyui-hunting.yaml`.
 
 ## The known-good local example
 
-A local run of the `comfyui` workshop challenge produced a usable surface:
+A local run of the `comfyui` challenge produced a usable surface:
 
 | field | value |
 |---|---|
