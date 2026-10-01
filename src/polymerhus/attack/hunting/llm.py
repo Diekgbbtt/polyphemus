@@ -37,9 +37,12 @@ uses; the actors reuse the SAME composers (`_gate_skill`,
 `_compose_gate_prompt`) and the SAME free-text-then-parse (`_parse_json_object`)
 as these factories, so the two lanes can never drift.
 
-This module imports no driver and performs no I/O at import (CODING_STANDARD
-section 6): `invoke_role`, the message classes, and the skill read all resolve
-lazily on call.
+This module imports no driver, but it is NOT env-free at import: it imports
+`hunt_orchestrator`, whose chain pulls `app.config`, which reads env at module
+scope (so importing `llm.py` requires the app env vars). The env-free home for
+the conciseness constant + appender re-exported below is `conciseness.py`.
+Everything that performs I/O (`invoke_role`, the message classes, and the skill
+read) still resolves lazily on call.
 """
 from __future__ import annotations
 

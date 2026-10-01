@@ -370,8 +370,9 @@ def test_parse_json_object_passthrough_and_empty():
 # --- #292: the single-sourced surgical-conciseness directive ------------------
 
 def test_conciseness_directive_is_single_sourced_and_names_the_cap():
-    """The canonical directive (#292) lives once in `llm.py` and names the
-    ~500-char cap while covering the config `rationale` and note bodies."""
+    """The canonical directive (#292) lives once in `conciseness.py` (`llm.py`
+    re-exports it) and names the ~500-char cap while covering the config
+    `rationale` and note bodies."""
     d = HL.HUNTING_CONCISENESS_DIRECTIVE
     assert "500" in d
     assert "rationale" in d
