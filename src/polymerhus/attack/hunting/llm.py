@@ -37,9 +37,12 @@ uses; the actors reuse the SAME composers (`_gate_skill`,
 `_compose_gate_prompt`) and the SAME free-text-then-parse (`_parse_json_object`)
 as these factories, so the two lanes can never drift.
 
-This module imports no driver and performs no I/O at import (CODING_STANDARD
-section 6): `invoke_role`, the message classes, and the skill read all resolve
-lazily on call.
+This module imports no driver, but it is NOT env-free at import: it imports
+`hunt_orchestrator`, whose chain pulls `app.config`, which reads env at module
+scope (so importing `llm.py` requires the app env vars). The env-free home for
+the conciseness constant + appender re-exported below is `conciseness.py`.
+Everything that performs I/O (`invoke_role`, the message classes, and the skill
+read) still resolves lazily on call.
 """
 from __future__ import annotations
 
@@ -47,6 +50,13 @@ import json
 import logging
 from typing import Callable
 
+# The conciseness directive + appender are re-exported here for their public
+# home; the env-free definition lives in `conciseness.py` so the tool modules
+# import at module top without pulling `app.config` (#292).
+from polymerhus.attack.hunting.conciseness import (
+    HUNTING_CONCISENESS_DIRECTIVE,
+    append_conciseness_directive,
+)
 from polymerhus.attack.hunting.hunt_orchestrator import (
     GateDecision,
     GateInput,

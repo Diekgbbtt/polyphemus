@@ -58,6 +58,7 @@ from langchain_core.tools import BaseTool
 from lightrag.tool import QUERY_LIGHTRAG_DESCRIPTION
 from pydantic import BaseModel, ConfigDict, Field
 
+from .conciseness import append_conciseness_directive
 from .hunter_memory import (
     DuplicateSpecError,
     HunterMemoryStore,
@@ -462,6 +463,7 @@ class HuntsStoreTool(StoreToolBase):
         self._store = store
         self._project_id = project_id
         self._hunt_store = hunt_store
+        self.description = append_conciseness_directive(self.description)
 
     def _unavailable(self, args: HuntsStoreArgs) -> str:
         return json.dumps({
@@ -537,7 +539,7 @@ class HuntsStoreTool(StoreToolBase):
                            "status": spec.get("status")})
 
 
-_NOTES_DESCRIPTION = (
+_NOTES_DESCRIPTION = append_conciseness_directive((
     "The hunt's notes seam - one note per fault covering all decisions that "
     "concern it, more detailed than the rationale. Commands: read / write.\n"
     "A write MUST set command=\"write\" (action is the write option - "
@@ -556,7 +558,7 @@ _NOTES_DESCRIPTION = (
     "update/delete on a missing note returns a denoted note_missing. read "
     "is the grep-match read, latest-first, by the fault_key parent / key / "
     "body keyword, optionally projected onto attributes."
-)
+))
 
 
 class HunterMemoryNotesHandle:

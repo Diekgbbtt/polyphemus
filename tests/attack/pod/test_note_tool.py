@@ -355,3 +355,14 @@ def test_malformed_write_is_a_coded_teaching_rejection(store, spec_id):
     assert out.startswith(NOTES_ARGS_REJECTED)
     assert "order" in out  # the detail names the missing variant order
     assert store.read_notes(spec_id) == []  # nothing persisted
+
+
+# --- #292: the conciseness directive in the pod note description --------------
+
+def test_pod_note_description_carries_the_conciseness_directive(store, spec_id):
+    """The pod `note` tool description carries the single-sourced conciseness
+    directive verbatim (#292), so the Runner keeps the consolidated summary
+    under the cap."""
+    from polymerhus.attack.hunting.llm import HUNTING_CONCISENESS_DIRECTIVE
+
+    assert HUNTING_CONCISENESS_DIRECTIVE in _tool(store=store, spec_id=spec_id).description

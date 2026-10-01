@@ -30,6 +30,7 @@ import json
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from polymerhus.attack.hunting.conciseness import append_conciseness_directive
 from polymerhus.attack.hunting.pod.pod_memory import (
     POD_NOTE_KINDS,
     PodMemoryStore,
@@ -107,6 +108,7 @@ class PodNoteTool(StoreToolBase):
         super().__init__(**kwargs)
         self.__store = store
         self.__spec_id = spec_id
+        self.description = append_conciseness_directive(self.description)
 
     # ------------------------------------------------------------------
     # the rejections carry the semantic + the machine code (D84-22)

@@ -146,3 +146,16 @@ def test_unknown_parameter_still_raises_the_rejected_call(tmp_path):
                       "fault_key": FAULT_KEY, "fault_keyword": "f1",
                       "strategy_keyword": "probe",
                       "spec": {"status": "hypothesised"}, "bogus": 1})
+
+
+# --- #292: the conciseness directive in the hunter tool descriptions -----------
+
+def test_hunter_store_and_notes_descriptions_carry_the_conciseness_directive():
+    """The hunter's `hunts_store` / `notes` descriptions carry the single-sourced
+    conciseness directive verbatim (#292), so the writing cap reaches the hunter
+    model."""
+    from polymerhus.attack.hunting.llm import HUNTING_CONCISENESS_DIRECTIVE
+
+    for tool in (HuntsStoreTool(store=None, project_id=PROJECT),
+                 NotesTool(store=None, project_id=PROJECT)):
+        assert HUNTING_CONCISENESS_DIRECTIVE in tool.description, tool.name

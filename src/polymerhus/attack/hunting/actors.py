@@ -40,6 +40,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from polymerhus.attack.hunting.conciseness import append_conciseness_directive
 from polymerhus.attack.hunting.tool_contract import (
     NotesFieldMap,
     StoreToolBase,
@@ -555,6 +556,11 @@ def build_orchestrator_tool_surface(tools, *, run_id: str, project_id: str | Non
         rejection_name="notes",
         require_write_intent=False,
     )
+
+    # The single-sourced conciseness directive (#292) rides the two store
+    # descriptions verbatim; the env-free appender is imported at module top.
+    hunts_store.description = append_conciseness_directive(hunts_store.description)
+    notes.description = append_conciseness_directive(notes.description)
     return [hunts_store, notes, graph_view]
 
 
