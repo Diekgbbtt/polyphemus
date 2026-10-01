@@ -179,12 +179,14 @@ class StoreToolBase(BaseTool):
     _require_write_intent: bool = True
     _rejection_name: str = ""
     _as_json: bool = False
+    # The ONE extension point for seam-specific rejection rules; set through
+    # the `extra_rejection=` constructor argument (`StoreNotesTool`).
+    _extra_rules: RejectionRule | None = None
 
     def invoke(self, input, config=None, **kwargs):
         try:
             return super().invoke(input, config=config, **kwargs)
         except ValidationError as exc:
-            rules = getattr(self, "_extra_rules", None) or self._extra_rejection
             coded = coded_teaching_rejection(
                 tool_name=self._rejection_name or self.name,
                 tool_input=input,
@@ -194,15 +196,11 @@ class StoreToolBase(BaseTool):
                 write_intent_fields=self._write_intent_fields,
                 require_write_intent=self._require_write_intent,
                 args_schema=self.args_schema,
-                extra_rules=rules,
+                extra_rules=self._extra_rules,
             )
             if coded is None:
                 raise
             return json.dumps(coded) if self._as_json else coded
-
-    def _extra_rejection(self, tool_input: dict, errors: list) -> dict | None:
-        """Seam-specific rejection rules (default: none)."""
-        return None
 
     def _run(self, **kwargs: Any):
         schema = self.args_schema

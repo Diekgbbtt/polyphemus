@@ -231,8 +231,9 @@ def _fault_key_violation(
 # The D84-22 refinement: a schema failure on the store/notes tools is a CODED
 # teaching rejection (never a bare ValidationError the harness turns into
 # `tool_failed`). The shared translation lives in `tool_contract`; the hunter's
-# seam-specific extras (a wrong-typed `evidence`, a stray `provenance` key) are
-# the `_extra_rejection` hook below.
+# seam-specific extras (`_notes_extra_rejection` below: the `command` omission
+# clause, a wrong-typed `evidence`, a stray `provenance` key) are passed to it
+# as the `extra_rejection=` callback.
 
 _HUNTER_WRITE_INTENT_FIELDS = ("mode", "spec", "fault_keyword", "strategy_keyword")
 _NOTES_WRITE_INTENT_FIELDS = ("action", "fault_key", "note_name", "kind", "body")
