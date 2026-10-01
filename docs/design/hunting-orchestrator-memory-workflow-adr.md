@@ -67,9 +67,11 @@ state machine per config: `hypothesised -> ratified | dropped`.
 1. **`hunts_store`** - contract: `read` / `write` cmds. `read` needs the config
    identifier and accepts optionally specific attributes; the whole surface context
    of a projected unit may NEVER be read through it - only service keys, which may
-   later be inspected with `graph_view`. `write` takes the hunt config object; any
-   attribute specification is optional and internal schema validation never rejects
-   on missing attributes.
+   later be inspected with `graph_view`. `write` takes the hunt config object
+   carrying the identity attributes `unit_id` + `fault_class` (`vulnerability_class`
+   may be empty); the file name, semantic key, and `hunt_id` are DERIVED from them
+   (#298), so a missing/empty identity is a coded rejection and every other
+   attribute is optional.
 2. **`notes`** - contract: `read` / `write` cmds, same data contract as
    `hunts_store`. `write` options: `append`, `update`, `delete`.
 3. **`graph_view`** - as-is (read-only L0/L1 view, write-shaped calls rejected).

@@ -610,7 +610,7 @@ def test_integration_c11_mint_fanout_per_distinct_class():
     configs = mint_hunt_config(
         direction,
         surface_context={}, prior_hunt_insights=[],
-    )
+        )
     assert len(configs) == 2
     assert [c.hunt_id for c in configs] == [
         hunt_id_for(SERVICE_A, FAULT_352, "CSRF"),
@@ -726,7 +726,7 @@ def test_integration_c12b_surface_context_shows_connected_data_items(tmp_path):
         # deterministic surface_context on the wrapped seam
         for config in mint_hunt_config(
                 direction,
-        surface_context={}, prior_hunt_insights=[]):
+            surface_context={}, prior_hunt_insights=[]):
             tools.store_reads.write_config("project-1", config)
         return GateDecision(directions=[direction])
 

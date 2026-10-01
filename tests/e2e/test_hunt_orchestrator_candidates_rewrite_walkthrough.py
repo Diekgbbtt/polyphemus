@@ -265,7 +265,7 @@ def _agent_seams(tools, project_id: str):
                     continue
                 for config in mint_hunt_config(
                         direction,
-        surface_context={}, prior_hunt_insights=[]):
+                    surface_context={}, prior_hunt_insights=[]):
                     _safe_write(tools.store_reads.write_config, project_id, config)
             return decision
         return agent_hypothesise

@@ -202,7 +202,7 @@ def _agent_hypothesise(tools, *, classes=None):
             directions.append(direction)
             for config in mint_hunt_config(
                     direction,
-        surface_context={}, prior_hunt_insights=[]):
+                surface_context={}, prior_hunt_insights=[]):
                 _safe_store_write(tools.store_reads.write_config, "project-1", config)
         return GateDecision(directions=directions)
     return hypothesise
@@ -317,7 +317,7 @@ def test_mint_hunt_config_mints_a_hypothesised_draft():
         direction=_carry(candidate),
         surface_context={"card": {"kind": "Service", "spine": {}}},
         prior_hunt_insights=[{"kind": "prior_verdict", "verdict": "unsuccessful"}],
-    )[0]
+        )[0]
     assert config.hunt_id == hunt_id_for(SERVICE_A, FAULT_X, "")
     assert config.unit_id == SERVICE_A
     assert config.fault_class == FAULT_X
@@ -352,7 +352,7 @@ def test_surface_context_folds_the_candidate_applies_witness():
         surface_context=_surface_context_for(
             [], None, applies_witness=candidate.applies_witnesses),
         prior_hunt_insights=[],
-    )[0]
+        )[0]
     text = _compose_grounding(config)
     assert "L0 fault-applicability evidence:" in text
     assert "deterministic: clause-x" in text and "llm: why" in text
@@ -375,6 +375,11 @@ def test_surface_context_store_injects_prior_hunt_insights():
     seam.set_projection(None)
     kept = seam._inject({"unit_id": "u", "prior_hunt_insights": [{"keep": True}]})
     assert kept["prior_hunt_insights"] == [{"keep": True}]
+    # the production nodes thread a LIST (possibly empty): an empty pair read
+    # overwrites a model-authored value with [] - the field is harness-owned
+    seam.set_projection(None, prior_hunt_insights=[])
+    cleared = seam._inject({"unit_id": "u", "prior_hunt_insights": [{"model": "x"}]})
+    assert cleared["prior_hunt_insights"] == []
 
 
 # --- The risk-descending schedule (the fault_risk policy) -----------------------
@@ -410,7 +415,7 @@ def test_mint_fans_out_one_config_per_distinct_class():
     configs = mint_hunt_config(
         direction=direction,
         surface_context={}, prior_hunt_insights=[],
-    )
+        )
     assert len(configs) == 3
     # each config carries its own class as the identity axis
     assert [c.vulnerability_class for c in configs] == ["csrf", "idor", "ssti"]
@@ -434,7 +439,7 @@ def test_mint_collapses_same_class_duplicates_deterministically():
     configs = mint_hunt_config(
         direction=direction,
         surface_context={}, prior_hunt_insights=[],
-    )
+        )
     assert len(configs) == 2
     assert [c.vulnerability_class for c in configs] == ["csrf", "idor"]
 
@@ -447,7 +452,7 @@ def test_mint_without_classes_is_the_carried_bare_fallback():
     configs = mint_hunt_config(
         direction=direction,
         surface_context={}, prior_hunt_insights=[],
-    )
+        )
     assert len(configs) == 1
     config = configs[0]
     assert config.hunt_id == hunt_id_for(SERVICE_A, FAULT_X, "")
@@ -464,7 +469,7 @@ def test_mint_with_only_empty_classes_is_the_carried_bare_fallback():
     configs = mint_hunt_config(
         direction=direction,
         surface_context={}, prior_hunt_insights=[],
-    )
+        )
     assert len(configs) == 1
     assert configs[0].vulnerability_class == ""
 
@@ -479,7 +484,7 @@ def test_mint_passes_research_direction_and_preserves_the_identity_slots():
     configs = mint_hunt_config(
         direction=direction,
         surface_context={}, prior_hunt_insights=[],
-    )
+        )
     assert [c.hunt_id for c in configs] == [
         hunt_id_for(SERVICE_A, FAULT_X, "idor"),
         hunt_id_for(SERVICE_A, FAULT_X, "csrf")]
@@ -983,7 +988,7 @@ def test_surface_store_is_stable_across_passes_on_one_run():
         for direction in directions:
             for config in mint_hunt_config(
                     direction,
-        surface_context={}, prior_hunt_insights=[]):
+                surface_context={}, prior_hunt_insights=[]):
                 captured["surface"]["hunts_store"].invoke(
                     {"cmd": "write", "hunt_config": config.model_dump()})
         return GateDecision(directions=directions)
@@ -1431,7 +1436,7 @@ def test_hunt_config_shape_is_the_lean_three_goal_config():
         prior_hunt_insights=[],
         observed_defences=["WAF on /api/* blocks XSS payloads"],
         preconditions=["an authenticated session is obtainable"],
-    )[0]
+        )[0]
     # the merged G1 preconditions list (capabilities + assumptions unified)
     assert config.preconditions == ["an authenticated session is obtainable"]
     # the renamed, re-oriented target_caveats slot
@@ -1452,7 +1457,7 @@ def test_mint_never_assembles_a_tool_registry():
         direction=_carry(_candidate(deterministic_witness=None)),
         surface_context={},
         prior_hunt_insights=[],
-    )[0]
+        )[0]
     assert not hasattr(config, "tool_registry")
 
 

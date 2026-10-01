@@ -39,7 +39,7 @@ knowledge under one project folder:
   YAML file per config, in `produced/` while it lives and `consumed/` once dispatched. **Oriented by the three goals
   (#202):** each config covers (G1) the technical feasibility of that fault at that unit, (G2) the initial
   concretisation (the vulnerability-class naming), and (G3) synergistic further-concretisation material
-  (`sub_fault_ids` + the downstream prior-hunt insights). Every config attribute serves one of the three goals;
+  (the downstream prior-hunt insights; `sub_fault_ids` was removed by #298). Every config attribute serves one of the three goals;
   nothing more - the config is the minimal set that still covers all three.
 - **Notes** - per-config reasoning artifacts: the observations drawn from tool calls (graph_view / memory reads)
   that drove the rationale, refusal reasons, and forward-useful insights. One `memory.yaml` notes file per project.

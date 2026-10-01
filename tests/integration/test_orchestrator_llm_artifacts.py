@@ -1066,7 +1066,7 @@ def test_structured_schemas_and_tool_surface_unchanged():
     config = mint_hunt_config(
         direction,
         surface_context={}, prior_hunt_insights=[],
-    )[0]
+        )[0]
     assert config.status == "hypothesised"
     assert config.vulnerability_class == "CSRF"
     assert config.prompt_template.rationale == "r"
