@@ -29,7 +29,8 @@ The operator's investigation (2026-08-23) established four defects:
    DECOMPOSE/GENERATE hypothesis formulation; the production hunter prompt consumes
    none of the candidates-rewrite slots (`concrete_fault_candidates`,
    `research_direction`, `blocking_constraints`, `sub_fault_ids` are minted and
-   never read). The orchestrator must own only the higher stretch: sub-classing the
+   never read; #298 later REMOVED `sub_fault_ids` as bare folded ids the hunter
+   cannot resolve). The orchestrator must own only the higher stretch: sub-classing the
    fault into vulnerability classes that could characterise the application itself.
 3. **The phase-transition verbatims are mislocated.** The next-reasoning-phase
    hints are embedded in the agent system prompt; they must be injected on-the-fly
@@ -101,9 +102,11 @@ back-edge-to-recon tool (standing operator ruling 2026-08-22).
   in the config's surface context, a Service's `edge_degree` counts are replaced by
   the detailed specification of the DataItems it is connected to (name, type,
   sensitivity, fields, notes), mirroring the rich projection.
-- `sub_fault_ids` (fold family) keeps feeding each class-config (#66
-  non-conflation, G14); `kb_degraded` / materialisation / fold-family preloads are
-  unchanged (G14).
+- the fold family keeps feeding the gate's per-class non-conflation reasoning
+  (#66, G14); `kb_degraded` / materialisation / fold-family preloads are
+  unchanged (G14). `sub_fault_ids` (the bare folded CWE ids carried on each
+  class-config) was REMOVED (#298: the hunter has no tool to resolve them, so
+  they were noise for test-implementation authoring).
 
 ### Memory topology (per project)
 

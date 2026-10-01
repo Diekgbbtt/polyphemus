@@ -77,8 +77,9 @@ The write payload (`OrchestratorHuntsStoreArgs.hunt_config`) carries the values 
 ## 6. Failure semantics
 
 - The store raises a typed refusal when the attributes required to derive the symbol are absent or malformed.
-- The tool translates that refusal into a coded, field-naming rejection (the `tool_contract.coded_teaching_rejection` pattern), so the agent sees a contract violation it can correct, not a silent success and not a bare pydantic error.
+- The tool translates that refusal into a coded, field-naming rejection (the `tool_contract.coded_teaching_rejection` pattern): the orchestrator `hunts_store` returns `{"error": "hunts_store_write_rejected", "fields": [...missing...], "detail": ...}` - a machine code plus the field names - so the agent sees a contract violation it can correct, not a silent success and not a bare pydantic error.
 - A write that cannot form a valid config is never persisted.
+- The symbols the store owns are additionally ENFORCED at the write: `hunt_id` is overwritten with the deterministic derivation (`semantic_key(unit_id, fault_class, vulnerability_class)`) so a prompt-compliant payload that omits it (the agent contract says the harness derives it) can never persist a config the surfer's `HuntConfig` validation would later refuse.
 
 ## 7. Superseded decisions
 

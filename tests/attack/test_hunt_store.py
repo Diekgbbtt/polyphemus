@@ -98,6 +98,34 @@ def test_update_config_refuses_an_incomplete_identity(tmp_path):
     assert list(store._produced_dir(PROJECT).glob("*.yaml")) == []
 
 
+def test_write_config_derives_hunt_id_from_the_identity(tmp_path):
+    # #298 Rule 1: `hunt_id` is a DERIVED symbol, never a request field. A
+    # prompt-compliant payload omits it (the agent contract says the harness
+    # derives it), so the store must set it from the validated identity - else
+    # the surfer's `HuntConfig.model_validate` refuses the config every tick
+    # and the run never quiesces (the #298 failure class, relocated).
+    from polymerhus.attack.hunting.hunt_orchestrator import HuntConfig
+
+    store = HuntStore(tmp_path)
+    body = _config()
+    del body["hunt_id"]
+    store.write_config(PROJECT, body)
+    (stored,) = store.read_configs(PROJECT)
+    assert stored["hunt_id"] == semantic_key(UNIT, CWE, CLASS)
+    # the persisted body is validatable as the HuntConfig the surfer reads
+    assert HuntConfig.model_validate(stored).hunt_id == semantic_key(UNIT, CWE, CLASS)
+
+
+def test_update_config_derives_hunt_id_from_the_identity(tmp_path):
+    store = HuntStore(tmp_path)
+    body = _config(status="ratified", unit_id="Service:b", fault_class=CWE,
+                   vulnerability_class="IDOR")
+    body["hunt_id"] = "a-stale-agent-value"
+    store.update_config(PROJECT, body)
+    (stored,) = store.read_configs(PROJECT)
+    assert stored["hunt_id"] == semantic_key("Service:b", CWE, "IDOR")
+
+
 # --- naming + the semantic key round-trip (G4) ------------------------------
 
 def test_config_file_name_uses_underscore_separators():
@@ -313,9 +341,10 @@ def test_read_configs_by_semantic_key_and_revival_prefix(tmp_path):
     store.write_config(PROJECT, _config(hunt_id="hunt-2", vulnerability_class="CSRF"))
     store.write_config(PROJECT, _config(unit_id="Service:b", fault_class=CWE,
                                         vulnerability_class="IDOR"))
-    # the full semantic key reads exactly its config
+    # the full semantic key reads exactly its config; the hunt_id is DERIVED
+    # from the identity on the write (#298), never the caller's value
     exact = store.read_configs_by_key(PROJECT, semantic_key(UNIT, CWE, CLASS))
-    assert [c["hunt_id"] for c in exact] == ["hunt-1"]
+    assert [c["hunt_id"] for c in exact] == [semantic_key(UNIT, CWE, CLASS)]
     # the 2-part revival key reads every class at the locus
     locus = store.read_configs_by_key(PROJECT, f"{UNIT}::{CWE}")
     assert {c["vulnerability_class"] for c in locus} == {"IDOR", "CSRF"}

@@ -842,6 +842,7 @@ class SurfaceContextStore:
         self.surface = surface
         self._projection: object | None = None
         self._applies_witness: object | None = None
+        self._prior_hunt_insights: object | None = None
         self.write_failures = 0
         self.duplicate_config_writes = 0
 
@@ -854,14 +855,19 @@ class SurfaceContextStore:
         self.surface = surface
         self._projection = None
         self._applies_witness = None
+        self._prior_hunt_insights = None
         self.reset_counters()
 
-    def set_projection(self, projection, *, applies_witness=None) -> None:
-        """Thread the current pair's rich projection AND its applies-witness onto
-        the seam for the next turn (the surface context is per-unit, and the
-        witness folds into it as `fault_evidence`, #298)."""
+    def set_projection(self, projection, *, applies_witness=None,
+                       prior_hunt_insights=None) -> None:
+        """Thread the current pair's rich projection, its applies-witness, AND the
+        pair's orchestrator-assembled `prior_hunt_insights` onto the seam for the
+        next turn (the surface context is per-unit, the witness folds into it as
+        `fault_evidence`, and the prior-hunt insights are harness-owned downstream
+        material - all three are applied on the write seam, #201/#298)."""
         self._projection = projection
         self._applies_witness = applies_witness
+        self._prior_hunt_insights = prior_hunt_insights
 
     def reset_counters(self) -> None:
         """Zero the observed-write counters (the pass snapshots them)."""
@@ -870,17 +876,26 @@ class SurfaceContextStore:
 
     def _inject(self, config):
         """Return a copy of `config` (a `HuntConfig` or a dict) carrying the
-        harness-assembled deterministic `surface_context`; the caller's object
-        is never mutated."""
+        harness-assembled deterministic `surface_context` AND the pair's
+        `prior_hunt_insights` (orchestrator-owned, #201/#298); the caller's
+        object is never mutated. The prior-hunt insights are applied only when
+        the seam threaded them (a turn with no pair context leaves the config's
+        own value untouched)."""
         context = _surface_context_for(
             self.surface, self._projection,
             applies_witness=self._applies_witness)
+        insights = (list(self._prior_hunt_insights)
+                    if self._prior_hunt_insights is not None else None)
         if isinstance(config, dict):
             out = dict(config)
             out["surface_context"] = context
+            if insights is not None:
+                out["prior_hunt_insights"] = insights
             return out
         amended = config.model_copy(deep=True)
         amended.surface_context = context
+        if insights is not None:
+            amended.prior_hunt_insights = insights
         return amended
 
     def _counted(self, method, *args, **kwargs):
@@ -951,7 +966,6 @@ def hunt_id_for(unit_id: str, fault_class: str, vulnerability_class: str) -> str
 
 def mint_hunt_config(
     direction: EnvisionedDirection,
-    candidate: DeliveredCandidate,
     *,
     surface_context: dict,
     prior_hunt_insights: Sequence[dict],
@@ -967,11 +981,12 @@ def mint_hunt_config(
     (rationale -> rationale, research_direction passes through), while the
     ratification-phase fields - `preconditions`, `observed_defences` - stay empty
     (the ratification phase fills them, R3.4). The wide surface context (adapted
-    index-card, with the candidate's applies-witness folded as `fault_evidence`)
-    and the downstream prior-hunt insights (the hunter memory's specs + Q16 pod
-    exports by config_key, #202) are passed in pre-assembled. `tool_registry` is
-    retired and `target_caveats` is renamed `observed_defences` (#202);
-    `sub_fault_ids` is removed (#298).
+    index-card, with the caller's applies-witness already folded as
+    `fault_evidence` - the caller owns the candidate, so the mint takes no
+    `candidate`; #298) and the downstream prior-hunt insights (the hunter
+    memory's specs + Q16 pod exports by config_key, #202) are passed in
+    pre-assembled. `tool_registry` is retired and `target_caveats` is renamed
+    `observed_defences` (#202); `sub_fault_ids` is removed (#298).
 
     The mint stays deterministic given the emitted set (no LLM, no I/O): the
     distinct-class grouping preserves first-emission order, and each config's
@@ -1343,7 +1358,6 @@ async def arun_orchestration(
         `observed_defences`) stay empty on the hypothesised draft (R3.4)."""
         return mint_hunt_config(
             direction,
-            candidate,
             surface_context=_surface_context_for(
                 surface, projection, applies_witness=candidate.applies_witnesses),
             prior_hunt_insights=prior_insights,
@@ -1450,14 +1464,20 @@ async def arun_orchestration(
             "fold_family": "ok" if fold_ids is not None else "UNKNOWN",
             "kb_degraded": kb_degraded,
         })
+        # The pair's orchestrator-assembled prior-hunt insights (fail-open []):
+        # harness-owned downstream material applied on the write seam (#201/#298)
+        # so the agent's `hunts_store(write)` carries them without authoring them.
+        prior_insights = await _read_prior_insights(key)
         if hypothesise_fn is not None:
             if store_seam is not None:
                 # The #201 carve-out is threaded per turn: the agent's
                 # `hunts_store(write)` during this turn gets the pair's own
-                # projection (the surface context is per-unit) and its
-                # applies-witness folded as `fault_evidence` (#298).
+                # projection (the surface context is per-unit), its
+                # applies-witness folded as `fault_evidence`, and the pair's
+                # prior-hunt insights (#298).
                 store_seam.set_projection(
-                    projection, applies_witness=pair.applies_witnesses)
+                    projection, applies_witness=pair.applies_witnesses,
+                    prior_hunt_insights=prior_insights)
             decision = await _phase_turn(hypothesise_fn, gate_input,
                                          phase="hypothesise")
             directions = list(getattr(decision, "directions", None) or [])
@@ -1499,7 +1519,6 @@ async def arun_orchestration(
                     "projections": {pair.unit_id: projection}}
         candidate = by_identity.get((pair.unit_id, fault_class)) or pair
         for direction in carried:
-            prior_insights = await _read_prior_insights(key)
             configs = _mint_for_direction(
                 direction, candidate, prior_insights, projection=projection)
             # S8: several carried directions for ONE pair all sit at the SAME
@@ -1554,10 +1573,14 @@ async def arun_orchestration(
                 # #201 carve-out: thread the pair's own projection onto the
                 # seam for the ratify turn, so the agent's write carries the
                 # deterministic surface context (aggregates re-injected) with the
-                # pair's applies-witness folded as `fault_evidence` (#298).
+                # pair's applies-witness folded as `fault_evidence` and its
+                # prior-hunt insights (#298). The insights ride the minted drafts
+                # (assembled at the hypothesise phase for the same pair).
                 store_seam.set_projection(
                     (state.get("projections") or {}).get(pair.unit_id),
-                    applies_witness=pair.applies_witnesses)
+                    applies_witness=pair.applies_witnesses,
+                    prior_hunt_insights=(drafts[0].prior_hunt_insights
+                                         if drafts else None))
             out = await _phase_turn(ratify_fn, _phase_input(pair, drafts, state),
                                     phase="ratify")
             decision = out if isinstance(out, RatifyDecision) else RatifyDecision()

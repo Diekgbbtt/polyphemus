@@ -217,8 +217,13 @@ class ConfigIdentityError(ValueError):
     is DERIVED from (#298): `unit_id` and `fault_class` must be present and
     non-empty; `vulnerability_class` may be empty (the carried-bare degrade is
     legal). The write seam raises this rather than composing a degenerate file
-    name no reader can ratify (the `_CWE-1220_.yaml` regression). The tool
-    translates it into a coded teaching rejection the agent can correct."""
+    name no reader can ratify (the `_CWE-1220_.yaml` regression). `fields` names
+    the missing attribute(s) so the tool emits a CODED rejection the agent can
+    correct."""
+
+    def __init__(self, fields: "list[str]", message: str):
+        super().__init__(message)
+        self.fields = list(fields)
 
 
 def require_config_identity(data: dict) -> tuple[str, str, str]:
@@ -234,9 +239,10 @@ def require_config_identity(data: dict) -> tuple[str, str, str]:
                                         ("fault_class", fault_class)) if not value]
     if missing:
         raise ConfigIdentityError(
+            missing,
             f"hunt config write needs the identity attribute(s) "
             f"{', '.join(missing)} to derive the file name; the payload did "
-            f"not carry them"
+            f"not carry them",
         )
     return unit_id, fault_class, vulnerability_class
 
@@ -304,6 +310,11 @@ class HuntStore:
         with _lock_for(project_id):
             data = config.model_dump() if not isinstance(config, dict) else dict(config)
             unit_id, fault_class, vulnerability_class = require_config_identity(data)
+            # #298 Rule 1: the hunt_id is a DERIVED symbol, never a request
+            # field - set it from the validated identity so a payload that omits
+            # it (as the agent contract requires) can never persist a config the
+            # surfer's `HuntConfig` validation would then refuse.
+            data["hunt_id"] = semantic_key(unit_id, fault_class, vulnerability_class)
             name = config_file_name(unit_id, fault_class, vulnerability_class)
             produced = self._produced_dir(project_id) / name
             consumed = self._consumed_dir(project_id) / name
@@ -348,6 +359,9 @@ class HuntStore:
         with _lock_for(project_id):
             data = config.model_dump() if not isinstance(config, dict) else dict(config)
             unit_id, fault_class, vulnerability_class = require_config_identity(data)
+            # #298 Rule 1: `hunt_id` is DERIVED from the validated identity
+            # (the file name / semantic key family), never a request field.
+            data["hunt_id"] = semantic_key(unit_id, fault_class, vulnerability_class)
             name = config_file_name(unit_id, fault_class, vulnerability_class)
             produced = self._produced_dir(project_id)
             consumed = self._consumed_dir(project_id)

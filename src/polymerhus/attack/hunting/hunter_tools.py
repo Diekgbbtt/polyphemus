@@ -553,8 +553,9 @@ class HunterMemoryNotesHandle:
 
 
 # The explicit notes field map (#293): the hunter's schema names, checked
-# against `NotesArgs` at construction - no alias guessing. In particular a read
-# keys on `parent_key` (the documented read filter), never the write `fault_key`.
+# against `NotesArgs` at construction - no alias guessing. `key`/`read_key` are
+# None because the hunt's config key is BOUND on the handle (#298), never a
+# request field, so neither role names a schema field.
 _HUNTER_NOTES_FIELD_MAP = NotesFieldMap(
     key=None,
     read_key=None,

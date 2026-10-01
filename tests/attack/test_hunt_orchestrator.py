@@ -201,8 +201,8 @@ def _agent_hypothesise(tools, *, classes=None):
                 direction.vulnerability_classes = list(classes)
             directions.append(direction)
             for config in mint_hunt_config(
-                    direction, candidate,
-                    surface_context={}, prior_hunt_insights=[]):
+                    direction,
+        surface_context={}, prior_hunt_insights=[]):
                 _safe_store_write(tools.store_reads.write_config, "project-1", config)
         return GateDecision(directions=directions)
     return hypothesise
@@ -314,7 +314,7 @@ def test_mint_hunt_config_mints_a_hypothesised_draft():
     # (preconditions / observed_defences) empty
     candidate = _candidate(deterministic_witness=None)
     config = mint_hunt_config(
-        direction=_carry(candidate), candidate=candidate,
+        direction=_carry(candidate),
         surface_context={"card": {"kind": "Service", "spine": {}}},
         prior_hunt_insights=[{"kind": "prior_verdict", "verdict": "unsuccessful"}],
     )[0]
@@ -348,7 +348,7 @@ def test_surface_context_folds_the_candidate_applies_witness():
     # the hunter prompt renders the folded evidence, not a template slot
     from polymerhus.attack.hunting.hunting_agent import _compose_grounding
     config = mint_hunt_config(
-        direction=_carry(candidate), candidate=candidate,
+        direction=_carry(candidate),
         surface_context=_surface_context_for(
             [], None, applies_witness=candidate.applies_witnesses),
         prior_hunt_insights=[],
@@ -356,6 +356,25 @@ def test_surface_context_folds_the_candidate_applies_witness():
     text = _compose_grounding(config)
     assert "L0 fault-applicability evidence:" in text
     assert "deterministic: clause-x" in text and "llm: why" in text
+
+
+def test_surface_context_store_injects_prior_hunt_insights():
+    """#201/#298: `prior_hunt_insights` is orchestrator-owned downstream material
+    applied on the write seam (like `surface_context`). The seam injects the
+    pair's insights - a model-authored value is replaced - and a turn that
+    threads none leaves the config's own value untouched."""
+    from polymerhus.attack.hunting.hunt_orchestrator import SurfaceContextStore
+
+    seam = SurfaceContextStore(_MemoryStore(), surface=[])
+    insights = [{"kind": "prior_verdict", "verdict": "unsuccessful"}]
+    seam.set_projection(None, prior_hunt_insights=insights)
+    injected = seam._inject({"unit_id": "u",
+                             "prior_hunt_insights": [{"model": "authored"}]})
+    assert injected["prior_hunt_insights"] == insights
+    # a turn with no threaded insights leaves the config's own value alone
+    seam.set_projection(None)
+    kept = seam._inject({"unit_id": "u", "prior_hunt_insights": [{"keep": True}]})
+    assert kept["prior_hunt_insights"] == [{"keep": True}]
 
 
 # --- The risk-descending schedule (the fault_risk policy) -----------------------
@@ -389,7 +408,7 @@ def test_mint_fans_out_one_config_per_distinct_class():
     direction = _carry(_candidate(deterministic_witness=None))
     direction.vulnerability_classes = ["csrf", "idor", "ssti"]
     configs = mint_hunt_config(
-        direction=direction, candidate=_candidate(deterministic_witness=None),
+        direction=direction,
         surface_context={}, prior_hunt_insights=[],
     )
     assert len(configs) == 3
@@ -413,7 +432,7 @@ def test_mint_collapses_same_class_duplicates_deterministically():
     direction = _carry(_candidate(deterministic_witness=None))
     direction.vulnerability_classes = ["csrf", "csrf", "idor"]
     configs = mint_hunt_config(
-        direction=direction, candidate=_candidate(deterministic_witness=None),
+        direction=direction,
         surface_context={}, prior_hunt_insights=[],
     )
     assert len(configs) == 2
@@ -426,7 +445,7 @@ def test_mint_without_classes_is_the_carried_bare_fallback():
     direction = _carry(_candidate(deterministic_witness=None))
     direction.research_direction = "csrf hygiene across state-changing flows"
     configs = mint_hunt_config(
-        direction=direction, candidate=_candidate(deterministic_witness=None),
+        direction=direction,
         surface_context={}, prior_hunt_insights=[],
     )
     assert len(configs) == 1
@@ -443,7 +462,7 @@ def test_mint_with_only_empty_classes_is_the_carried_bare_fallback():
     direction = _carry(_candidate(deterministic_witness=None))
     direction.vulnerability_classes = ["", ""]
     configs = mint_hunt_config(
-        direction=direction, candidate=_candidate(deterministic_witness=None),
+        direction=direction,
         surface_context={}, prior_hunt_insights=[],
     )
     assert len(configs) == 1
@@ -458,7 +477,7 @@ def test_mint_passes_research_direction_and_preserves_the_identity_slots():
     direction.research_direction = "enumerating the receipts resource"
     direction.vulnerability_classes = ["idor", "csrf"]
     configs = mint_hunt_config(
-        direction=direction, candidate=_candidate(deterministic_witness=None),
+        direction=direction,
         surface_context={}, prior_hunt_insights=[],
     )
     assert [c.hunt_id for c in configs] == [
@@ -898,7 +917,9 @@ def test_hunts_store_write_rejects_a_payload_missing_the_identity():
         "status": "ratified",
     }})
     assert out.get("rejected") is True
-    assert "unit_id" in out["error"]
+    assert out["error"] == "hunts_store_write_rejected"
+    assert out["fields"] == ["unit_id"]
+    assert "unit_id" in out["detail"]
     assert store.write_calls == 0 and store.update_calls == 0
     assert store.read_configs("project-1") == []
 
@@ -961,8 +982,8 @@ def test_surface_store_is_stable_across_passes_on_one_run():
         directions = [_carry(c) for c in inp.candidates]
         for direction in directions:
             for config in mint_hunt_config(
-                    direction, inp.candidates[0],
-                    surface_context={}, prior_hunt_insights=[]):
+                    direction,
+        surface_context={}, prior_hunt_insights=[]):
                 captured["surface"]["hunts_store"].invoke(
                     {"cmd": "write", "hunt_config": config.model_dump()})
         return GateDecision(directions=directions)
@@ -1173,7 +1194,7 @@ def test_multi_direction_for_one_pair_accumulates_all_drafts():
         # emulate the agent's hunts_store(write) tool call per direction
         for direction in (d1, d2):
             for config in mint_hunt_config(
-                    direction, c, surface_context={},
+                    direction, surface_context={},
                     prior_hunt_insights=[]):
                 tools.store_reads.write_config("project-1", config)
         return GateDecision(directions=[d1, d2])
@@ -1325,7 +1346,7 @@ def test_prior_hunt_insights_never_embed_nested_records(tmp_path):
             + list(tools.store_reads.read_hunter_notes("project-1", key))
         )
         for config in mint_hunt_config(
-                direction, c, surface_context={},
+                direction, surface_context={},
                 prior_hunt_insights=insights):
             tools.store_reads.write_config("project-1", config)
         return GateDecision(directions=[direction])
@@ -1381,7 +1402,7 @@ def test_carried_bare_direction_with_rationale_is_still_minted():
             rationale="plausible at this locus", research_direction="probe the flow")
         # the agent's hunts_store(write) of its carried-bare draft
         for config in mint_hunt_config(
-                direction, c, surface_context={},
+                direction, surface_context={},
                 prior_hunt_insights=[]):
             tools.store_reads.write_config("project-1", config)
         return GateDecision(directions=[direction])
@@ -1406,7 +1427,6 @@ def test_hunt_config_shape_is_the_lean_three_goal_config():
     `technique_primitives`, `target_caveats`) are gone."""
     config = mint_hunt_config(
         direction=_carry(_candidate(deterministic_witness=None)),
-        candidate=_candidate(deterministic_witness=None),
         surface_context={},
         prior_hunt_insights=[],
         observed_defences=["WAF on /api/* blocks XSS payloads"],
@@ -1430,7 +1450,6 @@ def test_mint_never_assembles_a_tool_registry():
     assert not hasattr(ho, "_registry_from_kb")
     config = mint_hunt_config(
         direction=_carry(_candidate(deterministic_witness=None)),
-        candidate=_candidate(deterministic_witness=None),
         surface_context={},
         prior_hunt_insights=[],
     )[0]
@@ -1503,7 +1522,7 @@ def test_prior_hunt_insights_read_the_downstream_hunter_records(tmp_path):
             + list(tools.store_reads.read_hunter_notes("project-1", key))
         )
         for config in mint_hunt_config(
-                direction, c, surface_context={},
+                direction, surface_context={},
                 prior_hunt_insights=insights):
             tools.store_reads.write_config("project-1", config)
         return GateDecision(directions=[direction])

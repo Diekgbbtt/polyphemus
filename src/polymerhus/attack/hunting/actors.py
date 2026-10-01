@@ -464,7 +464,12 @@ class _OrchestratorHuntsStoreTool(StoreToolBase):
             require_config_identity(hunt_config)
         except ConfigIdentityError as exc:
             logger.warning("hunts_store write rejected: %s", exc)
-            return {"error": f"hunts_store_write_rejected: {exc}",
+            # the CODED contract rejection (the `coded_teaching_rejection`
+            # convention): a machine error code + the missing field names the
+            # agent must supply, never a prose-only error.
+            return {"error": "hunts_store_write_rejected",
+                    "fields": list(exc.fields),
+                    "detail": str(exc),
                     "rejected": True, "status": status}
         store = self._store_seam
         if store is None:
@@ -519,9 +524,12 @@ def build_orchestrator_tool_surface(tools, *, run_id: str, project_id: str | Non
       full semantic key `<unit>::<CWE>::<class>`) and accepts optionally
       specific `attributes`; the WHOLE projected surface context is NEVER
       readable through it - only the service keys (which may later be inspected
-      with `graph_view`, G3). `write` takes the hunt config object (any
-      attribute specification is optional; schema validation never rejects on
-      missing attributes); the `status` attribute rides the config object
+      with `graph_view`, G3). `write` takes the hunt config object carrying the
+      identity attributes `unit_id` + `fault_class` (`vulnerability_class` may
+      be empty); the file name, the semantic key, and `hunt_id` are DERIVED
+      from them (#298), so a missing/empty `unit_id`/`fault_class` is a coded
+      contract rejection and every other attribute is optional. The `status`
+      attribute rides the config object
       itself and drives the write: `hypothesised` creates the draft (a
       duplicate identity FAILS with the G4 deduplication signal), `ratified`
       upserts the config in place, `dropped` marks the orphan on disk (G6,

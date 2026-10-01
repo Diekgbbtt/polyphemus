@@ -449,12 +449,8 @@ def _agent_seams(tools, *, project_id: str = "project-1"):
     def hypothesise(inp):
         directions = [_carry(c) for c in inp.candidates]
         for direction in directions:
-            candidate = next(
-                c for c in inp.candidates
-                if (c.unit_id, c.fault_class)
-                == (direction.unit_id, direction.fault_class))
             for config in mint_hunt_config(
-                    direction, candidate, surface_context={},
+                    direction, surface_context={},
                     prior_hunt_insights=[]):
                 tools.store_reads.write_config(project_id, config)
         return GateDecision(directions=directions)
@@ -559,7 +555,8 @@ def test_integration_c9_store_append_and_split_reads(tmp_path):
     assert "Service:slug:a::CWE-352::CSRF" == key
 
     configs = store.read_configs_by_key("project-1", "Service:slug:a::CWE-352")
-    assert len(configs) == 1 and configs[0]["hunt_id"] == "h1"
+    # #298: the hunt_id is DERIVED from the identity, never the caller's "h1"
+    assert len(configs) == 1 and configs[0]["hunt_id"] == key
     assert store.read_notes("project-1", "Service:slug:a::CWE-352")[0]["note"] == "track it"
     # default root is the app-owned data root, fixed, no env var
     assert HuntStore()._root == DATA_ROOT
@@ -610,13 +607,8 @@ def test_integration_c11_mint_fanout_per_distinct_class():
         research_direction="probe CSRF vs IDOR",
         vulnerability_classes=["CSRF", "IDOR"],
     )
-    candidate = DeliveredCandidate(
-        unit_id=SERVICE_A, fault_class=FAULT_352,
-        applies_witnesses=Witness(llm="form Z no token", deterministic="EXPOSED_VIA=WebPresentation"),
-        match_verdict="applies",
-    )
     configs = mint_hunt_config(
-        direction, candidate,
+        direction,
         surface_context={}, prior_hunt_insights=[],
     )
     assert len(configs) == 2
@@ -635,7 +627,7 @@ def test_integration_c11_mint_fanout_per_distinct_class():
         research_direction="probe CSRF vs IDOR",
         vulnerability_classes=["CSRF", "CSRF", "IDOR"],
     )
-    configs2 = mint_hunt_config(direction2, candidate, surface_context={}, prior_hunt_insights=[])
+    configs2 = mint_hunt_config(direction2, surface_context={}, prior_hunt_insights=[])
     assert len(configs2) == 2  # collapsed to 2 distinct classes
 
 
@@ -644,17 +636,13 @@ def test_integration_c11_mint_fanout_per_distinct_class():
 def test_integration_c12_mint_collapse_and_bare_degrade():
     """C12 - same-class duplicates collapse to one config; empty degrades to a
     carried-bare hypothesised draft with the 5-part fields present."""
-    candidate = DeliveredCandidate(
-        unit_id=SERVICE_A, fault_class=FAULT_352,
-        applies_witnesses=Witness(llm="x"), match_verdict="applies",
-    )
     # a) duplicates
     direction_dup = EnvisionedDirection(
         unit_id=SERVICE_A, fault_class=FAULT_352, carried=True,
         research_direction="probe CSRF",
         vulnerability_classes=["CSRF", "CSRF"],
     )
-    configs_dup = mint_hunt_config(direction_dup, candidate, surface_context={}, prior_hunt_insights=[])
+    configs_dup = mint_hunt_config(direction_dup, surface_context={}, prior_hunt_insights=[])
     assert len(configs_dup) == 1
     assert configs_dup[0].hunt_id == hunt_id_for(SERVICE_A, FAULT_352, "CSRF")
     assert configs_dup[0].vulnerability_class == "CSRF"
@@ -664,7 +652,7 @@ def test_integration_c12_mint_collapse_and_bare_degrade():
         research_direction="probe bare",
         vulnerability_classes=[],
     )
-    configs_bare = mint_hunt_config(direction_empty, candidate, surface_context={}, prior_hunt_insights=[])
+    configs_bare = mint_hunt_config(direction_empty, surface_context={}, prior_hunt_insights=[])
     assert len(configs_bare) == 1
     assert configs_bare[0].vulnerability_class == ""
     assert configs_bare[0].prompt_template.research_direction == "probe bare"
@@ -683,7 +671,7 @@ def test_integration_c12_mint_collapse_and_bare_degrade():
         research_direction="probe bare",
         vulnerability_classes=[""],
     )
-    configs_blank = mint_hunt_config(direction_blank, candidate, surface_context={}, prior_hunt_insights=[])
+    configs_blank = mint_hunt_config(direction_blank, surface_context={}, prior_hunt_insights=[])
     assert len(configs_blank) == 1
     assert configs_blank[0].vulnerability_class == ""
 
@@ -737,8 +725,8 @@ def test_integration_c12b_surface_context_shows_connected_data_items(tmp_path):
         # the agent's hunts_store(write) - the #201 carve-out injects the
         # deterministic surface_context on the wrapped seam
         for config in mint_hunt_config(
-                direction, inp.candidates[0],
-                surface_context={}, prior_hunt_insights=[]):
+                direction,
+        surface_context={}, prior_hunt_insights=[]):
             tools.store_reads.write_config("project-1", config)
         return GateDecision(directions=[direction])
 
@@ -859,7 +847,7 @@ def test_integration_c15_cross_run_memory_fixed_root(tmp_path):
     storeB = HuntStore(tmp_path)
     configs = storeB.read_configs_by_key("project-1", "Service:slug:a::CWE-352")
     assert len(configs) == 1
-    assert configs[0]["hunt_id"] == "h1"
+    assert configs[0]["hunt_id"] == f"{SERVICE_A}::{FAULT_352}::CSRF"
     notes = storeB.read_notes("project-1", "Service:slug:a::CWE-352")
     assert [n["note"] for n in notes] == ["track the CSRF surface"]
     # no memory.md; the topology is produced/ + consumed/ + memory.yaml

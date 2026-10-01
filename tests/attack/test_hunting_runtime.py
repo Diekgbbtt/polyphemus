@@ -68,7 +68,7 @@ def _phase_seams(tools):
                 vulnerability_classes=["CSRF"])
             directions.append(direction)
             for config in mint_hunt_config(
-                    direction, c, surface_context={},
+                    direction, surface_context={},
                     prior_hunt_insights=[]):
                 tools.store_reads.write_config("rt-project", config)
         return GateDecision(directions=directions)

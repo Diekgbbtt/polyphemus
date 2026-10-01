@@ -63,7 +63,7 @@ config = HuntConfig(
         l0_evidence=["GET /api/a answers 200"],
         research_direction="probe the state-changing form for token verification",
     ),
-    surface_context={"cards": [{
+        surface_context={"cards": [{
         "kind": "Service",
         "key": {"business_function_slug": "a"},
         "label": "a",
