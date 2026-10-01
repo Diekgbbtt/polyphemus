@@ -724,7 +724,7 @@ def build_actor_judge_fn(registry):
 
 
 def build_actor_hunting_agent(*, run_id, project_id="", memory_store=None,
-                              hunt_store=None, graph_view_fn=None, kb_fn=None,
+                              graph_view_fn=None, kb_fn=None,
                               exec_fn=None, checkpointer=None, model_factory=None,
                               observe: bool = True,
                               http_search_fn=None, http_get_fn=None):
@@ -749,7 +749,7 @@ def build_actor_hunting_agent(*, run_id, project_id="", memory_store=None,
                                     model_factory=model_factory, observe=observe)
     dispatch_fn = build_hunting_agent(
         run_id=run_id, project_id=project_id,
-        memory_store=memory_store, hunt_store=hunt_store,
+        memory_store=memory_store,
         graph_view_fn=graph_view_fn, kb_fn=kb_fn, exec_fn=exec_fn,
         http_search_fn=http_search_fn, http_get_fn=http_get_fn,
         checkpointer=checkpointer, model_factory=model_factory, observe=observe,

@@ -103,6 +103,7 @@ def _hunt_config(**overrides) -> HuntConfig:
         hunt_id="hunt-1",
         unit_id=UNIT_ID,
         fault_class=FAULT_CLASS,
+        vulnerability_class=VULNERABILITY_CLASS,
         prompt_template=HuntPromptTemplate(
             rationale=f"{FAULT_CLASS} applies to {UNIT_ID} because ...",
             research_direction="CSRF feasibility reasoning at the state-changing form locus",

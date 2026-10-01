@@ -197,6 +197,12 @@ data/<project_id>/hunting/test-specs/
 **The `fault_key` contract (pinned, #199):** the fault_key is the hunt's own config identity, model-emitted
 through the tool surface but never model-trusted (the write boundary is a harness-owned gate).
 
+> **SUPERSEDED (2026-10-01, #298):** the fault_key is no longer model-emitted at all. The harness BINDS it at
+> tool construction (`semantic_key(unit_id, fault_class, vulnerability_class)` from the dispatched `HuntConfig`),
+> so the request-field gate is replaced by the binding (`hunts_store` / `notes` can only address the hunt's own
+> config; an unbound tool degrades with a coded `invalid_args`). See
+> `docs/design/hunting-store-write-decisions.md`. The bullets below are kept for history.
+
 - **Canonical form**: the `_`-joined `<unit_id>_<CWE_ID>_<vulnerability_class>` config file-name stem with the
   class's spaces preserved - example `Service:account-registration_CWE-1220_Privilege Escalation` (the config's
   own identity, G4/ADR Q13 `config_id`).

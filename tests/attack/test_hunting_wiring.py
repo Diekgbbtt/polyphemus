@@ -305,7 +305,7 @@ def test_bootstrap_schedules_orchestrator_and_surfer_sessions(stores, monkeypatc
     assert control.live(RUN) == set()
 
 
-def _noop_hunts(*, run_id, project_id, hunt_store, hunter_store, **kw):
+def _noop_hunts(*, run_id, project_id, hunter_store, **kw):
     async def dispatch(config):
         return DispatchResult(hypothesis_verdict=None, feedback="concluded (fixture)")
     return dispatch, None
@@ -418,7 +418,7 @@ def test_n_configs_fan_out_but_the_gate_caps_concurrent_hunters(stores, monkeypa
     control = _FakeControl(gate=asyncio.Semaphore(2))
     tracking = {"now": 0, "max": 0, "sees": []}
 
-    def gated_hunts(*, run_id, project_id, hunt_store, hunter_store, **kw):
+    def gated_hunts(*, run_id, project_id, hunter_store, **kw):
         async def dispatch(config):
             tracking["now"] += 1
             tracking["max"] = max(tracking["max"], tracking["now"])
@@ -455,7 +455,7 @@ def test_specified_spec_dispatches_one_pod_through_the_same_mover(stores, monkey
     control = _FakeControl()
     pod_calls: list[tuple[str, str]] = []
 
-    def spec_hunts(*, run_id, project_id, hunt_store, hunter_store, **kw):
+    def spec_hunts(*, run_id, project_id, hunter_store, **kw):
         async def dispatch(config):
             hunter_store.write_spec(
                 project_id, FAULT_KEY,
@@ -573,7 +573,7 @@ def test_idle_loop_consumes_and_records_a_delivered_pod_export(stores, monkeypat
               "evidence": {"trail": []}, "clean": True, "iterations": 1,
               "marker": "the-export"}
 
-    def spec_hunts(*, run_id, project_id, hunt_store, hunter_store, **kw):
+    def spec_hunts(*, run_id, project_id, hunter_store, **kw):
         async def dispatch(config):
             hunter_store.write_spec(
                 project_id, FAULT_KEY, fault_keyword="sqli", strategy_keyword="blind",
@@ -701,7 +701,7 @@ def test_run_does_not_complete_while_a_session_is_live(stores, monkeypatch):
     control = _FakeControl()
     release = asyncio.Event()
 
-    def spec_hunts(*, run_id, project_id, hunt_store, hunter_store, **kw):
+    def spec_hunts(*, run_id, project_id, hunter_store, **kw):
         async def dispatch(config):
             hunter_store.write_spec(
                 project_id, FAULT_KEY, fault_keyword="sqli", strategy_keyword="blind",
@@ -790,7 +790,7 @@ def test_stop_cancels_every_session_and_leaves_the_registry_empty(stores, monkey
     monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
     h, r, n = _single_class_seams(hunt)
 
-    def block_hunts(*, run_id, project_id, hunt_store, hunter_store, **kw):
+    def block_hunts(*, run_id, project_id, hunter_store, **kw):
         async def dispatch(config):
             hunter_store.write_spec(
                 project_id, FAULT_KEY, fault_keyword="sqli", strategy_keyword="blind",
@@ -860,7 +860,7 @@ def test_undispatchable_statuses_never_block_quiesce(stores, monkeypatch):
     monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
     h, r, n = _single_class_seams(hunt)
 
-    def draft_hunts(*, run_id, project_id, hunt_store, hunter_store, **kw):
+    def draft_hunts(*, run_id, project_id, hunter_store, **kw):
         async def dispatch(config):
             hunter_store.write_spec(
                 project_id, FAULT_KEY, fault_keyword="sqli", strategy_keyword="blind",

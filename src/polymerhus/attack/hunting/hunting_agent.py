@@ -66,7 +66,7 @@ from polymerhus.attack.hunting.hunt_orchestrator import (
     DispatchResult,
     HuntConfig,
 )
-from polymerhus.attack.hunting.hunt_store import HuntStore
+from polymerhus.attack.hunting.hunt_store import semantic_key
 from polymerhus.attack.hunting.hunter_graph import build_hunter_graph
 from polymerhus.attack.hunting.hunter_memory import HunterMemoryStore
 from polymerhus.attack.hunting.hunter_state import D3_HINT, FAULT_STATUSES
@@ -422,7 +422,6 @@ def build_hunting_agent(
     run_id: str,
     project_id: str = "",
     memory_store: HunterMemoryStore | None = None,
-    hunt_store: HuntStore | None = None,
     graph_view_fn: GraphViewFn | None = None,
     kb_fn: KbQueryFn | None = None,
     exec_fn: ExecFn | None = None,
@@ -436,10 +435,10 @@ def build_hunting_agent(
     """Build the turn-by-turn hunting-agent dispatch seam (IA-2).
 
     `run_id` / `project_id` are the hunt's run and project (the project keys the
-    per-project `HunterMemoryStore`); `memory_store` is that per-project store
-    and `hunt_store` the per-project `HuntStore` whose persisted config
-    identities the fault_key gate validates against (#199 - absent degrades the
-    gate to convention-only, fail-open); `graph_view_fn` / `kb_fn` / `exec_fn`
+    per-project `HunterMemoryStore`); `memory_store` is that per-project store;
+    each dispatch BINDS the hunt's own config key into the tool surface (#298,
+    derived from the `HuntConfig` identity) so the store tools can only address
+    it; `graph_view_fn` / `kb_fn` / `exec_fn`
     the injected tool seams (each
     absent degrades fail-open, O3/O4/C2/C3). `checkpointer` defaults to
     `get_session_checkpointer()` under `module_context("hunting")`; `middleware`
@@ -486,7 +485,9 @@ def build_hunting_agent(
         hunt_id = config.hunt_id
         compiled = build_hunter_graph().compile()
         tools = build_hunter_tools(
-            store=memory_store, project_id=project_id, hunt_store=hunt_store,
+            store=memory_store, project_id=project_id,
+            fault_key=semantic_key(
+                config.unit_id, config.fault_class, config.vulnerability_class),
             graph_view_fn=graph_view_fn, kb_fn=kb_fn, exec_fn=exec_fn,
             http_search_fn=http_search_fn, http_get_fn=http_get_fn,
         )

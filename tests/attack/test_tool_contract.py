@@ -48,7 +48,7 @@ _ORCH_FIELD_MAP = NotesFieldMap(
     note_id="note_id", attributes="attributes",
 )
 _HUNTER_FIELD_MAP = NotesFieldMap(
-    key="fault_key", read_key="parent_key", action="action", note="body",
+    key=None, read_key=None, action="action", note="body",
     note_id=None, attributes="attributes", key_keyword="key_keyword",
     body_keyword="body_keyword",
     passthrough=("note_name", "kind", "evidence", "provenance"),
@@ -166,11 +166,11 @@ def test_shared_notes_builder_routes_writes_to_the_bound_store(tmp_path):
         discriminator="cmd", as_json=False, rejection_name="notes",
     )
     hunter_notes = build_notes_tool(
-        HunterMemoryNotesHandle(hunter, PROJECT, None),
+        HunterMemoryNotesHandle(hunter, PROJECT, FAULT_KEY),
         args_schema=NotesArgs, field_map=_HUNTER_FIELD_MAP,
         name="notes", description="hunter notes",
         discriminator="command", as_json=True, rejection_name="notes",
-        write_intent_fields=("action", "fault_key", "note_name", "kind", "body"),
+        write_intent_fields=("action", "note_name", "kind", "body"),
     )
     assert isinstance(orchestrator_notes, StoreNotesTool)
     assert isinstance(hunter_notes, StoreNotesTool)
@@ -179,7 +179,7 @@ def test_shared_notes_builder_routes_writes_to_the_bound_store(tmp_path):
         {"cmd": "write", "option": "append", "key": FAULT_KEY,
          "note": "orchestrator note"})
     hunter_notes.invoke(
-        {"command": "write", "action": "append", "fault_key": FAULT_KEY,
+        {"command": "write", "action": "append",
          "note_name": "n", "kind": "freeform", "body": "hunter note"})
 
     assert [n["note"] for n in hunt.read_notes(PROJECT, FAULT_KEY)] == [
@@ -210,48 +210,48 @@ def test_builder_rejects_a_field_map_naming_an_absent_schema_field(tmp_path):
     """A field map that names a field the bound schema does not declare fails
     LOUDLY at construction (CODING_STANDARD 5: no path left to chance), instead
     of silently reading the wrong field."""
-    with pytest.raises(ValueError, match="fault_key"):
+    with pytest.raises(ValueError, match="action"):
         build_notes_tool(
             HunterMemoryNotesHandle(HunterMemoryStore(root_dir=tmp_path),
-                                    PROJECT, None),
+                                    PROJECT, ""),
             args_schema=OrchestratorNotesArgs, field_map=_HUNTER_FIELD_MAP,
             name="notes", description="mismatched", discriminator="cmd",
         )
 
 
-# --- the hunter read path (the alias-union regression) -------------------------
+# --- the hunter's bound config identity (#298) ---------------------------------
 
 
-def test_hunter_notes_read_filters_by_parent_key_never_a_write_field(tmp_path):
-    """A hunter `notes` READ filters by `parent_key`; a stray `fault_key` (a
-    documented WRITE field) must NOT silently become the read filter. Pre-fix
-    the alias union read `fault_key` first, so this call returned only KEY_A's
-    notes instead of the unfiltered set."""
+def test_hunter_notes_tool_is_bound_to_its_own_config(tmp_path):
+    """The hunt's config key is BOUND at construction (#298): two tools bound to
+    different configs read and write ONLY their own folder. The model never
+    supplies the key, and there is no cross-config read."""
     store = HunterMemoryStore(root_dir=tmp_path)
-    tool = notes_tool_for(store=store, project_id=PROJECT)
     key_a = "Service:aaa_CWE-352_CSRF"
     key_b = "Service:bbb_CWE-352_CSRF"
-    tool.invoke({"command": "write", "action": "append", "fault_key": key_a,
-                 "note_name": "a", "kind": "freeform", "body": "note-a"})
-    tool.invoke({"command": "write", "action": "append", "fault_key": key_b,
-                 "note_name": "b", "kind": "freeform", "body": "note-b"})
+    tool_a = notes_tool_for(store=store, project_id=PROJECT, fault_key=key_a)
+    tool_b = notes_tool_for(store=store, project_id=PROJECT, fault_key=key_b)
+    tool_a.invoke({"command": "write", "action": "append",
+                   "note_name": "a", "kind": "freeform", "body": "note-a"})
+    tool_b.invoke({"command": "write", "action": "append",
+                   "note_name": "b", "kind": "freeform", "body": "note-b"})
 
-    by_parent = json.loads(tool.invoke(
-        {"command": "read", "parent_key": key_a}))
-    assert [n["body"] for n in by_parent["notes"]] == ["note-a"]
-
-    # a stray fault_key on a read is ignored: the read is unfiltered, so BOTH
-    # notes come back (latest-first) - it never narrows to key_a.
-    stray = json.loads(tool.invoke({"command": "read", "fault_key": key_a}))
-    assert {n["body"] for n in stray["notes"]} == {"note-a", "note-b"}
+    read_a = json.loads(tool_a.invoke({"command": "read"}))
+    assert [n["body"] for n in read_a["notes"]] == ["note-a"]
+    read_b = json.loads(tool_b.invoke({"command": "read"}))
+    assert [n["body"] for n in read_b["notes"]] == ["note-b"]
+    # the config key is not a request field at all
+    assert "fault_key" not in NotesArgs.model_fields
+    assert "parent_key" not in NotesArgs.model_fields
 
 
 def test_hunter_notes_missing_command_names_the_action_option(tmp_path):
     """#209 restored: the hunter's missing-`command` rejection names `action`
     as the write option, not the command."""
     store = HunterMemoryStore(root_dir=tmp_path)
-    out = json.loads(NotesTool(store=store, project_id=PROJECT).invoke(
-        {"action": "append", "fault_key": FAULT_KEY, "note_name": "n",
+    out = json.loads(NotesTool(store=store, project_id=PROJECT,
+                               fault_key=FAULT_KEY).invoke(
+        {"action": "append", "note_name": "n",
          "kind": "freeform", "body": "b"}))
     assert out["error"] == "notes_args_rejected"
     assert "command" in out["detail"]

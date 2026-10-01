@@ -172,7 +172,7 @@ async def _noop_hunter_dispatch(config):
     return None
 
 
-def _noop_hunter_builder(*, run_id, project_id, hunt_store, hunter_store, **kw):
+def _noop_hunter_builder(*, run_id, project_id, hunter_store, **kw):
     return _noop_hunter_dispatch, None
 
 
@@ -382,7 +382,7 @@ def test_build_production_hunting_agent_wires_real_seams(tmp_path):
     from polymerhus.attack.hunting.runtime import build_production_hunting_agent
 
     dispatch, registry = build_production_hunting_agent(
-        store=HuntStore(tmp_path), run_id="prod-run",
+        run_id="prod-run",
     )
     assert callable(dispatch)
     assert registry is not None

@@ -52,9 +52,9 @@ The write payload (`OrchestratorHuntsStoreArgs.hunt_config`) carries the values 
 
 ### 4.2 hunting agent `hunts_store` and `notes`
 
-- `fault_key` is the hunter's OWN parent config key. The harness already holds it (the hunter was dispatched with its `HuntConfig`), so it is bound at tool construction - Rule 3 - and removed from the request contract.
-- The produced spec file name `<fault_keyword>_<strategy_keyword>.yaml` must be derived from the spec's own identity attributes, not from independent `fault_keyword` / `strategy_keyword` request fields. The spec dict carries the identity; the store derives the symbol; a spec without a resolvable identity is a coded rejection.
-- `notes` already derives its destination from a caller-bound handle (never a request field); it is conformant.
+- `fault_key` (the hunter's OWN parent config key) is BOUND at tool construction (Rule 3, operator-ratified 2026-10-01). The harness already holds it - the hunter is dispatched with its `HuntConfig` - so it is derived as `semantic_key(unit_id, fault_class, vulnerability_class)` and removed from the request contract; the #199 request-field gate is superseded because there is no longer a request key to validate. The tools degrade with a coded `invalid_args` if no key is bound (a harness wiring defect).
+- `fault_keyword` / `strategy_keyword` are AGENT-OWNED identity attributes (operator-ratified 2026-10-01), exactly like `vulnerability_class`: the reasoning model authors them, and it is the store that derives and sanitises the produced spec file name `<fault_keyword>_<strategy_keyword>.yaml` from them. They stay in the request contract; the store rejects them when empty, never forming a degenerate name.
+- `notes` derives both its destination and the hunt's config key from the caller-bound handle (never a request field); it is conformant.
 
 ### 4.3 test-executor pod `note`
 
@@ -85,3 +85,5 @@ The write payload (`OrchestratorHuntsStoreArgs.hunt_config`) carries the values 
 - #294 "the agent's store tool calls are the sole initiator of config/note persistence" stands, EXCEPT that the identity symbols (file name, semantic key, hunt id) are derived by the symbolic layer from validated contract attributes rather than authored blindly by the agent.
 - `hunting-memory-system-spec.md` section 6.1 "internal schema validation never rejects on missing attributes" is superseded: the identity attributes are now required and validated.
 - `hunting-orchestrator-candidates-rewrite-spec.md` section 3.5's `l0_evidence` and `sub_fault_ids` slots are removed; `hunt_id` derivation changes from a `uuid4` base plus `-i` to a deterministic function of the identity triple.
+- The `#199` request-field `fault_key` gate is SUPERSEDED (section 4.2): the hunter's `fault_key` is harness-bound, so there is no model-emitted key to gate. Amended in `hunting-164-state-graph-spec.md` (the `fault_key` contract), `hunting-pipeline-wiring-adr.md` (the model-facing `fault_key` contract), and `hunting-164-assertion-catalogue.md` (C23/C24).
+- The pod `note` seam is CONFORMANT and unchanged: `spec_id` is bound at construction, `order` is a domain value, and no file-name symbol is requested (section 4.3).

@@ -84,8 +84,8 @@ agent = build_sync_hunting_agent(
 )
 result = agent(config)
 
-# the model chooses the config identifier (fault_key) itself - walk the REAL
-# topology the store persisted, whatever key it used
+# the harness BINDS the config identifier (fault_key) at tool construction
+# (#298) - walk the REAL topology the store persisted
 project_root = root / project_id / "hunting" / "hunter"
 specs_dir = project_root / "test-specs"
 fault_keys = sorted(p.name for p in specs_dir.glob("*")) if specs_dir.exists() else []

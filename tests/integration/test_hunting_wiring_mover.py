@@ -219,7 +219,7 @@ def _agent_seam_builders():
     envelope through the real `PodMemoryStore` and returns it - so the durable
     `<spec_id>/<run_id>.yaml` observable is REAL."""
 
-    def hunter_builder(*, run_id, project_id, hunt_store, hunter_store, **kw):
+    def hunter_builder(*, run_id, project_id, hunter_store, **kw):
         async def _dispatch(config):
             return None
 

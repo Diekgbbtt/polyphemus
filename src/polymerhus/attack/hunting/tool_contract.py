@@ -233,12 +233,16 @@ class NotesFieldMap:
     read cannot silently treat a write field (`fault_key`) as the read filter.
     `build_notes_tool` validates every named field against the bound schema at
     construction - a missing declaration fails loudly.
+
+    `key` / `read_key` may be None: a seam whose config identity is BOUND at the
+    handle (the hunter's own fault_key, #298) does not request it, so the role
+    is absent from the schema and the handle supplies the identity itself.
     """
 
-    key: str
-    read_key: str
-    action: str
-    note: str
+    action: str = ""
+    note: str = ""
+    key: str | None = None
+    read_key: str | None = None
     note_id: str | None = None
     attributes: str | None = "attributes"
     key_keyword: str | None = None
@@ -246,8 +250,9 @@ class NotesFieldMap:
     passthrough: tuple[str, ...] = ()
 
     def declared_fields(self) -> tuple[str, ...]:
-        named = [self.key, self.read_key, self.action, self.note]
-        named += [n for n in (self.note_id, self.attributes, self.key_keyword,
+        named = [self.action, self.note]
+        named += [n for n in (self.key, self.read_key, self.note_id,
+                              self.attributes, self.key_keyword,
                               self.body_keyword) if n]
         return tuple(named) + tuple(self.passthrough)
 

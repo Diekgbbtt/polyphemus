@@ -132,16 +132,14 @@ lifecycle home. Session id = coroutine id = registry run name.
   `hunter_inboxes` is keyed by `config_key` on BOTH the register side (hunter
   dispatch) and the lookup side (pod dispatch): the two sides of one cross-family
   join must agree on the SAME canonical key, or every pod dispatch misses its parent.
-- **The model-facing `fault_key` contract (amended by #199):** the model-emitted
-  `fault_key` is validated by a harness-owned gate in the typed layer of the
-  `hunts_store` / `notes` tools (writes AND reads) against the persisted config
-  ids in the `HuntStore` - the naming convention (a well-formed 3-part config key,
-  canonical `_`-joined `<unit_id>_<CWE_ID>_<vulnerability_class>` with the class's
-  spaces preserved, or its `::`-semantic twin) plus a literal `:`-split match of
-  the parts against a persisted config identity, with no cross-form resolution.
-  A violation returns the denoted `fault_key_mismatch` error (never a raise, never
-  a fabricated folder); the model reflects and corrects, mirroring the G4 dedup
-  signal's interpretation.
+- **The model-facing `fault_key` contract (amended by #199, SUPERSEDED by #298):**
+  the `fault_key` is no longer model-emitted: the harness BINDS it at tool
+  construction (`semantic_key(unit_id, fault_class, vulnerability_class)` from the
+  dispatched `HuntConfig`), so the #199 request-field gate is replaced by the
+  binding - `hunts_store` / `notes` can only address the hunt's own config, and an
+  unbound tool degrades with a coded `invalid_args`. The agent-authored
+  `fault_keyword` / `strategy_keyword` stay the spec-file-name identity attributes.
+  See `docs/design/hunting-store-write-decisions.md` (section 4.2).
 - `spec_id` = semantic spec file name `<fault>_<strategy>` (164 state-graph spec 6).
   This REPLACES the pod branch's canonical-hash spec id everywhere it was identity
   (session-address spec discriminator, pod memory keys) - a reconciliation item for
