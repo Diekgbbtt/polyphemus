@@ -540,19 +540,18 @@ class HuntingOrchestratorLaunch(BaseModel):
 class HuntingHuntLaunch(BaseModel):
     """Hunter-only launch body: ONE produced RATIFIED hunt config to enqueue
     into the project's HuntStore produced family (the mover's hunter-dispatch
-    input). The essential identity fields surface; the rest of the
-    `HuntConfig` parameter set (surface context, target caveats, prior-hunt
-    insights, tool registry) keeps its defaults."""
+    input). Only the identity triple plus the orientation prose surface; the
+    `hunt_id` is DERIVED from the identity (#298/#300), never a caller field,
+    and the #202-removed slots (`adversarial_capabilities` / `assumptions` /
+    `technique_primitives`) are gone. The rest of the `HuntConfig` parameter
+    set (surface context, preconditions, prior-hunt insights) keeps its
+    defaults."""
 
     unit_id: str
     fault_class: str
     vulnerability_class: str = ""
-    hunt_id: str | None = None
     research_direction: str = ""
     rationale: str = ""
-    adversarial_capabilities: list[str] = []
-    assumptions: list[str] = []
-    technique_primitives: list[str] = []
 
 
 class HuntingPodLaunch(BaseModel):
@@ -620,6 +619,7 @@ async def launch_hunt_only(project_id: str, body: HuntingHuntLaunch) -> dict:
     from polymerhus.attack.hunting.hunt_orchestrator import (
         HuntConfig,
         HuntPromptTemplate,
+        hunt_id_for,
     )
     from polymerhus.attack.hunting.hunt_store import DuplicateConfigError
 
@@ -627,8 +627,8 @@ async def launch_hunt_only(project_id: str, body: HuntingHuntLaunch) -> dict:
         raise HTTPException(status_code=404, detail="unknown project")
 
     config = HuntConfig(
-        hunt_id=body.hunt_id or (
-            f"{body.unit_id}::{body.fault_class}::{body.vulnerability_class}"
+        hunt_id=hunt_id_for(
+            body.unit_id, body.fault_class, body.vulnerability_class,
         ),
         unit_id=body.unit_id,
         fault_class=body.fault_class,
@@ -636,9 +636,6 @@ async def launch_hunt_only(project_id: str, body: HuntingHuntLaunch) -> dict:
         prompt_template=HuntPromptTemplate(
             rationale=body.rationale, research_direction=body.research_direction,
         ),
-        adversarial_capabilities=body.adversarial_capabilities,
-        assumptions=body.assumptions,
-        technique_primitives=body.technique_primitives,
     )
     try:
         key = await asyncio.to_thread(
