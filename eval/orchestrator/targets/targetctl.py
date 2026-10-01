@@ -141,9 +141,13 @@ class TargetctlStrategy:
         # S5: quote interpolated config; web_dir/repo_url may carry spaces or
         # shell metacharacters and are operator-supplied.
         web_dir = shlex.quote(self.web_dir)
+        # The bundled targets vendor their codebase as git submodules, and
+        # `targetctl build` refuses an uninitialized one, so the clone recurses
+        # (and an existing checkout is repaired in place).
         script = (
             f"test -d {web_dir}/.git || "
-            f"(git clone --depth 1 {shlex.quote(self.repo_url)} {web_dir})"
+            f"(git clone --depth 1 --recurse-submodules "
+            f"{shlex.quote(self.repo_url)} {web_dir})"
         )
         return Command(
             argv=("sh", "-c", script),
@@ -278,27 +282,30 @@ class TargetctlStrategy:
         return replace(command, env={**(command.env or {}), **self._env()})
 
     def provision(self, run: CommandRunner) -> tuple[str, ...]:
-        """Provision this target's images by the precedence, locally.
+        """Build this target locally, then provision its declared images.
 
-        A declared Dockerfile builds the app image, a configured registry pulls
-        the images, and otherwise the images must already be present. Without
-        declared images the idempotent `targetctl build` still builds them
-        (`--force` is never used: a forced rebuild is drift, not freshness).
+        `targetctl build` is idempotent (it skips when the built images already
+        exist) and self-healing (it rebuilds after a reclaim), so it always
+        runs; `--force` is never used (a forced rebuild is drift, not
+        freshness). Any declared images are then verified by the precedence: a
+        Dockerfile builds the first, a configured registry pulls the rest, and
+        otherwise they must already be present.
         """
-        if not self.images:
-            build = self._targetctl("build", self.target)
-            require_ok(run(build), build, error=TargetctlError)
-            return (f"targetctl build {self.target}",)
-        outcomes = docker_images.provision_images(
-            run,
-            self.images,
-            dockerfile=self.dockerfile,
-            context=self.dockerfile_context,
-            registry=self.registry,
-            wrap=self._wrap,
-            error=TargetctlError,
-        )
-        return tuple(outcome.detail for outcome in outcomes)
+        build = self._targetctl("build", self.target)
+        require_ok(run(build), build, error=TargetctlError)
+        details = [f"targetctl build {self.target}"]
+        if self.images:
+            outcomes = docker_images.provision_images(
+                run,
+                self.images,
+                dockerfile=self.dockerfile,
+                context=self.dockerfile_context,
+                registry=self.registry,
+                wrap=self._wrap,
+                error=TargetctlError,
+            )
+            details.extend(outcome.detail for outcome in outcomes)
+        return tuple(details)
 
     def reclaim(self, run: CommandRunner) -> tuple[str, ...]:
         """Remove this target's images, keeping shared bases; best-effort.

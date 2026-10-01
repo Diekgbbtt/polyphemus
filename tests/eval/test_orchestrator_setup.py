@@ -471,4 +471,8 @@ def test_webexploitbench_chain_setup_parses() -> None:
         "wordpress",
         "youlai-mall",
     ]
-    assert all(run.images for run in instance.targets)
+    by_target = {run.target_config.params["target"]: run for run in instance.targets}
+    # Every target declares its built app image(s) except openmetadata, which
+    # builds none (its services use published images).
+    assert all(run.images for name, run in by_target.items() if name != "openmetadata")
+    assert by_target["openmetadata"].images == ()

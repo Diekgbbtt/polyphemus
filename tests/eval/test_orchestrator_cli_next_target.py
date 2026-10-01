@@ -76,8 +76,9 @@ def test_next_target_reports_the_step(tmp_path, sample_setup, recording_runner, 
     assert report["target_id"] == TARGET
     assert report["images"] == ["pentestbench-jetlinks:2.3.0-synthetic"]
     assert report["pulled"] == [
+        "targetctl build jetlinks",
         "build pentestbench-jetlinks:2.3.0-synthetic from "
-        "setup_files/environment/Dockerfile"
+        "setup_files/environment/Dockerfile",
     ]
     assert report["health"].strip() == "running"
 
