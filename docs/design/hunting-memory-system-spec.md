@@ -149,11 +149,18 @@ Contract: `read` / `write` cmds over the produced/consumed config files.
   insights of a config read those downstream records by the `::` `config_key`, shallow-projected (I3), never the
   orchestrator's own prior configs. The tool description carries this extended capability.
 - **`write`** takes the hunt config object, and this tool call is the **sole writer** (#294): the harness never
-  re-persists the structured decision. Any attribute specification is optional; internal schema validation
-  never rejects on missing attributes (the hypothesised draft has only `rationale` + `research_direction`). The
-  `status` attribute (`hypothesised | ratified | dropped`) is carried BY the config object (operator correction:
-  it must be explicit on the config, not an out-of-band harness token). The harness-owned `surface_context` is
-  injected by the wrapped store seam (#201 carve-out) - the agent never authors it.
+  re-persists the structured decision. The `status` attribute (`hypothesised | ratified | dropped`) is carried BY
+  the config object (operator correction: it must be explicit on the config, not an out-of-band harness token).
+  **The identity attributes are REQUIRED and validated (#298), superseding the earlier "validation never rejects
+  on missing attributes":** the payload must carry `unit_id` and `fault_class` (and `vulnerability_class`, which
+  MAY be empty for a carried-bare draft). The config file name and the semantic key are DERIVED from them, and
+  `hunt_id` is a deterministic function of the identity triple; the file name is never an attribute of the request
+  contract. A payload missing `unit_id` or `fault_class` is a contract violation: the store raises a typed
+  `ConfigIdentityError` and the tool returns a coded `hunts_store_write_rejected` error naming the missing
+  attribute, never a silent degenerate-name write (the `_CWE-1220_.yaml` regression). The harness-owned
+  deterministic fields are applied on the wrapped store seam (#201 carve-out, extended #298): `surface_context`
+  (carrying the candidate's applies-witness folded as `fault_evidence`) and `prior_hunt_insights` - the agent never
+  authors them.
 - A duplicate-id write (a file name that already exists) FAILS with a denoted error - the model interprets it as
   the deduplication signal (G4). `dropped` configs stay on disk statused `dropped`, never deleted (G6).
 

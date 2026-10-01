@@ -211,7 +211,7 @@ amended 2026-08-23)**: budget tracking and the hard-stop mechanism are the runti
 (the pod keeps internal fixed caps per D67-09; #164 keeps pod-level caps) - the orchestrator does not cut its own
 accumulated set.
 
-### 3.5 The mint (Q2/Q8/Q12, amended 2026-08-23)
+### 3.5 The mint (Q2/Q8/Q12, amended 2026-08-23; amended 2026-10-01 by #298)
 
 The mint is **anticipated to the hypothesis-elicitation phase** (G-operator): the model calls `hunts_store(write,
 config, status="hypothesised")` at elicitation, producing a **draft config** with only `rationale` and
@@ -220,6 +220,16 @@ config, status="hypothesised")` at elicitation, producing a **draft config** wit
 model (#294)** those tool calls are the ONLY persistence: the harness mints deterministically *in memory* to drive
 the phase flow and the report, but never writes the minted drafts itself - an absent agent write means no artifact
 on disk (fail-open, never a backfill).
+
+**Derived symbols and the validated identity (#298).** The write payload MUST carry the identity attributes
+`unit_id`, `fault_class`, and `vulnerability_class` (the class MAY be empty for a carried-bare draft). The config
+file name and the semantic key are DERIVED from them, and `hunt_id` is a deterministic function of the identity
+triple (`hunt_id_for`) - there is no uuid base and no `-i` fan-out order element. A payload missing `unit_id` or
+`fault_class` is a contract violation (coded tool rejection), never a silently-composed degenerate file name.
+`prompt_template.l0_evidence` is REMOVED (the candidate's applies-witness is folded into the harness-owned
+`surface_context` as `fault_evidence`), and `HuntConfig.sub_fault_ids` is REMOVED (bare folded CWE ids the hunter
+cannot resolve). The full boundary and the universal pattern are recorded in
+`docs/design/hunting-store-write-decisions.md`.
 
 - **N configs per pass** (Q2/Q12): one `HuntConfig` per distinct **vulnerability class** the model elicited for that
   unit-fault locus, after the (LLM-owned) same-class merge. The vulnerability class is the config's identity axis -
@@ -274,15 +284,16 @@ on disk (fail-open, never a backfill).
   (`test-specs/<config_key>/` + the verdict-stub notes, joined by the `::` `config_key`), shallow-projected (I3:
   never a full config/spec embedded), instead of the orchestrator's own prior configs+notes by revival key.
   `research_direction` is **tightened to G1 feasibility prose**: verbatim reasoning WHY the fault is feasible at
-  this locus (surface, preconditions), never technique words ("probe X with Y"). The remaining parameter-set slots
-  (`surface_context`, `sub_fault_ids`) are unchanged (`sub_fault_ids` keeps feeding each class-config, #66
-  non-conflation, G14).
+  this locus (surface, preconditions), never technique words ("probe X with Y"). The `surface_context` slot
+  carries the unit's adapted index-card with the candidate's applies-witness folded as `fault_evidence` (#298);
+  `sub_fault_ids` is removed (#298).
 
-  **The three-goal orientation (#202).** The config carries the orchestrator's stretch only, mapped to the three
-  goals: (G1) the technical feasibility of that fault at that specific unit - `rationale`, `research_direction`,
-  `vulnerability_class`, `surface_context`, `l0_evidence`, `preconditions`, `observed_defences`; (G2) the initial
-  concretisation - the `vulnerability_class` naming itself; (G3) synergistic further-concretisation material -
-  `sub_fault_ids` and `prior_hunt_insights`. Every attribute serves one of the three goals; nothing more.
+  **The three-goal orientation (#202, amended #298).** The config carries the orchestrator's stretch only, mapped
+  to the three goals: (G1) the technical feasibility of that fault at that specific unit - `rationale`,
+  `research_direction`, `vulnerability_class`, `surface_context` (now carrying the folded applies-witness),
+  `preconditions`, `observed_defences`; (G2) the initial concretisation - the `vulnerability_class` naming itself;
+  (G3) synergistic further-concretisation material - `prior_hunt_insights`. Every attribute serves one of the three
+  goals; nothing more.
 - **Novelty (Q11)** is enforced by the LLM reflection directly before the hypothesise write; a config the model
   asserts duplicate is **never written** (prune-side only). A duplicate write attempt FAILS (no file with the same
   name can be created, G4) and the error is the deduplication signal the model interprets - the module does not
@@ -386,7 +397,7 @@ The real LLM match stays #71/#64 scope; `match_fn` is the injectable seam.
   expanded under the parent unit in `surface_context` (#201, a deterministic typed assembly, the System card
   carrying its linked services' endpoints with the owning service slug). The config's role is oriented by
   the three goals: G1 feasibility / G2 the vulnerability-class naming (the initial concretisation) / G3
-  further-concretisation material (`sub_fault_ids`, `prior_hunt_insights`).
+  further-concretisation material (`prior_hunt_insights`).
 - **match verdict** - unchanged three-valued prune signal (level 1); the gate no longer **is** the verdict - it is the
   per-fault vulnerability-class elicitation + ratification. **AMENDED by #200**: the verdict's LLM witness half is
   OPTIONAL - the deterministic stage's witness alone (clause or pass marker) is a valid delivered candidate, so the
@@ -400,12 +411,15 @@ projection stays silent-and-counted; every tool seam degrades fail-open. The min
 fan-out - it is the model-driven hypothesise/ratify writes under harness state tracking, and the O9 envelope BUDGET
 stage is REMOVED (G7): budget and the hard stop are the runtime plane's and the pod's (D67-09).
 
-**Agent-sole writes (#294).** The harness stops initiating config/note persistence: the agent's
+**Agent-sole writes (#294, amended #298).** The harness stops initiating config/note persistence: the agent's
 `hunts_store(write)` / `notes(write)` tool calls are the sole writers, the harness never re-persists the structured
-decisions, and the #201 `surface_context` carve-out is preserved by injecting it on the wrapped store seam. A failed
-or absent tool write degrades the phase without raising into the turn; the harness counts the failure it observes on
-the seam and the pass keeps serving. The note frame and ledger read the persisted configs/notes, never the harness's
-own writes.
+decisions, and the #201 `surface_context` carve-out is preserved by injecting it on the wrapped store seam. **The
+write seam validates the derived-symbol inputs (#298):** the payload must carry the identity attributes (`unit_id`,
+`fault_class`, `vulnerability_class`), the file name and semantic key are derived from them, `hunt_id` is a
+deterministic function of the identity triple, and a missing identity attribute is a coded contract rejection -
+never a silent degenerate-name write. A failed or absent tool write degrades the phase without raising into the
+turn; the harness counts the failure it observes on the seam and the pass keeps serving. The note frame and ledger
+read the persisted configs/notes, never the harness's own writes.
 
 **Anti-fabrication (amended by #186, 2026-08-25).** A raising/empty hypothesise decision NEVER fabricates a
 fully-empty draft: the pair is SKIPPED and counted on the ledger (`units_skipped`), so an actor-runtime turn

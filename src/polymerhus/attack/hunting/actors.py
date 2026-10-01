@@ -236,7 +236,13 @@ _HUNTS_STORE_DESCRIPTION = (
     "('hypothesised' | 'ratified' | 'dropped') drives the write - hypothesised "
     "creates the draft (a duplicate identity FAILS as the deduplication "
     "signal, G4), ratified / dropped upsert the config in place (dropped "
-    "stays on disk, G6)."
+    "stays on disk, G6). The payload MUST carry the identity attributes "
+    "`unit_id` and `fault_class`, plus `vulnerability_class` (which MAY be "
+    "empty for a carried-bare draft): the config file name and hunt id are "
+    "DERIVED from them, never authored as a file name. A payload missing "
+    "`unit_id` or `fault_class` is rejected with a coded "
+    "`hunts_store_write_rejected` error naming the missing attribute - correct "
+    "it and retry."
 )
 
 _ORCH_NOTES_DESCRIPTION = (

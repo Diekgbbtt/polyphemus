@@ -516,8 +516,12 @@ def _compose_gate_prompt(inp: GateInput) -> str:
         "only fundamentally discriminable classes survive as distinct configs. "
         "Pure LLM reflection - no module-side parsing.",
         "  The hypothesise write (spec 3.3): call hunts_store(write, config, "
-        "status='hypothesised') with ONE draft per surviving class, carrying "
-        "rationale + research_direction ONLY. The preconditions / "
+        "status='hypothesised') with ONE draft per surviving class, carrying the "
+        "identity attributes unit_id + fault_class + vulnerability_class (the "
+        "class may be empty for a carried-bare draft) and rationale + "
+        "research_direction ONLY - the file name and hunt_id are DERIVED by the "
+        "harness from the identity, never authored. A payload missing unit_id or "
+        "fault_class is rejected with a coded error. The preconditions / "
         "observed-defences analysis is the RATIFICATION phase's work (the next "
         "phase) - never filled at this hypothesise turn.",
         "",
