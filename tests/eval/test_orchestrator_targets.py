@@ -15,6 +15,7 @@ whose failure is fatal (an unreachable target is never a silent success).
 from __future__ import annotations
 
 import shlex
+from pathlib import Path
 
 import pytest
 
@@ -242,6 +243,28 @@ def test_targetctl_quotes_interpolated_config(tmp_path) -> None:
     assert shlex.quote("https://example.invalid/a b.git") in checkout
     # The targetctl argv is an argv list: the target stays one unquoted element.
     assert any("a b" in c.argv for c in targetctl_cmds)
+
+
+def test_targetctl_expands_a_tilde_web_dir(tmp_path) -> None:
+    """The checkout quotes the path and the argv never sees a shell, so `~` must
+    be expanded before either is built."""
+    run = setup_mod.TargetRun(
+        target_id="t-1",
+        target_config=setup_mod.TargetConfig(
+            lifecycle="targetctl", params={"target": "x", "web_dir": "~/w"}
+        ),
+    )
+    instance = setup_mod.Instance(instance_id="arm-a", targets=(run,))
+    paths = instances.instance_paths(
+        instance, tmp_path / "instances", repo=tmp_path / "repo", branch="eval"
+    )
+    strategy = build_strategy(run, paths, env={}, sleep=_noop)
+
+    home = str(Path.home())
+    assert strategy.web_dir == f"{home}/w"
+    checkout = " ".join(strategy.plan_up()[0].argv)
+    assert home in checkout and "~" not in checkout
+    assert strategy.plan_status()[0].argv[0].startswith(home)
 
 
 def test_routing_constants_are_single_sourced() -> None:

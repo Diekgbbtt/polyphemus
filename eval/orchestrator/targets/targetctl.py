@@ -101,10 +101,15 @@ class TargetctlStrategy:
         self.dockerfile_context = context.run.target_config.dockerfile_context
         self._sleep = sleep or time.sleep
         self.target = str(params["target"])
-        self.web_dir = str(
-            params.get("web_dir")
-            or environment.get("EVAL_WEB_DIR")
-            or DEFAULT_WEB_DIR
+        # Expand `~` here: the checkout runs through `shlex.quote` (which quotes
+        # the tilde literal) and the targetctl argv never goes through a shell,
+        # so a `~/...` default would never resolve.
+        self.web_dir = os.path.expanduser(
+            str(
+                params.get("web_dir")
+                or environment.get("EVAL_WEB_DIR")
+                or DEFAULT_WEB_DIR
+            )
         )
         self.repo_url = str(params.get("repo_url") or DEFAULT_REPO_URL)
         self.platform = str(
