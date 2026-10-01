@@ -125,16 +125,26 @@ single-sourced:
      and the known commands. The hunter's local `_coded_teaching_rejection`
      copy and `_WRITE_INTENT_FIELDS` are REMOVED.
    - `StoreToolBase` - the shared binding base: it validates through the tool's
-     own `args_schema`, translates the known drift before the turn sees a
-     raise, and dispatches read/write on the declared discriminator. Every
-     store tool (orchestrator, hunter, pod) rides it; the pod keeps its OWN
-     `NoteToolSpec` contract but uses the shared binding/rejection base.
+     own `args_schema` (the ONE args model), translates the known drift before
+     the turn sees a raise, and dispatches read/write on the declared
+     discriminator. Every store tool (orchestrator, hunter, pod) rides it; the
+     pod keeps its OWN `NoteToolSpec` contract but uses the shared
+     binding/rejection base.
    - `StoreNotesTool` / `build_notes_tool` - ONE `notes` implementation bound
      at the orchestrator and hunter seams through a caller-bound
-     `NotesStoreHandle`. The filesystem destination (orchestrator `memory.yaml`
-     via `HuntStore`, hunter `notes.yaml` via `HunterMemoryStore`) is derived
-     from the HANDLE, never a request field; the typed surface stays loose
-     (shared minimal field names) so each seam keeps its own schema.
+     `NotesStoreHandle` and an explicit `NotesFieldMap`. The map names the
+     semantic fields of the bound schema and is validated at construction, so a
+     read cannot silently treat a write field as its filter; the filesystem
+     destination (orchestrator `memory.yaml` via `HuntStore`, hunter
+     `notes.yaml` via `HunterMemoryStore`) is derived from the HANDLE, never a
+     request field.
+   - **Scope of the sharing for `hunts_store`.** Only the BINDING is shared:
+     the typed `args_schema` + `StoreToolBase`'s read/write dispatch + the coded
+     teaching rejection. The write algorithm itself is necessarily per-store
+     (the orchestrator upserts a `HuntConfig` through `HuntStore` with the G4
+     dedup gate and the G1 phase verbatims; the hunter writes a spec through
+     `HunterMemoryStore`), so it stays in each seam's `_read` / `_write`. #293
+     does NOT abstract the two store write paths into one body.
 2. **Typed orchestrator schemas.** `OrchestratorHuntsStoreArgs` /
    `OrchestratorNotesArgs` are pydantic `BaseModel`s with `extra="forbid"`,
    every field a `Field(description=...)`, and the discriminators as `Literal`
@@ -147,7 +157,8 @@ single-sourced:
    (`hunts_store` / `notes` / `graph_view`); the `hunts_store` write algorithm
    (`hypothesised` create / `ratified` / `dropped` upsert, the G4 dedup
    signal, the G1 phase-transition verbatims) is unchanged in behaviour, only
-   re-homed into a typed `BaseTool`.
+   re-homed into a typed `BaseTool`. The hunter's production note binding goes
+   through `notes_tool_for` (the named `build_notes_tool` path).
 
 ## The `kb_query` / `query_lightrag` tool (#207): one canonical description + per-stage observability
 

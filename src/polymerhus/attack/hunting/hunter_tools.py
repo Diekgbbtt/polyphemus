@@ -69,7 +69,12 @@ from .http_history_contract import (
 )
 from .hunter_state import FAULT_STATUSES
 from .hunt_store import HuntStore, config_file_name, semantic_key
-from .tool_contract import StoreNotesTool, StoreToolBase
+from .tool_contract import (
+    NotesFieldMap,
+    StoreNotesTool,
+    StoreToolBase,
+    build_notes_tool,
+)
 from polymerhus.recon.config import EXEC_TIMEOUT_S
 from polymerhus.recon.domain.types import ExecResult
 
@@ -234,8 +239,21 @@ _NOTES_WRITE_INTENT_FIELDS = ("action", "fault_key", "note_name", "kind", "body"
 
 
 def _notes_extra_rejection(tool_input: dict, errors: list) -> dict | None:
-    """The hunter's seam-specific teaching rejections: a dict-valued `evidence`
-    (structured refs belong in `provenance`) and a stray `provenance` key."""
+    """The hunter's seam-specific teaching rejections: the `command` omission
+    (which names `action` as the write option, restoring the #209 clause), a
+    dict-valued `evidence` (structured refs belong in `provenance`), and a
+    stray `provenance` key. Runs BEFORE the shared translation."""
+    missing_command = any(
+        e.get("type") == "missing" and list(e.get("loc") or ()) == ["command"]
+        for e in errors
+    )
+    if missing_command:
+        return {
+            "ok": False, "error": "notes_args_rejected",
+            "detail": "command is required: a write needs command=\"write\" "
+                      f"(action {tool_input.get('action', '')!r} is the write "
+                      "option, not the command); a read needs command=\"read\"",
+        }
     evidence_error = any(
         e.get("type") == "string_type" and list(e.get("loc") or ()) == ["evidence"]
         for e in errors
@@ -430,7 +448,6 @@ class HuntsStoreTool(StoreToolBase):
         "never the whole surface."
     )
     args_schema: type[BaseModel] = HuntsStoreArgs
-    _args_model: type[BaseModel] = HuntsStoreArgs
     _discriminator: str = "command"
     _rejection_name: str = "hunts_store"
     _write_intent_fields: tuple[str, ...] = _HUNTER_WRITE_INTENT_FIELDS
@@ -606,6 +623,52 @@ class HunterMemoryNotesHandle:
         return {"ok": True, "key": key}
 
 
+# The explicit notes field map (#293): the hunter's schema names, checked
+# against `NotesArgs` at construction - no alias guessing. In particular a read
+# keys on `parent_key` (the documented read filter), never the write `fault_key`.
+_HUNTER_NOTES_FIELD_MAP = NotesFieldMap(
+    key="fault_key",
+    read_key="parent_key",
+    action="action",
+    note="body",
+    note_id=None,
+    attributes="attributes",
+    key_keyword="key_keyword",
+    body_keyword="body_keyword",
+    passthrough=("note_name", "kind", "evidence", "provenance"),
+)
+
+
+def _hunter_notes_kwargs(handle: HunterMemoryNotesHandle) -> dict:
+    """The one config for the hunter's shared `notes` binding, shared by the
+    `notes_tool_for` production builder and the `NotesTool` compatibility
+    constructor so the two can never drift."""
+    return dict(
+        handle=handle,
+        args_schema=NotesArgs,
+        field_map=_HUNTER_NOTES_FIELD_MAP,
+        name="notes",
+        description=_NOTES_DESCRIPTION,
+        discriminator="command",
+        as_json=True,
+        rejection_name="notes",
+        write_intent_fields=_NOTES_WRITE_INTENT_FIELDS,
+        require_write_intent=True,
+        extra_rejection=_notes_extra_rejection,
+    )
+
+
+def notes_tool_for(*, store: HunterMemoryStore | None = None,
+                   project_id: str = "",
+                   hunt_store: HuntStore | None = None) -> StoreNotesTool:
+    """The production builder for the hunter's bound `notes` tool: the shared
+    `build_notes_tool` over the hunter's store handle. The `notes.yaml`
+    destination is derived from the handle, never a request field."""
+    return build_notes_tool(
+        **_hunter_notes_kwargs(HunterMemoryNotesHandle(store, project_id, hunt_store))
+    )
+
+
 class NotesTool(StoreNotesTool):
     """The notes body read/write over the store's `notes.yaml` (G6, spec 5): the
     SAME data contract as `hunts_store`, write options `append` / `update` /
@@ -614,10 +677,10 @@ class NotesTool(StoreNotesTool):
     omitting the required `command` with write-intent, passing a dict-valued
     `evidence`, or a stray provenance key is a CODED teaching rejection.
 
-    This is the hunter binding of the ONE shared implementation
-    (`tool_contract.StoreNotesTool`): the read/write algorithm and the coded
-    rejection live in `tool_contract`, and the `notes.yaml` destination is
-    derived from the `HunterMemoryNotesHandle`."""
+    This is the class-shaped compatibility constructor for the ONE shared
+    implementation (`tool_contract.StoreNotesTool`); production binds the tool
+    through `notes_tool_for` (the named `build_notes_tool` path). Both share
+    `_hunter_notes_kwargs`, so they cannot drift."""
 
     name: str = "notes"
     description: str = _NOTES_DESCRIPTION
@@ -627,20 +690,10 @@ class NotesTool(StoreNotesTool):
                  project_id: str = "", hunt_store: HuntStore | None = None,
                  **kwargs):
         super().__init__(
-            handle=HunterMemoryNotesHandle(store, project_id, hunt_store),
-            args_schema=NotesArgs,
-            name="notes",
-            description=_NOTES_DESCRIPTION,
-            discriminator="command",
-            as_json=True,
-            rejection_name="notes",
-            write_intent_fields=_NOTES_WRITE_INTENT_FIELDS,
-            require_write_intent=True,
+            **_hunter_notes_kwargs(
+                HunterMemoryNotesHandle(store, project_id, hunt_store)),
             **kwargs,
         )
-
-    def _extra_rejection(self, tool_input: dict, errors: list) -> dict | None:
-        return _notes_extra_rejection(tool_input, errors)
 
 
 class KbQueryTool(BaseTool):
@@ -906,7 +959,7 @@ def build_hunter_tools(
 
     return [
         HuntsStoreTool(store=store, project_id=project_id, hunt_store=hunt_store),
-        NotesTool(store=store, project_id=project_id, hunt_store=hunt_store),
+        notes_tool_for(store=store, project_id=project_id, hunt_store=hunt_store),
         build_graph_view_tool(graph_view_fn),
         KbQueryTool(kb_fn=kb_fn),
         ExecTool(exec_fn=exec_fn),
@@ -931,6 +984,7 @@ __all__ = [
     "HuntsStoreTool",
     "NotesTool",
     "HunterMemoryNotesHandle",
+    "notes_tool_for",
     "KbQueryTool",
     "ExecTool",
     "HttpHistorySearchTool",

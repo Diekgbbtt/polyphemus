@@ -182,15 +182,18 @@ The memory-read/write surface is **two store tools plus `graph_view`**; the earl
    must be explicit on the config).
    **As of #293** the tool is a typed `BaseTool` (`OrchestratorHuntsStoreArgs`, `extra="forbid"`, every field
    described) with `cmd: Literal["read","write"]`; `hunts_store.invoke({})` returns a CODED teaching rejection
-   naming `cmd` and the known commands, never a bare pydantic error. The binding, the read/write dispatch, and the
-   rejection are the shared `attack/hunting/tool_contract.py` base (the same base the hunter and pod ride).
+   naming `cmd` and the known commands, never a bare pydantic error. The shared part is the BINDING (the typed
+   schema, the read/write dispatch, and the coded rejection) in `attack/hunting/tool_contract.py` - the same base
+   the hunter and pod ride; the WRITE ALGORITHM stays per-store (the orchestrator's `HuntStore` upsert with the G4
+   dedup gate and the G1 verbatims; the hunter's spec write), by design rather than over-abstraction.
 2. **`notes`** - contract: `read` / `write` cmds, same data contract as `hunts_store`; write options are `append`,
    `update`, `delete` (G3).
    **As of #293** `notes` is ONE shared implementation (`tool_contract.build_notes_tool` /
-   `StoreNotesTool`) bound at the orchestrator and hunter seams through a caller-bound store handle: the
-   `memory.yaml` destination is derived from the handle (orchestrator `HuntStore`), never a request field. The
-   orchestrator surface is typed (`OrchestratorNotesArgs`, `cmd` + `option` enums, per-field descriptions) with the
-   same coded teaching rejection.
+   `StoreNotesTool`) bound at the orchestrator and hunter seams through a caller-bound store handle and an explicit
+   `NotesFieldMap`: the `memory.yaml` destination is derived from the handle (orchestrator `HuntStore`), never a
+   request field, and the map is validated against the bound schema so a stray write field can never be read as a
+   filter. The orchestrator surface is typed (`OrchestratorNotesArgs`, `cmd` + `option` enums, per-field
+   descriptions) with the same coded teaching rejection.
 3. **`graph_view`** - unchanged (read-only L0/L1 view, write-shaped calls rejected). **As of #197**: rides the ONE shared tool `graph_view_tool.py::build_graph_view_tool` with the single-source usage contract (schema, query-language primitives, read-only guard, `{"rows":[...]}` shape, worked example) - the SAME tool bound at the orchestrator, hunter, and pod runner + triager.
 
 There is no back-edge-to-recon tool (standing operator ruling 2026-08-22); the target-knowledge loop rides

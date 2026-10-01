@@ -98,7 +98,6 @@ class PodNoteTool(StoreToolBase):
         "filters, each note's body verbatim."
     )
     args_schema: type[BaseModel] = NoteToolSpec
-    _args_model: type[BaseModel] = NoteToolSpec
     _discriminator: str = "operation"
     _rejection_name: str = "note"
     _require_write_intent: bool = False

@@ -41,6 +41,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from polymerhus.attack.hunting.tool_contract import (
+    NotesFieldMap,
     StoreToolBase,
     build_notes_tool,
 )
@@ -298,6 +299,18 @@ class OrchestratorNotesArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+# The explicit notes field map (#293): the orchestrator's schema names, checked
+# against `OrchestratorNotesArgs` at construction - no alias guessing.
+_ORCH_NOTES_FIELD_MAP = NotesFieldMap(
+    key="key",
+    read_key="key",
+    action="option",
+    note="note",
+    note_id="note_id",
+    attributes="attributes",
+)
+
+
 class HuntStoreNotesHandle:
     """The orchestrator seam's store handle for the shared `notes` tool.
 
@@ -342,10 +355,10 @@ class HuntStoreNotesHandle:
                     "option": option}
         try:
             if option == "append":
-                if not request.key or not request.note:
+                if not request.key or not request.body:
                     return {"error": "notes append needs key and note"}
                 record = self._store.append_note(
-                    self._project_id, request.key, request.note)
+                    self._project_id, request.key, request.body)
                 next_pair = None
                 if self._phase_context is not None:
                     next_pair = getattr(self._phase_context, "next_pair", None)
@@ -354,10 +367,10 @@ class HuntStoreNotesHandle:
                         "next_pair": next_pair,
                         "hint": self._next_pair_hint}
             if option == "update":
-                if not request.note_id or request.note is None:
+                if not request.note_id or request.body is None:
                     return {"error": "notes update needs note_id and note"}
                 ok = self._store.update_note(
-                    self._project_id, request.note_id, request.note)
+                    self._project_id, request.note_id, request.body)
                 return {"updated": ok, "note_id": request.note_id}
             if not request.note_id:
                 return {"error": "notes delete needs note_id"}
@@ -375,7 +388,6 @@ class _OrchestratorHuntsStoreTool(StoreToolBase):
     name: str = "hunts_store"
     description: str = _HUNTS_STORE_DESCRIPTION
     args_schema: type[BaseModel] = OrchestratorHuntsStoreArgs
-    _args_model: type[BaseModel] = OrchestratorHuntsStoreArgs
     _discriminator: str = "cmd"
     _rejection_name: str = "hunts_store"
     _require_write_intent: bool = False
@@ -535,6 +547,7 @@ def build_orchestrator_tool_surface(tools, *, run_id: str, project_id: str | Non
         HuntStoreNotesHandle(store_seam, project_id, phase_context,
                              next_pair_hint=NEXT_PAIR_HINT),
         args_schema=OrchestratorNotesArgs,
+        field_map=_ORCH_NOTES_FIELD_MAP,
         name="notes",
         description=_ORCH_NOTES_DESCRIPTION,
         discriminator="cmd",
