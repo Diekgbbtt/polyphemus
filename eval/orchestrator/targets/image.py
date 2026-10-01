@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import time
 
+from orchestrator import docker as docker_images
 from orchestrator import front, routing
 from orchestrator.commands import Command, CommandRunner, is_absent_container, require_ok
 from orchestrator.ids import short_id
@@ -47,7 +48,13 @@ class ImageStrategy:
         self.context = context
         self.host = context.host
         self.paths = context.paths
-        self.image = str(params["image"])
+        self.registry = context.registry
+        # The target's image identifiers are as-is on the TargetRun; the params
+        # `image` is the legacy single-image form.
+        self.images = tuple(context.run.images) or (str(params["image"]),)
+        self.image = self.images[0]
+        self.dockerfile = context.run.target_config.dockerfile
+        self.dockerfile_context = context.run.target_config.dockerfile_context
         self.port = int(params["port"])
         self.internal_port = int(params.get("internal_port", DEFAULT_INTERNAL_PORT))
         self.ready_path = str(params.get("ready_path", "/"))
@@ -184,3 +191,29 @@ class ImageStrategy:
     def status(self, run: CommandRunner) -> str:
         command = self.plan_status()[0]
         return require_ok(run(command), command, error=ImageError).stdout
+
+    # --- image lifecycle (the chain's build/pull/present/reclaim seam) --------
+
+    def _references(self) -> tuple[str, ...]:
+        """The local image names the provisioning precedence leaves."""
+        return docker_images.provisioned_references(
+            self.images, dockerfile=self.dockerfile, registry=self.registry
+        )
+
+    def provision(self, run: CommandRunner) -> tuple[str, ...]:
+        outcomes = docker_images.provision_images(
+            run,
+            self.images,
+            dockerfile=self.dockerfile,
+            context=self.dockerfile_context,
+            registry=self.registry,
+            error=ImageError,
+        )
+        return tuple(outcome.detail for outcome in outcomes)
+
+    def reclaim(self, run: CommandRunner) -> tuple[str, ...]:
+        return tuple(
+            label
+            for reference in self._references()
+            for label in docker_images.remove(run, reference)
+        )

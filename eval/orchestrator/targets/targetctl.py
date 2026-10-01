@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Mapping
 from urllib.parse import urlparse
 
+from orchestrator import docker as docker_images
 from orchestrator import routing
 from orchestrator.commands import Command, CommandRunner, require_ok
 from orchestrator.targets.base import (
@@ -91,6 +92,10 @@ class TargetctlStrategy:
         self.context = context
         self.host = context.host
         self.paths = context.paths
+        self.registry = context.registry
+        self.images = tuple(context.run.images)
+        self.dockerfile = context.run.target_config.dockerfile
+        self.dockerfile_context = context.run.target_config.dockerfile_context
         self._sleep = sleep or time.sleep
         self.target = str(params["target"])
         self.ssh_host = str(
@@ -267,3 +272,69 @@ class TargetctlStrategy:
     def status(self, run: CommandRunner) -> str:
         command = self._targetctl("ps", self.target)
         return require_ok(run(command), command, error=TargetctlError).stdout
+
+    # --- image lifecycle (the chain's build/pull/present/reclaim seam) --------
+
+    def _wrap(self, command: Command) -> Command:
+        """Run a local docker primitive over ssh on the workshop host."""
+        return self._ssh(shlex.join(command.argv), description=command.description)
+
+    def provision(self, run: CommandRunner) -> tuple[str, ...]:
+        """Provision this target's images by the precedence, over ssh.
+
+        A declared Dockerfile builds the app image on the workshop host, a
+        configured registry pulls the images, and otherwise the images must
+        already be present there. Without declared images the idempotent
+        `targetctl build` still builds them (`--force` is never used: a forced
+        rebuild is drift, not freshness).
+        """
+        if not self.images:
+            build = self._targetctl("build", self.target)
+            require_ok(run(build), build, error=TargetctlError)
+            return (f"targetctl build {self.target}",)
+        outcomes = docker_images.provision_images(
+            run,
+            self.images,
+            dockerfile=self.dockerfile,
+            context=self.dockerfile_context,
+            registry=self.registry,
+            wrap=self._wrap,
+            error=TargetctlError,
+        )
+        return tuple(outcome.detail for outcome in outcomes)
+
+    def reclaim(self, run: CommandRunner) -> tuple[str, ...]:
+        """Remove this target's images, keeping shared bases; best-effort.
+
+        Declared images are removed by their provisioned reference; otherwise
+        the built app images are matched by the `pentestbench-<target>` prefix
+        (e.g. `pentestbench-siyucms-web`), which reclaims the target's own
+        layers without touching the shared evaluator or the bases other targets
+        need. An absent image is success; a genuine removal failure is reported
+        through the returned label rather than aborting the chain.
+        """
+        if not self.images:
+            pattern = f"pentestbench-{self.target}"
+            remote = (
+                "docker image ls --format '{{.Repository}}:{{.Tag}}' "
+                f"| grep -F {shlex.quote(pattern)} | xargs -r docker image rm"
+            )
+            command = self._ssh(remote, description=f"reclaim {pattern}*")
+            result = run(command)
+            if result.returncode != 0:
+                detail = result.stderr.strip() or result.stdout.strip()
+                return (f"reclaim {self.target} failed: {detail}",)
+            return (f"reclaim pentestbench-{self.target}*",)
+        references = docker_images.provisioned_references(
+            self.images, dockerfile=self.dockerfile, registry=self.registry
+        )
+        labels: list[str] = []
+        for reference in references:
+            command = self._wrap(docker_images.plan_remove(reference))
+            result = run(command)
+            if result.returncode != 0:
+                detail = result.stderr.strip() or result.stdout.strip()
+                labels.append(f"reclaim {reference} failed: {detail}")
+            else:
+                labels.append(f"rm {reference}")
+        return tuple(labels)

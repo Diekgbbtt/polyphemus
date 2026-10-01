@@ -8,6 +8,8 @@ and names itself, so an operator never debugs a silently empty run.
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from orchestrator import setup as setup_mod
@@ -369,3 +371,104 @@ def test_invalid_yaml_names_the_path(tmp_path) -> None:
 
     with pytest.raises(setup_mod.SetupError, match="broken.yaml"):
         setup_mod.load_eval_setup(path)
+
+
+def test_dataset_absent_is_none(sample_setup) -> None:
+    assert setup_mod.parse_eval_setup(sample_setup).dataset is None
+
+
+def test_dataset_is_parsed(sample_setup) -> None:
+    sample_setup["dataset"] = {
+        "name": "webexploitbench",
+        "repo": "https://github.com/AgentCyberRange/WebExploitBench.git",
+        "registry": "ghcr.io/agentcyberrange/webench",
+        "ground_truth": "/srv/eval-harness/gt",
+    }
+
+    dataset = setup_mod.parse_eval_setup(sample_setup).dataset
+
+    assert dataset.name == "webexploitbench"
+    assert dataset.repo == "https://github.com/AgentCyberRange/WebExploitBench.git"
+    assert dataset.registry == "ghcr.io/agentcyberrange/webench"
+    assert dataset.ground_truth == "/srv/eval-harness/gt"
+
+
+def test_dataset_registry_defaults_empty(sample_setup) -> None:
+    sample_setup["dataset"] = {
+        "name": "webexploitbench",
+        "repo": "https://github.com/AgentCyberRange/WebExploitBench.git",
+    }
+
+    assert setup_mod.parse_eval_setup(sample_setup).dataset.registry == ""
+
+
+def test_target_run_images_are_parsed(sample_setup) -> None:
+    sample_setup["instances"][0]["targets"][0]["images"] = [
+        "pentestbench-comfyui-web:latest"
+    ]
+
+    (run,) = setup_mod.parse_eval_setup(sample_setup).instances[0].targets
+
+    assert run.images == ("pentestbench-comfyui-web:latest",)
+
+
+def test_target_run_images_default_empty(sample_setup) -> None:
+    (run,) = setup_mod.parse_eval_setup(sample_setup).instances[0].targets
+
+    assert run.images == ()
+
+
+def test_target_config_dockerfile_is_parsed(sample_setup) -> None:
+    target_config = sample_setup["instances"][0]["targets"][0]["target_config"]
+    target_config["dockerfile"] = "setup_files/environment/Dockerfile"
+    target_config["dockerfile_context"] = "setup_files"
+
+    (run,) = setup_mod.parse_eval_setup(sample_setup).instances[0].targets
+
+    assert run.target_config.dockerfile == "setup_files/environment/Dockerfile"
+    assert run.target_config.dockerfile_context == "setup_files"
+
+
+def test_target_config_dockerfile_defaults_none(sample_setup) -> None:
+    (run,) = setup_mod.parse_eval_setup(sample_setup).instances[0].targets
+
+    assert run.target_config.dockerfile is None
+    assert run.target_config.dockerfile_context is None
+
+
+def test_target_run_images_must_be_strings(sample_setup) -> None:
+    sample_setup["instances"][0]["targets"][0]["images"] = [1]
+
+    with pytest.raises(setup_mod.SetupError, match="images"):
+        setup_mod.parse_eval_setup(sample_setup)
+
+
+def test_webexploitbench_chain_setup_parses() -> None:
+    root = Path(__file__).resolve().parents[2]
+    setup = setup_mod.load_eval_setup(
+        root / "eval" / "setups" / "webexploitbench-chain.yaml"
+    )
+
+    assert setup.dataset is not None
+    assert setup.dataset.name == "webexploitbench"
+    assert setup.dataset.registry == ""
+    (instance,) = setup.instances
+    names = [run.target_config.params["target"] for run in instance.targets]
+    assert names == [
+        "comfyui",
+        "jetlinks",
+        "prestashop",
+        "siyucms",
+        "white-jotter",
+        "dataease",
+        "dify",
+        "geoserver",
+        "mogu-blog-v2",
+        "ofbiz",
+        "openmetadata",
+        "openremote",
+        "phpbb",
+        "wordpress",
+        "youlai-mall",
+    ]
+    assert all(run.images for run in instance.targets)

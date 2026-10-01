@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import time
 
+from orchestrator import docker as docker_images
 from orchestrator import front, routing
 from orchestrator.commands import Command, CommandRunner, require_ok
 from orchestrator.ids import short_id
@@ -46,6 +47,10 @@ class ComposeStrategy:
         self.context = context
         self.host = context.host
         self.paths = context.paths
+        self.registry = context.registry
+        self.images = tuple(context.run.images)
+        self.dockerfile = context.run.target_config.dockerfile
+        self.dockerfile_context = context.run.target_config.dockerfile_context
         self.compose_file = str(params["compose_file"])
         self.port = int(params["port"])
         self.ready_path = str(params.get("ready_path", "/"))
@@ -164,3 +169,41 @@ class ComposeStrategy:
     def status(self, run: CommandRunner) -> str:
         command = self._compose("ps")
         return require_ok(run(command), command, error=ComposeTargetError).stdout
+
+    # --- image lifecycle (the chain's build/pull/present/reclaim seam) --------
+
+    def provision(self, run: CommandRunner) -> tuple[str, ...]:
+        # Declared images follow the precedence (build, pull, present); a stack
+        # that declares none builds its compose services.
+        if self.images:
+            outcomes = docker_images.provision_images(
+                run,
+                self.images,
+                dockerfile=self.dockerfile,
+                context=self.dockerfile_context,
+                registry=self.registry,
+                error=ComposeTargetError,
+            )
+            return tuple(outcome.detail for outcome in outcomes)
+        command = self._compose("build")
+        require_ok(run(command), command, error=ComposeTargetError)
+        return (f"compose build {self.project}",)
+
+    def reclaim(self, run: CommandRunner) -> tuple[str, ...]:
+        if self.images:
+            references = docker_images.provisioned_references(
+                self.images, dockerfile=self.dockerfile, registry=self.registry
+            )
+            return tuple(
+                label
+                for reference in references
+                for label in docker_images.remove(run, reference)
+            )
+        # `--rmi local` removes only images this project built, never pulled
+        # bases another target still needs.
+        command = self._compose("down", "--rmi", "local")
+        result = run(command)
+        if result.returncode != 0:
+            detail = result.stderr.strip() or result.stdout.strip()
+            return (f"reclaim {self.project} failed: {detail}",)
+        return (f"compose down --rmi local {self.project}",)

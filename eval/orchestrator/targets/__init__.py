@@ -42,12 +42,19 @@ def build_strategy(
     run: TargetRun,
     paths: InstancePaths,
     *,
+    registry: str = "",
     env: Mapping[str, str] | None = None,
     sleep: Sleep | None = None,
 ) -> TargetStrategy:
-    """Build the strategy for one TargetRun, with its synthetic Host allocated."""
+    """Build the strategy for one TargetRun, with its synthetic Host allocated.
+
+    `registry` is the dataset's image registry, threaded so a strategy can
+    compose a pull reference from the target's image identifier.
+    """
     identity = f"{paths.instance.instance_id}/{run.target_id}"
-    context = TargetContext(paths=paths, host=routing.synthetic_host(identity), run=run)
+    context = TargetContext(
+        paths=paths, host=routing.synthetic_host(identity), run=run, registry=registry
+    )
     lifecycle = run.target_config.lifecycle
     if lifecycle == "targetctl":
         return targetctl_strategy.TargetctlStrategy(context, env=env, sleep=sleep)

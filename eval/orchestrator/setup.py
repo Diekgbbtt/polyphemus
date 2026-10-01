@@ -102,6 +102,12 @@ class TargetConfig:
     operator_kb: str | None = None
     auth: Mapping[str, object] | None = None
     l1_surface: Mapping[str, object] | None = None
+    # The image build recipe: when set, the target's app image is built from this
+    # Dockerfile, overwriting the pull path. `dockerfile_context` is the build
+    # context directory; unset means the Dockerfile's own parent (which is only
+    # correct when the Dockerfile copies nothing from a wider directory).
+    dockerfile: str | None = None
+    dockerfile_context: str | None = None
 
 
 @dataclass(frozen=True)
@@ -133,11 +139,37 @@ class PreloadedArtifacts:
 
 
 @dataclass(frozen=True)
+class TargetDataset:
+    """The benchmark dataset the targets and their ground truth come from.
+
+    One dataset is one external source: its remote repo (the challenge
+    definitions and per-vuln ground truth), the image registry that hosts the
+    target images (a host/domain plus a URL path prefix), and where the ground
+    truth is checked out. These are shared by every target in the set, so they
+    live here once rather than repeated per target. A target's image identifier
+    is bare and as-is (`TargetRun.images`); the full pull reference is this
+    registry joined with that identifier.
+    """
+
+    name: str
+    repo: str
+    # The image registry (host + URL path prefix) that publishes the target
+    # images. Empty means the dataset publishes none, so targets are built
+    # locally from their fetched sources rather than pulled.
+    registry: str = ""
+    ground_truth: str | None = None
+
+
+@dataclass(frozen=True)
 class TargetRun:
     """The evaluation of one `Target` on one instance: config, phase, cap, seeds."""
 
     target_id: str
     target_config: TargetConfig
+    # The target's image identifier(s), as-is from the dataset (e.g.
+    # `pentestbench-comfyui-web:latest`); the dataset's registry qualifies them
+    # for a pull. The next-target tool contract exposes these.
+    images: tuple[str, ...] = ()
     start_phase: str = "recon"
     hunt_config_budget: int | None = None
     preloaded_hunting_artifacts: PreloadedArtifacts | None = None
@@ -167,6 +199,11 @@ class EvalSetup:
     schema_version: int
     artifact_store: str
     instances: tuple[Instance, ...]
+    # The benchmark dataset the targets and their ground truth come from: the
+    # remote repo and the image registry that qualify a target's image
+    # identifier for a pull. Absent means the setup carries no dataset-level
+    # addressing (each target's lifecycle strategy must supply its own).
+    dataset: TargetDataset | None = None
     work_items: tuple[WorkItem, ...] = ()
     # #274: declared per-artifact-class migrations/rebuilds the alignment step
     # resolves a decider's action against. Absent means nothing is declared.
@@ -214,6 +251,19 @@ def _optional_str(mapping: Mapping, key: str, where: str) -> str | None:
     return value
 
 
+def _string_tuple(mapping: Mapping, key: str, where: str) -> tuple[str, ...]:
+    """A list of non-empty strings; absent is the empty tuple."""
+    if key not in mapping or mapping[key] is None:
+        return ()
+    value = mapping[key]
+    if not isinstance(value, list):
+        raise SetupError(f"{where}.{key}: expected a list of strings")
+    for item in value:
+        if not isinstance(item, str) or not item:
+            raise SetupError(f"{where}.{key}: expected non-empty strings, got {item!r}")
+    return tuple(value)
+
+
 def is_path_safe_id(value: object) -> bool:
     """True when `value` is one safe path segment.
 
@@ -256,7 +306,14 @@ def parse_eval_setup(payload: object) -> EvalSetup:
 
     artifact_store = _str_field(root, "artifact_store", "EvalSetup", required=True)
 
-    allowed = ("schema_version", "artifact_store", "instances", "work_items", "alignment")
+    allowed = (
+        "schema_version",
+        "artifact_store",
+        "dataset",
+        "instances",
+        "work_items",
+        "alignment",
+    )
     _check_keys(root, allowed, "EvalSetup")
 
     raw_instances = _require(root, "instances", "EvalSetup")
@@ -297,8 +354,22 @@ def parse_eval_setup(payload: object) -> EvalSetup:
         schema_version=_schema,
         artifact_store=artifact_store,
         instances=instances,
+        dataset=_parse_dataset(root.get("dataset"), "EvalSetup.dataset"),
         work_items=work_items,
         alignment=_parse_alignment(root.get("alignment"), "EvalSetup.alignment"),
+    )
+
+
+def _parse_dataset(payload: object, where: str) -> TargetDataset | None:
+    if payload is None:
+        return None
+    mapping = _mapping(payload, where)
+    _check_keys(mapping, ("name", "repo", "registry", "ground_truth"), where)
+    return TargetDataset(
+        name=_str_field(mapping, "name", where, required=True),
+        repo=_str_field(mapping, "repo", where, required=True),
+        registry=_optional_str(mapping, "registry", where) or "",
+        ground_truth=_optional_str(mapping, "ground_truth", where),
     )
 
 
@@ -332,6 +403,7 @@ def _parse_target_run(payload: object, where: str) -> TargetRun:
         (
             "target_id",
             "target_config",
+            "images",
             "start_phase",
             "hunt_config_budget",
             "preloaded_hunting_artifacts",
@@ -342,6 +414,7 @@ def _parse_target_run(payload: object, where: str) -> TargetRun:
     )
     target_id = _str_field(mapping, "target_id", where, required=True)
     target_config = _parse_target_config(_require(mapping, "target_config", where), f"{where}.target_config")
+    images = _string_tuple(mapping, "images", where)
 
     existing_project_id = _path_safe(mapping, "existing_project_id", where)
     raw_start_phase = mapping.get("start_phase")
@@ -368,6 +441,7 @@ def _parse_target_run(payload: object, where: str) -> TargetRun:
     return TargetRun(
         target_id=target_id,
         target_config=target_config,
+        images=images,
         start_phase=start_phase,
         hunt_config_budget=budget,
         preloaded_hunting_artifacts=_parse_preloaded_artifacts(
@@ -425,7 +499,16 @@ def _parse_target_config(payload: object, where: str) -> TargetConfig:
     mapping = _mapping(payload, where)
     _check_keys(
         mapping,
-        ("lifecycle", "params", "target_seed", "operator_kb", "auth", "l1_surface"),
+        (
+            "lifecycle",
+            "params",
+            "target_seed",
+            "operator_kb",
+            "auth",
+            "l1_surface",
+            "dockerfile",
+            "dockerfile_context",
+        ),
         where,
     )
     lifecycle = _require(mapping, "lifecycle", where)
@@ -453,6 +536,8 @@ def _parse_target_config(payload: object, where: str) -> TargetConfig:
         operator_kb=_optional_str(mapping, "operator_kb", where),
         auth=auth,
         l1_surface=l1_surface,
+        dockerfile=_optional_str(mapping, "dockerfile", where),
+        dockerfile_context=_optional_str(mapping, "dockerfile_context", where),
     )
 
 

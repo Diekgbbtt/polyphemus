@@ -88,7 +88,8 @@ class Orchestrator:
         )
 
     def _strategy(self, paths: InstancePaths, run: TargetRun) -> TargetStrategy:
-        return build_strategy(run, paths, env=self._env, sleep=self._sleep)
+        registry = self.setup.dataset.registry if self.setup.dataset else ""
+        return build_strategy(run, paths, registry=registry, env=self._env, sleep=self._sleep)
 
     def _require_runner(self) -> CommandRunner:
         if self._runner is None:

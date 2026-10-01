@@ -39,11 +39,16 @@ class TargetUpResult:
 
 @dataclass(frozen=True)
 class TargetContext:
-    """The instance and TargetRun a strategy acts on, plus the synthetic Host."""
+    """The instance and TargetRun a strategy acts on, plus the synthetic Host.
+
+    `registry` is the dataset's image registry (host plus URL path prefix); a
+    strategy joins it with a target image identifier for a pull.
+    """
 
     paths: InstancePaths
     host: str
     run: TargetRun
+    registry: str = ""
 
 
 class TargetStrategy(Protocol):
@@ -55,6 +60,12 @@ class TargetStrategy(Protocol):
     def down(self, run: CommandRunner) -> None: ...
     def plan_status(self) -> list[Command]: ...
     def status(self, run: CommandRunner) -> str: ...
+    # The chain's image lifecycle seam: pull the target's image before it starts
+    # (verified present), and reclaim the previous target's image after it stops
+    # so peak disk is one target. Both return the image references they acted on
+    # (the chain record).
+    def provision(self, run: CommandRunner) -> tuple[str, ...]: ...
+    def reclaim(self, run: CommandRunner) -> tuple[str, ...]: ...
 
 
 Sleep = Callable[[float], None]
