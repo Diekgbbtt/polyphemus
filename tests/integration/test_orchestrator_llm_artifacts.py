@@ -1061,11 +1061,9 @@ def test_structured_schemas_and_tool_surface_unchanged():
     assert dumped["directions"][0]["vulnerability_classes"] == ["CSRF"]
 
     config = mint_hunt_config(
-        direction, _candidate(SERVICE_A, "CWE-352"), "hunt-1",
+        direction, _candidate(SERVICE_A, "CWE-352"),
         surface_context={}, prior_hunt_insights=[],
-        sub_fault_ids=["CWE-520", "CWE-9"],
     )[0]
-    assert config.sub_fault_ids == ["CWE-520", "CWE-9"]
     assert config.status == "hypothesised"
     assert config.vulnerability_class == "CSRF"
     assert config.prompt_template.rationale == "r"

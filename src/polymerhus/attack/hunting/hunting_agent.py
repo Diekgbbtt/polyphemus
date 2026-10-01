@@ -315,6 +315,9 @@ def _compose_grounding(config: HuntConfig) -> str:
             aggregated.extend(card.get("aggregated_endpoints") or [])
     if aggregated:
         surface_text += f"; aggregated endpoints: {_fmt_aggregated_endpoints(aggregated)}"
+    # #298: the candidate's applies-witness is folded into the orchestrator-owned
+    # surface context (the former `prompt_template.l0_evidence` slot is gone).
+    fault_evidence = surface.get("fault_evidence") or []
     return (
         f"You are dispatched to hunt {config.unit_id} for fault class "
         f"{config.fault_class}.\n"
@@ -323,14 +326,13 @@ def _compose_grounding(config: HuntConfig) -> str:
         f"{config.vulnerability_class or '(none)'}\n"
         f"Class-level research direction (feasibility): "
         f"{tpl.research_direction or '(none)'}\n"
-        f"L0 fault-applicability evidence: {_fmt_list(tpl.l0_evidence)}\n"
+        f"L0 fault-applicability evidence: {_fmt_list(fault_evidence)}\n"
         f"Adapted surface context (index card of {config.unit_id}): "
         f"{surface_text}\n"
         f"Observed target defences (hinder the tests / support falsification): "
         f"{_fmt_list(config.observed_defences)}\n"
         f"Test preconditions (attacker + environment): "
         f"{_fmt_list(config.preconditions)}\n"
-        f"Sub-fault reflection material: {_fmt_list(config.sub_fault_ids)}\n"
         f"Prior-hunt insights (downstream specs + pod verdicts): "
         f"{_fmt_list(config.prior_hunt_insights)}"
     )

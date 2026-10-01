@@ -107,7 +107,7 @@ def _run(store: HuntStore, candidates, *, hypothesise_fn, ratify_fn=None,
                 if (c.unit_id, c.fault_class)
                 == (direction.unit_id, direction.fault_class))
             for config in mint_hunt_config(
-                    direction, candidate, uuid.uuid4().hex, surface_context={},
+                    direction, candidate, surface_context={},
                     prior_hunt_insights=[]):
                 tools.store_reads.write_config("project-1", config)
         return decision

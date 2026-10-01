@@ -204,7 +204,7 @@ def _agent_seams(tools, project_id: str):
                     continue
                 insights = _prior_insights(direction.unit_id, direction.fault_class)
                 for config in mint_hunt_config(
-                        direction, candidate, uuid.uuid4().hex,
+                        direction, candidate,
                         surface_context={}, prior_hunt_insights=insights):
                     _safe_write(tools.store_reads.write_config, project_id, config)
             return decision

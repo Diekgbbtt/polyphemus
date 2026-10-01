@@ -207,13 +207,12 @@ def test_compose_grounding_renders_only_surviving_fields_goal_ordered():
         hunt_id="hunt-1", unit_id="Service:slug:a", fault_class="fault-x",
         status="ratified",
         prompt_template=HuntPromptTemplate(
-            rationale="r", l0_evidence=["llm: witness"],
+            rationale="r",
             research_direction="CSRF feasibility reasoning"),
         vulnerability_class="CSRF",
-        surface_context={"kind": "Service"},
+        surface_context={"kind": "Service", "fault_evidence": ["llm: witness"]},
         observed_defences=["WAF blocks XSS payloads"],
         preconditions=["authenticated session obtainable"],
-        sub_fault_ids=["CWE-24"],
         prior_hunt_insights=[{"kind": "prior_verdict", "verdict": "unsuccessful"}],
     )
     text = _compose_grounding(config)
@@ -224,11 +223,11 @@ def test_compose_grounding_renders_only_surviving_fields_goal_ordered():
     assert "L0 fault-applicability evidence: llm: witness" in text
     assert "Observed target defences" in text and "WAF blocks XSS payloads" in text
     assert "Test preconditions" in text and "authenticated session obtainable" in text
-    assert "Sub-fault reflection material" in text and "CWE-24" in text
     assert "Prior-hunt insights" in text
-    # the redundant slots never render
+    # the #298 removals never render
     for gone in ("technique_primitives", "adversarial_capabilities",
-                 "tool_registry", "assumptions", "target caveats"):
+                 "tool_registry", "assumptions", "target caveats",
+                 "sub-fault reflection"):
         assert gone not in text.lower()
     # the three-goal order: the feasibility fields precede the further-directions ones
     assert text.index("research direction") < text.index("Prior-hunt insights")

@@ -73,7 +73,7 @@ def _config(**overrides) -> dict:
         "status": "ratified",
         "vulnerability_class": CLASS,
         "prompt_template": {
-            "rationale": "r", "l0_evidence": [], "research_direction": "rd",
+            "rationale": "r", "research_direction": "rd",
         },
     }
     data.update(overrides)

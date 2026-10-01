@@ -107,7 +107,7 @@ def _write_agent_drafts(tools, inp, directions):
             c for c in inp.candidates
             if (c.unit_id, c.fault_class) == (direction.unit_id, direction.fault_class))
         for config in mint_hunt_config(
-                direction, candidate, uuid.uuid4().hex, surface_context={},
+                direction, candidate, surface_context={},
                 prior_hunt_insights=[]):
             tools.store_reads.write_config(PROJECT, config)
 

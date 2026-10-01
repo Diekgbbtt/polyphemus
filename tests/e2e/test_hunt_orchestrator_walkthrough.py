@@ -285,7 +285,7 @@ def _agent_seams(tools, project_id: str):
                 if candidate is None:
                     continue
                 for config in mint_hunt_config(
-                        direction, candidate, uuid.uuid4().hex,
+                        direction, candidate,
                         surface_context={},
                         prior_hunt_insights=_prior_insights(
                             direction.unit_id, direction.fault_class)):

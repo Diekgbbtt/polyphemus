@@ -36,7 +36,7 @@ def _config(**overrides) -> dict:
         "fault_class": CWE,
         "status": "hypothesised",
         "vulnerability_class": CLASS,
-        "prompt_template": {"rationale": "r", "l0_evidence": [], "research_direction": "rd"},
+        "prompt_template": {"rationale": "r", "research_direction": "rd"},
         "surface_context": {},
         "observed_defences": [],
         "preconditions": [],
@@ -335,7 +335,7 @@ def test_read_configs_searches_produced_and_consumed(tmp_path):
 def test_config_read_round_trips_the_full_config(tmp_path):
     store = HuntStore(tmp_path)
     config = _config(prompt_template={
-        "rationale": "the catalogue surface is public", "l0_evidence": [],
+        "rationale": "the catalogue surface is public",
         "research_direction": "enumerate the receipts resource",
     })
     store.write_config(PROJECT, config)

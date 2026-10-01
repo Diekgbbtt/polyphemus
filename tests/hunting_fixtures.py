@@ -105,10 +105,9 @@ def _hunt_config(**overrides) -> HuntConfig:
         fault_class=FAULT_CLASS,
         prompt_template=HuntPromptTemplate(
             rationale=f"{FAULT_CLASS} applies to {UNIT_ID} because ...",
-            l0_evidence=["GET /api/a answers 200"],
             research_direction="CSRF feasibility reasoning at the state-changing form locus",
         ),
-        surface_context={"cards": []},
+        surface_context={"cards": [], "fault_evidence": ["GET /api/a answers 200"]},
         observed_defences=["perimeter WAF on /api/*"],
         preconditions=["an authenticated session is obtainable"],
         prior_hunt_insights=[],

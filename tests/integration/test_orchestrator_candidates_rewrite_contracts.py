@@ -41,6 +41,7 @@ from polymerhus.attack.hunting.hunt_orchestrator import (
     ReadOnlyGraphView,
     ReadOnlyGraphViewError,
     Witness,
+    hunt_id_for,
     mint_hunt_config,
     revival_key,
     run_orchestration,
@@ -453,7 +454,7 @@ def _agent_seams(tools, *, project_id: str = "project-1"):
                 if (c.unit_id, c.fault_class)
                 == (direction.unit_id, direction.fault_class))
             for config in mint_hunt_config(
-                    direction, candidate, uuid.uuid4().hex, surface_context={},
+                    direction, candidate, surface_context={},
                     prior_hunt_insights=[]):
                 tools.store_reads.write_config(project_id, config)
         return GateDecision(directions=directions)
@@ -615,16 +616,16 @@ def test_integration_c11_mint_fanout_per_distinct_class():
         match_verdict="applies",
     )
     configs = mint_hunt_config(
-        direction, candidate, "abc123",
+        direction, candidate,
         surface_context={}, prior_hunt_insights=[],
     )
     assert len(configs) == 2
-    assert configs[0].hunt_id == "abc123"
-    assert configs[1].hunt_id == "abc123-1"
+    assert [c.hunt_id for c in configs] == [
+        hunt_id_for(SERVICE_A, FAULT_352, "CSRF"),
+        hunt_id_for(SERVICE_A, FAULT_352, "IDOR")]
     assert [c.vulnerability_class for c in configs] == ["CSRF", "IDOR"]
     assert all(c.status == "hypothesised" for c in configs)
     assert all(c.prompt_template.research_direction == "probe CSRF vs IDOR" for c in configs)
-    assert all("llm: form Z no token" in c.prompt_template.l0_evidence for c in configs)
     assert all(c.preconditions == [] for c in configs)
     assert all(c.observed_defences == [] for c in configs)
     # oracle is the class not the raw string count: adding a third emission of
@@ -634,7 +635,7 @@ def test_integration_c11_mint_fanout_per_distinct_class():
         research_direction="probe CSRF vs IDOR",
         vulnerability_classes=["CSRF", "CSRF", "IDOR"],
     )
-    configs2 = mint_hunt_config(direction2, candidate, "abc123", surface_context={}, prior_hunt_insights=[])
+    configs2 = mint_hunt_config(direction2, candidate, surface_context={}, prior_hunt_insights=[])
     assert len(configs2) == 2  # collapsed to 2 distinct classes
 
 
@@ -653,9 +654,9 @@ def test_integration_c12_mint_collapse_and_bare_degrade():
         research_direction="probe CSRF",
         vulnerability_classes=["CSRF", "CSRF"],
     )
-    configs_dup = mint_hunt_config(direction_dup, candidate, "base", surface_context={}, prior_hunt_insights=[])
+    configs_dup = mint_hunt_config(direction_dup, candidate, surface_context={}, prior_hunt_insights=[])
     assert len(configs_dup) == 1
-    assert configs_dup[0].hunt_id == "base"
+    assert configs_dup[0].hunt_id == hunt_id_for(SERVICE_A, FAULT_352, "CSRF")
     assert configs_dup[0].vulnerability_class == "CSRF"
     # b) empty degrades to carried-bare
     direction_empty = EnvisionedDirection(
@@ -663,7 +664,7 @@ def test_integration_c12_mint_collapse_and_bare_degrade():
         research_direction="probe bare",
         vulnerability_classes=[],
     )
-    configs_bare = mint_hunt_config(direction_empty, candidate, "base", surface_context={}, prior_hunt_insights=[])
+    configs_bare = mint_hunt_config(direction_empty, candidate, surface_context={}, prior_hunt_insights=[])
     assert len(configs_bare) == 1
     assert configs_bare[0].vulnerability_class == ""
     assert configs_bare[0].prompt_template.research_direction == "probe bare"
@@ -682,7 +683,7 @@ def test_integration_c12_mint_collapse_and_bare_degrade():
         research_direction="probe bare",
         vulnerability_classes=[""],
     )
-    configs_blank = mint_hunt_config(direction_blank, candidate, "base", surface_context={}, prior_hunt_insights=[])
+    configs_blank = mint_hunt_config(direction_blank, candidate, surface_context={}, prior_hunt_insights=[])
     assert len(configs_blank) == 1
     assert configs_blank[0].vulnerability_class == ""
 
@@ -736,7 +737,7 @@ def test_integration_c12b_surface_context_shows_connected_data_items(tmp_path):
         # the agent's hunts_store(write) - the #201 carve-out injects the
         # deterministic surface_context on the wrapped seam
         for config in mint_hunt_config(
-                direction, inp.candidates[0], uuid.uuid4().hex,
+                direction, inp.candidates[0],
                 surface_context={}, prior_hunt_insights=[]):
             tools.store_reads.write_config("project-1", config)
         return GateDecision(directions=[direction])
