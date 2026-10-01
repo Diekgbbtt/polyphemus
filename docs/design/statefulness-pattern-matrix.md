@@ -93,14 +93,14 @@ The future full conversion of the supervisor into an async-native
 actor-with-mailbox (pooled checkpointer + `create_agent`) is ticketed:
 https://github.com/Diekgbbtt/polyphemus/issues/102.
 
-### OUTLIER-3: the legacy sync orchestrator seams (one retired, two hunting-only)
+### OUTLIER-3: the legacy sync orchestrator seams (one retired, one removed, one hunting-only)
 
-**Location**: `attack/hunting/llm.py:226,248` (`build_gate_reason_fn` / `build_rematch_fn`)
+**Location**: `attack/hunting/llm.py` (`build_gate_reason_fn`)
 
 The recon `decide_routing` seam has been **removed** (#223 D223-12 retired mid-run steering); no `decide_routing` symbol survives in `recon/`.
-The hunting `build_gate_reason_fn` / `build_rematch_fn` remain injectable sync one-shot seams that the `HuntOrchestratorActor` supersedes; the production callers pass `None` to use the actor path, and the sync versions are retained only for test injection.
+The hunting `build_gate_reason_fn` remains an injectable sync one-shot seam that the `HuntOrchestratorActor` supersedes; its production caller passes `None` to use the actor path, and the sync version is retained only for test injection. Its sibling `build_rematch_fn` was **removed** with the D2 re-match seam (operator ruling 2026-09-24); `OrchestratorTools.back_edge` survives as the dispatch seam.
 
-**Status**: `decide_routing` retired; hunting seams superseded.
+**Status**: `decide_routing` retired; `build_rematch_fn` removed; `build_gate_reason_fn` superseded.
 
 ### OUTLIER-4: `_hunter_turn` dual-path (ContextVar or invoke_role)
 
