@@ -75,6 +75,9 @@ IGNORED_PREFIXES: tuple[str, ...] = (
     ".gitattributes",
     ".github",
     ".gitignore",
+    # Agent tooling (the eval orchestrator agent + its plugin): it configures the
+    # agent runtime, not the stack, so a version advance never aligns it.
+    ".opencode",
     "CLAUDE.md",
     "CODING_STANDARD.md",
     "CONTEXT-MAP.md",
