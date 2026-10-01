@@ -15,7 +15,7 @@ Last run: 2026-10-01 (**#286 diagnosis + three sub-issue fixes (#292/#293/#294) 
 
 **Integration state.** Merged into `dev` per the operator's instruction. NOT on `main`; no PR opened (main is human-gated).
 
-**Follow-ups (filed as #295).** Pre-existing failing tests on `dev`: `tests/integration/test_hunter_harness_memory_contracts.py::test_H5_tool_schemas_ride_the_session_turn` (surface drift vs the #196 http-history tools) and `tests/integration/test_l1_constraints_present_and_enforced.py`. Minor hardening: hoist the duplicated `_agent_seams` test emulation; avoid mutating `tools.store_reads`; reconcile `ledger.notes_recorded` vs `report.notes_written`.
+**Follow-ups.** The two pre-existing failing tests surfaced during this work were diagnosed as OBSOLETE (not regressions) and fixed (#295, merged `9080a5b`): `tests/integration/test_hunter_harness_memory_contracts.py::test_H5_tool_schemas_ride_the_session_turn` (pin updated to the current 9-tool surface, adding #196's `search_http_history` / `get_http_artifact`) and `tests/integration/test_l1_curator_merge.py::test_l1_constraints_present_and_enforced` (now asserts `{l1service_unique, l1system_unique, l1dataitem_unique}`; `systemkind_unique` was retired by the 2026-07-20 operator correction). The remaining DISTINCT path is a malformed `GateDecision` on the structured-output `ToolStrategy` seam (not covered by the tool-argument teaching rejection), tracked in #296. Minor hardening still open: hoist the duplicated `_agent_seams` test emulation; avoid mutating `tools.store_reads`; reconcile `ledger.notes_recorded` vs `report.notes_written`.
 
 ## AMENDMENT 2026-09-08 - #208 follow-ups: typed Profile literal + swissai empty-tools fix (branch `fix/httpx-reprofile-one-pod-208`, merged as `28ab60e`)
 
