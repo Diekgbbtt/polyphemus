@@ -56,7 +56,7 @@ from typing import Any, Callable, Literal
 
 from langchain_core.tools import BaseTool
 from lightrag.tool import QUERY_LIGHTRAG_DESCRIPTION
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field
 
 from .hunter_memory import (
     DuplicateSpecError,
@@ -69,6 +69,7 @@ from .http_history_contract import (
 )
 from .hunter_state import FAULT_STATUSES
 from .hunt_store import HuntStore, config_file_name, semantic_key
+from .tool_contract import StoreNotesTool, StoreToolBase
 from polymerhus.recon.config import EXEC_TIMEOUT_S
 from polymerhus.recon.domain.types import ExecResult
 
@@ -220,61 +221,41 @@ def _fault_key_violation(
     )
 
 
-# --- the coded teaching rejection (#209) --------------------------------------
+# --- the coded teaching rejection (#209, shared in tool_contract) --------------
 
 # The D84-22 refinement: a schema failure on the store/notes tools is a CODED
 # teaching rejection (never a bare ValidationError the harness turns into
-# `tool_failed`). The helper inspects the raw call + the pydantic error list and
-# translates the known drift shapes; anything else re-raises (the D84-22
-# rejected-call canon for an unknown parameter).
+# `tool_failed`). The shared translation lives in `tool_contract`; the hunter's
+# seam-specific extras (a wrong-typed `evidence`, a stray `provenance` key) are
+# the `_extra_rejection` hook below.
 
-_WRITE_INTENT_FIELDS = {
-    "notes": ("action", "fault_key", "note_name", "kind", "body"),
-    "hunts_store": ("mode", "spec", "fault_keyword", "strategy_keyword"),
-}
+_HUNTER_WRITE_INTENT_FIELDS = ("mode", "spec", "fault_keyword", "strategy_keyword")
+_NOTES_WRITE_INTENT_FIELDS = ("action", "fault_key", "note_name", "kind", "body")
 
 
-def _coded_teaching_rejection(
-    name: str, tool_input: Any, exc: ValidationError,
-) -> str | None:
-    """Translate a known schema-drift `ValidationError` into a coded teaching
-    rejection JSON, else None (the call keeps failing as a rejected call)."""
-    if not isinstance(tool_input, dict):
-        return None
-    errors = exc.errors()
-    missing_command = any(
-        e.get("type") == "missing" and list(e.get("loc") or ()) == ["command"]
-        for e in errors
-    )
-    if missing_command and any(
-        k in tool_input for k in _WRITE_INTENT_FIELDS[name]
-    ):
-        return json.dumps({
-            "ok": False, "error": f"{name}_args_rejected",
-            "detail": "command is required: a write needs command=\"write\" "
-                      f"(action {tool_input.get('action', '')!r} is the write "
-                      f"option, not the command); a read needs command=\"read\"",
-        })
+def _notes_extra_rejection(tool_input: dict, errors: list) -> dict | None:
+    """The hunter's seam-specific teaching rejections: a dict-valued `evidence`
+    (structured refs belong in `provenance`) and a stray `provenance` key."""
     evidence_error = any(
         e.get("type") == "string_type" and list(e.get("loc") or ()) == ["evidence"]
         for e in errors
     )
     if evidence_error:
-        return json.dumps({
+        return {
             "ok": False, "error": "notes_args_rejected",
             "detail": "evidence must be a string (prose); put structured refs "
                       "in provenance (source/run_id/verdict_stub/probe_refs)",
-        })
+        }
     provenance_error = any(
         list(e.get("loc") or ())[:1] == ["provenance"] for e in errors
     )
     if provenance_error:
-        return json.dumps({
+        return {
             "ok": False, "error": "notes_args_rejected",
             "detail": "provenance is the typed NoteProvenance "
                       "(source/run_id/verdict_stub/probe_refs, extra=forbid): "
                       + "; ".join(e.get("msg", "") for e in errors),
-        })
+        }
     return None
 
 
@@ -303,16 +284,30 @@ class HuntsStoreArgs(BaseModel):
     kind-qualified L1 service/system identity that surfaces alongside it.
     A spec whose `target_identity.url` is absent is INIT-rejected by the pod."""
 
-    command: Literal["read", "write"]
+    command: Literal["read", "write"] = Field(
+        description="The operation: 'read' or 'write' (required).")
     # -- read path -----------------------------------------------------------
-    fault_key: str = ""
-    statuses: list[str] = Field(default_factory=list)
-    attributes: list[str] = Field(default_factory=list)
+    fault_key: str = Field(
+        default="",
+        description="The hunt's OWN 3-part config key (G4); required on a read.")
+    statuses: list[str] = Field(
+        default_factory=list,
+        description="Read filter: keep only specs with one of these statuses.")
+    attributes: list[str] = Field(
+        default_factory=list,
+        description="Read projection: return only these attributes per spec.")
     # -- write path ----------------------------------------------------------
-    mode: Literal["create", "update"] = "create"
-    spec: dict = Field(default_factory=dict)
-    fault_keyword: str = ""
-    strategy_keyword: str = ""
+    mode: Literal["create", "update"] = Field(
+        default="create",
+        description="Write mode: 'create' fails on a duplicate (G4), 'update' "
+                    "re-authors in place (G5).")
+    spec: dict = Field(
+        default_factory=dict,
+        description="The authored spec object carrying the status verbatim.")
+    fault_keyword: str = Field(
+        default="", description="Names the produced spec file.")
+    strategy_keyword: str = Field(
+        default="", description="Names the produced spec file.")
 
     model_config = ConfigDict(extra="forbid")
 
@@ -348,20 +343,40 @@ class NotesArgs(BaseModel):
     option, never the command. `evidence` is prose `str`; `provenance` is the
     TYPED `NoteProvenance` structured slot."""
 
-    command: Literal["read", "write"]
+    command: Literal["read", "write"] = Field(
+        description="The operation: 'read' or 'write' (required); `action` is "
+                    "the write option, never the command.")
     # -- read path -----------------------------------------------------------
-    parent_key: str = ""
-    key_keyword: str = ""
-    body_keyword: str = ""
-    attributes: list[str] = Field(default_factory=list)
+    parent_key: str = Field(
+        default="", description="Read filter: the hunt's OWN 3-part config key.")
+    key_keyword: str = Field(
+        default="", description="Read filter: substring over the note keys.")
+    body_keyword: str = Field(
+        default="", description="Read filter: substring over the note bodies.")
+    attributes: list[str] = Field(
+        default_factory=list,
+        description="Read projection: return only these attributes per note.")
     # -- write path ----------------------------------------------------------
-    action: Literal["append", "update", "delete"] = "append"
-    fault_key: str = ""
-    note_name: str = ""
-    kind: str = "freeform"
-    body: str = ""
-    evidence: str | None = None
-    provenance: NoteProvenance | None = None
+    action: Literal["append", "update", "delete"] = Field(
+        default="append",
+        description="The write option: 'append' a new note, 'update' or "
+                    "'delete' an existing one.")
+    fault_key: str = Field(
+        default="", description="The hunt's OWN 3-part config key (G4).")
+    note_name: str = Field(
+        default="", description="The note's name, unique within the fault_key.")
+    kind: str = Field(
+        default="freeform",
+        description="The note kind: hypothesis_refusal | "
+                    "implicit_test_primitive | freeform.")
+    body: str = Field(default="", description="The note body.")
+    evidence: str | None = Field(
+        default=None,
+        description="Prose evidence; structured refs go in provenance.")
+    provenance: NoteProvenance | None = Field(
+        default=None,
+        description="The typed structured provenance (source/run_id/"
+                    "verdict_stub/probe_refs).")
 
     model_config = ConfigDict(extra="forbid")
 
@@ -380,14 +395,15 @@ class ExecArgs(BaseModel):
 # --- the tools ----------------------------------------------------------------
 
 
-class HuntsStoreTool(BaseTool):
+class HuntsStoreTool(StoreToolBase):
     """The status-bearing write/read seam over `HunterMemoryStore` (spec 5): the
     transition verbatim lives here (`status` on the write). A duplicate `create`
     FAILS with the denoted `duplicate_spec` dedup signal the model reflects on
     (G4); `update` re-authors in place (G5). Reads degrade to an empty set (O4);
     genuine write failures raise to the harness (O3); an absent store degrades
     fail-open. #209: a call omitting the required `command` with write-intent
-    fields is a CODED teaching rejection (never a bare validation error)."""
+    fields is a CODED teaching rejection (never a bare validation error) - the
+    binding and translation are the shared `tool_contract.StoreToolBase`."""
 
     name: str = "hunts_store"
     description: str = (
@@ -414,6 +430,12 @@ class HuntsStoreTool(BaseTool):
         "never the whole surface."
     )
     args_schema: type[BaseModel] = HuntsStoreArgs
+    _args_model: type[BaseModel] = HuntsStoreArgs
+    _discriminator: str = "command"
+    _rejection_name: str = "hunts_store"
+    _write_intent_fields: tuple[str, ...] = _HUNTER_WRITE_INTENT_FIELDS
+    _require_write_intent: bool = True
+    _as_json: bool = True
 
     def __init__(self, *, store: HunterMemoryStore | None = None,
                  project_id: str = "", hunt_store: HuntStore | None = None,
@@ -423,32 +445,16 @@ class HuntsStoreTool(BaseTool):
         self._project_id = project_id
         self._hunt_store = hunt_store
 
-    def invoke(self, input, config=None, **kwargs):
-        """#209: translate the known schema drift (missing `command` with
-        write-intent) into a coded teaching rejection; everything else keeps
-        the D84-22 rejected-call canon."""
-        try:
-            return super().invoke(input, config=config, **kwargs)
-        except ValidationError as exc:
-            coded = _coded_teaching_rejection("hunts_store", input, exc)
-            if coded is not None:
-                return coded
-            raise
-
-    def _run(self, **kwargs: Any) -> str:
-        args = HuntsStoreArgs(**kwargs)
-        if self._store is None:
-            degraded = {
-                "command": args.command,
-                "error": "store_unavailable",
-                "degraded": True,
-            }
-            return json.dumps(degraded)
-        if args.command == "read":
-            return self._read(args)
-        return self._write(args)
+    def _unavailable(self, args: HuntsStoreArgs) -> str:
+        return json.dumps({
+            "command": args.command,
+            "error": "store_unavailable",
+            "degraded": True,
+        })
 
     def _read(self, args: HuntsStoreArgs) -> str:
+        if self._store is None:
+            return self._unavailable(args)
         if not args.fault_key:
             return json.dumps({"specs": [], "error": "invalid_args",
                                "detail": "read needs the fault_key identifier"})
@@ -470,6 +476,8 @@ class HuntsStoreTool(BaseTool):
         return json.dumps({"specs": specs})
 
     def _write(self, args: HuntsStoreArgs) -> str:
+        if self._store is None:
+            return self._unavailable(args)
         if not args.fault_key or not args.fault_keyword or not args.strategy_keyword:
             return json.dumps({"ok": False, "error": "invalid_args",
                                "detail": "write needs fault_key, fault_keyword, "
@@ -511,117 +519,128 @@ class HuntsStoreTool(BaseTool):
                            "status": spec.get("status")})
 
 
-class NotesTool(BaseTool):
+_NOTES_DESCRIPTION = (
+    "The hunt's notes seam - one note per fault covering all decisions that "
+    "concern it, more detailed than the rationale. Commands: read / write.\n"
+    "A write MUST set command=\"write\" (action is the write option - "
+    "append | update | delete - not the command); a read sets "
+    "command=\"read\".\n"
+    "write takes an action (append | update | delete), the fault_key "
+    "- the hunt's OWN config identity, the 3-part config key "
+    "<unit_id>_<CWE_ID>_<vulnerability_class> of "
+    "the hunt's own config (spaces preserved; a fault_key that does not "
+    "reference a persisted config returns the fault_key_mismatch error), a "
+    "note_name, the note kind (hypothesis_refusal | implicit_test_primitive "
+    "| freeform), and the body. evidence is a plain string (prose); "
+    "structured refs go in provenance, the typed object with source, run_id, "
+    "verdict_stub, and probe_refs (extra=forbid - a stray provenance key is "
+    "rejected). "
+    "update/delete on a missing note returns a denoted note_missing. read "
+    "is the grep-match read, latest-first, by the fault_key parent / key / "
+    "body keyword, optionally projected onto attributes."
+)
+
+
+class HunterMemoryNotesHandle:
+    """The hunter seam's store handle for the shared `notes` tool.
+
+    It owns the `notes.yaml` destination (via `HunterMemoryStore`) and the
+    harness-owned fault_key gate (#199). The shared algorithm never sees a path
+    or a store: the destination is derived from THIS handle, never a request
+    field."""
+
+    def __init__(self, store: HunterMemoryStore | None, project_id: str,
+                 hunt_store: HuntStore | None):
+        self._store = store
+        self._project_id = project_id
+        self._hunt_store = hunt_store
+
+    def read(self, query) -> dict:
+        if self._store is None:
+            return {"command": query.command, "error": "store_unavailable",
+                    "degraded": True}
+        if query.key:
+            violation = _fault_key_violation(
+                query.key, hunt_store=self._hunt_store,
+                project_id=self._project_id)
+            if violation is not None:
+                return {"notes": [], "error": "fault_key_mismatch",
+                        "fault_key": query.key, "detail": violation}
+        try:
+            notes = self._store.read_notes(
+                self._project_id,
+                parent_key=query.key or None,
+                key_keyword=query.key_keyword or None,
+                body_keyword=query.body_keyword or None,
+                attributes=query.attributes or None,
+            )
+        except Exception as exc:  # noqa: BLE001 - O4: read failure -> empty set
+            return {"notes": [], "error": "read_failed", "detail": str(exc)}
+        return {"notes": notes}
+
+    def write(self, request) -> dict:
+        if self._store is None:
+            return {"command": request.command, "error": "store_unavailable",
+                    "degraded": True}
+        if not request.key or not request.note_name:
+            return {"ok": False, "error": "invalid_args",
+                    "detail": "write needs fault_key and note_name"}
+        violation = _fault_key_violation(
+            request.key, hunt_store=self._hunt_store,
+            project_id=self._project_id)
+        if violation is not None:
+            return {"ok": False, "error": "fault_key_mismatch",
+                    "fault_key": request.key, "detail": violation}
+        try:
+            key = self._store.write_note(
+                self._project_id, action=request.action, fault_key=request.key,
+                note_name=request.note_name, kind=request.kind, body=request.body,
+                evidence=request.evidence, provenance=request.provenance)
+        except ValueError as exc:
+            return {"ok": False, "error": "invalid_args", "detail": str(exc)}
+        # O3: any other write failure raises to the harness, which warns and
+        # keeps serving.
+        if key is None:
+            return {"ok": False, "error": "note_missing",
+                    "fault_key": request.key, "note_name": request.note_name}
+        return {"ok": True, "key": key}
+
+
+class NotesTool(StoreNotesTool):
     """The notes body read/write over the store's `notes.yaml` (G6, spec 5): the
     SAME data contract as `hunts_store`, write options `append` / `update` /
     `delete`. Reads degrade to an empty set (O4); genuine write failures raise
     to the harness (O3); an absent store degrades fail-open. #209: a call
     omitting the required `command` with write-intent, passing a dict-valued
-    `evidence`, or a stray provenance key is a CODED teaching rejection."""
+    `evidence`, or a stray provenance key is a CODED teaching rejection.
+
+    This is the hunter binding of the ONE shared implementation
+    (`tool_contract.StoreNotesTool`): the read/write algorithm and the coded
+    rejection live in `tool_contract`, and the `notes.yaml` destination is
+    derived from the `HunterMemoryNotesHandle`."""
 
     name: str = "notes"
-    description: str = (
-        "The hunt's notes seam - one note per fault covering all decisions that "
-        "concern it, more detailed than the rationale. Commands: read / write.\n"
-        "A write MUST set command=\"write\" (action is the write option - "
-        "append | update | delete - not the command); a read sets "
-        "command=\"read\".\n"
-        "write takes an action (append | update | delete), the fault_key "
-        "- the hunt's OWN config identity, the 3-part config key "
-        "<unit_id>_<CWE_ID>_<vulnerability_class> of "
-        "the hunt's own config (spaces preserved; a fault_key that does not "
-        "reference a persisted config returns the fault_key_mismatch error), a "
-        "note_name, the note kind (hypothesis_refusal | implicit_test_primitive "
-        "| freeform), and the body. evidence is a plain string (prose); "
-        "structured refs go in provenance, the typed object with source, run_id, "
-        "verdict_stub, and probe_refs (extra=forbid - a stray provenance key is "
-        "rejected). "
-        "update/delete on a missing note returns a denoted note_missing. read "
-        "is the grep-match read, latest-first, by the fault_key parent / key / "
-        "body keyword, optionally projected onto attributes."
-    )
+    description: str = _NOTES_DESCRIPTION
     args_schema: type[BaseModel] = NotesArgs
 
     def __init__(self, *, store: HunterMemoryStore | None = None,
                  project_id: str = "", hunt_store: HuntStore | None = None,
                  **kwargs):
-        super().__init__(**kwargs)
-        self._store = store
-        self._project_id = project_id
-        self._hunt_store = hunt_store
+        super().__init__(
+            handle=HunterMemoryNotesHandle(store, project_id, hunt_store),
+            args_schema=NotesArgs,
+            name="notes",
+            description=_NOTES_DESCRIPTION,
+            discriminator="command",
+            as_json=True,
+            rejection_name="notes",
+            write_intent_fields=_NOTES_WRITE_INTENT_FIELDS,
+            require_write_intent=True,
+            **kwargs,
+        )
 
-    def invoke(self, input, config=None, **kwargs):
-        """#209: translate the known schema drift (missing `command` with
-        write-intent, dict-valued `evidence`, stray provenance key) into a coded
-        teaching rejection; everything else keeps the D84-22 rejected-call
-        canon."""
-        try:
-            return super().invoke(input, config=config, **kwargs)
-        except ValidationError as exc:
-            coded = _coded_teaching_rejection("notes", input, exc)
-            if coded is not None:
-                return coded
-            raise
-
-    def _run(self, **kwargs: Any) -> str:
-        args = NotesArgs(**kwargs)
-        if self._store is None:
-            return json.dumps({"command": args.command,
-                               "error": "store_unavailable", "degraded": True})
-        if args.command == "read":
-            return self._read(args)
-        return self._write(args)
-
-    def _read(self, args: NotesArgs) -> str:
-        if args.parent_key:
-            violation = _fault_key_violation(
-                args.parent_key, hunt_store=self._hunt_store,
-                project_id=self._project_id)
-            if violation is not None:
-                return json.dumps({"notes": [], "error": "fault_key_mismatch",
-                                   "fault_key": args.parent_key,
-                                   "detail": violation})
-        try:
-            notes = self._store.read_notes(
-                self._project_id,
-                parent_key=args.parent_key or None,
-                key_keyword=args.key_keyword or None,
-                body_keyword=args.body_keyword or None,
-                attributes=args.attributes or None,
-            )
-        except Exception as exc:  # noqa: BLE001 - O4: read failure -> empty set
-            return json.dumps({"notes": [], "error": "read_failed",
-                               "detail": str(exc)})
-        return json.dumps({"notes": notes})
-
-    def _write(self, args: NotesArgs) -> str:
-        if not args.fault_key or not args.note_name:
-            return json.dumps({"ok": False, "error": "invalid_args",
-                               "detail": "write needs fault_key and note_name"})
-        violation = _fault_key_violation(
-            args.fault_key, hunt_store=self._hunt_store, project_id=self._project_id)
-        if violation is not None:
-            return json.dumps({"ok": False, "error": "fault_key_mismatch",
-                               "fault_key": args.fault_key, "detail": violation})
-        try:
-            key = self._store.write_note(
-                self._project_id,
-                action=args.action, fault_key=args.fault_key,
-                note_name=args.note_name, kind=args.kind, body=args.body,
-                evidence=args.evidence,
-                provenance=(args.provenance.model_dump()
-                            if args.provenance is not None else None),
-            )
-        except ValueError as exc:
-            return json.dumps({"ok": False, "error": "invalid_args",
-                               "detail": str(exc)})
-        # O3: any other write failure raises to the harness, which warns and
-        # keeps serving.
-        if key is None:
-            return json.dumps({"ok": False, "error": "note_missing",
-                               "fault_key": args.fault_key,
-                               "note_name": args.note_name})
-        return json.dumps({"ok": True, "key": key})
+    def _extra_rejection(self, tool_input: dict, errors: list) -> dict | None:
+        return _notes_extra_rejection(tool_input, errors)
 
 
 class KbQueryTool(BaseTool):
@@ -911,6 +930,7 @@ __all__ = [
     "ExecArgs",
     "HuntsStoreTool",
     "NotesTool",
+    "HunterMemoryNotesHandle",
     "KbQueryTool",
     "ExecTool",
     "HttpHistorySearchTool",

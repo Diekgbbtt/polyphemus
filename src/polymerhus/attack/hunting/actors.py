@@ -36,6 +36,14 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Sequence
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field
+
+from polymerhus.attack.hunting.tool_contract import (
+    StoreToolBase,
+    build_notes_tool,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -206,6 +214,264 @@ class _TurnActor:
                 pass
 
 
+# The service keys of a config: the ONLY always-readable projection (G3).
+# The whole projected surface context is never readable through the store
+# tools - surface inspection defers to `graph_view`.
+_SERVICE_KEYS = ("unit_id", "fault_class", "vulnerability_class",
+                 "status", "hunt_id")
+
+_HUNTS_STORE_DESCRIPTION = (
+    "Read or write hunt configs through the per-project store (G3).\n"
+    "cmd='read': pass the config identifier `key` (a revival key "
+    "'<unit>::<fault>' or a full semantic key '<unit>::<CWE>::<class>') and "
+    "optionally the specific `attributes` you want; the service keys are "
+    "always returned - the projected surface context is NEVER readable "
+    "through this tool (inspect it with graph_view). The read surface "
+    "extends to the DOWNSTREAM sibling hunter-memory bucket (#202): the same "
+    "`key` also surfaces the hunter's TestImplementationSpecs + the Q16 "
+    "durable PodExport verdicts (the prior-hunt insights of a config).\n"
+    "cmd='write': pass the `hunt_config` object; its `status` attribute "
+    "('hypothesised' | 'ratified' | 'dropped') drives the write - hypothesised "
+    "creates the draft (a duplicate identity FAILS as the deduplication "
+    "signal, G4), ratified / dropped upsert the config in place (dropped "
+    "stays on disk, G6)."
+)
+
+_ORCH_NOTES_DESCRIPTION = (
+    "Read or write the project's notes (`memory.yaml`) through the "
+    "per-project store, the SAME data contract as hunts_store (G3).\n"
+    "cmd='read': pass `key` (a config identifier) and optionally the specific "
+    "`attributes`. cmd='write': pass ONE of the options - 'append' (a new "
+    "note for `key`; the response carries the NEXT pair's data plus the "
+    "restart verbatim - the pair end, G1), 'update' (amend the note with "
+    "`note_id`), or 'delete' (remove the note with `note_id`)."
+)
+
+
+class OrchestratorHuntsStoreArgs(BaseModel):
+    """The orchestrator `hunts_store` ARGS contract (G3): typed `read`/`write`
+    cmds over the produced/consumed config files. `extra="forbid"` plus a
+    coded teaching rejection on a missing `cmd` (#293)."""
+
+    cmd: Literal["read", "write"] = Field(
+        description="The operation: 'read' or 'write' (required).")
+    key: str = Field(
+        default="",
+        description="Read identifier: a revival key '<unit>::<fault>' or a "
+                    "full semantic key '<unit>::<CWE>::<class>'.")
+    attributes: list[str] = Field(
+        default_factory=list,
+        description="Read projection: return only these config attributes "
+                    "(surface_context is never readable here).")
+    hunt_config: dict = Field(
+        default_factory=dict,
+        description="Write payload: the hunt config object; its `status` "
+                    "attribute ('hypothesised' | 'ratified' | 'dropped') "
+                    "drives the write.")
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class OrchestratorNotesArgs(BaseModel):
+    """The orchestrator `notes` ARGS contract (G3): typed `read`/`write` cmds
+    over `memory.yaml`, the SAME data contract as `hunts_store`. Write options
+    `append` / `update` / `delete`; `extra="forbid"` plus a coded teaching
+    rejection on a missing `cmd` (#293)."""
+
+    cmd: Literal["read", "write"] = Field(
+        description="The operation: 'read' or 'write' (required).")
+    option: Literal["append", "update", "delete"] | None = Field(
+        default=None,
+        description="The write option: 'append' a new note, 'update' or "
+                    "'delete' an existing one.")
+    key: str = Field(
+        default="",
+        description="The config identifier the note(s) are keyed by.")
+    note: str | None = Field(
+        default=None, description="The note body (append / update).")
+    note_id: str | None = Field(
+        default=None, description="The note identifier for update / delete.")
+    attributes: list[str] = Field(
+        default_factory=list,
+        description="Read projection: return only these attributes per note.")
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class HuntStoreNotesHandle:
+    """The orchestrator seam's store handle for the shared `notes` tool.
+
+    It owns the `memory.yaml` destination (via `HuntStore`) and injects the
+    phase-transition verbatim. The shared algorithm never sees a path: the
+    destination is derived from THIS handle, never a request field."""
+
+    def __init__(self, store, project_id, phase_context=None,
+                 next_pair_hint=None):
+        self._store = store
+        self._project_id = project_id
+        self._phase_context = phase_context
+        self._next_pair_hint = next_pair_hint
+
+    def read(self, query) -> dict:
+        key = query.key
+        if not key:
+            return {"error": "notes read needs the config identifier (key)"}
+        if self._store is None:
+            return {"error": "no notes seam configured; notes unavailable",
+                    "key": key}
+        try:
+            notes_list = list(self._store.read_notes(self._project_id, key))
+        except Exception as exc:  # noqa: BLE001 - fail-open
+            return {"error": f"notes read degraded: {exc}", "key": key}
+        requested = list(query.attributes)
+        out = []
+        for record in notes_list:
+            projected = {"note_id": record.get("note_id"),
+                         "revival_key": record.get("revival_key"),
+                         "note": record.get("note")}
+            for attr in requested:
+                if attr in record:
+                    projected[attr] = record[attr]
+            out.append({k: v for k, v in projected.items() if v is not None})
+        return {"key": key, "notes": out}
+
+    def write(self, request) -> dict:
+        option = request.action
+        if self._store is None:
+            return {"error": "no notes seam configured; note not written",
+                    "option": option}
+        try:
+            if option == "append":
+                if not request.key or not request.note:
+                    return {"error": "notes append needs key and note"}
+                record = self._store.append_note(
+                    self._project_id, request.key, request.note)
+                next_pair = None
+                if self._phase_context is not None:
+                    next_pair = getattr(self._phase_context, "next_pair", None)
+                return {"recorded": True, "key": request.key,
+                        "note_id": record.get("note_id"),
+                        "next_pair": next_pair,
+                        "hint": self._next_pair_hint}
+            if option == "update":
+                if not request.note_id or request.note is None:
+                    return {"error": "notes update needs note_id and note"}
+                ok = self._store.update_note(
+                    self._project_id, request.note_id, request.note)
+                return {"updated": ok, "note_id": request.note_id}
+            if not request.note_id:
+                return {"error": "notes delete needs note_id"}
+            ok = self._store.delete_note(self._project_id, request.note_id)
+            return {"deleted": ok, "note_id": request.note_id}
+        except Exception as exc:  # noqa: BLE001 - fail-open, never into the turn
+            return {"error": f"notes {option} degraded: {exc}"}
+
+
+class _OrchestratorHuntsStoreTool(StoreToolBase):
+    """The orchestrator's `hunts_store` binding: the shared store-tool base
+    (typed schema + coded teaching rejection + read/write dispatch) over the
+    per-project `HuntStore` seam."""
+
+    name: str = "hunts_store"
+    description: str = _HUNTS_STORE_DESCRIPTION
+    args_schema: type[BaseModel] = OrchestratorHuntsStoreArgs
+    _args_model: type[BaseModel] = OrchestratorHuntsStoreArgs
+    _discriminator: str = "cmd"
+    _rejection_name: str = "hunts_store"
+    _require_write_intent: bool = False
+    _as_json: bool = False
+
+    def __init__(self, *, store_seam=None, project_id: str | None = None,
+                 **data):
+        super().__init__(**data)
+        self._store_seam = store_seam
+        self._project_id = project_id
+
+    def _read(self, args: OrchestratorHuntsStoreArgs) -> dict:
+        key = args.key
+        if not key:
+            return {"error": "hunts_store read needs the config identifier (key)"}
+        store = self._store_seam
+        if store is None:
+            return {"error": "no hunt store configured; configs unavailable",
+                    "key": key}
+        try:
+            read_fn = getattr(store, "read_configs_by_key", None)
+            if not callable(read_fn):
+                return {"error": "no hunt store configured; configs unavailable",
+                        "key": key}
+            configs = list(read_fn(self._project_id, key))
+        except Exception as exc:  # noqa: BLE001 - fail-open (O4)
+            logger.warning("hunts_store read degraded for %s (%s)", key, exc)
+            return {"error": f"hunts_store read degraded: {exc}", "key": key}
+        requested = list(args.attributes or [])
+        out: list[dict] = []
+        for cfg in configs:
+            projected = {k: cfg.get(k) for k in _SERVICE_KEYS
+                         if cfg.get(k) is not None}
+            for attr in requested:
+                if attr == "surface_context":
+                    # the whole projected surface context is NEVER readable
+                    # through the store tools (G3)
+                    continue
+                if attr in cfg:
+                    projected[attr] = cfg[attr]
+            out.append(projected)
+        return {"key": key, "configs": out}
+
+    def _write(self, args: OrchestratorHuntsStoreArgs) -> dict:
+        from polymerhus.attack.hunting.hunt_orchestrator import (  # noqa: PLC0415
+            NEXT_NOTE_HINT,
+            NEXT_RATIFY_HINT,
+            DuplicateConfigError,
+        )
+
+        hunt_config = args.hunt_config
+        if not isinstance(hunt_config, dict) or not hunt_config:
+            return {"error": "hunts_store write needs the hunt_config object"}
+        status = str(hunt_config.get("status") or "hypothesised")
+        if status not in ("hypothesised", "ratified", "dropped"):
+            return {"error": f"unknown config status {status!r}; known: "
+                             "hypothesised, ratified, dropped"}
+        store = self._store_seam
+        if store is None:
+            return {"error": "no hunt store configured; config not written",
+                    "status": status}
+        try:
+            if status == "hypothesised":
+                write_fn = getattr(store, "write_config", None)
+                if not callable(write_fn):
+                    return {"error": "no hunt store configured; config not "
+                                     "written", "status": status}
+                key = write_fn(self._project_id, hunt_config)
+                return {"acknowledged": True, "status": status, "key": key,
+                        "hint": NEXT_RATIFY_HINT}
+            update_fn = getattr(store, "update_config", None)
+            if not callable(update_fn):
+                return {"error": "no hunt store configured; config not written",
+                        "status": status}
+            key = update_fn(self._project_id, hunt_config)
+            if status == "ratified":
+                # G1 correction: the ratification response carries ONLY the
+                # strongly-take-notes verbatim - the next pair is NOT fed here.
+                return {"acknowledged": True, "status": status, "key": key,
+                        "hint": NEXT_NOTE_HINT}
+            # a dropped write is ratification-internal (G6): the model keeps
+            # ratifying the surviving configs.
+            return {"acknowledged": True, "status": status, "key": key,
+                    "hint": NEXT_RATIFY_HINT}
+        except DuplicateConfigError as exc:
+            # G4: the storage-layer deduplication signal - the model interprets
+            # it (merges or refreshes instead of duplicating).
+            logger.warning("hunts_store write blocked by the novelty gate (%s)",
+                           exc)
+            return {"error": str(exc), "duplicate": True, "status": status}
+        except Exception as exc:  # noqa: BLE001 - fail-open, never into the turn
+            logger.warning("hunts_store write degraded (%s)", exc)
+            return {"error": f"hunts_store write degraded: {exc}",
+                    "status": status}
+
+
 def build_orchestrator_tool_surface(tools, *, run_id: str, project_id: str | None):
     """The model-facing tool surface bound onto the orchestrator's session
     agent (spec 3.4, amended by #167/G3): EXACTLY the three tools `hunts_store`,
@@ -241,25 +507,13 @@ def build_orchestrator_tool_surface(tools, *, run_id: str, project_id: str | Non
     never raising into the turn. The seam bodies are constructed lazily (this
     module imports no driver at import); the tools are JSON-serialisable
     callables a structured-output session turn can bind."""
-    from langchain_core.tools import tool
-
     from polymerhus.attack.hunting.hunt_orchestrator import (  # noqa: PLC0415
-        DuplicateConfigError,
-        NEXT_NOTE_HINT,
         NEXT_PAIR_HINT,
-        NEXT_RATIFY_HINT,
     )
 
     graph_view_seam = getattr(tools, "graph_view", None)
     store_seam = getattr(tools, "store_reads", None)
     phase_context = getattr(tools, "phase_context", None)
-    surface: list = []
-
-    # The service keys of a config: the ONLY always-readable projection (G3).
-    # The whole projected surface context is never readable through the store
-    # tools - surface inspection defers to `graph_view`.
-    _SERVICE_KEYS = ("unit_id", "fault_class", "vulnerability_class",
-                     "status", "hunt_id")
 
     # The ONE shared graph_view tool (#197): bound at all three seams, the
     # usage contract (schema + query-language primitives + read-only guard +
@@ -271,185 +525,24 @@ def build_orchestrator_tool_surface(tools, *, run_id: str, project_id: str | Non
     read_fn = getattr(graph_view_seam, "read", None) if graph_view_seam is not None else None
     graph_view = build_graph_view_tool(read_fn if callable(read_fn) else None)
 
-    @tool
-    def hunts_store(cmd: str, *, hunt_config: dict | None = None,
-                    key: str | None = None,
-                    attributes: list[str] | None = None) -> dict:
-        """Read or write hunt configs through the per-project store (G3).
-        cmd='read': pass the config identifier `key` (a revival key
-        '<unit>::<fault>' or a full semantic key '<unit>::<CWE>::<class>') and
-        optionally the specific `attributes` you want; the service keys are
-        always returned - the projected surface context is NEVER readable
-        through this tool (inspect it with graph_view). The read surface
-        extends to the DOWNSTREAM sibling hunter-memory bucket (#202): the
-        same `key` also surfaces the hunter's TestImplementationSpecs + the
-        Q16 durable PodExport verdicts (the prior-hunt insights of a config).
-        cmd='write': pass the
-        `hunt_config` object; its `status` attribute ('hypothesised' |
-        'ratified' | 'dropped') drives the write - hypothesised creates the
-        draft (a duplicate identity FAILS as the deduplication signal, G4),
-        ratified / dropped upsert the config in place (dropped stays on disk,
-        G6)."""
-        if cmd == "read":
-            if not key:
-                return {"error": "hunts_store read needs the config identifier (key)"}
-            if store_seam is None:
-                return {"error": "no hunt store configured; configs unavailable",
-                        "key": key}
-            try:
-                read_fn = getattr(store_seam, "read_configs_by_key", None)
-                if not callable(read_fn):
-                    return {"error": "no hunt store configured; configs unavailable",
-                            "key": key}
-                configs = list(read_fn(project_id, key))
-            except Exception as exc:  # noqa: BLE001 - fail-open (O4)
-                logger.warning("hunts_store read degraded for %s (%s)", key, exc)
-                return {"error": f"hunts_store read degraded: {exc}", "key": key}
-            requested = list(attributes or [])
-            out: list[dict] = []
-            for cfg in configs:
-                projected = {k: cfg.get(k) for k in _SERVICE_KEYS
-                             if cfg.get(k) is not None}
-                for attr in requested:
-                    if attr == "surface_context":
-                        # the whole projected surface context is NEVER
-                        # readable through the store tools (G3)
-                        continue
-                    if attr in cfg:
-                        projected[attr] = cfg[attr]
-                out.append(projected)
-            return {"key": key, "configs": out}
-        if cmd == "write":
-            if not isinstance(hunt_config, dict) or not hunt_config:
-                return {"error": "hunts_store write needs the hunt_config object"}
-            status = str(hunt_config.get("status") or "hypothesised")
-            if status not in ("hypothesised", "ratified", "dropped"):
-                return {"error": f"unknown config status {status!r}; known: "
-                                 "hypothesised, ratified, dropped"}
-            if store_seam is None:
-                return {"error": "no hunt store configured; config not written",
-                        "status": status}
-            try:
-                if status == "hypothesised":
-                    write_fn = getattr(store_seam, "write_config", None)
-                    if not callable(write_fn):
-                        return {"error": "no hunt store configured; config not written",
-                                "status": status}
-                    key = write_fn(project_id, hunt_config)
-                    return {"acknowledged": True, "status": status, "key": key,
-                            "hint": NEXT_RATIFY_HINT}
-                update_fn = getattr(store_seam, "update_config", None)
-                if not callable(update_fn):
-                    return {"error": "no hunt store configured; config not written",
-                            "status": status}
-                key = update_fn(project_id, hunt_config)
-                if status == "ratified":
-                    # G1 correction: the ratification response carries ONLY the
-                    # strongly-take-notes verbatim - the next pair is NOT fed
-                    # here.
-                    return {"acknowledged": True, "status": status, "key": key,
-                            "hint": NEXT_NOTE_HINT}
-                # a dropped write is ratification-internal (G6): the model
-                # keeps ratifying the surviving configs.
-                return {"acknowledged": True, "status": status, "key": key,
-                        "hint": NEXT_RATIFY_HINT}
-            except DuplicateConfigError as exc:
-                # G4: the storage-layer deduplication signal - the model
-                # interprets it (merges or refreshes instead of duplicating).
-                logger.warning("hunts_store write blocked by the novelty gate (%s)",
-                               exc)
-                return {"error": str(exc), "duplicate": True, "status": status}
-            except Exception as exc:  # noqa: BLE001 - fail-open, never into the turn
-                logger.warning("hunts_store write degraded (%s)", exc)
-                return {"error": f"hunts_store write degraded: {exc}",
-                        "status": status}
-        return {"error": f"unknown cmd {cmd!r}; known: read, write"}
-
-    @tool
-    def notes(cmd: str, *, option: str | None = None, key: str | None = None,
-              note: str | None = None, note_id: str | None = None,
-              attributes: list[str] | None = None) -> dict:
-        """Read or write the project's notes (`memory.yaml`) through the
-        per-project store, the SAME data contract as hunts_store (G3).
-        cmd='read': pass `key` (a config identifier) and optionally the
-        specific `attributes`. cmd='write': pass ONE of the options - 'append'
-        (a new note for `key`; the response carries the NEXT pair's data plus
-        the restart verbatim - the pair end, G1), 'update' (amend the note with
-        `note_id`), or 'delete' (remove the note with `note_id`)."""
-        if cmd == "read":
-            if not key:
-                return {"error": "notes read needs the config identifier (key)"}
-            if store_seam is None:
-                return {"error": "no notes seam configured; notes unavailable",
-                        "key": key}
-            try:
-                read_fn = getattr(store_seam, "read_notes", None)
-                if not callable(read_fn):
-                    return {"error": "no notes seam configured; notes unavailable",
-                            "key": key}
-                notes_list = list(read_fn(project_id, key))
-            except Exception as exc:  # noqa: BLE001 - fail-open
-                logger.warning("notes read degraded for %s (%s)", key, exc)
-                return {"error": f"notes read degraded: {exc}", "key": key}
-            requested = list(attributes or [])
-            out = []
-            for record in notes_list:
-                projected = {"note_id": record.get("note_id"),
-                             "revival_key": record.get("revival_key"),
-                             "note": record.get("note")}
-                for attr in requested:
-                    if attr in record:
-                        projected[attr] = record[attr]
-                out.append({k: v for k, v in projected.items()
-                            if v is not None})
-            return {"key": key, "notes": out}
-        if cmd == "write":
-            if option not in ("append", "update", "delete"):
-                return {"error": "notes write needs an option: "
-                                 "append, update, or delete"}
-            if store_seam is None:
-                return {"error": "no notes seam configured; note not written",
-                        "option": option}
-            try:
-                if option == "append":
-                    if not key or not note:
-                        return {"error": "notes append needs key and note"}
-                    append = getattr(store_seam, "append_note", None)
-                    if not callable(append):
-                        return {"error": "no notes seam configured; note not written",
-                                "option": option}
-                    record = append(project_id, key, note)
-                    next_pair = None
-                    if phase_context is not None:
-                        next_pair = getattr(phase_context, "next_pair", None)
-                    return {"recorded": True, "key": key,
-                            "note_id": record.get("note_id"),
-                            "next_pair": next_pair,
-                            "hint": NEXT_PAIR_HINT}
-                if option == "update":
-                    if not note_id or note is None:
-                        return {"error": "notes update needs note_id and note"}
-                    update = getattr(store_seam, "update_note", None)
-                    if not callable(update):
-                        return {"error": "no notes seam configured; note not written",
-                                "option": option}
-                    ok = update(project_id, note_id, note)
-                    return {"updated": ok, "note_id": note_id}
-                if not note_id:
-                    return {"error": "notes delete needs note_id"}
-                delete = getattr(store_seam, "delete_note", None)
-                if not callable(delete):
-                    return {"error": "no notes seam configured; note not written",
-                            "option": option}
-                ok = delete(project_id, note_id)
-                return {"deleted": ok, "note_id": note_id}
-            except Exception as exc:  # noqa: BLE001 - fail-open, never into the turn
-                logger.warning("notes %s degraded (%s)", option, exc)
-                return {"error": f"notes {option} degraded: {exc}"}
-        return {"error": f"unknown cmd {cmd!r}; known: read, write"}
-
-    surface.extend([hunts_store, notes, graph_view])
-    return surface
+    # The store tools ride the shared contract (#293): a typed schema with a
+    # coded teaching rejection, and ONE shared `notes` implementation bound to
+    # this seam's store handle (the `memory.yaml` destination is derived from
+    # the handle, never a request field).
+    hunts_store = _OrchestratorHuntsStoreTool(
+        store_seam=store_seam, project_id=project_id)
+    notes = build_notes_tool(
+        HuntStoreNotesHandle(store_seam, project_id, phase_context,
+                             next_pair_hint=NEXT_PAIR_HINT),
+        args_schema=OrchestratorNotesArgs,
+        name="notes",
+        description=_ORCH_NOTES_DESCRIPTION,
+        discriminator="cmd",
+        as_json=False,
+        rejection_name="notes",
+        require_write_intent=False,
+    )
+    return [hunts_store, notes, graph_view]
 
 
 class HuntOrchestratorActor(_TurnActor):

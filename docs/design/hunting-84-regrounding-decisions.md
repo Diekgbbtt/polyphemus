@@ -304,6 +304,13 @@ CODED rejection - a JSON error object with a machine code (mirroring `fault_key_
 hunter `notes` / `hunts_store` tools and the pod `note` tool (#209). The typed parameter structure rides the
 tool-calling protocol's own schema (a typed sub-model for `provenance`), never prose-only description.
 
+**#293 supersedes the per-seam copies:** the #209 disposition left the orchestrator's `hunts_store` / `notes`
+closures as-is and the rejection helper duplicated per seam. As of #293 the helper, the binding base
+(`StoreToolBase`), and the ONE shared `notes` implementation live in
+`src/polymerhus/attack/hunting/tool_contract.py`; the orchestrator migrated to typed schemas + the same coded
+rejection, and the pod keeps its own `NoteToolSpec` data contract while riding the shared base. See
+`docs/design/hunting-tools-design.md` #293.
+
 ---
 
 ## D84-23 - X4 Triager input = note + triager_context + variant_refs, no RunnerStep (VERDICTED; answer to X4's question)

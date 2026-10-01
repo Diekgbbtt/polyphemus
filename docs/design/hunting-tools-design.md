@@ -50,6 +50,12 @@ The contract is a single constant rendered into the tool's description, so no ag
 `docs/design/hunting-164-state-graph-spec.md` §5/§6 and
 `docs/design/hunting-67-test-executor-pod-spec.md` §2, amended by the same change).*
 
+*Superseded in part by #293: the coded teaching rejection and the tool binding
+are now single-sourced in `tool_contract.py`, the orchestrator closures migrated
+to the same discipline, and `notes` is ONE shared implementation - see the #293
+section below. The `NoteProvenance` typed slot and the hunter/pod data contracts
+recorded here remain in force.*
+
 The store-writing tools (`hunts_store` / `notes` on the hunter surface,
 `note` on the pod surface) share a contract pattern. The #209 defects surfaced
 two ways the pattern drifted, and the fix is a shared contract discipline for
@@ -98,6 +104,50 @@ all three tools:
 - `operation: str = "write"` already defaults to write (a tolerated
   discriminator); the SAME coded teaching rejection applies to a malformed
   call so the pod loop self-corrects instead of degrading silently.
+
+### #293 - the shared contract base and the orchestrator migration (SUPERSEDES the #209 disposition)
+
+*Status: DRAFT (records the #293 disposition; the authoritative spec sections
+are `hunting-orchestrator-candidates-rewrite-spec.md` §3.4,
+`hunting-164-state-graph-spec.md` §5/§6, and
+`hunting-67-test-executor-pod-spec.md` §2, amended by the same change).*
+
+#209 fixed the hunter and pod seams but left the orchestrator's `hunts_store` /
+`notes` as prose-only `@tool` closures with an INFERRED schema and no coded
+rejection; an empty-argument call surfaced a bare `1 validation error for
+hunts_store` (#286). That disposition is now SUPERSEDED, and the discipline is
+single-sourced:
+
+1. **One shared contract module** (`attack/hunting/tool_contract.py`):
+   - `coded_teaching_rejection` - the shared translation of a known
+     schema-drift `ValidationError` (a missing required discriminator, or an
+     out-of-enum value) into the coded JSON rejection naming the discriminator
+     and the known commands. The hunter's local `_coded_teaching_rejection`
+     copy and `_WRITE_INTENT_FIELDS` are REMOVED.
+   - `StoreToolBase` - the shared binding base: it validates through the tool's
+     own `args_schema`, translates the known drift before the turn sees a
+     raise, and dispatches read/write on the declared discriminator. Every
+     store tool (orchestrator, hunter, pod) rides it; the pod keeps its OWN
+     `NoteToolSpec` contract but uses the shared binding/rejection base.
+   - `StoreNotesTool` / `build_notes_tool` - ONE `notes` implementation bound
+     at the orchestrator and hunter seams through a caller-bound
+     `NotesStoreHandle`. The filesystem destination (orchestrator `memory.yaml`
+     via `HuntStore`, hunter `notes.yaml` via `HunterMemoryStore`) is derived
+     from the HANDLE, never a request field; the typed surface stays loose
+     (shared minimal field names) so each seam keeps its own schema.
+2. **Typed orchestrator schemas.** `OrchestratorHuntsStoreArgs` /
+   `OrchestratorNotesArgs` are pydantic `BaseModel`s with `extra="forbid"`,
+   every field a `Field(description=...)`, and the discriminators as `Literal`
+   (`cmd: Literal["read","write"]`, `option` a `Literal` enum). The JSON schema
+   emitted by `convert_to_openai_tool` therefore carries the enums and the
+   descriptions - the old `"cmd": {"type":"string"}` cannot recur.
+3. **Uniform rejection.** `hunts_store.invoke({})` / `notes.invoke({})` return
+   the coded teaching rejection naming `cmd` and the known commands - never a
+   bare pydantic error. The orchestrator keeps exactly the three tools
+   (`hunts_store` / `notes` / `graph_view`); the `hunts_store` write algorithm
+   (`hypothesised` create / `ratified` / `dropped` upsert, the G4 dedup
+   signal, the G1 phase-transition verbatims) is unchanged in behaviour, only
+   re-homed into a typed `BaseTool`.
 
 ## The `kb_query` / `query_lightrag` tool (#207): one canonical description + per-stage observability
 
@@ -148,8 +198,8 @@ log, so its observation metadata is the same shape for consistency.
 ## Open / not yet designed
 
 - The `exec` tool contract (`exec` remains a partially future section).
-- Whether the orchestrator's `hunts_store` / `notes` closures migrate into this
-  shared module. The orchestrator closures (`actors.py::hunts_store` /
-  `::notes`) already use a required positional `cmd` + a coded `unknown cmd`
-  rejection - a stricter contract than the hunter's - and are left as-is by
-  #209.
+- The orchestrator's `hunts_store` / `notes` closures MIGRATED into the shared
+  module (`tool_contract.py`) as of #293 - see the #293 section above. The
+  orchestrator now uses the same typed-schema + coded-teaching-rejection
+  discipline as the hunter and pod, and the `notes` implementation is shared
+  through a caller-bound store handle.
