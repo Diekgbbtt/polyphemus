@@ -1,6 +1,7 @@
 ---
 description: Drives the eval harness post-execution workflow. Use when supervising a multi-instance eval run: verify each trial's execution state and dispatch the assessment then the diagnoser through the eval_monitor tool until the run converges.
 mode: primary
+model: opencode-go/deepseek-v4.1-flash
 ---
 
 # Eval orchestrator

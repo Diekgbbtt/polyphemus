@@ -39,4 +39,7 @@ def test_every_role_agent_exists() -> None:
 
 
 def test_orchestrator_agent_still_ships() -> None:
-    assert (AGENT_DIR / "eval-orchestrator.md").is_file()
+    text = (AGENT_DIR / "eval-orchestrator.md").read_text(encoding="utf-8")
+
+    assert "eval/prompts/orchestrator.md" in text
+    assert "model: opencode-go/deepseek-v4.1-flash" in text
