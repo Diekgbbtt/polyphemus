@@ -17,6 +17,7 @@ Source: docs/design/hunting-67-orchestrator-spec.md section 6.3.
 """
 from __future__ import annotations
 
+import logging
 import subprocess
 import uuid
 
@@ -35,11 +36,14 @@ from polymerhus.attack.hunting.hunt_orchestrator import (
     ReadOnlyGraphView,
     ReadOnlyGraphViewError,
     Witness,
+    mint_hunt_config,
     revival_key,
     run_orchestration,
 )
 from polymerhus.attack.hunting.hunt_store import HuntStore
 from tests.conftest import neo4j_target, wait_for
+
+logger = logging.getLogger(__name__)
 
 SERVICE_A = "Service:slug:a"
 SYSTEM_B = "System:key:b"
@@ -162,22 +166,87 @@ def _recording_hypothesise(seen: dict):
     return hypothesise
 
 
-def _ratify_drafts(inp) -> RatifyDecision:
-    """The fixture ratify turn: every draft ends ratified."""
-    configs = []
-    for draft in inp.configs:
-        amended = draft.model_copy(deep=True)
-        amended.status = "ratified"
-        configs.append(amended)
-    return RatifyDecision(configs=configs)
+def _agent_seams(tools, project_id: str):
+    """The agent-sole write emulation (#294): the real `hunts_store` / `notes`
+    tools persist through the pass's wrapped store seam, so an injected phase
+    seam must do the same or nothing persists. Each write catches a store
+    failure per call (the tool's fail-open O3) so a later write can still land;
+    a caught failure is still counted on the wrapped seam for the report."""
+    def _safe_write(method, *args):
+        try:
+            return method(*args)
+        except Exception as exc:  # noqa: BLE001 - the tool degrades fail-open (O3)
+            logger.warning("agent store write degraded (tool fail-open): %s", exc)
+            return None
+
+    def _prior_insights(unit_id, fault_class):
+        """The downstream prior-hunt insights the real agent reads through
+        `hunts_store(read)` (the sibling hunter-memory records, #202)."""
+        key = revival_key(unit_id, fault_class)
+        try:
+            specs = list(tools.store_reads.read_hunter_specs(project_id, key))
+            notes = list(tools.store_reads.read_hunter_notes(project_id, key))
+            return specs + notes
+        except Exception:  # noqa: BLE001 - O4: a failing read degrades empty
+            return []
+
+    def wrap_hypothesise(hypothesise_fn):
+        def agent_hypothesise(inp):
+            decision = hypothesise_fn(inp)
+            for direction in getattr(decision, "directions", None) or []:
+                if not getattr(direction, "carried", False):
+                    continue
+                candidate = next(
+                    (c for c in inp.candidates
+                     if (c.unit_id, c.fault_class)
+                     == (direction.unit_id, direction.fault_class)), None)
+                if candidate is None:
+                    continue
+                insights = _prior_insights(direction.unit_id, direction.fault_class)
+                for config in mint_hunt_config(
+                        direction, candidate, uuid.uuid4().hex,
+                        surface_context={}, prior_hunt_insights=insights):
+                    _safe_write(tools.store_reads.write_config, project_id, config)
+            return decision
+        return agent_hypothesise
+
+    def ratify(inp) -> RatifyDecision:
+        """The agent's `hunts_store(write, status='ratified')` emulation."""
+        configs = []
+        for draft in inp.configs:
+            amended = draft.model_copy(deep=True)
+            amended.status = "ratified"
+            _safe_write(tools.store_reads.update_config, project_id, amended)
+            configs.append(amended)
+        return RatifyDecision(configs=configs)
+
+    def note(inp) -> NoteDecision:
+        """The agent's `notes(write, option='append')` emulation."""
+        key = revival_key(inp.pair.unit_id, inp.pair.fault_class)
+        _safe_write(tools.store_reads.append_note, project_id, key,
+                    "fixture note walking the reasoning")
+        return NoteDecision(notes=[NoteRecord(
+            key=key, note="fixture note walking the reasoning")])
+
+    return wrap_hypothesise, ratify, note
 
 
-def _note_pair(inp) -> NoteDecision:
-    """The fixture note turn: one note for the pair."""
-    return NoteDecision(notes=[NoteRecord(
-        key=revival_key(inp.pair.unit_id, inp.pair.fault_class),
-        note="fixture note walking the reasoning",
-    )])
+def _run_pass(project_id: str, run_id: str, candidates, hypothesise_fn, *,
+              store=None, graph_view=None, tools=None, ratify_fn=None,
+              note_fn=None, **kwargs):
+    """Run ONE pass with the agent-sole write emulation (#294): the injected
+    phase seams write through the pass's wrapped store seam exactly as the real
+    `hunts_store` / `notes` tools do."""
+    if tools is None:
+        tools = _tools(store, project_id, graph_view=graph_view)
+    wrap, agent_ratify, agent_note = _agent_seams(tools, project_id)
+    return run_orchestration(
+        project_id=project_id, run_id=run_id, candidates=candidates, tools=tools,
+        hypothesise_fn=wrap(hypothesise_fn),
+        ratify_fn=ratify_fn or agent_ratify,
+        note_fn=note_fn or agent_note,
+        **kwargs,
+    )
 
 
 # --- E3: H1 full run against the REAL graph (grounding + lifecycle + read-only)
@@ -187,13 +256,10 @@ def test_E3_full_run_grounds_in_real_graph_and_never_writes(session, project, tm
     seen: dict = {}
     before = _graph_counts(session, project)
 
-    report = run_orchestration(
-        project_id=project, run_id="run-e3",
-        candidates=[_candidate(SERVICE_A, FAULT_X), _candidate(SYSTEM_B, FAULT_Y)],
-        tools=_tools(store, project),
-        hypothesise_fn=_recording_hypothesise(seen),
-        ratify_fn=_ratify_drafts,
-        note_fn=_note_pair,
+    report = _run_pass(
+        project, "run-e3",
+        [_candidate(SERVICE_A, FAULT_X), _candidate(SYSTEM_B, FAULT_Y)],
+        _recording_hypothesise(seen), store=store,
     )
 
     assert report.pairs_processed == 2
@@ -241,14 +307,10 @@ def test_E4_dispatch_stage_is_removed_and_graph_still_untouched(session, project
     before = _graph_counts(session, project)
     yellow = _candidate(SERVICE_A, FAULT_X, verdict="insufficient-evidence")
 
-    report = run_orchestration(
-        project_id=project, run_id="run-e4",
-        candidates=[yellow],
-        tools=_tools(store, project),
-        hypothesise_fn=lambda inp: GateDecision(
-            directions=[_carry(c) for c in inp.candidates]),
-        ratify_fn=_ratify_drafts,
-        note_fn=_note_pair,
+    report = _run_pass(
+        project, "run-e4", [yellow],
+        lambda inp: GateDecision(directions=[_carry(c) for c in inp.candidates]),
+        store=store,
     )
 
     assert report.pairs_processed == 1
@@ -272,14 +334,11 @@ def test_E5_ratify_failure_keeps_the_drafts_hypothesised(project, tmp_path, capl
     def boom(inp):
         raise RuntimeError("ratify turn exhausted")
 
-    report = run_orchestration(
-        project_id=project, run_id="run-e5",
-        candidates=[_candidate(SERVICE_A, FAULT_X), _candidate(SYSTEM_B, FAULT_Y)],
-        tools=_tools(store, project),
-        hypothesise_fn=lambda inp: GateDecision(
-            directions=[_carry(c) for c in inp.candidates]),
-        ratify_fn=boom,
-        note_fn=_note_pair,
+    report = _run_pass(
+        project, "run-e5",
+        [_candidate(SERVICE_A, FAULT_X), _candidate(SYSTEM_B, FAULT_Y)],
+        lambda inp: GateDecision(directions=[_carry(c) for c in inp.candidates]),
+        store=store, ratify_fn=boom,
     )
     assert report.pairs_processed == 2
     assert report.configs_hypothesised == 2
@@ -296,16 +355,13 @@ def test_E6_deterministic_prune_before_the_gate(project, tmp_path):
     store = HuntStore(tmp_path)
     seen: dict = {}
 
-    report = run_orchestration(
-        project_id=project, run_id="run-e6",
-        candidates=[
+    report = _run_pass(
+        project, "run-e6",
+        [
             _candidate(SERVICE_A, FAULT_X),
             _candidate(SYSTEM_B, FAULT_Y, verdict="does-not-apply"),
         ],
-        tools=_tools(store, project),
-        hypothesise_fn=_recording_hypothesise(seen),
-        ratify_fn=_ratify_drafts,
-        note_fn=_note_pair,
+        _recording_hypothesise(seen), store=store,
     )
 
     assert report.pairs_processed == 1
@@ -320,10 +376,9 @@ def test_E6_deterministic_prune_before_the_gate(project, tmp_path):
 
 def test_E7_empty_candidate_set_is_an_empty_pass(project, tmp_path):
     store = HuntStore(tmp_path)
-    report = run_orchestration(
-        project_id=project, run_id="run-e7",
-        candidates=[], tools=_tools(store, project),
-        hypothesise_fn=lambda inp: GateDecision(directions=[]),
+    report = _run_pass(
+        project, "run-e7", [],
+        lambda inp: GateDecision(directions=[]), store=store,
     )
     assert report.pairs_processed == 0
     # the empty pass persists nothing in the memory topology (the per-run
@@ -336,19 +391,15 @@ def test_E7_empty_candidate_set_is_an_empty_pass(project, tmp_path):
 
 def test_E8_duplicate_and_malformed_dropped_counted(project, tmp_path):
     store = HuntStore(tmp_path)
-    report = run_orchestration(
-        project_id=project, run_id="run-e8",
-        candidates=[
+    report = _run_pass(
+        project, "run-e8",
+        [
             _candidate(SERVICE_A, FAULT_X),
             _candidate(SERVICE_A, FAULT_X),  # duplicate
             _candidate(SYSTEM_B, FAULT_Y, llm_witness=None),  # malformed
         ],
-        tools=_tools(store, project),
-        hypothesise_fn=lambda inp: GateDecision(
-            directions=[_carry(c) for c in inp.candidates]),
-        ratify_fn=_ratify_drafts,
-        note_fn=_note_pair,
-        known_faults=[FAULT_X, FAULT_Y],
+        lambda inp: GateDecision(directions=[_carry(c) for c in inp.candidates]),
+        store=store, known_faults=[FAULT_X, FAULT_Y],
     )
     assert report.pairs_processed == 1
     assert report.configs_ratified == 1
@@ -366,13 +417,10 @@ def test_E9_gate_grounds_on_materialisation_never_prunes(project, tmp_path):
     store = HuntStore(tmp_path)
     seen: dict = {}
 
-    report = run_orchestration(
-        project_id=project, run_id="run-e9",
-        candidates=[_candidate(SERVICE_A, FAULT_X)],
-        tools=_tools(store, project),
-        hypothesise_fn=_recording_hypothesise(seen),
-        ratify_fn=_ratify_drafts,
-        note_fn=_note_pair,
+    report = _run_pass(
+        project, "run-e9",
+        [_candidate(SERVICE_A, FAULT_X)],
+        _recording_hypothesise(seen), store=store,
     )
 
     assert seen["kb_degraded"] is False  # the direct materialisation read is the gate's grounding
@@ -408,21 +456,22 @@ class _FlakyStore(HuntStore):
 
 
 def test_E10_store_write_failure_degrades_to_warning(project, tmp_path, caplog):
-    flaky = _FlakyStore(tmp_path, fail_first=2)
-    report = run_orchestration(
-        project_id=project, run_id="run-e10",
-        candidates=[_candidate(SERVICE_A, FAULT_X)],
-        tools=_tools(flaky, project),
-        hypothesise_fn=lambda inp: GateDecision(
-            directions=[_carry(c) for c in inp.candidates]),
-        ratify_fn=_ratify_drafts,
-        note_fn=_note_pair,
+    flaky = _FlakyStore(tmp_path, fail_first=1)
+    report = _run_pass(
+        project, "run-e10",
+        [_candidate(SERVICE_A, FAULT_X)],
+        lambda inp: GateDecision(directions=[_carry(c) for c in inp.candidates]),
+        store=flaky,
     )
-    # the 1-candidate pass makes exactly three store writes (the hypothesise
-    # create, the ratify upsert, the note append); the first two fail (O3 -
-    # warned + counted), the pass still completes
-    assert report.store_write_failures == 2
+    # the 1-candidate agent-sole pass makes three agent store writes (the
+    # hypothesise create, the ratify upsert, the note append); the FIRST fails
+    # (O3 - warned + counted, the seam degrades it fail-open) and the LATER
+    # writes succeed
+    assert report.store_write_failures == 1
     assert report.pairs_processed == 1
+    configs = flaky.read_configs(project)
+    assert len(configs) == 1 and configs[0]["status"] == "ratified"
+    assert len(flaky.read_notes(project)) == 1
     assert "warning" in caplog.text.lower()
 
 
@@ -438,14 +487,11 @@ class _RaisingReadStore(HuntStore):
 
 def test_E11_store_read_failure_degrades_prior_insights(project, tmp_path, caplog):
     store = _RaisingReadStore(tmp_path)
-    report = run_orchestration(
-        project_id=project, run_id="run-e11",
-        candidates=[_candidate(SERVICE_A, FAULT_X)],
-        tools=_tools(store, project),
-        hypothesise_fn=lambda inp: GateDecision(
-            directions=[_carry(c) for c in inp.candidates]),
-        ratify_fn=_ratify_drafts,
-        note_fn=_note_pair,
+    report = _run_pass(
+        project, "run-e11",
+        [_candidate(SERVICE_A, FAULT_X)],
+        lambda inp: GateDecision(directions=[_carry(c) for c in inp.candidates]),
+        store=store,
     )
     assert report.pairs_processed == 1
     assert report.configs_ratified == 1
@@ -464,13 +510,10 @@ def test_E12_graph_view_failure_degrades_the_gate(project, tmp_path, caplog):
         raise RuntimeError("graph read failed (fixture)")
 
     graph_view = ReadOnlyGraphView(project, read_fn=broken_read)
-    report = run_orchestration(
-        project_id=project, run_id="run-e12",
-        candidates=[_candidate(SERVICE_A, FAULT_X)],
-        tools=_tools(store, project, graph_view=graph_view),
-        hypothesise_fn=_recording_hypothesise(seen),
-        ratify_fn=_ratify_drafts,
-        note_fn=_note_pair,
+    report = _run_pass(
+        project, "run-e12",
+        [_candidate(SERVICE_A, FAULT_X)],
+        _recording_hypothesise(seen), store=store, graph_view=graph_view,
     )
     assert report.pairs_processed == 1
     assert report.configs_ratified == 1
@@ -487,14 +530,11 @@ def test_E13_no_dispatch_node_on_the_graph(project, tmp_path):
     from polymerhus.attack.hunting.orchestrator_graph import build_hunting_graph
 
     store = HuntStore(tmp_path)
-    report = run_orchestration(
-        project_id=project, run_id="run-e13",
-        candidates=[_candidate(SERVICE_A, FAULT_X)],
-        tools=_tools(store, project),
-        hypothesise_fn=lambda inp: GateDecision(
-            directions=[_carry(c) for c in inp.candidates]),
-        ratify_fn=_ratify_drafts,
-        note_fn=_note_pair,
+    report = _run_pass(
+        project, "run-e13",
+        [_candidate(SERVICE_A, FAULT_X)],
+        lambda inp: GateDecision(directions=[_carry(c) for c in inp.candidates]),
+        store=store,
     )
     assert report.pairs_processed == 1
     assert report.configs_ratified == 1
@@ -512,14 +552,11 @@ def test_E14_budget_stage_is_removed(project, tmp_path):
     runtime plane's and the pod's) - both pairs ratify, the report has no
     budget-cut field."""
     store = HuntStore(tmp_path)
-    report = run_orchestration(
-        project_id=project, run_id="run-e14",
-        candidates=[_candidate(SERVICE_A, FAULT_X), _candidate(SYSTEM_B, FAULT_Y)],
-        tools=_tools(store, project),
-        hypothesise_fn=lambda inp: GateDecision(
-            directions=[_carry(c) for c in inp.candidates]),
-        ratify_fn=_ratify_drafts,
-        note_fn=_note_pair,
+    report = _run_pass(
+        project, "run-e14",
+        [_candidate(SERVICE_A, FAULT_X), _candidate(SYSTEM_B, FAULT_Y)],
+        lambda inp: GateDecision(directions=[_carry(c) for c in inp.candidates]),
+        store=store,
     )
     assert report.pairs_processed == 2
     assert report.configs_ratified == 2
@@ -548,13 +585,10 @@ def test_E15_cross_run_memory_by_config_key(project, tmp_path):
     seen_first: dict = {}
     seen_second: dict = {}
 
-    run_orchestration(
-        project_id=project, run_id="run-e15a",
-        candidates=[_candidate(SERVICE_A, FAULT_X)],
-        tools=_tools(store, project),
-        hypothesise_fn=_recording_hypothesise(seen_first),
-        ratify_fn=_ratify_drafts,
-        note_fn=_note_pair,
+    _run_pass(
+        project, "run-e15a",
+        [_candidate(SERVICE_A, FAULT_X)],
+        _recording_hypothesise(seen_first), store=store,
     )
     assert len(store.read_configs(project)) == 1
     assert len(store.read_notes(project)) == 1
@@ -577,13 +611,10 @@ def test_E15_cross_run_memory_by_config_key(project, tmp_path):
         provenance={"run_id": "run-e15a", "source": "pod-src", "verdict_stub": True},
     )
 
-    run_orchestration(
-        project_id=project, run_id="run-e15b",
-        candidates=[_candidate(SERVICE_A, FAULT_X)],
-        tools=_tools(store, project),
-        hypothesise_fn=_recording_hypothesise(seen_second),
-        ratify_fn=_ratify_drafts,
-        note_fn=_note_pair,
+    _run_pass(
+        project, "run-e15b",
+        [_candidate(SERVICE_A, FAULT_X)],
+        _recording_hypothesise(seen_second), store=store,
     )
     # The second pass's prior-hunt insights read the DOWNSTREAM hunter records
     # (spec + verdict) by config_key, shallow-projected.

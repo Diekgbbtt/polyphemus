@@ -12,6 +12,10 @@ are MOCKED (no live Neo4j, no live LLM - testing-strategy.md section 2); the
 catalogue predicates live in tests/integration and are never repeated in this
 tier's red/green loop.
 """
+import uuid
+
+import pytest
+
 from polymerhus.attack.hunting.hunt_orchestrator import (
     DeliveredCandidate,
     EnvisionedDirection,
@@ -44,13 +48,19 @@ class _MemoryStore:
         self._notes: list[dict] = []
         self.fail_reads = fail_reads
         self.read_attempts = 0
+        # the agent-sole write counters (#294): the harness must add none
+        self.write_calls = 0
+        self.update_calls = 0
+        self.append_calls = 0
 
     def write_config(self, project_id, config):
+        self.write_calls += 1
         data = config.model_dump() if not isinstance(config, dict) else dict(config)
         self._configs.append(data)
         return f"{data.get('unit_id')}::{data.get('fault_class')}::{data.get('vulnerability_class')}"
 
     def update_config(self, project_id, config):
+        self.update_calls += 1
         data = config.model_dump() if not isinstance(config, dict) else dict(config)
         identity = (str(data.get("unit_id") or ""), str(data.get("fault_class") or ""),
                     str(data.get("vulnerability_class") or ""))
@@ -63,6 +73,7 @@ class _MemoryStore:
         return "::".join(identity)
 
     def append_note(self, project_id, key, note):
+        self.append_calls += 1
         self._notes.append({"revival_key": key, "note": note})
         return {"note_id": f"n{len(self._notes)}", "revival_key": key, "note": note}
 
@@ -161,6 +172,66 @@ def _run(store, candidates, *, hypothesise=None, ratify=None, note=None,
         note_fn=note or _note_pair,
         **kwargs,
     )
+
+
+# --- #294: agent-owned writes (the agent's tool call is the sole writer) -------
+
+def _safe_store_write(method, *args):
+    """The `hunts_store` / `notes` tool's fail-open (O3): a raising store write
+    is caught and the tool returns an error object, so the phase turn still
+    returns its structured decision - exactly the production behaviour."""
+    try:
+        return method(*args)
+    except Exception:  # noqa: BLE001 - the tool degrades fail-open (O3)
+        return None
+
+
+def _agent_hypothesise(tools, *, classes=None):
+    """A hypothesise seam that emulates the AGENT's `hunts_store(write)` tool
+    call under the agent-sole model: it mints and writes each carried direction
+    through the store seam the pass wraps, exactly as the model's tool call
+    does (including the tool's fail-open on a raising write). `classes=None`
+    keeps the carried-bare degrade."""
+    def hypothesise(inp):
+        directions = []
+        for candidate in inp.candidates:
+            direction = _carry(candidate)
+            if classes is not None:
+                direction.vulnerability_classes = list(classes)
+            directions.append(direction)
+            for config in mint_hunt_config(
+                    direction, candidate, uuid.uuid4().hex,
+                    surface_context={}, prior_hunt_insights=[]):
+                _safe_store_write(tools.store_reads.write_config, "project-1", config)
+        return GateDecision(directions=directions)
+    return hypothesise
+
+
+def _agent_ratify(tools):
+    """A ratify seam that emulates the agent's `hunts_store(write,
+    status='ratified')` tool call: it amends each draft and writes it through
+    the store seam the pass wraps (with the tool's fail-open)."""
+    def ratify(inp):
+        configs = []
+        for draft in inp.configs:
+            amended = draft.model_copy(deep=True)
+            amended.status = "ratified"
+            amended.preconditions = ["an authenticated session is obtainable"]
+            amended.observed_defences = ["WAF blocks XSS payloads"]
+            _safe_store_write(tools.store_reads.update_config, "project-1", amended)
+            configs.append(amended)
+        return RatifyDecision(configs=configs)
+    return ratify
+
+
+def _agent_note(tools, *, text="fixture note: the reasoning that yielded the rationale"):
+    """A note seam that emulates the agent's `notes(write, option='append')`
+    tool call (with the tool's fail-open)."""
+    def note(inp):
+        key = revival_key(inp.pair.unit_id, inp.pair.fault_class)
+        _safe_store_write(tools.store_reads.append_note, "project-1", key, text)
+        return NoteDecision(notes=[NoteRecord(key=key, note=text)])
+    return note
 
 
 # --- Pure mechanics: the revival key ------------------------------------------
@@ -546,19 +617,18 @@ def test_fanned_out_direction_ratifies_each_config_and_notes_the_pair():
     # the hypothesise fan-out lands one draft per distinct class; the ratify
     # phase amends them to ratified; the note phase writes one note for the pair
     store = _MemoryStore()
+    tools = _tools(store)
 
-    def hypothesise_fn(inp):
-        direction = _carry(inp.candidates[0])
-        direction.vulnerability_classes = ["csrf class", "idor class"]
-        return GateDecision(directions=[direction])
-
-    report = _run(store, [_candidate()], hypothesise=hypothesise_fn)
+    report = _run(store, [_candidate()], tools=tools,
+                  hypothesise=_agent_hypothesise(tools, classes=["csrf class", "idor class"]),
+                  ratify=_agent_ratify(tools),
+                  note=_agent_note(tools))
     assert report.pairs_processed == 1
     assert report.configs_hypothesised == 2
     assert report.configs_ratified == 2
     assert report.notes_written == 1
     # the memory topology: two ratified configs in produced/ (one per distinct
-    # class), one note in memory.yaml (one per pair)
+    # class), one note in memory.yaml (one per pair) - all written by the agent
     configs = store.read_configs("project-1")
     assert len(configs) == 2
     assert all(c["status"] == "ratified" for c in configs)
@@ -588,21 +658,28 @@ def test_ratify_upsert_reinjects_the_deterministic_surface_context():
                  "props": {"business_function_slug": "slug:a", "exposure": "public"},
                  "rels": ["AGGREGATES", "AGGREGATES"]}]
 
+    tools = _tools(store, read_fn=read_fn)
+
     def ratify_fn(inp):
         configs = []
         for draft in inp.configs:
             amended = draft.model_copy(deep=True)
             amended.status = "ratified"
             amended.surface_context = {"model": "authored", "freeform": True}
+            # emulate the agent's hunts_store(write, status='ratified') - the
+            # #201 carve-out overwrites the model-authored shape on the seam
+            tools.store_reads.update_config("project-1", amended)
             configs.append(amended)
         return RatifyDecision(configs=configs)
 
-    report = _run(store, [_candidate()], tools=_tools(store, read_fn=read_fn),
-                  ratify=ratify_fn)
+    report = _run(store, [_candidate()], tools=tools, ratify=ratify_fn)
     assert report.configs_ratified == 1
     configs = store.read_configs("project-1")
     assert len(configs) == 1
     assert configs[0]["status"] == "ratified"
+    # the agent's hunts_store(write) is the ONLY ratify write (#294): the
+    # harness no longer upserts a second copy of the decision
+    assert store.update_calls == 1
     assert "model" not in configs[0]["surface_context"]
     cards = configs[0]["surface_context"]["cards"]
     transformed = cards[0]
@@ -610,6 +687,278 @@ def test_ratify_upsert_reinjects_the_deterministic_surface_context():
         {"method": "GET", "path": "/cart", "baseurl": "https://a"},
         {"method": "POST", "path": "/pay", "baseurl": "https://a"},
     ]
+
+
+# --- #294: agent-owned writes (the agent's tool call is the sole writer) -------
+
+def test_agent_note_write_is_the_sole_note_persist():
+    """#294: the agent's `notes(write, option='append')` tool call is the SOLE
+    note writer. The pre-#294 harness ALSO appended the structured decision's
+    note, so whenever the two renderings differed two non-identical notes
+    landed at one revival key (observed live). Here the decision's note text
+    differs from the agent's tool write: exactly the agent's one survives."""
+    store = _MemoryStore()
+    tools = _tools(store)
+    key = revival_key(SERVICE_A, FAULT_X)
+
+    def agent_note(inp):
+        tools.store_reads.append_note("project-1", key, "agent-authored note")
+        return NoteDecision(
+            notes=[NoteRecord(key=key, note="structured-decision note")])
+
+    report = _run(store, [_candidate()], tools=tools,
+                  hypothesise=_agent_hypothesise(tools),
+                  ratify=_agent_ratify(tools),
+                  note=agent_note)
+    notes = store.read_notes("project-1")
+    assert [n["note"] for n in notes] == ["agent-authored note"]  # exactly one
+    assert store.append_calls == 1  # the harness added no second append
+    assert report.notes_written == 1
+
+
+def test_hypothesise_does_not_backfill_a_config_without_the_agent_write():
+    """#294: the harness no longer backfills the in-memory mint - with no
+    agent `hunts_store(write, status='hypothesised')`, the phase persists
+    nothing. The in-memory mint still drives the phase flow/report."""
+    store = _MemoryStore()
+    report = _run(store, [_candidate()],
+                  hypothesise=lambda inp: GateDecision(
+                      directions=[_carry(inp.candidates[0])]))
+    assert store.read_configs("project-1") == []      # no backfill
+    assert report.configs_hypothesised == 1           # the in-memory flow ran
+
+
+def test_agent_hypothesise_write_persists_exactly_one_config():
+    """#294: with the agent's `hunts_store(write)` the hypothesise phase
+    persists exactly one config per elicited class - never a second
+    harness-minted copy."""
+    store = _MemoryStore()
+    tools = _tools(store)
+    report = _run(store, [_candidate()], tools=tools,
+                  hypothesise=_agent_hypothesise(tools, classes=["csrf"]))
+    assert report.configs_hypothesised == 1
+    configs = store.read_configs("project-1")
+    assert len(configs) == 1
+    assert configs[0]["status"] == "hypothesised"
+    assert configs[0]["vulnerability_class"] == "csrf"
+    assert store.write_calls == 1  # the harness added no second create
+
+
+def test_agent_write_failure_degrades_without_crashing():
+    """#294 fail-open (the TOOL's behaviour, not the phase turn's): the
+    `hunts_store` / `notes` tool catches a raising store write and returns an
+    error object, so the phase turn still returns its decision and the LATER
+    writes succeed - the failed create is warned + counted on the wrapped seam
+    and the pass keeps serving."""
+    class _RaisingStore(_MemoryStore):
+        def write_config(self, project_id, config):
+            raise OSError("disk full (fixture)")
+
+    store = _RaisingStore()
+    tools = _tools(store)
+    report = _run(store, [_candidate()], tools=tools,
+                  hypothesise=_agent_hypothesise(tools),
+                  ratify=_agent_ratify(tools),
+                  note=_agent_note(tools))
+    assert report.pairs_processed == 1
+    assert report.store_write_failures == 1  # exactly the failed hypothesise create
+    assert report.ledger.units_skipped == 0  # the tool degrades, not the turn
+    # the later agent writes succeeded: the ratify upsert created the ratified
+    # config and the note landed
+    configs = store.read_configs("project-1")
+    assert len(configs) == 1 and configs[0]["status"] == "ratified"
+    assert len(store.read_notes("project-1")) == 1
+
+
+def test_surface_context_store_injects_the_deterministic_context():
+    """#294 #201 carve-out: the store-seam wrapper injects the harness-owned
+    deterministic `surface_context` before persisting, so the agent never
+    authors the shape - a model-supplied dict is overwritten."""
+    from polymerhus.attack.hunting.hunt_orchestrator import SurfaceContextStore
+
+    store = _MemoryStore()
+    wrapper = SurfaceContextStore(store, surface=[])
+    wrapper.set_projection(None)
+    wrapper.write_config("project-1", {
+        "hunt_id": "h1", "unit_id": SERVICE_A, "fault_class": FAULT_X,
+        "vulnerability_class": "csrf", "surface_context": {"model": "authored"},
+    })
+    wrapper.update_config("project-1", {
+        "hunt_id": "h1", "unit_id": SERVICE_A, "fault_class": FAULT_X,
+        "vulnerability_class": "csrf", "surface_context": {"model": "authored"},
+    })
+    configs = store.read_configs("project-1")
+    assert len(configs) == 1
+    assert configs[0]["surface_context"] == {"cards": []}
+
+
+def test_surface_context_store_counts_note_write_failures():
+    """#294 #6: the wrapper counts a failed `append_note` too, so
+    `store_write_failures` covers every agent store write, not just the config
+    writes; a successful write does not count."""
+    from polymerhus.attack.hunting.hunt_orchestrator import SurfaceContextStore
+
+    class _RaisingNotes(_MemoryStore):
+        def append_note(self, project_id, key, note):
+            raise OSError("notes disk full (fixture)")
+
+    store = _RaisingNotes()
+    wrapper = SurfaceContextStore(store, surface=[])
+    with pytest.raises(OSError):
+        wrapper.append_note("project-1", "Service:slug:a::fault-x", "note")
+    assert wrapper.write_failures == 1
+    wrapper.write_config("project-1", {
+        "hunt_id": "h1", "unit_id": SERVICE_A, "fault_class": FAULT_X,
+        "vulnerability_class": "csrf",
+    })
+    assert wrapper.write_failures == 1  # a successful write does not count
+
+
+def test_hunts_store_tool_over_the_wrapped_seam_injects_surface_context_and_counts():
+    """#294 S3: the REAL `hunts_store` tool (built by
+    `build_orchestrator_tool_surface`) captures the wrapped store seam and
+    passes a Dict (not a HuntConfig); the wrapper injects the deterministic
+    `surface_context` into that dict and the tool degrades a raise fail-open
+    while the wrapper counts the observed failure. This closes the closure-fake
+    fidelity gap (an injected-seam test reads `tools.store_reads` itself and
+    would not catch a broken closure capture)."""
+    from polymerhus.attack.hunting.actors import build_orchestrator_tool_surface
+    from polymerhus.attack.hunting.hunt_orchestrator import SurfaceContextStore
+
+    cards = [{"kind": "Service", "key": {"business_function_slug": "slug:a"},
+              "edge_degree": {"EXPOSED_VIA": 1}}]
+    store = _MemoryStore()
+    wrapper = SurfaceContextStore(store, surface=cards)
+    wrapper.set_projection(None)
+    tools = OrchestratorTools(
+        store_reads=wrapper,
+        graph_view=ReadOnlyGraphView("project-1", read_fn=lambda cy, p: []),
+    )
+    by_name = {t.name: t for t in build_orchestrator_tool_surface(
+        tools, run_id="run-tool", project_id="project-1")}
+    out = by_name["hunts_store"].invoke({"cmd": "write", "hunt_config": {
+        "hunt_id": "h1", "unit_id": SERVICE_A, "fault_class": FAULT_X,
+        "vulnerability_class": "csrf", "surface_context": {"model": "authored"},
+    }})
+    assert out["acknowledged"] is True
+    configs = store.read_configs("project-1")
+    assert len(configs) == 1
+    # the harness-owned deterministic assembly overwrote the model-authored dict
+    assert configs[0]["surface_context"] == {"cards": cards}
+    assert wrapper.write_failures == 0
+
+    # a raising inner write: the TOOL degrades fail-open (error dict, never a
+    # raise into the turn) and the wrapper counts the observed failure
+    class _Raising(_MemoryStore):
+        def write_config(self, project_id, config):
+            raise OSError("disk full (fixture)")
+
+    failing_wrapper = SurfaceContextStore(_Raising(), surface=cards)
+    failing_wrapper.set_projection(None)
+    failing_tools = OrchestratorTools(
+        store_reads=failing_wrapper,
+        graph_view=ReadOnlyGraphView("project-1", read_fn=lambda cy, p: []),
+    )
+    failing_by_name = {t.name: t for t in build_orchestrator_tool_surface(
+        failing_tools, run_id="run-tool-2", project_id="project-1")}
+    err = failing_by_name["hunts_store"].invoke({"cmd": "write", "hunt_config": {
+        "hunt_id": "h2", "unit_id": SERVICE_A, "fault_class": FAULT_X,
+        "vulnerability_class": "csrf",
+    }})
+    assert "error" in err
+    assert failing_wrapper.write_failures == 1
+
+
+def test_surface_store_is_stable_across_passes_on_one_run():
+    """#294 requirement 2: the actor's tool surface captures the store seam
+    ONCE. A second pass on the SAME run_id with a fresh OrchestratorTools/store
+    must retarget that SAME wrapper, so (a) the second pass's agent write lands
+    in the second store carrying the SECOND pass's deterministic
+    `surface_context` (never the first's), and (b) the second report's counters
+    observe the second pass's writes."""
+    import asyncio
+
+    from polymerhus.attack.hunting.actors import build_orchestrator_tool_surface
+    from polymerhus.attack.hunting.hunt_orchestrator import _reap_orchestrator
+
+    class _FakeView:
+        def __init__(self, cards):
+            self._cards = cards
+
+        def index_cards(self):
+            return list(self._cards)
+
+        def read(self, cypher, params=None):
+            return []
+
+    class _FlakyOnce(_MemoryStore):
+        def __init__(self):
+            super().__init__()
+            self._left = 1
+
+        def write_config(self, project_id, config):
+            if self._left > 0:
+                self._left -= 1
+                raise OSError("disk full (fixture)")
+            return super().write_config(project_id, config)
+
+    run_id = "run-stable-" + uuid.uuid4().hex[:8]
+    store1 = _MemoryStore()
+    store2 = _FlakyOnce()
+    tools1 = OrchestratorTools(store_reads=store1,
+                               graph_view=_FakeView([{"marker": "pass-1"}]))
+    tools2 = OrchestratorTools(store_reads=store2,
+                               graph_view=_FakeView([{"marker": "pass-2"}]))
+    captured: dict = {}
+
+    def agent_hypothesise(inp):
+        # emulate the actor's `_ensure_started`: build the tool surface ONCE, so
+        # the captured seam is pass 1's wrapper (and must be retargeted later)
+        if "surface" not in captured:
+            captured["surface"] = {t.name: t for t in build_orchestrator_tool_surface(
+                tools1, run_id=run_id, project_id="project-1")}
+        directions = [_carry(c) for c in inp.candidates]
+        for direction in directions:
+            for config in mint_hunt_config(
+                    direction, inp.candidates[0], uuid.uuid4().hex,
+                    surface_context={}, prior_hunt_insights=[]):
+                captured["surface"]["hunts_store"].invoke(
+                    {"cmd": "write", "hunt_config": config.model_dump()})
+        return GateDecision(directions=directions)
+
+    def agent_ratify(inp):
+        configs = []
+        for draft in inp.configs:
+            amended = draft.model_copy(deep=True)
+            amended.status = "ratified"
+            captured["surface"]["hunts_store"].invoke(
+                {"cmd": "write", "hunt_config": amended.model_dump()})
+            configs.append(amended)
+        return RatifyDecision(configs=configs)
+
+    def _pass(tools):
+        return run_orchestration(
+            "project-1", run_id, [_candidate()], tools,
+            hypothesise_fn=agent_hypothesise, ratify_fn=agent_ratify,
+            note_fn=lambda inp: NoteDecision(notes=[]),
+        )
+
+    try:
+        report1 = _pass(tools1)
+        report2 = _pass(tools2)
+    finally:
+        asyncio.run(_reap_orchestrator(run_id))
+
+    assert report1.store_write_failures == 0
+    # (a) the second pass's persisted config carries pass-2's surface_context
+    configs2 = store2.read_configs("project-1")
+    assert len(configs2) == 1
+    assert configs2[0]["status"] == "ratified"
+    assert configs2[0]["surface_context"] == {"cards": [{"marker": "pass-2"}]}
+    # the first store was not written by pass 2
+    assert len(store1.read_configs("project-1")) == 1
+    # (b) the second report observes the second pass's failed write
+    assert report2.store_write_failures == 1
 
 
 # --- Seam behaviours: fail-open degradations ----------------------------------
@@ -666,14 +1015,18 @@ def test_ratify_turn_failure_keeps_the_drafts_hypothesised(caplog):
     phase's side effect - the hypothesised drafts stay on disk, never become
     ratified - but the pair keeps serving (the note phase still runs)."""
     store = _MemoryStore()
+    tools = _tools(store)
 
     def boom(inp):
         raise RuntimeError("ratify turn exhausted")
 
-    report = _run(store, [_candidate()], ratify=boom)
+    report = _run(store, [_candidate()], tools=tools,
+                  hypothesise=_agent_hypothesise(tools), ratify=boom)
     assert report.pairs_processed == 1
     assert report.configs_hypothesised == 1
     assert report.configs_ratified == 0
+    # the agent's hypothesised draft is on disk and the raising ratify turn
+    # wrote nothing over it (the harness does not re-persist - #294)
     assert store.read_configs("project-1")[0]["status"] == "hypothesised"
     assert "warning" in caplog.text.lower()
 
@@ -682,11 +1035,14 @@ def test_note_turn_failure_skips_the_note(caplog):
     """The note phase degrades fail-open: a raising note turn skips the note's
     side effect (no note lands) but the pass still completes."""
     store = _MemoryStore()
+    tools = _tools(store)
 
     def boom(inp):
         raise RuntimeError("note turn exhausted")
 
-    report = _run(store, [_candidate()], note=boom)
+    report = _run(store, [_candidate()], tools=tools,
+                  hypothesise=_agent_hypothesise(tools),
+                  ratify=_agent_ratify(tools), note=boom)
     assert report.pairs_processed == 1
     assert report.notes_written == 0
     assert store.read_notes("project-1") == []
@@ -717,13 +1073,16 @@ def test_ratify_returning_unratified_configs_does_not_count_them_ratified_and_do
     them, and the note phase does NOT note over them (the draft stays
     hypothesised on disk, the pair is still ratifying)."""
     store = _MemoryStore()
+    tools = _tools(store)
 
     def ratify_return_unratified(inp):
         # return the drafts verbatim (still hypothesised) - the turn did NOT end
-        # with ratified
+        # with ratified (so no agent write upserts them)
         return RatifyDecision(configs=list(inp.configs))
 
-    report = _run(store, [_candidate()], ratify=ratify_return_unratified)
+    report = _run(store, [_candidate()], tools=tools,
+                  hypothesise=_agent_hypothesise(tools),
+                  ratify=ratify_return_unratified)
     assert report.pairs_processed == 1
     assert report.configs_hypothesised == 1
     assert report.configs_ratified == 0
@@ -761,6 +1120,7 @@ def test_multi_direction_for_one_pair_accumulates_all_drafts():
     the same locus) accumulates every draft into the ratify set instead of
     earlier drafts being orphaned forever-hypothesised."""
     store = _MemoryStore()
+    tools = _tools(store)
 
     def hypothesise_two_dirs(inp):
         c = inp.candidates[0]
@@ -768,9 +1128,16 @@ def test_multi_direction_for_one_pair_accumulates_all_drafts():
                                  rationale="r", vulnerability_classes=["CSRF"])
         d2 = EnvisionedDirection(unit_id=c.unit_id, fault_class=c.fault_class, carried=True,
                                  rationale="r", vulnerability_classes=["IDOR"])
+        # emulate the agent's hunts_store(write) tool call per direction
+        for direction in (d1, d2):
+            for config in mint_hunt_config(
+                    direction, c, uuid.uuid4().hex, surface_context={},
+                    prior_hunt_insights=[]):
+                tools.store_reads.write_config("project-1", config)
         return GateDecision(directions=[d1, d2])
 
-    report = _run(store, [_candidate()], hypothesise=hypothesise_two_dirs)
+    report = _run(store, [_candidate()], tools=tools,
+                  hypothesise=hypothesise_two_dirs, ratify=_agent_ratify(tools))
     assert report.pairs_processed == 1
     assert report.configs_hypothesised == 2
     assert report.configs_ratified == 2
@@ -796,7 +1163,9 @@ def test_note_next_pair_at_fault_drain_carries_next_fault_first_candidate():
                         if tools.phase_context.next_pair is not None else None)
         return _note_pair(inp)
 
-    report = _run(store, [c_352, c_639], tools=tools, note=spying_note)
+    report = _run(store, [c_352, c_639], tools=tools,
+                  hypothesise=_agent_hypothesise(tools),
+                  ratify=_agent_ratify(tools), note=spying_note)
     assert report.pairs_processed == 2
     # first note's next_pair is the next fault's candidate, last is None
     assert len(captured) == 2
@@ -901,7 +1270,25 @@ def test_prior_hunt_insights_never_embed_nested_records(tmp_path):
             "conflicts": [], "test": "t",
         },
     )
-    report = _run(store, [_candidate()])
+    tools = _tools(store)
+    key = revival_key(SERVICE_A, FAULT_X)
+
+    def hypothesise_fn(inp):
+        # emulate the agent reading the sibling hunter records through the
+        # store tool and authoring them into its config (the prior insights)
+        c = inp.candidates[0]
+        direction = _carry(c)
+        insights = (
+            list(tools.store_reads.read_hunter_specs("project-1", key))
+            + list(tools.store_reads.read_hunter_notes("project-1", key))
+        )
+        for config in mint_hunt_config(
+                direction, c, uuid.uuid4().hex, surface_context={},
+                prior_hunt_insights=insights):
+            tools.store_reads.write_config("project-1", config)
+        return GateDecision(directions=[direction])
+
+    report = _run(store, [_candidate()], tools=tools, hypothesise=hypothesise_fn)
     assert report.pairs_processed == 1
     minted = store.read_configs("project-1")
     insights = minted[0]["prior_hunt_insights"]
@@ -943,14 +1330,21 @@ def test_carried_bare_direction_with_rationale_is_still_minted():
     class still fans out to the single carried-bare hypothesised draft (the
     mint's class-less degrade, spec 3.5)."""
     store = _MemoryStore()
+    tools = _tools(store)
 
     def hypothesise_fn(inp):
         c = inp.candidates[0]
-        return GateDecision(directions=[EnvisionedDirection(
+        direction = EnvisionedDirection(
             unit_id=c.unit_id, fault_class=c.fault_class, carried=True,
-            rationale="plausible at this locus", research_direction="probe the flow")])
+            rationale="plausible at this locus", research_direction="probe the flow")
+        # the agent's hunts_store(write) of its carried-bare draft
+        for config in mint_hunt_config(
+                direction, c, uuid.uuid4().hex, surface_context={},
+                prior_hunt_insights=[]):
+            tools.store_reads.write_config("project-1", config)
+        return GateDecision(directions=[direction])
 
-    report = _run(store, [_candidate()], hypothesise=hypothesise_fn)
+    report = _run(store, [_candidate()], tools=tools, hypothesise=hypothesise_fn)
     assert report.pairs_processed == 1
     assert report.ledger.units_done == 1
     assert report.ledger.units_skipped == 0
@@ -1056,12 +1450,29 @@ def test_prior_hunt_insights_read_the_downstream_hunter_records(tmp_path):
                          "terminal_reason": "no-symptom-evidence", "clean": True}),
         provenance={"run_id": "prior-run", "source": "pod-src", "verdict_stub": True},
     )
+    tools = _tools(store)
+    key = revival_key(SERVICE_A, FAULT_X)
+
+    def hypothesise_fn(inp):
+        # emulate the agent reading the sibling hunter records and authoring
+        # them into its config (the prior-hunt insights)
+        c = inp.candidates[0]
+        direction = _carry(c)
+        insights = (
+            list(tools.store_reads.read_hunter_specs("project-1", key))
+            + list(tools.store_reads.read_hunter_notes("project-1", key))
+        )
+        for config in mint_hunt_config(
+                direction, c, uuid.uuid4().hex, surface_context={},
+                prior_hunt_insights=insights):
+            tools.store_reads.write_config("project-1", config)
+        return GateDecision(directions=[direction])
+
     report = run_orchestration(
-        "project-1", "run-1", [_candidate()], _tools(store),
-        hypothesise_fn=lambda inp: GateDecision(
-            directions=[_carry(inp.candidates[0])]),
-        ratify_fn=_ratify_drafts,
-        note_fn=_note_pair,
+        "project-1", "run-1", [_candidate()], tools,
+        hypothesise_fn=hypothesise_fn,
+        ratify_fn=_agent_ratify(tools),
+        note_fn=_agent_note(tools),
     )
     assert report.configs_ratified == 1
     minted = store.read_configs("project-1")

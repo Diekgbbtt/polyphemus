@@ -244,6 +244,74 @@ def _note_pair(inp) -> "NoteDecision":
     )])
 
 
+def _agent_seams(tools, project_id: str):
+    """The agent-sole write emulation (#294): the real `hunts_store` / `notes`
+    tools persist through the pass's wrapped store seam, so an injected phase
+    seam must do the same or nothing persists. Each write catches a store
+    failure per call (the tool's fail-open O3) so a later write can still land."""
+    from polymerhus.attack.hunting.hunt_orchestrator import (  # noqa: PLC0415
+        NoteDecision,
+        NoteRecord,
+        RatifyDecision,
+        mint_hunt_config,
+        revival_key,
+    )
+
+    def _safe_write(method, *args):
+        try:
+            return method(*args)
+        except Exception:  # noqa: BLE001 - the tool degrades fail-open (O3)
+            return None
+
+    def _prior_insights(unit_id, fault_class):
+        key = revival_key(unit_id, fault_class)
+        try:
+            specs = list(tools.store_reads.read_hunter_specs(project_id, key))
+            notes = list(tools.store_reads.read_hunter_notes(project_id, key))
+            return specs + notes
+        except Exception:  # noqa: BLE001 - O4: a failing read degrades empty
+            return []
+
+    def wrap_hypothesise(hypothesise_fn):
+        def agent_hypothesise(inp):
+            decision = hypothesise_fn(inp)
+            for direction in getattr(decision, "directions", None) or []:
+                if not getattr(direction, "carried", False):
+                    continue
+                candidate = next(
+                    (c for c in inp.candidates
+                     if (c.unit_id, c.fault_class)
+                     == (direction.unit_id, direction.fault_class)), None)
+                if candidate is None:
+                    continue
+                for config in mint_hunt_config(
+                        direction, candidate, uuid.uuid4().hex,
+                        surface_context={},
+                        prior_hunt_insights=_prior_insights(
+                            direction.unit_id, direction.fault_class)):
+                    _safe_write(tools.store_reads.write_config, project_id, config)
+            return decision
+        return agent_hypothesise
+
+    def ratify(inp) -> RatifyDecision:
+        configs = []
+        for draft in inp.configs:
+            amended = draft.model_copy(deep=True)
+            amended.status = "ratified"
+            _safe_write(tools.store_reads.update_config, project_id, amended)
+            configs.append(amended)
+        return RatifyDecision(configs=configs)
+
+    def note(inp) -> NoteDecision:
+        key = revival_key(inp.pair.unit_id, inp.pair.fault_class)
+        _safe_write(tools.store_reads.append_note, project_id, key,
+                    "fixture note walking the reasoning")
+        return NoteDecision(notes=[NoteRecord(
+            key=key, note="fixture note walking the reasoning")])
+
+    return wrap_hypothesise, ratify, note
+
+
 def _run_live(store, project_id, run_id, candidates, session, *,
               hypothesise_fn=None, ratify_fn=None, note_fn=None):
     """One orchestration pass over the REAL graph view (no injected read_fn -
@@ -251,7 +319,9 @@ def _run_live(store, project_id, run_id, candidates, session, *,
     turns. The node-per-phase flow (#167): the phase seams are the actor
     defaults when None (the real LLM role drives the hypothesise / ratify /
     note turns); the pass ends at the REASON stretch (no dispatch node - G12,
-    no budget stage - G7)."""
+    no budget stage - G7). When an injected hypothesise seam is present, the
+    agent-sole write emulation (#294) is armed so the injected seams persist
+    through the wrapped store seam exactly as the real tools do."""
     from polymerhus.attack.hunting.hunt_orchestrator import (  # noqa: PLC0415
         OrchestratorTools,
         ReadOnlyGraphView,
@@ -261,11 +331,12 @@ def _run_live(store, project_id, run_id, candidates, session, *,
         store_reads=store,
         graph_view=ReadOnlyGraphView(project_id),
     )
+    wrap, agent_ratify, agent_note = _agent_seams(tools, project_id)
     return run_orchestration(
         project_id=project_id, run_id=run_id, candidates=candidates, tools=tools,
-        hypothesise_fn=hypothesise_fn,
-        ratify_fn=ratify_fn,
-        note_fn=note_fn,
+        hypothesise_fn=wrap(hypothesise_fn) if hypothesise_fn is not None else None,
+        ratify_fn=agent_ratify if ratify_fn is not None else None,
+        note_fn=agent_note if note_fn is not None else None,
     )
 
 
@@ -503,11 +574,12 @@ def test_full_pass_canon_unchanged_with_new_artifacts(session, project, tmp_path
             ) for c in inp.candidates])
 
     def report_for(tools, run_id):
+        wrap, agent_ratify, agent_note = _agent_seams(tools, project)
         return run_orchestration(
             project_id=project, run_id=run_id, candidates=candidates, tools=tools,
-            hypothesise_fn=carried,
-            ratify_fn=_ratify_drafts,
-            note_fn=_note_pair,
+            hypothesise_fn=wrap(carried),
+            ratify_fn=agent_ratify,
+            note_fn=agent_note,
         )
 
     # Without-artifacts pass: the canon, empty graph view (no projection),

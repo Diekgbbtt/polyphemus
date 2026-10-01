@@ -11,6 +11,7 @@ tool-surface contract (the three tools `hunts_store` / `notes` / `graph_view`,
 G3) is asserted here too. Expected values are taken from the spec, never
 recomputed the way the code computes them.
 """
+import logging
 import uuid
 
 import pytest
@@ -28,10 +29,13 @@ from polymerhus.attack.hunting.hunt_orchestrator import (
     ReadOnlyGraphViewError,
     TOOL_SURFACE,
     Witness,
+    mint_hunt_config,
     revival_key,
     run_orchestration,
 )
 from polymerhus.attack.hunting.hunt_store import HuntStore
+
+logger = logging.getLogger(__name__)
 
 SERVICE_A = "Service:slug:a"
 SYSTEM_B = "System:key:b"
@@ -61,37 +65,52 @@ def _carry(candidate: DeliveredCandidate, *, carried: bool = True) -> Envisioned
     )
 
 
-def _carry_hypothesise(calls: list | None = None):
-    """The fixture hypothesise turn: carries every candidate as a direction,
-    optionally recording the inputs (the per-pair gate-call shape)."""
-    record = calls if calls is not None else []
+def _agent_seams(tools, *, project_id: str = "project-1"):
+    """The fixture phase turns under the agent-sole write model (#294): each
+    emulates the AGENT's store tool call - hypothesise writes the drafts,
+    ratify upserts the terminal status, note appends - through the pass's
+    wrapped store seam, so the harness never persists anything itself. Each
+    write catches a store failure per call (the tool's fail-open O3) so a later
+    write can still land; the failure is still counted on the wrapped seam."""
+    def _safe_write(method, *args):
+        try:
+            return method(*args)
+        except Exception as exc:  # noqa: BLE001 - the tool degrades fail-open (O3)
+            logger.warning("agent store write degraded (tool fail-open): %s", exc)
+            return None
 
     def hypothesise(inp):
-        record.append(inp)
-        return GateDecision(directions=[_carry(c) for c in inp.candidates])
+        directions = [_carry(c) for c in inp.candidates]
+        for direction in directions:
+            candidate = next(
+                c for c in inp.candidates
+                if (c.unit_id, c.fault_class)
+                == (direction.unit_id, direction.fault_class))
+            for config in mint_hunt_config(
+                    direction, candidate, uuid.uuid4().hex, surface_context={},
+                    prior_hunt_insights=[]):
+                _safe_write(tools.store_reads.write_config, project_id, config)
+        return GateDecision(directions=directions)
 
-    return hypothesise
+    def ratify(inp):
+        configs = []
+        for draft in inp.configs:
+            amended = draft.model_copy(deep=True)
+            amended.status = "ratified"
+            amended.preconditions = ["an authenticated session is obtainable"]
+            amended.observed_defences = ["WAF blocks XSS payloads"]
+            _safe_write(tools.store_reads.update_config, project_id, amended)
+            configs.append(amended)
+        return RatifyDecision(configs=configs)
 
+    def note(inp):
+        key = revival_key(inp.pair.unit_id, inp.pair.fault_class)
+        _safe_write(tools.store_reads.append_note, project_id, key,
+                    "fixture note walking the reasoning")
+        return NoteDecision(notes=[NoteRecord(
+            key=key, note="fixture note walking the reasoning")])
 
-def _ratify_drafts(inp) -> RatifyDecision:
-    """The fixture ratify turn: amends every draft to ratified with the filled
-    ratification fields (preconditions + observed_defences, #202)."""
-    configs = []
-    for draft in inp.configs:
-        amended = draft.model_copy(deep=True)
-        amended.status = "ratified"
-        amended.preconditions = ["an authenticated session is obtainable"]
-        amended.observed_defences = ["WAF blocks XSS payloads"]
-        configs.append(amended)
-    return RatifyDecision(configs=configs)
-
-
-def _note_pair(inp) -> NoteDecision:
-    """The fixture note turn: one note for the pair (the pair end)."""
-    return NoteDecision(notes=[NoteRecord(
-        key=revival_key(inp.pair.unit_id, inp.pair.fault_class),
-        note="fixture note walking the reasoning",
-    )])
+    return hypothesise, ratify, note
 
 
 def _tools(store: HuntStore, *, read_fn=None) -> OrchestratorTools:
@@ -103,14 +122,16 @@ def _tools(store: HuntStore, *, read_fn=None) -> OrchestratorTools:
 
 def _run(store: HuntStore, candidates, *, hypothesise=None, ratify=None,
          note=None, tools=None, **kwargs) -> OrchestratorReport:
+    tools = tools or _tools(store)
+    agent_hypothesise, agent_ratify, agent_note = _agent_seams(tools)
     return run_orchestration(
         project_id="project-1",
         run_id=RUN_ID,
         candidates=candidates,
-        tools=tools or _tools(store),
-        hypothesise_fn=hypothesise or _carry_hypothesise(),
-        ratify_fn=ratify or _ratify_drafts,
-        note_fn=note or _note_pair,
+        tools=tools,
+        hypothesise_fn=hypothesise or agent_hypothesise,
+        ratify_fn=ratify or agent_ratify,
+        note_fn=note or agent_note,
         **kwargs,
     )
 
@@ -254,15 +275,19 @@ class _FlakyStore(HuntStore):
 
 
 def test_store_write_failure_degrades_to_warning(tmp_path, caplog):
-    real = HuntStore(tmp_path)
-    flaky = _FlakyStore(tmp_path, fail_first=2)
+    """O3 fail-open under the agent-sole model (#294): the agent's store-tool
+    writes are the pass's writes; the flaky store fails the FIRST one (the
+    hypothesise create) and the seam degrades it fail-open (warned + counted),
+    so the LATER writes still succeed - the ratify upsert creates the ratified
+    config and the note lands. The harness writes no fallback copy. This keeps
+    the 'later write succeeds after earlier failures' coverage."""
+    flaky = _FlakyStore(tmp_path, fail_first=1)
     report = _run(flaky, [_candidate(SERVICE_A, FAULT_X)], tools=_tools(flaky))
-    # a 1-candidate pass makes exactly three store writes - the hypothesise
-    # create, the ratify upsert, and the note append - so the first two fail
-    # (O3: warned + counted); the pass keeps serving (fail-open)
-    assert report.store_write_failures == 2
+    assert report.store_write_failures == 1  # exactly the failed create
     assert report.pairs_processed == 1
-    assert real.read_configs("project-1") == []  # neither config write landed
+    configs = flaky.read_configs("project-1")
+    assert len(configs) == 1 and configs[0]["status"] == "ratified"
+    assert len(flaky.read_notes("project-1")) == 1  # later writes succeeded
     assert "warning" in caplog.text.lower()
 
 
@@ -322,16 +347,24 @@ def test_hypothesise_turn_is_invoked_per_pair_with_one_candidate(tmp_path):
     candidate set), in schedule order - so the actor's checkpointed memory
     carries the pass's reasoning across pairs."""
     store = HuntStore(tmp_path)
+    tools = _tools(store)
     seen: list[list[tuple[str, str]]] = []
 
     def hypothesise_fn(inp):
         seen.append([(c.unit_id, c.fault_class) for c in inp.candidates])
-        return GateDecision(directions=[_carry(c) for c in inp.candidates])
+        directions = [_carry(c) for c in inp.candidates]
+        for direction in directions:
+            candidate = inp.candidates[0]
+            for config in mint_hunt_config(
+                    direction, candidate, uuid.uuid4().hex, surface_context={},
+                    prior_hunt_insights=[]):
+                tools.store_reads.write_config("project-1", config)
+        return GateDecision(directions=directions)
 
     report = _run(
         store,
         [_candidate(SERVICE_A, FAULT_X), _candidate(SYSTEM_B, FAULT_Y)],
-        hypothesise=hypothesise_fn,
+        tools=tools, hypothesise=hypothesise_fn,
     )
     assert seen == [[(SERVICE_A, FAULT_X)], [(SYSTEM_B, FAULT_Y)]]
     assert report.pairs_processed == 2
@@ -357,6 +390,8 @@ def test_orchestration_actor_survives_the_pass_and_is_reused(tmp_path):
     )
 
     store = HuntStore(tmp_path)
+    tools = _tools(store)
+    _, agent_ratify, agent_note = _agent_seams(tools)
 
     async def _drive():
         # the DEFAULT hypothesise seam resolves the run's actor (hypothesise=None);
@@ -365,8 +400,8 @@ def test_orchestration_actor_survives_the_pass_and_is_reused(tmp_path):
         await arun_orchestration(
             project_id="project-1", run_id=RUN_ID,
             candidates=[_candidate(SERVICE_A, FAULT_X)],
-            tools=_tools(store),
-            ratify_fn=_ratify_drafts, note_fn=_note_pair,
+            tools=tools,
+            ratify_fn=agent_ratify, note_fn=agent_note,
         )
         first = _ORCHESTRATOR_ACTORS.get(RUN_ID)
         assert first is not None  # the pass registered the actor and did NOT reap it
@@ -374,8 +409,8 @@ def test_orchestration_actor_survives_the_pass_and_is_reused(tmp_path):
         await arun_orchestration(
             project_id="project-1", run_id=RUN_ID,
             candidates=[_candidate(SERVICE_A, FAULT_X)],
-            tools=_tools(store),
-            ratify_fn=_ratify_drafts, note_fn=_note_pair,
+            tools=tools,
+            ratify_fn=agent_ratify, note_fn=agent_note,
         )
         second = _ORCHESTRATOR_ACTORS.get(RUN_ID)
         assert second is first  # a later pass on the same run reuses the SAME actor

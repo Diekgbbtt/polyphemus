@@ -27,6 +27,7 @@ from polymerhus.attack.hunting.hunt_orchestrator import (
     RatifyDecision,
     ReadOnlyGraphView,
     Witness,
+    mint_hunt_config,
     revival_key,
     run_orchestration,
 )
@@ -59,22 +60,6 @@ def _carry(candidate: DeliveredCandidate) -> EnvisionedDirection:
     )
 
 
-def _ratify_drafts(inp) -> RatifyDecision:
-    configs = []
-    for draft in inp.configs:
-        amended = draft.model_copy(deep=True)
-        amended.status = "ratified"
-        configs.append(amended)
-    return RatifyDecision(configs=configs)
-
-
-def _note_pair(inp) -> NoteDecision:
-    return NoteDecision(notes=[NoteRecord(
-        key=revival_key(inp.pair.unit_id, inp.pair.fault_class),
-        note="fixture note",
-    )])
-
-
 def _tools(store: HuntStore) -> OrchestratorTools:
     return OrchestratorTools(
         back_edge=None,
@@ -83,16 +68,58 @@ def _tools(store: HuntStore) -> OrchestratorTools:
     )
 
 
+def _agent_ratify(tools) -> "object":
+    """The agent's `hunts_store(write, status='ratified')` emulation (#294):
+    ratify upserts each draft's terminal status through the wrapped store."""
+    def ratify(inp) -> RatifyDecision:
+        configs = []
+        for draft in inp.configs:
+            amended = draft.model_copy(deep=True)
+            amended.status = "ratified"
+            tools.store_reads.update_config("project-1", amended)
+            configs.append(amended)
+        return RatifyDecision(configs=configs)
+    return ratify
+
+
+def _agent_note(tools) -> "object":
+    """The agent's `notes(write, option='append')` emulation (#294)."""
+    def note(inp) -> NoteDecision:
+        key = revival_key(inp.pair.unit_id, inp.pair.fault_class)
+        tools.store_reads.append_note("project-1", key, "fixture note")
+        return NoteDecision(notes=[NoteRecord(key=key, note="fixture note")])
+    return note
+
+
 def _run(store: HuntStore, candidates, *, hypothesise_fn, ratify_fn=None,
          note_fn=None) -> OrchestratorReport:
+    tools = _tools(store)
+
+    def writing_hypothesise(inp):
+        # the spy hypothesise turn decides the directions; the agent-sole
+        # emulation then writes each carried draft via the store tool (#294)
+        decision = hypothesise_fn(inp)
+        for direction in decision.directions:
+            if not direction.carried:
+                continue
+            candidate = next(
+                c for c in inp.candidates
+                if (c.unit_id, c.fault_class)
+                == (direction.unit_id, direction.fault_class))
+            for config in mint_hunt_config(
+                    direction, candidate, uuid.uuid4().hex, surface_context={},
+                    prior_hunt_insights=[]):
+                tools.store_reads.write_config("project-1", config)
+        return decision
+
     return run_orchestration(
         project_id="project-1",
         run_id=RUN_ID,
         candidates=candidates,
-        tools=_tools(store),
-        hypothesise_fn=hypothesise_fn,
-        ratify_fn=ratify_fn or _ratify_drafts,
-        note_fn=note_fn or _note_pair,
+        tools=tools,
+        hypothesise_fn=writing_hypothesise,
+        ratify_fn=ratify_fn or _agent_ratify(tools),
+        note_fn=note_fn or _agent_note(tools),
     )
 
 

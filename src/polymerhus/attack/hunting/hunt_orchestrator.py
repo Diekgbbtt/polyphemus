@@ -8,16 +8,19 @@ phase nodes operate on; every (unit, fault) pair runs `hypothesise -> ratify
 -> note` as graph nodes with the transition logic embedded in the graph (G2)
 and the phase-transition verbatims injected on-the-fly in the specific
 tool-call responses (constants, never the system prompt - G1/G3). The
-hypothesise phase elicits one or more vulnerability classes and WRITES the
-status="hypothesised" draft (the deterministic mint from #165 is called at
-this phase, via the `hunts_store` tool); the ratify phase may update/delete/
-create configs and MUST end with a status="ratified" write carrying the filled
-capabilities/assumptions/technique-primitives; the note phase writes the notes
-and the pair's loop ENDs at the note tool's response (the next pair + the
-restart verbatim). The dispatch node is REMOVED (G12) and the O9 budget stage
-is REMOVED (G7): the graph ENDs at the REASON stretch - dispatch state and
-spending are the runtime plane's and the pod's ownership. It never writes
-L0/L1 (its graph access is the read-only view, D67-04); the hunting agent
+hypothesise phase elicits one or more vulnerability classes; the AGENT's
+`hunts_store(write, status="hypothesised")` tool call is the SOLE writer of the
+draft (#294 - the harness mints deterministically in memory only, to drive the
+phase flow); the ratify phase may update/delete/create configs and MUST end with
+a status="ratified" agent write; the note phase's agent `notes(write)` call is
+the SOLE note writer and the pair's loop ENDs at that tool's response (the next
+pair + the restart verbatim). The harness never re-persists the structured
+decisions; the phase flow READS the persisted state (note frame + ledger). The
+#201 carve-out is preserved: the harness-owned deterministic `surface_context`
+is injected on the wrapped store seam. The dispatch node is REMOVED (G12) and the
+O9 budget stage is REMOVED (G7): the graph ENDs at the REASON stretch - dispatch
+state and spending are the runtime plane's and the pod's ownership. It never
+writes L0/L1 (its graph access is the read-only view, D67-04); the hunting agent
 (#83), not this module, is the test-DESIGN actor.
 
 The pass runs NATIVE-ASYNC (feat/async-actor-agents) on the #110 GRAPH engine:
@@ -25,10 +28,10 @@ The pass runs NATIVE-ASYNC (feat/async-actor-agents) on the #110 GRAPH engine:
 supervisor-state schedule loop (the ONE flexible StateGraph in
 `orchestrator_graph.py`) - per fault, the stateful phase turns run on the
 run's `HuntOrchestratorActor` thread (`hunting_orchestrator` session,
-monotonic across ALL faults and pairs), and the harness persists the configs
-into the store's `produced/` and the notes into `memory.yaml`. Each node
-closure delegates to the canon helpers in THIS module; the O1-O10 seam shapes
-stay single-sourced here. `run_orchestration` is its thin sync wrapper.
+monotonic across ALL faults and pairs), while the agent's own tool calls persist
+the configs into the store's `produced/` and the notes into `memory.yaml`. Each
+node closure delegates to the canon helpers in THIS module; the O1-O10 seam
+shapes stay single-sourced here. `run_orchestration` is its thin sync wrapper.
 
 The actor is the PURELY STATEFUL parent, exactly like the recon-orchestrator -
 but it now LIVES in a per-run registry (`_ORCHESTRATOR_ACTORS`) instead of being
@@ -40,11 +43,12 @@ Degradations are the spec's failure canon: KB unavailable -> the gate reasons
 degraded, never prunes (D67-11); a raising hypothesise turn carries the pair
 bare (fail-open, the old gate-carry); a raising ratify/note turn skips that
 phase's side effect but the pair keeps serving (the phase machine degrades
-gracefully); store write failure -> warning and a count (O3, a duplicate-config
-write is the deduplication signal and lands the same O3 path - G4); store read
-failure -> empty prior insights (O4); a malformed candidate is dropped and
-counted (O10). Fail-open throughout: one bad collaborator never aborts the
-pass.
+gracefully); an agent store write failure -> the tool degrades it fail-open and
+the harness counts it on the wrapped seam (O3, a duplicate-config write is the
+deduplication signal and lands the same O3 path - G4); store read failure ->
+empty prior insights / an empty note frame (O4); a malformed candidate is
+dropped and counted (O10). Fail-open throughout: one bad collaborator never
+aborts the pass.
 
 This module imports no driver and performs no I/O at import; the graph read
 seam resolves lazily on first call (CODING_STANDARD section 6).
@@ -69,7 +73,6 @@ from polymerhus.attack.hunting.fault_risk import risk_tier
 from polymerhus.attack.hunting.hunt_store import (
     DuplicateConfigError,
     KEY_SEPARATOR,
-    semantic_key,
 )
 from polymerhus.attack.hunting.orchestrator_graph import PhaseAbort
 from polymerhus.recon.control.targeted import (
@@ -133,6 +136,16 @@ def pair_frame(unit_id: str, fault_class: str) -> dict:
 # reaps it. Reaping is never a pass's `finally` responsibility.
 _ORCHESTRATOR_ACTORS: dict[str, "HuntOrchestratorActor"] = {}
 _ORCHESTRATOR_LOCK = threading.Lock()
+
+# The per-run store-seam wrappers (#294 requirement 2): ONE
+# `SurfaceContextStore` per run_id, RETARGETED each pass. The actor's tool
+# surface captures the store seam ONCE (`actors.build_orchestrator_tool_surface`
+# binds `tools.store_reads` at first `_ensure_started`), so a fresh wrapper per
+# pass would leave the actor writing through the previous pass's wrapper (stale
+# `surface_context`, and counters the report never reads). Keeping one wrapper
+# per run and retargeting it keeps the captured seam current for every pass.
+# Reaped alongside the actor by the module's stop path.
+_SURFACE_STORES: dict[str, "SurfaceContextStore"] = {}
 
 # The default targeted job a park/resume back-edge runs (a re-witness of the
 # unit's surface).
@@ -376,17 +389,19 @@ class NoteRecord(BaseModel):
 class RatifyDecision(BaseModel):
     """The ratify phase's outcome: the pair's configs after the ratification
     turn, each carrying its final status (`ratified` or `dropped`) and the
-    filled ratification fields. The harness persists them (update in place /
-    dropped-on-disk, G6); the model-facing writes ride the `hunts_store`
-    tool's `write` cmd."""
+    filled ratification fields. The decision drives the phase transition/report
+    only - the PERSISTENCE rides the agent's `hunts_store(write)` tool call
+    (update in place / dropped-on-disk, G6); the harness never re-persists it
+    (#294)."""
 
     configs: list["HuntConfig"] = Field(default_factory=list)
 
 
 class NoteDecision(BaseModel):
-    """The note phase's outcome: the notes the pair writes. The harness
-    appends them idempotently; the model-facing write rides the `notes` tool,
-    whose response carries the next pair + the NEXT_PAIR_HINT constant (G1)."""
+    """The note phase's outcome: the notes the pair writes. The PERSISTENCE
+    rides the agent's `notes(write, option="append")` tool call (the sole note
+    writer, #294); the harness never appends the decision's notes. The tool's
+    response carries the next pair + the NEXT_PAIR_HINT constant (G1)."""
 
     notes: list[NoteRecord] = Field(default_factory=list)
 
@@ -504,7 +519,9 @@ class OrchestratorReport(BaseModel):
     they stay hypothesised on disk, are never counted ratified, and the note
     phase does not note over them. `duplicate_config_writes` is the G4
     deduplication-signal count, kept separate from (but additive with) the O3
-    `store_write_failures` counter."""
+    `store_write_failures` counter; under the agent-sole write model (#294)
+    both are observed on the wrapped store seam (the agent's tool calls), never
+    incremented by a harness write."""
 
     pairs_processed: int = 0
     configs_hypothesised: int = 0
@@ -780,6 +797,130 @@ def _surface_context_for(surface, projection) -> dict:
     return {"cards": service_card_projection(surface, projection)}
 
 
+class SurfaceContextStore:
+    """The orchestrator's store seam wrapper for the agent-sole write model
+    (#294): the agent's `hunts_store(write)` tool call is the SOLE initiator of
+    config/note persistence, and this wrapper applies the harness-owned,
+    deterministic `surface_context` (#201 carve-out) on `write_config` /
+    `update_config` before the write reaches the store - so the agent never
+    authors the shape and a model-supplied `surface_context` is overwritten.
+
+    The projection is per-unit (the current pair's projection), so the pass
+    threads it per turn via `set_projection`; the surface is the pass's
+    read-only index-card view. Every read method (reads, sibling reads) and the
+    mover's `consume_config` are proxied unchanged; the note WRITE verbs
+    (`append_note` / `update_note` / `delete_note`) are counted too, so
+    `store_write_failures` keeps its meaning for every agent store write, not
+    just the config writes. The `hunts_store` / `notes` tools bind to this
+    wrapper exactly as they bind to the store.
+
+    The wrapper is STABLE per run (`_SURFACE_STORES`) and `retarget`ed each pass
+    to the current pass's raw store/surface, because the actor's tool surface
+    captures the store seam only once; a fresh wrapper per pass would strand the
+    actor on a stale seam.
+
+    Fail-open canon preserved: a write that raises propagates to the caller
+    (the tool degrades it fail-open, never into the turn); the wrapper only
+    counts the observed failures for the report. A `DuplicateConfigError` is
+    counted as both a write failure and a duplicate (G4) and re-raised so the
+    tool can surface the deduplication signal."""
+
+    def __init__(self, inner, *, surface=()):
+        self._inner = inner
+        self.surface = surface
+        self._projection: object | None = None
+        self.write_failures = 0
+        self.duplicate_config_writes = 0
+
+    def retarget(self, *, inner, surface) -> None:
+        """Point the stable per-run wrapper at the CURRENT pass's raw store and
+        surface (#294 requirement 2). A `SurfaceContextStore` passed as `inner`
+        is unwrapped, so the seam always delegates to the raw store; the
+        per-pass counters and the per-turn projection reset."""
+        self._inner = inner._inner if isinstance(inner, SurfaceContextStore) else inner
+        self.surface = surface
+        self._projection = None
+        self.reset_counters()
+
+    def set_projection(self, projection) -> None:
+        """Thread the current pair's rich projection onto the seam for the next
+        turn (the surface context is per-unit)."""
+        self._projection = projection
+
+    def reset_counters(self) -> None:
+        """Zero the observed-write counters (the pass snapshots them)."""
+        self.write_failures = 0
+        self.duplicate_config_writes = 0
+
+    def _inject(self, config):
+        """Return a copy of `config` (a `HuntConfig` or a dict) carrying the
+        harness-assembled deterministic `surface_context`; the caller's object
+        is never mutated."""
+        context = _surface_context_for(self.surface, self._projection)
+        if isinstance(config, dict):
+            out = dict(config)
+            out["surface_context"] = context
+            return out
+        amended = config.model_copy(deep=True)
+        amended.surface_context = context
+        return amended
+
+    def _counted(self, method, *args, **kwargs):
+        """Call one inner store write, counting an observed failure (O3) and
+        re-raising it to the caller (the tool degrades it fail-open)."""
+        try:
+            return method(*args, **kwargs)
+        except DuplicateConfigError:
+            self.write_failures += 1
+            self.duplicate_config_writes += 1
+            raise
+        except Exception:
+            self.write_failures += 1
+            raise
+
+    def write_config(self, project_id, config, **kwargs):
+        return self._counted(
+            self._inner.write_config, project_id, self._inject(config), **kwargs)
+
+    def update_config(self, project_id, config, **kwargs):
+        return self._counted(
+            self._inner.update_config, project_id, self._inject(config), **kwargs)
+
+    # The note write verbs are counted too, so `store_write_failures` covers
+    # every agent store write (not only the config writes); the reads stay
+    # proxied through `__getattr__`.
+    def append_note(self, project_id, key, note, **kwargs):
+        return self._counted(self._inner.append_note, project_id, key, note, **kwargs)
+
+    def update_note(self, project_id, note_id, note, **kwargs):
+        return self._counted(self._inner.update_note, project_id, note_id, note, **kwargs)
+
+    def delete_note(self, project_id, note_id, **kwargs):
+        return self._counted(self._inner.delete_note, project_id, note_id, **kwargs)
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+
+def _surface_store_for(run_id: str, store, *, surface):
+    """The STABLE per-run `SurfaceContextStore` for the pass's store seam
+    (#294 requirement 2). ONE wrapper per `run_id` is created and `retarget`ed
+    each pass to the current raw store/surface (counters/projection reset), so
+    the actor's once-captured seam is always the current pass's. `None` stays
+    `None` (a store-less pass)."""
+    if store is None:
+        return None
+    with _ORCHESTRATOR_LOCK:
+        wrapper = _SURFACE_STORES.get(run_id)
+        if wrapper is None:
+            inner = store._inner if isinstance(store, SurfaceContextStore) else store
+            wrapper = SurfaceContextStore(inner, surface=surface)
+            _SURFACE_STORES[run_id] = wrapper
+        else:
+            wrapper.retarget(inner=store, surface=surface)
+        return wrapper
+
+
 def mint_hunt_config(
     direction: EnvisionedDirection,
     candidate: DeliveredCandidate,
@@ -869,10 +1010,12 @@ def build_back_edge_request(
 
 async def _reap_orchestrator(run_id: str) -> None:
     """The module's stop path for the per-run orchestration actor (#110): reap
-    and drop the actor the registry holds for `run_id`, if any. Called by the
-    runtime teardown (Task 6) - never by a pass's `finally`."""
+    and drop the actor AND the stable store-seam wrapper (#294) the registries
+    hold for `run_id`, if any. Called by the runtime teardown (Task 6) - never
+    by a pass's `finally`."""
     with _ORCHESTRATOR_LOCK:
         actor = _ORCHESTRATOR_ACTORS.pop(run_id, None)
+        _SURFACE_STORES.pop(run_id, None)
     if actor is not None:
         try:
             await actor.stop()
@@ -898,13 +1041,20 @@ async def arun_orchestration(
     engine as reworked by #167: intake -> KB evidence -> surface read -> ONE
     supervisor-state schedule loop over the accepted FAULTS where every (unit,
     fault) pair runs the node-per-phase REASON stretch (`hypothesise -> ratify
-    -> note`, G2). The hypothesise phase elicits the vulnerability classes and
-    WRITES the status="hypothesised" drafts (the deterministic mint is called
-    at this phase, via the `hunts_store` tool); the ratify phase persists the
-    configs at their final status (ratified or dropped - G6, dropped stays on
-    disk); the note phase appends the notes. The graph ENDs at the REASON
-    stretch - the dispatch node is REMOVED (G12) and the O9 budget stage is
-    REMOVED (G7). Fail-open on every collaborator.
+    -> note`, G2). Under the agent-sole write model (#294) the harness does
+    NOT persist configs or notes: the AGENT's `hunts_store(write)` /
+    `notes(write, option="append")` tool calls are the sole writers (the
+    hypothesise phase elicits the vulnerability classes and its tool write
+    creates the status="hypothesised" drafts; the ratify phase's tool write
+    upserts the final status - ratified or dropped, G6 dropped stays on disk;
+    the note phase's tool write appends the notes). The deterministic mint still
+    runs at the hypothesise phase to build the IN-MEMORY drafts that drive the
+    phase flow and the report, but those drafts are never persisted by the
+    harness. The #201 carve-out is preserved: the harness-owned deterministic
+    `surface_context` is injected on the wrapped store seam before any agent
+    write, so the agent never authors it. The graph ENDs at the REASON stretch
+    - the dispatch node is REMOVED (G12) and the O9 budget stage is REMOVED
+    (G7). Fail-open on every collaborator.
 
     The hunt-orchestrator is the async-native parent of the hunting effort
     (feat/async-actor-agents): when the phase seams are None (the production
@@ -998,88 +1148,6 @@ async def arun_orchestration(
     if note_fn is None:
         note_fn = lambda inp: _resolve_orchestrator().note(inp)  # noqa: E731
 
-    write_failures = 0
-    duplicate_config_writes = 0
-
-    def _write_config(config) -> str | None:
-        """Persist one hypothesised draft into the project's `produced/` (the
-        hypothesise write, memory-system spec 3.2). IDEMPOTENT against the
-        model's own `hunts_store(write)` call during the same turn: when the
-        config's identity is already on disk, the harness records only (the
-        tool already persisted it) - never a second file, never a spurious
-        duplicate count. A FAILING identity read never blocks the write (a
-        degraded store still persists - the read is only the deduplication
-        optimisation, O4). A genuine `DuplicateConfigError` (a re-elicitation
-        the tool itself surfaced as the deduplication signal, G4) warns and
-        counts; the pass keeps serving with the in-memory config (O3)."""
-        nonlocal write_failures, duplicate_config_writes
-        try:
-            if tools.store_reads is None:
-                raise OSError("no hunt store configured")
-            identity = semantic_key(config.unit_id, config.fault_class,
-                                    config.vulnerability_class)
-            try:
-                already = bool(tools.store_reads.read_configs_by_key(
-                    project_id, identity))
-            except Exception:  # noqa: BLE001 - a failing read never blocks the write
-                already = False
-            if already:
-                return None  # the tool already persisted it this turn
-            return tools.store_reads.write_config(project_id, config)
-        except DuplicateConfigError:
-            # The G4 deduplication signal is deliberately CONFLATED into the
-            # O3 counter (the ADR/assertions pin store_write_failures): a
-            # duplicate write IS a failed write (no file was created). The
-            # separate duplicate_config_writes field gives the signal its own
-            # observability without unbundling the pinned metric.
-            write_failures += 1
-            duplicate_config_writes += 1
-            logger.warning("hunt store: duplicate config write blocked (%s)",
-                           config if isinstance(config, dict) else getattr(config, "hunt_id", ""))
-            return None
-        except Exception as exc:  # noqa: BLE001 - O3: warn and keep serving
-            write_failures += 1
-            logger.warning("hunt store: config write failed (%s)", exc)
-            return None
-
-    def _update_config(config) -> str | None:
-        """Persist one ratification write (the ratify upsert): overwrites the
-        config at its identity in place - a ratified config amends the draft,
-        a dropped config is marked on disk and NEVER deleted (G6). Fail-open
-        (O3): a raising write warns and counts; the pass keeps serving."""
-        nonlocal write_failures
-        try:
-            if tools.store_reads is None:
-                raise OSError("no hunt store configured")
-            return tools.store_reads.update_config(project_id, config)
-        except Exception as exc:  # noqa: BLE001 - O3: warn and keep serving
-            write_failures += 1
-            logger.warning("hunt store: config update failed (%s)", exc)
-            return None
-
-    def _append_note(key: str, note: str) -> None:
-        """Append one pair-end note into the project's `memory.yaml` (natural
-        append order, no `_seq`). IDEMPOTENT against the model's own
-        `notes(write, option='append')` call during the same turn: an identical
-        note for the key already on disk is not duplicated by the harness.
-        Fail-open (O3): a raising write warns and counts; the pass keeps
-        serving."""
-        nonlocal write_failures
-        try:
-            if tools.store_reads is None:
-                raise OSError("no hunt store configured")
-            try:
-                existing = tools.store_reads.read_notes(project_id, key)
-                already = any(n.get("note") == note for n in existing)
-            except Exception:  # noqa: BLE001 - a failing read never blocks the write
-                already = False
-            if already:
-                return
-            tools.store_reads.append_note(project_id, key, note)
-        except Exception as exc:  # noqa: BLE001 - O3: warn and keep serving
-            write_failures += 1
-            logger.warning("hunt store: note write failed (%s)", exc)
-
     intake = normalize_candidates(candidates, known_faults=known_faults)
     if intake.malformed_dropped:
         logger.warning("%s malformed candidate(s) dropped (counted)", intake.malformed_dropped)
@@ -1096,8 +1164,8 @@ async def arun_orchestration(
             malformed_dropped=intake.malformed_dropped,
             pruned_by_verdict=intake.pruned_by_verdict,
             exhausted_faults=tuple(exhausted_faults),
-            store_write_failures=write_failures,
-            duplicate_config_writes=duplicate_config_writes,
+            store_write_failures=0,
+            duplicate_config_writes=0,
         )
 
     # KB evidence (D67-11): the duplicate symptom-technique retrieval seam is
@@ -1116,6 +1184,16 @@ async def arun_orchestration(
             surface = await _await_seam(tools.graph_view.index_cards)
         except Exception as exc:  # noqa: BLE001 - O5: degrade to an empty view
             logger.warning("graph view read failed, gate grounds degraded (%s)", exc)
+
+    # The agent-sole write model (#294): the harness stops persisting configs /
+    # notes itself; the agent's `hunts_store(write)` / `notes(write)` tool calls
+    # are the sole writers. The #201 carve-out is preserved by wrapping the
+    # store seam so every agent write carries the harness-assembled
+    # deterministic `surface_context` (the projection is threaded per turn).
+    # The wrapper is STABLE per run and retargeted here to THIS pass's raw
+    # store/surface, so the actor's once-captured seam is always current.
+    store_seam = _surface_store_for(run_id, tools.store_reads, surface=surface)
+    tools.store_reads = store_seam
 
     # The #135 symbolic render's shared facets: the materialisation and
     # fold-family maps load ONCE per pass (static YAML reads) and are reused
@@ -1183,6 +1261,51 @@ async def arun_orchestration(
             logger.warning("hunt store sibling read degraded for %s (%s)", key, exc)
             return []
 
+    async def _persisted_configs(key: str) -> list[HuntConfig]:
+        """The pair's PERSISTED configs for a revival/semantic key (the
+        agent-sole phase flow, #294 requirement 3): the harness reads what the
+        agent's `hunts_store(write)` actually landed instead of trusting its own
+        in-memory mint. Fail-open per record and per read: a missing seam, a
+        raising read, or a record that does not parse as a `HuntConfig`
+        contributes nothing - never a raise into the pass (O4)."""
+        if store_seam is None:
+            return []
+        reads = getattr(store_seam, "read_configs_by_key", None)
+        if not callable(reads):
+            return []
+        try:
+            records = await _await_seam(reads, project_id, key)
+        except Exception as exc:  # noqa: BLE001 - O4
+            logger.warning("hunt store persisted-config read degraded for %s (%s)",
+                           key, exc)
+            return []
+        configs: list[HuntConfig] = []
+        for record in records or []:
+            try:
+                configs.append(HuntConfig.model_validate(record))
+            except Exception as exc:  # noqa: BLE001 - a malformed record degrades per record
+                logger.warning(
+                    "hunt store persisted config skipped for %s (unparseable "
+                    "record): %s", key, exc)
+                continue
+        return configs
+
+    async def _persisted_note_count(key: str) -> int:
+        """How many notes the pair's key carries on disk (the agent-sole note
+        ledger, #294 requirement 3). Fail-open to 0 (O4)."""
+        if store_seam is None:
+            return 0
+        reads = getattr(store_seam, "read_notes", None)
+        if not callable(reads):
+            return 0
+        try:
+            notes = await _await_seam(reads, project_id, key)
+        except Exception as exc:  # noqa: BLE001 - O4
+            logger.warning("hunt store persisted-note read degraded for %s (%s)",
+                           key, exc)
+            return 0
+        return len(notes or [])
+
     def _mint_for_direction(
         direction: EnvisionedDirection,
         candidate: DeliveredCandidate,
@@ -1192,9 +1315,10 @@ async def arun_orchestration(
         """The deterministic fan-out mint (D3/spec 3.5): ONE hypothesised
         `HuntConfig` draft per distinct elicited `vulnerability_class` (a
         class-less direction degrades to a single carried-bare draft), each
-        config's hunt_id derived from one base. Runs at the HYPOTHESISE phase
-        (the mint is called here, via the `hunts_store` tool) - the emitted set
-        is the model's authoritative submission. The surface context is
+        config's hunt_id derived from one base. Runs at the HYPOTHESISE phase to
+        build the in-memory drafts the phase flow/report reason over (#294: the
+        agent's `hunts_store(write)` tool call is the sole writer, so these
+        drafts are NEVER persisted by the harness). The surface context is
         transformed at the mint: a Service card's edge_degree counts become the
         detailed connected DataItems from the unit's rich projection when the
         projection resolved them; an absent projection degrades to the counts
@@ -1248,15 +1372,18 @@ async def arun_orchestration(
 
     async def _hypothesise_node(state) -> dict:
         """The HYPOTHESISE phase (Q8/spec 3.2): the pair's elicitation turn on
-        the run's orchestration thread, then the mint fan-out (called at this
-        phase) writes the status="hypothesised" drafts into produced/. The
-        `hunts_store` tool's write response carried the NEXT_RATIFY_HINT
-        constant (G1/G3); the loop state HYPOTHESISED is the graph's own (the
-        wrapper sets it, G2). Fail-open (amended #186): a raising/empty turn
-        SKIPS the pair (counted `units_skipped`) instead of minting a
-        fully-empty draft - the actor-death fabrication is dead; a GENUINE
-        carried-bare direction (the model emitted it: rationale present, class
-        absent) still fans out to the carried-bare draft."""
+        the run's orchestration thread, then the deterministic mint fan-out
+        builds the IN-MEMORY status="hypothesised" drafts that drive the phase
+        flow and report. Under the agent-sole write model (#294) the agent's
+        `hunts_store(write, status="hypothesised")` tool call is the sole
+        writer - the harness never persists these drafts. The `hunts_store`
+        tool's write response carried the NEXT_RATIFY_HINT constant (G1/G3); the
+        loop state HYPOTHESISED is the graph's own (the wrapper sets it, G2).
+        Fail-open (amended #186): a raising/empty turn SKIPS the pair (counted
+        `units_skipped`) instead of minting a fully-empty draft - the
+        actor-death fabrication is dead; a GENUINE carried-bare direction (the
+        model emitted it: rationale present, class absent) still fans out to the
+        carried-bare draft."""
         pair = state.get("current_pair")
         if pair is None:
             return {"trail": []}
@@ -1310,6 +1437,11 @@ async def arun_orchestration(
             "kb_degraded": kb_degraded,
         })
         if hypothesise_fn is not None:
+            if store_seam is not None:
+                # The #201 carve-out is threaded per turn: the agent's
+                # `hunts_store(write)` during this turn gets the pair's own
+                # projection (the surface context is per-unit).
+                store_seam.set_projection(projection)
             decision = await _phase_turn(hypothesise_fn, gate_input,
                                          phase="hypothesise")
             directions = list(getattr(decision, "directions", None) or [])
@@ -1331,7 +1463,11 @@ async def arun_orchestration(
         # model genuinely EMITTED (carried, with a rationale) reaches the mint;
         # its class-less degrade is the legit carried-bare draft (spec 3.5).
 
-        # --- the hypothesise write (spec 3.3, the mint called at this phase) --
+        # --- the hypothesise mint (spec 3.3, in-memory only, #294) -----------
+        # The agent's `hunts_store(write, status='hypothesised')` tool call is
+        # the SOLE writer; the deterministic mint below only builds the
+        # in-memory drafts the phase flow reasons over and is NEVER persisted by
+        # the harness. A missing agent write means no artifact on disk.
         carried = [d for d in directions if d.carried]
         trail = [
             {"kind": "gate_pruned",
@@ -1340,7 +1476,7 @@ async def arun_orchestration(
         ]
         ledger = prior_ledger
         minted = dict(state.get("minted_configs") or {})
-        configs_written = 0
+        configs_minted = 0
         if not carried:
             ledger.units_skipped += 1
             return {"ledger": ledger, "minted_configs": minted, "trail": trail,
@@ -1361,33 +1497,31 @@ async def arun_orchestration(
                 "configs": len(configs),
                 "classes": sorted(cfg.vulnerability_class for cfg in configs),
             })
-            for config in configs:
-                # G4: a duplicate write (the deduplication signal) is counted
-                # and the in-memory config keeps serving - the model-facing
-                # interpretation of the signal is the `hunts_store` TOOL.
-                _write_config(config)
-                configs_written += 1
+            configs_minted += len(configs)
         ledger.minted_config_keys.append(key)
         ledger.units_done += 1
         trail.append({"kind": "hypothesised", "revival_key": key,
-                      "configs": configs_written})
+                      "configs": configs_minted})
         return {"ledger": ledger, "minted_configs": minted, "trail": trail,
                 "projections": {pair.unit_id: projection}}
 
     async def _ratify_node(state) -> dict:
         """The RATIFY phase (spec 3.2): the pair's ratification turn on the run's
-        orchestration thread. The model may update/delete/create configs and
+        orchestration thread. The agent may update/delete/create configs and
         MUST end with a status="ratified" write carrying the filled
-        capabilities/assumptions/technique-primitives; the harness persists
-        each decision config at its terminal status (ratified upsert; dropped
-        stays on disk - G6). The `hunts_store` tool's ratified-write response
-        carried ONLY the NEXT_NOTE_HINT constant (G1); the loop state RATIFIED
-        is the graph's own. The "must END with ratified" contract (S2): a
-        decision entry RETURNED without status="ratified" (still hypothesised)
-        is NOT counted ratified, is NOT re-persisted (the draft stays
-        hypothesised on disk), and is NOT fed to the note phase. Fail-open: a
+        preconditions/observed_defences; the agent's `hunts_store(write)` tool
+        call is the SOLE writer (the harness never re-persists the decision, so
+        no second write lands - #294). The `hunts_store` tool's ratified-write
+        response carried ONLY the NEXT_NOTE_HINT constant (G1); the loop state
+        RATIFIED is the graph's own. The "must END with ratified" contract (S2):
+        a decision entry RETURNED without status="ratified" (still hypothesised)
+        is NOT counted ratified and is NOT fed to the note phase. Fail-open: a
         raising/empty turn skips the phase's side effect (the drafts stay
-        hypothesised) but the pair keeps serving."""
+        hypothesised) but the pair keeps serving.
+
+        The #201 carve-out is preserved: the wrapped store seam injects the
+        deterministic `surface_context` on the agent's write, so a model-authored
+        shape is overwritten (the projection is threaded before the turn)."""
         pair = state.get("current_pair")
         if pair is None:
             return {"trail": []}
@@ -1400,30 +1534,23 @@ async def arun_orchestration(
 
         decision = RatifyDecision()
         if ratify_fn is not None:
+            if store_seam is not None:
+                # #201 carve-out: thread the pair's own projection onto the
+                # seam for the ratify turn, so the agent's write carries the
+                # deterministic surface context (aggregates re-injected).
+                store_seam.set_projection(
+                    (state.get("projections") or {}).get(pair.unit_id))
             out = await _phase_turn(ratify_fn, _phase_input(pair, drafts, state),
                                     phase="ratify")
             decision = out if isinstance(out, RatifyDecision) else RatifyDecision()
 
-        # #201 (Q3 ruling): the surface_context is a deterministic typed assembly
-        # owned by the harness - the ratify upsert re-injects the minted shape
-        # (spine + connected data items + aggregated L0 endpoints under the
-        # parent unit) so the model's re-authoring never clobbers the aggregates.
-        ratify_projection = (state.get("projections") or {}).get(pair.unit_id)
-        deterministic_context = _surface_context_for(surface, ratify_projection)
-
         trail: list[dict] = []
-        ratified_configs: list[HuntConfig] = []
         ratified = dropped = unratified = 0
         for config in decision.configs:
             if config.status == "ratified":
-                config.surface_context = deterministic_context
-                _update_config(config)
                 ratified += 1
-                ratified_configs.append(config)
                 trail.append({"kind": "ratified", "revival_key": key})
             elif config.status == "dropped":
-                config.surface_context = deterministic_context
-                _update_config(config)
                 dropped += 1
                 trail.append({"kind": "dropped", "revival_key": key})
             else:
@@ -1437,27 +1564,31 @@ async def arun_orchestration(
             trail.append({"kind": "ratify-ended", "revival_key": key,
                           "ratified": ratified, "dropped": dropped,
                           "unratified": unratified})
-            minted = dict(state.get("minted_configs") or {})
-            minted[key] = ratified_configs
-            return {"trail": trail, "minted_configs": minted}
         return {"trail": trail}
 
     async def _note_node(state) -> dict:
         """The NOTE phase (spec 3.2/G8): the pair's note-taking turn on the
-        run's orchestration thread; the harness appends the decision's notes
-        (idempotently). The `notes` tool's append response carried the NEXT
-        pair's data + the NEXT_PAIR_HINT constant - the pair's loop ENDS there
-        (G1); the loop state NOTED is the graph's own (a LOOP state, never a
-        config status - G5). Fail-open: a raising/empty turn skips the phase's
-        side effect but the pair keeps serving."""
+        run's orchestration thread. The agent's `notes(write, option='append')`
+        tool call is the SOLE note writer (#294): the harness never appends the
+        decision's notes, and the note frame is the pair's PERSISTED ratified
+        configs. The `notes` tool's append response carried the NEXT pair's data
+        + the NEXT_PAIR_HINT constant - the pair's loop ENDS there (G1); the
+        loop state NOTED is the graph's own (a LOOP state, never a config
+        status - G5). Fail-open: a raising/empty turn skips the phase's side
+        effect but the pair keeps serving."""
         pair = state.get("current_pair")
         if pair is None:
             return {"trail": []}
         key = revival_key(pair.unit_id, pair.fault_class)
-        ratified = list((state.get("minted_configs") or {}).get(key) or [])
+        # #294 requirement 3: the note frame is built by READING the configs the
+        # agent actually persisted through `hunts_store(write, status=...)` - the
+        # harness no longer trusts its own in-memory set, so a missing agent
+        # write means nothing to note over (fail-open, never a backfill).
+        persisted = await _persisted_configs(key)
+        ratified = [config for config in persisted if config.status == "ratified"]
         if not ratified:
-            # a pair with no configs (pruned at hypothesise, every config
-            # dropped during ratification, or all returned-unratified - S2) has
+            # a pair with no ratified config on disk (the agent never wrote, it
+            # wrote only dropped configs, or all returned-unratified - S2) has
             # nothing to note: the phase skips its side effect but the loop
             # state NOTED still advances (G5).
             return {"trail": []}
@@ -1477,19 +1608,19 @@ async def arun_orchestration(
             tools.phase_context.next_pair = _pair_frame_for(next_pairs[0]) \
                 if next_pairs else None
 
-        decision = NoteDecision()
+        # The agent's `notes(write, option='append')` tool call is the SOLE note
+        # writer; the ledger counts what actually landed on disk (a before/after
+        # delta), never the harness's own append (#294).
+        notes_before = await _persisted_note_count(key)
         if note_fn is not None:
-            out = await _phase_turn(note_fn, _phase_input(pair, ratified, state),
-                                    phase="note")
-            decision = out if isinstance(out, NoteDecision) else NoteDecision()
+            await _phase_turn(note_fn, _phase_input(pair, ratified, state),
+                              phase="note")
+        notes_after = await _persisted_note_count(key)
+        notes_written = max(0, notes_after - notes_before)
 
         ledger = _ledger(state)
         trail: list[dict] = []
-        notes_written = 0
-        for record in decision.notes:
-            _append_note(key, record.note)
-            notes_written += 1
-        if decision.notes:
+        if notes_written:
             from polymerhus.attack.hunting.orchestrator_tracing import (  # noqa: PLC0415
                 trace_gate_step,
             )
@@ -1549,8 +1680,11 @@ async def arun_orchestration(
         pruned_by_verdict=intake.pruned_by_verdict,
         gate_pruned=tuple(t["revival_key"] for t in trail if t.get("kind") == "gate_pruned"),
         exhausted_faults=tuple(exhausted_faults),
-        store_write_failures=write_failures,
-        duplicate_config_writes=duplicate_config_writes,
+        # The agent-sole write counters (#294): observed on the wrapped store
+        # seam (the agent's tool calls), never incremented by the harness.
+        store_write_failures=store_seam.write_failures if store_seam else 0,
+        duplicate_config_writes=(
+            store_seam.duplicate_config_writes if store_seam else 0),
         ledger=ledger,
     )
 

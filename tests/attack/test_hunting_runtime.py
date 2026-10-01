@@ -41,36 +41,51 @@ def _tools(store) -> OrchestratorTools:
     )
 
 
-def _phase_seams():
-    """The three fixture phase seams: hypothesise carries the pair with one
-    CSRF class, ratify amends the drafts to ratified, note writes one note."""
+def _phase_seams(tools):
+    """The three fixture phase seams under the agent-sole write model (#294):
+    each emulates the AGENT's store tool call - hypothesise carries the pair
+    with one CSRF class and writes the draft, ratify amends to ratified and
+    writes it, note appends one note - all through the pass's wrapped store
+    seam, so the harness never persists anything itself."""
+    import uuid
+
     from polymerhus.attack.hunting.hunt_orchestrator import (
         EnvisionedDirection,
         GateDecision,
         NoteDecision,
         NoteRecord,
         RatifyDecision,
+        mint_hunt_config,
         revival_key,
     )
 
     def hypothesise(inp):
-        return GateDecision(directions=[EnvisionedDirection(
-            unit_id=c.unit_id, fault_class=c.fault_class, carried=True,
-            rationale="r", research_direction="rd",
-            vulnerability_classes=["CSRF"]) for c in inp.candidates])
+        directions = []
+        for c in inp.candidates:
+            direction = EnvisionedDirection(
+                unit_id=c.unit_id, fault_class=c.fault_class, carried=True,
+                rationale="r", research_direction="rd",
+                vulnerability_classes=["CSRF"])
+            directions.append(direction)
+            for config in mint_hunt_config(
+                    direction, c, uuid.uuid4().hex, surface_context={},
+                    prior_hunt_insights=[]):
+                tools.store_reads.write_config("rt-project", config)
+        return GateDecision(directions=directions)
 
     def ratify(inp):
         configs = []
         for draft in inp.configs:
             amended = draft.model_copy(deep=True)
             amended.status = "ratified"
+            tools.store_reads.update_config("rt-project", amended)
             configs.append(amended)
         return RatifyDecision(configs=configs)
 
     def note(inp):
-        return NoteDecision(notes=[NoteRecord(
-            key=revival_key(inp.pair.unit_id, inp.pair.fault_class),
-            note="fixture note")])
+        key = revival_key(inp.pair.unit_id, inp.pair.fault_class)
+        tools.store_reads.append_note("rt-project", key, "fixture note")
+        return NoteDecision(notes=[NoteRecord(key=key, note="fixture note")])
 
     return hypothesise, ratify, note
 
@@ -176,9 +191,10 @@ def test_start_hunting_persists_running_then_complete(tmp_path, monkeypatch):
     monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_status", fake.set_hunting_run_status)
     monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
 
-    h, r, n = _phase_seams()
+    tools = _tools(HuntStore(tmp_path))
+    h, r, n = _phase_seams(tools)
     hid = asyncio.run(hunting_runtime.start_hunting(
-        "rt-project", candidates=[_candidate()], tools=_tools(HuntStore(tmp_path)),
+        "rt-project", candidates=[_candidate()], tools=tools,
         hypothesise_fn=h, ratify_fn=r, note_fn=n,
         control=_FakeControl(),
         hunter_builder=_noop_hunter_builder, pod_builder=_noop_pod_builder,
@@ -274,12 +290,13 @@ def test_empty_candidate_launch_reasons_through_the_real_pass(tmp_path,
     monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_status", fake.set_hunting_run_status)
     monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
 
-    h, r, n = _phase_seams()
     store = HuntStore(tmp_path)
+    tools = _tools(store)
+    h, r, n = _phase_seams(tools)
     asyncio.run(hunting_runtime.start_hunting(
         "rt-project", candidates=(),
         fault_entries=(build_graphql_fault(),), read_fn=build_hunting_l1(),
-        tools=_tools(store),
+        tools=tools,
         hypothesise_fn=h, ratify_fn=r, note_fn=n,
         control=_FakeControl(),
         hunter_builder=_noop_hunter_builder, pod_builder=_noop_pod_builder,
@@ -400,10 +417,11 @@ def test_pinned_run_id_keys_the_run(tmp_path, monkeypatch):
     monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_status", fake.set_hunting_run_status)
     monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
 
-    h, r, n = _phase_seams()
+    tools = _tools(HuntStore(tmp_path))
+    h, r, n = _phase_seams(tools)
     hid = asyncio.run(hunting_runtime.start_hunting(
         "rt-project", run_id="pinned-run", candidates=[_candidate()],
-        tools=_tools(HuntStore(tmp_path)), hypothesise_fn=h, ratify_fn=r, note_fn=n,
+        tools=tools, hypothesise_fn=h, ratify_fn=r, note_fn=n,
         control=_FakeControl(),
         hunter_builder=_noop_hunter_builder, pod_builder=_noop_pod_builder,
         tick_interval=0.001,
@@ -507,9 +525,10 @@ def test_hunting_pg_calls_offload_via_asyncio_to_thread(tmp_path, monkeypatch):
 
     monkeypatch.setattr(hunting_runtime.asyncio, "to_thread", spied_to_thread)
 
-    h, r, n = _phase_seams()
+    tools = _tools(HuntStore(tmp_path))
+    h, r, n = _phase_seams(tools)
     hid = asyncio.run(hunting_runtime.start_hunting(
-        "rt-project", candidates=[_candidate()], tools=_tools(HuntStore(tmp_path)),
+        "rt-project", candidates=[_candidate()], tools=tools,
         hypothesise_fn=h, ratify_fn=r, note_fn=n,
         control=_FakeControl(),
         hunter_builder=_noop_hunter_builder, pod_builder=_noop_pod_builder,
@@ -601,9 +620,10 @@ def test_cancel_hunting_is_a_safe_no_op_with_no_active_run():
 # the run_orchestration sync lane still works through the module boundaries
 def test_explicit_root_store_trail_is_written(tmp_path):
     store = HuntStore(tmp_path)
-    h, r, n = _phase_seams()
+    tools = _tools(store)
+    h, r, n = _phase_seams(tools)
     report = run_orchestration(
-        "rt-project", "run-rt", [_candidate()], _tools(store),
+        "rt-project", "run-rt", [_candidate()], tools,
         hypothesise_fn=h, ratify_fn=r, note_fn=n,
     )
     assert report.pairs_processed == 1
@@ -633,9 +653,10 @@ def test_hunting_run_terminal_invokes_exactly_one_run_scoped_flush(tmp_path, mon
     monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_status", fake.set_hunting_run_status)
     monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
 
-    h, r, n = _phase_seams()
+    tools = _tools(HuntStore(tmp_path))
+    h, r, n = _phase_seams(tools)
     hid = asyncio.run(hunting_runtime.start_hunting(
-        "rt-project", candidates=[_candidate()], tools=_tools(HuntStore(tmp_path)),
+        "rt-project", candidates=[_candidate()], tools=tools,
         hypothesise_fn=h, ratify_fn=r, note_fn=n,
         control=_FakeControl(),
         hunter_builder=_noop_hunter_builder, pod_builder=_noop_pod_builder,

@@ -54,6 +54,7 @@ loop - all others remain in-process mechanisable when Docker is absent.
 from __future__ import annotations
 
 import asyncio
+import logging
 import subprocess
 import sys
 import time
@@ -78,6 +79,7 @@ from polymerhus.attack.hunting.hunt_orchestrator import (
     RatifyDecision,
     ReadOnlyGraphView,
     Witness,
+    mint_hunt_config,
     revival_key,
     run_orchestration,
 )
@@ -95,6 +97,8 @@ from tests.e2e.hunting_observability import (
     probe_for_run,
     TraceRow,
 )
+
+logger = logging.getLogger(__name__)
 
 SERVICE_A = "Service:slug:a"
 SERVICE_B = "Service:slug:b"
@@ -234,25 +238,82 @@ def _carry(candidate: DeliveredCandidate, *, research_direction: str = "probe CS
     )
 
 
-def _ratify_drafts(inp) -> RatifyDecision:
-    """The fixture ratify turn: every draft ends ratified with the filled
-    ratification fields (preconditions + observed_defences, #202)."""
-    configs = []
-    for draft in inp.configs:
-        amended = draft.model_copy(deep=True)
-        amended.status = "ratified"
-        amended.preconditions = ["an authenticated session is obtainable"]
-        amended.observed_defences = ["WAF blocks XSS payloads"]
-        configs.append(amended)
-    return RatifyDecision(configs=configs)
+def _agent_seams(tools, project_id: str):
+    """The agent-sole write emulation (#294): the real `hunts_store` / `notes`
+    tools persist through the pass's wrapped store seam, so an injected phase
+    seam must do the same or nothing persists. Each write catches a store
+    failure per call (the tool's fail-open O3) so a later write can still land;
+    a caught failure is still counted on the wrapped seam for the report."""
+    def _safe_write(method, *args):
+        try:
+            return method(*args)
+        except Exception as exc:  # noqa: BLE001 - the tool degrades fail-open (O3)
+            logger.warning("agent store write degraded (tool fail-open): %s", exc)
+            return None
+
+    def wrap_hypothesise(hypothesise_fn):
+        def agent_hypothesise(inp):
+            decision = hypothesise_fn(inp)
+            for direction in getattr(decision, "directions", None) or []:
+                if not getattr(direction, "carried", False):
+                    continue
+                candidate = next(
+                    (c for c in inp.candidates
+                     if (c.unit_id, c.fault_class)
+                     == (direction.unit_id, direction.fault_class)), None)
+                if candidate is None:
+                    continue
+                for config in mint_hunt_config(
+                        direction, candidate, uuid.uuid4().hex,
+                        surface_context={}, prior_hunt_insights=[]):
+                    _safe_write(tools.store_reads.write_config, project_id, config)
+            return decision
+        return agent_hypothesise
+
+    def ratify(inp) -> RatifyDecision:
+        """The agent's `hunts_store(write, status='ratified')` emulation: every
+        draft is amended with the filled ratification fields (#202) and written."""
+        configs = []
+        for draft in inp.configs:
+            amended = draft.model_copy(deep=True)
+            amended.status = "ratified"
+            amended.preconditions = ["an authenticated session is obtainable"]
+            amended.observed_defences = ["WAF blocks XSS payloads"]
+            _safe_write(tools.store_reads.update_config, project_id, amended)
+            configs.append(amended)
+        return RatifyDecision(configs=configs)
+
+    def note(inp) -> NoteDecision:
+        """The agent's `notes(write, option='append')` emulation: one note for
+        the pair."""
+        key = revival_key(inp.pair.unit_id, inp.pair.fault_class)
+        _safe_write(tools.store_reads.append_note, project_id, key,
+                    "fixture note walking the reasoning")
+        return NoteDecision(notes=[NoteRecord(
+            key=key, note="fixture note walking the reasoning")])
+
+    return wrap_hypothesise, ratify, note
 
 
-def _note_pair(inp) -> NoteDecision:
-    """The fixture note turn: one note for the pair."""
-    return NoteDecision(notes=[NoteRecord(
-        key=revival_key(inp.pair.unit_id, inp.pair.fault_class),
-        note="fixture note walking the reasoning",
-    )])
+def _agent_pass(project_id: str, run_id: str, candidates, hypothesise_fn, *,
+                store=None, graph_view=None, tools=None, arun: bool = False):
+    """Run ONE pass with the agent-sole write emulation (#294): the injected
+    phase seams write through the pass's wrapped store seam exactly as the real
+    `hunts_store` / `notes` tools do, so the persisted state matches a real
+    agent's."""
+    if tools is None:
+        tools = _tools(store, project_id, graph_view=graph_view)
+    wrap, ratify, note = _agent_seams(tools, project_id)
+    kwargs = dict(
+        project_id=project_id, run_id=run_id, candidates=candidates, tools=tools,
+        hypothesise_fn=wrap(hypothesise_fn), ratify_fn=ratify, note_fn=note,
+    )
+    if arun:
+        from polymerhus.attack.hunting.hunt_orchestrator import (  # noqa: PLC0415
+            arun_orchestration,
+        )
+        return arun_orchestration(**kwargs)
+    return run_orchestration(**kwargs)
 
 
 def _tools(store: HuntStore, project_id: str, *, graph_view=None) -> OrchestratorTools:
@@ -274,12 +335,14 @@ def pipe_delivered_candidates(project_id: str, run_id: str, candidates: list[Del
     if expected_counts is not None and store is not None:
         # caller can assert expected store counts before walkthrough runs
         pass
+    tools = _tools(store, project_id)
+    wrap, agent_ratify, agent_note = _agent_seams(tools, project_id)
     return run_orchestration(
         project_id=project_id, run_id=run_id, candidates=candidates,
-        tools=_tools(store, project_id),
-        hypothesise_fn=hypothesise_fn,
-        ratify_fn=ratify_fn or _ratify_drafts,
-        note_fn=note_fn or _note_pair,
+        tools=tools,
+        hypothesise_fn=wrap(hypothesise_fn),
+        ratify_fn=ratify_fn or agent_ratify,
+        note_fn=note_fn or agent_note,
     )
 
 
@@ -368,11 +431,7 @@ def test_e2e_e1_per_fault_fanout(tmp_path):
             return [{"labels": ["L1Service"], "props": {"business_function_slug": params.get("key")}, "edges": []}]
         return []
     tools = OrchestratorTools(store_reads=store, graph_view=ReadOnlyGraphView("proj-e1", read_fn=read_fn))
-    report = run_orchestration(
-        project_id="proj-e1", run_id="run-e1", candidates=[c_a, c_b],
-        tools=tools, hypothesise_fn=hypothesise_fn, ratify_fn=_ratify_drafts,
-        note_fn=_note_pair,
-    )
+    report = _agent_pass("proj-e1", "run-e1", [c_a, c_b], hypothesise_fn, tools=tools)
     assert report.pairs_processed == 2
     assert report.configs_hypothesised == 3
     assert report.configs_ratified == 3
@@ -512,12 +571,7 @@ def test_e2e_e4_budget_stage_removed(tmp_path):
 
     c_a = _candidate(SERVICE_A, FAULT_352, llm_witness="a")
     c_b = _candidate(SERVICE_B, FAULT_352, llm_witness="b")
-    report = run_orchestration(
-        project_id="proj-e4", run_id="run-e4", candidates=[c_a, c_b],
-        tools=_tools(store, "proj-e4"),
-        hypothesise_fn=hypothesise_fn, ratify_fn=_ratify_drafts,
-        note_fn=_note_pair,
-    )
+    report = _agent_pass("proj-e4", "run-e4", [c_a, c_b], hypothesise_fn, store=store)
     assert report.pairs_processed == 2
     assert report.configs_hypothesised == 3
     assert report.configs_ratified == 3
@@ -539,10 +593,9 @@ def test_e2e_e5_empty_after_prunes_is_empty_pass(tmp_path):
         DeliveredCandidate(unit_id=SYSTEM_CACHE, fault_class=FAULT_639, applies_witnesses=Witness(llm="x"), match_verdict="does-not-apply"),  # pruned
     ]
     # gate would see empty list -> empty pass, no phase machine
-    report = run_orchestration(
-        project_id="proj-e5", run_id="run-e5", candidates=candidates,
-        tools=_tools(store, "proj-e5"),
-        hypothesise_fn=lambda inp: GateDecision(directions=[]),
+    report = _agent_pass(
+        "proj-e5", "run-e5", candidates,
+        lambda inp: GateDecision(directions=[]), store=store,
     )
     assert report.pairs_processed == 0
     assert report.configs_hypothesised == 0
@@ -628,12 +681,11 @@ def test_e2e_e6_cooperating_systems_rendered(session, tmp_path):
     assert "kind=WebPresentation" in prompt or "WebPresentation" in prompt
 
     # run orchestration with the REAL graph view so surface_context is grounded.
-    report = run_orchestration(
-        project_id=pid, run_id="run-e6", candidates=[c],
-        tools=_tools(store, pid, graph_view=view),
-        hypothesise_fn=lambda inp: GateDecision(
+    report = _agent_pass(
+        pid, "run-e6", [c],
+        lambda inp: GateDecision(
             directions=[_carry(x, classes=["IDOR"]) for x in inp.candidates]),
-        ratify_fn=_ratify_drafts, note_fn=_note_pair,
+        tools=_tools(store, pid, graph_view=view),
     )
     assert report.pairs_processed == 1
     assert report.configs_ratified == 1
@@ -702,12 +754,7 @@ def test_e2e_e8_q2_accuracy_coverage(tmp_path):
         # add a pruned direction for unreachable unit (not in candidates list, so not minted)
         return GateDecision(directions=dirs)
 
-    report = run_orchestration(
-        project_id="proj-e8", run_id="run-e8", candidates=candidates,
-        tools=_tools(store, "proj-e8"),
-        hypothesise_fn=hypothesise_fn, ratify_fn=_ratify_drafts,
-        note_fn=_note_pair,
-    )
+    report = _agent_pass("proj-e8", "run-e8", candidates, hypothesise_fn, store=store)
     assert report.pairs_processed == 3
     assert report.configs_ratified == 3
     configs = store.read_configs("proj-e8")
@@ -738,12 +785,7 @@ def test_e2e_e9_q3_detail_depth(tmp_path):
             ))
         return GateDecision(directions=dirs)
 
-    report = run_orchestration(
-        project_id="proj-e9", run_id="run-e9", candidates=[c_a, c_b],
-        tools=_tools(store, "proj-e9"),
-        hypothesise_fn=hypothesise_fn, ratify_fn=_ratify_drafts,
-        note_fn=_note_pair,
-    )
+    report = _agent_pass("proj-e9", "run-e9", [c_a, c_b], hypothesise_fn, store=store)
     # harness field checks for the ratified configs (fan-out may create more than 2 configs due to distinct classes)
     assert report.pairs_processed == 2
     assert report.configs_ratified >= 2
@@ -781,12 +823,7 @@ def test_e2e_e10_q4_trajectory_soundness(tmp_path, monkeypatch):
 
     c_a = _candidate(SERVICE_A, FAULT_352)
     c_b = _candidate(SERVICE_B, FAULT_352)
-    report = run_orchestration(
-        project_id="proj-e10", run_id="run-e10", candidates=[c_a, c_b],
-        tools=_tools(store, "proj-e10"),
-        hypothesise_fn=hypothesise_fn, ratify_fn=_ratify_drafts,
-        note_fn=_note_pair,
-    )
+    report = _agent_pass("proj-e10", "run-e10", [c_a, c_b], hypothesise_fn, store=store)
     # judge Q4: the observed spans must obey the internal graph order.
     try:
         judge.assert_symbolic_then_gate()
@@ -830,12 +867,7 @@ def test_e2e_e11_q5_mint_note_consistency(tmp_path):
 
     c_a = _candidate(SERVICE_A, FAULT_352)
     c_b = _candidate(SERVICE_B, FAULT_352)
-    report = run_orchestration(
-        project_id="proj-e11", run_id="run-e11", candidates=[c_a, c_b],
-        tools=_tools(store, "proj-e11"),
-        hypothesise_fn=hypothesise_fn, ratify_fn=_ratify_drafts,
-        note_fn=_note_pair,
-    )
+    report = _agent_pass("proj-e11", "run-e11", [c_a, c_b], hypothesise_fn, store=store)
     # produced/ rows == distinct classes (3), memory.yaml notes == units_done (2)
     assert len(store.read_configs("proj-e11")) == 3
     assert len(store.read_notes("proj-e11")) == 2
@@ -933,12 +965,7 @@ def test_e2e_e13_q7_reflection_strategy(tmp_path):
     assert "Target-knowledge loop" in prompt
     assert "Same-class merge" in prompt
 
-    report = run_orchestration(
-        project_id="proj-e13", run_id="run-e13", candidates=[c],
-        tools=_tools(store, "proj-e13"),
-        hypothesise_fn=hypothesise_fn, ratify_fn=_ratify_drafts,
-        note_fn=_note_pair,
-    )
+    report = _agent_pass("proj-e13", "run-e13", [c], hypothesise_fn, store=store)
     # locale leak 0: research_direction contains class token CSRF and zero forbidden locale tokens
     configs = store.read_configs("proj-e13")
     assert len(configs) == 1  # merge collapsed 2 same-class ->1
@@ -982,27 +1009,25 @@ def test_e2e_e14_fail_open_store_kb_graph(tmp_path, caplog):
             self._write_guard()
             return super().append_note(project_id, key, note)
 
-    store = _FlakyStore(tmp_path, fail_first=2)
+    store = _FlakyStore(tmp_path, fail_first=1)
 
     def hypothesise_fn(inp: GateInput) -> GateDecision:
         return GateDecision(directions=[_carry(x, classes=["CSRF"]) for x in inp.candidates])
 
     c = _candidate(SERVICE_A, FAULT_352, llm_witness="form Z")
-    report = run_orchestration(
-        project_id="proj-e14", run_id="run-e14", candidates=[c],
-        tools=_tools(store, "proj-e14"),
-        hypothesise_fn=hypothesise_fn, ratify_fn=_ratify_drafts,
-        note_fn=_note_pair,
-    )
-    # the 1-candidate pass makes exactly three store writes (the hypothesise
-    # create, the ratify upsert, the note append); the first two fail (O3 -
-    # warned and counted, never a crash), the pass still completes and the
-    # third write (the note) lands
+    report = _agent_pass("proj-e14", "run-e14", [c], hypothesise_fn, store=store)
+    # the 1-candidate agent-sole pass makes three agent store writes (the
+    # hypothesise create, the ratify upsert, the note append); the FIRST fails
+    # (O3 - warned and counted, the seam degrades it fail-open, never a crash)
+    # and the LATER writes succeed: the ratify upsert creates the ratified
+    # config and the note lands
     assert report.pairs_processed == 1
-    assert report.store_write_failures == 2
+    assert report.store_write_failures == 1
     assert report.ledger.units_done == 1
-    assert store.read_configs("proj-e14") == []  # neither config write landed
+    configs = store.read_configs("proj-e14")
+    assert len(configs) == 1 and configs[0]["status"] == "ratified"
     assert len(store.read_notes("proj-e14")) == 1  # the note write succeeded
+    assert "warning" in caplog.text.lower()  # O3: warned + counted, never a crash
 
 
 # --- E15: concurrency barrier, duplicate-idempotent, malformed LLM ---------
@@ -1014,13 +1039,11 @@ def test_e2e_e15_concurrency_duplicate_malformed(tmp_path):
     store = HuntStore(tmp_path)
 
     async def run_one(candidates):
-        from polymerhus.attack.hunting.hunt_orchestrator import arun_orchestration
-        return await arun_orchestration(
-            project_id="proj-e15", run_id="run-e15", candidates=candidates,
-            tools=_tools(store, "proj-e15"),
-            hypothesise_fn=lambda inp: GateDecision(
+        return await _agent_pass(
+            "proj-e15", "run-e15", candidates,
+            lambda inp: GateDecision(
                 directions=[_carry(x, classes=["CSRF"]) for x in inp.candidates]),
-            ratify_fn=_ratify_drafts, note_fn=_note_pair,
+            store=store, arun=True,
         )
 
     import asyncio as _asyncio
@@ -1055,11 +1078,9 @@ def test_e2e_e15_concurrency_duplicate_malformed(tmp_path):
         raise ValueError("unparseable GateDecision (fixture)")
 
     store3 = HuntStore(tmp_path / "e15c")
-    report3 = run_orchestration(
-        project_id="proj-e15c", run_id="run-e15c", candidates=[_candidate(SERVICE_A, FAULT_352)],
-        tools=_tools(store3, "proj-e15c"),
-        hypothesise_fn=bad_hypothesise, ratify_fn=_ratify_drafts,
-        note_fn=_note_pair,
+    report3 = _agent_pass(
+        "proj-e15c", "run-e15c", [_candidate(SERVICE_A, FAULT_352)],
+        bad_hypothesise, store=store3,
     )
     assert report3.pairs_processed == 1
     assert report3.configs_hypothesised == 0
