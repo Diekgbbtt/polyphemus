@@ -83,6 +83,162 @@ It proxies `/projects` and `/runs` to the agent (`vite.config.ts`, override the 
 `AGENT_PROXY_TARGET`) and renders the projects list, the live graph, and running-run status.
 It has no launch or settings form, so a run always starts through the API above.
 
+## Eval read API and the `/eval` page
+
+The read-only eval viewer is a separate service that reads *only* the materialized
+artifact store `<artifact_store>/<target_id>/<target_run_id>/<trial_id>/`. It takes
+Target/TargetRun/Trial identity plus `eval_sha`/`stack_fingerprint` from each trial's
+`run-manifest.yaml`, counts a success only for an `identified` verdict in
+`verdicts.yaml`, and ignores `_sync/`, `live/`, and anything outside those trees. A
+missing or malformed trial is reported as *degraded* (with no host paths) instead of
+failing the whole report.
+
+Internally the API depends only on a `SnapshotSource` protocol (`snapshot()` + `health()`):
+`GET /snapshot` asks the source for the snapshot and `GET /health` asks it for its health,
+nothing else. The default source, `ArtifactStoreSnapshotSource`, adapts the filesystem store
+above, and `create_app()` accepts an injectable factory — so a future real source (REST,
+database, …) can replace the store without touching the routes or the frontend. The
+`EVAL_ARTIFACT_STORE`, `EVAL_DATASET_ID`, and `EVAL_DATASET_NAME` variables are read by the
+filesystem factory at request time (never at import). An unconfigured source degrades
+`/health` and makes `/snapshot` return a path-free `503`.
+
+`/snapshot` is the SPA's single data contract. Additively to `dataset`, `summary`, `targets`,
+`successes`, and `degraded_trials`, it carries:
+
+- `trials` — every discovered trial with its manifest metadata (`instance_id`, `project_id`,
+  `start_phase`, `terminal`, `copied_at`), its `phases` (`phase`, `status`, `run_id`), its
+  `eval_sha`/`stack_fingerprint`, *every* verdict (`identified`/`partial`/`missed`) with its
+  sanitized evidence references, the diagnoses paired to `partial`/`missed`, and an
+  `availability` (`complete`/`degraded`) + safe `reason` code;
+- `versions` — an aggregation per `eval_sha + stack_fingerprint` pair; the same `eval_sha`
+  under a different fingerprint stays a distinct version;
+- `identified`/`partial`/`missed` counts in the summary and on every Target.
+
+`successes` stays identified-only. A diagnosis exposes only allowlisted fields (`vuln`,
+`failure_mode`, `root_cause.type`/`combination_of`/`extended_description`,
+`diagnosis_overview`, and one of the safe `closest_issue`/`proposed_issue` shapes); a defect
+in the diagnoses or the evidence chain degrades that one trial, never the whole snapshot.
+Evidence appears as plain relative, path-safe text references — no download links, no
+absolute paths, traversal, credentials, ground truth, or file contents.
+
+### The `/eval` pages
+
+    /eval                                          dashboard (coverage donuts)
+    /eval/datasets/:datasetId                      dataset and its Target roster
+    /eval/targets/:targetId                        Target detail, grouped by TargetRun
+    /eval/trials/:targetId/:targetRunId/:trialId   trial detail
+    /eval/versions/:evalSha/:stackFingerprint      results of one version + environment
+    /eval/vulnerabilities                          identified vulnerabilities only
+
+`EvalDataProvider` loads `/snapshot` once and shares loading/error/data across all of them
+(no polling, no mutation). `target_id` is always visible and used as the stable identifier;
+the UI labels it “Target (machine)” while `Target` stays the canonical term. Breadcrumbs and
+cross-links keep browser back/forward and refresh working.
+
+    # 1. serve the API against a store
+    export EVAL_ARTIFACT_STORE=/srv/polymerhus/eval-artifacts
+    cd eval && PYTHONPATH=. ../.venv/bin/python -m uvicorn read_api.app:app --port 8090
+    # -> GET /snapshot  (dataset, targets, identified vulnerabilities, degraded trials)
+    # -> GET /health    ({"status": "ok"|"degraded", ...}); no mutating routes exist
+
+    # 2. run the frontend and open /eval
+    cd frontend && npm run dev      # http://localhost:5173/eval
+
+The page uses `VITE_EVAL_API_BASE_URL` (independent of `VITE_AGENT_BASE_URL`). In dev set it
+to `/eval-api`, which Vite proxies to the eval service (`EVAL_PROXY_TARGET`, default
+`http://localhost:8090`); in production point it at the service's full URL. The dataset is
+fixed to `webexploitbench` / “WebExploitBench” and can be overridden with `EVAL_DATASET_ID` /
+`EVAL_DATASET_NAME`.
+
+### Synthetic demo store
+
+To see the page without running real Trials, generate a fake store:
+
+    PYTHONPATH=eval .venv/bin/python -m read_api.demo_data --output /tmp/polyphemus-eval-demo
+
+The data is hand-written and **synthetic** (dataset WebExploitBench): it does **not**
+represent real results, and contains no credentials or host paths. The generator is
+deterministic and idempotent — it writes only the demo files it knows under the authoritative
+layout and never removes or rewrites anything else in the output directory. Point `--output`
+at a **fresh** directory: because it never deletes, an earlier run's files would otherwise
+still be projected. The full flow:
+
+    # 1. generate the store (command above)
+    # 2. serve the API against it
+    export EVAL_ARTIFACT_STORE=/tmp/polyphemus-eval-demo
+    cd eval && PYTHONPATH=. ../.venv/bin/python -m uvicorn read_api.app:app --port 8090
+    # 3. check it
+    curl -s localhost:8090/health
+    curl -s localhost:8090/snapshot
+    # 4. run the frontend
+    cd frontend && npm run dev      # VITE_EVAL_API_BASE_URL=/eval-api
+    # 5. open it
+    open http://localhost:5173/eval
+
+The corpus exercises the whole model **and** looks like a real materialized tree: every complete
+trial's manifest is built by the production `orchestrator.store.build_run_manifest`, its
+`chain_sources` list exactly the unique evidence references its verdicts name, and each
+referenced hunt config, spec family, experiment log and pod export really exists under that
+trial at the same relative paths `orchestrator.files` addresses — so `verdicts.yaml` and
+`diagnoses.yaml` pass the production readers, pairing rule included.
+
+The five trials are: `comfyui-1` (a full recon → analysis → hunting run with 2 identified + 1
+partial, plus a seeded **hunting-only** run with 1 identified + 1 missed), `jetlinks-1` (another
+full pipeline run, 2 identified + 1 missed), and `white-jotter-1` (a resumed analysis → hunting
+run with 1 partial + 2 missed, plus the deliberately broken trial below). One
+version+environment pair is shared across two Targets (`demo-sha-a` + `demo-env-x`), the same
+`eval_sha` appears under a different fingerprint (`demo-sha-a` + `demo-env-z`), and one Target
+carries two TargetRuns. Expected `/snapshot` summary:
+
+    {"targets": 3, "trials": 5, "identified": 5, "partial": 2, "missed": 4, "degraded": 1}
+
+**`white-jotter-1/run-demo-b/trial-2` is intentional failure injection**, not the output of a
+successful materialization: it models an interrupted run (`terminal: interrupted`) whose
+`verdicts.yaml` was never written, so it carries a manifest and nothing else — no verdicts, no
+diagnoses, no chain files. It exists only to keep the degraded path exercised; the other four
+trials are valid, self-contained materializations.
+
+The dashboard also reports deduplicated `coverage` (one entry per
+`(target_id, vuln_id)`, precedence `identified > partial > missed`): targets
+`{tested: 3, with_identified: 2, without_identified: 1}` and vulnerabilities
+`{total: 9, found: 5, not_found: 4, partial: 1}` (partial is a subset of not_found).
+
+#### One-command demo stack (Docker Compose)
+
+`eval/docker-compose.dashboard.yml` is an overlay on top of the base + dev files, so the whole
+demo — synthetic store, read API and dashboard — comes up beside the normal stack with one
+command:
+
+    docker compose -f docker-compose.yml -f docker-compose.dev.yml \
+      -f eval/docker-compose.dashboard.yml up --build
+
+It adds three throwaway services on the base `polymerhus-net`: `eval-store` (one-shot, writes
+the synthetic store into the dedicated `eval-dashboard-store` volume), `eval-api` (the read API
+on `0.0.0.0:8090`, mounting that store **read-only**, started only after the generator
+completes) and `eval-dashboard` (Vite on `0.0.0.0:5173`, started only after the API is healthy).
+
+Then open **http://localhost:5173/eval**. The API is directly reachable at
+`http://localhost:8090/health` (`{"status":"ok",…}`) and `http://localhost:8090/snapshot` (the
+dataset, targets, trials, versions, coverage and identified vulnerabilities; expected summary
+`{"targets":3,"trials":5,"identified":5,"partial":2,"missed":4,"degraded":1}`).
+
+Both ports bind to loopback only and can be moved when they are taken:
+
+    EVAL_API_PORT=18090 EVAL_DASHBOARD_PORT=15173 \
+      docker compose -f docker-compose.yml -f docker-compose.dev.yml \
+        -f eval/docker-compose.dashboard.yml up --build
+
+Stop the demo — removing only its own volumes — with:
+
+    docker compose -f docker-compose.yml -f docker-compose.dev.yml \
+      -f eval/docker-compose.dashboard.yml down -v
+
+The synthetic store lives in its own named volume and is never the operator's
+`EVAL_ARTIFACT_STORE`, so demo data cannot mix with a real artifact store; the services reuse the
+`polymerhus-agent:latest` Python runtime plus a stock Node image, and no credential or host path
+is baked into the overlay. Without the third `-f`, `docker compose up` is exactly what it was
+before.
+
 ### Walkthrough
 
     # 1. create a project
