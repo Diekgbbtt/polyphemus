@@ -138,6 +138,9 @@ jobs:
       - name: Tag and push every built service
         run: |
           set -euo pipefail
+          # A large image can take many minutes to build, so the login token may
+          # have aged out; refresh it before pushing.
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
           compose="webench/${TARGET}/docker-compose.cage.yml"
           # The same rule the dataset helper derives: a service that declares
           # both build: and image: is a canonical image; its registry tag is
@@ -165,5 +168,15 @@ jobs:
             ref="${REGISTRY}:${TARGET}-${service}"
             echo "Pushing ${image} -> ${ref}"
             docker tag "${image}" "${ref}"
-            docker push "${ref}"
+            # A large push can fail transiently ("unknown blob"); retry it.
+            pushed=0
+            for attempt in 1 2 3; do
+              if docker push "${ref}"; then pushed=1; break; fi
+              echo "::warning::push of ${ref} failed (attempt ${attempt}); retrying"
+              sleep $((attempt * 15))
+            done
+            if [ "${pushed}" -ne 1 ]; then
+              echo "::error::push of ${ref} failed after 3 attempts"
+              exit 1
+            fi
           done <<< "${services}"
