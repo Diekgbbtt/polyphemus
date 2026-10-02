@@ -312,3 +312,23 @@ Determinism and reliability:
 - The alias is runtime state in kali's writable layer, so it is lost on a kali recreation; only the declarative `extra_hosts` (`host.docker.internal`, `soupmarket.shop`) survive. This is the `hosts.sh` design carried into `routing.py`: the alias is "runtime-only (ephemeral, lost on container recreation), which is exactly right for a temporary harness". It is a known, accepted debt: a target stays reachable only while its instance's kali is not recreated, and the chain re-aliases on each `up`.
 - The host is matched by exact field equality, not a regex, so the `.` in `t-<short>.target` cannot match an unintended `/etc/hosts` line.
 - The `/etc/hosts` rewrite is a non-atomic truncate-write (the bind-mount constraint forbids `sed -i`); a crash mid-write could truncate kali's `/etc/hosts`.
+
+## Round-10 decisions (the native amd64 image plane, 2026-10-02)
+
+### D48 - Target images are built natively on amd64 in CI and pulled from ghcr
+*2026-10-02.* WebExploitBench targets are amd64-only and the eval host is aarch64 (D46). Building on the host ran every Dockerfile under qemu: slow, and fatal for the EOL Debian bullseye suites, whose security pool now 404s. The build moves off the host.
+
+- **Build**: `.github/workflows/webench-images.yml` builds each target on a native amd64 `ubuntu-latest` runner and pushes every service that declares both `build:` and `image:` to `ghcr.io/<owner>/webench:<target>-<service>`.
+- **Apt snapshot**: `eval/apt_snapshot.py` rewrites each Debian apt source in the checkout to a fixed `snapshot.debian.org` timestamp before the build, so the EOL bullseye packages exist forever and the build is reproducible.
+- **Pull**: the dataset declares `registry: ghcr.io/diekgbbtt/webench`; the targetctl strategy derives a pull reference per canonical tag (`docker.registry_reference`) and pulls instead of building. A pulled image is bound to the canonical tag (store/reclaim) AND to the compose reference, so the target's own `up` finds it locally.
+- **Precedence unchanged**: store -> pull -> build (D47). The build fallback remains for a dataset with no registry.
+
+Supersedes the build half of D46: the host no longer builds amd64 images under qemu. The run half of D46 still holds while the host is aarch64.
+
+**Readiness**: the default window stays 60 x 5s; a target may raise it with `ready_retries` / `ready_interval_s` (a slow JVM, a large stack). The per-target override wins over `EVAL_READY_RETRIES` / `EVAL_READY_INTERVAL_S`.
+
+### Runtime emulation blocks the evaluator on the aarch64 host (open)
+Verified live: the pulled siyucms images start and the target's own services are healthy (`mysql` healthy; `web` and `ssrf-listener` running), but the WebExploitBench `evaluator` restart-loops.
+Its entrypoint resolves its compose project with the amd64 `docker` CLI, and that Go binary segfaults under qemu (`SIGSEGV` in `runtime.netpoll`, the epoll path) on any socket I/O.
+The exhaustive readiness check (Round-9) therefore reports the stack not ready.
+This is the run half of D46, not the image plane: a native amd64 runtime host removes it. Until then the chain cannot pass its health gate on the aarch64 host for any target with an evaluator service.
