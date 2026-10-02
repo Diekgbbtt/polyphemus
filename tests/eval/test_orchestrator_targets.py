@@ -535,6 +535,19 @@ def test_targetctl_env_carries_the_excluded_services(tmp_path) -> None:
             assert command.env["TARGETCTL_EXCLUDE_SERVICES"] == "evaluator"
 
 
+def test_targetctl_readiness_reads_the_generated_compose(tmp_path) -> None:
+    """D49: with exclusions, the readiness poll reads the generated compose the
+    `up` used, not the original that still names the excluded service."""
+    strategy, _ = _targetctl(tmp_path, exclude_services=("evaluator",))
+    plan = strategy._readiness_plan()
+
+    assert ".targetctl/compose/" in " ".join(plan.probe.argv)
+    assert "evaluator" not in " ".join(plan.probe.argv)
+
+    plain, _ = _targetctl(tmp_path)
+    assert ".targetctl/compose/" not in " ".join(plain._readiness_plan().probe.argv)
+
+
 def test_targetctl_reclaim_is_gated_on_reclaimable(tmp_path, recording_runner) -> None:
     kept, _ = _targetctl(tmp_path, reclaimable=False)
     runner = recording_runner()

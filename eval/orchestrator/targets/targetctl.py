@@ -198,6 +198,23 @@ class TargetctlStrategy:
             host=self.host,
             retries=self.ready_retries,
             interval_s=self.ready_interval_s,
+            # D49: when services are excluded, `scripts/targetctl` runs `up` from
+            # a generated compose; the readiness poll must read that same stack,
+            # not the original (which still names the excluded service).
+            compose_file=self._effective_compose_path(),
+        )
+
+    def _effective_compose_path(self) -> str | None:
+        """The generated compose `scripts/targetctl` writes, or None.
+
+        `scripts/targetctl` places it at
+        `<web_dir>/.targetctl/compose/<project>.yml` (D49). None when nothing is
+        excluded, so the poll reads the target's own compose.
+        """
+        if not self.exclude_services:
+            return None
+        return str(
+            Path(self.web_dir) / ".targetctl" / "compose" / f"{self.project}.yml"
         )
 
     # --- lifecycle ------------------------------------------------------------

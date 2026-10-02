@@ -131,11 +131,15 @@ class DatasetHelper:
         host: str | None = None,
         retries: int = DEFAULT_READY_RETRIES,
         interval_s: float = DEFAULT_READY_INTERVAL_S,
+        compose_file: str | None = None,
     ) -> ReadinessPlan:
         """The bounded readiness plan; compose health by default.
 
         A named `checker` is resolved to this dataset's own checker when it
         defines one; otherwise the default compose-health poll applies.
+        `compose_file` overrides the compose the poll reads: the targetctl
+        strategy passes its generated compose when services are excluded (D49),
+        so the poll asserts the same stack `up` started.
         """
         named = self._named_checker(config.checker) if config.checker else None
         if named is not None:
@@ -143,10 +147,10 @@ class DatasetHelper:
                 target, config, project=project, port=port, host=host,
                 retries=retries, interval_s=interval_s,
             )
-        if config.runner in ("targetctl", "compose") and config.compose:
-            compose_file = str(self.compose_path(target, config))
+        if config.runner in ("targetctl", "compose") and (compose_file or config.compose):
+            resolved = compose_file or str(self.compose_path(target, config))
             return ReadinessPlan(
-                probe=plan_compose_health(compose_file, project),
+                probe=plan_compose_health(resolved, project),
                 retries=retries,
                 interval_s=interval_s,
                 kind="compose",
