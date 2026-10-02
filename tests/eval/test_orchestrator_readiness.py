@@ -37,32 +37,89 @@ def test_wait_probe_treats_front_codes_as_unreachable(fake_result):
     assert "000" in READY_UNREACHABLE
 
 
+def test_wait_probe_rejects_500(fake_result):
+    """A 500 is a live app that is broken, never a ready target."""
+    assert "500" in READY_UNREACHABLE
+    runner = _runner([fake_result(stdout="500"), fake_result(stdout="200")])
+    assert wait_probe(
+        runner, Command(argv=("curl",)), retries=3, interval_s=0, sleep=lambda _s: None
+    )
+    assert len(runner.calls) == 2
+
+
+def test_http_ready_rejects_every_5xx():
+    from orchestrator.readiness import http_ready
+
+    for code in ("", "000", "500", "501", "502", "503", "504", "599"):
+        assert not http_ready(code), code
+    for code in ("200", "204", "301", "401", "403"):
+        assert http_ready(code), code
+
+
 def test_parse_compose_health_json_array():
     output = json.dumps(
         [
-            {"Service": "db", "Health": "healthy", "State": "running"},
-            {"Service": "app", "State": "running"},
+            {"Service": "db", "Health": "healthy", "State": "running", "ExitCode": 0},
+            {"Service": "app", "State": "running", "ExitCode": 0},
         ]
     )
-    assert parse_compose_health(output) == ("healthy", "running")
+    services = parse_compose_health(output)
+    assert [(s.service, s.state, s.health, s.exit_code) for s in services] == [
+        ("db", "running", "healthy", 0),
+        ("app", "running", "", 0),
+    ]
+    assert compose_healthy(services)
 
 
 def test_parse_compose_health_json_lines():
-    output = '{"Service": "app", "Health": "starting"}\n{"Service": "db", "State": "running"}'
-    assert parse_compose_health(output) == ("starting", "running")
+    output = (
+        '{"Service": "app", "Health": "starting"}\n'
+        '{"Service": "db", "State": "running"}'
+    )
+    services = parse_compose_health(output)
+    assert [(s.service, s.state, s.health) for s in services] == [
+        ("app", "", "starting"),
+        ("db", "running", ""),
+    ]
 
 
 def test_parse_compose_health_empty():
     assert parse_compose_health("") == ()
 
 
+def test_plan_compose_health_lists_every_service_with_dash_a():
+    argv = plan_compose_health("c.yml", "proj").argv
+    assert "-a" in argv
+    assert argv[-2:] == ("--format", "json")
+
+
 def test_compose_healthy_all_ready():
-    assert compose_healthy(("healthy", "running"))
+    assert compose_healthy(parse_compose_health(json.dumps([
+        {"Service": "db", "Health": "healthy", "State": "running", "ExitCode": 0},
+        {"Service": "app", "State": "running", "ExitCode": 0},
+    ])))
 
 
-def test_compose_healthy_rejects_starting_or_unhealthy():
-    assert not compose_healthy(("healthy", "starting"))
-    assert not compose_healthy(("unhealthy",))
+def test_compose_healthy_accepts_a_clean_one_shot_exit():
+    assert compose_healthy(parse_compose_health(json.dumps([
+        {"Service": "db", "Health": "healthy", "State": "running", "ExitCode": 0},
+        {"Service": "migrate", "State": "exited", "ExitCode": 0},
+    ])))
+
+
+def test_compose_healthy_rejects_starting_unhealthy_and_failed_one_shot():
+    assert not compose_healthy(parse_compose_health(json.dumps([
+        {"Service": "app", "Health": "starting", "State": "running"},
+    ])))
+    assert not compose_healthy(parse_compose_health(json.dumps([
+        {"Service": "app", "Health": "unhealthy", "State": "running"},
+    ])))
+    assert not compose_healthy(parse_compose_health(json.dumps([
+        {"Service": "migrate", "State": "exited", "ExitCode": 1},
+    ])))
+    assert not compose_healthy(parse_compose_health(json.dumps([
+        {"Service": "app", "State": "created"},
+    ])))
     assert not compose_healthy(())
 
 

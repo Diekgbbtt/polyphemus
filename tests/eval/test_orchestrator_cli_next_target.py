@@ -70,7 +70,7 @@ def test_next_target_reports_the_step(tmp_path, recording_runner, fake_result):
             "curl": fake_result(0, stdout="200"),
             "docker build": fake_result(0),
             "image inspect": fake_result(0, stdout="sha256:built"),
-            "ps --format json": fake_result(
+            "ps -a --format json": fake_result(
                 0, stdout='{"Service": "web", "Health": "healthy"}'
             ),
         },

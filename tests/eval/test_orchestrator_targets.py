@@ -214,7 +214,7 @@ def test_targetctl_readiness_is_bounded_and_fatal_on_failure(
     strategy, _ = _targetctl(tmp_path)
     strategy.ready_retries = 2
     runner = recording_runner(
-        routes={"ps --format json": fake_result(0, '[{"State": "exited"}]\n')}
+        routes={"ps -a --format json": fake_result(0, '[{"Service": "app", "State": "created"}]\n')}
     )
 
     with pytest.raises(TargetNotReadyError, match=strategy.host):
@@ -229,7 +229,7 @@ def test_targetctl_readiness_succeeds_on_a_healthy_service(
 ) -> None:
     strategy, _ = _targetctl(tmp_path)
     runner = recording_runner(
-        routes={"ps --format json": fake_result(0, '[{"Health": "healthy"}]\n')}
+        routes={"ps -a --format json": fake_result(0, '[{"Health": "healthy"}]\n')}
     )
 
     assert "ready" in strategy.await_ready(runner)

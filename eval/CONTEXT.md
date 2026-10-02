@@ -51,7 +51,9 @@ Provisioning binds every produced image to its canonical tag, and that tag is th
 _Avoid_: local tag, built image
 
 **Readiness checker**:
-The bounded, non-blocking verification that a target is ready after `up`: a `docker compose ps --format json` health poll by default, or an HTTP port probe, or a named checker defined per dataset and selected on the target config.
+The bounded, non-blocking verification that a target is ready after `up`: a `docker compose ps -a --format json` poll of the stack's own health by default, an HTTP port probe for a compose-less target, or a named checker defined per dataset and selected on the target config.
+The compose poll is exhaustive: `-a` lists every service (including one-shot inits and not-yet-started services), and a service is ready only when it is `healthy`, or `running` with no healthcheck, or `exited` with code 0.
+An HTTP 5xx (500 included) is never a readiness signal.
 It never blocks `up`; the chain then verifies readiness under a bounded window, so a slow or broken healthcheck cannot hang the chain.
 `orchestrator/readiness.py` owns the plans, and `orchestrator/datasets/base.py` resolves the target's plan.
 _Avoid_: healthcheck, wait loop

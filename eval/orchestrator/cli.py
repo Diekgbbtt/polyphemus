@@ -676,8 +676,7 @@ def _run_trial(args, setup: EvalSetup, config: OrchestratorConfig, out: TextIO, 
 
     runner = runner_factory()
     api_runner = api_factory(args.api)
-    probe = trial.make_reachability_probe(paths, runner, trial.front_url(cfg))
-    engine = trial.Trial(cfg, api_runner=api_runner, runner=runner, reachable=probe)
+    engine = trial.Trial(cfg, api_runner=api_runner, runner=runner)
     orchestrator = Orchestrator(setup, config, runner=runner)
     record = engine.run(
         bring_up=orchestrator.up,
@@ -1812,8 +1811,7 @@ def _resume_trial(args, setup: EvalSetup, config: OrchestratorConfig,
     )
     runner = runner_factory()
     api_runner = (api_factory or (lambda base: api.HttpApiRunner(base)))(args.api)
-    probe = trial.make_reachability_probe(paths, runner, trial.front_url(cfg))
-    engine = trial.Trial(cfg, api_runner=api_runner, runner=runner, reachable=probe)
+    engine = trial.Trial(cfg, api_runner=api_runner, runner=runner)
     orchestrator = Orchestrator(setup, config, runner=runner)
     record = engine.run(
         bring_up=orchestrator.up, repair=trial.InstanceRepair(paths, runner)

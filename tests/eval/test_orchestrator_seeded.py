@@ -113,7 +113,6 @@ def _trial(tmp_path, api_runner, *, files=None, clock=None, **overrides) -> tria
         files=files if files is not None else FileStore(),
         clock=clock,
         sleep=clock.sleep,
-        reachable=lambda: True,
     )
 
 

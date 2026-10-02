@@ -87,9 +87,13 @@ def _compose_ps_kali(paths: InstancePaths) -> str:
 def _rewrite_hosts(host: str) -> str:
     # /etc/hosts is a docker bind mount: sed -i cannot rename it, so rewrite
     # through a temp file and truncate-write back (the hosts.sh technique).
+    # Match the host by exact FIELD equality, not a regex: the `.` in
+    # `t-<short>.target` is a regex metacharacter, so `/[[:space:]]host$/` could
+    # match an unintended line. `-v host=` keeps the pattern literal.
+    program = "{ for (i = 2; i <= NF; i++) if ($i == host) next } { print }"
     return (
-        f"awk '!/[[:space:]]{host}$/' /etc/hosts > /tmp/hosts.tmp "
-        "&& cat /tmp/hosts.tmp > /etc/hosts"
+        f"awk -v host={shlex.quote(host)} {shlex.quote(program)} "
+        "/etc/hosts > /tmp/hosts.tmp && cat /tmp/hosts.tmp > /etc/hosts"
     )
 
 
@@ -181,22 +185,6 @@ def kali_hosts_command(paths: InstancePaths) -> Command:
         paths,
         "cat /etc/hosts",
         description=f"read {paths.compose_project} kali /etc/hosts",
-    )
-
-
-def kali_probe_command(paths: InstancePaths, url: str, *, max_time_s: int = 10) -> Command:
-    """Probe a URL from INSIDE that instance's kali (the phase-entry check).
-
-    A target the recon fleet cannot reach is a failed run, not an empty
-    finding, so the recon predicate probes through the same exec plane the
-    pipeline uses. The command answers the HTTP status on stdout.
-    """
-    inner = (
-        f"curl -sS -o /dev/null -w '%{{http_code}}' --max-time {int(max_time_s)} "
-        f"{shlex.quote(url)}"
-    )
-    return _kali_exec_command(
-        paths, inner, description=f"probe {url} from {paths.compose_project} kali"
     )
 
 

@@ -132,7 +132,6 @@ def _trial(
     files=None,
     runner=None,
     clock=None,
-    reachable=None,
     **overrides,
 ) -> trial.Trial:
     clock = clock or FakeClock()
@@ -143,7 +142,6 @@ def _trial(
         runner=runner,
         clock=clock,
         sleep=clock.sleep,
-        reachable=reachable or (lambda: True),
     )
 
 
@@ -264,14 +262,13 @@ def test_recon_entry_block_records_a_blocked_terminal(tmp_path) -> None:
     assert not any(c.path.endswith("/recon") for c in api_runner.calls)
 
 
-def test_run_uses_the_injected_reachability_probe(tmp_path) -> None:
+def test_run_proceeds_without_a_reachability_probe(tmp_path) -> None:
     api_runner = FakeApi(_full_routes())
 
-    record = _trial(tmp_path, api_runner, reachable=lambda: False).run()
+    record = _trial(tmp_path, api_runner).run()
 
-    assert record.terminal == "blocked"
-    assert any("reachable" in b for b in record.phases[0].blocks)
-    assert not any(c.path.endswith("/recon") for c in api_runner.calls)
+    assert record.terminal == "complete"
+    assert any(c.path.endswith("/recon") for c in api_runner.calls)
 
 
 # --- the hunting cap ----------------------------------------------------------
@@ -508,7 +505,6 @@ def test_a_resumed_trial_keeps_its_baseline_and_does_not_reset_the_count(
         ),
         clock=resumed_clock,
         sleep=resumed_clock.sleep,
-        reachable=lambda: True,
     ).run()
 
     # Had the baseline reset, iteration one would clear the cap (empty count)
@@ -715,47 +711,6 @@ def test_scaffold_command_runs_through_the_command_runner(
     assert scaffold_calls[0].env == {
         "PYTHONPATH": os.pathsep.join(("src", str(tmp_path)))
     }
-
-
-def test_reachability_probe_maps_the_kali_http_code(tmp_path) -> None:
-    from orchestrator import instances
-    from orchestrator.setup import parse_eval_setup
-
-    setup = parse_eval_setup(
-        {
-            "schema_version": 1,
-            "artifact_store": "/srv/a",
-            "instances": [
-                {
-                    "instance_id": "arm-a",
-                    "targets": [
-                        {
-                            "target_key": "mock/webmock",
-                            "target_id": "t1",
-                        }
-                    ],
-                }
-            ],
-        }
-    )
-    paths = instances.instance_paths(
-        setup.instances[0], tmp_path / "instances", repo=tmp_path, branch="eval"
-    )
-
-    class Runner:
-        def __init__(self, code):
-            self.code = code
-            self.calls = []
-
-        def __call__(self, command):
-            self.calls.append(command)
-            return CommandResult(0, self.code)
-
-    happy = Runner("200")
-    assert trial.make_reachability_probe(paths, happy, "http://t-x.target/")() is True
-    assert any("curl" in " ".join(c.argv) for c in happy.calls)
-    assert trial.make_reachability_probe(paths, Runner("502"), "http://x/")() is False
-    assert trial.make_reachability_probe(paths, Runner(""), "http://x/")() is False
 
 
 def test_front_url_is_the_synthetic_host(tmp_path) -> None:

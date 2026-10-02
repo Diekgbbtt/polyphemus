@@ -7,8 +7,8 @@ within a budget. The setup outcome chains into execution: a configuration-layer
 failure gets one bounded repair and a retry, anything else escalates (D28).
 
 Every effect is injected - the REST `ApiRunner`, the `FileStore` filesystem
-seam, the #269 `CommandRunner`, the clock, and the reachability probe - so the
-engine is exercised without a live stack. Import performs no I/O.
+seam, the #269 `CommandRunner`, and the clock - so the engine is exercised
+without a live stack. Import performs no I/O.
 """
 from __future__ import annotations
 
@@ -32,7 +32,6 @@ from orchestrator.instances import InstanceError, InstancePaths
 from orchestrator.predicates import GateResult
 from orchestrator.setup import PreloadedArtifacts
 from orchestrator.workitems import WorkItemGateError
-from orchestrator.targets.base import READY_UNREACHABLE
 
 CONFIGURATION = "configuration"
 ESCALATE = "escalate"
@@ -153,24 +152,6 @@ def front_url(config: TrialConfig) -> str:
     """The trial's target front URL: the synthetic Host on the standard port."""
     host = routing.synthetic_host(f"{config.instance_id}/{config.target_id}")
     return f"http://{host}/"
-
-
-def make_reachability_probe(
-    paths: InstancePaths,
-    runner: CommandRunner,
-    url: str,
-    *,
-    max_time_s: int = 10,
-) -> Callable[[], bool]:
-    """Build the recon-entry reachability probe through the kali exec plane."""
-
-    def probe() -> bool:
-        command = routing.kali_probe_command(paths, url, max_time_s=max_time_s)
-        result = runner(command)
-        code = (result.stdout or "").strip()
-        return result.returncode == 0 and code not in READY_UNREACHABLE
-
-    return probe
 
 
 @dataclass(frozen=True)
@@ -387,7 +368,6 @@ class Trial:
         runner: CommandRunner | None = None,
         clock: Callable[[], float] | None = None,
         sleep: Callable[[float], None] | None = None,
-        reachable: Callable[[], bool] | None = None,
         now: Callable[[], str] | None = None,
     ) -> None:
         self.config = config
@@ -396,7 +376,6 @@ class Trial:
         self._runner = runner
         self._clock = clock or time.monotonic
         self._sleep = sleep or time.sleep
-        self._reachable = reachable
         self._now = now or subagents.utcnow
         # The trial-scoped cap baseline. A resumed trial arrives with one on the
         # config; a fresh trial has none and snapshots it at its first poll.
@@ -692,11 +671,7 @@ class Trial:
     def _phase_recon(self, state: predicates.PhaseState) -> PhaseRecord:
         if self._api is None:
             raise TrialError("trial execution requires an API runner")
-        if self._reachable is None:
-            raise TrialError("recon entry requires a reachability probe")
-        gate: GateResult = predicates.recon_entry(
-            self._api, self._files, state, reachable=self._reachable
-        )
+        gate: GateResult = predicates.recon_entry(self._api, self._files, state)
         if not gate.ok:
             return PhaseRecord(phase="recon", blocks=list(gate.blocks))
         run_id = api.run_id_of(

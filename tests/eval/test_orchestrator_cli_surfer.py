@@ -363,9 +363,6 @@ def test_resume_trial_threads_the_record_cap_baseline(tmp_path, monkeypatch) -> 
     monkeypatch.setattr(cli, "_trial_config", lambda *a, **k: (canned, None, None))
     monkeypatch.setattr(cli.trial, "Trial", _FakeTrial)
     monkeypatch.setattr(
-        cli.trial, "make_reachability_probe", lambda *a, **k: (lambda: True)
-    )
-    monkeypatch.setattr(
         cli, "Orchestrator", lambda *a, **k: SimpleNamespace(up=lambda: None)
     )
     plan = surfer.ResumePlan(

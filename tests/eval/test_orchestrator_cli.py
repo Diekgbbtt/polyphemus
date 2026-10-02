@@ -66,7 +66,7 @@ def test_up_executes_through_the_injected_runner(
             "scripts/targetctl up": fake_result(0, "UI: http://127.0.0.1:32768/\n"),
             "getent hosts": fake_result(0, "172.17.0.1 host.docker.internal\n"),
             "curl": fake_result(0, "200"),
-            "ps --format json": fake_result(
+            "ps -a --format json": fake_result(
                 0, '{"Service": "app", "Health": "healthy"}'
             ),
         }
@@ -194,7 +194,7 @@ def test_trial_executes_through_the_injected_api_and_runner(
             "getent hosts": fake_result(0, "172.17.0.1 host.docker.internal\n"),
             "scaffold.py": fake_result(0, "services: 3\n"),
             "curl": fake_result(0, "200"),
-            "ps --format json": fake_result(
+            "ps -a --format json": fake_result(
                 0, '{"Service": "app", "Health": "healthy"}'
             ),
         }
@@ -235,7 +235,7 @@ def test_trial_api_transport_failure_is_handled_not_a_traceback(
             "getent hosts": fake_result(0, "172.17.0.1 host.docker.internal\n"),
             "scaffold.py": fake_result(0, "services: 3\n"),
             "curl": fake_result(0, "200"),
-            "ps --format json": fake_result(
+            "ps -a --format json": fake_result(
                 0, '{"Service": "app", "Health": "healthy"}'
             ),
         }
@@ -284,7 +284,7 @@ def _run_trial_cli(sample_setup, tmp_path, recording_runner, fake_result, extra_
             "getent hosts": fake_result(0, "172.17.0.1 host.docker.internal\n"),
             "scaffold.py": fake_result(0, "services: 3\n"),
             "curl": fake_result(0, "200"),
-            "ps --format json": fake_result(
+            "ps -a --format json": fake_result(
                 0, '{"Service": "app", "Health": "healthy"}'
             ),
         }

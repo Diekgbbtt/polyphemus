@@ -286,3 +286,29 @@ The delta, its module seams, and the migration order are recorded in `docs/desig
 - **Opt-in `reclaimable`**: a target's own canonical tags are removed at teardown and after a failed up only when the target opts in (default false); a target that does not opt in leaves its images in the store.
 
 Supersedes D44 (the embedded `TargetDataset`) and the per-target lifecycle `params` and build-first precedence of D9/D43 in the parts above.
+
+## Round-9 observation (the exhaustive compose readiness check, 2026-10-02)
+
+The readiness checker now asserts the stack's OWN health, exhaustively.
+`docker compose ps -a --format json` lists every service, including one-shot init services that have exited and services not yet started; a service is ready only when it is `healthy`, or `running` with no healthcheck, or `exited` with code 0.
+`created`, `starting`, `unhealthy`, `restarting`, and a non-zero exit are all not ready.
+Without `-a`, compose reports only running containers, so a single running service read as a ready stack; with `-a` a not-yet-started dependent can never be mistaken for a ready one, and the functional `depends_on` conditions are asserted as the platform declares them.
+
+An HTTP 5xx (500 included) is removed as a valid readiness signal: a server-side error is a live but broken app, never a ready target.
+The runtime kali reachability gate is dropped from the recon-entry predicate (`predicates.recon_entry`): the target shares a Docker network that egresses to the host and reaches loopback, and its readiness was already asserted by the stack's own health check, so a second kali probe only duplicated the gate.
+
+### The synthetic-Host pointing mechanism (assessment)
+
+The synthetic Host `t-<short>.target` reaches a target through three hops, all verified live on the eval host:
+
+1. the instance's kali resolves the Host from its own `/etc/hosts`, where `routing.kali_alias_command` writes `<gateway-ip> <host>`;
+2. `<gateway-ip>` is the numeric answer of `getent hosts host.docker.internal` inside kali (SP1: `/etc/hosts` has no resolver, so a hostname in its address column is refused);
+3. the shared front (`ph-eval-front`, host `:80`) matches `server_name <host>` and proxies to `host.docker.internal:<published-port>`; the target publishes on `0.0.0.0:<published-port>`.
+
+Determinism and reliability:
+
+- The alias is re-resolved on every `up`, so a changed gateway address is picked up; `kali_clear_command` removes it on teardown.
+- `host.docker.internal` inside kali resolves to `172.17.0.1` (docker0), NOT kali's own network gateway (`172.28.0.1` on `polymerhus-net`). The cross-bridge hop works because the host forwards between bridges (`net.ipv4.ip_forward = 1`); both addresses were reachable from kali in the live check.
+- The alias is runtime state in kali's writable layer, so it is lost on a kali recreation; only the declarative `extra_hosts` (`host.docker.internal`, `soupmarket.shop`) survive. This is the `hosts.sh` design carried into `routing.py`: the alias is "runtime-only (ephemeral, lost on container recreation), which is exactly right for a temporary harness". It is a known, accepted debt: a target stays reachable only while its instance's kali is not recreated, and the chain re-aliases on each `up`.
+- The host is matched by exact field equality, not a regex, so the `.` in `t-<short>.target` cannot match an unintended `/etc/hosts` line.
+- The `/etc/hosts` rewrite is a non-atomic truncate-write (the bind-mount constraint forbids `sed -i`); a crash mid-write could truncate kali's `/etc/hosts`.
