@@ -37,7 +37,6 @@ from orchestrator import front, routing
 from orchestrator.commands import Command, CommandRunner, require_ok
 from orchestrator.datasets.base import canonical_tag
 from orchestrator.docker import ProvisionOutcome
-from orchestrator.ids import short_id
 from orchestrator.readiness import wait_readiness
 from orchestrator.targets.base import (
     Sleep,
@@ -91,6 +90,16 @@ def url_port(url: str) -> str:
     return str(port)
 
 
+def targetctl_project(target: str) -> str:
+    """The compose project `scripts/targetctl` names a target, `web_<sanitized>`.
+
+    The server scaffold lowercases the target and replaces every non-alphanumeric
+    character with `_` (`project_name`/`sanitize_project_part`). The readiness
+    poll and the generated-compose path must use the same name (D49).
+    """
+    return "web_" + re.sub(r"[^a-z0-9]", "_", target.lower())
+
+
 class TargetctlStrategy:
     """One WebExploitBench target run on the local eval host."""
 
@@ -131,7 +140,10 @@ class TargetctlStrategy:
         self.ready_interval_s = config.ready_interval_s or float(
             environment.get("EVAL_READY_INTERVAL_S") or DEFAULT_READY_INTERVAL_S
         )
-        self.project = config.project or f"ph-target-{short_id(context.host)}"
+        # The D45 server scaffold owns the compose project name (`web_<target>`);
+        # the readiness poll and the generated-compose path must speak it, or they
+        # address a project/file that does not exist (D49).
+        self.project = targetctl_project(self.target)
         # D49: the dataset's excluded services (the WebExploitBench evaluator)
         # merged with any the target itself excludes, de-duplicated, order-stable.
         excluded: list[str] = []

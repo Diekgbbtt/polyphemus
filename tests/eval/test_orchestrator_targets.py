@@ -548,6 +548,24 @@ def test_targetctl_readiness_reads_the_generated_compose(tmp_path) -> None:
     assert ".targetctl/compose/" not in " ".join(plain._readiness_plan().probe.argv)
 
 
+def test_targetctl_project_matches_the_server_scaffold(tmp_path) -> None:
+    """The readiness poll must name the project `scripts/targetctl` created
+    (`web_<sanitized target>`), or it reads a project that does not exist."""
+    from orchestrator.targets.targetctl import targetctl_project
+
+    assert targetctl_project("siyucms") == "web_siyucms"
+    assert targetctl_project("mogu-blog-v2") == "web_mogu_blog_v2"
+    assert targetctl_project("White-Jotter") == "web_white_jotter"
+
+    strategy, _ = _targetctl(tmp_path, exclude_services=("evaluator",))
+    plan = strategy._readiness_plan()
+    argv = " ".join(plan.probe.argv)
+
+    assert strategy.project == "web_jetlinks"
+    assert "-p web_jetlinks" in argv
+    assert "compose/web_jetlinks.yml" in argv
+
+
 def test_targetctl_reclaim_is_gated_on_reclaimable(tmp_path, recording_runner) -> None:
     kept, _ = _targetctl(tmp_path, reclaimable=False)
     runner = recording_runner()
