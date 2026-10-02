@@ -23,11 +23,8 @@ def _setup_payload(store_dir: str) -> dict:
                 "instance_id": "arm-a",
                 "targets": [
                     {
+                        "target_key": "webexploitbench/jetlinks",
                         "target_id": "jetlinks-1",
-                        "target_config": {
-                            "lifecycle": "targetctl",
-                            "params": {"target": "jetlinks"},
-                        },
                     }
                 ],
             }

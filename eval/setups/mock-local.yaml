@@ -1,12 +1,11 @@
 # A mock local-target setup: verifies the local target wiring (D45/D46) end to
-# end without a real WebExploitBench build. The `webmock` target
-# (`eval/mock/webmock/`) is copied into the dataset checkout (`$EVAL_WEB_DIR`,
-# default `~/WebExploitBench`) so `scripts/targetctl` discovers it, and the
+# end without a real WebExploitBench build. The repo-local `mock` dataset
+# (eval/platform/mock/webmock/) supplies the `webmock` target, and the
 # orchestrator parametrises it exactly like a real target.
 #
 # Two TargetRuns of the same target let `next-target` exercise the whole chain:
 # advancing from `webmock-1` to `webmock-2` tears the first down, reclaims its
-# image, provisions and brings up the second, and verifies health.
+# images, provisions and brings up the second, and verifies health.
 #
 # The instance is the eval server's running instance: `next-target` reuses its
 # kali container for the synthetic-Host alias, so the instance stack itself is
@@ -15,6 +14,9 @@
 schema_version: 1
 
 artifact_store: /srv/eval-artifacts
+
+datasets:
+  - mock
 
 work_items:
   - name: auth-bootstrap
@@ -28,13 +30,7 @@ instances:
   - instance_id: eval-server-1
     env_file: eval-server-1/.env
     targets:
-      - target_id: webmock-1
-        target_config:
-          lifecycle: targetctl
-          params:
-            target: webmock
-      - target_id: webmock-2
-        target_config:
-          lifecycle: targetctl
-          params:
-            target: webmock
+      - target_key: mock/webmock
+        target_id: webmock-1
+      - target_key: mock/webmock
+        target_id: webmock-2

@@ -65,10 +65,16 @@ def fake_result():
 
 
 def sample_setup_dict() -> dict:
-    """A minimal valid `EvalSetup`: one instance, one `targetctl` target."""
+    """A minimal valid `EvalSetup`: one instance, one keyed `targetctl` target.
+
+    The target is addressed by `<dataset>/<target>` (spec #301); the bring-up
+    configuration lives in `eval/targets/<dataset>/<target>.yaml`, while the
+    inline `target_config` carries only the per-trial data dependencies.
+    """
     return {
         "schema_version": 1,
         "artifact_store": "/srv/eval-artifacts",
+        "datasets": ["webexploitbench"],
         "work_items": [
             {"name": "auth-bootstrap", "status": "complete"},
             {"name": "l1-surface", "status": "complete"},
@@ -80,14 +86,13 @@ def sample_setup_dict() -> dict:
                 "systems": "ph-arm-a",
                 "targets": [
                     {
+                        "target_key": "webexploitbench/jetlinks",
                         "target_id": "jetlinks-1",
                         "start_phase": "recon",
                         "hunt_config_budget": 10,
                         "preloaded_hunting_artifacts": None,
                         "target_config": {
-                            "lifecycle": "targetctl",
-                            "params": {"target": "jetlinks"},
-                            "operator_kb": "eval/kbs/jetlinks/operator_kb.md",
+                            "operator_kb": "eval/data/webexploitbench/jetlinks/operator_kb.md",
                         },
                     }
                 ],

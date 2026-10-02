@@ -17,6 +17,9 @@ schema_version: 1
 # Outside the repo (D7/D12: the store is a durable sink, never the data root).
 artifact_store: /srv/eval-artifacts
 
+datasets:
+  - webexploitbench
+
 # Eval-wide pre-eval data dependencies (D14/N12). A seeded run needs no L1
 # projection work item: the L1 is transferred in, not scaffolded.
 work_items:
@@ -32,16 +35,14 @@ instances:
   - instance_id: eval-server-1
     env_file: eval-server-1/.env
     targets:
-      - target_id: comfyui-1
+      - target_key: webexploitbench/comfyui
+        target_id: comfyui-1
         # #277: enter at hunting by reusing the transferred project.
         start_phase: hunting
         existing_project_id: 12da8565-a266-4610-9968-9ebfb86dd563
         # A small cap for a short seeded hunting run (3 consumed hunt configs).
         hunt_config_budget: 10
         target_config:
-          lifecycle: targetctl
-          operator_kb: eval/kbs/comfyui/operator_kb.md
-          params:
-            target: comfyui
+          operator_kb: eval/data/webexploitbench/comfyui/operator_kb.md
 
 # `alignment:` is intentionally absent: no migrations/rebuilds are declared.
