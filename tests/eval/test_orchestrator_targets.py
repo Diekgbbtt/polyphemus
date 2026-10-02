@@ -60,6 +60,7 @@ def _dataset(
     repo="https://example.invalid/repo.git",
     platform_root="",
     registry="",
+    exclude_services=(),
 ):
     return BenchmarkDataset(
         id=dataset_id,
@@ -67,6 +68,7 @@ def _dataset(
         registry=registry,
         platform_root=platform_root,
         targets=("jetlinks", "img", "stack", "a b"),
+        exclude_services=tuple(exclude_services),
         eval_root=tmp_path / "eval",
     )
 
@@ -196,6 +198,7 @@ def test_targetctl_commands_select_the_amd64_platform(tmp_path) -> None:
             assert command.env == {
                 "DOCKER_DEFAULT_PLATFORM": "linux/amd64",
                 "TARGETCTL_NO_WAIT_DEPS": "1",
+                "TARGETCTL_EXCLUDE_SERVICES": "",
             }
 
 
@@ -459,6 +462,77 @@ def test_targetctl_provision_derives_pull_refs_from_the_registry(
         "docker tag ghcr.io/owner/webench:jetlinks-web pentestbench-jetlinks:web"
         in runner.argv_texts
     )
+
+
+TWO_SERVICE_COMPOSE = """\
+name: pb_mock
+services:
+  web:
+    build:
+      context: ./setup_files
+      dockerfile: environment/Dockerfile
+    image: pentestbench-mock-web:latest
+  evaluator:
+    build:
+      context: ./evaluator
+      dockerfile: Dockerfile
+    image: pentestbench-evaluator:latest
+"""
+
+
+def test_dataset_exclude_services_drops_the_evaluator_image(tmp_path) -> None:
+    """D49: a dataset-excluded service is not a built image, so it is never
+    tagged, pulled, or reclaimed."""
+    bank = tmp_path / "platform" / "mock" / "jetlinks"
+    bank.mkdir(parents=True, exist_ok=True)
+    (bank / "docker-compose.yml").write_text(TWO_SERVICE_COMPOSE, encoding="utf-8")
+    dataset = _dataset(
+        tmp_path,
+        platform_root=str(tmp_path / "platform" / "mock"),
+        exclude_services=("evaluator",),
+    )
+    config = TargetConfiguration(
+        target="jetlinks", runner="targetctl", compose="docker-compose.yml"
+    )
+    helper = DatasetHelper(dataset)
+
+    built = helper.built_images("jetlinks", config)
+
+    assert [(b.service, b.reference) for b in built] == [
+        ("web", "pentestbench-mock-web:latest")
+    ]
+    assert helper.canonical_tags("jetlinks", config) == ("ph/mock/jetlinks:web",)
+
+
+def test_target_exclude_services_merges_with_the_dataset(tmp_path) -> None:
+    """A target's own `exclude_services` adds to the dataset's, de-duplicated."""
+    bank = tmp_path / "platform" / "mock" / "jetlinks"
+    bank.mkdir(parents=True, exist_ok=True)
+    (bank / "docker-compose.yml").write_text(TWO_SERVICE_COMPOSE, encoding="utf-8")
+    dataset = _dataset(
+        tmp_path,
+        platform_root=str(tmp_path / "platform" / "mock"),
+        exclude_services=("web",),
+    )
+    config = TargetConfiguration(
+        target="jetlinks",
+        runner="targetctl",
+        compose="docker-compose.yml",
+        exclude_services=("evaluator",),
+    )
+    strategy, _ = _strategy(tmp_path, runner="targetctl", config=config, dataset=dataset)
+
+    assert strategy.exclude_services == ("web", "evaluator")
+    assert strategy.canonical_tags == ()
+
+
+def test_targetctl_env_carries_the_excluded_services(tmp_path) -> None:
+    """D49: the strategy passes the exclusions to `scripts/targetctl`."""
+    strategy, _ = _targetctl(tmp_path, exclude_services=("evaluator",))
+
+    for command in strategy.plan_up():
+        if (command.description or "").startswith("targetctl"):
+            assert command.env["TARGETCTL_EXCLUDE_SERVICES"] == "evaluator"
 
 
 def test_targetctl_reclaim_is_gated_on_reclaimable(tmp_path, recording_runner) -> None:

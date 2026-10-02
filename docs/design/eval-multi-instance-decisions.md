@@ -327,8 +327,30 @@ Supersedes the build half of D46: the host no longer builds amd64 images under q
 
 **Readiness**: the default window stays 60 x 5s; a target may raise it with `ready_retries` / `ready_interval_s` (a slow JVM, a large stack). The per-target override wins over `EVAL_READY_RETRIES` / `EVAL_READY_INTERVAL_S`.
 
-### Runtime emulation blocks the evaluator on the aarch64 host (open)
-Verified live: the pulled siyucms images start and the target's own services are healthy (`mysql` healthy; `web` and `ssrf-listener` running), but the WebExploitBench `evaluator` restart-loops.
-Its entrypoint resolves its compose project with the amd64 `docker` CLI, and that Go binary segfaults under qemu (`SIGSEGV` in `runtime.netpoll`, the epoll path) on any socket I/O.
-The exhaustive readiness check (Round-9) therefore reports the stack not ready.
-This is the run half of D46, not the image plane: a native amd64 runtime host removes it. Until then the chain cannot pass its health gate on the aarch64 host for any target with an evaluator service.
+### D49 - The WebExploitBench evaluator is dropped; polymerhus scores through its own assessment
+*2026-10-02.* The WebExploitBench `evaluator` is the benchmark's native oracle: an HTTP service (`POST /done/<vuln_id>`) that runs each challenge's `verify.py` against an `agent_output` payload and returns `{"status": bool}`.
+It is dropped from the eval platform, and its artifacts are removed.
+
+Rationale - the oracle cannot be fed:
+
+- **The evaluator consumes a submitted exploit, and no component produces one.** The native verifiers check exploit EFFECTS on the target (an SSRF-listener hit, an RCE canary process, an XSS `alert()` dialog, a written file) or WebExploitBench-shaped `final_answer/<id>/vulnerability.json` reports.
+  polymerhus is discovery-only: it hunts for vulnerabilities and persists evidence; it never runs an exploit and never emits a WebExploitBench report.
+  The exploit module that would submit a PoC is not implemented.
+  With no producer for its input contract, the evaluator can never return `true`.
+- **The oracle already exists, one layer up.** polymerhus scores a trial through the background assessment subagent (`orchestrator/assessment.py`), which reads the persisted run evidence and writes `verdicts.yaml` (`identified | partial | missed`).
+  The evaluator was never wired into the orchestrator: the chain never called `/done/<vuln_id>`, and no proof-of-concept replay path existed.
+  A second oracle that nothing invokes is dead weight, not redundancy.
+- **The two are unrelated systems.** The evaluator is the benchmark author's external acceptance oracle (intra-challenge, deterministic, effect-based); the assessor is polymerhus's self-assessment oracle (evidence-grounded, LLM, phase-mapped).
+  They share a vocabulary (`identified`/`missed`) and nothing else.
+  Keeping both would duplicate the decision with no independent producer for either.
+
+Consequences:
+
+- The evaluator is excluded from every target stack, so the exhaustive readiness check (Round-9) asserts only the target's own services and their transitive `depends_on`.
+  This also removes the amd64-under-qemu blocker of D46 for the runtime plane: the evaluator's Go `docker` CLI was the one process that segfaulted under emulation.
+- **Mechanism**: a target may declare `exclude_services` in its `TargetConfiguration`; the `targetctl` strategy renders a Compose `profiles` override that keeps the named services out of `up` without editing the frozen upstream compose.
+  The `webexploitbench` targets that carry an `evaluator` service declare `exclude_services: [evaluator]`.
+- The `webench-images` CI workflow stops building the evaluator image, and the harness stops deriving a pull reference for it.
+
+**Deleted artifacts**: the evaluator service from each target stack; `pentestbench-evaluator:latest` and `ghcr.io/diekgbbtt/webench:<target>-evaluator` images; the evaluator's compose references in the per-target pull/build sets; the evaluator rows in the harness design docs and the per-target research notes.
+The upstream `_common/evaluator/` source stays in the external dataset checkout (it is the benchmark's own file, used in place, never authored here); only the platform's dependency on it is removed.

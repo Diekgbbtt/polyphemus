@@ -45,6 +45,7 @@ KNOWN_FIELDS = (
     "ready_retries",
     "ready_interval_s",
     "reclaimable",
+    "exclude_services",
 )
 
 
@@ -83,6 +84,11 @@ class TargetConfiguration:
     # Opt-in removal of the target's own canonical-tagged images after teardown
     # (and after a failed up). Default false: images persist.
     reclaimable: bool = False
+    # Services kept out of the target's stack (D49: the WebExploitBench
+    # `evaluator`). The targetctl strategy renders these behind a Compose
+    # `profiles` gate, so `up` never starts them without editing the frozen
+    # upstream compose. Empty means every service starts.
+    exclude_services: tuple[str, ...] = ()
 
 
 def _mapping(value: object, where: str) -> Mapping:
@@ -218,6 +224,7 @@ def parse_target_configuration(
         ready_retries=_int_field(root, "ready_retries", where),
         ready_interval_s=_float_field(root, "ready_interval_s", where),
         reclaimable=_bool_field(root, "reclaimable", where, default=False),
+        exclude_services=_string_tuple(root, "exclude_services", where),
     )
     return config
 

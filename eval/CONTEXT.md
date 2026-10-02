@@ -23,7 +23,7 @@ The evaluated application a trial runs against; WebExploitBench's unit is called
 _Avoid_: challenge, app
 
 **BenchmarkDataset**:
-The keyed, first-class benchmark dataset the targets and their ground truth come from, declared once in `eval/datasets/<id>.yaml`: its `id`, remote `repo` (the challenge definitions and per-vuln ground truth), image `registry` (a host/domain plus a URL path prefix; empty means the targets are built, not pulled), `platform_root` (where the per-target platform bank lives), and the `targets[]` list.
+The keyed, first-class benchmark dataset the targets and their ground truth come from, declared once in `eval/datasets/<id>.yaml`: its `id`, remote `repo` (the challenge definitions and per-vuln ground truth), image `registry` (a host/domain plus a URL path prefix; empty means the targets are built, not pulled), `platform_root` (where the per-target platform bank lives), the `targets[]` list, and the `exclude_services[]` every target keeps out of its stack.
 It supersedes the old embedded `TargetDataset` value object (`orchestrator/setup.py`); the dataset is addressed by its `id`, and each target by the composite **Target key**.
 Its `platform_root` may be an external checkout (used in place so the dataset's own scaffold, such as `scripts/targetctl`, keeps working) or a repo-local bank (resolved relative to `eval/`).
 `orchestrator/dataset.py` owns parsing and path resolution.
@@ -36,9 +36,15 @@ Both segments are path-safe identifiers; `orchestrator/dataset.py` owns the spli
 _Avoid_: target id, target name (the `target_id` is the per-trial identity, not this key)
 
 **TargetConfiguration**:
-The bring-up configuration of one target, declared once in `eval/targets/<dataset>/<target>.yaml`: the `compose` file (relative to the target's **Platform bank** entry), the target's image set, the registry pull references, the optional named readiness checker, the `reclaimable` opt-in, and the `runner` (`targetctl`, `compose`, or `image`).
+The bring-up configuration of one target, declared once in `eval/targets/<dataset>/<target>.yaml`: the `compose` file (relative to the target's **Platform bank** entry), the target's image set, the registry pull references, the optional named readiness checker, the `reclaimable` opt-in, any target-level `exclude_services`, and the `runner` (`targetctl`, `compose`, or `image`).
 The image set may be omitted and derived from the compose by the dataset helper; `orchestrator/target_config.py` owns parsing and validation.
 _Avoid_: target definition, target descriptor
+
+**Excluded service**:
+A service the stack keeps out (D49), declared on the **BenchmarkDataset** (every target) or on one **TargetConfiguration** (that target), most notably the WebExploitBench `evaluator`.
+The `targetctl` strategy renders the exclusions into a generated compose: it cuts each named service block and every `depends_on` edge pointing at it from a `docker compose config` resolution of the target's compose, and `up`/`build`/`ps`/`down` use that copy. The upstream compose is never edited.
+An excluded service is not a **Canonical image tag**: it is never built, pulled, reclaimed, or asserted by **Readiness**.
+_Avoid_: disabled service, skipped service, removed service
 
 **Platform bank**:
 The per-target bring-up scaffolding at the dataset's `platform_root`: the target's compose file and Dockerfiles (plus the dataset's own scaffold, e.g. `scripts/targetctl`).

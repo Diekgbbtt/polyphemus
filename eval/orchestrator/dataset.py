@@ -86,6 +86,10 @@ class BenchmarkDataset:
     registry: str = ""
     platform_root: str = ""
     targets: tuple[str, ...] = ()
+    # Services every target of this dataset keeps out of its stack (D49: the
+    # WebExploitBench `evaluator`, dropped because nothing produces its input).
+    # The strategy merges these with any per-target `exclude_services`.
+    exclude_services: tuple[str, ...] = ()
     eval_root: Path | None = None
 
     # --- keying ---------------------------------------------------------------
@@ -202,7 +206,7 @@ def parse_benchmark_dataset(
     root = _mapping(payload, where)
     _check_keys(
         root,
-        ("id", "repo", "registry", "platform_root", "targets"),
+        ("id", "repo", "registry", "platform_root", "targets", "exclude_services"),
         where,
     )
     dataset_id = _str_field(root, "id", where, required=True)
@@ -212,6 +216,7 @@ def parse_benchmark_dataset(
     registry = _optional_str(root, "registry", where) or ""
     platform_root = _optional_str(root, "platform_root", where) or ""
     targets = _string_tuple(root, "targets", where)
+    exclude_services = _string_tuple(root, "exclude_services", where)
     for target in targets:
         if not is_path_safe_id(target):
             raise DatasetError(
@@ -226,6 +231,7 @@ def parse_benchmark_dataset(
         registry=registry,
         platform_root=platform_root,
         targets=targets,
+        exclude_services=exclude_services,
         eval_root=eval_root,
     )
 

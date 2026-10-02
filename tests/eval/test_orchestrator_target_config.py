@@ -102,6 +102,35 @@ def test_readiness_window_defaults_to_none():
     assert config.ready_interval_s is None
 
 
+def test_exclude_services_parses_and_defaults_empty():
+    """D49: a target may name services kept out of its stack."""
+    config = parse_target_configuration(
+        {"target": "x", "runner": "targetctl", "compose": "c.yml"}
+    )
+    assert config.exclude_services == ()
+    config = parse_target_configuration(
+        {
+            "target": "x",
+            "runner": "targetctl",
+            "compose": "c.yml",
+            "exclude_services": ["evaluator"],
+        }
+    )
+    assert config.exclude_services == ("evaluator",)
+
+
+def test_exclude_services_rejects_a_non_list():
+    with pytest.raises(TargetConfigError, match="exclude_services"):
+        parse_target_configuration(
+            {
+                "target": "x",
+                "runner": "targetctl",
+                "compose": "c.yml",
+                "exclude_services": "evaluator",
+            }
+        )
+
+
 def test_readiness_window_rejects_a_bad_type():
     with pytest.raises(TargetConfigError, match="ready_retries"):
         parse_target_configuration(

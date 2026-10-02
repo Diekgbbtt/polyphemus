@@ -132,6 +132,13 @@ class TargetctlStrategy:
             environment.get("EVAL_READY_INTERVAL_S") or DEFAULT_READY_INTERVAL_S
         )
         self.project = config.project or f"ph-target-{short_id(context.host)}"
+        # D49: the dataset's excluded services (the WebExploitBench evaluator)
+        # merged with any the target itself excludes, de-duplicated, order-stable.
+        excluded: list[str] = []
+        for service in (*context.dataset.exclude_services, *config.exclude_services):
+            if service not in excluded:
+                excluded.append(service)
+        self.exclude_services = tuple(excluded)
         self.canonical_tags = context.helper.canonical_tags(self.target, config)
         self.reclaimable = config.reclaimable
         self._sleep = sleep or time.sleep
@@ -151,6 +158,10 @@ class TargetctlStrategy:
             # order without waiting; the orchestrator asserts readiness itself,
             # under a bounded window, once `up` returns.
             "TARGETCTL_NO_WAIT_DEPS": "1",
+            # D49: services kept out of the target's stack. `scripts/targetctl`
+            # renders them behind a Compose `profiles` gate, so `up` never starts
+            # them without editing the frozen upstream compose.
+            "TARGETCTL_EXCLUDE_SERVICES": ",".join(self.exclude_services),
         }
 
     def _checkout_cmd(self) -> Command:

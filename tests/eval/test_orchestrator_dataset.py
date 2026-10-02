@@ -42,6 +42,17 @@ def test_registry_defaults_to_empty():
     assert parse_benchmark_dataset(payload).registry == ""
 
 
+def test_exclude_services_parses_and_defaults_empty():
+    assert parse_benchmark_dataset(_payload()).exclude_services == ()
+    dataset = parse_benchmark_dataset(_payload(exclude_services=["evaluator"]))
+    assert dataset.exclude_services == ("evaluator",)
+
+
+def test_exclude_services_rejects_a_non_list():
+    with pytest.raises(DatasetError, match="exclude_services"):
+        parse_benchmark_dataset(_payload(exclude_services="evaluator"))
+
+
 @pytest.mark.parametrize("missing", ["id", "repo"])
 def test_missing_required_field_fails_loud(missing):
     payload = _payload()

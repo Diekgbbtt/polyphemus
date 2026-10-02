@@ -100,11 +100,21 @@ jobs:
           compose="webench/${TARGET}/docker-compose.cage.yml"
           # The same rule the dataset helper derives: a service that declares
           # both build: and image: is a canonical image; its registry tag is
-          # `<target>-<service>` in the single `webench` repository.
+          # `<target>-<service>` in the single `webench` repository. Services the
+          # dataset excludes (D49: the `evaluator`) are never built nor pushed,
+          # so the harness never derives a pull reference for them either.
+          excluded="$(python3 -c '
+import sys, yaml
+data = yaml.safe_load(open("eval/datasets/webexploitbench.yaml"))
+print(",".join(data.get("exclude_services") or []))
+')"
           services="$(docker compose -f "${compose}" config --format json \
-            | jq -r '.services | to_entries[]
-                     | select(.value.build != null and .value.image != null)
-                     | "\(.key)\t\(.value.image)"')"
+            | jq -r --arg excluded "${excluded}" '
+                ($excluded | split(",")) as $ex
+                | .services | to_entries[]
+                | select(.value.build != null and .value.image != null)
+                | select(( $ex | index(.key) ) == null)
+                | "\(.key)\t\(.value.image)"')"
           if [ -z "${services}" ]; then
             echo "::error::${TARGET} declares no build+image service"
             exit 1

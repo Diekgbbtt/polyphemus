@@ -101,7 +101,14 @@ class DatasetHelper:
 
     def built_images(self, target: str, config: TargetConfiguration) -> tuple[BuiltImage, ...]:
         path = self.compose_path(target, config)
-        return parse_built_images(path.read_text(encoding="utf-8"))
+        built = parse_built_images(path.read_text(encoding="utf-8"))
+        # D49: a service kept out of the stack is not a built image of the target,
+        # so it is never tagged, pulled, or reclaimed. The dataset's exclusions
+        # (the `evaluator`) merge with any the target itself declares.
+        excluded = set(self.dataset.exclude_services) | set(config.exclude_services)
+        if not excluded:
+            return built
+        return tuple(item for item in built if item.service not in excluded)
 
     def canonical_tags(self, target: str, config: TargetConfiguration) -> tuple[str, ...]:
         """The target's own canonical tags; config.images overrides the derivation."""
