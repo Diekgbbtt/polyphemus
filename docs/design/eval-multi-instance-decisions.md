@@ -247,3 +247,19 @@ Consequence: the ground-truth checkout (`EVAL_WEB_DIR`) and the target-runtime c
 **(b) is rejected**: several bases have no aarch64 variant (mysql:5.7 never shipped arm64; elasticsearch:6.8 has no arm64; the Aliyun images are amd64-only), so it is infeasible for several targets, would fork each Dockerfile, and would change the benchmark's images - invalidating the cross-run comparison the eval exists to make.
 **(a) is chosen**: register `qemu-x86_64` with binfmt_misc (`docker run --privileged tonistiigi/binfmt --install amd64`) once per host, and select the target platform explicitly. Docker auto-emulates an already-amd64 image on run, but a build or pull must be told the platform, so every target lifecycle command runs with `DOCKER_DEFAULT_PLATFORM=linux/amd64` (targetctl: the `scripts/targetctl` env; image: `docker run --platform`; compose: the compose env). The platform is scoped to the target commands, never the polymerhus instance stack, which stays native aarch64.
 Tradeoff: emulation is slower than native and can stress the host on heavy images, but it preserves the benchmark exactly and needs no per-target maintenance. The platform is a per-lifecycle `platform` parameter (default `linux/amd64` for targetctl, native for image/compose).
+
+## Round-8 observations (full-dataset build and chain e2e on the eval host, 2026-10-02)
+
+With an approved Hugging Face token the full 15-target dataset fetched onto the eval host (`scripts/fetch`), the batch built and started each target, and the chain e2e then advanced every target with a per-target health check through the shared front on :80.
+
+**Wiring verified.** `targetctl` built and started targets locally; the chain (`next_target`) tore the previous target down, reclaimed its image, built and started the next, wrote the shared `ph-eval-front` conf, aliased the synthetic Host in the running instance's kali, and health-checked it. `comfyui` (`t-1fc05262.target`) and `jetlinks` answered `200` through the front; `prestashop` answered `500` (app not ready).
+
+**8 of 15 built and ran**: comfyui, jetlinks, prestashop, geoserver, ofbiz, openmetadata, openremote, wordpress.
+**7 failed to build**, none from the wiring or the arch choice:
+- `siyucms`, `phpbb`: a stale Debian bullseye `security.debian.org` 404 (a removed `curl` point release) in the base image's `apt-get update`.
+- `white-jotter`, `mogu-blog-v2`, `youlai-mall`: Maven Central timeouts / SSL handshake failures (very slow registry egress from the eval host).
+- `dataease`, `dify`: amd64 emulation crashes (`V8 lfstack.push` in a Node build; `uv sync` exit 139 = SIGSEGV).
+
+**`docker compose up -d` blocks under emulation.** Several targets declare `depends_on: condition: service_healthy`; a healthcheck that never passes under slow emulated startup makes `up -d` wait indefinitely, so `targetctl up` hangs (bounded by the per-target timeout). This is the dominant failure mode for the heavier targets, and it is a host/emulation limit, not a defect in the local target host.
+
+**Follow-up hardening** (does not change the benchmark images): a build-time registry mirror/cache and a Debian snapshot for the bullseye targets; a raised readiness window or a healthcheck-tolerant `up` for the emulated services; and confirmation that the emulation SIGSEGVs are qemu/Node-version specific before relying on those targets.
