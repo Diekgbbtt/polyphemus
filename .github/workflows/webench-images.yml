@@ -1,0 +1,118 @@
+name: webench-images
+
+# The native amd64 image plane (D48). WebExploitBench targets are amd64-only,
+# and the eval host is aarch64, so building them there runs every Dockerfile
+# under qemu: slow, and fatal for the EOL Debian bullseye suites whose security
+# pool now 404s. This workflow builds each target on a native amd64 runner,
+# pins Debian apt sources to snapshot.debian.org (eval/apt_snapshot.py), and
+# pushes every built service to the GitHub Container Registry as
+# `ghcr.io/<owner>/webench:<target>-<service>` - the exact reference the chain's
+# registry pull resolves (orchestrator/docker.py, datasets/webexploitbench.yaml).
+#
+# The eval server then pulls instead of building (docker.py precedence:
+# store -> pull -> build), so no target Dockerfile runs under emulation.
+#
+# Required permissions: packages: write (the job's GITHUB_TOKEN pushes ghcr).
+
+on:
+  workflow_dispatch:
+    inputs:
+      targets:
+        description: "Space-separated targets, or 'all'"
+        type: string
+        default: "all"
+        required: false
+
+permissions:
+  contents: read
+  packages: write
+
+# Serialise runs so two pushes cannot race on the same mutable tags.
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.select.outputs.matrix }}
+    steps:
+      - id: select
+        env:
+          ALL_TARGETS: >-
+            comfyui jetlinks prestashop siyucms white-jotter dataease dify
+            geoserver mogu-blog-v2 ofbiz openmetadata openremote phpbb wordpress
+            youlai-mall
+          REQUESTED: ${{ inputs.targets }}
+        run: |
+          set -euo pipefail
+          requested="${REQUESTED:-all}"
+          if [ "${requested}" = "all" ]; then
+            selected="${ALL_TARGETS}"
+          else
+            selected="${requested}"
+          fi
+          matrix="$(printf '%s\n' ${selected} | jq -R . | jq -sc '{target: .}')"
+          echo "matrix=${matrix}" >> "${GITHUB_OUTPUT}"
+          echo "Selected targets: ${selected}"
+
+  build:
+    needs: plan
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    env:
+      TARGET: ${{ matrix.target }}
+      REGISTRY: ghcr.io/${{ github.repository_owner }}/webench
+    steps:
+      - name: Check out polymerhus (for the apt patcher)
+        uses: actions/checkout@v4
+
+      - name: Check out WebExploitBench with submodules
+        uses: actions/checkout@v4
+        with:
+          repository: AgentCyberRange/WebExploitBench
+          path: webench
+          submodules: recursive
+
+      - name: Pin Debian apt sources to snapshot.debian.org
+        run: python3 eval/apt_snapshot.py webench
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build the target
+        run: |
+          set -euo pipefail
+          compose="webench/${TARGET}/docker-compose.cage.yml"
+          test -f "${compose}" || { echo "::error::missing ${compose}"; exit 1; }
+          docker compose -f "${compose}" build
+
+      - name: Tag and push every built service
+        run: |
+          set -euo pipefail
+          compose="webench/${TARGET}/docker-compose.cage.yml"
+          # The same rule the dataset helper derives: a service that declares
+          # both build: and image: is a canonical image; its registry tag is
+          # `<target>-<service>` in the single `webench` repository.
+          services="$(docker compose -f "${compose}" config --format json \
+            | jq -r '.services | to_entries[]
+                     | select(.value.build != null and .value.image != null)
+                     | "\(.key)\t\(.value.image)"')"
+          if [ -z "${services}" ]; then
+            echo "::error::${TARGET} declares no build+image service"
+            exit 1
+          fi
+          while IFS=$'\t' read -r service image; do
+            [ -n "${service}" ] || continue
+            ref="${REGISTRY}:${TARGET}-${service}"
+            echo "Pushing ${image} -> ${ref}"
+            docker tag "${image}" "${ref}"
+            docker push "${ref}"
+          done <<< "${services}"

@@ -42,6 +42,8 @@ KNOWN_FIELDS = (
     "images",
     "pull",
     "checker",
+    "ready_retries",
+    "ready_interval_s",
     "reclaimable",
 )
 
@@ -73,6 +75,11 @@ class TargetConfiguration:
     # A named readiness checker in the dataset helper; None defaults to the
     # compose's own healthchecks, read non-blockingly.
     checker: str | None = None
+    # Per-target readiness window overrides; None keeps the orchestrator default
+    # (60 retries x 5s). A slow target (a JVM under emulation, a large stack)
+    # raises these so its own healthcheck has time to pass (D48).
+    ready_retries: int | None = None
+    ready_interval_s: float | None = None
     # Opt-in removal of the target's own canonical-tagged images after teardown
     # (and after a failed up). Default false: images persist.
     reclaimable: bool = False
@@ -123,6 +130,15 @@ def _int_field(mapping: Mapping, key: str, where: str, *, default=None):
     if not isinstance(value, int) or isinstance(value, bool):
         raise TargetConfigError(f"{where}.{key}: expected an integer")
     return value
+
+
+def _float_field(mapping: Mapping, key: str, where: str, *, default=None):
+    if key not in mapping or mapping[key] is None:
+        return default
+    value = mapping[key]
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise TargetConfigError(f"{where}.{key}: expected a number")
+    return float(value)
 
 
 def _bool_field(mapping: Mapping, key: str, where: str, *, default: bool = False) -> bool:
@@ -199,6 +215,8 @@ def parse_target_configuration(
         images=_string_tuple(root, "images", where),
         pull=_string_map(root, "pull", where),
         checker=_optional_str(root, "checker", where),
+        ready_retries=_int_field(root, "ready_retries", where),
+        ready_interval_s=_float_field(root, "ready_interval_s", where),
         reclaimable=_bool_field(root, "reclaimable", where, default=False),
     )
     return config

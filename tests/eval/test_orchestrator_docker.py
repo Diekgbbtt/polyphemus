@@ -26,6 +26,20 @@ def test_pull_reference_tolerates_slashes_and_empty_registry():
     assert docker.pull_reference("", "mysql:8.0") == "mysql:8.0"
 
 
+def test_registry_reference_tags_by_target_and_service():
+    """D48: the registry reference is `<registry>:<target>-<service>`, the tag
+    the CI image workflow pushes."""
+    assert (
+        docker.registry_reference("ghcr.io/diekgbbtt/webench", "siyucms", "web")
+        == "ghcr.io/diekgbbtt/webench:siyucms-web"
+    )
+    assert docker.registry_reference("ghcr.io/diekgbbtt/webench/", "ofbiz", "ofbiz") == (
+        "ghcr.io/diekgbbtt/webench:ofbiz-ofbiz"
+    )
+    # An empty registry yields nothing, so the caller falls back to build.
+    assert docker.registry_reference("", "siyucms", "web") == ""
+
+
 def test_parse_pulled_digest():
     digest = "sha256:" + "a" * 64
     assert docker.parse_pulled_digest(f"Status: Downloaded\nDigest: {digest}\n") == digest

@@ -59,10 +59,12 @@ def _dataset(
     dataset_id="mock",
     repo="https://example.invalid/repo.git",
     platform_root="",
+    registry="",
 ):
     return BenchmarkDataset(
         id=dataset_id,
         repo=repo,
+        registry=registry,
         platform_root=platform_root,
         targets=("jetlinks", "img", "stack", "a b"),
         eval_root=tmp_path / "eval",
@@ -425,6 +427,38 @@ def test_targetctl_provision_pulls_and_binds_when_declared(
         ("ph/mock/jetlinks:web", docker.PULL, "reg/web:latest")
     ]
     assert "docker tag reg/web:latest ph/mock/jetlinks:web" in runner.argv_texts
+
+
+def test_targetctl_provision_derives_pull_refs_from_the_registry(
+    tmp_path, recording_runner, fake_result
+) -> None:
+    """D48: a dataset registry resolves each built service to its ghcr tag; the
+    pulled image is bound to the canonical tag AND the compose reference."""
+    platform_root = _write_compose(tmp_path, "jetlinks")
+    dataset = _dataset(tmp_path, platform_root=platform_root, registry="ghcr.io/owner/webench")
+    config = TargetConfiguration(
+        target="jetlinks", runner="targetctl", compose="docker-compose.yml"
+    )
+    strategy, _ = _strategy(tmp_path, runner="targetctl", config=config, dataset=dataset)
+    runner = recording_runner(
+        routes={
+            "ghcr.io/owner/webench:jetlinks-web": fake_result(0, stdout="sha256:x\n"),
+            "image inspect": fake_result(1, stderr="No such image"),
+            "docker tag": fake_result(0),
+        }
+    )
+
+    outcomes = strategy.provision(runner)
+
+    assert [(o.tag, o.source, o.reference) for o in outcomes] == [
+        ("ph/mock/jetlinks:web", docker.PULL, "ghcr.io/owner/webench:jetlinks-web")
+    ]
+    assert "docker pull ghcr.io/owner/webench:jetlinks-web" in runner.argv_texts
+    assert "docker tag ghcr.io/owner/webench:jetlinks-web ph/mock/jetlinks:web" in runner.argv_texts
+    assert (
+        "docker tag ghcr.io/owner/webench:jetlinks-web pentestbench-jetlinks:web"
+        in runner.argv_texts
+    )
 
 
 def test_targetctl_reclaim_is_gated_on_reclaimable(tmp_path, recording_runner) -> None:

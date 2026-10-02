@@ -66,6 +66,21 @@ def pull_reference(registry: str, image: str) -> str:
     return f"{registry}/{image.lstrip('/')}"
 
 
+def registry_reference(registry: str, target: str, service: str) -> str:
+    """`<registry>:<target>-<service>`: the chain's pull reference for a service.
+
+    The registry is `host/owner/repo`, one repository for every target of a
+    dataset (e.g. `ghcr.io/diekgbbtt/webench`); the tag names the target and the
+    service. The CI image workflow pushes each built service under exactly this
+    reference, so the chain can pull instead of building on the eval host (D48).
+    An empty registry yields an empty string, so the caller falls back to build.
+    """
+    registry = registry.strip().rstrip("/")
+    if not registry:
+        return ""
+    return f"{registry}:{target}-{service}"
+
+
 def plan_pull(reference: str) -> Command:
     """`docker pull <ref>`: fetch the image, streaming per-layer progress."""
     return Command(argv=("docker", "pull", reference), description=f"pull {reference}")

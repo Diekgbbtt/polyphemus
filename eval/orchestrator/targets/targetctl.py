@@ -123,10 +123,12 @@ class TargetctlStrategy:
             or environment.get("EVAL_TARGET_PLATFORM")
             or DEFAULT_PLATFORM
         )
-        self.ready_retries = int(
+        # A per-target window (config) wins over the orchestrator-wide env; the
+        # default (60 x 5s) is enough once targets run natively on amd64 (D48).
+        self.ready_retries = config.ready_retries or int(
             environment.get("EVAL_READY_RETRIES") or DEFAULT_READY_RETRIES
         )
-        self.ready_interval_s = float(
+        self.ready_interval_s = config.ready_interval_s or float(
             environment.get("EVAL_READY_INTERVAL_S") or DEFAULT_READY_INTERVAL_S
         )
         self.project = config.project or f"ph-target-{short_id(context.host)}"
@@ -283,7 +285,7 @@ class TargetctlStrategy:
         """Run a docker primitive locally, selecting the target platform (D46)."""
         return replace(command, env={**(command.env or {}), **self._env()})
 
-    def _build_mapping(self) -> dict[str, str]:
+    def _compose_refs(self) -> dict[str, str]:
         """canonical tag -> the compose's own built reference for that service.
 
         The mapping is read lazily (only when the store and pull paths both miss)
@@ -294,6 +296,25 @@ class TargetctlStrategy:
             canonical_tag(self.context.dataset.id, self.target, item.service): item.reference
             for item in built
         }
+
+    def _pull_refs(self) -> dict[str, str]:
+        """canonical tag -> pull reference: explicit config first, then registry.
+
+        An explicit `config.pull` wins; otherwise a dataset that declares a
+        `registry` resolves each built service to `<registry>:<target>-<service>`,
+        the tag the CI image workflow pushes (D48). No registry leaves the target
+        to build on the host.
+        """
+        refs = dict(self.config.pull)
+        registry = self.context.dataset.registry
+        if not registry:
+            return refs
+        for item in self.context.helper.built_images(self.target, self.config):
+            tag = canonical_tag(self.context.dataset.id, self.target, item.service)
+            reference = docker_images.registry_reference(registry, self.target, item.service)
+            if reference:
+                refs.setdefault(tag, reference)
+        return refs
 
     def provision(self, run: CommandRunner) -> tuple[ProvisionOutcome, ...]:
         """Bind this target's canonical tags by store -> pull -> build.
@@ -306,16 +327,33 @@ class TargetctlStrategy:
         def build() -> dict[str, str]:
             command = self._targetctl("build", self.target)
             require_ok(run(command), command, error=TargetctlError)
-            return self._build_mapping()
+            return self._compose_refs()
 
-        return docker_images.provision_tags(
+        outcomes = docker_images.provision_tags(
             run,
             self.canonical_tags,
-            pull_refs=self.config.pull,
+            pull_refs=self._pull_refs(),
             build=build,
             wrap=self._wrap,
             error=TargetctlError,
         )
+        # The compose names its own image references, not the canonical tags, so
+        # a pulled registry image must also carry the compose reference for the
+        # target's own `up` to find it locally. A target that declares its own
+        # `images` and has no readable compose has nothing to rebind.
+        try:
+            compose_refs = self._compose_refs()
+        except (OSError, ValueError):
+            compose_refs = {}
+        for outcome in outcomes:
+            if outcome.source != docker_images.PULL:
+                continue
+            compose_ref = compose_refs.get(outcome.tag)
+            if not compose_ref:
+                continue
+            command = self._wrap(docker_images.plan_tag(outcome.reference, compose_ref))
+            require_ok(run(command), command, error=TargetctlError)
+        return outcomes
 
     def reclaim(self, run: CommandRunner) -> tuple[str, ...]:
         """Remove this target's canonical tags; best-effort and opt-in.

@@ -80,6 +80,40 @@ def test_images_and_pull_and_checker_and_reclaimable():
     assert config.reclaimable is True
 
 
+def test_readiness_window_overrides_parse():
+    config = parse_target_configuration(
+        {
+            "target": "openmetadata",
+            "runner": "targetctl",
+            "compose": "docker-compose.cage.yml",
+            "ready_retries": 180,
+            "ready_interval_s": 10,
+        }
+    )
+    assert config.ready_retries == 180
+    assert config.ready_interval_s == 10.0
+
+
+def test_readiness_window_defaults_to_none():
+    config = parse_target_configuration(
+        {"target": "x", "runner": "targetctl", "compose": "c.yml"}
+    )
+    assert config.ready_retries is None
+    assert config.ready_interval_s is None
+
+
+def test_readiness_window_rejects_a_bad_type():
+    with pytest.raises(TargetConfigError, match="ready_retries"):
+        parse_target_configuration(
+            {
+                "target": "x",
+                "runner": "targetctl",
+                "compose": "c.yml",
+                "ready_retries": "many",
+            }
+        )
+
+
 def test_pull_map_rejects_bad_entries():
     with pytest.raises(TargetConfigError, match="pull"):
         parse_target_configuration(
