@@ -15,10 +15,7 @@ from orchestrator.commands import CommandResult
 
 def _paths(tmp_path, instance_id="arm-a"):
     run = setup_mod.TargetRun(
-        target_id="t-1",
-        target_config=setup_mod.TargetConfig(
-            lifecycle="targetctl", params={"target": "jetlinks"}
-        ),
+        target_key="webexploitbench/jetlinks", target_id="t-1"
     )
     instance = setup_mod.Instance(instance_id=instance_id, targets=(run,))
     return instances.instance_paths(

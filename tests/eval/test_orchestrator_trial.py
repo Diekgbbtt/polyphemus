@@ -730,11 +730,8 @@ def test_reachability_probe_maps_the_kali_http_code(tmp_path) -> None:
                     "instance_id": "arm-a",
                     "targets": [
                         {
+                            "target_key": "mock/webmock",
                             "target_id": "t1",
-                            "target_config": {
-                                "lifecycle": "image",
-                                "params": {"image": "nginx", "port": 18080},
-                            },
                         }
                     ],
                 }
@@ -895,11 +892,8 @@ def _instance_paths(tmp_path):
                     "instance_id": "arm-a",
                     "targets": [
                         {
+                            "target_key": "mock/webmock",
                             "target_id": "t1",
-                            "target_config": {
-                                "lifecycle": "image",
-                                "params": {"image": "nginx", "port": 18080},
-                            },
                         }
                     ],
                 }

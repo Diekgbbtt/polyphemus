@@ -40,10 +40,7 @@ def eval_repo(tmp_path: Path) -> Path:
 
 def _instance(instance_id: str, target_id: str = "t-1") -> setup_mod.Instance:
     run = setup_mod.TargetRun(
-        target_id=target_id,
-        target_config=setup_mod.TargetConfig(
-            lifecycle="targetctl", params={"target": "jetlinks"}
-        ),
+        target_key="webexploitbench/jetlinks", target_id=target_id
     )
     return setup_mod.Instance(instance_id=instance_id, targets=(run,))
 

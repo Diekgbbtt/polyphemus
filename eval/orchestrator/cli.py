@@ -1941,6 +1941,7 @@ def main(
             repo=Path(args.repo),
             instances_root=Path(args.instances_root),
             branch=args.branch,
+            eval_root=Path(args.repo) / "eval",
         )
         if args.verb == "alignment":
             return _run_alignment_resolve(args, out)

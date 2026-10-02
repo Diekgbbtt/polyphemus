@@ -70,6 +70,9 @@ def test_next_target_reports_the_step(tmp_path, recording_runner, fake_result):
             "curl": fake_result(0, stdout="200"),
             "docker build": fake_result(0),
             "image inspect": fake_result(0, stdout="sha256:built"),
+            "ps --format json": fake_result(
+                0, stdout='{"Service": "web", "Health": "healthy"}'
+            ),
         },
         default=fake_result(0, stdout="running"),
     )
@@ -91,7 +94,7 @@ def test_next_target_reports_the_step(tmp_path, recording_runner, fake_result):
     assert isinstance(report["pulled"], list)
     assert report["host"]
     assert report["front_url"]
-    assert report["health"].strip() == "running"
+    assert report["health"] == "compose ready"
 
 
 def test_next_target_unknown_target_reports_the_trace(tmp_path, recording_runner):

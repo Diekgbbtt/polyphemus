@@ -58,6 +58,12 @@ def recording_runner():
     return RecordingRunner
 
 
+@pytest.fixture(autouse=True)
+def _no_real_sleep(monkeypatch):
+    """Never sleep for real in the eval tier: a readiness poll must not hang a test."""
+    monkeypatch.setattr("time.sleep", lambda *_args, **_kwargs: None)
+
+
 @pytest.fixture
 def fake_result():
     """Return the result class so a test can build read responses."""

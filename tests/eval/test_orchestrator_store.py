@@ -172,10 +172,7 @@ def _setup(store_dir: Path, *, instance_ids=("arm-a",)) -> object:
             instance_id=iid,
             targets=(
                 TargetRun(
-                    target_id="jetlinks-1",
-                    target_config=TargetConfig(
-                        lifecycle="targetctl", params={"target": "jetlinks"}
-                    ),
+                    target_key="webexploitbench/jetlinks", target_id="jetlinks-1"
                 ),
             ),
         )
