@@ -25,6 +25,21 @@ def test_patch_dockerfile_inserts_the_block_after_from() -> None:
     assert 'CMD ["apache2-foreground"]' in patched
 
 
+def test_patch_dockerfile_guards_on_an_end_of_life_codename() -> None:
+    """A current-stable base must not be pinned: the block no-ops unless the
+    base's codename is an EOL suite. Regression: trixie got pinned and
+    `apt-get install` failed with "held broken packages"."""
+    patched = apt_snapshot.patch_dockerfile(SAMPLE, "20260815T000000Z")
+
+    assert 'case "$codename" in' in patched
+    assert "bullseye|buster)" in patched
+    assert "not EOL; skipping" in patched
+    # No current-stable suite is in the allow arm.
+    allow_arm = patched.split("case", 1)[1].split("esac", 1)[0]
+    assert "bookworm" not in allow_arm
+    assert "trixie" not in allow_arm
+
+
 def test_patch_dockerfile_is_idempotent() -> None:
     once = apt_snapshot.patch_dockerfile(SAMPLE, "20260815T000000Z")
     twice = apt_snapshot.patch_dockerfile(once, "20260815T000000Z")

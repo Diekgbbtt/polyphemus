@@ -6,6 +6,13 @@ Dockerfile that `apt-get`s from a bullseye base fails to build. This patcher
 rewrites each Debian apt source to a fixed `snapshot.debian.org` timestamp, so
 the exact package versions exist forever and the build is reproducible.
 
+The rewrite is scoped to END-OF-LIFE suites: the injected layer reads the base
+image's `VERSION_CODENAME` and no-ops on a current-stable base (bookworm,
+trixie). A current base already tracks the live archive and is rebuilt with
+packages newer than any fixed snapshot, so pinning it would force a downgrade
+and `apt-get install` would fail with "held broken packages". Only the suites
+the archive has retired (bullseye, buster) are pinned.
+
 The patch is applied to a checkout in place, because the image build reads the
 Dockerfiles from that checkout. It is idempotent: the injected block carries a
 marker and a second run is a no-op.
@@ -29,13 +36,23 @@ MARKER = "# ph-apt-snapshot"
 FROM_PREFIX = "FROM "
 _SKIP_DIRS = {".git", ".cache", "node_modules"}
 
-# One Dockerfile layer that pins every Debian source. The `#` sed delimiter keeps
-# the URL slashes readable; the `(deb|security)` alternation would clash with a
-# `|` delimiter. Both the classic `deb http://...` form and the deb822
-# `URIs: http://...` form are handled.
+# One Dockerfile layer that pins every Debian source, but only on an END-OF-LIFE
+# suite. A current-stable base (bookworm, trixie) already tracks the live archive
+# and is periodically rebuilt with packages newer than any fixed snapshot; pinning
+# it to the snapshot forces a downgrade and `apt-get install` fails with "held
+# broken packages". So the block reads the base image's own codename and no-ops
+# unless it is a suite the archive has retired (bullseye/buster). The `#` sed
+# delimiter keeps the URL slashes readable; the `(deb|security)` alternation would
+# clash with a `|` delimiter. Both the classic `deb http://...` form and the
+# deb822 `URIs: http://...` form are handled.
 _APT_BLOCK = """\
 {MARKER}
 RUN set -eux; \\
+    codename="$(sed -n 's/^VERSION_CODENAME=//p' /etc/os-release)"; \\
+    case "$codename" in \\
+        bullseye|buster) ;; \\
+        *) echo "ph-apt-snapshot: $codename is not EOL; skipping"; exit 0 ;; \\
+    esac; \\
     for f in /etc/apt/sources.list /etc/apt/sources.list.d/*; do \\
         [ -f "$f" ] || continue; \\
         sed -i -E "s#https?://(deb|security)\\.debian\\.org/debian-security#http://snapshot.debian.org/archive/debian-security/{timestamp}#g; s#https?://(deb|security)\\.debian\\.org/debian#http://snapshot.debian.org/archive/debian/{timestamp}#g" "$f"; \\

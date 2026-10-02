@@ -77,6 +77,30 @@ jobs:
           path: webench
           submodules: recursive
 
+      - name: Fetch the target from Hugging Face when it is not bundled
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          set -euo pipefail
+          # The git repo bundles only 5 targets; the other 10 live on Hugging
+          # Face. Fetch just this target's directory and unpack its codebase.
+          if [ -d "webench/${TARGET}" ]; then
+            echo "${TARGET} is bundled in the checkout"
+            exit 0
+          fi
+          if [ -z "${HF_TOKEN:-}" ]; then
+            echo "::error::${TARGET} is not bundled and HF_TOKEN is not set"
+            exit 1
+          fi
+          python3 -m pip install --quiet -U huggingface_hub
+          hf download AgentCyberRange/WebExploitBench --repo-type dataset \
+            --local-dir webench --include "${TARGET}/*"
+          for pack in webench/${TARGET}/setup_files/codebase.pack.tar.gz; do
+            [ -f "${pack}" ] || continue
+            tar -xzf "${pack}" -C "webench/${TARGET}/setup_files/codebase"
+            rm -f "${pack}"
+          done
+
       - name: Pin Debian apt sources to snapshot.debian.org
         run: python3 eval/apt_snapshot.py webench
 
@@ -112,7 +136,8 @@ jobs:
                 ($excluded | split(",")) as $ex
                 | .services | to_entries[]
                 | select(.value.build != null and .value.image != null)
-                | select(( $ex | index(.key) ) == null)
+                | .key as $k
+                | select(( $ex | index($k) ) == null)
                 | "\(.key)\t\(.value.image)"')"
           if [ -z "${services}" ]; then
             echo "::error::${TARGET} declares no build+image service"
