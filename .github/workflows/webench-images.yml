@@ -83,7 +83,8 @@ jobs:
         run: |
           set -euo pipefail
           # The git repo bundles only 5 targets; the other 10 live on Hugging
-          # Face. Fetch just this target's directory and unpack its codebase.
+          # Face, each as a single top-level `<target>.pack.tar.gz`. Fetch just
+          # this target's pack and unpack it, exactly as `scripts/fetch` does.
           if [ -d "webench/${TARGET}" ]; then
             echo "${TARGET} is bundled in the checkout"
             exit 0
@@ -94,12 +95,15 @@ jobs:
           fi
           python3 -m pip install --quiet -U huggingface_hub
           hf download AgentCyberRange/WebExploitBench --repo-type dataset \
-            --local-dir webench --include "${TARGET}/*"
-          for pack in webench/${TARGET}/setup_files/codebase.pack.tar.gz; do
-            [ -f "${pack}" ] || continue
-            tar -xzf "${pack}" -C "webench/${TARGET}/setup_files/codebase"
-            rm -f "${pack}"
-          done
+            --local-dir webench --include "${TARGET}.pack.tar.gz"
+          archive="webench/${TARGET}.pack.tar.gz"
+          test -f "${archive}" || { echo "::error::${archive} was not downloaded"; exit 1; }
+          rm -rf "webench/${TARGET}"
+          mkdir -p "webench/${TARGET}"
+          # -m stamps extracted files with the current time: the export zeroes
+          # mtimes, which a later `mvn package` turns into an invalid ZIP date.
+          tar -xmzf "${archive}" -C "webench/${TARGET}"
+          rm -f "${archive}"
 
       - name: Pin Debian apt sources to snapshot.debian.org
         run: python3 eval/apt_snapshot.py webench
