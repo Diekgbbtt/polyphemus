@@ -140,7 +140,15 @@ class TargetctlStrategy:
     # --- command builders (shared by plan and execute) ------------------------
 
     def _env(self) -> dict[str, str]:
-        return {"DOCKER_DEFAULT_PLATFORM": self.platform}
+        return {
+            "DOCKER_DEFAULT_PLATFORM": self.platform,
+            # The benchmark's own `up` waits for dependency healthchecks, which
+            # under amd64 emulation blocks for minutes and hides a ready stack
+            # behind a slow one. targetctl then starts the dependency chain in
+            # order without waiting; the orchestrator asserts readiness itself,
+            # under a bounded window, once `up` returns.
+            "TARGETCTL_NO_WAIT_DEPS": "1",
+        }
 
     def _checkout_cmd(self) -> Command:
         # S5: quote interpolated config; web_dir/repo_url may carry spaces or

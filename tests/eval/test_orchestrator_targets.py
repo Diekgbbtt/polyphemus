@@ -191,7 +191,10 @@ def test_targetctl_commands_select_the_amd64_platform(tmp_path) -> None:
 
     for command in strategy.plan_up():
         if (command.description or "").startswith("targetctl"):
-            assert command.env == {"DOCKER_DEFAULT_PLATFORM": "linux/amd64"}
+            assert command.env == {
+                "DOCKER_DEFAULT_PLATFORM": "linux/amd64",
+                "TARGETCTL_NO_WAIT_DEPS": "1",
+            }
 
 
 def test_targetctl_plan_up_lists_every_command_without_a_runner(
