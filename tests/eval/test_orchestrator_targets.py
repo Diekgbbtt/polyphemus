@@ -362,6 +362,18 @@ def test_parse_targetctl_output_prefers_ui_url() -> None:
     assert targetctl.parse_targetctl_url(out) == "http://0.0.0.0:32768/"
 
 
+def test_parse_targetctl_output_accepts_a_path_bearing_url() -> None:
+    """ofbiz prints `http://0.0.0.0:<port>/webtools/control/main`; the port is
+    all the front needs, so a path must not be filtered out."""
+    out = "Accessible URLs for ofbiz:\nhttp://0.0.0.0:57743/webtools/control/main\n"
+
+    assert (
+        targetctl.parse_targetctl_url(out)
+        == "http://0.0.0.0:57743/webtools/control/main"
+    )
+    assert targetctl.url_port("http://0.0.0.0:57743/webtools/control/main") == "57743"
+
+
 # --- targetctl provision / reclaim -------------------------------------------
 
 

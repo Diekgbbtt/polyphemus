@@ -69,16 +69,17 @@ class TargetctlError(TargetError):
 def parse_targetctl_url(output: str) -> str:
     """Pick the accessible URL from `targetctl up` output.
 
-    Prefer an explicit `UI:` line; otherwise the first URL with no path (a bare
-    host:port), matching the shape `targetctl` prints.
+    Prefer an explicit `UI:` line; otherwise the first URL that carries a port.
+    A target may expose a path (ofbiz prints
+    `http://0.0.0.0:<port>/webtools/control/main`), so the path is not a filter:
+    only the port is needed to point the front at the backend.
     """
     match = _UI_URL_RE.search(output)
     if match:
         return match.group(1)
     for candidate in _ANY_URL_RE.finditer(output):
         url = candidate.group(0)
-        parsed = urlparse(url)
-        if parsed.path in ("", "/"):
+        if urlparse(url).port is not None:
             return url
     raise TargetctlError("targetctl output carries no accessible URL")
 
