@@ -154,8 +154,11 @@ jobs:
                 | select(( $ex | index($k) ) == null)
                 | "\(.key)\t\(.value.image)"')"
           if [ -z "${services}" ]; then
-            echo "::error::${TARGET} declares no build+image service"
-            exit 1
+            # A target whose only build+image service is excluded (D49: the
+            # `evaluator`, as in openmetadata) has nothing of its own to build
+            # or push; its other services pull public images at `up`.
+            echo "${TARGET} declares no built service; nothing to push"
+            exit 0
           fi
           while IFS=$'\t' read -r service image; do
             [ -n "${service}" ] || continue
