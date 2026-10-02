@@ -27,11 +27,8 @@ def _setup_payload(target: str = "comfyui") -> dict:
                 "instance_id": "arm-a",
                 "targets": [
                     {
+                        "target_key": f"webexploitbench/{target}",
                         "target_id": target,
-                        "target_config": {
-                            "lifecycle": "targetctl",
-                            "params": {"target": target},
-                        },
                     }
                 ],
             }

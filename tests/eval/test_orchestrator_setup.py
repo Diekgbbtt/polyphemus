@@ -1,10 +1,13 @@
-"""EvalSetup parsing and validation (ticket #269, D1/D4).
+"""EvalSetup parsing and validation (ticket #269, D1/D4; spec #301).
 
 The `EvalSetup` shape follows the design's extended system description
 (`docs/design/eval-harness-multi-instance-solution.md` section 5): one setup
 carries instances, each with a serial target pipeline, plus the eval-wide
-artifact store and work items (D14). Every missing or unknown field fails loud
-and names itself, so an operator never debugs a silently empty run.
+artifact store and work items (D14). Under spec #301 a target is addressed by its
+`<dataset>/<target>` key and the per-trial data configuration only; the
+bring-up configuration lives in the target's own YAML. Every missing or unknown
+field fails loud and names itself, so an operator never debugs a silently empty
+run.
 """
 from __future__ import annotations
 
@@ -13,6 +16,8 @@ from pathlib import Path
 import pytest
 
 from orchestrator import setup as setup_mod
+from orchestrator.dataset import DatasetError, load_benchmark_dataset
+from orchestrator.target_config import load_target_configuration
 
 
 def test_parses_a_valid_setup(sample_setup) -> None:
@@ -20,17 +25,21 @@ def test_parses_a_valid_setup(sample_setup) -> None:
 
     assert parsed.schema_version == 1
     assert parsed.artifact_store == "/srv/eval-artifacts"
+    assert parsed.datasets == ("webexploitbench",)
     assert [w.name for w in parsed.work_items] == ["auth-bootstrap", "l1-surface"]
     (instance,) = parsed.instances
     assert instance.instance_id == "arm-a"
     assert instance.env_file == "arm-a/.env"
     (run,) = instance.targets
+    assert run.target_key == "webexploitbench/jetlinks"
+    assert run.dataset_id == "webexploitbench"
+    assert run.target == "jetlinks"
     assert run.target_id == "jetlinks-1"
     assert run.start_phase == "recon"
     assert run.hunt_config_budget == 10
-    assert run.target_config.lifecycle == "targetctl"
-    assert run.target_config.params["target"] == "jetlinks"
-    assert run.target_config.operator_kb == "eval/kbs/jetlinks/operator_kb.md"
+    assert run.target_config.operator_kb == (
+        "eval/data/webexploitbench/jetlinks/operator_kb.md"
+    )
 
 
 def test_loads_from_yaml_file(tmp_path, sample_setup) -> None:
@@ -91,58 +100,6 @@ def test_duplicate_instance_id_is_named(sample_setup) -> None:
         setup_mod.parse_eval_setup(sample_setup)
 
 
-def test_missing_target_config_is_named(sample_setup) -> None:
-    sample_setup["instances"][0]["targets"][0].pop("target_config")
-
-    with pytest.raises(setup_mod.SetupError, match="target_config"):
-        setup_mod.parse_eval_setup(sample_setup)
-
-
-def test_unknown_lifecycle_is_named(sample_setup) -> None:
-    sample_setup["instances"][0]["targets"][0]["target_config"]["lifecycle"] = "magic"
-
-    with pytest.raises(setup_mod.SetupError, match="lifecycle"):
-        setup_mod.parse_eval_setup(sample_setup)
-
-
-def test_missing_lifecycle_is_named(sample_setup) -> None:
-    sample_setup["instances"][0]["targets"][0]["target_config"].pop("lifecycle")
-
-    with pytest.raises(setup_mod.SetupError, match="lifecycle"):
-        setup_mod.parse_eval_setup(sample_setup)
-
-
-def test_targetctl_missing_required_param_is_named(sample_setup) -> None:
-    sample_setup["instances"][0]["targets"][0]["target_config"]["params"] = {}
-
-    with pytest.raises(setup_mod.SetupError, match="target"):
-        setup_mod.parse_eval_setup(sample_setup)
-
-
-def test_image_missing_required_params_is_named(sample_setup) -> None:
-    cfg = sample_setup["instances"][0]["targets"][0]["target_config"]
-    cfg["lifecycle"] = "image"
-    cfg["params"] = {}
-
-    with pytest.raises(setup_mod.SetupError, match="image"):
-        setup_mod.parse_eval_setup(sample_setup)
-
-
-def test_bad_start_phase_is_named(sample_setup) -> None:
-    sample_setup["instances"][0]["targets"][0]["start_phase"] = "exploit"
-
-    with pytest.raises(setup_mod.SetupError, match="start_phase"):
-        setup_mod.parse_eval_setup(sample_setup)
-
-
-def test_duplicate_target_id_is_named(sample_setup) -> None:
-    targets = sample_setup["instances"][0]["targets"]
-    targets.append(dict(targets[0]))
-
-    with pytest.raises(setup_mod.SetupError, match="jetlinks-1"):
-        setup_mod.parse_eval_setup(sample_setup)
-
-
 def test_unknown_top_level_key_is_named(sample_setup) -> None:
     sample_setup["extra_sauce"] = True
 
@@ -170,11 +127,105 @@ def test_parse_error_for_non_mapping_payload() -> None:
         setup_mod.parse_eval_setup(["not", "a", "mapping"])
 
 
-# --- pre-mined hunting artifacts (#270 AC4) -----------------------------------
+# --- the keyed dataset/target model (spec #301) -------------------------------
 
 
 def _target(sample_setup) -> dict:
     return sample_setup["instances"][0]["targets"][0]
+
+
+def test_datasets_are_optional_and_default_empty(sample_setup) -> None:
+    sample_setup.pop("datasets")
+
+    assert setup_mod.parse_eval_setup(sample_setup).datasets == ()
+
+
+def test_datasets_are_parsed(sample_setup) -> None:
+    sample_setup["datasets"] = ["webexploitbench", "mock"]
+
+    assert setup_mod.parse_eval_setup(sample_setup).datasets == (
+        "webexploitbench",
+        "mock",
+    )
+
+
+def test_path_unsafe_dataset_key_is_named(sample_setup) -> None:
+    sample_setup["datasets"] = ["../escape"]
+
+    with pytest.raises(setup_mod.SetupError, match="datasets"):
+        setup_mod.parse_eval_setup(sample_setup)
+
+
+def test_missing_target_key_is_named(sample_setup) -> None:
+    _target(sample_setup).pop("target_key")
+
+    with pytest.raises(setup_mod.SetupError, match="target_key"):
+        setup_mod.parse_eval_setup(sample_setup)
+
+
+def test_target_key_without_a_separator_is_named(sample_setup) -> None:
+    _target(sample_setup)["target_key"] = "jetlinks"
+
+    # The key splitter owns this failure and names the expected shape.
+    with pytest.raises(DatasetError, match="target key"):
+        setup_mod.parse_eval_setup(sample_setup)
+
+
+def test_target_id_defaults_to_the_target_segment(sample_setup) -> None:
+    _target(sample_setup).pop("target_id")
+
+    (run,) = setup_mod.parse_eval_setup(sample_setup).instances[0].targets
+
+    assert run.target_id == "jetlinks"
+
+
+def test_explicit_target_id_is_parsed(sample_setup) -> None:
+    _target(sample_setup)["target_id"] = "jetlinks-run1"
+
+    (run,) = setup_mod.parse_eval_setup(sample_setup).instances[0].targets
+
+    assert run.target_id == "jetlinks-run1"
+
+
+def test_duplicate_target_id_is_named(sample_setup) -> None:
+    targets = sample_setup["instances"][0]["targets"]
+    targets.append(dict(targets[0]))
+
+    with pytest.raises(setup_mod.SetupError, match="jetlinks-1"):
+        setup_mod.parse_eval_setup(sample_setup)
+
+
+def test_path_unsafe_target_id_is_named(sample_setup) -> None:
+    _target(sample_setup)["target_id"] = "../escape"
+
+    with pytest.raises(setup_mod.SetupError, match="target_id"):
+        setup_mod.parse_eval_setup(sample_setup)
+
+
+def test_target_config_is_optional(sample_setup) -> None:
+    _target(sample_setup).pop("target_config")
+
+    (run,) = setup_mod.parse_eval_setup(sample_setup).instances[0].targets
+
+    assert run.target_config.operator_kb is None
+    assert run.target_config.target_seed is None
+
+
+def test_target_config_unknown_key_is_named(sample_setup) -> None:
+    _target(sample_setup)["target_config"] = {"lifecycle": "targetctl"}
+
+    with pytest.raises(setup_mod.SetupError, match="lifecycle"):
+        setup_mod.parse_eval_setup(sample_setup)
+
+
+def test_bad_start_phase_is_named(sample_setup) -> None:
+    _target(sample_setup)["start_phase"] = "exploit"
+
+    with pytest.raises(setup_mod.SetupError, match="start_phase"):
+        setup_mod.parse_eval_setup(sample_setup)
+
+
+# --- pre-mined hunting artifacts (#270 AC4) -----------------------------------
 
 
 def test_preloaded_artifacts_legacy_string_parses_as_configs(sample_setup) -> None:
@@ -373,106 +424,71 @@ def test_invalid_yaml_names_the_path(tmp_path) -> None:
         setup_mod.load_eval_setup(path)
 
 
-def test_dataset_absent_is_none(sample_setup) -> None:
-    assert setup_mod.parse_eval_setup(sample_setup).dataset is None
+# --- the WebExploitBench chain setup (spec #301) ------------------------------
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+CHAIN_SETUP = REPO_ROOT / "eval" / "setups" / "webexploitbench-chain.yaml"
 
-def test_dataset_is_parsed(sample_setup) -> None:
-    sample_setup["dataset"] = {
-        "name": "webexploitbench",
-        "repo": "https://github.com/AgentCyberRange/WebExploitBench.git",
-        "registry": "ghcr.io/agentcyberrange/webench",
-        "ground_truth": "/srv/eval-harness/gt",
-    }
-
-    dataset = setup_mod.parse_eval_setup(sample_setup).dataset
-
-    assert dataset.name == "webexploitbench"
-    assert dataset.repo == "https://github.com/AgentCyberRange/WebExploitBench.git"
-    assert dataset.registry == "ghcr.io/agentcyberrange/webench"
-    assert dataset.ground_truth == "/srv/eval-harness/gt"
-
-
-def test_dataset_registry_defaults_empty(sample_setup) -> None:
-    sample_setup["dataset"] = {
-        "name": "webexploitbench",
-        "repo": "https://github.com/AgentCyberRange/WebExploitBench.git",
-    }
-
-    assert setup_mod.parse_eval_setup(sample_setup).dataset.registry == ""
-
-
-def test_target_run_images_are_parsed(sample_setup) -> None:
-    sample_setup["instances"][0]["targets"][0]["images"] = [
-        "pentestbench-comfyui-web:latest"
-    ]
-
-    (run,) = setup_mod.parse_eval_setup(sample_setup).instances[0].targets
-
-    assert run.images == ("pentestbench-comfyui-web:latest",)
-
-
-def test_target_run_images_default_empty(sample_setup) -> None:
-    (run,) = setup_mod.parse_eval_setup(sample_setup).instances[0].targets
-
-    assert run.images == ()
-
-
-def test_target_config_dockerfile_is_parsed(sample_setup) -> None:
-    target_config = sample_setup["instances"][0]["targets"][0]["target_config"]
-    target_config["dockerfile"] = "setup_files/environment/Dockerfile"
-    target_config["dockerfile_context"] = "setup_files"
-
-    (run,) = setup_mod.parse_eval_setup(sample_setup).instances[0].targets
-
-    assert run.target_config.dockerfile == "setup_files/environment/Dockerfile"
-    assert run.target_config.dockerfile_context == "setup_files"
-
-
-def test_target_config_dockerfile_defaults_none(sample_setup) -> None:
-    (run,) = setup_mod.parse_eval_setup(sample_setup).instances[0].targets
-
-    assert run.target_config.dockerfile is None
-    assert run.target_config.dockerfile_context is None
-
-
-def test_target_run_images_must_be_strings(sample_setup) -> None:
-    sample_setup["instances"][0]["targets"][0]["images"] = [1]
-
-    with pytest.raises(setup_mod.SetupError, match="images"):
-        setup_mod.parse_eval_setup(sample_setup)
+CHAIN_TARGETS = [
+    "comfyui",
+    "jetlinks",
+    "prestashop",
+    "siyucms",
+    "white-jotter",
+    "dataease",
+    "dify",
+    "geoserver",
+    "mogu-blog-v2",
+    "ofbiz",
+    "openmetadata",
+    "openremote",
+    "phpbb",
+    "wordpress",
+    "youlai-mall",
+]
+# The 5 targets bundled with the repo carry a committed operator KB; the 10
+# Hugging Face-only targets carry none yet.
+BUNDLED = ("comfyui", "jetlinks", "prestashop", "siyucms", "white-jotter")
 
 
 def test_webexploitbench_chain_setup_parses() -> None:
-    root = Path(__file__).resolve().parents[2]
-    setup = setup_mod.load_eval_setup(
-        root / "eval" / "setups" / "webexploitbench-chain.yaml"
-    )
+    setup = setup_mod.load_eval_setup(CHAIN_SETUP)
 
-    assert setup.dataset is not None
-    assert setup.dataset.name == "webexploitbench"
-    assert setup.dataset.registry == ""
+    assert setup.datasets == ("webexploitbench",)
     (instance,) = setup.instances
-    names = [run.target_config.params["target"] for run in instance.targets]
-    assert names == [
-        "comfyui",
-        "jetlinks",
-        "prestashop",
-        "siyucms",
-        "white-jotter",
-        "dataease",
-        "dify",
-        "geoserver",
-        "mogu-blog-v2",
-        "ofbiz",
-        "openmetadata",
-        "openremote",
-        "phpbb",
-        "wordpress",
-        "youlai-mall",
+    assert [run.target for run in instance.targets] == CHAIN_TARGETS
+    # Every target keeps its per-trial identity for the artifact store.
+    assert [run.target_id for run in instance.targets] == [
+        f"{name}-1" for name in CHAIN_TARGETS
     ]
-    by_target = {run.target_config.params["target"]: run for run in instance.targets}
-    # Every target declares its built app image(s) except openmetadata, which
-    # builds none (its services use published images).
-    assert all(run.images for name, run in by_target.items() if name != "openmetadata")
-    assert by_target["openmetadata"].images == ()
+    by_target = {run.target: run for run in instance.targets}
+    for name in BUNDLED:
+        assert by_target[name].target_config.operator_kb == (
+            f"eval/data/webexploitbench/{name}/operator_kb.md"
+        )
+    for name in CHAIN_TARGETS:
+        if name not in BUNDLED:
+            assert by_target[name].target_config.operator_kb is None
+
+
+def test_webexploitbench_target_configs_exist_and_parse() -> None:
+    setup = setup_mod.load_eval_setup(CHAIN_SETUP)
+    dataset = load_benchmark_dataset(REPO_ROOT / "eval" / "datasets" / "webexploitbench.yaml")
+
+    assert dataset.targets == tuple(CHAIN_TARGETS)
+    for run in setup.instances[0].targets:
+        path = dataset.target_config_search(run.target)
+        assert path.is_file(), path
+        config = load_target_configuration(path)
+        assert config.target == run.target
+        assert config.runner == "targetctl"
+        assert config.compose == "docker-compose.cage.yml"
+
+
+def test_mock_dataset_and_target_config_exist() -> None:
+    dataset = load_benchmark_dataset(REPO_ROOT / "eval" / "datasets" / "mock.yaml")
+
+    assert dataset.targets == ("webmock",)
+    config = load_target_configuration(dataset.target_config_search("webmock"))
+    assert config.target == "webmock"
+    assert dataset.bank_entry("webmock").is_dir()

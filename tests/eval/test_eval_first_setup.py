@@ -102,6 +102,7 @@ def test_first_setup_parses_against_the_real_schema() -> None:
 
     assert parsed.schema_version == 1
     assert parsed.artifact_store == "/srv/eval-artifacts"
+    assert parsed.datasets == ("webexploitbench",)
     assert [w.name for w in parsed.work_items] == [
         "auth-bootstrap",
         "l1-surface",
@@ -113,13 +114,15 @@ def test_first_setup_parses_against_the_real_schema() -> None:
     assert instance.instance_id == INSTANCE
     assert instance.env_file == f"{INSTANCE}/.env"
     (run,) = instance.targets
+    assert run.target_key == "webexploitbench/comfyui"
+    assert run.target == "comfyui"  # ground-truth name gt.py resolves
     assert run.target_id == TARGET
     assert run.start_phase == "recon"
     assert run.hunt_config_budget == 10
     assert run.preloaded_hunting_artifacts is None
-    assert run.target_config.lifecycle == "targetctl"
-    assert run.target_config.params["target"] == "comfyui"  # ground-truth name
-    assert run.target_config.operator_kb == "eval/kbs/comfyui/operator_kb.md"
+    assert run.target_config.operator_kb == (
+        "eval/data/webexploitbench/comfyui/operator_kb.md"
+    )
     assert run.target_config.target_seed is None  # derived from the synthetic Host
 
 
@@ -295,7 +298,7 @@ def test_ground_truth_wiring_resolves_the_chosen_target(tmp_path, monkeypatch) -
     parsed = load_eval_setup(FIRST_SETUP)
     run = parsed.instances[0].targets[0]
 
-    # `params.target` is the same name gt.py resolves; the CLI's
+    # The target segment of the key is the same name gt.py resolves; the CLI's
     # `_ground_truth_for` calls exactly this seam.
-    resolved = assessment.resolve_ground_truth(str(run.target_config.params["target"]))
+    resolved = assessment.resolve_ground_truth(run.target)
     assert resolved == challenge

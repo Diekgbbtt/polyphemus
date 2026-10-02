@@ -1,10 +1,11 @@
 """The `next-target` CLI verb - the tool the orchestrator agent calls per target.
 
-The verb wraps `Chain.next_target`: it reclaims the previous target's image,
-pulls (or builds) the next, brings it up, and prints the step as JSON; on
-failure it prints the inspectable trace and exits non-zero. These predicates
-drive the verb with a recording runner, so the whole chain step runs against
-canned command output with no host.
+The verb wraps `Chain.next_target`: it reclaims the previous target's images,
+provisions the next from the dataset helper, brings it up, and prints the step
+as JSON; on failure it prints the inspectable trace and exits non-zero. Under
+spec #301 the target is addressed by its `<dataset>/<target>` key, so these
+predicates drive the verb against the repo-local `mock` dataset with a recording
+runner: the whole chain step runs against canned command output with no host.
 """
 from __future__ import annotations
 
@@ -17,17 +18,28 @@ from orchestrator import cli
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 INSTANCE = "arm-a"
-TARGET = "jetlinks-1"
+TARGET = "webmock-1"
+# The mock compose builds exactly one service (`web`), so the helper derives one
+# canonical tag from the target's docker-compose.cage.yml.
+CANONICAL_IMAGE = "ph/mock/webmock:web"
 
 
-def _setup_file(tmp_path, sample_setup) -> Path:
-    # Give the target an image identifier and a Dockerfile, so the chain builds
-    # the app image (the Dockerfile overwrites the pull path).
-    target = sample_setup["instances"][0]["targets"][0]
-    target["images"] = ["pentestbench-jetlinks:2.3.0-synthetic"]
-    target["target_config"]["dockerfile"] = "setup_files/environment/Dockerfile"
+def _setup_file(tmp_path) -> Path:
+    payload = {
+        "schema_version": 1,
+        "artifact_store": "/srv/eval-artifacts",
+        "datasets": ["mock"],
+        "instances": [
+            {
+                "instance_id": INSTANCE,
+                "targets": [
+                    {"target_key": "mock/webmock", "target_id": TARGET},
+                ],
+            }
+        ],
+    }
     path = tmp_path / "setup.yaml"
-    path.write_text(yaml.safe_dump(sample_setup), encoding="utf-8")
+    path.write_text(yaml.safe_dump(payload), encoding="utf-8")
     return path
 
 
@@ -50,7 +62,7 @@ def _argv(setup_path, tmp_path, target=TARGET) -> list[str]:
     ]
 
 
-def test_next_target_reports_the_step(tmp_path, sample_setup, recording_runner, fake_result):
+def test_next_target_reports_the_step(tmp_path, recording_runner, fake_result):
     runner = recording_runner(
         {
             "targetctl up": fake_result(0, stdout="UI: http://127.0.0.1:4321"),
@@ -65,7 +77,7 @@ def test_next_target_reports_the_step(tmp_path, sample_setup, recording_runner, 
     err = _StringIO()
 
     code = cli.main(
-        _argv(_setup_file(tmp_path, sample_setup), tmp_path),
+        _argv(_setup_file(tmp_path), tmp_path),
         runner_factory=lambda: runner,
         stdout=out,
         stderr=err,
@@ -74,21 +86,20 @@ def test_next_target_reports_the_step(tmp_path, sample_setup, recording_runner, 
     assert code == 0, err.getvalue()
     report = json.loads(out.getvalue())
     assert report["target_id"] == TARGET
-    assert report["images"] == ["pentestbench-jetlinks:2.3.0-synthetic"]
-    assert report["pulled"] == [
-        "targetctl build jetlinks",
-        "build pentestbench-jetlinks:2.3.0-synthetic from "
-        "setup_files/environment/Dockerfile",
-    ]
+    # The image set is derived from the mock compose, not hand-listed in the setup.
+    assert report["images"] == [CANONICAL_IMAGE]
+    assert isinstance(report["pulled"], list)
+    assert report["host"]
+    assert report["front_url"]
     assert report["health"].strip() == "running"
 
 
-def test_next_target_unknown_target_reports_the_trace(tmp_path, sample_setup, recording_runner):
+def test_next_target_unknown_target_reports_the_trace(tmp_path, recording_runner):
     out = _StringIO()
     err = _StringIO()
 
     code = cli.main(
-        _argv(_setup_file(tmp_path, sample_setup), tmp_path, target="nope"),
+        _argv(_setup_file(tmp_path), tmp_path, target="nope"),
         runner_factory=lambda: recording_runner({}),
         stdout=out,
         stderr=err,
@@ -98,6 +109,43 @@ def test_next_target_unknown_target_reports_the_trace(tmp_path, sample_setup, re
     report = json.loads(err.getvalue())
     assert "unknown target" in report["error"]
     assert report["traceback"]
+
+
+def test_next_target_rejects_an_unlisted_dataset(tmp_path, sample_setup) -> None:
+    """A key naming a dataset the setup never lists fails loud, not silently."""
+    sample_setup["datasets"] = []
+    path = tmp_path / "setup.yaml"
+    path.write_text(yaml.safe_dump(sample_setup), encoding="utf-8")
+    out = _StringIO()
+    err = _StringIO()
+
+    code = cli.main(
+        [
+            "next-target",
+            str(path),
+            "--instance",
+            "arm-a",
+            "--target",
+            "jetlinks-1",
+            "--repo",
+            str(REPO_ROOT),
+            "--instances-root",
+            str(tmp_path / "instances"),
+            "--chain-state",
+            str(tmp_path / "chain-state.yaml"),
+        ],
+        runner_factory=lambda: _RecordingRunner(),
+        stdout=out,
+        stderr=err,
+    )
+
+    assert code == 1
+    assert "does not list" in err.getvalue()
+
+
+class _RecordingRunner:
+    def __call__(self, command):
+        return type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
 
 
 class _StringIO:

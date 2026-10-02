@@ -1,0 +1,11 @@
+# The repo-local mock dataset: the wiring target for the chain, no external
+# checkout (spec #301).
+#
+# `repo` is a local placeholder - the mock platform bank lives in this repo
+# under eval/platform/mock/, so nothing is fetched. `platform_root` is relative
+# to the eval root, so the bank resolves to eval/platform/mock/.
+id: mock
+repo: local
+platform_root: platform/mock
+targets:
+  - webmock

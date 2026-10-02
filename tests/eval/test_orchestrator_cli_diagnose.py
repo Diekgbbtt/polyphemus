@@ -24,11 +24,8 @@ def _setup_payload(*, target: str = "comfyui") -> dict:
                 "instance_id": "arm-a",
                 "targets": [
                     {
+                        "target_key": f"webexploitbench/{target}",
                         "target_id": target,
-                        "target_config": {
-                            "lifecycle": "targetctl",
-                            "params": {"target": target},
-                        },
                     }
                 ],
             }
@@ -310,19 +307,13 @@ def test_close_verify_continues_past_a_missing_ground_truth(
                 "instance_id": "arm-a",
                 "targets": [
                     {
+                        "target_key": "webexploitbench/comfyui",
                         "target_id": "comfyui",
-                        "target_config": {
-                            "lifecycle": "targetctl",
-                            "params": {"target": "comfyui"},
-                        },
                     },
                     {
-                        # An image target declares no ground-truth name.
+                        # An image target has no ground-truth challenge to resolve.
+                        "target_key": "webexploitbench/no-gt",
                         "target_id": "no-gt",
-                        "target_config": {
-                            "lifecycle": "image",
-                            "params": {"image": "nginx", "port": 18080},
-                        },
                     },
                 ],
             }

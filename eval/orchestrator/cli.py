@@ -20,6 +20,14 @@ import yaml
 
 from orchestrator import api, assessment, chain as chain_mod, diagnosis, evidence, instances, monitor, routing, store, subagents, surfer, trial, verdicts
 from orchestrator import alignment
+from orchestrator.dataset import (
+    BenchmarkDataset,
+    DatasetError,
+    load_benchmark_dataset,
+    resolve_target_key,
+)
+from orchestrator.datasets import helper_for
+from orchestrator.target_config import load_target_configuration
 from orchestrator.targets import build_strategy
 from orchestrator.commands import LocalRunner
 from orchestrator.files import FileStore
@@ -57,6 +65,7 @@ DiagnoseDispatchFactory = Callable[[tuple[str, ...]], diagnosis.SubagentDispatch
 IssueBankFactory = Callable[[], diagnosis.IssueBank]
 _HANDLED = (
     SetupError,
+    DatasetError,
     WorkItemGateError,
     InstanceError,
     TargetError,
@@ -485,6 +494,94 @@ def _find_target(instance: Instance, target_id: str) -> TargetRun:
     )
 
 
+# --- the keyed dataset/target resolution (spec #301) --------------------------
+
+
+def _dataset_path(repo: Path, dataset_id: str) -> Path:
+    return Path(repo) / "eval" / "datasets" / f"{dataset_id}.yaml"
+
+
+def _load_datasets(setup: EvalSetup, repo: Path) -> dict[str, BenchmarkDataset]:
+    """Every dataset the setup lists, by key, resolved under `<repo>/eval/datasets`."""
+    return {
+        dataset_id: load_benchmark_dataset(_dataset_path(repo, dataset_id))
+        for dataset_id in setup.datasets
+    }
+
+
+def _resolve_dataset(
+    setup: EvalSetup,
+    run: TargetRun,
+    *,
+    repo: Path,
+    datasets: dict[str, BenchmarkDataset] | None = None,
+) -> BenchmarkDataset:
+    """The dataset a run's `<dataset>/<target>` key names, validated against the setup."""
+    dataset_id, target = resolve_target_key(run.target_key)
+    if datasets is None:
+        datasets = _load_datasets(setup, repo)
+    dataset = datasets.get(dataset_id)
+    if dataset is None:
+        raise SetupError(
+            f"target {run.target_id!r} names dataset {dataset_id!r}, which the "
+            "EvalSetup does not list in `datasets`"
+        )
+    dataset.require_target(target)
+    return dataset
+
+
+def _dataset_and_config(
+    setup: EvalSetup,
+    run: TargetRun,
+    *,
+    repo: Path,
+    datasets: dict[str, BenchmarkDataset] | None = None,
+):
+    """The `(dataset, target_config)` a run's key resolves to, config read fresh."""
+    dataset = _resolve_dataset(setup, run, repo=repo, datasets=datasets)
+    _, target = resolve_target_key(run.target_key)
+    config = load_target_configuration(dataset.target_config_search(target))
+    return dataset, config
+
+
+def _strategy_for_factory(
+    setup: EvalSetup,
+    paths: "instances.InstancePaths",
+    repo: Path,
+    *,
+    env=None,
+    sleep=None,
+):
+    """A `TargetRun` -> strategy builder bound to one instance's paths.
+
+    The datasets and their helpers are resolved once per factory; each step loads
+    its target config from the run's key, so the chain and the config cannot
+    drift. `build_strategy`'s frozen signature is `(target_config, dataset,
+    helper, paths, run, ...)`.
+    """
+    datasets = _load_datasets(setup, repo)
+    helpers = {key: helper_for(dataset) for key, dataset in datasets.items()}
+
+    def build(run: TargetRun):
+        dataset, config = _dataset_and_config(setup, run, repo=repo, datasets=datasets)
+        return build_strategy(
+            config, dataset, helpers[dataset.id], paths, run, env=env, sleep=sleep
+        )
+
+    return build
+
+
+def _operator_kb(setup: EvalSetup, run: TargetRun, repo: Path) -> str | None:
+    """The run's operator KB, or the dataset's data-dir default when it carries one."""
+    declared = run.target_config.operator_kb
+    if declared:
+        candidate = Path(declared)
+        return str(candidate if candidate.is_absolute() else Path(repo) / candidate)
+    dataset = _resolve_dataset(setup, run, repo=repo)
+    default = dataset.data_dir(run.target) / "operator_kb.md"
+    return str(default) if default.is_file() else None
+
+
 def _resolve_data_root(args) -> Path:
     if args.data_root:
         return Path(args.data_root)
@@ -505,10 +602,7 @@ def _trial_config(args, setup: EvalSetup, config: OrchestratorConfig) -> tuple[
         branch=config.branch,
         compose_files=config.compose_files,
     )
-    kb = None
-    if run.target_config.operator_kb:
-        candidate = Path(run.target_config.operator_kb)
-        kb = str(candidate if candidate.is_absolute() else Path(args.repo) / candidate)
+    kb = _operator_kb(setup, run, args.repo)
     scaffold = None
     if run.start_phase == "recon" and kb:
         scaffold = trial.ScaffoldSpec(cwd=str(paths.worktree), kb=kb)
@@ -632,12 +726,8 @@ def _find_target_run(setup: EvalSetup, target_id: str) -> TargetRun:
 def _ground_truth_for(args, run: TargetRun) -> Path:
     if args.ground_truth:
         return Path(args.ground_truth)
-    target = run.target_config.params.get("target")
-    if not target:
-        raise assessment.AssessmentError(
-            f"target {run.target_id!r} declares no ground-truth name; pass --ground-truth"
-        )
-    return assessment.resolve_ground_truth(str(target))
+    # The target segment of the key is the ground-truth name gt.py resolves.
+    return assessment.resolve_ground_truth(run.target)
 
 
 def _assessment_data_root(args) -> Path:
@@ -1322,7 +1412,6 @@ def _run_next_target(
         branch=config.branch,
         compose_files=config.compose_files,
     )
-    registry = setup.dataset.registry if setup.dataset else ""
     state_path = (
         Path(args.chain_state)
         if args.chain_state
@@ -1331,8 +1420,8 @@ def _run_next_target(
     chain = chain_mod.Chain(
         instance=instance,
         paths=paths,
-        strategy_for=lambda run: build_strategy(
-            run, paths, registry=registry, env=os.environ
+        strategy_for=_strategy_for_factory(
+            setup, paths, config.repo, env=os.environ
         ),
         runner=runner_factory(),
         files=FileStore(),
@@ -1705,6 +1794,7 @@ def _resume_trial(args, setup: EvalSetup, config: OrchestratorConfig,
         poll_s=args.poll_s,
         project_id=plan.project_id,
         recon_run=plan.recon_run_id,
+        existing_project_id=None,
         eval_sha=args.eval_sha,
         stack_fingerprint=args.stack_fingerprint,
         trace_id=args.trace_id,
