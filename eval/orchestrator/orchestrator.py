@@ -1,9 +1,15 @@
-"""The orchestrator over one `EvalSetup` (ticket #269, D1/D14/D29).
+"""The orchestrator over one `EvalSetup` (ticket #269, D1/D14/D29, spec #301).
 
 `plan()` builds every instance and target command without a runner. `up()`
 gates the eval-wide work items first, then brings up each instance stack and
 its serial target pipeline; `down()` tears targets down in reverse and then the
 instance stacks. All effects flow through the injected runner.
+
+Per target, the orchestrator resolves its domain objects from the setup's eval
+root (spec #301): the `BenchmarkDataset` keyed by `TargetRun.target_key`, the
+target's `TargetConfiguration`, and the dataset helper, then hands that triple to
+`build_strategy`. `up` starts each target and then verifies readiness through the
+strategy's bounded plan - the target's own `up` never blocks on health.
 """
 from __future__ import annotations
 
@@ -13,24 +19,39 @@ from typing import Mapping
 
 from orchestrator import front, instances, routing
 from orchestrator.commands import Command, CommandRunner, require_ok
+from orchestrator.dataset import DATASET_DIRNAME, BenchmarkDataset, load_benchmark_dataset
+from orchestrator.datasets import DatasetHelper
+from orchestrator.datasets.base import helper_for
 from orchestrator.instances import COMPOSE_FILES, InstanceError, InstancePaths
 from orchestrator.setup import EvalSetup, Instance, TargetRun
+from orchestrator.target_config import TargetConfiguration, load_target_configuration
 from orchestrator.targets import TargetError, TargetStrategy, TargetUpResult, build_strategy
 from orchestrator.workitems import require_complete
 
+# Every lifecycle is local (D45), so each runner is fronted by the shared :80
+# container.
+LOCAL_RUNNERS = ("targetctl", "image", "compose")
+
 
 class OrchestratorError(RuntimeError):
-    """The orchestrator was asked to execute without a runner."""
+    """The orchestrator was asked to execute without a runner, or a target could
+    not be resolved to its dataset/target configuration."""
 
 
 @dataclass(frozen=True)
 class OrchestratorConfig:
-    """Where the eval lives: the canonical repo, instances root, and branch."""
+    """Where the eval lives: the canonical repo, instances root, and branch.
+
+    `eval_root` is the setup file's `eval/` directory, against which the dataset
+    YAMLs (`eval/datasets/<key>.yaml`) and the target YAMLs
+    (`eval/targets/<key>/<target>.yaml`) are resolved (spec #301).
+    """
 
     repo: Path
     instances_root: Path
     branch: str = "eval"
     compose_files: tuple[str, ...] = COMPOSE_FILES
+    eval_root: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -75,6 +96,11 @@ class Orchestrator:
         self._runner = runner
         self._sleep = sleep
         self._env = env
+        # Resolved domain objects, cached per dataset/target so a plan does not
+        # re-read a YAML for every pass.
+        self._datasets: dict[str, BenchmarkDataset] = {}
+        self._helpers: dict[str, DatasetHelper] = {}
+        self._target_configs: dict[tuple[str, str], TargetConfiguration] = {}
 
     # --- collaborators --------------------------------------------------------
 
@@ -87,9 +113,42 @@ class Orchestrator:
             compose_files=self.config.compose_files,
         )
 
+    def _dataset(self, dataset_id: str) -> BenchmarkDataset:
+        if dataset_id in self._datasets:
+            return self._datasets[dataset_id]
+        root = self.config.eval_root
+        if root is None:
+            raise OrchestratorError(
+                "resolving a target requires OrchestratorConfig.eval_root "
+                "(the setup file's eval/ directory)"
+            )
+        root = Path(root)
+        path = root / DATASET_DIRNAME / f"{dataset_id}.yaml"
+        dataset = load_benchmark_dataset(path, eval_root=root)
+        self._datasets[dataset_id] = dataset
+        return dataset
+
+    def _resolve(
+        self, run: TargetRun
+    ) -> tuple[BenchmarkDataset, DatasetHelper, TargetConfiguration]:
+        """Resolve a TargetRun's dataset, helper, and bring-up configuration."""
+        dataset = self._dataset(run.dataset_id)
+        key = (dataset.id, run.target)
+        config = self._target_configs.get(key)
+        if config is None:
+            config = load_target_configuration(dataset.target_config_search(run.target))
+            self._target_configs[key] = config
+        helper = self._helpers.get(dataset.id)
+        if helper is None:
+            helper = helper_for(dataset)
+            self._helpers[dataset.id] = helper
+        return dataset, helper, config
+
     def _strategy(self, paths: InstancePaths, run: TargetRun) -> TargetStrategy:
-        registry = self.setup.dataset.registry if self.setup.dataset else ""
-        return build_strategy(run, paths, registry=registry, env=self._env, sleep=self._sleep)
+        dataset, helper, config = self._resolve(run)
+        return build_strategy(
+            config, dataset, helper, paths, run, env=self._env, sleep=self._sleep
+        )
 
     def _require_runner(self) -> CommandRunner:
         if self._runner is None:
@@ -104,7 +163,7 @@ class Orchestrator:
         on :80 rather than a per-host nginx reached over ssh.
         """
         return any(
-            run.target_config.lifecycle in ("targetctl", "image", "compose")
+            self._resolve(run)[2].runner in LOCAL_RUNNERS
             for instance in self.setup.instances
             for run in instance.targets
         )
@@ -137,11 +196,12 @@ class Orchestrator:
                 )
             )
             for run in instance.targets:
+                _, _, config = self._resolve(run)
                 strategy = self._strategy(paths, run)
                 steps.append(
                     PlanStep(
                         f"target {instance.instance_id}/{run.target_id} "
-                        f"({run.target_config.lifecycle})",
+                        f"({config.runner})",
                         tuple(strategy.plan_up()),
                     )
                 )
@@ -150,7 +210,11 @@ class Orchestrator:
     # --- execution ------------------------------------------------------------
 
     def up(self) -> list[InstanceResult]:
-        """Gate the work items, then bring up every instance and its targets."""
+        """Gate the work items, then bring up every instance and its targets.
+
+        Each target is started, then its readiness is verified under the
+        strategy's bounded plan; the target's own `up` never blocks on health.
+        """
         require_complete(self.setup.work_items)
         runner = self._require_runner()
         if self._needs_front():
@@ -159,10 +223,12 @@ class Orchestrator:
         for instance in self.setup.instances:
             paths = self._paths(instance)
             instances.up(paths, runner)
-            target_results = tuple(
-                self._strategy(paths, run).up(runner) for run in instance.targets
-            )
-            results.append(InstanceResult(instance.instance_id, target_results))
+            target_results: list[TargetUpResult] = []
+            for run in instance.targets:
+                strategy = self._strategy(paths, run)
+                target_results.append(strategy.up(runner))
+                strategy.await_ready(runner)
+            results.append(InstanceResult(instance.instance_id, tuple(target_results)))
         return results
 
     def down(self) -> list[TeardownError]:

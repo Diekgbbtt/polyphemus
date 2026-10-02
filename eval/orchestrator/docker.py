@@ -1,23 +1,23 @@
-"""Docker image primitives: build, pull, present, remove.
+"""Docker image primitives: inspect, pull, build, tag, remove.
 
-The chain provisions each target's image before it starts and removes the
-previous target's image when the next target begins, so peak disk is one target
-at a time. Provisioning follows a strict precedence (`provision_images`):
+The chain provisions each target's canonical images before it starts and removes
+the previous target's canonical tags when the next target begins, so peak disk is
+one target at a time. Provisioning follows a strict precedence
+(`provision_tags`), store first:
 
-1. **build** - a Dockerfile declared in the target's configuration builds the
-   app image, overwriting any pull; the Dockerfile's `FROM` supplies its base;
-2. **pull** - a configured dataset registry pulls the image (qualified by the
-   registry host + URL path prefix, and verified present);
-3. **present** - with neither, the image must already be present locally, and a
-   missing image is a hard failure so the target trial fails and the chain moves
-   on.
+1. **present** (`store`) - `docker image inspect <canonical-tag>` succeeds, so the
+   image is already bound and the target is left alone; a store hit is never
+   pulled, rebuilt, or reclaimed by provisioning;
+2. **pull** - the target declares a pull reference for that canonical tag
+   (`config.pull[tag]`); it is pulled and then bound to the canonical tag with
+   `docker tag`;
+3. **build** - otherwise the target's own build (its compose/Dockerfile) runs and
+   the produced image is bound to the canonical tag with `docker tag`.
 
-A pull is monitored through its own progress output (per-layer completion and
-the manifest digest) and confirmed with `docker image inspect`; a build is
-confirmed the same way; a present image is confirmed by tag only, so it is
-recorded as the weakest, unverified tier. Removal is best-effort: an absent or
-in-use image does not abort the chain, and the outcome is reported through the
-returned label.
+Binding every produced image to its canonical tag is what lets the store check
+and reclaim speak one symbolic key, `ph/<dataset>/<target>:<service>`, rather than
+guess at the compose's own tags. Removal is best-effort: an absent or in-use image
+does not abort the chain, and the outcome is reported through the returned label.
 
 Every primitive builds a local `docker ...` command and accepts a `wrap` that
 turns it into the command actually run; the default runs it as-is on the local
@@ -28,7 +28,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Mapping
 
 from orchestrator.commands import Command, CommandRunner, require_ok
 
@@ -41,16 +41,16 @@ Wrap = Callable[[Command], Command]
 def _local(command: Command) -> Command:
     return command
 
-# The three provisioning paths, in precedence order: a declared Dockerfile
-# builds (overwriting a pull), a configured registry pulls, and otherwise the
-# image must already be present locally.
-BUILD = "build"
-PULL = "pull"
+# The three provisioning sources, in precedence order: a store hit leaves the
+# image alone, a declared pull reference fetches it, and otherwise the target's
+# own build produces it.
 PRESENT = "present"
+PULL = "pull"
+BUILD = "build"
 
 
 class ImagePrimitiveError(RuntimeError):
-    """A docker image primitive failed or a pulled image could not be verified."""
+    """A docker image primitive failed or a provisioned image could not be verified."""
 
 
 def pull_reference(registry: str, image: str) -> str:
@@ -76,6 +76,14 @@ def plan_inspect(reference: str) -> Command:
     return Command(
         argv=("docker", "image", "inspect", "--format", "{{.Id}}", reference),
         description=f"verify {reference}",
+    )
+
+
+def plan_tag(source: str, tag: str) -> Command:
+    """`docker tag <source> <tag>`: bind a produced image to its canonical tag."""
+    return Command(
+        argv=("docker", "tag", source, tag),
+        description=f"tag {tag}",
     )
 
 
@@ -144,9 +152,9 @@ def pull(
     )
 
 
-def remove(run: CommandRunner, reference: str) -> tuple[str, ...]:
+def remove(run: CommandRunner, reference: str, *, wrap: Wrap = _local) -> tuple[str, ...]:
     """Best-effort removal; the outcome is a label, never an abort."""
-    command = plan_remove(reference)
+    command = wrap(plan_remove(reference))
     result = run(command)
     if result.returncode != 0:
         detail = result.stderr.strip() or result.stdout.strip()
@@ -199,9 +207,9 @@ def build(
 def present(run: CommandRunner, reference: str, *, wrap: Wrap = _local) -> str | None:
     """The local image id when `reference` is already present, else None.
 
-    This is the weakest tier: it confirms an image carries the tag, not that it
-    is the expected one. A tag can point at a stale or foreign image, so the
-    caller records the path as `present` (unverified) rather than as a pull.
+    This is the store tier: it confirms an image carries the tag, not that it is
+    the expected one. A store hit is left alone (never pulled, rebuilt, or
+    reclaimed by provisioning), so the caller records the path as `present`.
     """
     result = run(wrap(plan_inspect(reference)))
     if result.returncode != 0:
@@ -210,83 +218,83 @@ def present(run: CommandRunner, reference: str, *, wrap: Wrap = _local) -> str |
     return image_id or None
 
 
-# --- the provisioning precedence ----------------------------------------------
+# --- the canonical-tag provisioning precedence --------------------------------
 
 
 @dataclass(frozen=True)
 class ProvisionOutcome:
-    """Which path provisioned one image, and what it left on the host."""
+    """Which source provisioned one canonical tag, and what it bound it to."""
 
+    tag: str
+    source: str
     reference: str
-    path: str
-    image_id: str
     detail: str
 
 
-def provisioned_references(
-    images: tuple[str, ...], *, dockerfile: str | None = None, registry: str = ""
-) -> tuple[str, ...]:
-    """The local image names the precedence would leave, for a later reclaim.
-
-    Mirrors `provision_images`: the first image is the Dockerfile's local tag,
-    a configured registry qualifies every other image, and otherwise the images
-    keep their bare identifier. Reclaim removes exactly these names.
-    """
-    references: list[str] = []
-    for index, image in enumerate(images):
-        if index == 0 and dockerfile:
-            references.append(image)
-        elif registry:
-            references.append(pull_reference(registry, image))
-        else:
-            references.append(image)
-    return tuple(references)
+BuildMapping = Callable[[], Mapping[str, str]]
 
 
-def provision_images(
+def provision_tags(
     run: CommandRunner,
-    images: tuple[str, ...],
+    tags: tuple[str, ...],
     *,
-    dockerfile: str | None = None,
-    context: str | None = None,
-    registry: str = "",
+    pull_refs: Mapping[str, str] | None = None,
+    build: BuildMapping | None = None,
     wrap: Wrap = _local,
     error: type[Exception] = ImagePrimitiveError,
 ) -> tuple[ProvisionOutcome, ...]:
-    """Provision a target's images by the precedence: build, then pull, then present.
+    """Provision each canonical tag by the precedence: store, pull, build.
 
-    * a declared `dockerfile` builds the target's **app image** (the first
-      identifier), overwriting any pull; the Dockerfile's `FROM` supplies its
-      base;
-    * a configured `registry` pulls each remaining image (qualified by the
-      registry, verified present);
-    * with neither, every image must already be present locally, and a missing
-      one is a hard failure (`error`), so the target trial fails and the chain
-      moves on.
+    For every tag: a local `docker image inspect` hit is `present` and left
+    alone; otherwise a declared `pull_refs[tag]` reference is pulled and bound to
+    the tag with `docker tag`; otherwise `build` (invoked at most once, only when
+    a tag still needs it) runs the target's own build and returns the produced
+    reference for each tag, which is then bound with `docker tag`. A tag that is
+    absent, has no pull reference, and is not produced by the build is a hard
+    failure, so the target trial fails instead of running a missing image.
     """
     outcomes: list[ProvisionOutcome] = []
-    for index, image in enumerate(images):
-        if index == 0 and dockerfile:
-            built = build(
-                run, image, dockerfile=dockerfile, context=context, wrap=wrap, error=error
-            )
-            outcomes.append(
-                ProvisionOutcome(image, BUILD, built.image_id, f"build {image} from {dockerfile}")
-            )
-        elif registry:
-            reference = pull_reference(registry, image)
-            pulled = pull(run, reference, wrap=wrap, error=error)
-            outcomes.append(
-                ProvisionOutcome(reference, PULL, pulled.image_id, f"pull {reference}")
-            )
+    pending: list[str] = []
+    for tag in tags:
+        if present(run, tag, wrap=wrap) is not None:
+            outcomes.append(ProvisionOutcome(tag, PRESENT, tag, f"present {tag}"))
         else:
-            image_id = present(run, image, wrap=wrap)
-            if image_id is None:
+            pending.append(tag)
+
+    declared = dict(pull_refs or {})
+    still: list[str] = []
+    for tag in pending:
+        reference = declared.get(tag)
+        if reference is None:
+            still.append(tag)
+            continue
+        pulled = pull(run, reference, wrap=wrap, error=error)
+        _bind(run, pulled.reference, tag, wrap=wrap, error=error)
+        outcomes.append(
+            ProvisionOutcome(tag, PULL, pulled.reference, f"pull {pulled.reference} -> {tag}")
+        )
+
+    if still:
+        produced = dict(build() if build is not None else {})
+        for tag in still:
+            reference = produced.get(tag)
+            if reference is None:
                 raise error(
-                    f"image {image!r} is not present locally and no dockerfile or "
-                    "registry is configured"
+                    f"image {tag!r} is not present locally, has no pull reference, "
+                    "and no build produced it"
                 )
-            outcomes.append(
-                ProvisionOutcome(image, PRESENT, image_id, f"present {image}")
-            )
+            _bind(run, reference, tag, wrap=wrap, error=error)
+            outcomes.append(ProvisionOutcome(tag, BUILD, reference, f"build {reference} -> {tag}"))
     return tuple(outcomes)
+
+
+def _bind(
+    run: CommandRunner,
+    reference: str,
+    tag: str,
+    *,
+    wrap: Wrap,
+    error: type[Exception],
+) -> None:
+    command = wrap(plan_tag(reference, tag))
+    require_ok(run(command), command, error=error)

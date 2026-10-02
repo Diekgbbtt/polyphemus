@@ -1,10 +1,16 @@
 """The multi-target chain: one instance, many targets, sequentially.
 
-The orchestrator's control plane drives this. Each `next_target` reclaims the
-previous target's app image, pulls the next target's image, brings the next
-target up, and verifies its health - and on failure returns the full inspectable
-trace (the step log plus the raised command error and traceback) so the
-orchestrator sees what happened, never a bare boolean.
+The orchestrator's control plane drives this. Each `next_target` tears the
+previous target down (reclaiming its canonical images only when the target opted
+in, `reclaimable`), provisions the next target's images by store -> pull ->
+build, brings the next target up, verifies its health under the helper's bounded
+plan, and records a `bind_artifacts` placeholder - and on failure returns the
+full inspectable trace (the step log plus the raised command error and
+traceback) so the orchestrator sees what happened, never a bare boolean.
+
+`up` never blocks on health: readiness is the chain's own bounded `health` stage.
+A reclaimable target's tags are also reclaimed after a failed `up`, so a half-up
+target never leaks its images.
 
 Every effect flows through the injected runner and strategy factory, so the unit
 tier sequences a whole chain against fakes with no host.
@@ -20,7 +26,7 @@ import yaml
 
 from orchestrator import front
 from orchestrator.commands import CommandRunner, require_ok
-from orchestrator.docker import ImagePrimitiveError
+from orchestrator.docker import PULL, ImagePrimitiveError
 from orchestrator.files import FileStore
 from orchestrator.instances import InstancePaths
 from orchestrator.setup import Instance, TargetRun
@@ -55,8 +61,9 @@ class ChainState:
 class TargetStep:
     """One successful `next_target`: what was reclaimed, pulled, brought up.
 
-    `images` are the target's image identifiers as-is (the tool contract exposes
-    them to the agent); `pulled` are the qualified references actually pulled.
+    `images` are the target's canonical tags (`ph/<dataset>/<target>:<service>`),
+    the one symbolic key the store check and reclaim speak; `pulled` are the
+    qualified references actually pulled during provisioning.
     """
 
     target_id: str
@@ -71,10 +78,11 @@ class TargetStep:
 class TargetFailure(RuntimeError):
     """A chain step failed; carries the inspectable trace the orchestrator needs.
 
-    `trace` is the ordered step log (down, reclaim, pull, up, health); `cause` is
-    the Python traceback; `error` is the raised command error, which already
-    names the command and its stderr. Together they are the "error stack trace
-    and any other programmatically inspectable trace" the orchestrator consumes.
+    `trace` is the ordered step log (down, reclaim, provision, up, health,
+    bind_artifacts); `cause` is the Python traceback; `error` is the raised
+    command error, which already names the command and its stderr. Together they
+    are the "error stack trace and any other programmatically inspectable trace"
+    the orchestrator consumes.
     """
 
     def __init__(
@@ -103,7 +111,7 @@ class TargetFailure(RuntimeError):
 
 
 class Chain:
-    """Sequences one instance through its TargetRuns: reclaim, pull, up, verify."""
+    """Sequences one instance through its TargetRuns: reclaim, provision, up, verify."""
 
     def __init__(
         self,
@@ -114,6 +122,7 @@ class Chain:
         runner: CommandRunner,
         files: FileStore,
         state_path: Path,
+        bind_artifacts: Callable[[TargetRun], None] | None = None,
     ) -> None:
         self.instance = instance
         self.paths = paths
@@ -121,6 +130,7 @@ class Chain:
         self.runner = runner
         self._files = files
         self.state_path = Path(state_path)
+        self._bind_artifacts_seam = bind_artifacts
         self.state = self._load()
         self._trace: list[str] = []
         self._step = "start"
@@ -152,30 +162,40 @@ class Chain:
     # --- steps ----------------------------------------------------------------
 
     def next_target(self, target_id: str) -> TargetStep:
-        """Reclaim the active target, pull and start `target_id`, verify health."""
+        """Reclaim the active target, provision and start `target_id`, verify health."""
         self._trace = []
+        strategy: TargetStrategy | None = None
         try:
             run = self._target(target_id)
             previous = self.state.active_target
             reclaimed: tuple[str, ...] = ()
             if previous is not None and previous != target_id:
                 reclaimed = self._teardown(previous)
-            pulled = self._pull(run)
             strategy = self._strategy(run)
             self._front()
+            pulled = self._provision(run, strategy)
             self._step = f"up {target_id}"
             self._trace.append(self._step)
             up = strategy.up(self.runner)
             health = self._health(strategy)
+            self._bind_artifacts(run)
             completed = tuple(dict.fromkeys((*self.state.completed, target_id)))
             self.state = replace(
                 self.state, active_target=target_id, completed=completed
             )
             self._save()
             return TargetStep(
-                target_id, previous, reclaimed, pulled, up, health, tuple(run.images)
+                target_id, previous, reclaimed, pulled, up, health,
+                tuple(strategy.canonical_tags),
             )
         except (TargetError, ImagePrimitiveError) as exc:
+            # No leak: a reclaimable target that half-came-up has its tags
+            # reclaimed before the failure is reported. Best-effort.
+            if strategy is not None and strategy.reclaimable:
+                try:
+                    strategy.reclaim(self.runner)
+                except Exception:
+                    pass
             raise self._failure(target_id, exc) from exc
 
     def _teardown(self, target_id: str) -> tuple[str, ...]:
@@ -185,12 +205,17 @@ class Chain:
         strategy.down(self.runner)
         self._step = f"reclaim {target_id}"
         self._trace.append(self._step)
+        # Only a reclaimable target hands its canonical tags back; a target that
+        # did not opt in leaves its images in the store for the next run.
+        if not strategy.reclaimable:
+            return ()
         return tuple(strategy.reclaim(self.runner))
 
-    def _pull(self, run: TargetRun) -> tuple[str, ...]:
-        self._step = f"pull {run.target_id}"
+    def _provision(self, run: TargetRun, strategy: TargetStrategy) -> tuple[str, ...]:
+        self._step = f"provision {run.target_id}"
         self._trace.append(self._step)
-        return tuple(self._strategy(run).provision(self.runner))
+        outcomes = strategy.provision(self.runner)
+        return tuple(outcome.reference for outcome in outcomes if outcome.source == PULL)
 
     def _front(self) -> None:
         """Ensure the shared front container before a local target starts (D45).
@@ -208,7 +233,19 @@ class Chain:
     def _health(self, strategy: TargetStrategy) -> str:
         self._step = "health"
         self._trace.append("health")
-        return strategy.status(self.runner)
+        return strategy.await_ready(self.runner)
+
+    def _bind_artifacts(self, run: TargetRun) -> None:
+        """Placeholder stage: delegate artifact seeding to the injected seam.
+
+        The artifact seeding itself is not implemented here; the chain only
+        records the step and hands the run to the seam when one is wired, so the
+        policy can be filled in without changing the chain's shape.
+        """
+        self._step = "bind_artifacts"
+        self._trace.append(self._step)
+        if self._bind_artifacts_seam is not None:
+            self._bind_artifacts_seam(run)
 
     def _failure(self, target_id: str, exc: BaseException) -> TargetFailure:
         return TargetFailure(
