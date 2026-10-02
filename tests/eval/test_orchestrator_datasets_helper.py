@@ -30,10 +30,11 @@ services:
 
 
 def test_parse_built_images_only_build_services():
+    # `wpcli` declares `profiles: [cli]`, so `docker compose config`/`build`
+    # leave it out of the target's default stack; it is not a built image.
     built = parse_built_images(COMPOSE)
-    assert [item.service for item in built] == ["wordpress", "wpcli"]
+    assert [item.service for item in built] == ["wordpress"]
     assert built[0].reference == "pentestbench-wordpress:php8.2-seeded-cage2"
-    assert built[1].reference == "pentestbench-wordpress-cli:php8.2-isolated"
 
 
 def test_parse_built_images_empty_when_no_build():
@@ -64,7 +65,6 @@ def test_helper_derives_canonical_tags_from_the_compose(tmp_path):
     assert helper.compose_path("wordpress", config) == bank / "docker-compose.cage.yml"
     assert helper.canonical_tags("wordpress", config) == (
         "ph/webench/wordpress:wordpress",
-        "ph/webench/wordpress:wpcli",
     )
 
 

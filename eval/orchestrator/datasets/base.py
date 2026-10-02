@@ -38,15 +38,18 @@ def parse_built_images(compose_text: str) -> tuple[BuiltImage, ...]:
 
     The parse is deliberately shallow (a compose-service block is a two-space key
     under `services:`), so it reads the same shape `targetctl`'s `build_images`
-    awk reads and needs no YAML dependency.
+    reads and needs no YAML dependency. A service gated behind a `profiles:` key
+    is not part of the target's default stack - `docker compose config` and
+    `docker compose build` both leave it out - so it is not a built image either.
     """
     images: list[BuiltImage] = []
     service: str | None = None
     has_build = False
     image: str | None = None
+    profiled = False
 
     def flush() -> None:
-        if service and has_build and image:
+        if service and has_build and image and not profiled:
             images.append(BuiltImage(service=service, reference=image))
 
     for raw in compose_text.splitlines():
@@ -60,6 +63,7 @@ def parse_built_images(compose_text: str) -> tuple[BuiltImage, ...]:
             service = stripped[:-1]
             has_build = False
             image = None
+            profiled = False
             continue
         if service is None:
             continue
@@ -67,6 +71,8 @@ def parse_built_images(compose_text: str) -> tuple[BuiltImage, ...]:
             has_build = True
         elif indent == 4 and stripped.startswith("image:"):
             image = stripped[len("image:"):].strip().strip("\"'")
+        elif indent == 4 and stripped.startswith("profiles:"):
+            profiled = True
     flush()
     seen: list[BuiltImage] = []
     for item in images:
