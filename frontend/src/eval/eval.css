@@ -1,0 +1,632 @@
+/* The eval page: a sleek, minimal, responsive report. Color is decorative; every
+   state and column is readable as text. */
+
+.eval {
+  max-width: 72rem;
+  margin: 0 auto;
+  padding: 2.5rem 1.25rem 4rem;
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: #e8eaed;
+  background: #0b0d10;
+  min-height: 100vh;
+}
+
+.eval-header {
+  border-bottom: 1px solid #23272d;
+  padding-bottom: 1.25rem;
+  margin-bottom: 1.5rem;
+}
+
+.eval-topbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  border-bottom: 1px solid #23272d;
+  padding-bottom: 0.75rem;
+  margin-bottom: 1.5rem;
+}
+
+.eval-topnav {
+  display: flex;
+  gap: 1rem;
+}
+
+.eval-topnav a {
+  color: #8ab4f8;
+  text-decoration: none;
+}
+
+.eval-topnav a:hover {
+  text-decoration: underline;
+}
+
+.eval-crumbs ol {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  list-style: none;
+  margin: 0 0 1rem;
+  padding: 0;
+  font-size: 13px;
+  color: #9aa0a6;
+}
+
+.eval-crumbs li + li::before {
+  content: "/";
+  margin-right: 0.45rem;
+  color: #5f6368;
+}
+
+.eval-crumbs a {
+  color: #8ab4f8;
+  text-decoration: none;
+}
+
+.eval-crumbs a:hover {
+  text-decoration: underline;
+}
+
+/* Two coverage donuts: side by side on desktop, stacked on a narrow viewport. */
+.eval-donuts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr));
+  gap: 1.25rem;
+}
+
+.eval-donut {
+  margin: 0;
+  border: 1px solid #23272d;
+  border-radius: 10px;
+  padding: 1rem 1.1rem;
+  background: #12151a;
+}
+
+.eval-donut figcaption {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 0.75rem;
+}
+
+.eval-donut-body {
+  position: relative;
+  width: 9rem;
+  height: 9rem;
+  margin: 0 auto 0.85rem;
+}
+
+.eval-donut-svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.eval-donut-ring {
+  fill: none;
+  stroke: #23272d;
+  stroke-width: 12;
+}
+
+.eval-donut-seg {
+  fill: none;
+  stroke-width: 12;
+}
+
+.eval-donut-seg-0 {
+  stroke: #8ab4f8;
+}
+
+.eval-donut-seg-1 {
+  stroke: #f8b88a;
+}
+
+.eval-donut-center {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  text-align: center;
+  line-height: 1.2;
+}
+
+.eval-donut-value {
+  font-size: 1.7rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.eval-donut-caption {
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #9aa0a6;
+}
+
+.eval-donut-legend {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 13px;
+}
+
+.eval-donut-legend li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.4rem;
+  padding: 0.25rem 0;
+}
+
+.eval-donut-legend a {
+  color: #8ab4f8;
+  text-decoration: none;
+}
+
+.eval-donut-legend a:hover {
+  text-decoration: underline;
+}
+
+.eval-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  flex: none;
+}
+
+.eval-swatch.eval-donut-seg-0 {
+  background: #8ab4f8;
+}
+
+.eval-swatch.eval-donut-seg-1 {
+  background: #f8b88a;
+}
+
+.eval-legend-value {
+  margin-left: auto;
+  color: #c9ccd1;
+  font-variant-numeric: tabular-nums;
+}
+
+.eval-legend-note {
+  flex-basis: 100%;
+  color: #9aa0a6;
+  font-size: 12px;
+}
+
+.eval-timeline {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.eval-trial-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.eval-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.eval-chips li {
+  border: 1px solid #23272d;
+  border-radius: 999px;
+  padding: 0.2rem 0.75rem;
+  background: #12151a;
+  font-size: 13px;
+}
+
+.eval-chip-label {
+  color: #9aa0a6;
+  margin-right: 0.4rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 11px;
+}
+
+.eval-chip-value {
+  font-variant-numeric: tabular-nums;
+}
+
+/* The per-TargetRun groups the Trial breadcrumb links to. */
+.eval-run-group {
+  scroll-margin-top: 1.5rem;
+}
+
+/* One expandable entry per vulnerability. */
+.eval-vulns {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+/* The Trial index: one entry per materialized artifact. */
+.eval-artifacts {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.eval-artifacts > li {
+  border: 1px solid #23272d;
+  border-radius: 10px;
+  background: #12151a;
+  padding: 0.85rem 1rem;
+}
+
+.eval-artifacts > li + li {
+  margin-top: 0.6rem;
+}
+
+.eval-artifacts > li > a,
+.eval-artifact-entry h3 {
+  color: #8ab4f8;
+  text-decoration: none;
+  font-size: 15px;
+}
+
+.eval-artifacts > li > a:hover {
+  text-decoration: underline;
+}
+
+.eval-artifact-status {
+  margin-left: 0.6rem;
+  border: 1px solid #3c4043;
+  border-radius: 999px;
+  padding: 0.05rem 0.55rem;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #c9ccd1;
+}
+
+.eval-artifact-summary {
+  margin: 0.4rem 0 0;
+  color: #9aa0a6;
+  font-size: 13px;
+}
+
+.eval-artifact-entry {
+  background: none;
+  border: none;
+  padding: 0;
+}
+
+.eval-artifact-entry h3 {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  margin: 0 0 0.6rem;
+}
+
+.eval-artifact-entry h4 {
+  margin: 0.85rem 0 0.35rem;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #9aa0a6;
+}
+
+.eval-table caption {
+  text-align: left;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #9aa0a6;
+  padding-bottom: 0.35rem;
+}
+
+.eval-vulns > li + li {
+  margin-top: 0.6rem;
+}
+
+.eval-vuln {
+  border: 1px solid #23272d;
+  border-radius: 10px;
+  background: #12151a;
+  overflow: hidden;
+}
+
+.eval-vuln > summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.6rem;
+  padding: 0.7rem 1rem;
+  cursor: pointer;
+}
+
+.eval-vuln > summary:hover {
+  background: #14171c;
+}
+
+.eval-vuln-confidence {
+  color: #9aa0a6;
+  font-size: 13px;
+  margin-left: auto;
+}
+
+.eval-badge {
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  padding: 0.05rem 0.55rem;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.eval-badge-identified {
+  color: #8ab4f8;
+}
+
+.eval-badge-partial {
+  color: #f8d78a;
+}
+
+.eval-badge-missed {
+  color: #f2b8b5;
+}
+
+.eval-vuln-body {
+  border-top: 1px solid #23272d;
+  padding: 0.9rem 1rem;
+}
+
+.eval-match,
+.eval-context {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  gap: 0.5rem 1rem;
+  margin: 0 0 0.85rem;
+}
+
+.eval-match > div,
+.eval-context > div {
+  border: 1px solid #23272d;
+  border-radius: 8px;
+  padding: 0.4rem 0.6rem;
+}
+
+.eval-match dt,
+.eval-context dt {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #9aa0a6;
+}
+
+.eval-match dd,
+.eval-context dd {
+  margin: 0.15rem 0 0;
+  word-break: break-word;
+}
+
+.eval-timeline li {
+  border-left: 2px solid #23272d;
+  padding: 0.15rem 0 0.85rem 0.85rem;
+  margin-left: 0.35rem;
+}
+
+.eval-timeline li:last-child {
+  padding-bottom: 0;
+}
+
+.eval-run {
+  color: #9aa0a6;
+  font-size: 13px;
+}
+
+.eval-counts {
+  color: #c9ccd1;
+}
+
+.eval-diagnosis {
+  border: 1px solid #23272d;
+  border-radius: 10px;
+  padding: 0.9rem 1.1rem;
+  background: #12151a;
+  margin-bottom: 0.85rem;
+}
+
+.eval-diagnosis h3,
+.eval-diagnosis h4 {
+  margin: 0 0 0.5rem;
+  font-size: 14px;
+}
+
+.eval-diagnosis p {
+  margin: 0.35rem 0;
+}
+
+.eval-diagnosis-cause,
+.eval-diagnosis-issue {
+  color: #9aa0a6;
+  font-size: 13px;
+}
+
+.eval-evidence,
+.eval-inline-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.eval-evidence li {
+  padding: 0.2rem 0;
+}
+
+.eval-inline-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.eval-inline-list a {
+  color: #8ab4f8;
+  text-decoration: none;
+}
+
+.eval-inline-list a:hover {
+  text-decoration: underline;
+}
+
+.eval-hint {
+  color: #9aa0a6;
+  font-size: 13px;
+}
+
+.eval-eyebrow {
+  margin: 0;
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #9aa0a6;
+}
+
+.eval-header h1 {
+  margin: 0.25rem 0 0;
+  font-size: clamp(1.6rem, 4vw, 2.4rem);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.eval-dataset-id {
+  margin: 0.35rem 0 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  color: #9aa0a6;
+}
+
+.eval-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
+  gap: 0.75rem;
+  margin: 0 0 1.75rem;
+}
+
+.eval-summary > div {
+  border: 1px solid #23272d;
+  border-radius: 10px;
+  padding: 0.85rem 1rem;
+  background: #12151a;
+}
+
+.eval-summary dt {
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #9aa0a6;
+}
+
+.eval-summary dd {
+  margin: 0.3rem 0 0;
+  font-size: 1.6rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.eval section {
+  margin-bottom: 2rem;
+}
+
+.eval h2 {
+  font-size: 1.05rem;
+  font-weight: 600;
+  margin: 0 0 0.6rem;
+}
+
+.eval-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+.eval-table th,
+.eval-table td {
+  text-align: left;
+  padding: 0.55rem 0.75rem;
+  border-bottom: 1px solid #23272d;
+  white-space: nowrap;
+}
+
+.eval-table thead th {
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #9aa0a6;
+}
+
+.eval-table tbody tr:hover {
+  background: #14171c;
+}
+
+.eval-ref {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+}
+
+.eval-notice {
+  border: 1px solid #6b5a1f;
+  border-left-width: 4px;
+  border-radius: 10px;
+  padding: 1rem 1.25rem;
+  background: #1a1708;
+}
+
+.eval-notice h2 {
+  margin-top: 0;
+}
+
+.eval-notice ul {
+  margin: 0.5rem 0 0;
+  padding-left: 1.1rem;
+}
+
+.eval-notice li {
+  margin-bottom: 0.25rem;
+}
+
+.eval-status,
+.eval-empty {
+  color: #9aa0a6;
+}
+
+.eval-error {
+  border: 1px solid #6b2222;
+  border-left-width: 4px;
+  border-radius: 10px;
+  padding: 1rem 1.25rem;
+  background: #1a0d0d;
+  color: #f2b8b5;
+}
+
+/* Keyboard focus stays visible on every interactive element. */
+.eval a:focus-visible,
+.eval button:focus-visible,
+.eval [tabindex]:focus-visible {
+  outline: 2px solid #8ab4f8;
+  outline-offset: 2px;
+}
+
+@media (max-width: 40rem) {
+  .eval {
+    padding: 1.5rem 0.9rem 3rem;
+  }
+  .eval-donuts {
+    grid-template-columns: 1fr;
+  }
+  .eval-table {
+    display: block;
+    overflow-x: auto;
+  }
+}
