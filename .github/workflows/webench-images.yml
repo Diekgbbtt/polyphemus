@@ -65,8 +65,14 @@ jobs:
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     env:
       TARGET: ${{ matrix.target }}
-      REGISTRY: ghcr.io/${{ github.repository_owner }}/webench
     steps:
+      - name: Set the lowercase registry reference
+        # Docker rejects an uppercase repository name; the owner may be
+        # `Diekgbbtt`. The dataset registry is `ghcr.io/diekgbbtt/webench`.
+        run: |
+          owner="$(printf '%s' "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
+          echo "REGISTRY=ghcr.io/${owner}/webench" >> "$GITHUB_ENV"
+
       - name: Check out polymerhus (for the apt patcher)
         uses: actions/checkout@v4
 
@@ -76,6 +82,10 @@ jobs:
           repository: AgentCyberRange/WebExploitBench
           path: webench
           submodules: recursive
+          # The repo tracks binary assets (archives, jars, the canary DB dumps)
+          # with Git LFS; without this the working tree holds LFS pointers and a
+          # seed import feeds `version https://git-lfs...` to MySQL.
+          lfs: true
 
       - name: Fetch the target from Hugging Face when it is not bundled
         env:
