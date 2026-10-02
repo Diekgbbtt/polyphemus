@@ -198,6 +198,7 @@ def test_targetctl_commands_select_the_amd64_platform(tmp_path) -> None:
             assert command.env == {
                 "DOCKER_DEFAULT_PLATFORM": "linux/amd64",
                 "TARGETCTL_NO_WAIT_DEPS": "1",
+                "TARGETCTL_NO_BUILD": "1",
                 "TARGETCTL_EXCLUDE_SERVICES": "",
             }
 

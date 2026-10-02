@@ -170,6 +170,11 @@ class TargetctlStrategy:
             # order without waiting; the orchestrator asserts readiness itself,
             # under a bounded window, once `up` returns.
             "TARGETCTL_NO_WAIT_DEPS": "1",
+            # D48: the chain provisions every image (store -> pull -> build)
+            # before `up`. Compose v5 otherwise rebuilds a pulled image that
+            # lacks Compose's own labels, so `up` is told never to build; the
+            # explicit `targetctl build` step stays the only build path.
+            "TARGETCTL_NO_BUILD": "1",
             # D49: services kept out of the target's stack. `scripts/targetctl`
             # renders them behind a Compose `profiles` gate, so `up` never starts
             # them without editing the frozen upstream compose.
