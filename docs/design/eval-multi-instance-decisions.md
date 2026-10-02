@@ -12,7 +12,7 @@
 *2026-09-25.* Each target run gets a unique synthetic Host (e.g. `t-<short>.target`), written into the target front's `server_name` and aliased into that instance's kali `/etc/hosts`. Distinct published ports were rejected (they break the platform's bare-domain scope gate). (Amended by D45: the front is the local `ph-eval-front` container for every lifecycle, not the workshop nginx.)
 
 ### D3 - Canonical terms
-*2026-09-25.* `PolyphemusInstance` (one polymerhus deployment, identified by uuid and defined by its `.env`), `Trial` (fresh target instance + fresh project per attempt), `Target` (the evaluated application; WebExploitBench calls it a `challenge`). Glossary: `tools/eval/CONTEXT.md`. `System` stays reserved for the L1 node.
+*2026-09-25.* `PolyphemusInstance` (one polymerhus deployment, identified by uuid and defined by its `.env`), `Trial` (fresh target instance + fresh project per attempt), `Target` (the evaluated application; WebExploitBench calls it a `challenge`). Glossary: `eval/CONTEXT.md`. `System` stays reserved for the L1 node.
 
 ### D4 - Config topology
 *2026-09-25.* One `EvalSetup` per evaluation. Each instance has an `InstanceConfiguration` that references a manually managed `.env` file.
@@ -32,7 +32,7 @@
 
 ### D9 - Target agnosticity: strategy-typed lifecycle
 *2026-09-25.* A strategy-typed lifecycle (`targetctl` for WebExploitBench, `image`/`compose` for pullable containers) behind one interface, selected by the target descriptor. Accepted provisionally; see **R2**.
-*2026-10-01 (amended by D43).* The lifecycle interface gains an image-provisioning seam with a strict precedence (build > pull > present > fail-hard); the strategy still selects by the target descriptor, but how the image is obtained is decided by the target's build recipe and the dataset registry, not by the strategy alone.
+*2026-10-01 (amended by D43).* The lifecycle interface gains an image-provisioning seam with a strict precedence; the strategy still selects by the target descriptor, but how the image is obtained is decided by the target's build recipe and the dataset registry, not by the strategy alone. The precedence itself is restated by D47 as store -> pull -> build.
 
 ### D10 - No machine resource limits; one instance at a time
 *2026-09-28.* Co-located instances are **not** cgroup-capped. Normally only one instance runs, and the operator accepts the contention in the exceptional case. Host-published port offsets remain necessary (R3) so host-side tooling addresses the right instance.
@@ -225,13 +225,15 @@ Per-instance clones (D11) multiplied by the `eval` branch (D23) means N checkout
 ### D43 - Target image provisioning precedence: build > pull > present > fail-hard
 *2026-10-01.* Amends D9. Before a target starts, its image is provisioned by a strict precedence:
 1. **build** - a Dockerfile declared on the target config (`dockerfile`, with `dockerfile_context` for the build context) builds the app image, overwriting any pull; the Dockerfile's `FROM` supplies its base.
-2. **pull** - otherwise a configured dataset registry (`TargetDataset.registry`) pulls each image (qualified by the registry, verified present).
+2. **pull** - otherwise a configured dataset registry pulls each image (qualified by the registry, verified present).
 3. **present** - otherwise the image must already be present locally; a missing image is a hard failure for that target, and the chain moves on (D42).
 Build and pull are confirmed with `docker image inspect`; present is confirmed by tag only, so it is the weakest tier.
+*Amended 2026-10-02 by D47.* The precedence is now store -> pull -> build: a local image under the target's canonical tag is the first tier and is left alone, pull is the second, and the target's own build is the last fallback. The D43 reliability evaluation (tag vs content identity, pull drift, multi-image targets) still holds.
 **Critical reliability evaluation.** (a) *Build context*: a bare Dockerfile path is insufficient - a Dockerfile that `COPY`s sibling files needs the real context, so `dockerfile_context` is a first-class field; defaulting to the Dockerfile's parent is a documented footgun. (b) *Tag vs content identity*: build and pull can both yield an image under the same tag with different content (base digest, source revision), so the provisioning path and the resolved image id are recorded on the step; comparability across paths is not assumed. (c) *Pull drift*: a tag can be repointed, so a tag-pull is not drift-free; digest pinning is the intended hardening (carried as an open item). (d) *Present is unverified*: it confirms a tag exists, not that it is the expected image - acceptable only as an explicit operator opt-in, recorded as the weakest tier. (e) *Multi-image targets*: one `dockerfile` builds one image, so a target needing several built images (e.g. jetlinks' app + attacker-stage) can express only the primary build; the rest fall to pull/present. A per-image build map is the future extension. (f) *Security*: building an untrusted Dockerfile runs its build steps as root; acceptable on the isolated eval host, noted here.
 
 ### D44 - `TargetDataset` owns the shared location addressing
 *2026-10-01.* The registry host + URL path, the remote repo, and the ground-truth root are one fact per dataset, not per target. A `TargetDataset` (`name`, `repo`, `registry`, `ground_truth`) parents the targets and their ground truth; `EvalSetup` references it, and `TargetRun` carries each target's image identifier **as-is**. The pull reference is `dataset.registry` joined to the identifier; an empty registry means the dataset publishes no images, so targets are built (D43). This keeps a shared fact in one place and out of the external `challenge.json`, which is WebExploitBench's artifact, not polymerhus's domain.
+*Superseded 2026-10-02 by D47.* The embedded `TargetDataset` value object and the per-target lifecycle `params` are replaced by the keyed `BenchmarkDataset` + `TargetConfiguration` layer; the shared-location intent (one repo, registry, and platform root per dataset) is retained.
 
 ### Rejected: the environment-affordance check
 *2026-10-01.* An environment-affordance gate (disk/docker/registry probing that chose prebuild-all vs on-demand before any pull) was implemented and then removed. It existed only in uncommitted code, so no prior decision is amended; the durable decisions are D42/D43. The operator's ruling: the chain defaults to reclaim-then-provision per target, and the image precedence (D43) is the gate - not a separate affordance probe.
@@ -263,3 +265,24 @@ With an approved Hugging Face token the full 15-target dataset fetched onto the 
 **`docker compose up -d` blocks under emulation.** Several targets declare `depends_on: condition: service_healthy`; a healthcheck that never passes under slow emulated startup makes `up -d` wait indefinitely, so `targetctl up` hangs (bounded by the per-target timeout). This is the dominant failure mode for the heavier targets, and it is a host/emulation limit, not a defect in the local target host.
 
 **Follow-up hardening** (does not change the benchmark images): a build-time registry mirror/cache and a Debian snapshot for the bullseye targets; a raised readiness window or a healthcheck-tolerant `up` for the emulated services; and confirmation that the emulation SIGSEGVs are qemu/Node-version specific before relying on those targets.
+
+## Round-9 decision (the keyed dataset and target configuration model, spec #301, 2026-10-02)
+
+### D47 - The benchmark dataset is a first-class keyed artifact; target bring-up is a separate config
+*2026-10-02.* Spec #301 replaces the embedded `TargetDataset` value object and the per-target lifecycle `params` with a keyed two-layer model.
+The delta, its module seams, and the migration order are recorded in `docs/design/eval-dataset-domain-model-impact-map.md`.
+
+- **Keyed, first-class `BenchmarkDataset`** (`orchestrator/dataset.py`, `eval/datasets/<id>.yaml`): `id`, `repo`, `registry`, `platform_root`, `targets[]`.
+  It supersedes the embedded value object and lives in its own artifact, so a dataset is referenced by key and can be repo-local or an external checkout used in place.
+- **`Target key`** `<dataset>/<target>`: the one identifier indexing the target's bring-up configuration (`eval/targets/<dataset>/<target>.yaml`), its platform bank entry (`<platform_root>/<target>/`), and its data dependencies (`eval/data/<dataset>/<target>/`).
+  `EvalSetup.datasets` lists the datasets by key; `TargetRun` carries only `target_key`, `target_id`, the per-trial data (`TargetConfig`), and the runtime fields.
+- **`TargetConfiguration`** (`orchestrator/target_config.py`): the target's own bring-up attributes - compose, image set, pull references, checker, `reclaimable`, and runner.
+  The old per-target lifecycle `params` are gone; validation moves here.
+- **Canonical image tagging** (`orchestrator/datasets/base.py`): the dataset helper derives the target's images from the compose (services declaring both `build:` and `image:`) and binds each to `ph/<dataset>/<target>[:<service>]`.
+  That tag is the one key the store check and reclaim speak.
+- **Store -> pull -> build precedence** (`orchestrator/docker.py`, `orchestrator/chain.py`): a store hit under the canonical tag is left alone (never pulled, rebuilt, or reclaimed by provisioning); otherwise a declared pull reference is fetched and bound; otherwise the target's own build produces it and the produced image is bound.
+  Build is the last fallback, not the first; this supersedes D43's build-first ordering.
+- **Bounded per-target readiness** (`orchestrator/readiness.py`): `up` never blocks on health; the chain verifies readiness under a bounded window, defaulting to the compose's own health and allowing a port probe or a named per-dataset checker.
+- **Opt-in `reclaimable`**: a target's own canonical tags are removed at teardown and after a failed up only when the target opts in (default false); a target that does not opt in leaves its images in the store.
+
+Supersedes D44 (the embedded `TargetDataset`) and the per-target lifecycle `params` and build-first precedence of D9/D43 in the parts above.

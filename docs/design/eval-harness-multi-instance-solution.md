@@ -19,7 +19,7 @@ Its runtime assumptions (one shared stack, one global KB, one shared kali, one g
 - **P3 - Ground-truth isolation**: `gt.py` output never reaches the pipeline.
 - **P4 - Deterministic L1 scaffold** primary, LLM bootstrap fallback (prose KBs).
 - **P5 - Auth via the store**: seed `PUT /projects/{id}/auth`; the recon orchestrator's authn gateway validates/mints.
-- **P6 - Per-target precomputed KBs** (`tools/eval/kbs/<target>/`).
+- **P6 - Per-target precomputed KBs** (`eval/data/<dataset>/<target>/`).
 - **P7 - Judgment protocol**: `identified`/`partial`/`missed` with the three conjuncts; `verdicts.yaml` + `trial.yaml`.
 - **P8 - Integrity gates**: recon liveness (job rows), absence-vs-failure, degraded-trail grading.
 - **P9 - pass@k**: fresh target instance + fresh project per attempt.

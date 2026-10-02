@@ -40,7 +40,8 @@ Knobs: `<TARGET>` in `comfyui, jetlinks, prestashop, siyucms, white-jotter`;
 agent, e.g. "skip the heavy browser/brute jobs (steel_crawl/ffuf/kiterunner)".
 
 Prerequisites: the polymerhus stack up (kali + agent API on `localhost:8080`),
-ssh access to the remote docker host, and the bundled targets reachable there.
+and the target platform bank available locally (`EVAL_WEB_DIR`, default
+`~/WebExploitBench`; D45).
 
 ### 1.1. The toolkit
 
@@ -183,7 +184,7 @@ Settings PUT body (`ph.py settings put`):
 
 ```
 --target-seed <synthetic-host>                e.g. t-a20a63a4.target
---operator-kb eval/kbs/<target>/operator_kb.md
+--operator-kb eval/data/webexploitbench/<target>/operator_kb.md
 --toggle streaming_analysis=true
 --toggle async_analysis_consumer=true
 ```
@@ -273,17 +274,16 @@ operator KB, research notes, evidence, verdicts, trial record - lands there.
 1. Bring the target up through the orchestrator (`python3 -m orchestrator up
    <setup.yaml>`); capture the `TARGET_URL` (the synthetic Host front URL) and
    the backend from its output.
-2. The orchestrator fronts the target on :80 (the remote nginx for `targetctl`;
-   the shared `ph-eval-front` container for local `image`/`compose`) and aliases
-   the synthetic Host inside the instance kali (`targetctl`: the target's public
-   IP; `image`/`compose`: the host gateway resolved to a numeric address), so
-   the recon fleet can reach the target. The synthetic Host name is what the
-   pipeline will observe.
+2. The orchestrator fronts the target on :80 through the shared `ph-eval-front`
+   container (all three lifecycles are local, D45) and aliases the synthetic Host
+   inside the instance kali (the Docker host gateway resolved to a numeric
+   address), so the recon fleet can reach the target. The synthetic Host name is
+   what the pipeline will observe.
 3. `gt.py <target>`; read the ground truth (the JUDGE's private reference, kept
    out of anything the pipeline sees).
 4. **The operator-KB stage**: use the PRECOMPUTED per-target KB VERBATIM:
-   `eval/kbs/<target>/operator_kb.md` is the operator knowledge passed
-   to the pipeline (`--operator-kb`); `eval/kbs/<target>/surface-map.md`
+   `eval/data/webexploitbench/<target>/operator_kb.md` is the operator knowledge passed
+   to the pipeline (`--operator-kb`); `eval/data/webexploitbench/<target>/surface-map.md`
    and `research-notes.md` are the judge's reference (reverse-engineered
    endpoint inventory + source ledger) and never reach the pipeline. Do NOT
    re-research or rewrite the KB per trial. The KBs were written per target by
@@ -294,11 +294,11 @@ operator KB, research notes, evidence, verdicts, trial record - lands there.
 6. `ph.py project create eval-<target>-<attempt>`; `ph.py settings put` with
    `--target-seed <bare-domain>` (the domain from TARGET_URL, never the IP,
    never a scheme/port form - see section 1.2) +
-   `--operator-kb eval/kbs/<target>/operator_kb.md` + the contract
+   `--operator-kb eval/data/webexploitbench/<target>/operator_kb.md` + the contract
    toggles.
 7. **Scaffold the L1 skeleton - the deterministic path, PRIMARY IMPORTANCE**:
    `PYTHONPATH=src` (repo root) `python3 eval/scaffold.py <project_id>
-   --kb eval/kbs/<target>/operator_kb.md`. This is THE way the L1 gets
+   --kb eval/data/webexploitbench/<target>/operator_kb.md`. This is THE way the L1 gets
    scaffolded: deterministic, zero LLM calls, byte-identical skeleton per
    target, and the dispositions (dropped kinds, normalized exposures) are
    printed for the trial record. Zero services parsed = a BLOCKED scaffold:
@@ -319,9 +319,14 @@ operator KB, research notes, evidence, verdicts, trial record - lands there.
 
 ### 1.5. The EvalSetup and the orchestrator
 
-One `EvalSetup` YAML declares the whole evaluation: the instances, each with a
-serial target pipeline, the durable artifact store, and the eval-wide work
-items (D14) that must be complete before any target starts. Each instance runs
+One `EvalSetup` YAML declares the whole evaluation: the benchmark datasets in
+play by key (`datasets:`), the instances, each with a serial target pipeline, the
+durable artifact store, and the eval-wide work items (D14) that must be complete
+before any target starts. Each target is a `target_key`
+(`<dataset>/<target>`) plus a `target_id`; the dataset resolves the target's
+bring-up configuration (`eval/targets/<dataset>/<target>.yaml`) and its platform
+bank, while `target_config` carries only the per-trial data (seed, operator KB,
+auth, L1). Each instance runs
 from its own git worktree DETACHED at the `eval` branch commit under the
 configured instances root, with its own `.env` validated by
 `eval/env_preflight.py`; the compose project is `ph-<short>`. Detached means any
@@ -331,12 +336,15 @@ target run gets a unique synthetic Host (`t-<short>.target`), written into the
 target front and aliased in that instance's kali.
 
 The first committed setup is `eval/setups/first.yaml` (one instance, the
-`comfyui` target); the operator bootstrap and the per-step acceptance
-criteria for running it live are in `eval/E2E-SCAFFOLD.md`.
+`webexploitbench/comfyui` target); the operator bootstrap and the per-step
+acceptance criteria for running it live are in `eval/E2E-SCAFFOLD.md`.
 
 ```yaml
 schema_version: 1
 artifact_store: /srv/eval-artifacts
+datasets:                   # the benchmark datasets in play, by key (eval/datasets/<key>.yaml)
+  - webexploitbench
+  - mock
 work_items:
   - name: auth-bootstrap
     status: complete          # complete | pending | incomplete
@@ -346,7 +354,8 @@ instances:
   - instance_id: arm-a
     env_file: arm-a/.env       # relative to the instances root; default <worktree>/.env
     targets:
-      - target_id: jetlinks-1
+      - target_key: webexploitbench/jetlinks  # <dataset>/<target>; indexes the target config + platform bank
+        target_id: jetlinks-1   # the trial identity; defaults to the target segment
         start_phase: recon     # recon | analysis | hunting
         hunt_config_budget: 10
         target_run_id: jetlinks-1-run1  # optional; the artifact store middle level (#273)
@@ -356,13 +365,16 @@ instances:
           test_specs:                             # each spec names its fault key
             - path: /mnt/premined-specs/unit_CWE-89_sqli.yaml
               fault_key: unit_CWE-89_sqli
-        target_config:
-          lifecycle: targetctl # targetctl | image | compose
-          operator_kb: eval/kbs/jetlinks/operator_kb.md
-          params:
-            target: jetlinks   # targetctl params; image/compose take image/port/compose_file
+        target_config:        # per-trial data only; bring-up lives in eval/targets/<dataset>/<target>.yaml
+          operator_kb: eval/data/webexploitbench/jetlinks/operator_kb.md
           # target_seed defaults to this run's synthetic Host; set it only to pin.
 ```
+
+The target's bring-up attributes (compose file, image set, pull references,
+readiness checker, `reclaimable`, and runner `targetctl | compose | image`) live
+in `eval/targets/<dataset>/<target>.yaml` (`TargetConfiguration`) and are shared
+across every trial of that target; see `eval/CONTEXT.md` and
+`docs/design/eval-dataset-domain-model-impact-map.md` (#301).
 
 **Pre-mined hunting artifacts** (the two ratified lazy-read seams). The
 pipeline consumes hunting artifacts only by reading its own produced/ inboxes,
@@ -472,8 +484,8 @@ grows.
 | `verdicts.yaml` | The oracle's per-vuln rows: `identified / partial / missed`, confidence, evidence refs with quoted passages |
 | `trial.yaml` | The trial record (#270): `trial_id`, `instance_id`/`target_id`/`target_run_id`, `start_phase`, `terminal`, the per-phase rows (`entered`, `status`, `run_id`, `blocks`, `notes`, `failure`), timings, the cap accounting (`cap`/`stop_count`/`final_count`/`overshoot`, all trial-scoped, and the `cap_baseline` it counted against), the aggregated `notes`, the version identity (`eval_sha`/`stack_fingerprint`/`trace_id`), and the `assessment`/`diagnosis` state |
 | `manifest.json` | What `ev.py` collected and what was absent (per-store `present` flags, statuses, KB files) |
-| `operator_kb.md` / `research-notes.md` | What the pipeline was told the deployed application is (per-target, precomputed in `eval/kbs/<target>/`), and the reverse-engineering source ledger |
-| `surface-map.md` (in `eval/kbs/<target>/`) | The reverse-engineered endpoint inventory the KB was derived from - judge's reference only, never piped |
+| `operator_kb.md` / `research-notes.md` | What the pipeline was told the deployed application is (per-target, precomputed in `eval/data/webexploitbench/<target>/`), and the reverse-engineering source ledger |
+| `surface-map.md` (in `eval/data/webexploitbench/<target>/`) | The reverse-engineered endpoint inventory the KB was derived from - judge's reference only, never piped |
 | `graph.json` | The L0+L1 graph the pipeline built |
 | `hunt_store/`, `project_memory/`, `pod_memory/` | The raw evidence the oracle judged on |
 
@@ -1087,7 +1099,7 @@ belong in `surface-map.md`, never in the contract text.
 
 ### Output shape
 
-Write THREE files in `eval/kbs/<target>/`:
+Write THREE files in `eval/data/webexploitbench/<target>/`:
 
 1. `operator_kb.md` - the KB passed to the pipeline (`--operator-kb`). Prose
    with a consistent structure, 150-400 lines:

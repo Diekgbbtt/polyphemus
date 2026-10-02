@@ -1,7 +1,8 @@
 # Spec: Multi-Instance Eval Harness
 
 *Status: draft for implementation.
-Synthesized from the round-1 to round-5 grill, recorded in `docs/design/eval-multi-instance-decisions.md` (D1-D43, R1-R17), `docs/design/eval-environment-version-pinning-adr.md` (RATIFIED), and the FR rewrite in `docs/design/eval-harness-multi-instance-solution.md` (N1-N19).
+Synthesized from the round-1 to round-5 grill, recorded in `docs/design/eval-multi-instance-decisions.md` (D1-D47, R1-R17), `docs/design/eval-environment-version-pinning-adr.md` (RATIFIED), and the FR rewrite in `docs/design/eval-harness-multi-instance-solution.md` (N1-N19).
+The keyed dataset and target model of spec #301 is recorded in `docs/design/eval-dataset-domain-model-impact-map.md` (D47).
 Glossary: `eval/CONTEXT.md` (moves with the restructure from `tools/eval/CONTEXT.md`).*
 
 ## Problem Statement
@@ -29,14 +30,14 @@ A multi-instance eval harness rooted at `eval/` (brought up one layer from `tool
 
 ## User Stories
 
-1. As an operator, I want to declare an `EvalSetup` (instances, targets, caps, pre-mined artifacts, artifact store) in one place, so that an evaluation is reproducible.
+1. As an operator, I want to declare an `EvalSetup` (the benchmark datasets by key, instances, targets, caps, pre-mined artifacts, artifact store) in one place, so that an evaluation is reproducible.
 2. As an operator, I want each instance configured by an `InstanceConfiguration` that references a manually managed `.env`, so that ports, LLM roles, and provider keys are explicit and diffable.
 3. As an operator, I want the harness to start, stop, and destroy instance stacks, so that I do not drive docker by hand.
 4. As an operator, I want a preflight that fills missing `.env` keys from `.env.example` without clobbering my values, so that compose interpolation never drifts silently.
 5. As an operator, I want an eval compose overlay that fails loud on missing required environment, so that a stale `.env` is caught before a run starts.
 6. As an operator, I want the eval toolkit brought up to `eval/` with helper scripts placed cohesively and obsolete ones removed, so that the harness is navigable and maintainable.
 7. As an operator, I want per-target parameters (ports, LLM role models, provider API keys) expressible per instance, so that comparative arms can differ.
-8. As an eval orchestrator, I want a strategy-typed target lifecycle (`targetctl`, `image`, `compose`) behind one interface, so that WebExploitBench and pullable-container targets follow the same contract.
+8. As an eval orchestrator, I want a strategy-typed target lifecycle (`targetctl`, `compose`, `image`) selected from each target's `TargetConfiguration` behind one interface, so that WebExploitBench and pullable-container targets follow the same contract.
 9. As an eval orchestrator, I want a unique synthetic Host per `TargetRun`, registered in the target front and aliased in the instance kali, so that two instances can address the same target unambiguously.
 10. As an operator, I want target bring-up, readiness verification, and teardown cycles proven repeatable, so that runs can be trusted.
 11. As an operator, I want pre-eval work items (auth bootstrap, L1 surface, hunting artifacts) recorded at the `EvalSetup` level and gated, so that no trial starts unprepared.
@@ -78,7 +79,22 @@ A multi-instance eval harness rooted at `eval/` (brought up one layer from `tool
 
 ### Vocabulary
 
-The eval glossary (`eval/CONTEXT.md`) is the canonical vocabulary: `PolyphemusInstance`, `EvalSetup`, `InstanceConfiguration`, `Target`, `TargetDataset`, `TargetRun`, `TargetConfig`, `Target image provisioning`, `AuthContext`, `Trial`, `Phase`, `Target lifecycle strategy`, `Hunting cap`, `Pre-mined hunting artifacts`, `Artifact store`, `Assessment`, `Evidence chain`, `Diagnosis`, `Failure mode`, `Root cause type`, `Eval branch`, `Version advance`, `Stack fingerprint`, `Alignment action`, `Eval compose overlay`, `Surfer loop`.
+The eval glossary (`eval/CONTEXT.md`) is the canonical vocabulary: `PolyphemusInstance`, `EvalSetup`, `InstanceConfiguration`, `Target`, `BenchmarkDataset`, `Target key`, `TargetConfiguration`, `Platform bank`, `Canonical image tag`, `Readiness checker`, `Reclaimable`, `TargetRun`, `TargetConfig`, `Target image provisioning`, `AuthContext`, `Trial`, `Phase`, `Target lifecycle strategy`, `Hunting cap`, `Pre-mined hunting artifacts`, `Artifact store`, `Assessment`, `Evidence chain`, `Diagnosis`, `Failure mode`, `Root cause type`, `Eval branch`, `Version advance`, `Stack fingerprint`, `Alignment action`, `Eval compose overlay`, `Surfer loop`.
+
+### Benchmark dataset and target configuration (spec #301)
+
+The benchmark dataset is a first-class, keyed artifact, declared once in `eval/datasets/<id>.yaml` (id, remote repo, image registry, platform root, targets).
+It supersedes the embedded `TargetDataset` value object; the dataset is addressed by its `id` and each target by the composite `Target key` `<dataset>/<target>`.
+That one key indexes the target's bring-up configuration (`eval/targets/<dataset>/<target>.yaml`), its platform bank entry (`<platform_root>/<target>/`), and its project data dependencies (`eval/data/<dataset>/<target>/`).
+`EvalSetup.datasets` lists the datasets in play by key; `TargetRun` carries `target_key`, `target_id`, and the per-trial data (`TargetConfig`: seed, KB, auth, L1).
+
+The target's bring-up configuration is `TargetConfiguration` (`orchestrator/target_config.py`): compose, image set, registry pull references, readiness checker, `reclaimable`, and runner.
+The per-dataset helper (`orchestrator/datasets/base.py`) derives the target's images from the compose and binds each to its `Canonical image tag` `ph/<dataset>/<target>[:<service>]`.
+
+Target image provisioning follows the precedence store -> pull -> build: a store hit under the canonical tag is left alone (never pulled, rebuilt, or reclaimed), otherwise a declared pull reference is fetched and bound, otherwise the target's own build produces it and the produced image is bound; a missing image is a hard failure for that target.
+Reclaim of a target's own canonical tags is opt-in per target (`reclaimable`, default false) and happens at teardown and after a failed up.
+Readiness is bounded and non-blocking (`orchestrator/readiness.py`): the compose's own health by default, a port probe or a named per-dataset checker otherwise.
+The model, its module seams, and the migration are recorded in `docs/design/eval-dataset-domain-model-impact-map.md` (D47).
 
 ### Restructure
 
@@ -227,7 +243,7 @@ Prior art: the live e2e suite (`tests/e2e/`), the eval playbook runs (`eval/runs
 
 ## Further Notes
 
-- Companion docs: `docs/design/eval-harness-multi-instance-solution.md` (FR rewrite, impact map), `docs/design/eval-multi-instance-decisions.md` (D1-D43, R1-R17), `docs/design/eval-environment-version-pinning-adr.md` (RATIFIED), `docs/design/eval-harness-design.md` (oracle and target pipeline), `docs/design/eval-harness-agentcyberrange.md` (architecture study).
+- Companion docs: `docs/design/eval-harness-multi-instance-solution.md` (FR rewrite, impact map), `docs/design/eval-multi-instance-decisions.md` (D1-D47, R1-R17), `docs/design/eval-environment-version-pinning-adr.md` (RATIFIED), `docs/design/eval-harness-design.md` (oracle and target pipeline), `docs/design/eval-harness-agentcyberrange.md` (architecture study), `docs/design/eval-dataset-domain-model-impact-map.md` (the keyed dataset and target model, #301).
 - Carried risks: R2 target agnosticity is asserted, not proven; R16 manifest completeness; R17 env-schema drift; the ADR's still-open items (alert threshold, manifest review discipline, env-rename reporting, the PR-contract note).
 - Next step: `/to-tickets` over this spec, then `/to-assertions` over each ticket.
 - The eval environment is not production; the `eval` branch is never merged, and verdicts may belong to a `dev` commit that has not shipped.

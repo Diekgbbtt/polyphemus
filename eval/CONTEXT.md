@@ -22,27 +22,63 @@ _Avoid_: instance config, env
 The evaluated application a trial runs against; WebExploitBench's unit is called a `challenge`.
 _Avoid_: challenge, app
 
-**TargetDataset**:
-The benchmark dataset the targets and their ground truth come from: its remote repo (the challenge definitions and per-vuln ground truth), the image registry that hosts the target images (a host/domain plus a URL path prefix), and where the ground truth is checked out.
-These are shared by every target in the set, so they live here once rather than repeated per target: the `EvalSetup` references one dataset, and a target's bare image identifier is qualified by the dataset's registry to form a pull reference.
-_Avoid_: benchmark, corpus, repo
+**BenchmarkDataset**:
+The keyed, first-class benchmark dataset the targets and their ground truth come from, declared once in `eval/datasets/<id>.yaml`: its `id`, remote `repo` (the challenge definitions and per-vuln ground truth), image `registry` (a host/domain plus a URL path prefix; empty means the targets are built, not pulled), `platform_root` (where the per-target platform bank lives), and the `targets[]` list.
+It supersedes the old embedded `TargetDataset` value object (`orchestrator/setup.py`); the dataset is addressed by its `id`, and each target by the composite **Target key**.
+Its `platform_root` may be an external checkout (used in place so the dataset's own scaffold, such as `scripts/targetctl`, keeps working) or a repo-local bank (resolved relative to `eval/`).
+`orchestrator/dataset.py` owns parsing and path resolution.
+_Avoid_: benchmark, corpus, repo, TargetDataset
+
+**Target key**:
+The one identifier indexing a target across every domain of the eval data: `<dataset>/<target>`.
+It indexes the target's bring-up configuration (`eval/targets/<dataset>/<target>.yaml`), its **Platform bank** entry (`<platform_root>/<target>/`), and its project data dependencies (`eval/data/<dataset>/<target>/`), so keying is consistent across configuration, platform, and data.
+Both segments are path-safe identifiers; `orchestrator/dataset.py` owns the split and validation.
+_Avoid_: target id, target name (the `target_id` is the per-trial identity, not this key)
+
+**TargetConfiguration**:
+The bring-up configuration of one target, declared once in `eval/targets/<dataset>/<target>.yaml`: the `compose` file (relative to the target's **Platform bank** entry), the target's image set, the registry pull references, the optional named readiness checker, the `reclaimable` opt-in, and the `runner` (`targetctl`, `compose`, or `image`).
+The image set may be omitted and derived from the compose by the dataset helper; `orchestrator/target_config.py` owns parsing and validation.
+_Avoid_: target definition, target descriptor
+
+**Platform bank**:
+The per-target bring-up scaffolding at the dataset's `platform_root`: the target's compose file and Dockerfiles (plus the dataset's own scaffold, e.g. `scripts/targetctl`).
+For `webexploitbench` it is the external WebExploitBench checkout; for the repo-local `mock` dataset it is `eval/platform/mock/`.
+_Avoid_: images, docker dir
+
+**Canonical image tag**:
+The symbolic image key `ph/<dataset>/<target>[:<service>]`, derived from the target's compose by the dataset helper (the services declaring both `build:` and `image:`), or declared explicitly on the target config.
+Provisioning binds every produced image to its canonical tag, and that tag is the one key the store check and reclaim speak; `orchestrator/datasets/base.py` owns the derivation.
+_Avoid_: local tag, built image
+
+**Readiness checker**:
+The bounded, non-blocking verification that a target is ready after `up`: a `docker compose ps --format json` health poll by default, or an HTTP port probe, or a named checker defined per dataset and selected on the target config.
+It never blocks `up`; the chain then verifies readiness under a bounded window, so a slow or broken healthcheck cannot hang the chain.
+`orchestrator/readiness.py` owns the plans, and `orchestrator/datasets/base.py` resolves the target's plan.
+_Avoid_: healthcheck, wait loop
+
+**Reclaimable**:
+A per-target opt-in (default false) to remove the target's own **Canonical image tags** at teardown and after a failed `up`.
+A store hit is never reclaimed by provisioning; only the target's own canonical tags are, so a target that does not opt in leaves its images in the store for the next run.
+_Avoid_: cleanup, garbage collection
 
 **TargetRun**:
-The evaluation of one Target on one instance: its linked target configuration, its image identifier(s) as-is (qualified by the dataset registry for a pull), the phase it starts at, its hunting cap, any pre-mined artifacts, its optional `target_run_id` identity, and its optional `existing_project_id`.
+The evaluation of one `<dataset>/<target>` on one instance: its composite target key, its trial identity `target_id` (defaulting to the target segment), its per-trial `TargetConfig`, the phase it starts at, its hunting cap, any pre-mined artifacts, its optional `target_run_id` identity, and its optional `existing_project_id`.
+The bring-up configuration and the dataset are resolved from the key at run time, not carried here.
 That identity names the artifact store's middle level and is resolved CLI override > setup `target_run_id` > instance id; when set it must be path-safe and unique within the setup.
 `existing_project_id` names a pre-recon'd project whose L0/L1 were transferred onto the instance (#277): the trial then enters at hunting, skips creation/settings/scaffold, and asserts the project and its L1; it must be path-safe and unique within the setup, and it forces `start_phase: hunting`.
 _Avoid_: job, task
 
 **TargetConfig**:
-The linked configuration of a Target: lifecycle strategy, seed, operator KB, auth context, bootstrapped L1 surface, and the optional image build recipe.
+The per-trial data configuration of a Target: seed, operator KB, auth context, and bootstrapped L1 surface.
+The bring-up configuration is not here: it lives in the target's `eval/targets/<dataset>/<target>.yaml` (**TargetConfiguration**).
 The seed is the bare Synthetic Host; when a setup leaves it unset the harness derives it from the target-run identity, so routing and scope cannot disagree.
-The build recipe is `dockerfile` plus `dockerfile_context`: when set, the target's app image is built from that Dockerfile instead of pulled.
 _Avoid_: target definition
 
 **Target image provisioning**:
-How the chain obtains one target's image before it starts, by a strict precedence: a declared `dockerfile` **builds** it (overwriting the pull path), otherwise a configured dataset `registry` **pulls** it (qualified by the registry and verified present), otherwise the image must already be **present** locally and a missing image fails that target hard - the run moves on to the next target.
-Build and pull are verified with `docker image inspect`; present is confirmed by tag only, so it is the weakest, unverified tier.
-Each provisioning is recorded on the step (`build`/`pull`/`present`) and reclaims the same local reference.
+How the chain obtains one target's image before it starts, by a strict store -> pull -> build precedence: an image already present under its **Canonical image tag** is a store hit and is left alone (never pulled, rebuilt, or reclaimed by provisioning); otherwise a declared pull reference is fetched and bound to the canonical tag; otherwise the target's own compose/Dockerfile builds it and the produced image is bound to the canonical tag - build is the last fallback, not the first.
+A target with no store hit, no pull reference, and no built image fails that target hard, and the run moves on to the next target.
+Each provisioning is recorded on the step (`store`/`pull`/`build`, where the store tier records as `present`) with the qualified reference actually pulled.
+Reclaim happens only when the target is **Reclaimable**; `orchestrator/docker.py` owns the algorithm.
 _Avoid_: prebuild, pre-pull, on-demand
 
 **AuthContext**:
@@ -59,13 +95,13 @@ One of the three discovery stages a trial can start at: recon, analysis, or hunt
 _Avoid_: stage, step
 
 **Target lifecycle strategy**:
-How a target is brought up on the eval host: `targetctl` (WebExploitBench), `image`, or `compose`.
+How a target is brought up on the eval host: `targetctl` (WebExploitBench), `compose`, or `image`, selected by the `runner` field of the target's **TargetConfiguration**.
 All three run locally on the eval server (D45); none reaches a remote host.
 _Avoid_: target kind, deployment
 
 **Synthetic Host**:
 The unique per-`TargetRun` hostname (`t-<short>.target`) written into the target front's `server_name` and aliased in that instance's kali `/etc/hosts`; the routing discriminator.
-The alias target is the target's public IP for `targetctl` and the Docker host gateway resolved to a numeric address for `image`/`compose` (kali is not on the host network, and `/etc/hosts` has no resolver in its address column).
+The alias target is the Docker host gateway resolved to a numeric address for every lifecycle (kali is not on the host network, and `/etc/hosts` has no resolver in its address column).
 A port-bearing seed was rejected because it breaks the platform's bare-domain scope gate.
 _Avoid_: alias, virtual host, domain
 

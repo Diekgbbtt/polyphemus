@@ -39,6 +39,8 @@ A change is not ready to commit until this pass is done and the impacted docs la
 
 The eval dataset is `tests/e2e/fixtures/eval-targets.yaml` - the registry of live targets for end-to-end runs.
 Each target's `settings` map onto `settings.recon` (`target_seed`, `operator_kb`, feature toggles) plus the `POST /recon` job subset, and its `auth_context` seeds the shared auth store via `PUT /projects/{id}/auth` (the settings blob carries no auth, #243); the eval agent applies one target mechanically and asserts against its `expected_recon` ground truth.
+The eval harness's own benchmark datasets are keyed artifacts: `eval/datasets/<id>.yaml` declares a dataset, `eval/targets/<dataset>/<target>.yaml` its target bring-up, `eval/platform/<dataset>/` its platform bank, and `eval/data/<dataset>/<target>/` its data dependencies.
+Target images are bound to canonical tags `ph/<dataset>/<target>[:<service>]` (spec #301).
 
 ### Work authority
 

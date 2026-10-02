@@ -3,6 +3,13 @@
 *Companion to the spec published as issue #301.
 This map grounds the delta on the current implementation: every component that changes, every component that becomes obsolete and must be removed, and every new component, keyed by the `eval/` module it lives in.*
 
+## 0. Executed
+
+The migration landed on this branch (spec #301).
+The components are `orchestrator/dataset.py` (`BenchmarkDataset`, `Target key`), `orchestrator/target_config.py` (`TargetConfiguration`), `orchestrator/datasets/base.py` (the compose-derived helper, canonical tags, and the readiness plan), `orchestrator/readiness.py` (bounded, non-blocking readiness), and `orchestrator/docker.py` (the store -> pull -> build provisioning precedence).
+The keyed artifacts are `eval/datasets/<id>.yaml`, `eval/targets/<dataset>/<target>.yaml`, `eval/platform/<dataset>/`, and `eval/data/<dataset>/<target>/`.
+The obsolete `TargetDataset` value object, the per-target lifecycle `params`, and the `eval/kbs/<target>/` and `eval/mock/webmock/` paths are removed.
+
 ## 1. The delta in one line
 
 Replace the embedded `TargetDataset` value object and the per-target lifecycle `params` with a keyed, first-class dataset layer (`eval/datasets/`, `eval/targets/<dataset>/`, `eval/platform/`, `eval/data/`) plus a per-dataset helper that derives and canonically tags each target's images; drive `next_target` through store -> pull -> build, a bounded readiness checker, and an opt-in `reclaimable` teardown.
@@ -13,9 +20,8 @@ Replace the embedded `TargetDataset` value object and the per-target lifecycle `
 |---|---|
 | `eval/orchestrator/dataset.py` | `BenchmarkDataset` dataclass, `parse_benchmark_dataset` / `load_benchmark_dataset`, loud validation, and `resolve` of the `<dataset>/<target>` key onto the bank and data-dependency paths |
 | `eval/orchestrator/target_config.py` | `TargetConfiguration` dataclass, loader, and validation (compose, images, pull, checker, reclaimable, runner) |
-| `eval/orchestrator/datasets/__init__.py` | Registry mapping a dataset key to its helper module |
-| `eval/orchestrator/datasets/webexploitbench.py` | WebExploitBench helper: derive the built image set from the compose, bind canonical tags, own the named readiness checkers, declare `platform_root` as the checkout |
-| `eval/orchestrator/datasets/mock.py` | Mock helper for the wiring target |
+| `eval/orchestrator/datasets/__init__.py` | `helper_for` returns a dataset's own helper module when one exists (`orchestrator/datasets/<id>.py` exposing `helper(dataset)`), else the generic helper |
+| `eval/orchestrator/datasets/base.py` | The generic compose-derived helper: derive the target's image set from the services declaring both `build:` and `image:`, bind each to its canonical tag, and resolve the bounded readiness plan; a dataset may add its own module for named checkers |
 | `eval/orchestrator/readiness.py` | The bounded, non-blocking readiness checker: default compose-health poll plus the TCP/HTTP port-probe fallback |
 | `eval/datasets/webexploitbench.yaml`, `eval/datasets/mock.yaml` | The per-dataset YAMLs |
 | `eval/targets/webexploitbench/<target>.yaml` (15), `eval/targets/mock/webmock.yaml` | The per-target YAMLs |
