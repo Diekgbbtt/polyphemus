@@ -668,6 +668,10 @@ Tests to write: Client encoding/base/abort tests; shared graph characterization;
 
 ### Task 9: Frontend contract, navigation, and grouped artifact index
 
+**Implementation state:** Complete in `511a70f9`; independently verified with
+85 focused frontend tests, the complete 114-test frontend suite, and the
+production build passing.
+
 **Files:**
 - Create: `frontend/src/eval/projectArtifacts.ts`
 - Create: `frontend/src/eval/ProjectArtifactsPage.tsx`
@@ -687,15 +691,15 @@ Tests to write: Client encoding/base/abort tests; shared graph characterization;
 - Consumes: Task 4 `artifact_summary`, Task 6 inventory response, and Task 7 project workspace/paths.
 - Produces: `ProjectArtifactEntry`, `ProjectArtifactGroup`, `ProjectArtifactInventory`, and `ProjectArtifactDetail` wire types; `getProjectArtifacts(...)`, `getProjectArtifact(...)`, and `projectArtifactContentUrl(...)`; routes from the spec; pure `groupLabel(...)` and ordering helpers.
 
-- [ ] **Step 1: Add failing client URL and type-contract tests**
+- [x] **Step 1: Add failing client URL and type-contract tests**
 
 Assert all ids are individually URL-encoded, base URL remains independent of `VITE_AGENT_BASE_URL`, non-2xx responses reject, and content URL construction performs no fetch.
 
-- [ ] **Step 2: Implement client types and calls**
+- [x] **Step 2: Implement client types and calls**
 
 Accept an optional `AbortSignal` on list/detail fetches. Do not add project artifacts to `EvalDataProvider`; each new page owns route-scoped loading/error state so `/snapshot` remains one shared request.
 
-- [ ] **Step 3: Add failing navigation/index tests**
+- [x] **Step 3: Add failing navigation/index tests**
 
 Cover summary links from both eval and project Trial pages, the historical
 unavailable notice with no link, empty available inventory, grouped
@@ -703,7 +707,7 @@ Hunting/Skills headings, both compatible route families, direct refresh,
 unknown/mismatched Trial, API error, and an unresolved request aborted on route
 change.
 
-- [ ] **Step 4: Implement routes, paths, Trial entry, and index page**
+- [x] **Step 4: Implement routes, paths, Trial entry, and index page**
 
 Add `evalPaths.projectArtifacts(...)`, `evalPaths.projectArtifact(...)`, and
 the Task 7 project equivalents. Register compatibility routes under `/eval`
@@ -711,17 +715,17 @@ and primary routes under the full project Trial path. Render groups in server
 order with stable keys and artifact links; keep all identifiers visible as
 text. Use `AbortController` cleanup for every route-scoped fetch.
 
-- [ ] **Step 5: Add accessible index styling**
+- [x] **Step 5: Add accessible index styling**
 
 Extend existing eval CSS classes instead of introducing a second design system. Groups must be navigable by headings and lists, status must not rely on color, and the layout must stack at the existing mobile breakpoint.
 
-- [ ] **Step 6: Run frontend client and index tests**
+- [x] **Step 6: Run frontend client and index tests**
 
 Run: `cd frontend && npm test -- src/eval/client.test.ts src/eval/ProjectArtifactsPage.test.tsx src/eval/EvalPage.test.tsx src/eval/navigation.test.tsx`
 
 Expected: all tests PASS.
 
-- [ ] **Step 7: Commit frontend navigation**
+- [x] **Step 7: Commit frontend navigation**
 
 ```bash
 git add frontend/src/App.tsx frontend/src/projectPaths.ts frontend/src/pages/ProjectTrialPage.tsx frontend/src/eval/types.ts frontend/src/eval/client.ts frontend/src/eval/client.test.ts frontend/src/eval/EvalBreadcrumbs.tsx frontend/src/eval/TrialPage.tsx frontend/src/eval/projectArtifacts.ts frontend/src/eval/ProjectArtifactsPage.tsx frontend/src/eval/ProjectArtifactsPage.test.tsx frontend/src/eval/eval.css frontend/src/eval/*.test.tsx
