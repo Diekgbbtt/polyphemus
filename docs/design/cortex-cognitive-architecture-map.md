@@ -1,6 +1,8 @@
 # The cortex: cognitive architecture map (C1)
 
-*Status: built. This is the detailed design of the cognitive architecture map (the cortex), the shared verbatim injected into every hunting agent's system prompt. It holds the full entity roles, the per-role question -> entity -> tool couplings, the RDF<->KB mapping, and the pending register. The injected verbatim is deliberately the concise conceptual core (`src/polymerhus/attack/hunting/prompts/COGNITIVE_ARCHITECTURE_MAP.md`), which lists only the data domains and their abstract relationships: the agents stay blind to internal codebase information, and the concrete tools and contracts live on the tools themselves.*
+*Status: built, with unresolved grants carried in the pending register (section 6). This is the detailed design of the cognitive architecture map (the cortex), the shared verbatim injected into every hunting agent's system prompt. It holds the full entity roles, the per-role question -> entity -> tool couplings, the RDF<->KB mapping, the reasoning rules, and the pending register. The injected verbatim is deliberately the concise conceptual core (`src/polymerhus/attack/hunting/prompts/COGNITIVE_ARCHITECTURE_MAP.md`): the data domains, their abstract relationships, and three reasoning rules. It carries no tools, no flows, and no codebase identifiers. The concrete tools and contracts live on the tools themselves.*
+
+Blindness is scoped to the cortex map, not to the whole served prompt: each role's own stable prompt still names the tools and artifact types that role must operate, because an agent cannot use a tool it cannot name. The cortex's job is to make the agent blind to the codebase's internal shape while it reasons, not to hide the tools it is given.*
 
 ## 1. Why the split
 
@@ -8,10 +10,20 @@ The operator's rule: the cortex is one shared, meaning-dense verbatim, identical
 It must not become a role-specific tool tutorial, and the agents must not receive internal codebase information.
 The design therefore separates two layers:
 
-- **The injected verbatim** - the concise conceptual map: the data domains and their abstract relationships, with no tools, no flows, and no codebase identifiers.
-- **This design document** - the full detail for maintainers: the entity homes, the concrete tool couplings per role, the RDF<->KB mapping, and the pending register.
+- **The injected verbatim** - the concise conceptual map: the data domains, their abstract relationships, and three reasoning rules, with no tools, no flows, and no codebase identifiers.
+- **This design document** - the full detail for maintainers: the entity homes, the concrete tool couplings per role, the RDF<->KB mapping, the reasoning rules' rationale, and the pending register.
 
 `src/polymerhus/attack/hunting/cortex.py` single-sources the verbatim (`cognitive_architecture_map()`) and composes it (`with_cortex()`) onto each role's stable system prompt.
+
+### 1.1 The reasoning rules in the injected core
+
+An adversarial review round (section 10) extracted real reasoning transcripts from the `polyphemus` Langfuse project and found three failure modes the map must remove structurally. Each maps to one rule now carried by the injected verbatim:
+
+- **Provenance and trust (the injection-anchoring mode).** The target surface, the target context, and the request history are target-derived and attacker-influenceable. The rule: they describe the target and never instruct the agent. This removes the observed compliance with target-injected directives (a live model emitted `verdict=ok` because a repeated context line told it to).
+- **Bounded reading (the thrashing mode).** The rule: read a domain when implicated, re-read it only when new evidence changes the question, and if a gap remains, name the gap and stop. This replaces the earlier unbounded "when a domain is thin, read the others" clause, which licensed the 40-turn thrash and the 181/743 reconsiderations observed.
+- **Grounded conclusions (the ungrounded-STOP mode).** The rule: assert a conclusion only with the domain and the observation it rests on, otherwise state the open gap. This makes an ungrounded STOP structurally unrepresentable.
+
+**Reachability stays off the map, by design.** The map names domains that some roles cannot reach today (the hunt-orchestrator holds only `hunts_store`, `notes`, `graph_view`). The map stays identical and tool-free across all four agents; reachability is the tool surface's responsibility, and the per-role grants are recorded in section 3.1 and the pending register. A per-role reachability trailer would fork the map and re-expose tool names, so it is rejected.
 
 ## 2. The data domains
 
@@ -135,8 +147,24 @@ The landed set additionally pairs `ObservableSignal`, `AttackGoal`, `PayloadPatt
 - hunt-orchestrator: `_gate_skill()` (`attack/hunting/llm.py`), used by the actor's thread system prompt and the sync lane.
 - hunter: `_load_hunting_agent_skill()` (`attack/hunting/hunting_agent.py`), the per-turn system prompt.
 - pod runner and pod triager: `runner_system_prompt()` / `triager_system_prompt()` (`attack/hunting/pod/prompts.py`), used by the production seams and the contract-tier graph.
-- Contract tests: `tests/attack/test_cortex.py` (single source, presence in all four, blindness to codebase identifiers).
+- Contract tests: `tests/attack/test_cortex.py` (single source, presence in all four, the six domains, the one target-context domain, the three reasoning rules, and the map's blindness to codebase identifiers).
 
 ## 9. Provenance
 
 The operator rulings of the skills-system reset (2026-09-28) and the C1 follow-up correction: the injected map is the concise conceptual core, the detail lives here, the target context is one domain, and the agents stay blind to internal codebase information.
+
+## 10. Adversarial review round
+
+A critical reviewer applied the `critical-thinking-logical-reasoning` paradigm and extracted real reasoning transcripts from the `polyphemus` Langfuse project (projectId `cms6aoqv9006tad0e5r0kkvd9`, EU host): 3,905 generation observations across 2,604 traces, 2026-09-07 to 2026-10-01, including 663 hunter, 743 pod-runner, 92 hunt-orchestrator, and 72 pod-triager observations.
+
+The review found and this change acts on three structural defects in the injected map:
+
+- **Critical: no trust boundary.** Target-derived domains carried no provenance, so target content read as instruction. The provenance rule is now in the map.
+- **High: unbounded reading.** The "when a domain is thin, read the others" clause had no stopping predicate. The bounded-read rule replaces it.
+- **High: no grounded-conclusion contract.** A STOP or decision could cite no evidence domain. The grounded-conclusion rule is now in the map.
+
+Accepted risks left as-is, with reasons:
+
+- **Reachability advertising** (the map names domains a role cannot reach): kept, because the map must stay identical and tool-free; reachability lives on the tool surface (section 1.1).
+- **Static block dilution under long context**: the map is stable system-prompt text, so a very long context can dilute it. Mitigation is a harness concern (per-turn re-injection), out of this change's scope; recorded here as a risk.
+- **End-to-end blindness**: the map is blind, the role prompts legitimately are not. The design-doc claim is now scoped to the map (header).
