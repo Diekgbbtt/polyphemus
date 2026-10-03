@@ -1,0 +1,93 @@
+# Eval real dashboard overlay (real eval project artifacts).
+#
+# Brings up the read-only project/eval dashboard beside the normal stack:
+#
+#   EVAL_ARTIFACT_STORE_HOST_PATH=/srv/eval-artifacts \
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml \
+#     -f eval/docker-compose.dashboard.real.yml up --build
+#
+# Two services, both on the base `polymerhus-net`:
+#   eval-api       the read API over the REAL artifact store (read-only host
+#                  bind; GET /health, /snapshot, and the graph/artifact routes)
+#   eval-dashboard Vite dev server for the project/eval pages, proxying
+#                  /eval-api -> eval-api (loopback ports only)
+#
+# This overlay deliberately starts no demo generator and mounts neither the
+# instance data root nor the raw `live/` mirror: the only store it reads is the
+# operator's real artifact store, bound read-only.
+
+volumes:
+  # The frontend's dependencies, kept out of the bind-mounted working tree.
+  eval-dashboard-node-modules:
+
+services:
+  eval-api:
+    image: polymerhus-agent:latest
+    working_dir: /srv/eval
+    environment:
+      PYTHONPATH: /srv/eval
+      # The real store is mounted read-only at this fixed container path.
+      EVAL_ARTIFACT_STORE: /srv/eval-artifacts
+      EVAL_DATASET_ID: webexploitbench
+      EVAL_DATASET_NAME: WebExploitBench
+    volumes:
+      - ./eval:/srv/eval:ro
+      - ${EVAL_ARTIFACT_STORE_HOST_PATH:-/srv/eval-artifacts}:/srv/eval-artifacts:ro
+    command:
+      - python
+      - -m
+      - uvicorn
+      - read_api.app:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8090"
+    ports:
+      - "127.0.0.1:${EVAL_API_PORT:-8090}:8090"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          python -c "import urllib.request;
+          urllib.request.urlopen('http://127.0.0.1:8090/health', timeout=3)"
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    networks: [polymerhus-net]
+
+  eval-dashboard:
+    image: node:22-alpine
+    working_dir: /srv/frontend
+    environment:
+      VITE_EVAL_API_BASE_URL: /eval-api
+      EVAL_PROXY_TARGET: http://eval-api:8090
+      AGENT_PROXY_TARGET: http://agent:8080
+    volumes:
+      - ./frontend:/srv/frontend
+      - eval-dashboard-node-modules:/srv/frontend/node_modules
+    command:
+      - sh
+      - -c
+      - >-
+        npm ci --no-audit --no-fund
+        && exec npm run dev -- --host 0.0.0.0 --port 5173 --strictPort
+    ports:
+      - "127.0.0.1:${EVAL_DASHBOARD_PORT:-5173}:5173"
+    depends_on:
+      eval-api:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - >-
+          fetch('http://127.0.0.1:5173/eval')
+          .then((response) => process.exit(response.ok ? 0 : 1))
+          .catch(() => process.exit(1))
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 90s
+    networks: [polymerhus-net]

@@ -30,6 +30,11 @@ ENV_STORE = "EVAL_ARTIFACT_STORE"
 ENV_DATASET_ID = "EVAL_DATASET_ID"
 ENV_DATASET_NAME = "EVAL_DATASET_NAME"
 
+MANIFEST_FILENAME = "run-manifest.yaml"
+# Non-Trial siblings a store also contains: the materializer's scratch root, the
+# rendered sync dir, and the raw live mirror. Never counted as materialized.
+_SKIP_DIRNAMES = frozenset({"_staging", "_sync", "live"})
+
 
 class SnapshotSourceUnavailable(RuntimeError):
     """The source cannot serve a snapshot (unconfigured or unreachable).
@@ -132,10 +137,43 @@ class ArtifactStoreSnapshotSource:
     def health(self) -> SourceHealth:
         configured = bool(self.store)
         readable = configured and Path(self.store).is_dir()
+        trials = _count_materialized_trials(self.store) if readable else 0
         return SourceHealth(
-            ok=configured,
-            detail={"store_configured": configured, "store_readable": readable},
+            ok=configured and readable,
+            detail={
+                "store_configured": configured,
+                "store_readable": readable,
+                "materialized_trials": trials,
+            },
         )
+
+
+def _count_materialized_trials(store: str | Path | None) -> int:
+    """The number of `<target>/<run>/<trial>/run-manifest.yaml` trees.
+
+    A readable empty store is healthy and reports zero; a walk error degrades
+    the count to zero rather than failing health. Host paths never reach the
+    response.
+    """
+    if not store:
+        return 0
+    root = Path(store)
+    count = 0
+    try:
+        for target in root.iterdir():
+            if not target.is_dir() or target.name in _SKIP_DIRNAMES:
+                continue
+            for run in target.iterdir():
+                if not run.is_dir() or run.name in _SKIP_DIRNAMES:
+                    continue
+                for trial in run.iterdir():
+                    if not trial.is_dir() or trial.name in _SKIP_DIRNAMES:
+                        continue
+                    if (trial / MANIFEST_FILENAME).is_file():
+                        count += 1
+    except OSError:
+        return 0
+    return count
 
 
 def filesystem_source() -> SnapshotSource:

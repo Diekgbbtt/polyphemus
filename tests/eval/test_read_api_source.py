@@ -125,6 +125,7 @@ def test_health_is_ok_and_readable_for_a_present_store(tmp_path: Path) -> None:
         "status": "ok",
         "store_configured": True,
         "store_readable": True,
+        "materialized_trials": 0,
     }
 
 
@@ -136,13 +137,53 @@ def test_health_is_degraded_when_unconfigured() -> None:
         "status": "degraded",
         "store_configured": False,
         "store_readable": False,
+        "materialized_trials": 0,
     }
 
 
 def test_health_is_degraded_when_the_store_directory_is_absent(tmp_path: Path) -> None:
     health = source.ArtifactStoreSnapshotSource(tmp_path / "nope").health()
 
+    assert health.ok is False
     assert health.as_dict()["store_readable"] is False
+    assert health.as_dict()["materialized_trials"] == 0
+
+
+def test_health_is_degraded_when_the_store_is_not_a_directory(tmp_path: Path) -> None:
+    store = tmp_path / "store"
+    store.write_text("not a directory", encoding="utf-8")
+
+    health = source.ArtifactStoreSnapshotSource(store).health()
+
+    assert health.ok is False
+    assert health.as_dict()["store_configured"] is True
+    assert health.as_dict()["store_readable"] is False
+    assert health.as_dict()["materialized_trials"] == 0
+
+
+def test_health_counts_materialized_trials_without_degrading(tmp_path: Path) -> None:
+    store = tmp_path / "store"
+    for target, run, trial in (
+        ("jetlinks-1", "run-a", "t1"),
+        ("jetlinks-1", "run-a", "t2"),
+        ("jetlinks-1", "run-b", "t1"),
+    ):
+        trial_dir = store / target / run / trial
+        trial_dir.mkdir(parents=True)
+        (trial_dir / "run-manifest.yaml").write_text("schema_version: 2\n", encoding="utf-8")
+    # A staging scratch tree and a live mirror are not materialized Trials.
+    (store / "_staging" / "trial-x").mkdir(parents=True)
+    (store / "arm-a" / "live" / "pid").mkdir(parents=True)
+
+    health = source.ArtifactStoreSnapshotSource(store).health()
+
+    assert health.ok is True
+    assert health.as_dict() == {
+        "status": "ok",
+        "store_configured": True,
+        "store_readable": True,
+        "materialized_trials": 3,
+    }
 
 
 # --- the injectable factory ----------------------------------------------------

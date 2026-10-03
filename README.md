@@ -150,6 +150,30 @@ to `/eval-api`, which Vite proxies to the eval service (`EVAL_PROXY_TARGET`, def
 fixed to `webexploitbench` / “WebExploitBench” and can be overridden with `EVAL_DATASET_ID` /
 `EVAL_DATASET_NAME`.
 
+### The project workspace (live + historical)
+
+    /p/:projectId                                             live L0/L1 graph
+    /p/:projectId/runs                                        operational recon runs
+    /p/:projectId/evals                                       materialized eval Trials for the project
+    /p/:projectId/evals/:targetId/:targetRunId/:trialId       one Trial's workspace
+    /p/:projectId/evals/.../:trialId/artifacts                grouped Hunting/Skills inventory
+    /p/:projectId/evals/.../:trialId/artifacts/:artifactId    one artifact (semantic / raw)
+
+**Live vs Trial snapshot.** The live graph and the run list read the operational agent API and
+poll while the stack is up. The Trial workspace renders only the immutable graph and artifacts a
+completed Trial captured before teardown: it never falls back to, or merges with, the live graph.
+The `/eval/...` routes stay valid for compatibility and link to the matching Trial workspace.
+
+`GET /health` distinguishes configuration, readability, and materialized Trials:
+
+    {"status":"ok","store_configured":true,"store_readable":true,"materialized_trials":5}
+
+`ok` requires a configured, readable store; a readable empty store is healthy and reports
+`materialized_trials: 0`. A Trial materialized before the project snapshot existed (schema v1)
+reports `project_artifacts_unavailable` and `project_graph_unavailable`; a schema-v2 Trial whose
+graph/artifact capture could not publish a complete snapshot reports
+`project_snapshot_unavailable`. In every case the core verdicts stay readable.
+
 ### Synthetic demo store
 
 To see the page without running real Trials, generate a fake store:
@@ -238,6 +262,30 @@ The synthetic store lives in its own named volume and is never the operator's
 `polymerhus-agent:latest` Python runtime plus a stock Node image, and no credential or host path
 is baked into the overlay. Without the third `-f`, `docker compose up` is exactly what it was
 before.
+
+#### One-command real dashboard stack (Docker Compose)
+
+`eval/docker-compose.dashboard.real.yml` serves the same dashboard from the **real** artifact
+store instead of the synthetic demo. It adds only the read API and the Vite dashboard — no demo
+generator — and binds the operator's store read-only:
+
+    EVAL_ARTIFACT_STORE_HOST_PATH=/srv/eval-artifacts \
+      docker compose -f docker-compose.yml -f docker-compose.dev.yml \
+        -f eval/docker-compose.dashboard.real.yml up --build
+
+`EVAL_ARTIFACT_STORE_HOST_PATH` defaults to `/srv/eval-artifacts` and is mounted read-only at the
+container's `/srv/eval-artifacts` (its `EVAL_ARTIFACT_STORE`). The overlay never mounts the
+instance data root or the raw `live/` mirror: the only historical source is the immutable Trial
+trees. Both published ports are loopback-only and configurable (`EVAL_API_PORT`,
+`EVAL_DASHBOARD_PORT`).
+
+Open **http://localhost:5173/p** for the project hub and **http://localhost:5173/eval** for the
+read-only eval pages; the API is reachable at `http://localhost:8090/health` and
+`http://localhost:8090/snapshot`. This overlay reads completed Trials only — it is not live
+monitoring. Stop it with:
+
+    docker compose -f docker-compose.yml -f docker-compose.dev.yml \
+      -f eval/docker-compose.dashboard.real.yml down
 
 ### Walkthrough
 

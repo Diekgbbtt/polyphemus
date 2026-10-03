@@ -44,8 +44,11 @@ BASE_SERVICES = {"agent", "kali", "postgres", "neo4j", "lightrag"}
 
 EVAL_OVERLAY = "eval/docker-compose.eval.yml"
 DASHBOARD_OVERLAY = "eval/docker-compose.dashboard.yml"
+REAL_OVERLAY = "eval/docker-compose.dashboard.real.yml"
 # The demo trio the dashboard overlay adds; nothing else may appear with it.
 DASHBOARD_SERVICES = {"eval-store", "eval-api", "eval-dashboard"}
+# The real overlay adds only the read API and the dashboard.
+REAL_SERVICES = {"eval-api", "eval-dashboard"}
 
 docker = pytest.mark.skipif(
     shutil.which("docker") is None, reason="docker CLI unavailable"
@@ -57,6 +60,7 @@ def stage(
     env: dict[str, str] | None,
     with_overlay: bool = True,
     with_dashboard: bool = False,
+    with_real: bool = False,
 ) -> Path:
     """A tmp compose project mirroring the instance layout (root files plus
     the eval overlay under `eval/`); the repo-root `.env` is never read."""
@@ -67,6 +71,8 @@ def stage(
         shutil.copy(REPO_ROOT / EVAL_OVERLAY, tmp_path / EVAL_OVERLAY)
     if with_dashboard:
         shutil.copy(REPO_ROOT / DASHBOARD_OVERLAY, tmp_path / DASHBOARD_OVERLAY)
+    if with_real:
+        shutil.copy(REPO_ROOT / REAL_OVERLAY, tmp_path / REAL_OVERLAY)
     if env is not None:
         (tmp_path / ".env").write_text(
             "".join(f"{k}={v}\n" for k, v in env.items()), encoding="utf-8"
@@ -280,3 +286,111 @@ def test_normal_startup_is_unchanged_without_the_dashboard_overlay(tmp_path: Pat
     config = yaml.safe_load(rendered.stdout)
     assert not (DASHBOARD_SERVICES & set(config["services"]))
     assert BASE_SERVICES <= set(config["services"])
+
+
+def real_render(project: Path, extra: dict[str, str] | None = None):
+    return render(
+        project,
+        ["docker-compose.yml", "docker-compose.dev.yml", REAL_OVERLAY],
+        extra=extra,
+    )
+
+
+@docker
+def test_real_overlay_adds_only_the_api_and_dashboard(tmp_path: Path) -> None:
+    project = stage(tmp_path, COMPLETE_ENV, with_real=True)
+
+    rendered = real_render(project)
+
+    assert rendered.returncode == 0, rendered.stderr
+    config = yaml.safe_load(rendered.stdout)
+    # The normal stack survives; the real overlay adds exactly two services and
+    # never the demo generator.
+    assert set(config["services"]) == BASE_SERVICES | REAL_SERVICES
+    assert "eval-store" not in config["services"]
+    assert "eval-dashboard-store" not in config.get("volumes", {})
+
+
+@docker
+def test_real_overlay_binds_the_real_store_read_only(tmp_path: Path) -> None:
+    project = stage(tmp_path, COMPLETE_ENV, with_real=True)
+
+    config = yaml.safe_load(real_render(project).stdout)
+    api = config["services"]["eval-api"]
+    api_mounts = mounts(api)
+
+    assert set(api_mounts) == {"/srv/eval", "/srv/eval-artifacts"}
+    assert api_mounts["/srv/eval-artifacts"]["source"] == "/srv/eval-artifacts"
+    assert api_mounts["/srv/eval-artifacts"]["read_only"] is True
+    assert api_mounts["/srv/eval"]["read_only"] is True
+    assert api["environment"]["EVAL_ARTIFACT_STORE"] == "/srv/eval-artifacts"
+    assert api["environment"]["PYTHONPATH"] == "/srv/eval"
+    assert api["image"] == "polymerhus-agent:latest"
+    assert api["healthcheck"]
+
+    # The host path is configurable; the container path stays fixed.
+    overridden = yaml.safe_load(
+        real_render(
+            project, extra={"EVAL_ARTIFACT_STORE_HOST_PATH": "/tmp/real-eval-store"}
+        ).stdout
+    )
+    assert mounts(overridden["services"]["eval-api"])["/srv/eval-artifacts"]["source"] == (
+        "/tmp/real-eval-store"
+    )
+
+
+@docker
+def test_real_overlay_never_mounts_live_or_the_instance_data_root(tmp_path: Path) -> None:
+    project = stage(tmp_path, COMPLETE_ENV, with_real=True)
+
+    config = yaml.safe_load(real_render(project).stdout)
+
+    for service in REAL_SERVICES:
+        for mount in config["services"][service]["volumes"]:
+            source = mount["source"]
+            assert "live" not in source.split("/")
+            assert not source.endswith("/data")
+            assert "instances" not in source
+
+
+@docker
+def test_real_overlay_ports_and_proxy_are_loopback(tmp_path: Path) -> None:
+    project = stage(tmp_path, COMPLETE_ENV, with_real=True)
+
+    config = yaml.safe_load(real_render(project).stdout)
+
+    assert published_port(config, "eval-api", 8090) == "127.0.0.1:8090"
+    assert published_port(config, "eval-dashboard", 5173) == "127.0.0.1:5173"
+    dashboard = config["services"]["eval-dashboard"]
+    assert dashboard["environment"]["EVAL_PROXY_TARGET"] == "http://eval-api:8090"
+    assert dashboard["environment"]["VITE_EVAL_API_BASE_URL"] == "/eval-api"
+    assert dashboard["depends_on"]["eval-api"]["condition"] == "service_healthy"
+    assert dashboard["healthcheck"]
+
+
+@docker
+def test_real_overlay_ports_are_configurable(tmp_path: Path) -> None:
+    project = stage(tmp_path, COMPLETE_ENV, with_real=True)
+
+    config = yaml.safe_load(
+        real_render(
+            project, extra={"EVAL_API_PORT": "18090", "EVAL_DASHBOARD_PORT": "15173"}
+        ).stdout
+    )
+
+    assert published_port(config, "eval-api", 8090) == "127.0.0.1:18090"
+    assert published_port(config, "eval-dashboard", 5173) == "127.0.0.1:15173"
+
+
+@docker
+def test_demo_overlay_still_uses_its_dedicated_named_volume(tmp_path: Path) -> None:
+    project = stage(tmp_path, COMPLETE_ENV, with_dashboard=True)
+
+    config = yaml.safe_load(dashboard_render(project).stdout)
+
+    assert mounts(config["services"]["eval-api"])["/srv/eval-store"]["source"] == (
+        "eval-dashboard-store"
+    )
+    assert mounts(config["services"]["eval-store"])["/srv/eval-store"]["source"] == (
+        "eval-dashboard-store"
+    )

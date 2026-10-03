@@ -664,9 +664,10 @@ breakdowns.
   `identified` and say why.
 - Langfuse traces (one per pod run, spans per loop iteration) are the trajectory
   layer: cite trace ids in `notes` when they help.
-- The setup pipeline web API, CAGE integration, a deterministic oracle, and a
-  dashboard are deliberately absent from this harness. The evidence bundles are
-  the migration seam to that future harness.
+- The setup pipeline web API, CAGE integration, and a deterministic oracle are
+  deliberately absent from this harness. The evidence bundles are the migration
+  seam to that future harness; the read-only project/eval dashboard (section
+  2.14) already renders them.
 
 ### 2.8. Delivering `dev` to the eval server (the delivery plane)
 
@@ -986,6 +987,62 @@ Example:
 
 ```
 EVAL_SURFER_COMMAND='opencode run --agent eval-surfer --dir <canonical-checkout> "Follow {prompt}. input={input}; destination={destination}. Write only {destination}."'
+```
+
+### 2.14. The read-only project/eval dashboard (real store)
+
+A completed Trial is read-only history: the materializer publishes an immutable
+Trial tree under the artifact store, and the dashboard renders it. Live and
+historical data are strictly separate - the Trial workspace never falls back to
+the live project graph and never merges live and captured nodes.
+
+Bring the real dashboard up beside the normal stack with the real overlay:
+
+```
+EVAL_ARTIFACT_STORE_HOST_PATH=/srv/eval-artifacts \
+  docker compose -f docker-compose.yml -f docker-compose.dev.yml \
+    -f eval/docker-compose.dashboard.real.yml up --build
+```
+
+`EVAL_ARTIFACT_STORE_HOST_PATH` defaults to `/srv/eval-artifacts`; it is mounted
+read-only at the container's `/srv/eval-artifacts`, which becomes
+`EVAL_ARTIFACT_STORE`. The overlay adds only `eval-api` and `eval-dashboard` (no
+demo generator) and never mounts the instance data root or the raw `live/`
+mirror. Ports are loopback-only and configurable with `EVAL_API_PORT` /
+`EVAL_DASHBOARD_PORT` (defaults 8090 / 5173).
+
+| URL | What it is |
+|---|---|
+| `http://localhost:5173/p/:projectId` | the live L0/L1 graph (agent API) |
+| `http://localhost:5173/p/:projectId/runs` | operational recon runs (polled) |
+| `http://localhost:5173/p/:projectId/evals` | materialized eval Trials for the project |
+| `http://localhost:5173/p/:projectId/evals/:targetId/:targetRunId/:trialId` | one Trial's historical graph and outcomes |
+| `http://localhost:5173/p/.../:trialId/artifacts` | grouped Hunting/Skills inventory |
+| `http://localhost:5173/eval` | the compatible read-only eval pages |
+| `http://localhost:8090/health` | health (below) |
+| `http://localhost:8090/snapshot` | the lightweight `/snapshot` payload |
+
+`GET /health` reports configuration, readability, and how many materialized
+Trials are discoverable:
+
+```
+{"status":"ok","store_configured":true,"store_readable":true,"materialized_trials":5}
+```
+
+`ok` requires a configured, readable store; a readable empty store is healthy
+and reports `materialized_trials: 0`. A historical Trial whose project snapshot
+was ever captured reports `available`; a schema-v1 Trial (materialized before
+the project snapshot existed) reports `project_artifacts_unavailable` and
+`project_graph_unavailable`; a schema-v2 Trial whose graph/artifact capture
+could not publish a complete snapshot reports `project_snapshot_unavailable` -
+in every case the core verdicts stay readable. This overlay serves completed
+Trials only; it is not live monitoring.
+
+Stop it with:
+
+```
+docker compose -f docker-compose.yml -f docker-compose.dev.yml \
+  -f eval/docker-compose.dashboard.real.yml down
 ```
 
 ## 3. KB authoring
