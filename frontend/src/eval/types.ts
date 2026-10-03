@@ -76,6 +76,31 @@ export interface EvalPhase {
 
 export type EvalAvailability = "complete" | "degraded"
 
+// The lightweight project-snapshot summaries the dashboard reads from
+// `/snapshot`: counts and status only, never inventory entries or graph bodies.
+export type ProjectArtifactStatus =
+  | "available"
+  | "project_artifacts_unavailable"
+  | "project_snapshot_unavailable"
+
+export interface ProjectArtifactSummary {
+  status: ProjectArtifactStatus
+  hunting: number
+  skills: number
+}
+
+export type ProjectGraphStatus =
+  | "available"
+  | "project_graph_unavailable"
+  | "project_snapshot_unavailable"
+
+export interface ProjectGraphSummary {
+  status: ProjectGraphStatus
+  nodes: number
+  links: number
+  captured_at: string | null
+}
+
 export interface EvalTrial {
   target_id: string
   target_run_id: string
@@ -92,6 +117,8 @@ export interface EvalTrial {
   diagnoses: EvalDiagnosis[]
   availability: EvalAvailability
   reason: string | null
+  artifact_summary: ProjectArtifactSummary
+  project_graph_summary: ProjectGraphSummary
 }
 
 export interface EvalVersionTrial {

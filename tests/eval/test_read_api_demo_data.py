@@ -247,8 +247,14 @@ def test_manifests_use_the_real_builder_contract(tmp_path: Path) -> None:
         assert list(document) == list(reference)
         assert document["schema_version"] == orchestrator_store.STORE_SCHEMA_VERSION
         assert document["copied_at"] == demo_data.DEMO_COPIED_AT
+        # The real builder's phase pointer carries `stop_run_id`.
         assert document["phases"] == [
-            {"phase": p["phase"], "status": p["status"], "run_id": p["run_id"]}
+            {
+                "phase": p["phase"],
+                "status": p["status"],
+                "run_id": p["run_id"],
+                "stop_run_id": p.get("stop_run_id"),
+            }
             for p in document["phases"]
         ]
 
@@ -409,14 +415,109 @@ def test_the_degraded_trial_is_a_documented_failure_injection(tmp_path: Path) ->
     injected = [s for s in demo_data.demo_trials() if s.scenario == demo_data.FAILURE_INJECTION]
     assert injected[0].trial_id == "trial-2"
     assert "failure injection" in demo_data.instructions(root)
+    broken = next(
+        trial
+        for trial in build_snapshot(root)["trials"]
+        if (trial["target_run_id"], trial["trial_id"]) == ("run-demo-b", "trial-2")
+    )
+    # The new summaries never change the pre-existing degraded state.
+    assert broken["availability"] == "degraded"
+    assert broken["reason"] == "verdicts_missing"
+    assert broken["verdicts"] == []
+
+
+# --- schema-v2 project snapshots -----------------------------------------------
+
+
+def test_demo_project_snapshot_counts_are_stable(tmp_path: Path) -> None:
+    root = demo_data.generate(tmp_path / "store")
+
+    snap = build_snapshot(root)
+    by_key = {
+        (trial["target_id"], trial["target_run_id"], trial["trial_id"]): trial
+        for trial in snap["trials"]
+    }
+    # hunting = 5 per chained verdict (config, spec, variant, log, export);
+    # skills = 4 (SKILL.md, reference, script, asset); graph = 1 service + units.
+    expected = {
+        ("comfyui-1", "run-demo-a", "trial-1"): (15, 4, 4, 3),
+        ("comfyui-1", "run-demo-a", "trial-2"): (5, 4, 2, 1),
+        ("jetlinks-1", "run-demo-a", "trial-1"): (10, 4, 3, 2),
+        ("white-jotter-1", "run-demo-a", "trial-1"): (5, 4, 2, 1),
+    }
+    for key, (hunting, skills, nodes, links) in expected.items():
+        trial = by_key[key]
+        assert trial["artifact_summary"] == {
+            "status": "available",
+            "hunting": hunting,
+            "skills": skills,
+        }
+        assert trial["project_graph_summary"] == {
+            "status": "available",
+            "nodes": nodes,
+            "links": links,
+            "captured_at": demo_data.DEMO_CAPTURED_AT,
+        }
+
+    # The manifest fingerprint is present and shared by both sections.
+    for trial_dir in _trial_dirs_with_verdicts(root):
+        manifest = _manifest(trial_dir)
+        assert manifest["project_snapshot"]["status"] == "available"
+        fingerprint = manifest["project_snapshot"]["snapshot_sha256"]
+        assert fingerprint
+        assert fingerprint == manifest["project_artifacts"]["snapshot_sha256"]
+        assert manifest["project_graph"]["sha256"]
+
+    # Counts are stable across a regeneration.
+    demo_data.generate(root)
+    assert build_snapshot(root) == snap
+
+
+def test_two_generations_in_separate_dirs_are_byte_identical(tmp_path: Path) -> None:
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    demo_data.generate(first)
+    demo_data.generate(second)
+
+    assert _demo_files(first) == _demo_files(second)
+    assert build_snapshot(first) == build_snapshot(second)
+
+
+def test_snapshot_carries_no_graph_bodies_inventory_or_binary(tmp_path: Path) -> None:
+    root = demo_data.generate(tmp_path / "store")
+
+    snap = build_snapshot(root)
+    blob = json.dumps(snap)
+
+    for token in (
+        "relative_path",
+        "artifact_id",
+        "media_type",
+        "representation",
+        "entries",
+        "sha256",
+        "unit:",
+        "service:",
+        "PNG",
+        "\\u0089",
+    ):
+        assert token not in blob, token
+    for trial in snap["trials"]:
+        assert set(trial["artifact_summary"]) == {"status", "hunting", "skills"}
+        assert set(trial["project_graph_summary"]) == {
+            "status",
+            "nodes",
+            "links",
+            "captured_at",
+        }
 
 
 # --- safety, determinism, idempotency ------------------------------------------
 
 
-def _demo_files(root: Path) -> dict[str, str]:
+def _demo_files(root: Path) -> dict[str, bytes]:
     return {
-        str(path.relative_to(root)): path.read_text(encoding="utf-8")
+        str(path.relative_to(root)): path.read_bytes()
         for path in sorted(root.rglob("*"))
         if path.is_file()
     }
@@ -431,7 +532,11 @@ def test_generated_files_carry_no_host_paths_links_or_credentials(tmp_path: Path
         assert ".." not in relative.split("/")
         if not path.is_file():
             continue
-        text = path.read_text(encoding="utf-8")
+        try:
+            text = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            # The synthetic binary asset: no text contract applies.
+            continue
         lowered = text.lower()
         assert "http://" not in lowered and "https://" not in lowered
         for token in text.split():

@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 import yaml
 
 from read_api import projection
@@ -51,6 +52,76 @@ def _manifest(
         "stack_fingerprint": stack_fingerprint,
         "copied_at": "2024-01-01T00:00:00+00:00",
     }
+
+
+_CAPTURED_AT = "2024-01-01T00:00:00+00:00"
+
+
+def _v2_sections(
+    *,
+    project_id: str = "proj-t",
+    captured_at: str = _CAPTURED_AT,
+    hunting: int = 2,
+    skills: int = 1,
+    nodes: int = 4,
+    links: int = 3,
+) -> dict:
+    entries = [
+        {
+            "artifact_id": f"hunt-{index}",
+            "category": "hunting",
+            "kind": "hunt_config",
+            "relative_path": f"hunting/config-{index}.yaml",
+            "media_type": "application/yaml",
+            "size_bytes": 1,
+            "sha256": f"hunt-digest-{index}",
+            "representation": "yaml",
+        }
+        for index in range(hunting)
+    ] + [
+        {
+            "artifact_id": f"skill-{index}",
+            "category": "skill",
+            "kind": "skill_procedure",
+            "relative_path": f"skills/demo/reference-{index}.md",
+            "media_type": "text/markdown",
+            "size_bytes": 1,
+            "sha256": f"skill-digest-{index}",
+            "representation": "markdown",
+        }
+        for index in range(skills)
+    ]
+    return {
+        "project_snapshot": {
+            "status": "available",
+            "project_id": project_id,
+            "captured_at": captured_at,
+            "snapshot_sha256": "snapshot-fp",
+        },
+        "project_artifacts": {
+            "status": "available",
+            "project_id": project_id,
+            "captured_at": captured_at,
+            "snapshot_sha256": "snapshot-fp",
+            "entries": entries,
+        },
+        "project_graph": {
+            "status": "available",
+            "project_id": project_id,
+            "captured_at": captured_at,
+            "sha256": "graph-digest",
+            "node_count": nodes,
+            "link_count": links,
+        },
+    }
+
+
+def _v2_manifest(**overrides: object) -> dict:
+    manifest = _manifest("t", "r", "trial")
+    manifest["schema_version"] = 2
+    manifest.update(_v2_sections(project_id=manifest["project_id"]))
+    manifest.update(overrides)
+    return manifest
 
 
 def _verdict(
@@ -553,6 +624,15 @@ def test_payload_uses_only_the_allowlisted_fields(tmp_path: Path) -> None:
         "diagnoses",
         "availability",
         "reason",
+        "artifact_summary",
+        "project_graph_summary",
+    }
+    assert set(trial["artifact_summary"]) == {"status", "hunting", "skills"}
+    assert set(trial["project_graph_summary"]) == {
+        "status",
+        "nodes",
+        "links",
+        "captured_at",
     }
     assert set(trial["phases"][0]) == {"phase", "status", "run_id"}
     assert set(trial["verdicts"][0]) == {
@@ -748,3 +828,135 @@ def test_targets_without_identified_findings_are_counted(tmp_path: Path) -> None
     coverage = _snapshot(store)["coverage"]
 
     assert coverage["targets"] == {"tested": 2, "with_identified": 1, "without_identified": 1}
+
+
+# --- lightweight project-snapshot summaries ------------------------------------
+
+
+def test_schema_v2_projects_lightweight_project_snapshot_summaries(tmp_path: Path) -> None:
+    store = tmp_path / "store"
+    manifest = _v2_manifest(hunting=2, skills=1, nodes=4, links=3)
+    _write_trial(store, "t", "r", "trial", manifest=manifest, verdicts=[_verdict("v1")])
+
+    trial = _snapshot(store)["trials"][0]
+
+    assert trial["project_id"] == "proj-t"
+    assert trial["availability"] == "complete"
+    assert trial["artifact_summary"] == {"status": "available", "hunting": 2, "skills": 1}
+    assert trial["project_graph_summary"] == {
+        "status": "available",
+        "nodes": 4,
+        "links": 3,
+        "captured_at": _CAPTURED_AT,
+    }
+    assert set(trial["project_graph_summary"]) == {
+        "status",
+        "nodes",
+        "links",
+        "captured_at",
+    }
+    # No inventory entries, artifact ids/digests, graph bodies, or content leak.
+    blob = json.dumps(trial)
+    for token in (
+        "relative_path",
+        "artifact_id",
+        "entries",
+        "media_type",
+        "representation",
+        "hunt-0",
+        "skill-0",
+        "hunt-digest",
+        "skill-digest",
+        "snapshot-fp",
+        "graph-digest",
+        "sha256",
+    ):
+        assert token not in blob, token
+
+
+def test_schema_v1_project_snapshot_is_unavailable_not_degraded(tmp_path: Path) -> None:
+    store = tmp_path / "store"
+    _write_trial(store, "t", "r", "trial", verdicts=[_verdict("v1")])
+
+    trial = _snapshot(store)["trials"][0]
+
+    assert trial["availability"] == "complete"
+    assert trial["reason"] is None
+    assert [v["vuln_id"] for v in trial["verdicts"]] == ["v1"]
+    assert trial["artifact_summary"] == {
+        "status": "project_artifacts_unavailable",
+        "hunting": 0,
+        "skills": 0,
+    }
+    assert trial["project_graph_summary"] == {
+        "status": "project_graph_unavailable",
+        "nodes": 0,
+        "links": 0,
+        "captured_at": None,
+    }
+
+
+def _drop_graph_status(manifest: dict) -> None:
+    manifest["project_graph"]["status"] = "unavailable"
+
+
+def _mismatched_project_id(manifest: dict) -> None:
+    manifest["project_graph"]["project_id"] = "someone-else"
+
+
+def _mismatched_captured_at(manifest: dict) -> None:
+    manifest["project_artifacts"]["captured_at"] = "2099-01-01T00:00:00+00:00"
+
+
+def _missing_fingerprint(manifest: dict) -> None:
+    manifest["project_snapshot"]["snapshot_sha256"] = None
+
+
+def _missing_graph_digest(manifest: dict) -> None:
+    manifest["project_graph"]["sha256"] = None
+
+
+def _entries_not_a_list(manifest: dict) -> None:
+    manifest["project_artifacts"]["entries"] = {"not": "a list"}
+
+
+def _negative_node_count(manifest: dict) -> None:
+    manifest["project_graph"]["node_count"] = -1
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        _drop_graph_status,
+        _mismatched_project_id,
+        _mismatched_captured_at,
+        _missing_fingerprint,
+        _missing_graph_digest,
+        _entries_not_a_list,
+        _negative_node_count,
+    ],
+)
+def test_malformed_schema_v2_snapshot_is_unavailable_without_degrading(
+    tmp_path: Path, mutate
+) -> None:
+    store = tmp_path / "store"
+    manifest = _v2_manifest()
+    mutate(manifest)
+    _write_trial(store, "t", "r", "trial", manifest=manifest, verdicts=[_verdict("v1")])
+
+    trial = _snapshot(store)["trials"][0]
+
+    assert trial["availability"] == "complete"
+    assert trial["reason"] is None
+    assert [v["vuln_id"] for v in trial["verdicts"]] == ["v1"]
+    assert trial["artifact_summary"] == {
+        "status": "project_snapshot_unavailable",
+        "hunting": 0,
+        "skills": 0,
+    }
+    assert trial["project_graph_summary"] == {
+        "status": "project_snapshot_unavailable",
+        "nodes": 0,
+        "links": 0,
+        "captured_at": None,
+    }

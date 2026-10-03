@@ -77,6 +77,13 @@ const SNAPSHOT: EvalSnapshot = {
       ],
       availability: "complete",
       reason: null,
+      artifact_summary: { status: "available", hunting: 5, skills: 4 },
+      project_graph_summary: {
+        status: "available",
+        nodes: 3,
+        links: 2,
+        captured_at: "2024-01-01T00:00:00+00:00",
+      },
     },
     {
       target_id: "comfyui-1",
@@ -122,6 +129,13 @@ const SNAPSHOT: EvalSnapshot = {
       ],
       availability: "complete",
       reason: null,
+      artifact_summary: { status: "available", hunting: 2, skills: 1 },
+      project_graph_summary: {
+        status: "available",
+        nodes: 2,
+        links: 1,
+        captured_at: "2024-01-02T00:00:00+00:00",
+      },
     },
     {
       target_id: "white-jotter-1",
@@ -139,6 +153,13 @@ const SNAPSHOT: EvalSnapshot = {
       diagnoses: [],
       availability: "degraded",
       reason: "verdicts_missing",
+      artifact_summary: { status: "project_artifacts_unavailable", hunting: 0, skills: 0 },
+      project_graph_summary: {
+        status: "project_graph_unavailable",
+        nodes: 0,
+        links: 0,
+        captured_at: null,
+      },
     },
     {
       target_id: "comfyui-1",
@@ -164,6 +185,13 @@ const SNAPSHOT: EvalSnapshot = {
       diagnoses: [],
       availability: "complete",
       reason: null,
+      artifact_summary: { status: "available", hunting: 1, skills: 0 },
+      project_graph_summary: {
+        status: "available",
+        nodes: 1,
+        links: 0,
+        captured_at: "2024-01-03T00:00:00+00:00",
+      },
     },
   ],
   versions: [

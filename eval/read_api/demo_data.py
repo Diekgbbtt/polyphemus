@@ -35,6 +35,8 @@ from pathlib import Path
 import yaml
 
 from orchestrator import files as artifact_files
+from orchestrator import project_artifacts as artifact_catalog
+from orchestrator import project_graph as artifact_graph
 from orchestrator import store as artifact_store
 
 MANIFEST_FILENAME = artifact_store.RUN_MANIFEST
@@ -53,6 +55,12 @@ DEMO_ENV_Y = "demo-env-y"
 DEMO_ENV_Z = "demo-env-z"
 # A fixed timestamp keeps the output byte-identical across runs.
 DEMO_COPIED_AT = "2024-01-01T00:00:00+00:00"
+# The captured graph carries the same fixed clock (never a real timestamp).
+DEMO_CAPTURED_AT = "2024-01-01T00:00:00+00:00"
+# The demo project skill bundle every snapshot Trial carries.
+DEMO_SKILL_NAME = "demo-skill"
+# The synthetic binary asset (non-UTF-8 bytes on purpose).
+DEMO_ASSET_BYTES = b"\x89PNG\r\n\x1a\nSYNTHETIC DEMO ASSET\n"
 # The (synthetic) issue-bank hit the demo diagnoses "match".
 DEMO_ISSUE = {"repo": "org/polyphemus-demo", "number": 7, "title": "[demo] issue"}
 
@@ -347,12 +355,23 @@ def generate(output: str | Path) -> Path:
             diagnoses = [_diagnosis_row(spec, row, chains) for row in spec.diagnoses]
             _write_yaml(trial_dir / DIAGNOSES_FILENAME, diagnoses)
 
+        snapshot = None
+        if spec.verdicts:
+            snapshot = _materialize_project_snapshot(files, trial_dir, spec, chains)
+
         manifest = artifact_store.build_run_manifest(
             _record(spec),
             artifact_store._chain_sources(rows),
             DEMO_COPIED_AT,
             diagnoses_present=bool(spec.diagnoses),
+            project_snapshot=snapshot,
         )
+        if snapshot is not None:
+            # The schema-v2 fingerprint is computed from the exact staged bytes
+            # (Task 3 helper); it is embedded in both available sections.
+            fingerprint = artifact_store._snapshot_sha256(trial_dir, manifest, files)
+            manifest["project_snapshot"]["snapshot_sha256"] = fingerprint
+            manifest["project_artifacts"]["snapshot_sha256"] = fingerprint
         _write_yaml(trial_dir / MANIFEST_FILENAME, manifest)
     return root
 
@@ -499,6 +518,106 @@ def _materialize_chain(
     }
 
 
+def _materialize_project_snapshot(
+    files: artifact_files.FileStore,
+    trial_dir: Path,
+    spec: TrialSpec,
+    chains: dict[str, dict],
+) -> artifact_store.ProjectSnapshot:
+    """A complete, deterministic schema-v2 project snapshot for one demo trial.
+
+    Everything is produced through the production helpers: the graph through
+    `capture_project_graph` (canonical bytes + digest), the inventory through
+    `collect_project_artifacts` (real ids, digests, media types and
+    representations), and the manifest sections through
+    `store.build_run_manifest`. No id, digest, count or entry is hand-authored.
+    """
+    project_root = trial_dir / spec.project_id
+    for vuln_id in sorted(chains):
+        slug = _slug(vuln_id)
+        _write_yaml(
+            project_root
+            / "hunting"
+            / "test-executor-pod"
+            / slug
+            / "variants"
+            / f"{slug}-variant.yaml",
+            {
+                "synthetic": True,
+                "kind": "pod-variant",
+                "trial_id": spec.trial_id,
+                "vuln_id": vuln_id,
+            },
+        )
+
+    skill_dir = project_root / "skills" / DEMO_SKILL_NAME
+    _write_text(skill_dir / "SKILL.md", BANNER + "# Demo skill\n\nSynthetic demo procedure.\n")
+    _write_text(
+        skill_dir / "references" / "overview.md",
+        BANNER + "# Overview\n\nSynthetic demo reference.\n",
+    )
+    _write_text(
+        skill_dir / "scripts" / "check.sh",
+        BANNER + "#!/bin/sh\necho synthetic-demo-skill\n",
+    )
+    _write_bytes(skill_dir / "assets" / "marker.bin", DEMO_ASSET_BYTES)
+
+    payload = _graph_payload(spec, chains)
+    destination = trial_dir / artifact_graph.PROJECT_GRAPH_FILENAME
+    capture = artifact_graph.capture_project_graph(
+        payload,
+        project_id=spec.project_id,
+        captured_at=DEMO_CAPTURED_AT,
+        destination=destination,
+        files=files,
+    )
+    artifacts = artifact_catalog.collect_project_artifacts(
+        trial_dir, spec.project_id, files=files
+    )
+    return artifact_store.ProjectSnapshot(
+        available=True,
+        project_id=spec.project_id,
+        captured_at=DEMO_CAPTURED_AT,
+        graph_sha256=capture.sha256,
+        graph_node_count=len(payload["nodes"]),
+        graph_link_count=len(payload["links"]),
+        artifacts=artifacts,
+    )
+
+
+def _graph_payload(spec: TrialSpec, chains: dict[str, dict]) -> dict:
+    """A deterministic L0/L1 `GraphData` payload for one demo trial."""
+    slugs = sorted({_slug(vuln_id) for vuln_id in chains})
+    service_id = f"service:{spec.target_id}"
+    nodes = [
+        {
+            "id": service_id,
+            "name": f"{spec.target_id} demo service",
+            "type": "L1Service",
+            "properties": {"synthetic": True},
+        }
+    ]
+    for slug in slugs:
+        nodes.append(
+            {
+                "id": f"unit:{slug}",
+                "name": slug,
+                "type": "L1Unit",
+                "properties": {"synthetic": True},
+            }
+        )
+    links = [
+        {
+            "source": service_id,
+            "target": f"unit:{slug}",
+            "type": "contains",
+            "properties": {"synthetic": True},
+        }
+        for slug in slugs
+    ]
+    return {"project_id": spec.project_id, "nodes": nodes, "links": links}
+
+
 def _slug(vuln_id: str) -> str:
     """A path-safe family name for one vuln's artifacts."""
     return "".join(char if char.isalnum() else "-" for char in vuln_id.lower())
@@ -512,6 +631,16 @@ def _relative(path: Path, root: Path) -> str:
 def _write_yaml(path: Path, document: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(BANNER + yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+
+
+def _write_text(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+
+
+def _write_bytes(path: Path, data: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
 
 
 if __name__ == "__main__":  # pragma: no cover - exercised via the CLI command

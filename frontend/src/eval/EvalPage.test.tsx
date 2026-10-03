@@ -35,6 +35,13 @@ const SNAPSHOT: EvalSnapshot = {
       diagnoses: [],
       availability: "complete",
       reason: null,
+      artifact_summary: { status: "available", hunting: 3, skills: 2 },
+      project_graph_summary: {
+        status: "available",
+        nodes: 4,
+        links: 3,
+        captured_at: "2024-01-01T00:00:00+00:00",
+      },
     },
   ],
   versions: [

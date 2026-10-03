@@ -27,6 +27,15 @@ import yaml
 MANIFEST_FILENAME = "run-manifest.yaml"
 VERDICTS_FILENAME = "verdicts.yaml"
 DIAGNOSES_FILENAME = "diagnoses.yaml"
+
+# The lightweight project-snapshot statuses the dashboard consumes.
+ARTIFACTS_AVAILABLE = "available"
+GRAPH_AVAILABLE = "available"
+ARTIFACTS_UNAVAILABLE = "project_artifacts_unavailable"
+GRAPH_UNAVAILABLE = "project_graph_unavailable"
+SNAPSHOT_UNAVAILABLE = "project_snapshot_unavailable"
+STORE_SCHEMA_V2 = 2
+_ARTIFACT_CATEGORIES = ("hunting", "skill")
 # The non-authoritative siblings the store also contains (D7/D12, project
 # artifacts): the rendered deploy dir, the raw one-way live mirror, and the
 # materializer's `_staging/` scratch trees. Never an input to the report.
@@ -154,13 +163,24 @@ def _read_trial(
     eval_sha = _safe_id(manifest.get("eval_sha"))
     stack_fingerprint = _safe_id(manifest.get("stack_fingerprint"))
     meta = _metadata(manifest)
+    artifact_summary, project_graph_summary = _project_summaries(manifest)
     if not eval_sha or not stack_fingerprint:
-        return _record(target_id, target_run_id, trial_id, reason="identity_missing", meta=meta)
+        return _record(
+            target_id,
+            target_run_id,
+            trial_id,
+            reason="identity_missing",
+            meta=meta,
+            artifact_summary=artifact_summary,
+            project_graph_summary=project_graph_summary,
+        )
 
     identity = {
         "eval_sha": eval_sha,
         "stack_fingerprint": stack_fingerprint,
         "meta": meta,
+        "artifact_summary": artifact_summary,
+        "project_graph_summary": project_graph_summary,
     }
     verdicts_path = trial_dir / VERDICTS_FILENAME
     if not verdicts_path.exists():
@@ -498,6 +518,107 @@ def _metadata(manifest: Mapping) -> dict[str, Any]:
     }
 
 
+# --- lightweight project-snapshot summaries ------------------------------------
+
+
+def _historical_artifact_summary() -> dict[str, Any]:
+    return {"status": ARTIFACTS_UNAVAILABLE, "hunting": 0, "skills": 0}
+
+
+def _historical_graph_summary() -> dict[str, Any]:
+    return {"status": GRAPH_UNAVAILABLE, "nodes": 0, "links": 0, "captured_at": None}
+
+
+def _snapshot_unavailable_artifact_summary() -> dict[str, Any]:
+    return {"status": SNAPSHOT_UNAVAILABLE, "hunting": 0, "skills": 0}
+
+
+def _snapshot_unavailable_graph_summary() -> dict[str, Any]:
+    return {"status": SNAPSHOT_UNAVAILABLE, "nodes": 0, "links": 0, "captured_at": None}
+
+
+def _project_summaries(manifest: Mapping) -> tuple[dict[str, Any], dict[str, Any]]:
+    """The lightweight artifact/graph summaries for one manifest.
+
+    A schema-v1 (or unversioned) manifest is a historical Trial and reports the
+    two distinct unavailable statuses. A schema-v2 manifest yields `available`
+    summaries only when the three sections are coherent and complete; a
+    malformed or non-atomic snapshot reports `project_snapshot_unavailable` for
+    both without touching the Trial's own availability or reason.
+    """
+    if manifest.get("schema_version") != STORE_SCHEMA_V2:
+        return _historical_artifact_summary(), _historical_graph_summary()
+
+    snapshot = manifest.get("project_snapshot")
+    artifacts = manifest.get("project_artifacts")
+    graph = manifest.get("project_graph")
+    sections = (snapshot, artifacts, graph)
+    if not all(
+        isinstance(section, Mapping) and section.get("status") == "available"
+        for section in sections
+    ):
+        return _snapshot_unavailable_artifact_summary(), _snapshot_unavailable_graph_summary()
+
+    project_id = _safe_id(manifest.get("project_id"))
+    if project_id is None or any(
+        section.get("project_id") != manifest.get("project_id") for section in sections
+    ):
+        return _snapshot_unavailable_artifact_summary(), _snapshot_unavailable_graph_summary()
+
+    captured_at = snapshot.get("captured_at")
+    if not _is_text(captured_at) or any(
+        section.get("captured_at") != captured_at for section in (artifacts, graph)
+    ):
+        return _snapshot_unavailable_artifact_summary(), _snapshot_unavailable_graph_summary()
+
+    snapshot_fingerprint = snapshot.get("snapshot_sha256")
+    artifacts_fingerprint = artifacts.get("snapshot_sha256")
+    if (
+        not _is_text(snapshot_fingerprint)
+        or snapshot_fingerprint != artifacts_fingerprint
+    ):
+        return _snapshot_unavailable_artifact_summary(), _snapshot_unavailable_graph_summary()
+    if not _is_text(graph.get("sha256")):
+        return _snapshot_unavailable_artifact_summary(), _snapshot_unavailable_graph_summary()
+
+    entries = artifacts.get("entries")
+    if not isinstance(entries, list) or not all(_valid_entry(entry) for entry in entries):
+        return _snapshot_unavailable_artifact_summary(), _snapshot_unavailable_graph_summary()
+    node_count = graph.get("node_count")
+    link_count = graph.get("link_count")
+    if not _is_count(node_count) or not _is_count(link_count):
+        return _snapshot_unavailable_artifact_summary(), _snapshot_unavailable_graph_summary()
+
+    hunting = sum(1 for entry in entries if entry["category"] == "hunting")
+    skills = sum(1 for entry in entries if entry["category"] == "skill")
+    return (
+        {"status": ARTIFACTS_AVAILABLE, "hunting": hunting, "skills": skills},
+        {
+            "status": GRAPH_AVAILABLE,
+            "nodes": node_count,
+            "links": link_count,
+            "captured_at": captured_at,
+        },
+    )
+
+
+def _valid_entry(entry: object) -> bool:
+    if not isinstance(entry, Mapping):
+        return False
+    if entry.get("category") not in _ARTIFACT_CATEGORIES:
+        return False
+    relative = entry.get("relative_path")
+    return isinstance(relative, str) and bool(relative.strip())
+
+
+def _is_text(value: object) -> bool:
+    return isinstance(value, str) and bool(value.strip())
+
+
+def _is_count(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
 def _phases(raw: object) -> list[dict[str, Any]]:
     if not isinstance(raw, list):
         return []
@@ -527,6 +648,8 @@ def _record(
     meta: Mapping[str, Any] | None = None,
     verdicts: list[dict[str, Any]] | None = None,
     diagnoses: list[dict[str, Any]] | None = None,
+    artifact_summary: Mapping[str, Any] | None = None,
+    project_graph_summary: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     meta = meta or {}
     return {
@@ -545,6 +668,8 @@ def _record(
         "diagnoses": diagnoses or [],
         "availability": availability,
         "reason": reason,
+        "artifact_summary": artifact_summary or _historical_artifact_summary(),
+        "project_graph_summary": project_graph_summary or _historical_graph_summary(),
     }
 
 
