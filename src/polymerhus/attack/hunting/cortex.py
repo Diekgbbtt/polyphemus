@@ -6,12 +6,13 @@ stable system prompt - the hunt-orchestrator, the hunter, the pod runner, and
 the pod triager - so all four reason through ONE map of the data layer.
 
 The injected verbatim is the concise conceptual core: the data domains,
-their abstract relationships, and three reasoning rules (the provenance and
-trust boundary, the bounded read discipline, and the grounded-conclusion
-contract). It carries no tools, no flows, and no internal codebase
-information. The full detail (entity homes, per-role tool couplings, the
-RDF<->KB mapping, the reasoning-rule rationale, the pending register) lives in
-the design document `docs/design/cortex-cognitive-architecture-map.md`.
+their abstract relationships, and four reasoning rules (the trust boundary
+over all non-operator content, the anti-repetition read discipline, the
+degraded-is-not-absent rule, and the grounded-conclusion contract). It
+carries no tools, no flows, and no internal codebase information. The full
+detail (entity homes, per-role tool couplings, the RDF<->KB mapping, the
+reasoning-rule rationale, the pending register) lives in the design document
+`docs/design/cortex-cognitive-architecture-map.md`.
 
 Single-source discipline (the `L1_ONTOLOGY_PRIMER` / `QUERY_LIGHTRAG_DESCRIPTION`
 precedent): the map lives in its own file, is read by ONE accessor
