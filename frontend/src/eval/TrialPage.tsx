@@ -1,6 +1,7 @@
 import { Link, useParams } from "react-router-dom"
 import { EvalBreadcrumbs, evalPaths } from "./EvalBreadcrumbs"
 import { useEvalData } from "./EvalDataProvider"
+import { projectPaths } from "../projectPaths"
 import { ARTIFACT_LABELS, ARTIFACT_ORDER, summarizeArtifact } from "./TrialArtifactPage"
 
 // Must match the id TargetPage puts on each TargetRun group.
@@ -58,6 +59,20 @@ export function TrialPage() {
             <span className="eval-chip-value">{trial.availability}</span>
           </li>
         </ul>
+        {trial.project_id && (
+          <p className="eval-trial-workspace">
+            <Link
+              to={projectPaths.trial(
+                trial.project_id,
+                trial.target_id,
+                trial.target_run_id,
+                trial.trial_id,
+              )}
+            >
+              Open project workspace
+            </Link>
+          </p>
+        )}
       </header>
 
       {trial.availability === "degraded" && (

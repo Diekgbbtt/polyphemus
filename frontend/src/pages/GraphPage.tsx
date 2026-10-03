@@ -3,6 +3,8 @@ import { Link, useParams } from "react-router-dom"
 import { useGraphData } from "../graph/useGraphData"
 import { GraphCanvas } from "../graph/GraphCanvas"
 import type { LayerVisibility } from "../graph/projection"
+import { projectPaths } from "../projectPaths"
+import { ProjectNav } from "./ProjectNav"
 
 const LAYERS: { key: keyof LayerVisibility; label: string }[] = [
   { key: "l0", label: "L0" },
@@ -50,14 +52,15 @@ function LayerToggles({
 }
 
 export function GraphPage() {
-  const { id = "" } = useParams()
-  const { data, loading, error } = useGraphData(id)
+  const { projectId = "" } = useParams()
+  const { data, loading, error } = useGraphData(projectId)
   const [layers, setLayers] = useState<LayerVisibility>({ l0: true, l1: true })
   const anyLayer = layers.l0 || layers.l1
   return (
     <main>
       <header style={{ display: "flex", alignItems: "center", gap: 12 }}>
-        <Link to="/">back</Link> <Link to={`/p/${id}/runs`}>running runs</Link>
+        <Link to="/">back</Link> <Link to={projectPaths.runs(projectId)}>running runs</Link>
+        <ProjectNav projectId={projectId} active="graph" />
         <LayerToggles layers={layers} onChange={setLayers} />
       </header>
       {loading && <p>Loading graph...</p>}

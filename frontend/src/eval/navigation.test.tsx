@@ -788,3 +788,28 @@ test("the non-eval routes still render", async () => {
   await waitFor(() => expect(screen.getByText("Projects")).toBeDefined())
   expect(screen.queryByText("Targets (machines)")).toBeNull()
 })
+
+// --- reciprocal link to the project workspace ----------------------------------
+
+test("the eval Trial links to the project workspace with the full identity", async () => {
+  stubFetch(SNAPSHOT)
+  goto("/eval/trials/comfyui-1/run-demo-a/trial-1")
+
+  await waitFor(() =>
+    expect(screen.getByRole("link", { name: "Open project workspace" })).toBeDefined(),
+  )
+  expect(
+    screen.getByRole("link", { name: "Open project workspace" }).getAttribute("href"),
+  ).toBe("/p/proj-comfyui-1/evals/comfyui-1/run-demo-a/trial-1")
+})
+
+test("the eval Trial shows no project link when project_id is null", async () => {
+  stubFetch(SNAPSHOT)
+  // The degraded trial in the corpus carries no project_id.
+  goto("/eval/trials/white-jotter-1/run-demo-a/trial-1")
+
+  await waitFor(() =>
+    expect(screen.getByRole("heading", { name: /Trial trial-1/ })).toBeDefined(),
+  )
+  expect(screen.queryByRole("link", { name: "Open project workspace" })).toBeNull()
+})

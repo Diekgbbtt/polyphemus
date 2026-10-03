@@ -10,6 +10,6 @@ test("runs page shows a stalled badge", async () => {
         jobs: { total: 2, in_progress: 0, success: 1, degraded: 1, skipped: 0, failed: 0 } }] }),
       { status: 200 })) as typeof fetch
   render(<MemoryRouter initialEntries={["/p/p1/runs"]}>
-    <Routes><Route path="/p/:id/runs" element={<RunsPage />} /></Routes></MemoryRouter>)
+    <Routes><Route path="/p/:projectId/runs" element={<RunsPage />} /></Routes></MemoryRouter>)
   await waitFor(() => expect(screen.getByText(/stalled/i)).toBeDefined())
 })

@@ -2,9 +2,11 @@ import { useEffect, useState } from "react"
 import { Link, useParams } from "react-router-dom"
 import { getRunningRuns } from "../api/client"
 import type { RunningRun } from "../api/types"
+import { projectPaths } from "../projectPaths"
+import { ProjectNav } from "./ProjectNav"
 
 export function RunsPage() {
-  const { id = "" } = useParams()
+  const { projectId = "" } = useParams()
   const [runs, setRuns] = useState<RunningRun[]>([])
   useEffect(() => {
     let alive = true
@@ -13,10 +15,13 @@ export function RunsPage() {
     const h = setInterval(tick, 2500)
     return () => { alive = false; clearInterval(h) }
   }, [])
-  const mine = runs.filter((r) => r.project_id === id)
+  const mine = runs.filter((r) => r.project_id === projectId)
   return (
     <main>
-      <header><Link to={`/p/${id}`}>back to graph</Link></header>
+      <header style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <Link to={projectPaths.live(projectId)}>back to graph</Link>
+        <ProjectNav projectId={projectId} active="runs" />
+      </header>
       <h1>Running recon runs</h1>
       {mine.length === 0 && <p>No running runs.</p>}
       <ul>{mine.map((r) => (
