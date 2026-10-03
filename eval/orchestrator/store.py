@@ -389,6 +389,9 @@ def _phase_pointer(phase: Mapping) -> dict:
         "phase": phase.get("phase"),
         "status": phase.get("status"),
         "run_id": phase.get("run_id"),
+        # The id the phase's stop verb expects, when it differs from `run_id`
+        # (analysis is keyed by the recon run id); a terminate reads it.
+        "stop_run_id": phase.get("stop_run_id"),
     }
 
 

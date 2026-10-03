@@ -352,6 +352,32 @@ def test_the_spend_trigger_names_the_phase_it_stopped_in() -> None:
     assert triggers[0].start_phase == "recon"
 
 
+def test_the_spend_trigger_names_the_recon_run_for_an_analysis_stop() -> None:
+    # The analysis stop endpoint is keyed by the recon run id, so the trigger
+    # must use the phase's `stop_run_id`, not the surrogate analysis run id.
+    record = {
+        "instance_id": "arm-a",
+        "target_id": "t1",
+        "project_id": "pid",
+        "phases": [
+            {
+                "phase": "analysis",
+                "status": "stopped",
+                "run_id": "a1",
+                "stop_run_id": "r0",
+            }
+        ],
+        "token_budget": 500,
+        "spent_tokens": 600,
+    }
+
+    triggers = surfer.spend_triggers(record)
+
+    assert triggers[0].run_kind == "analysis"
+    assert triggers[0].run_id == "r0"
+    assert triggers[0].start_phase == "analysis"
+
+
 def test_the_spend_trigger_carries_the_record_baseline() -> None:
     """The resume path reads the persisted baseline off the spend record."""
     record = {
@@ -852,6 +878,37 @@ def test_terminate_stops_the_named_runs_through_the_api(tmp_path) -> None:
     assert outcome.escalated is False
     assert api_runner.paths == ["POST /projects/pid/recon/r1/stop"]
     assert kit.applied == []
+
+
+def test_terminate_stops_an_analysis_spend_trigger_by_recon_run_id(tmp_path) -> None:
+    record = {
+        "instance_id": "arm-a",
+        "target_id": "t1",
+        "project_id": "pid",
+        "phases": [
+            {
+                "phase": "analysis",
+                "status": "stopped",
+                "run_id": "a1",
+                "stop_run_id": "r0",
+            }
+        ],
+        "token_budget": 500,
+        "spent_tokens": 600,
+    }
+    trigger = surfer.spend_triggers(record)[0]
+    asserter = StaticAsserter(state_with(trigger))
+    api_runner = FakeApi()
+    decider = StaticDecider(surfer.SurferDecision(surfer.TERMINATE, reason="budget blown"))
+    kit = FakeRepairKit()
+
+    outcome = make_surfer(
+        asserter, decider, tmp_path=tmp_path, api_runner=api_runner, repair_kit=kit
+    ).cycle()
+
+    assert outcome.action == surfer.TERMINATE
+    assert outcome.escalated is False
+    assert api_runner.paths == ["POST /projects/pid/analysis/r0/stop"]
 
 
 def test_destroy_tears_the_instance_down_through_instances_down(

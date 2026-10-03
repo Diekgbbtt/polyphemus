@@ -61,9 +61,11 @@ class UsageLedger:
                 return
             input_tokens = _int_field(usage, "input_tokens")
             output_tokens = _int_field(usage, "output_tokens")
-            total_tokens = (input_tokens + output_tokens
-                            if "total_tokens" not in usage
-                            else _int_field(usage, "total_tokens"))
+            # A present-but-invalid total must not record zero: fall back to the
+            # input + output sum so the budget is never silently defeated.
+            total_tokens = _int_field(usage, "total_tokens") or (
+                input_tokens + output_tokens
+            )
             key = (project_id or _UNSCOPED, agent)
             with self._lock:
                 entry = self._entries.get(key)

@@ -560,8 +560,24 @@ def test_no_token_budget_makes_no_usage_call(tmp_path) -> None:
 
     t = _trial(tmp_path, api_runner, project_id="pid", token_budget=None)
 
-    assert t._check_spend("pid", "recon", "r1") is False
+    assert t._check_spend("pid", "recon", "r1") is None
     assert api_runner.usage_calls == 0
+
+
+def test_the_spend_check_returns_a_spend_result_on_a_stop(tmp_path) -> None:
+    # The spec contract is `SpendResult | None`: a stop returns the result, a
+    # below-budget check returns None. Call sites only test truthiness.
+    api_runner = SeqUsageApi(_usage_routes(), totals=[1500, 1700])
+
+    t = _trial(
+        tmp_path, api_runner, project_id="pid", token_budget=500, spend_baseline=1000
+    )
+
+    result = t._check_spend("pid", "hunting", "h1")
+
+    assert isinstance(result, trial.SpendResult)
+    assert result.spent == 500
+    assert result.overshoot == 200
 
 
 def test_token_budget_stops_the_run_and_records_the_spend(tmp_path) -> None:
@@ -636,6 +652,45 @@ def test_the_token_budget_is_trial_wide_and_stops_recon(tmp_path) -> None:
     assert not any(c.path.endswith("/hunting") for c in api_runner.calls)
 
 
+def test_an_analysis_token_stop_names_the_recon_run_id(tmp_path) -> None:
+    # The analysis stop endpoint is keyed by the recon run id; the surrogate
+    # `analysis_run_id` is only the launch handle. The record must carry the id
+    # the stop verb expects, or the surfer's terminate is a silent no-op.
+    api_runner = SeqUsageApi(
+        {
+            "GET /projects/pid/recon/r0": {
+                "status": "complete",
+                "per_job": [{"job": "crawl", "status": "complete"}],
+                "stats": {},
+            },
+            "POST /projects/pid/analysis/r0/stop": {"stopped": True},
+            "POST /projects/pid/analysis": {"analysis_run_id": "a1"},
+            "GET /projects/pid/analysis/r0": {"status": "draining"},
+            "GET /projects/pid/graph": GRAPH_L1_L0,
+        },
+        totals=[1000, 1500, 1500],
+    )
+
+    record = _trial(
+        tmp_path,
+        api_runner,
+        start_phase="analysis",
+        project_id="pid",
+        recon_run_id="r0",
+        token_budget=500,
+    ).run()
+
+    stop = next(c for c in api_runner.calls if c.path.endswith("/stop"))
+    assert stop.path == "/projects/pid/analysis/r0/stop"
+    assert record.terminal == "stopped"
+    assert [p.phase for p in record.phases] == ["analysis"]
+    # The analysis consumer id is the surrogate; the recon id is the stop key.
+    assert record.phases[0].run_id == "a1"
+    assert record.phases[0].stop_run_id == "r0"
+    # The analysis stop ends the trial; it never chains into hunting.
+    assert not any(c.path.endswith("/hunting") for c in api_runner.calls)
+
+
 def test_a_resumed_trial_does_not_re_snapshot_the_baseline(tmp_path) -> None:
     api_runner = SeqUsageApi(_usage_routes(), totals=[1500, 1500])
 
@@ -693,6 +748,32 @@ def test_the_spend_check_runs_before_the_cap_in_hunting(tmp_path) -> None:
     assert record.terminal == "stopped"
     assert record.spent_tokens == 500
     assert sum(1 for c in api_runner.calls if c.path.endswith("/stop")) == 1
+
+
+def test_a_malformed_usage_payload_never_falsely_stops(tmp_path) -> None:
+    # The usage endpoint is advisory: a malformed total reads as zero, so the
+    # trial times out rather than falsely tripping the budget.
+    api_runner = FakeApi(
+        {
+            "GET /projects/pid/usage": {"total_tokens": "not-an-int", "by_agent": "oops"},
+            "GET /projects/pid/hunting/h1": {"status": "running"},
+            "POST /projects/pid/hunting": {"hunting_run_id": "h1"},
+            "GET /projects/pid/graph": GRAPH_L1_L0,
+        }
+    )
+
+    record = _trial(
+        tmp_path,
+        api_runner,
+        start_phase="hunting",
+        project_id="pid",
+        token_budget=500,
+        budget_s=25.0,
+        poll_s=10.0,
+    ).run()
+
+    assert record.terminal == "timeout"
+    assert not any(c.path.endswith("/stop") for c in api_runner.calls)
 
 
 # --- pre-mined artifacts ------------------------------------------------------
@@ -907,6 +988,13 @@ def test_plan_lists_the_calls_without_reading(tmp_path) -> None:
     assert "POST /projects" in text
     assert "with_analysis" in text
     assert "poll" in text.lower()
+
+
+def test_the_plan_names_the_token_budget_when_set(tmp_path) -> None:
+    plan = _trial(tmp_path, api_runner=None, token_budget=1234).plan()
+
+    note = next(s.note for s in plan.steps if s.label == "hunting entry + launch")
+    assert "token budget 1234" in note
 
 
 # --- chaining: setup outcome -> repair or escalate ----------------------------

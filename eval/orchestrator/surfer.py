@@ -512,7 +512,7 @@ def spend_triggers(record: Mapping) -> list[Trigger]:
     phase = _stopped_phase(record)
     if phase is not None:
         run_kind = str(phase.get("phase") or "hunting")
-        run_id = phase.get("run_id")
+        run_id = _phase_stop_run_id(phase)
     else:
         run_kind = "hunting"
         run_id = _hunting_run_id(record)
@@ -649,10 +649,19 @@ def _recon_run_id(record: Mapping) -> str | None:
     return record.get("recon_run_id")
 
 
+def _phase_stop_run_id(phase: Mapping) -> str | None:
+    """The run id a phase's stop verb expects: `stop_run_id`, else `run_id`.
+
+    The analysis stop is keyed by the recon run id, recorded as `stop_run_id`;
+    recon and hunting carry the same id in both fields.
+    """
+    return phase.get("stop_run_id") or phase.get("run_id")
+
+
 def _hunting_run_id(record: Mapping) -> str | None:
     for phase in phase_mappings(record):
         if phase.get("phase") == "hunting":
-            return phase.get("run_id")
+            return _phase_stop_run_id(phase)
     return record.get("hunting_run_id")
 
 

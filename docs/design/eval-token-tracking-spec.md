@@ -114,3 +114,5 @@ Tokens only. Cost is out of scope.
 - The middleware must not depend on Langfuse being configured.
 - The token budget is trial-wide (checked in every phase poll), unlike the hunting cap, which is hunting-only.
 - The `spend_baseline` mirrors `cap_baseline`: it protects a resumed or seeded trial from a prior run's spend.
+- **Known limitation:** a blackloop-cut streamed turn closes the stream before the model response completes, so `wrap_model_call` never records usage and the cut turn's tokens are not counted.
+  The provider does not deliver usage on a client-aborted stream, and the harness never fabricates an estimated number, so a trial's recorded spend can undercount by the cut turns it ran.

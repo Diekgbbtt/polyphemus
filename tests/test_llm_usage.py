@@ -8,6 +8,9 @@ actually records a real `create_agent` run.
 """
 from __future__ import annotations
 
+import threading
+from types import SimpleNamespace
+
 import pytest
 from langchain.agents import create_agent
 from langchain_core.language_models import BaseChatModel
@@ -111,6 +114,58 @@ def test_none_or_empty_usage_is_a_no_op():
     assert snap["by_agent"] == {}
 
 
+def test_a_partial_total_falls_back_to_input_plus_output():
+    # A present-but-invalid total must not record zero and silently defeat the
+    # budget; fall back to the input + output sum.
+    ledger = UsageLedger()
+    ledger.record(
+        "proj-1",
+        "assigner",
+        {"input_tokens": 10, "output_tokens": 5, "total_tokens": None},
+    )
+    snap = ledger.snapshot("proj-1")
+    assert snap["total_tokens"] == 15
+    assert snap["by_agent"]["assigner"]["total_tokens"] == 15
+
+
+def test_a_non_mapping_usage_payload_is_swallowed():
+    ledger = UsageLedger()
+    ledger.record("proj-1", "assigner", "not-a-mapping")  # type: ignore[arg-type]
+    assert ledger.snapshot("proj-1") == {
+        "project_id": "proj-1",
+        "total_tokens": 0,
+        "calls": 0,
+        "by_agent": {},
+    }
+
+
+def test_concurrent_record_and_snapshot_stay_consistent():
+    ledger = UsageLedger()
+
+    def writer() -> None:
+        for _ in range(200):
+            ledger.record(
+                "proj-1",
+                "assigner",
+                {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
+            )
+
+    def reader() -> None:
+        for _ in range(200):
+            ledger.snapshot("proj-1")
+
+    threads = [threading.Thread(target=writer) for _ in range(4)]
+    threads += [threading.Thread(target=reader) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    snap = ledger.snapshot("proj-1")
+    assert snap["calls"] == 800
+    assert snap["total_tokens"] == 1600
+
+
 def test_reset_clears_all_state():
     ledger = UsageLedger()
     ledger.record("proj-1", "assigner", {"input_tokens": 4, "output_tokens": 4,
@@ -158,6 +213,40 @@ def test_middleware_without_config_metadata_does_not_raise():
     agent = _usage_agent()
     # No metadata at all: the record lands in the unscoped bucket, never raises.
     agent.invoke({"messages": [HumanMessage(content="hi")]})
+    assert usage_ledger().snapshot("proj-1")["total_tokens"] == 0
+
+
+def test_middleware_non_mapping_usage_metadata_does_not_raise():
+    # A malformed payload (here a string, bypassing the message's validation)
+    # must fail open: no raise, nothing recorded.
+    response = SimpleNamespace(
+        result=[AIMessage.model_construct(content="x", usage_metadata="oops")]
+    )
+    out = usage_middleware().wrap_model_call(object(), lambda _request: response)
+    assert out is response
+    assert usage_ledger().snapshot("proj-1")["total_tokens"] == 0
+
+
+def test_middleware_swallows_a_raising_get_config(monkeypatch):
+    import langgraph.config as config
+
+    def boom():
+        raise RuntimeError("no run context")
+
+    monkeypatch.setattr(config, "get_config", boom)
+    response = SimpleNamespace(result=[AIMessage(content="x", usage_metadata=dict(_USAGE))])
+    out = usage_middleware().wrap_model_call(object(), lambda _request: response)
+    assert out is response
+    assert usage_ledger().snapshot("proj-1")["total_tokens"] == 0
+
+
+def test_a_cut_streamed_turn_records_no_usage():
+    # WHY: a blackloop-cut stream closes before the provider delivers usage, so
+    # there is nothing to count (accepted limitation, spec "Known limitation").
+    # Pin that the cut records nothing rather than fabricating an estimate.
+    response = SimpleNamespace(result=[AIMessage(content="partial")])
+    out = usage_middleware().wrap_model_call(object(), lambda _request: response)
+    assert out is response
     assert usage_ledger().snapshot("proj-1")["total_tokens"] == 0
 
 

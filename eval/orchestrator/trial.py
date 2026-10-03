@@ -215,6 +215,10 @@ class PhaseRecord:
     entered: bool = False
     status: str | None = None
     run_id: str | None = None
+    # The run id the phase's stop verb expects, when it differs from `run_id`
+    # (the analysis stop is keyed by the recon run id, not the consumer id).
+    # The surfer names this id so its terminate is not a silent no-op.
+    stop_run_id: str | None = None
     blocks: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
     # Why the phase failed (a failed terminal, or a `complete` run whose
@@ -733,6 +737,7 @@ class Trial:
             entered=True,
             status=status,
             run_id=run_id,
+            stop_run_id=run_id,
             notes=notes,
             failure=failure,
         )
@@ -759,6 +764,9 @@ class Trial:
             entered=True,
             status=status,
             run_id=analysis_run_id,
+            # The analysis stop is keyed by the recon run id, not the consumer
+            # surrogate; record it so the surfer stops the run the trial stopped.
+            stop_run_id=state.recon_run_id,
             notes=list(gate.notes),
         )
 
@@ -775,6 +783,7 @@ class Trial:
             entered=True,
             status=result.status,
             run_id=run_id,
+            stop_run_id=run_id,
             notes=list(gate.notes),
         )
         return phase, result
@@ -802,8 +811,8 @@ class Trial:
                 return "timeout"
             self._sleep(self.config.poll_s)
 
-    def _check_spend(self, project_id: str, run_kind: str, run_id: str) -> bool:
-        """Enforce the trial-wide token budget; True when it stops the run.
+    def _check_spend(self, project_id: str, run_kind: str, run_id: str) -> SpendResult | None:
+        """Enforce the trial-wide token budget; a `SpendResult` when it stops.
 
         No configured budget means no API call at all, so an unbudgeted trial
         pays nothing. The first check snapshots the project's cumulative token
@@ -813,14 +822,14 @@ class Trial:
         """
         budget = self.config.token_budget
         if budget is None:
-            return False
+            return None
         resp = self._call(api.usage(project_id))
         total = api.usage_total(resp)
         if self._spend_baseline is None:
             self._spend_baseline = total
         spent = max(0, total - self._spend_baseline)
         if spent < budget:
-            return False
+            return None
         self._call(api.stop_run(project_id, run_kind, run_id))
         # Re-read after the stop: the in-flight work may add tokens past the
         # budget, which is the recorded overshoot.
@@ -830,7 +839,7 @@ class Trial:
             overshoot=max(0, final_total - self._spend_baseline - budget),
             by_agent=api.usage_by_agent(resp),
         )
-        return True
+        return self._spend
 
     def _poll_hunting(self, project_id: str, run_id: str) -> PollResult:
         cfg = self.config
