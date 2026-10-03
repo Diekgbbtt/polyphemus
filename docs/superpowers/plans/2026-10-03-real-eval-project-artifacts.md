@@ -62,8 +62,8 @@
 
 ### Task 1: Allowlisted project-artifact catalog
 
-**Implementation state:** Base implementation committed as `30799ff9`; review
-found one compatibility gap before this task can pass its gate.
+**Implementation state:** Complete in `30799ff9` plus compatibility fix
+`021d884d`; independently verified with 8 focused tests passing.
 
 **Files:**
 - Create: `eval/orchestrator/project_artifacts.py`
@@ -106,7 +106,7 @@ git add eval/orchestrator/project_artifacts.py eval/orchestrator/files.py tests/
 git commit -m "feat(eval): catalog project artifacts for trial snapshots"
 ```
 
-- [ ] **Step 7: Add the failing real-key compatibility regression**
+- [x] **Step 7: Add the failing real-key compatibility regression**
 
 Add `test_accepts_domain_punctuation_in_dynamic_segments`. Create allowlisted
 files below dynamic directories containing `fault:http:request`,
@@ -114,27 +114,27 @@ files below dynamic directories containing `fault:http:request`,
 keeps exact POSIX paths. Extend the unsafe-segment test to reject `.`, `..`,
 slash, backslash, NUL, and a control character.
 
-- [ ] **Step 8: Run the new regression and observe the current rejection**
+- [x] **Step 8: Run the new regression and observe the current rejection**
 
 Run: `PYTHONPATH=eval .venv/bin/python -m pytest tests/eval/test_orchestrator_project_artifacts.py -q`
 
 Expected: FAIL only for valid punctuation rejected by the current segment
 validator.
 
-- [ ] **Step 9: Relax only the dynamic-segment validator**
+- [x] **Step 9: Relax only the dynamic-segment validator**
 
 Replace the restrictive character allowlist with a path-safety predicate that
 accepts domain punctuation but rejects the exact unsafe values from Step 7.
 Keep project-id validation, containment, symlink/special-file behavior,
 classification, and all public interfaces unchanged.
 
-- [ ] **Step 10: Run the complete catalog suite**
+- [x] **Step 10: Run the complete catalog suite**
 
 Run: `PYTHONPATH=eval .venv/bin/python -m pytest tests/eval/test_orchestrator_project_artifacts.py -q`
 
 Expected: all tests PASS.
 
-- [ ] **Step 11: Commit the compatibility fix**
+- [x] **Step 11: Commit the compatibility fix**
 
 ```bash
 git add eval/orchestrator/project_artifacts.py tests/eval/test_orchestrator_project_artifacts.py
