@@ -139,3 +139,26 @@ NONE
 
 Refreshed the README status/open-items section, the decomposition report's open questions, and the cross-stream status map and audit findings (each finding now carries its closure status).
 
+## Machine-check runs
+
+### After Phase A
+
+Command: `bash skills-unspurious/_completion/verify.sh`
+
+Output:
+```
+== W0+W1 completion checks (2026-10-03T11:55Z) ==
+PASS  no stale 'awaiting operator review' in boundary/ontology
+PASS  stale agnosticism lines gone; llm-prompt-injection carries no Framework-Specific
+PASS  skills-ontology.md references the boundary
+PASS  cross-stream doc tracked; citations present
+PASS  arsenal ticket #303 exists and is linked from SCREAMING-REPORT
+PENDING  taxonomy document (B1)
+PENDING  defence-bypass / proxy-techniques families (C1)
+PASS  101 child SKILL.md present (found 101)
+PASS  every child frontmatter name equals its directory
+PASS  no em dashes in authored Markdown
+== ALL-CHECKS-PASS ==
+exit=0
+```
+
