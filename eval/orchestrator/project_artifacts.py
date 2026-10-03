@@ -226,7 +226,7 @@ def collect_project_artifacts(
             size = files.file_size(path)
         except OSError:
             pass
-        media_type, representation = _classify(relative)
+        media_type, representation = classify_artifact(relative)
         artifacts.append(
             ProjectArtifact(
                 artifact_id=hashlib.sha256(relative.encode()).hexdigest(),
@@ -246,8 +246,13 @@ def collect_project_artifacts(
 # --- classification -----------------------------------------------------------
 
 
-def _classify(relative_path: str) -> tuple[str, str]:
-    """The explicit (media type, representation) for a relative path's suffix."""
+def classify_artifact(relative_path: str) -> tuple[str, str]:
+    """The explicit (media type, representation) for a relative path's suffix.
+
+    An unknown or missing extension falls back to
+    `("application/octet-stream", "binary")`. This is the single classifier the
+    catalog and the read API both validate against.
+    """
     suffix = Path(relative_path).suffix.lower()
     return _EXTENSION_MEDIA.get(suffix, _DEFAULT_MEDIA)
 
@@ -500,5 +505,6 @@ __all__ = [
     "ProjectArtifact",
     "ProjectArtifactError",
     "artifact_manifest",
+    "classify_artifact",
     "collect_project_artifacts",
 ]

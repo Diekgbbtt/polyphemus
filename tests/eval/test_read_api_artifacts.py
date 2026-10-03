@@ -152,6 +152,20 @@ def _entries_by_path(store: Path) -> dict[str, dict]:
     return {e["relative_path"]: e for e in manifest["project_artifacts"]["entries"]}
 
 
+def _tamper_entry(store: Path, relative: str, **overrides: object) -> dict:
+    """Rewrite one inventory entry's metadata without recollecting the files."""
+    manifest_path = store / TARGET / RUN / TRIAL / "run-manifest.yaml"
+    manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+    for entry in manifest["project_artifacts"]["entries"]:
+        if entry["relative_path"] == relative:
+            entry.update(overrides)
+            manifest_path.write_text(
+                yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8"
+            )
+            return entry
+    raise AssertionError(f"no inventory entry for {relative}")
+
+
 # --- inventory ------------------------------------------------------------------
 
 
@@ -306,6 +320,29 @@ def test_detail_binary_is_metadata_only(tmp_path: Path) -> None:
     assert "PNG" not in json.dumps(body)
 
 
+def test_detail_yaml_binary_tag_is_unsupported_not_a_500(tmp_path: Path) -> None:
+    store = tmp_path / "store"
+    raw = b"payload: !!binary /w==\n"
+    _build_trial(
+        store,
+        extra={"hunting/orchestration/hunt_configs/produced/binary.yaml": raw},
+    )
+    entry = _entries_by_path(store)[
+        "hunting/orchestration/hunt_configs/produced/binary.yaml"
+    ]
+    client = _client(store)
+
+    res = client.get(_detail_url(entry["artifact_id"]))
+
+    assert res.status_code == 200
+    preview = res.json()["preview"]
+    assert preview["parsed"] is None
+    assert preview["parse_error"] == "unsupported_yaml_value"
+    assert preview["text"] == raw.decode()
+    # The raw download is still available.
+    assert client.get(_content_url(entry["artifact_id"])).content == raw
+
+
 # --- exact preview boundaries ----------------------------------------------------
 
 
@@ -329,6 +366,36 @@ def test_text_preview_512k_plus_one_is_truncated(tmp_path: Path) -> None:
 
     assert preview["truncated"] is True
     assert preview["text"] == "a" * MAX_PREVIEW
+
+
+def test_truncated_preview_with_invalid_byte_reports_invalid_utf8(tmp_path: Path) -> None:
+    store = tmp_path / "store"
+    # The 0xff sits inside the preview window, not at a genuine UTF-8 boundary.
+    over = b"a" * (MAX_PREVIEW - 1) + b"\xff" + b"x" * 16
+    _build_trial(store, extra={"skills/authn/references/invalid.md": over})
+    entry = _entries_by_path(store)["skills/authn/references/invalid.md"]
+
+    preview = _client(store).get(_detail_url(entry["artifact_id"])).json()["preview"]
+
+    assert preview["truncated"] is True
+    assert preview["text"] is None
+    assert preview["parse_error"] == "invalid_utf8"
+
+
+def test_truncated_preview_trims_a_split_multibyte_character(tmp_path: Path) -> None:
+    store = tmp_path / "store"
+    # The euro sign's first byte lands exactly at the 512 KiB preview boundary.
+    text = b"a" * (MAX_PREVIEW - 1) + "\u20ac".encode("utf-8")
+    _build_trial(store, extra={"skills/authn/references/split.md": text})
+    entry = _entries_by_path(store)["skills/authn/references/split.md"]
+
+    res = _client(store).get(_detail_url(entry["artifact_id"]))
+
+    assert res.status_code == 200
+    preview = res.json()["preview"]
+    assert preview["truncated"] is True
+    assert preview["parse_error"] is None
+    assert preview["text"] == "a" * (MAX_PREVIEW - 1)
 
 
 def _yaml_bytes(size: int) -> bytes:
@@ -512,6 +579,37 @@ def test_unsafe_inventory_metadata_is_artifact_unsafe(tmp_path: Path) -> None:
 
     assert res.status_code == 409
     assert res.json()["detail"] == "artifact_unsafe"
+    assert str(tmp_path) not in res.text
+
+
+def test_representation_mismatch_is_artifact_unsafe(tmp_path: Path) -> None:
+    store = tmp_path / "store"
+    _build_trial(store, extra={"skills/authn/assets/icon.svg": b"<svg></svg>\n"})
+    _tamper_entry(store, "skills/authn/assets/icon.svg", media_type="text/plain", representation="text")
+
+    res = _client(store).get(_list_url())
+
+    assert res.status_code == 409
+    assert res.json()["detail"] == "artifact_unsafe"
+    assert str(tmp_path) not in res.text
+
+
+def test_media_type_with_crlf_is_artifact_unsafe_without_header_injection(
+    tmp_path: Path,
+) -> None:
+    store = tmp_path / "store"
+    _build_trial(store)
+    _tamper_entry(
+        store,
+        "skills/authn/SKILL.md",
+        media_type="text/markdown\r\nX-Injected: yes",
+    )
+
+    res = _client(store).get(_list_url())
+
+    assert res.status_code == 409
+    assert res.json()["detail"] == "artifact_unsafe"
+    assert "x-injected" not in {key.lower() for key in res.headers}
     assert str(tmp_path) not in res.text
 
 

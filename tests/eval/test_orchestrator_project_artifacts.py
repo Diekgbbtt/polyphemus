@@ -20,6 +20,7 @@ from orchestrator.project_artifacts import (
     ProjectArtifact,
     ProjectArtifactError,
     artifact_manifest,
+    classify_artifact,
     collect_project_artifacts,
 )
 
@@ -63,6 +64,28 @@ def _build_full_project(root: Path) -> Path:
     _write(project, "skills/authn/scripts/run.sh", "echo hi\n")
     _write(project, "skills/authn/assets/logo.png", b"\x89PNG\r\n\x1a\n\x00\x01")
     return project
+
+
+def test_classify_artifact_maps_extensions_and_falls_back() -> None:
+    assert classify_artifact("hunting/x.yaml") == ("application/yaml", "yaml")
+    assert classify_artifact("skills/a/SKILL.md") == ("text/markdown", "markdown")
+    assert classify_artifact("skills/a/scripts/run.sh") == ("text/x-shellscript", "text")
+    assert classify_artifact("skills/a/assets/logo.svg") == ("image/svg+xml", "binary")
+    assert classify_artifact("skills/a/assets/logo.bin") == (
+        "application/octet-stream",
+        "binary",
+    )
+    # An unknown (or missing) extension falls back to octet-stream/binary.
+    assert classify_artifact("skills/a/assets/mystery.xyz") == (
+        "application/octet-stream",
+        "binary",
+    )
+    assert classify_artifact("skills/a/assets/noextension") == (
+        "application/octet-stream",
+        "binary",
+    )
+    # Extension matching is case-insensitive.
+    assert classify_artifact("skills/a/assets/LOGO.PNG") == ("image/png", "binary")
 
 
 def test_collects_every_hunting_and_skill_family(tmp_path: Path) -> None:

@@ -12,7 +12,9 @@ Errors are path-free codes only; import performs no I/O.
 from __future__ import annotations
 
 import hashlib
+import math
 import re
+from datetime import date, datetime, time
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -20,6 +22,8 @@ from typing import Any
 from urllib.parse import quote
 
 import yaml
+
+from orchestrator.project_artifacts import classify_artifact
 
 MANIFEST_FILENAME = "run-manifest.yaml"
 STORE_SCHEMA_VERSION = 2
@@ -51,6 +55,10 @@ _HUNT_KINDS = ("hunt_config", "test_spec", "pod_variant", "experiment_log", "pod
 _SKILL_KINDS = ("skill_procedure", "skill_reference", "skill_script", "skill_asset")
 _REPRESENTATIONS = ("yaml", "markdown", "text", "binary")
 _SAFE_FILENAME = re.compile(r"[^A-Za-z0-9._-]+")
+# A strict RFC 7230 media-type token: no control characters, CR, or LF.
+_MEDIA_TYPE = re.compile(
+    r"^[!#$%&'*+.^_`|~0-9A-Za-z-]+/[!#$%&'*+.^_`|~0-9A-Za-z-]+$"
+)
 # Media types that may execute or render when opened directly in a browser.
 _ACTIVE_MEDIA_TYPES = frozenset(
     {
@@ -63,6 +71,10 @@ _ACTIVE_MEDIA_TYPES = frozenset(
         "application/javascript",
     }
 )
+
+
+class _UnsupportedYamlValue(Exception):
+    """A parsed YAML value that cannot be represented as deterministic JSON."""
 
 
 class ArtifactLookupError(RuntimeError):
@@ -217,6 +229,10 @@ def _validated_entry(raw: object) -> dict:
         raise _error(ARTIFACT_UNSAFE, 409)
     if not _is_text(entry["relative_path"]) or not _is_text(entry["media_type"]):
         raise _error(ARTIFACT_UNSAFE, 409)
+    if not _is_media_type(entry["media_type"]):
+        # A MIME containing CR/LF (or any control character) must never reach a
+        # response header.
+        raise _error(ARTIFACT_UNSAFE, 409)
     if not _is_text(entry["sha256"]):
         raise _error(ARTIFACT_UNSAFE, 409)
     if not _is_count(entry["size_bytes"]):
@@ -230,6 +246,16 @@ def _validated_entry(raw: object) -> dict:
         raise _error(ARTIFACT_UNSAFE, 409)
     expected_category = "skill" if entry["kind"] in _SKILL_KINDS else "hunting"
     if entry["category"] != expected_category:
+        raise _error(ARTIFACT_UNSAFE, 409)
+    # The media type and representation are a pure function of the path suffix;
+    # a forged pair (e.g. an SVG as text/plain) is unsafe metadata.
+    expected_media_type, expected_representation = classify_artifact(
+        entry["relative_path"]
+    )
+    if (
+        entry["media_type"] != expected_media_type
+        or entry["representation"] != expected_representation
+    ):
         raise _error(ARTIFACT_UNSAFE, 409)
     return entry
 
@@ -378,17 +404,25 @@ def _read_head(path: Path, count: int) -> bytes:
 
 
 def _decode_preview(head: bytes, *, truncated: bool) -> str | None:
-    """Strict UTF-8, trimming a split trailing character when truncating."""
+    """Strict UTF-8, trimming a genuinely incomplete trailing sequence.
+
+    A final trim is valid only when the error is an *unexpected end of data* at
+    the very end of the buffer (a multibyte code point cut by the byte-limit
+    boundary). An invalid start byte, invalid continuation byte, or any earlier
+    error is real corruption and reports `invalid_utf8`.
+    """
     try:
         return head.decode("utf-8")
-    except UnicodeDecodeError:
-        if truncated:
-            for trim in range(1, 4):
-                candidate = head[: len(head) - trim]
-                try:
-                    return candidate.decode("utf-8")
-                except UnicodeDecodeError:
-                    continue
+    except UnicodeDecodeError as exc:
+        if (
+            truncated
+            and exc.reason == "unexpected end of data"
+            and exc.end == len(head)
+        ):
+            try:
+                return head[: exc.start].decode("utf-8")
+            except UnicodeDecodeError:
+                return None
         return None
 
 
@@ -402,9 +436,62 @@ def _parse_yaml(path: Path) -> tuple[Any, str | None]:
     except UnicodeDecodeError:
         return None, "invalid_utf8"
     try:
-        return yaml.safe_load(text), None
+        loaded = yaml.safe_load(text)
     except yaml.YAMLError:
         return None, "invalid_yaml"
+    try:
+        return _json_safe(loaded), None
+    except _UnsupportedYamlValue:
+        return None, "unsupported_yaml_value"
+
+
+def _json_safe(value: Any) -> Any:
+    """Convert a `yaml.safe_load` value into a deterministic JSON-safe structure.
+
+    `!!binary` (bytes), `!!set`, non-finite floats, and any other value that has
+    no faithful JSON form raise `_UnsupportedYamlValue`; dates and times convert
+    to their stable ISO 8601 string. Mapping keys are coerced to strings, with a
+    collision treated as unsupported.
+    """
+    if value is None or isinstance(value, (str, bool)):
+        return value
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        if math.isfinite(value):
+            return value
+        raise _UnsupportedYamlValue()
+    if isinstance(value, (datetime, date, time)):
+        return value.isoformat()
+    if isinstance(value, list):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, Mapping):
+        converted: dict[str, Any] = {}
+        for key, item in value.items():
+            safe_key = _json_safe_key(key)
+            if safe_key in converted:
+                raise _UnsupportedYamlValue()
+            converted[safe_key] = _json_safe(item)
+        return converted
+    raise _UnsupportedYamlValue()
+
+
+def _json_safe_key(key: Any) -> str:
+    if isinstance(key, str):
+        return key
+    if isinstance(key, bool):
+        return "true" if key else "false"
+    if isinstance(key, int):
+        return str(key)
+    if isinstance(key, float):
+        if math.isfinite(key):
+            return repr(key)
+        raise _UnsupportedYamlValue()
+    if key is None:
+        return "null"
+    if isinstance(key, (datetime, date, time)):
+        return key.isoformat()
+    raise _UnsupportedYamlValue()
 
 
 # --- grouping -------------------------------------------------------------------
@@ -502,6 +589,10 @@ def _is_within(root: str | Path, path: str | Path) -> bool:
 
 def _is_text(value: object) -> bool:
     return isinstance(value, str) and bool(value.strip())
+
+
+def _is_media_type(value: object) -> bool:
+    return isinstance(value, str) and bool(_MEDIA_TYPE.match(value))
 
 
 def _is_count(value: object) -> bool:
