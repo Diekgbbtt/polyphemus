@@ -310,6 +310,10 @@ Tests to write: Every named Task 3 publication, failure-isolation, digest, dedup
 
 ### Task 4: Lightweight projection and reproducible demo data
 
+**Implementation state:** Complete in `85b772b2`; independently verified with
+58 focused backend tests, 124 backend regression tests, 40 frontend tests, and
+the production frontend build passing.
+
 **Files:**
 - Modify: `eval/read_api/projection.py`
 - Modify: `eval/read_api/demo_data.py`
@@ -321,7 +325,7 @@ Tests to write: Every named Task 3 publication, failure-isolation, digest, dedup
 - Consumes: schema-v2 `run-manifest.yaml` from Task 3.
 - Produces: every projected `EvalTrial` retains `project_id` and carries `artifact_summary: {status, hunting, skills}` plus `project_graph_summary: {status, nodes, links, captured_at}`; demo Trials contain a deterministic historical graph and safe synthetic hunting/skill artifacts.
 
-- [ ] **Step 1: Add failing schema compatibility tests**
+- [x] **Step 1: Add failing schema compatibility tests**
 
 Add `test_schema_v2_projects_lightweight_project_snapshot_summaries` and
 `test_schema_v1_project_snapshot_is_unavailable_not_degraded`. Assert
@@ -329,20 +333,20 @@ Add `test_schema_v2_projects_lightweight_project_snapshot_summaries` and
 `/snapshot` contains no nodes, links, `relative_path`, artifact body, or
 inventory entries.
 
-- [ ] **Step 2: Run projection tests and confirm the missing field**
+- [x] **Step 2: Run projection tests and confirm the missing field**
 
 Run: `PYTHONPATH=eval .venv/bin/python -m pytest tests/eval/test_read_api_projection.py -q`
 
 Expected: FAIL because project graph/artifact summaries are absent.
 
-- [ ] **Step 3: Implement summary projection and TypeScript wire type**
+- [x] **Step 3: Implement summary projection and TypeScript wire type**
 
 Add `ProjectArtifactSummary` and `ProjectGraphSummary` in
 `frontend/src/eval/types.ts`, and require both summaries plus `project_id` on
 `EvalTrial`. Treat malformed or non-atomic schema-v2 project sections as
 unavailable without changing Trial `availability` or `reason`.
 
-- [ ] **Step 4: Extend the synthetic corpus through production inventory helpers**
+- [x] **Step 4: Extend the synthetic corpus through production inventory helpers**
 
 For at least one complete demo Trial, create a normalized synthetic graph plus
 a hunt config, test spec, pod export/log/variant, `SKILL.md`, Markdown
@@ -350,19 +354,19 @@ reference, script, and binary asset. Generate graph metadata through Task 2
 helpers and inventory through Task 1 helpers; do not hand-author ids or
 digests. Keep the Compose demo overlay unchanged.
 
-- [ ] **Step 5: Pin demo determinism and privacy**
+- [x] **Step 5: Pin demo determinism and privacy**
 
 Add assertions that two generations are byte-equivalent, graph/artifact counts
 are stable, no graph or binary body enters `/snapshot`, and the intentionally
 degraded demo Trial stays degraded only for its existing reason.
 
-- [ ] **Step 6: Run projection and demo tests**
+- [x] **Step 6: Run projection and demo tests**
 
 Run: `PYTHONPATH=eval .venv/bin/python -m pytest tests/eval/test_read_api_projection.py tests/eval/test_read_api_demo_data.py -q`
 
 Expected: all tests PASS.
 
-- [ ] **Step 7: Commit projection compatibility**
+- [x] **Step 7: Commit projection compatibility**
 
 ```bash
 git add eval/read_api/projection.py eval/read_api/demo_data.py tests/eval/test_read_api_projection.py tests/eval/test_read_api_demo_data.py frontend/src/eval/types.ts
