@@ -13,6 +13,7 @@ Import performs no I/O (CODING_STANDARD section 6).
 from __future__ import annotations
 
 import os
+import stat
 import tempfile
 from pathlib import Path
 
@@ -205,6 +206,34 @@ class FileStore:
         if not self.is_dir(base):
             return []
         return sorted(p for p in base.rglob("*") if self.is_file(p))
+
+    def walk_regular_files(self, directory: str | Path) -> list[Path]:
+        """Every true regular file under `directory` recursively, sorted.
+
+        Unlike `walk_files` (which follows symlinks through `Path.is_file`),
+        this uses `lstat` so a symlink or special file is never reported as an
+        eligible regular file. Missing directories return `[]`.
+        """
+        base = Path(directory)
+        if not self.is_dir(base):
+            return []
+        found: list[Path] = []
+        for candidate in base.rglob("*"):
+            try:
+                mode = candidate.lstat().st_mode
+            except OSError:
+                continue
+            if stat.S_ISREG(mode):
+                found.append(candidate)
+        return sorted(found)
+
+    def is_symlink(self, path: str | Path) -> bool:
+        """True when `path` itself (not its target) is a symlink; missing -> False."""
+        return Path(path).is_symlink()
+
+    def file_size(self, path: str | Path) -> int:
+        """The size in bytes of `path` as reported by `stat`."""
+        return Path(path).stat().st_size
 
     def count_files(self, directory: str | Path) -> int:
         """The number of regular files directly under `directory`."""
