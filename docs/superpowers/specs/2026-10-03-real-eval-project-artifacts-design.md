@@ -1,23 +1,28 @@
-# Real eval project artifacts dashboard design
+# Real eval project workspace and artifacts dashboard design
 
 ## Status
 
-Approved design for `feat/eval-pipeline-frontend`. This document extends the
-read-only eval dashboard defined in `docs/design/eval-dashboard-290-spec.md`.
-It does not authorize implementation by itself; implementation follows a
-separate reviewed plan.
+Conversationally approved design for `feat/eval-pipeline-frontend`, revised to
+unify the existing project L0/L1 frontend with the real-eval artifact work.
+This document extends the read-only eval dashboard defined in
+`docs/design/eval-dashboard-290-spec.md`. It does not authorize implementation
+by itself; implementation follows a separate reviewed plan.
 
 ## Objective
 
-Serve the dashboard from the real eval server and let an operator inspect the
-immutable hunting artifacts and project-authored skills that belonged to a
-completed eval Trial.
+Serve the dashboard from the real eval server and give an operator one project
+workspace for the live project plus the immutable L0/L1 graph, hunting
+artifacts, and project-authored skills that belonged to each completed eval
+Trial.
 
 Success means:
 
 - the read API runs beside the real artifact store and mounts it read-only;
 - a newly materialized Trial contains a complete, immutable snapshot of the
-  approved project-artifact paths;
+  approved project-artifact paths and the Trial's final L0/L1 graph;
+- the existing project page becomes the common entry point for live graph,
+  runs, eval Trials, and Trial project snapshots;
+- a historical Trial view never silently substitutes the current live graph;
 - `/snapshot` remains lightweight while project artifacts load on demand;
 - the frontend provides semantic views for known formats and raw access for
   every allowlisted artifact;
@@ -41,6 +46,16 @@ Success means:
 7. Existing demo behavior remains separate from the real deployment overlay.
 8. Historical schema-v1 Trials expose `project_artifacts_unavailable`; the
    system does not backfill them from `live/`.
+9. `project_id` joins the operational project UI to eval Trials; the full
+   `(target_id, target_run_id, trial_id)` tuple identifies a historical Trial.
+10. The orchestrator captures the final project graph before the eval instance
+    can be torn down. Materialization never reconstructs it from a later live
+    graph.
+11. The existing `GraphCanvas` and independent L0/L1 toggles render both live
+    and historical graph data through the same `GraphData` shape.
+12. Historical graph and project-artifact inventory form one atomically
+    published project snapshot. The eval result remains valid if that auxiliary
+    snapshot is unavailable.
 
 ## Existing storage model
 
@@ -79,6 +94,7 @@ subtrees under the same project directory:
 ```text
 <store>/<target_id>/<target_run_id>/<trial_id>/
   run-manifest.yaml
+  project-graph.json
   verdicts.yaml
   diagnoses.yaml
   <project_id>/
@@ -100,6 +116,21 @@ subtrees under the same project directory:
 Existing evidence-chain paths continue to resolve unchanged because the
 snapshot uses the same `<project_id>/...` namespace. Duplicate source paths are
 copied once and represented once in the inventory.
+
+`project-graph.json` uses the existing frontend `GraphData` contract:
+
+```json
+{
+  "project_id": "<project_id>",
+  "nodes": [],
+  "links": []
+}
+```
+
+Nodes are sorted by stable node id. Links are sorted by source, target, and
+type; object keys are serialized canonically. This normalization makes the
+content digest independent of database return order without changing graph
+semantics.
 
 Only regular files are eligible. Symlinks, sockets, devices, traversal,
 absolute paths, and any resolved path outside the project root are rejected.
@@ -123,8 +154,10 @@ skills/<skill_name>/scripts/**
 skills/<skill_name>/assets/**
 ```
 
-`<fault_key>`, `<spec_id>`, and `<skill_name>` are path-safe single segments.
-Nested files are accepted only below the three named skill support
+`<fault_key>`, `<spec_id>`, and `<skill_name>` are non-empty path-safe single
+segments: neither `.` nor `..`, and containing no slash, backslash, NUL, or
+control character. Domain punctuation, including `:` and repeated `::`, is
+valid. Nested files are accepted only below the three named skill support
 directories. Files outside the allowlist remain private even if present in the
 data root or live mirror.
 
@@ -133,6 +166,11 @@ data root or live mirror.
 New materializations use store schema version 2. `run-manifest.yaml` gains:
 
 ```yaml
+project_snapshot:
+  status: available
+  project_id: <project_id>
+  captured_at: <UTC timestamp>
+  snapshot_sha256: <digest of the normalized complete Trial file set>
 project_artifacts:
   status: available
   project_id: <project_id>
@@ -147,17 +185,33 @@ project_artifacts:
       size_bytes: <integer>
       sha256: <content digest>
       representation: yaml | markdown | text | binary
+project_graph:
+  status: available
+  project_id: <project_id>
+  captured_at: <UTC timestamp>
+  sha256: <digest of canonical project-graph.json>
+  node_count: <integer>
+  link_count: <integer>
 ```
+
+For schema-v2 Trials whose graph or artifact capture cannot form a complete
+project snapshot, the core eval bundle is still published and the three
+sections instead carry `status: unavailable`; `project_snapshot.failure`
+contains the stable failure code, artifact entries are empty, and no
+`project-graph.json` is exposed. Availability is therefore atomic across graph
+and artifacts even though the verdict and diagnosis remain readable.
 
 The artifact id is deterministic within the Trial and is resolved only through
 the manifest inventory. The client never submits a filesystem path. The
 content digest is checked again before the API serves an artifact.
 
 `snapshot_sha256` is computed from the sorted relative paths and content
-digests of every non-manifest Trial file plus the canonical manifest payload
-with `copied_at`, `captured_at`, and `snapshot_sha256` omitted. It therefore
-stays stable when identical inputs are materialized at a later time and avoids
-a self-referential digest.
+digests of every non-manifest Trial file, including `project-graph.json`, plus
+the canonical manifest payload with `copied_at`, `captured_at`, and
+`snapshot_sha256` omitted. It therefore stays stable when identical inputs are
+materialized at a later time and avoids a self-referential digest. The same
+value appears in `project_snapshot` and `project_artifacts` for compatibility
+with the artifact inventory contract.
 
 Schema-v1 manifests remain supported. Their projected Trial carries:
 
@@ -167,6 +221,11 @@ Schema-v1 manifests remain supported. Their projected Trial carries:
     "status": "project_artifacts_unavailable",
     "hunting": 0,
     "skills": 0
+  },
+  "project_graph_summary": {
+    "status": "project_graph_unavailable",
+    "nodes": 0,
+    "links": 0
   }
 }
 ```
@@ -174,19 +233,37 @@ Schema-v1 manifests remain supported. Their projected Trial carries:
 This status means the historical snapshot was never captured. It is not a
 degraded Trial and does not affect verdict or diagnosis availability.
 
+## Graph capture lifecycle
+
+When a Trial reaches its terminal state, and before its instance is eligible
+for teardown, the orchestrator calls the same read-only project graph endpoint
+used by the live frontend. It validates the response against the `GraphData`
+contract, normalizes it deterministically, and atomically writes
+`project-graph.json` beside `trial.yaml`. The Trial record stores the capture
+timestamp and either `available` or a stable, path-free failure code.
+
+Graph capture failure does not change the Trial's eval outcome. It prevents the
+combined project snapshot from being published as available, so the UI can say
+that historical project data is unavailable without misrepresenting the
+verdict. The materializer does not call the live API: a retry consumes only the
+captured Trial inputs and therefore cannot drift to a newer graph.
+
 ## Materialization lifecycle
 
 Before publishing, the materializer:
 
 1. loads and validates the Trial record, verdicts, diagnoses, and evidence
    chain exactly as today;
-2. enumerates the allowlist from the Trial's project directory;
-3. rejects unsafe entries and records metadata and digests for regular files;
-4. copies the evidence chain and project-artifact union into a staging tree;
-5. writes verdicts, diagnoses, and the schema-v2 manifest into staging;
-6. verifies that every inventory entry exists, remains contained, matches its
-   digest, and that the existing self-contained evidence checks pass;
-7. publishes the complete Trial tree only after all checks succeed.
+2. reads the recorded graph-capture state and enumerates the artifact allowlist;
+3. validates the captured graph plus every regular artifact, recording one
+   path-free failure if the combined project snapshot is incomplete or unsafe;
+4. stages the core eval bundle and, only when the combined validation passed,
+   the graph plus project-artifact union;
+5. writes the schema-v2 manifest with either all project-snapshot sections
+   available or all unavailable;
+6. verifies core self-containment and, when available, the graph and artifact
+   digests;
+7. publishes the complete Trial tree only after all applicable checks succeed.
 
 A first publication is immutable. Repeating materialization with the same
 prospective `snapshot_sha256` is an idempotent no-op and retains the original
@@ -195,7 +272,8 @@ a named `snapshot_conflict` error rather than silently changing historical
 evidence.
 
 Missing allowlisted directories are normal. An unsafe path or read failure
-prevents publication. Invalid YAML is copied and inventoried; its entry exposes
+prevents publication of the auxiliary project snapshot but not the validated
+core eval bundle. Invalid YAML is copied and inventoried; its entry exposes
 `parse_error` at read time while preserving the raw bytes.
 
 ## Read API
@@ -213,10 +291,27 @@ The existing `/snapshot` response adds `artifact_summary` to every Trial:
 Artifact bodies are served on demand through these GET-only routes:
 
 ```text
+GET /trials/{target_id}/{target_run_id}/{trial_id}/project-graph
 GET /trials/{target_id}/{target_run_id}/{trial_id}/artifacts
 GET /trials/{target_id}/{target_run_id}/{trial_id}/artifacts/{artifact_id}
 GET /trials/{target_id}/{target_run_id}/{trial_id}/artifacts/{artifact_id}/content
 ```
+
+The project-graph route returns a stable wrapper whose `graph` member is the
+unchanged frontend `GraphData` shape:
+
+```json
+{
+  "status": "available",
+  "captured_at": "<UTC timestamp>",
+  "sha256": "<content digest>",
+  "graph": {"project_id": "<project_id>", "nodes": [], "links": []}
+}
+```
+
+It never proxies the operational project API. `/snapshot` also adds
+`project_graph_summary` and retains `project_id`, allowing the project hub to
+select its Trials without loading graph or artifact bodies.
 
 The list route returns inventory entries grouped by hunting family and skill
 bundle. The detail route returns metadata plus one safe representation:
@@ -242,8 +337,30 @@ safe artifact-local error without exposing host paths.
 
 ## Frontend information architecture
 
-The Trial page retains its existing manifest, verdict, diagnosis, and evidence
-views. It adds a `Project artifacts` summary and a dedicated route:
+The existing `/p/:projectId` page becomes the project hub while preserving its
+current live graph as the default view:
+
+```text
+/p/:projectId                                      # live L0/L1 graph
+/p/:projectId/runs                                 # operational runs
+/p/:projectId/evals                                # completed eval Trials
+/p/:projectId/evals/:targetId/:targetRunId/:trialId
+/p/:projectId/evals/:targetId/:targetRunId/:trialId/artifacts/:artifactId
+```
+
+The full Trial identity appears in the route because `trial_id` alone is not
+the store address and must not be assumed globally unique. The Trial workspace
+shows eval result, immutable L0/L1 graph, hunting artifacts, and minted skills.
+It reuses `GraphCanvas`, layer projection, colors, and independent L0/L1
+toggles; only its data source differs from the live page.
+
+The existing `/eval/...` routes remain valid. Their Trial page retains its
+manifest, verdict, diagnosis, and evidence views, adds project graph and
+artifact summaries, and links to the matching project workspace. This avoids a
+destructive route migration while establishing the project hub as the combined
+operator workflow.
+
+Project artifacts retain dedicated eval routes for compatibility:
 
 ```text
 /eval/trials/:targetId/:targetRunId/:trialId/project-artifacts
@@ -282,6 +399,11 @@ Loading and failure state belongs to the artifact route. It must not replace or
 degrade the already-loaded Trial snapshot. Browser history, refresh, and direct
 links remain supported.
 
+The historical workspace labels its graph `Trial snapshot` and shows
+`captured_at`. It never falls back to `GET /projects/{project_id}/graph`. A
+separate `Live` link returns to `/p/:projectId`, making any comparison an
+explicit operator action rather than an invisible change of temporal context.
+
 ## Deployment
 
 The synthetic overlay remains unchanged and explicitly demo-only. A separate
@@ -302,8 +424,16 @@ healthy but reports zero Trials.
 
 ## Error model
 
+- `project_snapshot_unavailable`: a schema-v2 Trial retained its core eval
+  bundle but could not publish graph and artifacts as one complete snapshot.
 - `project_artifacts_unavailable`: historical schema-v1 Trial; normal
   compatibility state.
+- `project_graph_unavailable`: no historical graph was captured; normal for
+  schema-v1 and a named auxiliary-snapshot failure for schema-v2.
+- `project_graph_invalid`: captured bytes do not satisfy the `GraphData`
+  contract.
+- `project_graph_digest_mismatch`: captured graph bytes no longer match the
+  immutable manifest.
 - `parse_error`: one text/YAML artifact cannot be interpreted; raw remains
   available.
 - `artifact_missing`: an inventoried file is absent.
@@ -312,8 +442,8 @@ healthy but reports zero Trials.
 - `snapshot_conflict`: a caller attempted to rematerialize an existing Trial
   with different bytes.
 
-Artifact errors never reveal absolute host paths, credentials, or file
-contents not requested through an inventory identifier.
+Project-snapshot and artifact errors never reveal absolute host paths,
+credentials, or file contents not requested through an inventory identifier.
 
 ## Testing strategy
 
@@ -328,9 +458,19 @@ Materializer unit tests cover:
 - equivalent rematerialization and `snapshot_conflict` on changed input;
 - schema-v1 compatibility.
 
+Graph capture and materializer tests cover:
+
+- capture before terminal teardown and no materializer call to the live API;
+- `GraphData` validation and deterministic node/link normalization;
+- stable graph digest across equivalent database orderings;
+- atomic publication of graph plus project-artifact inventory;
+- idempotent retry, missing capture, invalid graph, and digest mismatch;
+- preservation of the Trial eval outcome when the project snapshot fails.
+
 Read API tests cover:
 
 - lightweight `/snapshot` summaries;
+- historical graph response and capture metadata;
 - grouped inventory, detail, preview, and raw download;
 - YAML, Markdown, text, and binary representations;
 - preview limits and truncation metadata;
@@ -339,6 +479,10 @@ Read API tests cover:
 
 Frontend tests cover:
 
+- project hub navigation across live graph, runs, and completed eval Trials;
+- historical graph rendering through the shared `GraphCanvas` and L0/L1
+  toggles;
+- strict separation of live and historical graph data for one `project_id`;
 - Trial summary and both project-artifact routes;
 - hunting and skill grouping;
 - typed YAML, sanitized Markdown, script/log, binary, and raw renderers;
@@ -348,7 +492,9 @@ Frontend tests cover:
 Integration verification uses a realistic temporary data root, materializes a
 Trial, reads it through the actual FastAPI routes, and consumes the responses
 with the frontend client contract. Compose validation checks both the unchanged
-demo overlay and the new real overlay.
+demo overlay and the new real overlay. The end-to-end fixture gives the live
+project and its historical Trial different graphs and asserts that the Trial
+workspace renders only the captured graph.
 
 ## Non-goals
 
@@ -356,6 +502,8 @@ demo overlay and the new real overlay.
 - reading project artifacts directly from `live/`;
 - modifying, deleting, or uploading artifacts;
 - retroactively reconstructing complete snapshots for historical Trials;
+- using the live graph as an implicit fallback for a historical Trial;
+- merging live and historical nodes into one graph;
 - rendering active binary content inline;
 - exposing arbitrary filesystem paths;
 - public internet authentication or authorization for the dashboard;
