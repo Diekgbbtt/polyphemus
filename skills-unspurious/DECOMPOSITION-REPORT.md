@@ -45,6 +45,7 @@ Non-discriminators confirmed across classes: technology stack and versions, payl
 
 ## Open questions and grey points
 
-- `graphql` does not decompose; the parent stands as the family entry.
+- `graphql` does not decompose; the parent stands as the family entry, pending the B3 operator confirmation.
+- `two-principal-authz` is excluded from the 29 decomposed classes as a cross-cutting reference.
 - Class-level grey points (for example the `ssrf` file-wrapper versus command-craft split, the `information-disclosure` referrer and tracing-header placement) are recorded in each analysis section 11 and were accepted as pass-level.
-- Cross-references to the future `defence-bypass` and `proxy-techniques` families (#278) and to `two-principal-authz` are named at their steps rather than restated.
+- Cross-references to the `defence-bypass` and `proxy-techniques` families (#278) and to `two-principal-authz` are named at their steps rather than restated; the families are authored by C1 and the references wired by C2.

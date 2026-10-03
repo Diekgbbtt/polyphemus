@@ -61,8 +61,12 @@ The loader is still flat; teaching it the nested path is a later stream (W4), so
 
 ## Status and open items
 
+- The boundary and the ontology are validated by the operator (2026-09-28); the W0 residual documentation debt is closed by the W0+W1 completion stream (see `docs/design/w0-w1-completion-ledger.md`).
 - `graphql` produces no variants; its parent stands as the family entry.
+  The one-line operator confirmation of that outlier is the B3 gate.
+- `two-principal-authz` is kept as a cross-cutting reference and excluded from the 29 decomposed classes.
 - The 30 parents are not re-authored to the new ontology sections (`## Adversarial Capabilities`, `## Trust Assumptions`); only the variants carry them.
-  Bringing the parents to full ontology conformance is a later change.
-- The nested loader (W4) is required before this layout loads.
-- The `defence-bypass` and `proxy-techniques` families (#278) and the cross-referenced `two-principal-authz` step ownership are pending the respective streams.
+  Whether the parents get a full conformance pass is the B2 operator ruling.
+- The nested loader (W4) is required before this layout loads; it is out of scope for the W0+W1 completion stream.
+- The round-2 taxonomy and naming spec is authored as B1 (`docs/design/skills-taxonomy.md`); the `defence-bypass` and `proxy-techniques` families (#278) are authored per it (C1) and the classes are rewired to them (C2).
+- Suite enrichment from the local repositories runs as D1a-D1c.

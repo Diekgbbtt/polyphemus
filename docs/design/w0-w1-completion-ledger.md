@@ -24,7 +24,7 @@ Nothing is pushed; integration is a later human-merged PR.
 | A3 | Boundary reference ubiquitous | done | `COMMIT-A3` | `for f in <skill-concern docs>; do grep -q skills-variant-boundary.md "$f" && echo REF $f || echo MISS $f; done` | all `REF` |
 | A4 | Tracked home for the cross-stream doc | done | `COMMIT-A4` | `git ls-files docs/design/skills-system-decomposition.md; grep -rn skills-system-decomposition.md docs/design skills-unspurious` | tracked; 3 citations resolve |
 | A5 | Arsenal-gaps ticket(s) | done | `COMMIT-A5` | `gh issue view 303 --json number,state,labels; grep -n 303 skills-unspurious/SCREAMING-REPORT.md` | issue #303 OPEN (enhancement, needs-triage); report links it |
-| A6 | Open-item refresh | pending | - | - | - |
+| A6 | Open-item refresh | done | `COMMIT-A6` | `grep -rn 'awaiting review\|awaiting operator review\|for a future ticket' skills-unspurious/ docs/design/skills-*.md` | `NONE` |
 | B1 | Round-2 taxonomy map | pending | - | - | - |
 | B2 | Parent-conformance decision | pending | - | - | - |
 | B3 | `graphql` outlier confirmation | pending | - | - | - |
@@ -127,4 +127,15 @@ Output:
 42:## 3. Arsenal gaps discovered (filed as #303)
 44:... The seven gaps below are filed as [issue #303](https://github.com/Diekgbbtt/polyphemus/issues/303) (`enhancement`, `needs-triage`):
 ```
+
+### A6 - open-item refresh
+
+Command: `grep -rn 'awaiting review\|awaiting operator review\|for a future ticket' skills-unspurious/ docs/design/skills-*.md`
+
+Output:
+```
+NONE
+```
+
+Refreshed the README status/open-items section, the decomposition report's open questions, and the cross-stream status map and audit findings (each finding now carries its closure status).
 
