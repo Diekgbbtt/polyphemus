@@ -90,6 +90,13 @@ class BenchmarkDataset:
     # WebExploitBench `evaluator`, dropped because nothing produces its input).
     # The strategy merges these with any per-target `exclude_services`.
     exclude_services: tuple[str, ...] = ()
+    # Services that run natively on the eval host, not under emulation. On an
+    # aarch64 host, arch-independent infra images (redis) crash under qemu-user:
+    # qemu leaks mmap addresses above the guest's 47-bit user VA and jemalloc
+    # sign-extends one into an unmapped write. The targetctl scaffold pins these
+    # services to the host platform; the vulnerable target services stay on the
+    # dataset's emulated platform.
+    native_services: tuple[str, ...] = ()
     eval_root: Path | None = None
 
     # --- keying ---------------------------------------------------------------
@@ -206,7 +213,15 @@ def parse_benchmark_dataset(
     root = _mapping(payload, where)
     _check_keys(
         root,
-        ("id", "repo", "registry", "platform_root", "targets", "exclude_services"),
+        (
+            "id",
+            "repo",
+            "registry",
+            "platform_root",
+            "targets",
+            "exclude_services",
+            "native_services",
+        ),
         where,
     )
     dataset_id = _str_field(root, "id", where, required=True)
@@ -217,6 +232,7 @@ def parse_benchmark_dataset(
     platform_root = _optional_str(root, "platform_root", where) or ""
     targets = _string_tuple(root, "targets", where)
     exclude_services = _string_tuple(root, "exclude_services", where)
+    native_services = _string_tuple(root, "native_services", where)
     for target in targets:
         if not is_path_safe_id(target):
             raise DatasetError(
@@ -232,6 +248,7 @@ def parse_benchmark_dataset(
         platform_root=platform_root,
         targets=targets,
         exclude_services=exclude_services,
+        native_services=native_services,
         eval_root=eval_root,
     )
 

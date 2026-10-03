@@ -53,6 +53,17 @@ def test_exclude_services_rejects_a_non_list():
         parse_benchmark_dataset(_payload(exclude_services="evaluator"))
 
 
+def test_native_services_parses_and_defaults_empty():
+    assert parse_benchmark_dataset(_payload()).native_services == ()
+    dataset = parse_benchmark_dataset(_payload(native_services=["redis"]))
+    assert dataset.native_services == ("redis",)
+
+
+def test_native_services_rejects_a_non_list():
+    with pytest.raises(DatasetError, match="native_services"):
+        parse_benchmark_dataset(_payload(native_services="redis"))
+
+
 @pytest.mark.parametrize("missing", ["id", "repo"])
 def test_missing_required_field_fails_loud(missing):
     payload = _payload()

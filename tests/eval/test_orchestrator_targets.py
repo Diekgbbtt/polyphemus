@@ -61,6 +61,7 @@ def _dataset(
     platform_root="",
     registry="",
     exclude_services=(),
+    native_services=(),
 ):
     return BenchmarkDataset(
         id=dataset_id,
@@ -69,6 +70,7 @@ def _dataset(
         platform_root=platform_root,
         targets=("jetlinks", "img", "stack", "a b"),
         exclude_services=tuple(exclude_services),
+        native_services=tuple(native_services),
         eval_root=tmp_path / "eval",
     )
 
@@ -96,13 +98,14 @@ def _strategy(tmp_path, *, runner, config, dataset=None, env=None):
     return strategy, paths
 
 
-def _targetctl(tmp_path, *, target="jetlinks", **kwargs):
+def _targetctl(tmp_path, *, target="jetlinks", dataset=None, **kwargs):
     kwargs.setdefault("compose", "docker-compose.yml")
     kwargs.setdefault("images", (f"ph/mock/{target}:web",))
     return _strategy(
         tmp_path,
         runner="targetctl",
         config=TargetConfiguration(target=target, runner="targetctl", **kwargs),
+        dataset=dataset,
     )
 
 
@@ -200,6 +203,7 @@ def test_targetctl_commands_select_the_amd64_platform(tmp_path) -> None:
                 "TARGETCTL_NO_WAIT_DEPS": "1",
                 "TARGETCTL_NO_BUILD": "1",
                 "TARGETCTL_EXCLUDE_SERVICES": "",
+                "TARGETCTL_NATIVE_SERVICES": "",
             }
 
 
@@ -534,6 +538,16 @@ def test_targetctl_env_carries_the_excluded_services(tmp_path) -> None:
     for command in strategy.plan_up():
         if (command.description or "").startswith("targetctl"):
             assert command.env["TARGETCTL_EXCLUDE_SERVICES"] == "evaluator"
+
+
+def test_targetctl_env_carries_the_native_services(tmp_path) -> None:
+    """D50: arch-independent infra services are pinned native by targetctl."""
+    dataset = _dataset(tmp_path, native_services=("redis",))
+    strategy, _ = _targetctl(tmp_path, dataset=dataset)
+
+    for command in strategy.plan_up():
+        if (command.description or "").startswith("targetctl"):
+            assert command.env["TARGETCTL_NATIVE_SERVICES"] == "redis"
 
 
 def test_targetctl_readiness_reads_the_generated_compose(tmp_path) -> None:

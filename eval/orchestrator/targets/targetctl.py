@@ -151,6 +151,12 @@ class TargetctlStrategy:
             if service not in excluded:
                 excluded.append(service)
         self.exclude_services = tuple(excluded)
+        # The dataset's arch-independent infra services run natively on the eval
+        # host, not under emulation: qemu-user leaks mmap addresses above the
+        # guest's 47-bit user VA and jemalloc (redis) sign-extends one into an
+        # unmapped write. `scripts/targetctl` pins these services to the host
+        # platform; the vulnerable target services stay on `self.platform`.
+        self.native_services = tuple(context.dataset.native_services)
         self.canonical_tags = context.helper.canonical_tags(self.target, config)
         self.reclaimable = config.reclaimable
         self._sleep = sleep or time.sleep
@@ -179,6 +185,11 @@ class TargetctlStrategy:
             # renders them behind a Compose `profiles` gate, so `up` never starts
             # them without editing the frozen upstream compose.
             "TARGETCTL_EXCLUDE_SERVICES": ",".join(self.exclude_services),
+            # Arch-independent infra services run natively. `scripts/targetctl`
+            # pins each to the host platform in its generated compose, overriding
+            # `DOCKER_DEFAULT_PLATFORM`, so redis is not emulated (and does not
+            # fault under qemu-user).
+            "TARGETCTL_NATIVE_SERVICES": ",".join(self.native_services),
         }
 
     def _checkout_cmd(self) -> Command:
