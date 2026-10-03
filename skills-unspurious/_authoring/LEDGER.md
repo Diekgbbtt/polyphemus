@@ -6,6 +6,8 @@
 
 *Result: 101 variant skills authored across 28 classes, every one PASS on its first review. Zero reworks. Parents unmodified; no em dashes; every frontmatter `name` equals its directory.*
 
+*The authoring contract is the operator-validated ontology (`docs/design/skills-ontology.md`, validated in session `ses_f181eb14bffei9Y8v5O30nGDjG`, 2026-09-28); the boundary (`docs/design/skills-variant-boundary.md`) carries the same validation.*
+
 | # | unit (class) | variants | writer | reviewer | status |
 |---|---|---|---|---|---|
 | 01 | authentication-jwt | 4 | done | PASS | done |

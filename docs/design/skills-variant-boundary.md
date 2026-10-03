@@ -1,6 +1,6 @@
 # The skills variant boundary
 
-*Status: proposed, awaiting operator review. This document is the single authority on how a vulnerability-testing skill decomposes into variants. It is written from the twenty-nine class analyses in `skills-unspurious/_analysis/` (each reviewed and PASSed by an independent reviewer). Every document about skills references this one.*
+*Status: validated by the operator in session `ses_f181eb14bffei9Y8v5O30nGDjG` (2026-09-28, "boundary and skills analysis validated. We can move on to the effective skill writing") and accepted as the single authority on how a vulnerability-testing skill decomposes into variants. It is written from the twenty-nine class analyses in `skills-unspurious/_analysis/` (each reviewed and PASSed by an independent reviewer). Every document about skills references this one.*
 
 ## The problem
 

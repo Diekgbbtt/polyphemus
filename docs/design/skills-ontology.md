@@ -1,6 +1,6 @@
 # The skill ontology and section contract
 
-*Status: proposed, awaiting operator review. This is the consolidated ontology the authoring fleet writes against: the two layers (RDF notion sections and methodology entities), the canonical section layout, and the entity-to-section mapping with its evidence sources. It consolidates three previously scattered sources (below) and is the authority for the skill-writer and skills-reviewer prompts.*
+*Status: validated by the operator in session `ses_f181eb14bffei9Y8v5O30nGDjG` (2026-09-28), including the corrections that trust assumptions are the generative layer, that detection channels are multicast per variant, and that Tooling stays. This is the consolidated ontology the authoring fleet writes against: the two layers (RDF notion sections and methodology entities), the canonical section layout, and the entity-to-section mapping with its evidence sources. It consolidates three previously scattered sources (below) and is the authority for the skill-writer and skills-reviewer prompts.*
 
 ## 1. Where the ontology was documented before
 

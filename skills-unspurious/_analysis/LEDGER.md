@@ -4,6 +4,8 @@
 
 *Spec: `SPEC.md`. Creator artifact: `<class>.md`. Reviewer artifact: `<class>.review.md` (all PASS). Boundary: `docs/design/skills-variant-boundary.md`.*
 
+*The operator validated the boundary and all 29 analyses in session `ses_f181eb14bffei9Y8v5O30nGDjG` (2026-09-28); the boundary status line now records that validation.*
+
 ## Pool result (29 classes; `two-principal-authz` excluded as a cross-cutting methodology)
 
 | # | class | creator | reviewer | status | recommended variants |
