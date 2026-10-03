@@ -6,6 +6,7 @@ import { ProjectEvalLayout } from "./pages/ProjectEvalLayout"
 import { ProjectEvalsPage } from "./pages/ProjectEvalsPage"
 import { ProjectTrialPage } from "./pages/ProjectTrialPage"
 import { ProjectArtifactsPage } from "./eval/ProjectArtifactsPage"
+import { ProjectArtifactPage } from "./eval/ProjectArtifactPage"
 import { EvalPage } from "./eval/EvalPage"
 import { EvalDashboard } from "./eval/EvalDashboard"
 import { DatasetPage } from "./eval/DatasetPage"
@@ -34,6 +35,10 @@ export function AppRoutes() {
           path=":targetId/:targetRunId/:trialId/artifacts"
           element={<ProjectArtifactsPage variant="workspace" />}
         />
+        <Route
+          path=":targetId/:targetRunId/:trialId/artifacts/:artifactId"
+          element={<ProjectArtifactPage variant="workspace" />}
+        />
       </Route>
       {/* The eval layout holds one data provider for every child route. */}
       <Route path="/eval" element={<EvalPage />}>
@@ -45,6 +50,10 @@ export function AppRoutes() {
         <Route
           path="trials/:targetId/:targetRunId/:trialId/project-artifacts"
           element={<ProjectArtifactsPage variant="eval" />}
+        />
+        <Route
+          path="trials/:targetId/:targetRunId/:trialId/project-artifacts/:artifactId"
+          element={<ProjectArtifactPage variant="eval" />}
         />
         {/* The four materialized artifacts, each with its own readable view. */}
         <Route

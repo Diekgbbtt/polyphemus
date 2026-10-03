@@ -763,6 +763,137 @@
   color: #9aa0a6;
 }
 
+/* --- artifact detail: metadata, cards, trees, code --------------------------- */
+
+.artifact-metadata,
+.artifact-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  gap: 0.5rem 1rem;
+  margin: 0 0 1rem;
+}
+
+.artifact-metadata > div,
+.artifact-fields > div {
+  min-width: 0;
+}
+
+.artifact-metadata dt,
+.artifact-fields dt {
+  font-size: 12px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #9aa0a6;
+}
+
+.artifact-metadata dd,
+.artifact-fields dd {
+  margin: 0.1rem 0 0;
+  overflow-wrap: anywhere;
+}
+
+.artifact-actions {
+  margin: 0 0 1rem;
+}
+
+.artifact-download {
+  color: #8ab4f8;
+}
+
+.artifact-view-toggle {
+  display: inline-flex;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.artifact-view-toggle button {
+  border: 1px solid #3c4043;
+  background: #14161a;
+  color: #e8eaed;
+  border-radius: 6px;
+  padding: 4px 12px;
+  cursor: pointer;
+}
+
+.artifact-view-toggle button[aria-pressed="true"] {
+  border-color: #8ab4f8;
+  font-weight: 600;
+}
+
+.artifact-truncated {
+  border: 1px solid #6b5a1f;
+  border-left-width: 4px;
+  border-radius: 8px;
+  padding: 0.5rem 0.75rem;
+  background: #1a1708;
+}
+
+.artifact-card,
+.artifact-tree {
+  border: 1px solid #23272d;
+  border-radius: 10px;
+  padding: 0.75rem 1rem;
+  margin: 0 0 1rem;
+}
+
+.artifact-card h3,
+.artifact-tree h3 {
+  margin-top: 0;
+}
+
+.yaml-object,
+.yaml-array {
+  margin: 0;
+}
+
+.yaml-object > div {
+  display: grid;
+  grid-template-columns: minmax(6rem, 18rem) 1fr;
+  gap: 0.5rem;
+  padding: 0.15rem 0;
+}
+
+.yaml-object dt {
+  color: #9aa0a6;
+  overflow-wrap: anywhere;
+}
+
+.yaml-object dd {
+  margin: 0;
+  min-width: 0;
+}
+
+.yaml-array {
+  padding-left: 1.1rem;
+}
+
+.yaml-scalar {
+  overflow-wrap: anywhere;
+}
+
+.artifact-raw,
+.artifact-code {
+  background: #0f1216;
+  border: 1px solid #23272d;
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  overflow-x: auto;
+  max-width: 100%;
+  font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.artifact-markdown {
+  overflow-wrap: anywhere;
+}
+
+.artifact-markdown pre,
+.artifact-markdown code {
+  overflow-x: auto;
+  max-width: 100%;
+}
+
 @media (max-width: 40rem) {
   .project-nav {
     width: 100%;
@@ -772,5 +903,8 @@
   }
   .project-artifacts-group {
     margin-left: 0.35rem;
+  }
+  .yaml-object > div {
+    grid-template-columns: 1fr;
   }
 }
