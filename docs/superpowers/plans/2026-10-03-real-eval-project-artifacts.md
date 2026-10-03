@@ -595,6 +595,10 @@ Tests to write: URL encoding, project isolation, duplicate trial-id identity, or
 
 ### Task 8: Shared live and historical L0/L1 graph presentation
 
+**Implementation state:** Complete in `1b2eda1c`; independently verified with
+49 focused graph/client/workspace tests, the complete 91-test frontend suite,
+and the production build passing.
+
 **Files:**
 - Create: `frontend/src/graph/GraphView.tsx`
 - Create: `frontend/src/eval/TrialProjectGraph.tsx`
@@ -610,44 +614,44 @@ Tests to write: URL encoding, project isolation, duplicate trial-id identity, or
 - Consumes: Task 5 `HistoricalProjectGraph` response and existing `GraphCanvas` / `LayerVisibility`.
 - Produces: `getTrialProjectGraph(targetId, targetRunId, trialId, signal?) -> Promise<HistoricalProjectGraph>`; reusable `GraphView({data, loading, error, label, capturedAt?})`; `TrialProjectGraph` route-scoped loader.
 
-- [ ] **Step 1: Add failing historical graph client tests**
+- [x] **Step 1: Add failing historical graph client tests**
 
 Assert the full Trial tuple is individually URL-encoded, the eval base URL is
 independent of `VITE_AGENT_BASE_URL`, non-2xx rejects with the stable code, and
 an optional `AbortSignal` is forwarded.
 
-- [ ] **Step 2: Extract the shared graph presentation under characterization tests**
+- [x] **Step 2: Extract the shared graph presentation under characterization tests**
 
 Move layer toggles and loading/error/empty/both-off presentation from
 `GraphPage` into `GraphView`. Existing live graph tests must keep passing
 without changing `useGraphData` or the agent endpoint.
 
-- [ ] **Step 3: Add failing historical workspace tests**
+- [x] **Step 3: Add failing historical workspace tests**
 
 Cover snapshot label/capture time, L0/L1 toggle combinations, empty graph,
 unavailable snapshot, API error, direct refresh, abort on route change, and a
 late response ignored after navigation.
 
-- [ ] **Step 4: Implement `TrialProjectGraph` and workspace integration**
+- [x] **Step 4: Implement `TrialProjectGraph` and workspace integration**
 
 Fetch only through the eval client and pass `response.graph` to `GraphView`.
 Show `Trial snapshot` plus `captured_at`; provide an explicit link to the live
 project. Never call `getGraph`, `useGraphData`, or fall back to live data on any
 historical error.
 
-- [ ] **Step 5: Pin temporal separation with different graphs**
+- [x] **Step 5: Pin temporal separation with different graphs**
 
 In one test, give the same `project_id` a live graph node `live-only` and a
 historical response node `trial-only`; assert the Trial workspace renders only
 `trial-only`, including after the live request resolves.
 
-- [ ] **Step 6: Run graph/client/workspace tests and build**
+- [x] **Step 6: Run graph/client/workspace tests and build**
 
 Run: `cd frontend && npm test -- src/graph src/eval/client.test.ts src/eval/TrialProjectGraph.test.tsx src/pages/ProjectEvalsPage.test.tsx && npm run build`
 
 Expected: all tests PASS and the build exits 0.
 
-- [ ] **Step 7: Commit historical graph rendering**
+- [x] **Step 7: Commit historical graph rendering**
 
 ```bash
 git add frontend/src/graph/GraphView.tsx frontend/src/eval/TrialProjectGraph.tsx frontend/src/eval/TrialProjectGraph.test.tsx frontend/src/pages/GraphPage.tsx frontend/src/pages/ProjectTrialPage.tsx frontend/src/eval/types.ts frontend/src/eval/client.ts frontend/src/eval/client.test.ts frontend/src/eval/eval.css
