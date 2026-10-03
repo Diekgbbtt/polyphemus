@@ -23,7 +23,7 @@ Nothing is pushed; integration is a later human-merged PR.
 | A2 | Fix the stale agnosticism lines | done | `COMMIT-A2` | `grep -rn 'block stays\|left in place and flagged' skills-unspurious/; grep -rn '^## Framework-Specific' skills-unspurious/llm-prompt-injection/` | `NONE`; `NONE` (skill carries no such section) |
 | A3 | Boundary reference ubiquitous | done | `COMMIT-A3` | `for f in <skill-concern docs>; do grep -q skills-variant-boundary.md "$f" && echo REF $f || echo MISS $f; done` | all `REF` |
 | A4 | Tracked home for the cross-stream doc | done | `COMMIT-A4` | `git ls-files docs/design/skills-system-decomposition.md; grep -rn skills-system-decomposition.md docs/design skills-unspurious` | tracked; 3 citations resolve |
-| A5 | Arsenal-gaps ticket(s) | pending | - | - | - |
+| A5 | Arsenal-gaps ticket(s) | done | `COMMIT-A5` | `gh issue view 303 --json number,state,labels; grep -n 303 skills-unspurious/SCREAMING-REPORT.md` | issue #303 OPEN (enhancement, needs-triage); report links it |
 | A6 | Open-item refresh | pending | - | - | - |
 | B1 | Round-2 taxonomy map | pending | - | - | - |
 | B2 | Parent-conformance decision | pending | - | - | - |
@@ -109,5 +109,22 @@ Output (3 citations, all now resolve to a tracked path):
 docs/design/skills-variant-boundary.md:144:The **RDF notions** (`docs/design/skills-system-decomposition.md`) are the skill's sections; ...
 docs/design/skills-ontology.md:13:- The **RDF notions** (the ordered skill sections) are in `docs/design/skills-system-decomposition.md`, component C2 and its provisional glossary.
 skills-unspurious/_analysis/SPEC.md:104:RDF notions (from `docs/design/skills-system-decomposition.md`): ...
+```
+
+### A5 - arsenal-gaps ticket
+
+Command: `gh issue view 303 --json number,title,labels,state`
+
+Output:
+```
+{"labels":["enhancement","needs-triage"],"number":303,"state":"OPEN","title":"Kali arsenal gaps from the skills-suite de-spuriation (seven blind/automation capabilities)"}
+```
+
+Command: `grep -n 303 skills-unspurious/SCREAMING-REPORT.md`
+
+Output:
+```
+42:## 3. Arsenal gaps discovered (filed as #303)
+44:... The seven gaps below are filed as [issue #303](https://github.com/Diekgbbtt/polyphemus/issues/303) (`enhancement`, `needs-triage`):
 ```
 

@@ -39,9 +39,9 @@
 | `cve-exploitation` | Version-to-CVE workflow organised around specific products; not a vulnerability class. |
 | `low-hanging-fruit` | Per-target hygiene checklist, not a vulnerability-class procedure (bypass/proxy content extracted, see above). |
 
-## 3. Arsenal gaps discovered (for a future ticket)
+## 3. Arsenal gaps discovered (filed as #303)
 
-The real arsenal is the Kali exec image (`Dockerfile.kali` + `kali/postrun.sh`, driven through `kali/mcp_server.py`). Genuine gaps - valuable techniques with no arsenal tool:
+The real arsenal is the Kali exec image (`Dockerfile.kali` + `kali/postrun.sh`, driven through `kali/mcp_server.py`). Genuine gaps - valuable techniques with no arsenal tool. The seven gaps below are filed as [issue #303](https://github.com/Diekgbbtt/polyphemus/issues/303) (`enhancement`, `needs-triage`):
 
 1. **OAST callback service** (affects `rce`, `ssrf`, `ssti`, `xxe`, `path-traversal-lfi-rfi`, `nosql-injection`). No `interactsh`/collaborator client exists; blind confirmation was adapted to the http-history capture surface or a minimal Python listener.
 2. **Automated JWT tampering** (`authentication-jwt`, `oauth`, `crypto-weakness`). No `jwt_tool`/`hashcat`/`flask-unsign`; adapted to manual `python3` decode-edit-encode.
