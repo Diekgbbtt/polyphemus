@@ -449,6 +449,11 @@ Tests to write: Every named happy-path, identity, compatibility, integrity, syml
 
 ### Task 6: Manifest-backed artifact read API
 
+**Implementation state:** Complete in `cafd08e0` plus hardening fix
+`e2ce69fc`; worker verification reports 50 targeted and 148 read-API tests
+passing. Independent checks passed the 9 catalog tests and direct regressions
+for JSON-safe YAML, strict UTF-8 boundaries, and classifier consistency.
+
 **Files:**
 - Create: `eval/read_api/artifacts.py`
 - Create: `tests/eval/test_read_api_artifacts.py`
@@ -462,17 +467,17 @@ Tests to write: Every named happy-path, identity, compatibility, integrity, syml
 - Inventory response is `{status, project_id, groups}`. Each recursive group is `{key, label, category, entries, children}`; hunting keys are `hunt-configs/{side}`, `test-specs/{fault_key}`, and `pod-executions/{spec_id}`, while skill keys are `skills/{skill_name}/{procedure|references|scripts|assets}`. Groups and entries sort lexically by key/path.
 - HTTP routes are exactly the three routes in the spec. Detail response is `{entry, preview: {text, parsed, truncated, parse_error}, content_url}`. `text` carries the raw preview for YAML/Markdown/text, `parsed` is non-null only for valid bounded YAML, and binary has both fields null.
 
-- [ ] **Step 1: Write failing route and source-contract tests**
+- [x] **Step 1: Write failing route and source-contract tests**
 
 Test grouped inventory, YAML detail, text/Markdown detail, binary metadata-only detail, raw streaming, URL encoding, read-only methods, and source factory injection. Verify no absolute path appears in JSON or error text.
 
-- [ ] **Step 2: Run API tests and confirm the new routes are 404**
+- [x] **Step 2: Run API tests and confirm the new routes are 404**
 
 Run: `PYTHONPATH=eval .venv/bin/python -m pytest tests/eval/test_read_api_artifacts.py tests/eval/test_read_api_app.py -q`
 
 Expected: FAIL because the routes and source methods are absent.
 
-- [ ] **Step 3: Implement safe inventory resolution**
+- [x] **Step 3: Implement safe inventory resolution**
 
 Resolve Trial ids as safe single segments, load only its manifest, locate artifacts only by exact `artifact_id`, revalidate allowlist/path containment/regular-file status, and compare SHA-256 before every detail or content response. Map missing Trial/artifact to 404 and unavailable/integrity failures to path-free 409 responses.
 
@@ -482,21 +487,21 @@ Require the combined project snapshot to be available. Use response codes
 absent from inventory is a plain 404 `artifact_not_found`; it must never be
 interpreted as a path.
 
-- [ ] **Step 4: Implement bounded representations and streaming**
+- [x] **Step 4: Implement bounded representations and streaming**
 
 Decode text with strict UTF-8; invalid UTF-8 returns `parse_error` and leaves download available. Read at most 512 KiB plus one byte for text/Markdown truncation. Parse YAML with `yaml.safe_load` only when size is at most 2 MiB; larger YAML is download-only. Stream content in bounded chunks and set attachment disposition for binary/active types.
 
-- [ ] **Step 5: Add boundary and adversarial tests**
+- [x] **Step 5: Add boundary and adversarial tests**
 
 Add exact 512 KiB and 512 KiB+1 cases, exact 2 MiB and 2 MiB+1 YAML cases, malformed YAML, invalid UTF-8, digest mismatch, symlink replacement after materialization, path-like artifact id, and unknown URL-encoded ids.
 
-- [ ] **Step 6: Run all read-API tests**
+- [x] **Step 6: Run all read-API tests**
 
 Run: `PYTHONPATH=eval .venv/bin/python -m pytest tests/eval/test_read_api_app.py tests/eval/test_read_api_source.py tests/eval/test_read_api_projection.py tests/eval/test_read_api_artifacts.py -q`
 
 Expected: all tests PASS.
 
-- [ ] **Step 7: Commit the read API**
+- [x] **Step 7: Commit the read API**
 
 ```bash
 git add eval/read_api/artifacts.py eval/read_api/source.py eval/read_api/app.py tests/eval/test_read_api_artifacts.py tests/eval/test_read_api_app.py
