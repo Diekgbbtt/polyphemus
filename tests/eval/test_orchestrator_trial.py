@@ -79,6 +79,33 @@ class SeqListFileStore(FileStore):
         return len(FileStore.list_files(self, directory))
 
 
+class SeqUsageApi(FakeApi):
+    """A `FakeApi` whose usage route pops a scripted token total per call.
+
+    The token-budget poll reads the usage endpoint once per check, plus one
+    re-read after a stop for the overshoot, so scripting the totals models the
+    baseline snapshot, the consumption, and the in-flight overshoot.
+    """
+
+    def __init__(self, routes: dict | None = None, totals=()):
+        super().__init__(routes)
+        self._totals = list(totals)
+        self.usage_calls = 0
+
+    def __call__(self, call):
+        if call.path.endswith("/usage"):
+            self.usage_calls += 1
+            total = self._totals.pop(0) if self._totals else 0
+            self.calls.append(call)
+            return {
+                "project_id": "pid",
+                "total_tokens": total,
+                "calls": 1,
+                "by_agent": {"recon": {"total_tokens": total}},
+            }
+        return super().__call__(call)
+
+
 class AtomicFileStore(FileStore):
     """Records the atomic writes, so the trial record's writer is provable."""
 
@@ -514,6 +541,158 @@ def test_a_resumed_trial_keeps_its_baseline_and_does_not_reset_the_count(
     assert resumed.stop_count == 2
     assert resumed.final_count == 2
     assert resumed.overshoot == 0
+
+
+# --- the trial-wide token budget ----------------------------------------------
+
+
+def _usage_routes() -> dict:
+    return {
+        "GET /projects/pid/hunting/h1": {"status": "running"},
+        "POST /projects/pid/hunting/h1/stop": {"stopping": True},
+        "POST /projects/pid/hunting": {"hunting_run_id": "h1"},
+        "GET /projects/pid/graph": GRAPH_L1_L0,
+    }
+
+
+def test_no_token_budget_makes_no_usage_call(tmp_path) -> None:
+    api_runner = SeqUsageApi()
+
+    t = _trial(tmp_path, api_runner, project_id="pid", token_budget=None)
+
+    assert t._check_spend("pid", "recon", "r1") is False
+    assert api_runner.usage_calls == 0
+
+
+def test_token_budget_stops_the_run_and_records_the_spend(tmp_path) -> None:
+    # The first read snapshots the baseline (1000); the second read reaches the
+    # budget (500 spent); the third is the post-stop re-read for the overshoot.
+    api_runner = SeqUsageApi(_usage_routes(), totals=[1000, 1500, 1500])
+
+    record = _trial(
+        tmp_path,
+        api_runner,
+        start_phase="hunting",
+        project_id="pid",
+        token_budget=500,
+    ).run()
+
+    stop = next(c for c in api_runner.calls if c.path.endswith("/stop"))
+    assert stop.path == "/projects/pid/hunting/h1/stop"
+    assert record.terminal == "stopped"
+    assert record.token_budget == 500
+    assert record.spend_baseline == 1000
+    assert record.spent_tokens == 500
+    assert record.spend_overshoot == 0
+    assert record.spend_by_agent == {"recon": {"total_tokens": 1500}}
+    written = yaml.safe_load(Path(record.trial_dir, "trial.yaml").read_text())
+    assert written["spent_tokens"] == 500
+    assert written["spend_baseline"] == 1000
+
+
+def test_the_baseline_is_the_project_total_at_the_first_check(tmp_path) -> None:
+    api_runner = SeqUsageApi(_usage_routes(), totals=[1000, 1500, 1500])
+
+    record = _trial(
+        tmp_path,
+        api_runner,
+        start_phase="hunting",
+        project_id="pid",
+        token_budget=500,
+    ).run()
+
+    # The project started at 1000: only the 500 consumed during the trial count.
+    assert record.spend_baseline == 1000
+    assert record.spent_tokens == 500
+
+
+def test_the_token_budget_is_trial_wide_and_stops_recon(tmp_path) -> None:
+    api_runner = SeqUsageApi(
+        {
+            "GET /projects/pid/recon/r1": {"status": "running"},
+            "POST /projects/pid/recon/r1/stop": {"stopped": True},
+            "POST /projects/pid/recon": {"run_id": "r1"},
+            "GET /projects/pid/graph": GRAPH_L1_L0,
+            "GET /projects": PROJECTS,
+        },
+        totals=[1000, 1500, 1500],
+    )
+
+    record = _trial(
+        tmp_path,
+        api_runner,
+        start_phase="recon",
+        project_id="pid",
+        token_budget=500,
+    ).run()
+
+    stop = next(c for c in api_runner.calls if c.path.endswith("/stop"))
+    assert stop.path == "/projects/pid/recon/r1/stop"
+    assert record.terminal == "stopped"
+    assert [p.phase for p in record.phases] == ["recon"]
+    assert record.phases[0].status == "stopped"
+    assert record.spent_tokens == 500
+    # A recon stop never chains into hunting.
+    assert not any(c.path.endswith("/hunting") for c in api_runner.calls)
+
+
+def test_a_resumed_trial_does_not_re_snapshot_the_baseline(tmp_path) -> None:
+    api_runner = SeqUsageApi(_usage_routes(), totals=[1500, 1500])
+
+    record = _trial(
+        tmp_path,
+        api_runner,
+        start_phase="hunting",
+        project_id="pid",
+        token_budget=500,
+        spend_baseline=1000,
+    ).run()
+
+    # Against the carried 1000 baseline the first read already clears the
+    # budget; a fresh snapshot at 1500 would spend zero and never stop.
+    assert record.terminal == "stopped"
+    assert record.spend_baseline == 1000
+    assert record.spent_tokens == 500
+    assert api_runner.usage_calls == 2
+
+
+def test_the_spend_overshoot_counts_tokens_spent_past_the_budget(tmp_path) -> None:
+    api_runner = SeqUsageApi(_usage_routes(), totals=[1000, 1500, 1700])
+
+    record = _trial(
+        tmp_path,
+        api_runner,
+        start_phase="hunting",
+        project_id="pid",
+        token_budget=500,
+    ).run()
+
+    # 1700 total - 1000 baseline - 500 budget = 200 spent past the bound.
+    assert record.spent_tokens == 500
+    assert record.spend_overshoot == 200
+
+
+def test_the_spend_check_runs_before_the_cap_in_hunting(tmp_path) -> None:
+    api_runner = SeqUsageApi(_usage_routes(), totals=[1000, 1500, 1500])
+    files = _cap_store(
+        tmp_path, [["c0.yaml"], ["c0.yaml", "new.yaml"], ["c0.yaml", "new.yaml"]]
+    )
+
+    record = _trial(
+        tmp_path,
+        api_runner,
+        files=files,
+        start_phase="hunting",
+        project_id="pid",
+        hunt_config_budget=1,
+        token_budget=500,
+    ).run()
+
+    # Both bounds trip on the second poll. The spend check runs first, so the
+    # stop is attributed to spend (the cap would leave spent_tokens None).
+    assert record.terminal == "stopped"
+    assert record.spent_tokens == 500
+    assert sum(1 for c in api_runner.calls if c.path.endswith("/stop")) == 1
 
 
 # --- pre-mined artifacts ------------------------------------------------------
