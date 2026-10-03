@@ -390,10 +390,12 @@ def test_ignores_sync_and_live_trees(tmp_path: Path) -> None:
     _write_trial(store, "t", "r", "authoritative", verdicts=[_verdict("v1")])
     _write_trial(store / "_sync", "t", "r", "sneaky", verdicts=[_verdict("bad1")])
     _write_trial(store / "arm-a" / "live", "t", "r", "sneaky", verdicts=[_verdict("bad2")])
+    _write_trial(store / "_staging" / "trial-x", "t", "r", "staged", verdicts=[_verdict("bad3")])
 
     snap = _snapshot(store)
 
     assert [r["vuln_id"] for r in snap["successes"]] == ["v1"]
+    assert [trial["trial_id"] for trial in snap["trials"]] == ["authoritative"]
     assert snap["summary"] == {
         "targets": 1,
         "trials": 1,

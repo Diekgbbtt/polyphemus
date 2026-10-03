@@ -27,9 +27,10 @@ import yaml
 MANIFEST_FILENAME = "run-manifest.yaml"
 VERDICTS_FILENAME = "verdicts.yaml"
 DIAGNOSES_FILENAME = "diagnoses.yaml"
-# The non-authoritative siblings the store also contains (D7/D12): the rendered
-# deploy dir and the raw one-way live mirror. Never an input to the report.
-SKIP_DIRNAMES = frozenset({"_sync", "live"})
+# The non-authoritative siblings the store also contains (D7/D12, project
+# artifacts): the rendered deploy dir, the raw one-way live mirror, and the
+# materializer's `_staging/` scratch trees. Never an input to the report.
+SKIP_DIRNAMES = frozenset({"_sync", "live", "_staging"})
 
 DEFAULT_DATASET_ID = "webexploitbench"
 DEFAULT_DATASET_NAME = "WebExploitBench"

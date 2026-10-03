@@ -177,6 +177,36 @@ def test_materialize_dry_run_prints_and_writes_nothing(tmp_path, capsys) -> None
     assert not (store_dir / "jetlinks-1").exists()
 
 
+def test_cli_dry_run_names_schema_v2_destination_without_writing(tmp_path, capsys) -> None:
+    store_dir = tmp_path / "store"
+    setup = _write_setup(tmp_path, store_dir)
+    data_root = tmp_path / "instances" / "arm-a" / "data"
+    _make_data_root(data_root)
+    trial_dir = _make_trial(tmp_path, data_root)
+
+    code = cli.main(
+        [
+            "store",
+            "materialize",
+            setup,
+            "--instances-root",
+            str(tmp_path / "instances"),
+            "--trial",
+            trial_dir,
+            "--dry-run",
+        ]
+    )
+
+    out = capsys.readouterr().out
+    dest = store_dir / "jetlinks-1" / "arm-a" / "trial-1"
+    assert code == 0
+    assert str(dest) in out
+    assert str(dest / "run-manifest.yaml") in out
+    # The schema-v2 plan writes nothing: no trial tree and no staging scratch.
+    assert not (store_dir / "jetlinks-1").exists()
+    assert not (store_dir / "_staging").exists()
+
+
 def test_materialize_writes_the_trial_tree(tmp_path) -> None:
     store_dir = tmp_path / "store"
     setup = _write_setup(tmp_path, store_dir)

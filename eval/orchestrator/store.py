@@ -17,6 +17,8 @@ performs no I/O (CODING_STANDARD section 6).
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import textwrap
 from dataclasses import dataclass
 from pathlib import Path
@@ -26,15 +28,37 @@ import yaml
 
 from orchestrator import diagnosis, evidence, subagents, verdicts
 from orchestrator.files import FileStore
+from orchestrator.project_artifacts import (
+    ProjectArtifact,
+    ProjectArtifactError,
+    collect_project_artifacts,
+)
+from orchestrator.project_graph import PROJECT_GRAPH_FILENAME
 from orchestrator.setup import EvalSetup
 
 LIVE_DIRNAME = "live"
 SYNC_DIRNAME = "_sync"
+# The materializer's scratch root: `<store>/_staging/<unique-id>`. Never
+# projected as a target (see `read_api.projection.SKIP_DIRNAMES`).
+STAGING_DIRNAME = "_staging"
 RUN_MANIFEST = "run-manifest.yaml"
-STORE_SCHEMA_VERSION = 1
+STORE_SCHEMA_VERSION = 2
 # D20: only a success (`identified`) needs no diagnosis entry (the verdict
 # vocabulary shared with the diagnosis pair).
 DIAGNOSABLE = verdicts.DIAGNOSABLE
+
+# The manifest keys excluded from the stable snapshot fingerprint: the two
+# materialization/capture timestamps and the self-referential fingerprint.
+_VOLATILE_MANIFEST_KEYS = frozenset({"copied_at", "captured_at", "snapshot_sha256"})
+_SAFE_FAILURES = frozenset(
+    {
+        "artifact_unsafe",
+        "artifact_unreadable",
+        "project_graph_unavailable",
+        "project_graph_invalid",
+        "project_snapshot_unavailable",
+    }
+)
 
 
 class StoreError(RuntimeError):
@@ -250,6 +274,25 @@ def _assert_one_way(spec: SyncSpec) -> None:
 # --- materialize --------------------------------------------------------------
 
 
+@dataclass(frozen=True)
+class ProjectSnapshot:
+    """The validated auxiliary snapshot: the captured graph plus the inventory.
+
+    The graph and the project-artifact inventory are one unit: both are
+    published, or neither is. `graph_bytes` is the exact captured file content.
+    """
+
+    available: bool
+    project_id: str | None = None
+    failure: str | None = None
+    captured_at: str | None = None
+    graph_sha256: str | None = None
+    graph_node_count: int = 0
+    graph_link_count: int = 0
+    graph_bytes: bytes | None = None
+    artifacts: tuple[ProjectArtifact, ...] = ()
+
+
 def materialize(
     trial_dir: str | Path,
     *,
@@ -260,9 +303,12 @@ def materialize(
 ) -> Path:
     """Assemble the self-contained trial tree under the store.
 
-    Idempotent: re-running replaces each copy atomically from the source. The
-    store is never an authority - the source always wins on re-materialize, and
-    nothing under the instance data root is written.
+    The complete tree is built under `<store>/_staging/<unique-id>` and only
+    renamed into place after every applicable check passes, so a reader never
+    sees a partial Trial. The first publication is immutable: an equal replay
+    returns the existing tree untouched; a changed replay raises a named
+    `snapshot_conflict` instead of rewriting historical evidence. Nothing under
+    the instance data root is written, and no live API is ever called.
     """
     trial_dir = Path(trial_dir)
     store = Path(store)
@@ -272,6 +318,7 @@ def materialize(
     target_id = _require_str(record, "target_id", "trial record")
     trial_id = _require_str(record, "trial_id", "trial record")
     instance_id = _require_str(record, "instance_id", "trial record")
+    project_id = _require_str(record, "project_id", "trial record")
     target_run_id = str(record.get("target_run_id") or instance_id)
     eval_sha = record.get("eval_sha")
     fingerprint = record.get("stack_fingerprint")
@@ -285,11 +332,10 @@ def materialize(
     dest = store_trial_dir(store, target_id, target_run_id, trial_id)
     _guard_within(store, dest)
 
+    # --- validate the core eval bundle (the existing rules) -------------------
     verdicts_path = trial_dir / verdicts.VERDICTS_FILENAME
     if not files.exists(verdicts_path):
-        raise StoreError(
-            f"verdicts.yaml not found at {verdicts_path}", failure="verdicts_missing"
-        )
+        raise StoreError("verdicts.yaml not found in the trial record", failure="verdicts_missing")
     rows = _load_rows(verdicts_path, files)
 
     chain_sources = _chain_sources(rows)
@@ -326,32 +372,93 @@ def materialize(
             failure="diagnoses_missing",
         )
 
-    for relative in chain_sources:
-        _copy_chain(data_root, dest, relative, files, store)
-
-    _write_bytes(
-        dest / verdicts.VERDICTS_FILENAME, files.read_bytes(verdicts_path), files, store
+    # --- validate (but do not yet stage) the auxiliary project snapshot -------
+    snapshot = _validate_project_snapshot(
+        record, trial_dir, data_root, files, project_id=project_id
     )
-    if diagnoses_present:
-        _write_bytes(
-            dest / diagnosis.DIAGNOSES_FILENAME,
-            files.read_bytes(diagnoses_path),
+
+    staging_root = store / STAGING_DIRNAME
+    _guard_within(store, staging_root)
+    staging = files.make_staging_dir(staging_root)
+    try:
+        staged: set[str] = set()
+        for relative in chain_sources:
+            _stage_chain(data_root, staging, relative, files, store, staged)
+        _stage_bytes(
+            staging,
+            verdicts.VERDICTS_FILENAME,
+            files.read_bytes(verdicts_path),
+            files,
+            store,
+            staged,
+        )
+        if diagnoses_present:
+            _stage_bytes(
+                staging,
+                diagnosis.DIAGNOSES_FILENAME,
+                files.read_bytes(diagnoses_path),
+                files,
+                store,
+                staged,
+            )
+
+        if snapshot.available:
+            _stage_bytes(
+                staging,
+                PROJECT_GRAPH_FILENAME,
+                snapshot.graph_bytes or b"",
+                files,
+                store,
+                staged,
+            )
+            for artifact in snapshot.artifacts:
+                relative = f"{project_id}/{artifact.relative_path}"
+                if relative in staged:
+                    # The evidence chain already copied this path; copy once.
+                    continue
+                _stage_bytes(
+                    staging,
+                    relative,
+                    files.read_bytes(artifact.source_path),
+                    files,
+                    store,
+                    staged,
+                )
+
+        manifest = build_run_manifest(
+            record,
+            chain_sources,
+            (now or subagents.utcnow)(),
+            diagnoses_present=diagnoses_present,
+            project_snapshot=snapshot,
+        )
+        snapshot_sha256 = _snapshot_sha256(staging, manifest, files)
+        manifest["project_snapshot"]["snapshot_sha256"] = snapshot_sha256
+        manifest["project_artifacts"]["snapshot_sha256"] = snapshot_sha256
+        _stage_text(
+            staging,
+            RUN_MANIFEST,
+            yaml.safe_dump(manifest, sort_keys=False),
             files,
             store,
         )
 
-    manifest = build_run_manifest(
-        record,
-        chain_sources,
-        (now or subagents.utcnow)(),
-        diagnoses_present=diagnoses_present,
-    )
-    _write_text(
-        dest / RUN_MANIFEST, yaml.safe_dump(manifest, sort_keys=False), files, store
-    )
+        # Publish only after every applicable check passes.
+        _verify_self_contained(staging, files, eval_sha, fingerprint)
+        if snapshot.available:
+            _verify_project_snapshot(staging, snapshot, files, project_id)
 
-    _verify_self_contained(dest, files, eval_sha, fingerprint)
-    return dest
+        if files.exists(dest):
+            existing = _existing_snapshot_sha256(dest, files)
+            if existing != snapshot_sha256:
+                raise StoreError(
+                    "the published trial has different bytes", failure="snapshot_conflict"
+                )
+            return dest
+        files.publish_tree(staging, dest)
+        return dest
+    finally:
+        files.remove_tree(staging)
 
 
 def build_run_manifest(
@@ -360,10 +467,16 @@ def build_run_manifest(
     copied_at: str,
     *,
     diagnoses_present: bool,
+    project_snapshot: ProjectSnapshot | None = None,
 ) -> dict:
-    """The run manifest: the trial's pointers plus the copied chain provenance."""
+    """The schema-v2 run manifest: pointers, provenance, and the snapshot state.
+
+    `project_snapshot` defaults to an unavailable auxiliary snapshot, so a
+    caller that has not captured a graph (the demo generator) still gets the
+    three project-snapshot sections in their stable unavailable shape.
+    """
     phases = record.get("phases") or []
-    return {
+    manifest = {
         "schema_version": STORE_SCHEMA_VERSION,
         "trial_id": record.get("trial_id"),
         "target_id": record.get("target_id"),
@@ -379,6 +492,8 @@ def build_run_manifest(
         "diagnoses_present": bool(diagnoses_present),
         "copied_at": copied_at,
     }
+    manifest.update(_snapshot_sections(record, project_snapshot))
+    return manifest
 
 
 # --- internals ----------------------------------------------------------------
@@ -397,13 +512,13 @@ def _phase_pointer(phase: Mapping) -> dict:
 
 def _load_record(path: Path, files: FileStore) -> Mapping:
     if not files.exists(path):
-        raise StoreError(f"trial record not found: {path}", failure="record_missing")
+        raise StoreError("trial record not found", failure="record_missing")
     try:
         payload = yaml.safe_load(files.read_text(path))
     except yaml.YAMLError as exc:
-        raise StoreError(f"trial record {path}: invalid YAML: {exc}", failure="record_invalid") from exc
+        raise StoreError("trial record: invalid YAML", failure="record_invalid") from exc
     if not isinstance(payload, Mapping):
-        raise StoreError(f"trial record {path}: expected a mapping", failure="record_invalid")
+        raise StoreError("trial record: expected a mapping", failure="record_invalid")
     return payload
 
 
@@ -411,9 +526,11 @@ def _load_rows(path: Path, files: FileStore) -> list:
     try:
         payload = yaml.safe_load(files.read_text(path))
     except yaml.YAMLError as exc:
-        raise StoreError(f"{path}: invalid YAML: {exc}", failure="verdicts_invalid") from exc
+        raise StoreError("verdicts.yaml: invalid YAML", failure="verdicts_invalid") from exc
     if not isinstance(payload, list):
-        raise StoreError(f"{path}: expected a list of verdict rows", failure="verdicts_invalid")
+        raise StoreError(
+            "verdicts.yaml: expected a list of verdict rows", failure="verdicts_invalid"
+        )
     return payload
 
 
@@ -483,14 +600,30 @@ def _validate_chain_source(data_root: Path, relative: str, files: FileStore) -> 
         )
 
 
-def _copy_chain(data_root: Path, dest: Path, relative: str, files: FileStore, store: Path) -> None:
-    source = data_root / relative
+def _stage_chain(
+    data_root: Path,
+    staging: Path,
+    relative: str,
+    files: FileStore,
+    store: Path,
+    staged: set[str],
+) -> None:
+    """Copy one evidence-chain source into staging, preserving its structure."""
+    normalized = Path(relative).as_posix()
+    source = data_root / normalized
     if files.is_dir(source):
         for path in files.walk_files(source):
-            sub = path.relative_to(source)
-            _write_bytes(dest / relative / sub, files.read_bytes(path), files, store)
+            sub = path.relative_to(source).as_posix()
+            _stage_bytes(
+                staging,
+                f"{normalized}/{sub}",
+                files.read_bytes(path),
+                files,
+                store,
+                staged,
+            )
         return
-    _write_bytes(dest / relative, files.read_bytes(source), files, store)
+    _stage_bytes(staging, normalized, files.read_bytes(source), files, store, staged)
 
 
 def _verify_self_contained(dest: Path, files: FileStore, eval_sha: str, fingerprint: str) -> None:
@@ -514,18 +647,259 @@ def _require_str(record: Mapping, key: str, where: str) -> str:
     return value
 
 
-def _write_bytes(target: Path, data: bytes, files: FileStore, store: Path) -> None:
+def _stage_bytes(
+    staging: Path,
+    relative: str,
+    data: bytes,
+    files: FileStore,
+    store: Path,
+    staged: set[str],
+) -> None:
+    target = staging / relative
     _guard_within(store, target)
     files.write_bytes_atomic(target, data)
+    staged.add(Path(relative).as_posix())
 
 
-def _write_text(target: Path, text: str, files: FileStore, store: Path) -> None:
+def _stage_text(staging: Path, relative: str, text: str, files: FileStore, store: Path) -> None:
+    target = staging / relative
     _guard_within(store, target)
     files.write_text_atomic(target, text)
 
 
+# --- auxiliary project snapshot -----------------------------------------------
+
+
+def _snapshot_sections(record: Mapping, snapshot: ProjectSnapshot | None) -> dict:
+    """The three project-snapshot manifest sections.
+
+    Available only when the graph capture and the artifact inventory are both
+    valid and share one `captured_at`; otherwise all three are unavailable and
+    carry one stable, path-free failure code.
+    """
+    project_id = record.get("project_id")
+    if snapshot is not None and snapshot.available:
+        return {
+            "project_snapshot": {
+                "status": "available",
+                "project_id": project_id,
+                "captured_at": snapshot.captured_at,
+                "snapshot_sha256": None,
+            },
+            "project_artifacts": {
+                "status": "available",
+                "project_id": project_id,
+                "captured_at": snapshot.captured_at,
+                "snapshot_sha256": None,
+                "entries": [
+                    artifact.as_manifest_entry() for artifact in snapshot.artifacts
+                ],
+            },
+            "project_graph": {
+                "status": "available",
+                "project_id": project_id,
+                "captured_at": snapshot.captured_at,
+                "sha256": snapshot.graph_sha256,
+                "node_count": snapshot.graph_node_count,
+                "link_count": snapshot.graph_link_count,
+            },
+        }
+    failure = (
+        snapshot.failure if snapshot is not None and snapshot.failure else None
+    ) or "project_snapshot_unavailable"
+    return {
+        "project_snapshot": {
+            "status": "unavailable",
+            "project_id": project_id,
+            "failure": failure,
+        },
+        "project_artifacts": {
+            "status": "unavailable",
+            "project_id": project_id,
+            "failure": failure,
+            "entries": [],
+        },
+        "project_graph": {
+            "status": "unavailable",
+            "project_id": project_id,
+            "failure": failure,
+        },
+    }
+
+
+def _validate_project_snapshot(
+    record: Mapping,
+    trial_dir: Path,
+    data_root: Path,
+    files: FileStore,
+    *,
+    project_id: str,
+) -> ProjectSnapshot:
+    """Validate the recorded graph capture plus the artifact allowlist.
+
+    The graph and the artifact inventory are one unit: a graph problem or an
+    unsafe artifact tree yields an unavailable snapshot, never a partial graph
+    or a usable inventory. No live API is consulted.
+    """
+    graph_meta = record.get("project_graph")
+    if not isinstance(graph_meta, Mapping) or graph_meta.get("status") != "available":
+        recorded = graph_meta.get("failure") if isinstance(graph_meta, Mapping) else None
+        failure = _safe_failure(recorded) or "project_graph_unavailable"
+        return ProjectSnapshot(available=False, project_id=project_id, failure=failure)
+
+    captured_at = graph_meta.get("captured_at")
+    recorded_sha = graph_meta.get("sha256")
+    if not isinstance(captured_at, str) or not captured_at:
+        return ProjectSnapshot(
+            available=False, project_id=project_id, failure="project_graph_invalid"
+        )
+    if not isinstance(recorded_sha, str) or not recorded_sha:
+        return ProjectSnapshot(
+            available=False, project_id=project_id, failure="project_graph_invalid"
+        )
+
+    graph_path = trial_dir / PROJECT_GRAPH_FILENAME
+    if files.is_symlink(graph_path) or not files.is_file(graph_path):
+        return ProjectSnapshot(
+            available=False, project_id=project_id, failure="project_graph_invalid"
+        )
+    try:
+        graph_bytes = files.read_bytes(graph_path)
+    except OSError:
+        return ProjectSnapshot(
+            available=False, project_id=project_id, failure="project_graph_unavailable"
+        )
+    if hashlib.sha256(graph_bytes).hexdigest() != recorded_sha:
+        return ProjectSnapshot(
+            available=False, project_id=project_id, failure="project_graph_invalid"
+        )
+    try:
+        graph = json.loads(graph_bytes.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError):
+        return ProjectSnapshot(
+            available=False, project_id=project_id, failure="project_graph_invalid"
+        )
+    if not isinstance(graph, Mapping) or graph.get("project_id") != project_id:
+        return ProjectSnapshot(
+            available=False, project_id=project_id, failure="project_graph_invalid"
+        )
+
+    try:
+        artifacts = collect_project_artifacts(data_root, project_id, files=files)
+    except ProjectArtifactError as exc:
+        failure = _safe_failure(exc.failure) or "artifact_unsafe"
+        return ProjectSnapshot(available=False, project_id=project_id, failure=failure)
+    except OSError:
+        return ProjectSnapshot(
+            available=False, project_id=project_id, failure="artifact_unreadable"
+        )
+
+    nodes = graph.get("nodes")
+    links = graph.get("links")
+    return ProjectSnapshot(
+        available=True,
+        project_id=project_id,
+        captured_at=captured_at,
+        graph_sha256=recorded_sha,
+        graph_node_count=len(nodes) if isinstance(nodes, list) else 0,
+        graph_link_count=len(links) if isinstance(links, list) else 0,
+        graph_bytes=graph_bytes,
+        artifacts=artifacts,
+    )
+
+
+def _verify_project_snapshot(
+    staging: Path, snapshot: ProjectSnapshot, files: FileStore, project_id: str
+) -> None:
+    """Re-check the staged graph and artifact digests before publication."""
+    graph_target = staging / PROJECT_GRAPH_FILENAME
+    if files.is_symlink(graph_target) or not files.is_file(graph_target):
+        raise StoreError(
+            "staged project graph is missing", failure="project_snapshot_unavailable"
+        )
+    if hashlib.sha256(files.read_bytes(graph_target)).hexdigest() != snapshot.graph_sha256:
+        raise StoreError(
+            "staged project graph digest disagrees",
+            failure="project_snapshot_unavailable",
+        )
+    for artifact in snapshot.artifacts:
+        relative = f"{project_id}/{artifact.relative_path}"
+        target = staging / relative
+        if not files.is_file(target):
+            raise StoreError(
+                f"staged artifact is missing: {relative}",
+                failure="project_snapshot_unavailable",
+            )
+        if hashlib.sha256(files.read_bytes(target)).hexdigest() != artifact.sha256:
+            raise StoreError(
+                f"staged artifact digest disagrees: {relative}",
+                failure="project_snapshot_unavailable",
+            )
+
+
+# --- the stable snapshot fingerprint ------------------------------------------
+
+
+def _snapshot_sha256(staging: Path, manifest: Mapping, files: FileStore) -> str:
+    """The time-independent fingerprint of the complete staged Trial payload.
+
+    Sorted relative path + content digest of every non-manifest file, plus the
+    canonical manifest payload with `copied_at`, `captured_at`, and
+    `snapshot_sha256` removed, so identical inputs fingerprint equally across
+    rematerializations and there is no self-referential digest.
+    """
+    staged_files: list[list[str]] = []
+    for path in sorted(Path(staging).rglob("*")):
+        if not path.is_file() or path.is_symlink():
+            continue
+        relative = path.relative_to(staging).as_posix()
+        if relative == RUN_MANIFEST:
+            continue
+        staged_files.append([relative, hashlib.sha256(files.read_bytes(path)).hexdigest()])
+    payload = {"files": staged_files, "manifest": _strip_volatile(manifest)}
+    canonical = json.dumps(payload, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _strip_volatile(value: object) -> object:
+    """Recursively drop the manifest keys excluded from the fingerprint."""
+    if isinstance(value, Mapping):
+        return {
+            key: _strip_volatile(item)
+            for key, item in value.items()
+            if key not in _VOLATILE_MANIFEST_KEYS
+        }
+    if isinstance(value, list):
+        return [_strip_volatile(item) for item in value]
+    return value
+
+
+def _existing_snapshot_sha256(dest: Path, files: FileStore) -> str | None:
+    """The published tree's schema-v2 fingerprint, or None when it has none."""
+    manifest_path = dest / RUN_MANIFEST
+    if not files.is_file(manifest_path):
+        return None
+    try:
+        payload = yaml.safe_load(files.read_text(manifest_path))
+    except (OSError, yaml.YAMLError):
+        return None
+    if (
+        not isinstance(payload, Mapping)
+        or payload.get("schema_version") != STORE_SCHEMA_VERSION
+    ):
+        return None
+    section = payload.get("project_snapshot")
+    if not isinstance(section, Mapping):
+        return None
+    value = section.get("snapshot_sha256")
+    return value if isinstance(value, str) and value else None
+
+
+def _safe_failure(code: object) -> str | None:
+    """A recognized, path-free failure code, or None."""
+    return code if isinstance(code, str) and code in _SAFE_FAILURES else None
+
+
 def _guard_within(store: Path, path: Path) -> None:
     if not is_within(store, path):
-        raise StoreError(
-            f"refusing to write outside the store root: {path}", failure="escape"
-        )
+        raise StoreError("refusing to write outside the store root", failure="escape")

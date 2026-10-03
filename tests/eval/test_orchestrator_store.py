@@ -10,6 +10,8 @@ write escapes the store root.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import textwrap
 from pathlib import Path
 
@@ -129,6 +131,52 @@ def _make_trial(
         yaml.safe_dump(record or _record_payload(), sort_keys=False), encoding="utf-8"
     )
     return trial_dir, data_root
+
+
+GRAPH_JSON = {
+    "project_id": "pid",
+    "nodes": [{"id": "n1", "name": "a", "type": "L1Service", "properties": {}}],
+    "links": [],
+}
+
+
+def _add_graph(
+    trial_dir: Path,
+    *,
+    digest: str | None = None,
+    captured_at: str = "2026-10-03T00:00:00+00:00",
+) -> dict:
+    """Write the captured graph beside `trial.yaml` and return its record metadata."""
+    data = json.dumps(GRAPH_JSON).encode("utf-8")
+    (trial_dir / "project-graph.json").write_bytes(data)
+    return {
+        "status": "available",
+        "captured_at": captured_at,
+        "sha256": digest if digest is not None else hashlib.sha256(data).hexdigest(),
+        "node_count": len(GRAPH_JSON["nodes"]),
+        "link_count": len(GRAPH_JSON["links"]),
+        "failure": None,
+    }
+
+
+def _rewrite_record(trial_dir: Path, **overrides) -> dict:
+    record = _record_payload(**overrides)
+    (trial_dir / "trial.yaml").write_text(
+        yaml.safe_dump(record, sort_keys=False), encoding="utf-8"
+    )
+    return record
+
+
+def _add_skill(data_root: Path, name: str = "authn") -> Path:
+    path = data_root / "pid" / "skills" / name / "SKILL.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("# authn\n", encoding="utf-8")
+    return path
+
+
+def _staging_entries(store_dir: Path) -> list[Path]:
+    staging = store_dir / "_staging"
+    return sorted(staging.iterdir()) if staging.exists() else []
 
 
 class _RecordingFileStore(FileStore):
@@ -359,21 +407,198 @@ def test_materialize_surfaces_a_named_failure_for_a_missing_chain_file(tmp_path)
     assert not (tmp_path / "store" / "jetlinks-1" / "arm-a" / "trial-1").exists()
 
 
-def test_materialize_is_idempotent_and_replaces_a_changed_copy(tmp_path) -> None:
+def test_materialize_publishes_schema_v2_graph_and_artifacts(tmp_path) -> None:
+    trial_dir, data_root = _make_trial(tmp_path)
+    _add_skill(data_root)
+    graph_meta = _add_graph(trial_dir)
+    _rewrite_record(trial_dir, project_graph=graph_meta)
+
+    dest = store.materialize(
+        trial_dir, store=tmp_path / "store", data_root=data_root, files=FileStore()
+    )
+
+    manifest = yaml.safe_load((dest / store.RUN_MANIFEST).read_text(encoding="utf-8"))
+    assert store.STORE_SCHEMA_VERSION == 2
+    assert manifest["schema_version"] == 2
+    for section in ("project_snapshot", "project_artifacts", "project_graph"):
+        assert manifest[section]["status"] == "available", section
+        assert manifest[section]["project_id"] == "pid"
+        assert manifest[section]["captured_at"] == graph_meta["captured_at"]
+    assert (
+        manifest["project_artifacts"]["snapshot_sha256"]
+        == manifest["project_snapshot"]["snapshot_sha256"]
+    )
+    assert manifest["project_snapshot"]["snapshot_sha256"]
+    assert manifest["project_graph"]["sha256"] == graph_meta["sha256"]
+    assert manifest["project_graph"]["node_count"] == 1
+    assert manifest["project_graph"]["link_count"] == 0
+    # The manifest never carries a host path.
+    assert str(tmp_path) not in yaml.safe_dump(manifest)
+
+    entries = {
+        entry["relative_path"]: entry
+        for entry in manifest["project_artifacts"]["entries"]
+    }
+    assert "hunting/orchestration/hunt_configs/consumed/cfg.yaml" in entries
+    assert "hunting/test-executor-pod/spec-1/export.yaml" in entries
+    assert "hunting/test-executor-pod/spec-1/experiment-log/order-0.yaml" in entries
+    assert "skills/authn/SKILL.md" in entries
+
+    assert (dest / "project-graph.json").exists()
+    assert (dest / "pid/skills/authn/SKILL.md").exists()
+    assert (dest / "pid/hunting/orchestration/hunt_configs/consumed/cfg.yaml").exists()
+
+
+def test_auxiliary_failure_publishes_core_with_project_snapshot_unavailable(tmp_path) -> None:
+    trial_dir, data_root = _make_trial(tmp_path)
+
+    dest = store.materialize(
+        trial_dir, store=tmp_path / "store", data_root=data_root, files=FileStore()
+    )
+
+    manifest = yaml.safe_load((dest / store.RUN_MANIFEST).read_text(encoding="utf-8"))
+    assert manifest["schema_version"] == 2
+    for section in ("project_snapshot", "project_artifacts", "project_graph"):
+        assert manifest[section]["status"] == "unavailable", section
+    assert manifest["project_snapshot"]["failure"] == "project_graph_unavailable"
+    assert manifest["project_artifacts"]["failure"] == "project_graph_unavailable"
+    assert manifest["project_graph"]["failure"] == "project_graph_unavailable"
+    assert manifest["project_artifacts"]["entries"] == []
+    assert not (dest / "project-graph.json").exists()
+    # The validated core eval bundle is still published and readable.
+    assert (dest / "verdicts.yaml").exists()
+    assert (dest / "pid/hunting/orchestration/hunt_configs/consumed/cfg.yaml").exists()
+
+
+def test_equal_rematerialization_preserves_original_timestamps(tmp_path) -> None:
+    trial_dir, data_root = _make_trial(tmp_path)
+    store_dir = tmp_path / "store"
+    files = FileStore()
+
+    dest = store.materialize(trial_dir, store=store_dir, data_root=data_root, files=files)
+    before_manifest = (dest / store.RUN_MANIFEST).read_text(encoding="utf-8")
+    before_mtimes = {
+        path.relative_to(dest).as_posix(): path.stat().st_mtime_ns
+        for path in dest.rglob("*")
+        if path.is_file()
+    }
+
+    second = store.materialize(trial_dir, store=store_dir, data_root=data_root, files=files)
+
+    assert second == dest
+    assert (dest / store.RUN_MANIFEST).read_text(encoding="utf-8") == before_manifest
+    after_mtimes = {
+        path.relative_to(dest).as_posix(): path.stat().st_mtime_ns
+        for path in dest.rglob("*")
+        if path.is_file()
+    }
+    assert after_mtimes == before_mtimes
+    assert _staging_entries(store_dir) == []
+
+
+def test_changed_rematerialization_refuses_snapshot_conflict(tmp_path) -> None:
     trial_dir, data_root = _make_trial(tmp_path)
     store_dir = tmp_path / "store"
     files = FileStore()
     cfg = data_root / "pid/hunting/orchestration/hunt_configs/consumed/cfg.yaml"
 
-    first = store.materialize(trial_dir, store=store_dir, data_root=data_root, files=files)
+    dest = store.materialize(trial_dir, store=store_dir, data_root=data_root, files=files)
+    before_manifest = (dest / store.RUN_MANIFEST).read_text(encoding="utf-8")
     cfg.write_text("config: edited\n", encoding="utf-8")
-    second = store.materialize(trial_dir, store=store_dir, data_root=data_root, files=files)
 
-    assert first == second
-    copied = first / "pid/hunting/orchestration/hunt_configs/consumed/cfg.yaml"
-    assert copied.read_text(encoding="utf-8") == "config: edited\n"
-    # No temp file survived the atomic replacement.
-    assert sorted(p.name for p in copied.parent.iterdir()) == ["cfg.yaml"]
+    with pytest.raises(store.StoreError) as excinfo:
+        store.materialize(trial_dir, store=store_dir, data_root=data_root, files=files)
+
+    assert excinfo.value.failure == "snapshot_conflict"
+    # The published tree is immutable: neither the manifest nor the copy changed.
+    assert (dest / store.RUN_MANIFEST).read_text(encoding="utf-8") == before_manifest
+    copied = dest / "pid/hunting/orchestration/hunt_configs/consumed/cfg.yaml"
+    assert copied.read_text(encoding="utf-8") == "config: cfg\n"
+    assert _staging_entries(store_dir) == []
+
+
+def test_core_failure_leaves_no_visible_trial_or_staging_tree(tmp_path) -> None:
+    trial_dir, data_root = _make_trial(tmp_path)
+    store_dir = tmp_path / "store"
+    (data_root / "pid/hunting/test-executor-pod/spec-1/export.yaml").unlink()
+
+    with pytest.raises(store.StoreError) as excinfo:
+        store.materialize(trial_dir, store=store_dir, data_root=data_root, files=FileStore())
+
+    assert excinfo.value.failure == "chain_unresolved"
+    assert str(tmp_path) not in str(excinfo.value)
+    assert not (store_dir / "jetlinks-1").exists()
+    assert _staging_entries(store_dir) == []
+
+
+def test_evidence_and_project_snapshot_copy_the_same_path_once(tmp_path) -> None:
+    trial_dir, data_root = _make_trial(tmp_path)
+    graph_meta = _add_graph(trial_dir)
+    _rewrite_record(trial_dir, project_graph=graph_meta)
+    files = _RecordingFileStore()
+
+    dest = store.materialize(
+        trial_dir, store=tmp_path / "store", data_root=data_root, files=files
+    )
+
+    overlapping = dest / "pid/hunting/orchestration/hunt_configs/consumed/cfg.yaml"
+    assert overlapping.exists()
+    # The staging write happens once even though the evidence chain and the
+    # artifact inventory both cover this path (the final tree is one rename).
+    staged_overlap = [
+        path
+        for path in files.writes
+        if "_staging" in path.parts
+        and path.as_posix().endswith(
+            "pid/hunting/orchestration/hunt_configs/consumed/cfg.yaml"
+        )
+    ]
+    assert len(staged_overlap) == 1
+    # The shared path is still part of the published inventory.
+    manifest = yaml.safe_load((dest / store.RUN_MANIFEST).read_text(encoding="utf-8"))
+    paths = {entry["relative_path"] for entry in manifest["project_artifacts"]["entries"]}
+    assert "hunting/orchestration/hunt_configs/consumed/cfg.yaml" in paths
+
+
+def test_project_symlink_publishes_no_partial_auxiliary_snapshot(tmp_path) -> None:
+    trial_dir, data_root = _make_trial(tmp_path)
+    graph_meta = _add_graph(trial_dir)
+    _rewrite_record(trial_dir, project_graph=graph_meta)
+    outside = tmp_path / "outside.md"
+    outside.write_text("x", encoding="utf-8")
+    references = data_root / "pid/skills/authn/references"
+    references.mkdir(parents=True)
+    (references / "evil.md").symlink_to(outside)
+
+    dest = store.materialize(
+        trial_dir, store=tmp_path / "store", data_root=data_root, files=FileStore()
+    )
+
+    manifest = yaml.safe_load((dest / store.RUN_MANIFEST).read_text(encoding="utf-8"))
+    for section in ("project_snapshot", "project_artifacts", "project_graph"):
+        assert manifest[section]["status"] == "unavailable", section
+    assert manifest["project_snapshot"]["failure"] == "artifact_unsafe"
+    assert manifest["project_artifacts"]["entries"] == []
+    assert not (dest / "project-graph.json").exists()
+    assert (dest / "verdicts.yaml").exists()
+
+
+def test_graph_digest_mismatch_publishes_no_partial_auxiliary_snapshot(tmp_path) -> None:
+    trial_dir, data_root = _make_trial(tmp_path)
+    graph_meta = _add_graph(trial_dir, digest="0" * 64)
+    _rewrite_record(trial_dir, project_graph=graph_meta)
+
+    dest = store.materialize(
+        trial_dir, store=tmp_path / "store", data_root=data_root, files=FileStore()
+    )
+
+    manifest = yaml.safe_load((dest / store.RUN_MANIFEST).read_text(encoding="utf-8"))
+    for section in ("project_snapshot", "project_artifacts", "project_graph"):
+        assert manifest[section]["status"] == "unavailable", section
+    assert manifest["project_snapshot"]["failure"] == "project_graph_invalid"
+    assert manifest["project_artifacts"]["entries"] == []
+    assert not (dest / "project-graph.json").exists()
+    assert (dest / "verdicts.yaml").exists()
 
 
 def test_run_manifest_carries_the_trial_pointers(tmp_path) -> None:

@@ -13,6 +13,7 @@ Import performs no I/O (CODING_STANDARD section 6).
 from __future__ import annotations
 
 import os
+import shutil
 import stat
 import tempfile
 from pathlib import Path
@@ -234,6 +235,32 @@ class FileStore:
     def file_size(self, path: str | Path) -> int:
         """The size in bytes of `path` as reported by `stat`."""
         return Path(path).stat().st_size
+
+    def make_staging_dir(self, root: str | Path) -> Path:
+        """Create and return a unique staging directory under `root`.
+
+        Used by the materializer to assemble a complete Trial tree off to the
+        side (`<store>/_staging/<unique-id>`) that is only renamed into place on
+        success, so a failure never leaves a visible or half-built Trial.
+        """
+        base = Path(root)
+        base.mkdir(parents=True, exist_ok=True)
+        return Path(tempfile.mkdtemp(prefix="trial-", dir=str(base)))
+
+    def publish_tree(self, staging: str | Path, destination: str | Path) -> None:
+        """Atomically move a fully-staged tree to `destination`.
+
+        The caller publishes only when `destination` does not exist; the rename
+        is the single visible step, so a reader never sees a partial Trial.
+        """
+        source = Path(staging)
+        target = Path(destination)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        os.replace(source, target)
+
+    def remove_tree(self, path: str | Path) -> None:
+        """Recursively delete `path`, tolerating a missing tree (staging cleanup)."""
+        shutil.rmtree(path, ignore_errors=True)
 
     def count_files(self, directory: str | Path) -> int:
         """The number of regular files directly under `directory`."""
