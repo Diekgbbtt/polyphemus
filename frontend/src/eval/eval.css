@@ -682,6 +682,38 @@
   padding-top: 1rem;
 }
 
+/* --- the shared graph view (live and historical) ----------------------------- */
+
+.graph-view {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.graph-view-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.graph-view-source {
+  font-weight: 600;
+  color: #e8eaed;
+}
+
+.graph-view-captured {
+  color: #9aa0a6;
+}
+
+.graph-live-link a {
+  color: #8ab4f8;
+  text-decoration: none;
+}
+
+.graph-live-link a:hover {
+  text-decoration: underline;
+}
+
 @media (max-width: 40rem) {
   .project-nav {
     width: 100%;

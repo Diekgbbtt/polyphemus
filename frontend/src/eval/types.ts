@@ -1,6 +1,8 @@
 // The eval read API's `/snapshot` wire shape (#278). Every field is allowlisted
 // on the server: no host paths, ground truth, or raw evidence content here.
 
+import type { GraphData } from "../api/types"
+
 export interface EvalDataset {
   id: string
   name: string
@@ -99,6 +101,16 @@ export interface ProjectGraphSummary {
   nodes: number
   links: number
   captured_at: string | null
+}
+
+// The historical project graph one materialized Trial captured. Its `graph` is
+// the same `GraphData` contract the live graph uses, but the two sources are
+// never mixed.
+export interface HistoricalProjectGraph {
+  status: "available"
+  captured_at: string
+  sha256: string
+  graph: GraphData
 }
 
 export interface EvalTrial {

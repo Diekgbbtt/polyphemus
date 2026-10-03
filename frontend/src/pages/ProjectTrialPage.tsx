@@ -1,6 +1,7 @@
 import { Link, useParams } from "react-router-dom"
 import { evalPaths } from "../eval/EvalBreadcrumbs"
 import { useEvalData } from "../eval/EvalDataProvider"
+import { TrialProjectGraph } from "../eval/TrialProjectGraph"
 import type { EvalTrial } from "../eval/types"
 
 function outcomeCounts(trial: EvalTrial): { identified: number; partial: number; missed: number } {
@@ -98,15 +99,13 @@ export function ProjectTrialPage() {
         </section>
       )}
 
-      {/* Placeholders for the graph, hunting, and skills views (Tasks 8-10). */}
-      <section aria-label="Graph" className="project-trial-section">
-        <h2>Graph</h2>
-        <p className="eval-status">
-          Historical L0/L1 graph ·{" "}
-          <span className="eval-ref">{graph.status}</span> · {graph.nodes} nodes /{" "}
-          {graph.links} links
-        </p>
-      </section>
+      <TrialProjectGraph
+        projectId={projectId}
+        targetId={trial.target_id}
+        targetRunId={trial.target_run_id}
+        trialId={trial.trial_id}
+        summary={graph}
+      />
       <section aria-label="Hunting" className="project-trial-section">
         <h2>Hunting</h2>
         <p className="eval-status">

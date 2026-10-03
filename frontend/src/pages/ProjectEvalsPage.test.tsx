@@ -259,7 +259,8 @@ test("list to detail navigation keeps one /snapshot request", async () => {
     expect(screen.getByRole("heading", { name: /Trial trial-1/ })).toBeDefined(),
   )
   expect(calls.filter((url) => url.endsWith("/snapshot"))).toHaveLength(1)
-  expect(calls.some((url) => url.includes("project-graph"))).toBe(false)
+  // The workspace loads its historical (eval) graph, never the live one.
+  expect(calls.some((url) => url.includes("/projects/"))).toBe(false)
   expect(calls.some((url) => url.includes("artifacts"))).toBe(false)
 })
 
