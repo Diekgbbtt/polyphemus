@@ -227,6 +227,10 @@ Tests to write: The five named normalization, validation, finalization, and fail
 
 ### Task 3: Schema-v2 immutable Trial publication
 
+**Implementation state:** Complete in `66e11a7a` with isolation fixes
+`15215f75` and `cdd8abef`; independently verified with 69 focused and 95
+extended tests passing.
+
 **Files:**
 - Modify: `eval/orchestrator/store.py`
 - Modify: `eval/orchestrator/files.py`
@@ -239,7 +243,7 @@ Tests to write: The five named normalization, validation, finalization, and fail
 - Produces: unchanged public `store.materialize(...) -> Path`; `STORE_SCHEMA_VERSION = 2`; manifest `project_snapshot`, `project_artifacts`, and `project_graph`; stable `snapshot_sha256`; named `StoreError(failure="snapshot_conflict")`.
 - Adds `FileStore.make_staging_dir(root: Path) -> Path`, `FileStore.publish_tree(staging: Path, destination: Path) -> None`, and `FileStore.remove_tree(path: Path) -> None` for testable staging cleanup and atomic first publication.
 
-- [ ] **Step 1: Replace the old mutable-rematerialization expectation with failing immutable tests**
+- [x] **Step 1: Replace the old mutable-rematerialization expectation with failing immutable tests**
 
 Add `test_materialize_publishes_schema_v2_graph_and_artifacts`,
 `test_auxiliary_failure_publishes_core_with_project_snapshot_unavailable`,
@@ -248,14 +252,14 @@ Add `test_materialize_publishes_schema_v2_graph_and_artifacts`,
 `test_core_failure_leaves_no_visible_trial_or_staging_tree`. Update the
 existing test that expects edited source bytes to overwrite a published Trial.
 
-- [ ] **Step 2: Run focused store tests and observe the schema/idempotence failures**
+- [x] **Step 2: Run focused store tests and observe the schema/idempotence failures**
 
 Run: `PYTHONPATH=eval .venv/bin/python -m pytest tests/eval/test_orchestrator_store.py tests/eval/test_orchestrator_cli_store.py -q`
 
 Expected: FAIL on schema version, missing graph/inventory metadata, auxiliary
 failure isolation, and current overwrite-on-rematerialize behavior.
 
-- [ ] **Step 3: Implement staged complete-tree publication**
+- [x] **Step 3: Implement staged complete-tree publication**
 
 Build under `<store>/_staging/<unique-id>`, union evidence-chain sources with
 Task 1 candidates by normalized relative path, and validate the Task 2 graph
@@ -266,7 +270,7 @@ Extend `projection.SKIP_DIRNAMES` with `_staging`. Compute `snapshot_sha256`
 from sorted non-manifest file digests plus canonical manifest data excluding
 `copied_at`, `captured_at`, and `snapshot_sha256`.
 
-- [ ] **Step 4: Implement immutable replay behavior**
+- [x] **Step 4: Implement immutable replay behavior**
 
 When destination exists, load its schema-v2 fingerprint: equal fingerprint
 returns the existing path without rewriting; different or missing fingerprint
@@ -274,7 +278,7 @@ raises `snapshot_conflict`. For a new destination, publish staging only after
 core self-containment and, when available, graph/inventory verification pass;
 always clean staging on exceptions.
 
-- [ ] **Step 5: Add deduplication and safety regression tests**
+- [x] **Step 5: Add deduplication and safety regression tests**
 
 Add `test_evidence_and_project_snapshot_copy_the_same_path_once`,
 `test_project_symlink_publishes_no_partial_auxiliary_snapshot`,
@@ -283,13 +287,13 @@ Add `test_evidence_and_project_snapshot_copy_the_same_path_once`,
 core bundle stays readable, neither graph nor artifact inventory is exposed,
 and `_staging` is never projected as a Target.
 
-- [ ] **Step 6: Run store, CLI, and projection tests**
+- [x] **Step 6: Run store, CLI, and projection tests**
 
 Run: `PYTHONPATH=eval .venv/bin/python -m pytest tests/eval/test_orchestrator_store.py tests/eval/test_orchestrator_cli_store.py tests/eval/test_read_api_projection.py -q`
 
 Expected: all tests PASS.
 
-- [ ] **Step 7: Commit immutable publication**
+- [x] **Step 7: Commit immutable publication**
 
 ```bash
 git add eval/orchestrator/store.py eval/orchestrator/files.py eval/read_api/projection.py tests/eval/test_orchestrator_store.py tests/eval/test_orchestrator_cli_store.py tests/eval/test_read_api_projection.py
