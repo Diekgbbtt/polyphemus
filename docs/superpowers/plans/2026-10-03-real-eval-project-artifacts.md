@@ -383,6 +383,11 @@ Tests to write: The named Task 4 schema-v1/v2 and determinism tests plus stable 
 
 ### Task 5: Manifest-backed historical graph read API
 
+**Implementation state:** Complete in `20cfe439`; worker verification reports
+62 graph/source/app tests and 120 read-API tests passing. The implementation
+was independently reviewed; a local route rerun was stopped after the sandbox
+runner stalled inside FastAPI `TestClient` without producing a failure.
+
 **Files:**
 - Create: `eval/read_api/project_graph.py`
 - Create: `tests/eval/test_read_api_project_graph.py`
@@ -395,39 +400,39 @@ Tests to write: The named Task 4 schema-v1/v2 and determinism tests plus stable 
 - Produces: `HistoricalProjectGraph` response `{status, captured_at, sha256, graph}`; extend `SnapshotSource` with `get_project_graph(target_id: str, target_run_id: str, trial_id: str) -> dict`; exact route `GET /trials/{target_id}/{target_run_id}/{trial_id}/project-graph`.
 - Errors: unknown Trial is path-free 404; unavailable snapshot, malformed manifest, missing graph, or digest mismatch are path-free 409 with stable codes from the spec.
 
-- [ ] **Step 1: Write failing source and route tests**
+- [x] **Step 1: Write failing source and route tests**
 
 Add `test_get_project_graph_returns_graphdata_and_capture_metadata`,
 `test_project_graph_route_uses_full_trial_identity`, and
 `test_project_graph_route_never_calls_or_mentions_live_api`. Assert individual
 URL segment decoding cannot escape the configured store.
 
-- [ ] **Step 2: Run focused tests and observe missing interfaces**
+- [x] **Step 2: Run focused tests and observe missing interfaces**
 
 Run: `PYTHONPATH=eval .venv/bin/python -m pytest tests/eval/test_read_api_project_graph.py tests/eval/test_read_api_app.py -q`
 
 Expected: FAIL because the source method and route do not exist.
 
-- [ ] **Step 3: Implement manifest-backed graph lookup**
+- [x] **Step 3: Implement manifest-backed graph lookup**
 
 Resolve only the full Trial identity below the configured store, require all
 project-snapshot sections to be available, load the fixed filename rather than
 client input, verify regular-file containment and SHA-256, validate `GraphData`,
 and return the exact wrapper from the spec. Never proxy the agent API.
 
-- [ ] **Step 4: Add integrity and compatibility tests**
+- [x] **Step 4: Add integrity and compatibility tests**
 
 Cover schema-v1, schema-v2 unavailable, missing file, malformed JSON,
 project-id mismatch, digest mismatch, symlink replacement, path-like Trial
 ids, and absolute-path absence from every error.
 
-- [ ] **Step 5: Run all graph read-API tests**
+- [x] **Step 5: Run all graph read-API tests**
 
 Run: `PYTHONPATH=eval .venv/bin/python -m pytest tests/eval/test_read_api_project_graph.py tests/eval/test_read_api_source.py tests/eval/test_read_api_app.py -q`
 
 Expected: all tests PASS.
 
-- [ ] **Step 6: Commit historical graph API**
+- [x] **Step 6: Commit historical graph API**
 
 ```bash
 git add eval/read_api/project_graph.py eval/read_api/source.py eval/read_api/app.py tests/eval/test_read_api_project_graph.py tests/eval/test_read_api_app.py
