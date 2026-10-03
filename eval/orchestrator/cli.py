@@ -650,6 +650,7 @@ def _trial_config(args, setup: EvalSetup, config: OrchestratorConfig) -> tuple[
         auth_surface=run.target_config.auth is not None,
         preloaded_hunting_artifacts=run.preloaded_hunting_artifacts,
         hunt_config_budget=run.hunt_config_budget,
+        token_budget=run.token_budget,
         target_run_id=target_run_id,
         data_root=data_root,
         runs_root=Path(args.runs_root),
@@ -696,6 +697,12 @@ def _run_trial(args, setup: EvalSetup, config: OrchestratorConfig, out: TextIO, 
         print(
             f"  cap {record.cap}: stopped at {record.stop_count}, "
             f"final {record.final_count} (overshoot {record.overshoot})",
+            file=out,
+        )
+    if record.token_budget is not None and record.spent_tokens is not None:
+        print(
+            f"  spend {record.spent_tokens} tokens "
+            f"(overshoot {record.spend_overshoot})",
             file=out,
         )
     # I2: a failed or timed-out run is a handled failure (the record is written
@@ -1805,9 +1812,10 @@ def _resume_trial(args, setup: EvalSetup, config: OrchestratorConfig,
         cfg,
         start_phase=plan.start_phase,
         intervention=plan.intervention,
-        # A resumed trial keeps its recorded trial-scoped baseline; only a new
+        # A resumed trial keeps its recorded trial-scoped baselines; only a new
         # trial snapshots a fresh one (D8/D16).
         cap_baseline=plan.cap_baseline,
+        spend_baseline=plan.spend_baseline,
     )
     runner = runner_factory()
     api_runner = (api_factory or (lambda base: api.HttpApiRunner(base)))(args.api)

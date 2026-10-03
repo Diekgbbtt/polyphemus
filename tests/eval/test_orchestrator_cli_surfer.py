@@ -382,3 +382,60 @@ def test_resume_trial_threads_the_record_cap_baseline(tmp_path, monkeypatch) -> 
     assert trial_id == "resumed-1"
     assert captured["cfg"].cap_baseline == ("old.yaml",)
     assert captured["cfg"].start_phase == "hunting"
+
+
+def test_resume_trial_threads_the_record_spend_baseline(tmp_path, monkeypatch) -> None:
+    """The CLI resume builds a TrialConfig carrying the record's spend baseline."""
+    setup = setup_mod.parse_eval_setup(_setup_payload())
+    config = cli.OrchestratorConfig(
+        repo=tmp_path / "repo", instances_root=tmp_path / "instances", branch="eval"
+    )
+    canned = trial.TrialConfig(
+        instance_id="arm-a",
+        target_id="jetlinks-1",
+        start_phase="hunting",
+        project_id="pid",
+        data_root=tmp_path / "data",
+        runs_root=tmp_path / "runs",
+    )
+    args = argparse.Namespace(
+        runs_root=str(tmp_path / "runs"),
+        budget_s=100.0,
+        poll_s=10.0,
+        eval_sha="sha",
+        stack_fingerprint="fp",
+        trace_id="t",
+        repo=str(tmp_path / "repo"),
+        api="http://api",
+    )
+    captured: dict = {}
+
+    class _FakeTrial:
+        def __init__(self, cfg, **kwargs) -> None:
+            captured["cfg"] = cfg
+
+        def run(self, **kwargs) -> object:
+            return SimpleNamespace(trial_id="resumed-1")
+
+    monkeypatch.setattr(cli, "_trial_config", lambda *a, **k: (canned, None, None))
+    monkeypatch.setattr(cli.trial, "Trial", _FakeTrial)
+    monkeypatch.setattr(
+        cli, "Orchestrator", lambda *a, **k: SimpleNamespace(up=lambda: None)
+    )
+    plan = surfer.ResumePlan(
+        instance_id="arm-a",
+        target_id="jetlinks-1",
+        project_id="pid",
+        start_phase="hunting",
+        intervention="surfer: resumed",
+        spend_baseline=1000,
+    )
+
+    trial_id = cli._resume_trial(
+        args, setup, config, plan, tmp_path / "data",
+        lambda: object(), lambda base: object(),
+    )
+
+    assert trial_id == "resumed-1"
+    assert captured["cfg"].spend_baseline == 1000
+    assert captured["cfg"].start_phase == "hunting"

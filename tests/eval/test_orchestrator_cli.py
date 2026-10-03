@@ -6,6 +6,10 @@ parameter so a test can prove plan mode executes nothing.
 """
 from __future__ import annotations
 
+import io
+from pathlib import Path
+from types import SimpleNamespace
+
 import yaml
 
 from orchestrator import api, cli
@@ -164,6 +168,9 @@ def _trial_routes() -> dict:
         "PUT /projects/pid/settings": {"ok": True},
         "POST /projects": {"project_id": "pid"},
         "GET /projects": {"projects": [{"project_id": "pid"}]},
+        # The trial-wide token budget reads the usage seam each poll. A constant
+        # total snapshots the baseline and never reaches the budget.
+        "GET /projects/pid/usage": {"total_tokens": 1000, "by_agent": {}},
     }
 
 
@@ -364,3 +371,60 @@ def test_trial_rejects_a_path_unsafe_target_run_id(
 
     assert code == 1
     assert "target_run_id" in capsys.readouterr().err
+
+
+def test_trial_threads_the_token_budget_into_the_record(
+    sample_setup, tmp_path, recording_runner, fake_result
+) -> None:
+    """The setup's per-target token budget reaches the TrialConfig and record."""
+    code, record = _run_trial_cli(sample_setup, tmp_path, recording_runner, fake_result)
+
+    assert code == 0
+    assert record["token_budget"] == 10
+
+
+def test_trial_outcome_prints_the_token_spend(monkeypatch) -> None:
+    record = SimpleNamespace(
+        trial_id="t1",
+        terminal="stopped",
+        project_id="pid",
+        phases=[
+            SimpleNamespace(
+                phase="hunting", status="stopped", failure=None, blocks=[], notes=[]
+            )
+        ],
+        overshoot=None,
+        cap=None,
+        stop_count=None,
+        final_count=None,
+        token_budget=500,
+        spent_tokens=600,
+        spend_overshoot=100,
+    )
+
+    class _FakeTrial:
+        def __init__(self, cfg, **kwargs) -> None:
+            pass
+
+        def run(self, **kwargs) -> object:
+            return record
+
+    monkeypatch.setattr(cli, "_trial_config", lambda *a, **k: (None, None, None))
+    monkeypatch.setattr(cli.trial, "Trial", _FakeTrial)
+    monkeypatch.setattr(
+        cli, "Orchestrator", lambda *a, **k: SimpleNamespace(up=lambda: None)
+    )
+    out, err = io.StringIO(), io.StringIO()
+
+    code = cli._run_trial(
+        SimpleNamespace(dry_run=False, api="http://api"),
+        object(),
+        cli.OrchestratorConfig(repo=Path("/repo"), instances_root=Path("/instances")),
+        out,
+        err,
+        lambda: object(),
+        lambda base: object(),
+    )
+
+    assert code == 0
+    assert "spend 600 tokens (overshoot 100)" in out.getvalue()
