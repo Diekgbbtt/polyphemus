@@ -151,6 +151,9 @@ Tests to write: `test_accepts_domain_punctuation_in_dynamic_segments` plus exact
 
 ### Task 2: Final L0/L1 graph capture
 
+**Implementation state:** Complete in `39fe6064`; independently verified with
+99 focused and 199 extended tests passing.
+
 **Files:**
 - Create: `eval/orchestrator/project_graph.py`
 - Create: `tests/eval/test_orchestrator_project_graph.py`
@@ -163,7 +166,7 @@ Tests to write: `test_accepts_domain_punctuation_in_dynamic_segments` plus exact
 - Produces: `PROJECT_GRAPH_FILENAME = "project-graph.json"`; `ProjectGraphCapture` with `status`, `captured_at`, `sha256`, `node_count`, `link_count`, and `failure`; `normalize_project_graph(payload: Mapping, *, project_id: str) -> dict`; `capture_project_graph(payload: Mapping, *, project_id: str, captured_at: str, destination: Path, files: FileStore) -> ProjectGraphCapture`.
 - Extends `TrialRecord` with additive `project_graph: dict | None = None`; available records serialize capture metadata, unavailable records serialize a stable failure and no digest.
 
-- [ ] **Step 1: Write failing pure graph-contract tests**
+- [x] **Step 1: Write failing pure graph-contract tests**
 
 Add `test_normalizes_graph_order_and_canonical_digest`,
 `test_rejects_graph_for_another_project`, and
@@ -171,13 +174,13 @@ Add `test_normalizes_graph_order_and_canonical_digest`,
 `(source, target, type)`, nested mapping keys serialize canonically, exact
 `project_id` is required, and errors expose no response content or host path.
 
-- [ ] **Step 2: Run the graph tests and confirm the missing module**
+- [x] **Step 2: Run the graph tests and confirm the missing module**
 
 Run: `PYTHONPATH=eval .venv/bin/python -m pytest tests/eval/test_orchestrator_project_graph.py -q`
 
 Expected: FAIL because `orchestrator.project_graph` does not exist.
 
-- [ ] **Step 3: Implement deterministic validation and capture**
+- [x] **Step 3: Implement deterministic validation and capture**
 
 Validate the existing `GraphData` fields without adding graph semantics: node
 `id`, `name`, and `type` plus link endpoints/types are strings, `properties` is
@@ -185,7 +188,7 @@ a mapping, and extra fields already returned by the API remain intact. Serialize
 with sorted keys and stable separators, end with one newline, hash those exact
 bytes, then write atomically.
 
-- [ ] **Step 4: Add failing Trial-finalization tests**
+- [x] **Step 4: Add failing Trial-finalization tests**
 
 Add `test_finish_captures_project_graph_before_writing_record` and
 `test_graph_capture_failure_preserves_terminal_and_records_unavailable`.
@@ -193,7 +196,7 @@ Assert the graph API is called once after phase execution, the file sits beside
 `trial.yaml`, metadata and bytes agree, and transport/validation failure leaves
 the original terminal unchanged with no graph file.
 
-- [ ] **Step 5: Integrate capture into `Trial._finish`**
+- [x] **Step 5: Integrate capture into `Trial._finish`**
 
 For a finalized Trial with a non-empty project id, capture before writing
 `trial.yaml`. Catch ordinary API/validation/I/O exceptions at this auxiliary
@@ -201,13 +204,13 @@ boundary, store the path-free `project_graph_unavailable` or
 `project_graph_invalid` failure, and continue writing the Trial record. Never
 retry or defer capture to materialization.
 
-- [ ] **Step 6: Run graph and Trial tests**
+- [x] **Step 6: Run graph and Trial tests**
 
 Run: `PYTHONPATH=eval .venv/bin/python -m pytest tests/eval/test_orchestrator_project_graph.py tests/eval/test_orchestrator_trial.py tests/eval/test_orchestrator_seeded.py -q`
 
 Expected: all tests PASS.
 
-- [ ] **Step 7: Commit graph capture**
+- [x] **Step 7: Commit graph capture**
 
 ```bash
 git add eval/orchestrator/project_graph.py eval/orchestrator/trial.py tests/eval/test_orchestrator_project_graph.py tests/eval/test_orchestrator_trial.py tests/eval/test_orchestrator_seeded.py
