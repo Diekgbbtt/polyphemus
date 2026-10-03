@@ -52,6 +52,7 @@ DIAGNOSABLE = verdicts.DIAGNOSABLE
 _VOLATILE_MANIFEST_KEYS = frozenset({"copied_at", "captured_at", "snapshot_sha256"})
 _SAFE_FAILURES = frozenset(
     {
+        "artifact_digest_mismatch",
         "artifact_unsafe",
         "artifact_unreadable",
         "project_graph_unavailable",
@@ -59,6 +60,19 @@ _SAFE_FAILURES = frozenset(
         "project_snapshot_unavailable",
     }
 )
+
+
+class _AuxiliarySnapshotError(Exception):
+    """A late graph/artifact staging or verification failure.
+
+    Raised only by the auxiliary snapshot path; the materializer converts it to
+    an unavailable snapshot and rebuilds a core-only tree. The message is a
+    stable, path-free failure code.
+    """
+
+    def __init__(self, failure: str) -> None:
+        super().__init__(failure)
+        self.failure = failure
 
 
 class StoreError(RuntimeError):
@@ -377,76 +391,55 @@ def materialize(
         record, trial_dir, data_root, files, project_id=project_id
     )
 
+    copied_at = (now or subagents.utcnow)()
     staging_root = store / STAGING_DIRNAME
     _guard_within(store, staging_root)
     staging = files.make_staging_dir(staging_root)
     try:
-        staged: set[str] = set()
-        for relative in chain_sources:
-            _stage_chain(data_root, staging, relative, files, store, staged)
-        _stage_bytes(
-            staging,
-            verdicts.VERDICTS_FILENAME,
-            files.read_bytes(verdicts_path),
-            files,
-            store,
-            staged,
-        )
-        if diagnoses_present:
-            _stage_bytes(
+        try:
+            snapshot_sha256 = _write_staged_trial(
                 staging,
-                diagnosis.DIAGNOSES_FILENAME,
-                files.read_bytes(diagnoses_path),
-                files,
-                store,
-                staged,
+                record=record,
+                chain_sources=chain_sources,
+                diagnoses_present=diagnoses_present,
+                verdicts_path=verdicts_path,
+                diagnoses_path=diagnoses_path,
+                data_root=data_root,
+                files=files,
+                store=store,
+                project_id=project_id,
+                snapshot=snapshot,
+                copied_at=copied_at,
             )
-
-        if snapshot.available:
-            _stage_bytes(
+            # The core self-containment check is a core error: never degraded.
+            _verify_self_contained(staging, files, eval_sha, fingerprint)
+            if snapshot.available:
+                _verify_project_snapshot(staging, snapshot, files, project_id)
+        except _AuxiliarySnapshotError as exc:
+            # A late graph/artifact staging or verification failure. Discard the
+            # contaminated staging tree and rebuild a core-only tree with an
+            # unavailable snapshot, so the validated core eval still publishes
+            # and no partial auxiliary file survives.
+            files.remove_tree(staging)
+            staging = files.make_staging_dir(staging_root)
+            degraded = ProjectSnapshot(
+                available=False, project_id=project_id, failure=exc.failure
+            )
+            snapshot_sha256 = _write_staged_trial(
                 staging,
-                PROJECT_GRAPH_FILENAME,
-                snapshot.graph_bytes or b"",
-                files,
-                store,
-                staged,
+                record=record,
+                chain_sources=chain_sources,
+                diagnoses_present=diagnoses_present,
+                verdicts_path=verdicts_path,
+                diagnoses_path=diagnoses_path,
+                data_root=data_root,
+                files=files,
+                store=store,
+                project_id=project_id,
+                snapshot=degraded,
+                copied_at=copied_at,
             )
-            for artifact in snapshot.artifacts:
-                relative = f"{project_id}/{artifact.relative_path}"
-                if relative in staged:
-                    # The evidence chain already copied this path; copy once.
-                    continue
-                _stage_bytes(
-                    staging,
-                    relative,
-                    files.read_bytes(artifact.source_path),
-                    files,
-                    store,
-                    staged,
-                )
-
-        manifest = build_run_manifest(
-            record,
-            chain_sources,
-            (now or subagents.utcnow)(),
-            diagnoses_present=diagnoses_present,
-            project_snapshot=snapshot,
-        )
-        snapshot_sha256 = _snapshot_sha256(staging, manifest, files)
-        manifest["project_snapshot"]["snapshot_sha256"] = snapshot_sha256
-        manifest["project_artifacts"]["snapshot_sha256"] = snapshot_sha256
-        _stage_text(
-            staging,
-            RUN_MANIFEST,
-            yaml.safe_dump(manifest, sort_keys=False),
-            files,
-            store,
-        )
-
-        # Publish only after every applicable check passes.
-        _verify_self_contained(staging, files, eval_sha, fingerprint)
-        if snapshot.available:
-            _verify_project_snapshot(staging, snapshot, files, project_id)
+            _verify_self_contained(staging, files, eval_sha, fingerprint)
 
         if files.exists(dest):
             existing = _existing_snapshot_sha256(dest, files)
@@ -667,6 +660,139 @@ def _stage_text(staging: Path, relative: str, text: str, files: FileStore, store
     files.write_text_atomic(target, text)
 
 
+def _write_staged_trial(
+    staging: Path,
+    *,
+    record: Mapping,
+    chain_sources: Sequence[str],
+    diagnoses_present: bool,
+    verdicts_path: Path,
+    diagnoses_path: Path,
+    data_root: Path,
+    files: FileStore,
+    store: Path,
+    project_id: str,
+    snapshot: ProjectSnapshot,
+    copied_at: str,
+) -> str:
+    """Stage one complete tree (core plus the given snapshot) and write its manifest.
+
+    The core staging reads are not auxiliary: an OSError here propagates as a
+    core failure. Only `_stage_project_snapshot`/`_verify_project_snapshot`
+    raise `_AuxiliarySnapshotError`, which the caller degrades.
+    """
+    staged: set[str] = set()
+    for relative in chain_sources:
+        _stage_chain(data_root, staging, relative, files, store, staged)
+    _stage_bytes(
+        staging,
+        verdicts.VERDICTS_FILENAME,
+        files.read_bytes(verdicts_path),
+        files,
+        store,
+        staged,
+    )
+    if diagnoses_present:
+        _stage_bytes(
+            staging,
+            diagnosis.DIAGNOSES_FILENAME,
+            files.read_bytes(diagnoses_path),
+            files,
+            store,
+            staged,
+        )
+    if snapshot.available:
+        _stage_project_snapshot(
+            staging, snapshot, data_root, files, store, project_id, staged
+        )
+
+    manifest = build_run_manifest(
+        record,
+        chain_sources,
+        copied_at,
+        diagnoses_present=diagnoses_present,
+        project_snapshot=snapshot,
+    )
+    snapshot_sha256 = _snapshot_sha256(staging, manifest, files)
+    manifest["project_snapshot"]["snapshot_sha256"] = snapshot_sha256
+    manifest["project_artifacts"]["snapshot_sha256"] = snapshot_sha256
+    _stage_text(
+        staging, RUN_MANIFEST, yaml.safe_dump(manifest, sort_keys=False), files, store
+    )
+    return snapshot_sha256
+
+
+def _stage_project_snapshot(
+    staging: Path,
+    snapshot: ProjectSnapshot,
+    data_root: Path,
+    files: FileStore,
+    store: Path,
+    project_id: str,
+    staged: set[str],
+) -> None:
+    """Stage the validated captured graph and the artifact union (deduplicated)."""
+    try:
+        _stage_bytes(
+            staging,
+            PROJECT_GRAPH_FILENAME,
+            snapshot.graph_bytes or b"",
+            files,
+            store,
+            staged,
+        )
+    except OSError as exc:
+        raise _AuxiliarySnapshotError("project_graph_unavailable") from exc
+    for artifact in snapshot.artifacts:
+        relative = f"{project_id}/{artifact.relative_path}"
+        if relative in staged:
+            # The evidence chain already copied this path; copy once.
+            continue
+        _stage_artifact(staging, relative, artifact, data_root, files, store, staged)
+
+
+def _stage_artifact(
+    staging: Path,
+    relative: str,
+    artifact: ProjectArtifact,
+    data_root: Path,
+    files: FileStore,
+    store: Path,
+    staged: set[str],
+) -> None:
+    """Copy one cataloged artifact, re-validated and digest-checked at staging time.
+
+    The catalog read is not trusted at face value: containment, symlink status,
+    and regular-file status are re-checked before the bytes are read, the read
+    bytes must match the catalog digest, and the staged bytes are re-hashed.
+    Every failure maps to a stable, path-free auxiliary code.
+    """
+    source = Path(artifact.source_path)
+    if (
+        not is_within(data_root, source)
+        or files.is_symlink(source)
+        or not files.is_file(source)
+    ):
+        raise _AuxiliarySnapshotError("artifact_unsafe")
+    try:
+        data = files.read_bytes(source)
+    except OSError as exc:
+        raise _AuxiliarySnapshotError("artifact_unreadable") from exc
+    if hashlib.sha256(data).hexdigest() != artifact.sha256:
+        raise _AuxiliarySnapshotError("artifact_digest_mismatch")
+
+    target = staging / relative
+    if not is_within(store, target):
+        raise _AuxiliarySnapshotError("artifact_unsafe")
+    try:
+        _stage_bytes(staging, relative, data, files, store, staged)
+        staged_digest = hashlib.sha256(files.read_bytes(target)).hexdigest()
+    except OSError as exc:
+        raise _AuxiliarySnapshotError("artifact_unreadable") from exc
+    if staged_digest != artifact.sha256:
+        raise _AuxiliarySnapshotError("artifact_digest_mismatch")
+
+
 # --- auxiliary project snapshot -----------------------------------------------
 
 
@@ -814,27 +940,24 @@ def _verify_project_snapshot(
     """Re-check the staged graph and artifact digests before publication."""
     graph_target = staging / PROJECT_GRAPH_FILENAME
     if files.is_symlink(graph_target) or not files.is_file(graph_target):
-        raise StoreError(
-            "staged project graph is missing", failure="project_snapshot_unavailable"
-        )
-    if hashlib.sha256(files.read_bytes(graph_target)).hexdigest() != snapshot.graph_sha256:
-        raise StoreError(
-            "staged project graph digest disagrees",
-            failure="project_snapshot_unavailable",
-        )
+        raise _AuxiliarySnapshotError("project_graph_invalid")
+    try:
+        graph_digest = hashlib.sha256(files.read_bytes(graph_target)).hexdigest()
+    except OSError as exc:
+        raise _AuxiliarySnapshotError("project_graph_unavailable") from exc
+    if graph_digest != snapshot.graph_sha256:
+        raise _AuxiliarySnapshotError("project_graph_invalid")
     for artifact in snapshot.artifacts:
         relative = f"{project_id}/{artifact.relative_path}"
         target = staging / relative
         if not files.is_file(target):
-            raise StoreError(
-                f"staged artifact is missing: {relative}",
-                failure="project_snapshot_unavailable",
-            )
-        if hashlib.sha256(files.read_bytes(target)).hexdigest() != artifact.sha256:
-            raise StoreError(
-                f"staged artifact digest disagrees: {relative}",
-                failure="project_snapshot_unavailable",
-            )
+            raise _AuxiliarySnapshotError("artifact_unsafe")
+        try:
+            staged_digest = hashlib.sha256(files.read_bytes(target)).hexdigest()
+        except OSError as exc:
+            raise _AuxiliarySnapshotError("artifact_unreadable") from exc
+        if staged_digest != artifact.sha256:
+            raise _AuxiliarySnapshotError("artifact_digest_mismatch")
 
 
 # --- the stable snapshot fingerprint ------------------------------------------

@@ -601,6 +601,69 @@ def test_graph_digest_mismatch_publishes_no_partial_auxiliary_snapshot(tmp_path)
     assert (dest / "verdicts.yaml").exists()
 
 
+class _LateArtifactFailureStore(FileStore):
+    """A `FileStore` whose artifact source changes between catalog and staging.
+
+    The first `read_bytes` of the target (the catalog digest) succeeds; the
+    second (the staging copy) raises or returns different bytes, so the
+    materializer must degrade only the auxiliary snapshot.
+    """
+
+    def __init__(self, target: Path, mode: str) -> None:
+        self._target = Path(target)
+        self._mode = mode
+        self.reads = 0
+
+    def read_bytes(self, path):  # type: ignore[override]
+        if Path(path) == self._target:
+            self.reads += 1
+            if self.reads >= 2:
+                if self._mode == "unreadable":
+                    raise OSError("late read failure")
+                return b"tampered content\n"
+        return super().read_bytes(path)
+
+
+@pytest.mark.parametrize(
+    ("mode", "expected_failure"),
+    [
+        ("unreadable", "artifact_unreadable"),
+        ("digest_mismatch", "artifact_digest_mismatch"),
+    ],
+)
+def test_late_artifact_failure_publishes_core_only_snapshot(
+    tmp_path, mode: str, expected_failure: str
+) -> None:
+    trial_dir, data_root = _make_trial(tmp_path)
+    skill = _add_skill(data_root)  # a pure artifact, absent from the evidence chain
+    graph_meta = _add_graph(trial_dir)
+    _rewrite_record(trial_dir, project_graph=graph_meta)
+    files = _LateArtifactFailureStore(skill, mode)
+
+    dest = store.materialize(
+        trial_dir, store=tmp_path / "store", data_root=data_root, files=files
+    )
+
+    manifest = yaml.safe_load((dest / store.RUN_MANIFEST).read_text(encoding="utf-8"))
+    assert manifest["schema_version"] == 2
+    for section in ("project_snapshot", "project_artifacts", "project_graph"):
+        assert manifest[section]["status"] == "unavailable", section
+        assert manifest[section]["failure"] == expected_failure, section
+    assert manifest["project_artifacts"]["entries"] == []
+    assert not (dest / "project-graph.json").exists()
+    # The core eval stays readable: verdicts and the evidence chain were kept.
+    assert (dest / "verdicts.yaml").exists()
+    assert (dest / "pid/hunting/orchestration/hunt_configs/consumed/cfg.yaml").exists()
+    assert (dest / "pid/hunting/test-executor-pod/spec-1/export.yaml").exists()
+    # The pure auxiliary artifact does not survive, partially copied or not.
+    assert not (dest / "pid/skills/authn/SKILL.md").exists()
+    # No contaminated staging tree is left behind.
+    assert _staging_entries(tmp_path / "store") == []
+    # The failure code/messages stay path-free.
+    assert str(tmp_path) not in yaml.safe_dump(manifest)
+    assert files.reads >= 2
+
+
 def test_run_manifest_carries_the_trial_pointers(tmp_path) -> None:
     trial_dir, data_root = _make_trial(tmp_path)
     store_dir = tmp_path / "store"
