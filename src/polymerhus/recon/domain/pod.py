@@ -429,7 +429,9 @@ def build_pod_graph(*, exec_fn, curate_fn, triage_fn):
             from polymerhus.app.llm.session_address import SessionContext
             address = pod_session(run_id, state.get("phase"), job,
                                   state.get("input_asset", {}), role_id="triager")
-            token = _pod_ctx().set(SessionContext(address, get_session_checkpointer()))
+            token = _pod_ctx().set(SessionContext(
+                address, get_session_checkpointer(),
+                project_id=state.get("project_id")))
             try:
                 observations = _best_effort_triage(
                     triage_fn, state["exec_result"], state.get("assets", []), job)
@@ -761,7 +763,8 @@ def default_triage_fn(exec_result: ExecResult, assets: list[AssetDelta], job: Jo
                                tools=binding.tools,
                                middleware=[C.cached_role_compaction_middleware("triager")]
                                + binding.middleware,
-                               context=binding.context)
+                               context=binding.context,
+                               usage_scope=ctx.project_id)
     else:
         result = invoke_role("triager", messages, schema=_ObservationBatch)
     return result.observations if result else []  # None = exhausted generation -> no observations

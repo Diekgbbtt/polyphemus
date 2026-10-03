@@ -455,6 +455,7 @@ async def _run_hunter_idle(
                 inbox=inbox,
                 on_message=_verdict_stub_handler(fault_key=config_key),
                 extra_tags=[run_id],
+                usage_scope=project_id,
                 tools=binding.tools,
                 middleware=binding.middleware,
                 context=binding.context,

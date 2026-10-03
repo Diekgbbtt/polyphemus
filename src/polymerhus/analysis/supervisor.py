@@ -589,9 +589,9 @@ async def analyse_chunked(
     # Tests inject `session_checkpointer` (an isolated `InMemorySaver`); an explicitly
     # injected `invoke_fn`/`typist_invoke_fn`/`data_modeller_invoke_fn` still wins.
     session_cp = session_checkpointer if session_checkpointer is not None else get_session_checkpointer()
-    invoke_fn = invoke_fn or assigner_stateful_invoke_fn(run_id, session_cp)
-    typist_invoke_fn = typist_invoke_fn or typist_stateful_invoke_fn(run_id, session_cp)
-    data_modeller_invoke_fn = data_modeller_invoke_fn or dm_stateful_invoke_fn(run_id, session_cp)
+    invoke_fn = invoke_fn or assigner_stateful_invoke_fn(run_id, session_cp, project_id)
+    typist_invoke_fn = typist_invoke_fn or typist_stateful_invoke_fn(run_id, session_cp, project_id)
+    data_modeller_invoke_fn = data_modeller_invoke_fn or dm_stateful_invoke_fn(run_id, session_cp, project_id)
 
     assigner_inner = make_assigner_body(invoke_fn=invoke_fn, inventory_fn=inventory_fn)
 

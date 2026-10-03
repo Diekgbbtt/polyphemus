@@ -186,10 +186,14 @@ class SessionContext:
     """A per-instance session binding an owning node sets for a seam that cannot carry
     the address through its OWN contract (the recon `triage_fn`, the hunting
     `author`/`judge`). Replaces the stringly `(thread_id, checkpointer)` tuple with a
-    typed pair the consumer reads as `ctx.address.thread_id` / `ctx.checkpointer`."""
+    typed pair the consumer reads as `ctx.address.thread_id` / `ctx.checkpointer`.
+    `project_id` (default None) is the owning project the node threads through so a
+    session turn can attribute its token usage; a seam that does not know it leaves
+    it None (unscoped, never mis-attributed)."""
 
     address: SessionAddress
     checkpointer: Any
+    project_id: str | None = None
 
 
 @dataclass(frozen=True)

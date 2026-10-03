@@ -88,9 +88,12 @@ def _hunt_ctx():
     return _hunt_session_ctx
 
 
-def hunt_session(run_id: str, hunt_id: str):
+def hunt_session(run_id: str, hunt_id: str, project_id: str | None = None):
     """Context manager the hunting agent wraps a hunt's author/judge calls in, so those
-    turns run STATEFUL on ONE per-hunt thread (`HuntSession(run_id, hunt_id)`)."""
+    turns run STATEFUL on ONE per-hunt thread (`HuntSession(run_id, hunt_id)`).
+    `project_id` (default None) is carried on the binding so the stateful turns
+    attribute their token usage to the project; a caller that does not know it leaves
+    it None (unscoped)."""
     from contextlib import contextmanager
 
     from polymerhus.app.llm.checkpoints import get_session_checkpointer
@@ -98,7 +101,8 @@ def hunt_session(run_id: str, hunt_id: str):
 
     @contextmanager
     def _cm():
-        ctx = SessionContext(HuntSession(run_id, hunt_id), get_session_checkpointer())
+        ctx = SessionContext(HuntSession(run_id, hunt_id), get_session_checkpointer(),
+                             project_id=project_id)
         token = _hunt_ctx().set(ctx)
         try:
             yield
@@ -132,7 +136,8 @@ def _hunter_turn(text: str) -> dict | None:
         return _parse_json_object(stateful_turn(
             HUNTER_ROLE, ctx.address, [HumanMessage(content=text)],
             checkpointer=ctx.checkpointer, tools=binding.tools,
-            middleware=binding.middleware, context=binding.context))
+            middleware=binding.middleware, context=binding.context,
+            usage_scope=ctx.project_id))
     from polymerhus.app.llm.roles import invoke_role
     return _parse_json_object(invoke_role(HUNTER_ROLE, [HumanMessage(content=text)]))
 
@@ -742,7 +747,8 @@ def build_actor_hunting_agent(*, run_id, project_id="", memory_store=None,
     from polymerhus.attack.hunting.hunting_agent import build_hunting_agent  # noqa: PLC0415
 
     registry = HuntingActorRegistry(run_id, checkpointer=checkpointer,
-                                    model_factory=model_factory, observe=observe)
+                                    model_factory=model_factory, observe=observe,
+                                    project_id=project_id)
     dispatch_fn = build_hunting_agent(
         run_id=run_id, project_id=project_id,
         memory_store=memory_store, hunt_store=hunt_store,

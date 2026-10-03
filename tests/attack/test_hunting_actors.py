@@ -410,7 +410,7 @@ def test_author_tools_reach_run_session_agent(monkeypatch):
 
     async def _drive():
         registry = HuntingActorRegistry(
-            "run-1", author_tools=["fake-tool"],
+            "run-1", author_tools=["fake-tool"], project_id="proj-1",
             checkpointer=InMemorySaver(), observe=False,
         )
         actor = registry.actor_for("hunt-1")
@@ -421,6 +421,8 @@ def test_author_tools_reach_run_session_agent(monkeypatch):
 
     actor = asyncio.run(_drive())
     assert actor._tools == ["fake-tool"]
+    # The actor's turns are scoped to the run's project in the usage ledger.
+    assert captured["usage_scope"] == "proj-1"
     # The auth capability (#220) rides the same bounding seam as the skill
     # surface: a bound role additionally carries `auth_store`.
     assert [getattr(t, "name", t) for t in captured["tools"]] == [
@@ -575,7 +577,7 @@ def test_a6_hunt_verdict_uses_the_negotiated_strategy(monkeypatch):
     async def _drive():
         actor = HuntOrchestratorActor("run1", checkpointer=InMemorySaver(),
                                       model_factory=_factory([("GateDecision", {})]),
-                                      observe=False)
+                                      observe=False, project_id="proj-1")
         await actor._ensure_started()
         await actor.stop()
 
@@ -585,6 +587,8 @@ def test_a6_hunt_verdict_uses_the_negotiated_strategy(monkeypatch):
         GateDecision, RatifyDecision, NoteDecision}
     assert calls["tools_bound"] is False  # no tool surface in this drive
     assert seen["response_format"] is sentinel
+    # The orchestrator's turns are scoped to the run's project in the usage ledger.
+    assert seen["usage_scope"] == "proj-1"
 
 
 # --- #292: the conciseness directive in the orchestrator tool descriptions ----

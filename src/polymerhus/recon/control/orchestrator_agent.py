@@ -395,6 +395,7 @@ class ReconOrchestratorActor:
                 system_prompt=_load_gateway_prompt(),
                 model_factory=self._model_factory,
                 observe=self._observe,
+                usage_scope=project_id,
             )
         )
 

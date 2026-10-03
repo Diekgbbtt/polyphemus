@@ -22,7 +22,7 @@ def _capture(monkeypatch):
         seen.update(role_id=role_id, thread_id=getattr(thread, "thread_id", thread),
                     schema=schema, cp=checkpointer, extra_tags=kw.get("extra_tags"))
         seen.update(tools=kw.get("tools"), middleware=kw.get("middleware"),
-                    context=kw.get("context"))
+                    context=kw.get("context"), usage_scope=kw.get("usage_scope"))
         return None
 
     monkeypatch.setattr(S, "stateful_turn", fake_stateful_turn)
@@ -96,6 +96,21 @@ def test_all_three_proposers_tag_turns_with_the_run_id(monkeypatch):
         seen = _capture(monkeypatch)
         call(build("runX", object()))
         assert seen["extra_tags"] == ["runX"]
+
+
+def test_all_three_proposers_thread_the_project_id_as_usage_scope(monkeypatch):
+    """The project id rides the stateful seam as `usage_scope`, so each
+    proposer's tokens land in the project's ledger bucket."""
+    from polymerhus.analysis.assigner import stateful_invoke_fn as a
+    from polymerhus.analysis.data_modeller import stateful_invoke_fn as d
+    from polymerhus.analysis.mechanism_typist import stateful_invoke_fn as t
+
+    for build, call in ((a, lambda f: f([HumanMessage(content="m")])),
+                        (t, lambda f: f([HumanMessage(content="m")], schema=None)),
+                        (d, lambda f: f([HumanMessage(content="m")], schema=None))):
+        seen = _capture(monkeypatch)
+        call(build("runX", object(), project_id="proj-1"))
+        assert seen["usage_scope"] == "proj-1"
 
 
 def test_the_proposers_carry_no_skill_surface(monkeypatch):

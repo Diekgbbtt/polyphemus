@@ -25,13 +25,15 @@ def test_default_triage_fn_runs_stateful_on_the_per_pod_thread_when_ctx_set(monk
     def fake_stateful_turn(role, thread, messages, *, checkpointer, schema=None, **kw):
         # the seam passes the typed address; record its thread_id (as the real
         # stateful_turn would coerce it)
-        seen.update(role=role, thread_id=getattr(thread, "thread_id", thread), schema=schema)
+        seen.update(role=role, thread_id=getattr(thread, "thread_id", thread),
+                    schema=schema, usage_scope=kw.get("usage_scope"))
         return None  # None -> [] observations, the exhausted-generation signal
 
     from polymerhus.app.llm.session_address import PodSession, SessionContext
 
     monkeypatch.setattr(S, "stateful_turn", fake_stateful_turn)
-    ctx = SessionContext(PodSession("run1", 2, "httpx", "hostA", "triager"), object())
+    ctx = SessionContext(PodSession("run1", 2, "httpx", "hostA", "triager"), object(),
+                         project_id="proj-1")
     token = pod._pod_ctx().set(ctx)
     try:
         obs = pod.default_triage_fn(_EXEC, [], _JOB)
@@ -39,6 +41,7 @@ def test_default_triage_fn_runs_stateful_on_the_per_pod_thread_when_ctx_set(monk
         pod._pod_ctx().reset(token)
     assert seen["role"] == "triager"
     assert seen["thread_id"] == "run1:2:httpx:hostA:triager"   # the per-pod session
+    assert seen["usage_scope"] == "proj-1"
     assert obs == []
 
 
@@ -68,6 +71,7 @@ def test_triager_node_sets_per_pod_ctx_from_run_and_asset(monkeypatch):
     def capturing_triage_fn(er, assets, job):
         ctx = pod._pod_ctx().get()
         captured.setdefault("threads", []).append(ctx.address.thread_id if ctx else None)
+        captured.setdefault("projects", []).append(ctx.project_id if ctx else None)
         return []
 
     def exec_fn(cmd, sid, t):
@@ -87,3 +91,5 @@ def test_triager_node_sets_per_pod_ctx_from_run_and_asset(monkeypatch):
     assert threads[0] and threads[0].endswith(":triager")
     assert threads[0] != threads[1]      # distinct pods -> distinct session threads
     assert threads[2] is None            # no run_id -> stateless (no context set)
+    # The node threads the pod's project id onto the session context.
+    assert captured["projects"][0] == "p"

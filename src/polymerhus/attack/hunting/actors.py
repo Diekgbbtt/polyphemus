@@ -101,6 +101,12 @@ class _TurnActor:
         no run; run-scoped subclasses override with their run id."""
         return None
 
+    @property
+    def _usage_scope(self) -> str | None:
+        """The project the actor's turns attribute their token usage to. The
+        generic base knows none; a project-scoped subclass overrides it."""
+        return None
+
     async def _ensure_started(self, response_format=None, system_prompt=None,
                               middleware_extra: list = None, tools=None) -> None:
         """Spawn the actor task on first use (lazy: a pass with no turns never
@@ -145,6 +151,7 @@ class _TurnActor:
             "model_factory": self._model_factory,
             "observe": self._observe,
             "extra_tags": self._extra_tags,
+            "usage_scope": self._usage_scope,
         }
         if tools:
             kwargs["tools"] = list(tools)
@@ -612,6 +619,11 @@ class HuntOrchestratorActor(_TurnActor):
         # that the hand-written gate span is gone.
         return [self._run_id]
 
+    @property
+    def _usage_scope(self) -> str | None:
+        # The orchestrator's tokens are scoped to the run's project.
+        return self.project_id
+
     async def _ensure_started(self) -> None:
         from polymerhus.attack.hunting.hunt_orchestrator import (  # noqa: PLC0415
             GateDecision,
@@ -800,12 +812,13 @@ class HuntingHunterActor(_TurnActor):
 
     def __init__(self, run_id: str, hunt_id: str, *, checkpointer=None,
                  model_factory=None, observe: bool = True, compaction=None,
-                 author_tools: Sequence = ()):
+                 author_tools: Sequence = (), project_id: str | None = None):
         super().__init__(checkpointer=checkpointer, model_factory=model_factory,
                          observe=observe, tools=author_tools)
         self._run_id = run_id
         self._hunt_id = hunt_id
         self._compaction = compaction
+        self._project_id = project_id
 
     @property
     def compaction_manager(self):
@@ -833,6 +846,11 @@ class HuntingHunterActor(_TurnActor):
         # Convergence join: the hunter's turns carry the run tag now that the
         # hand-written agent span is gone.
         return [self._run_id]
+
+    @property
+    def _usage_scope(self) -> str | None:
+        # The hunter's tokens are scoped to the run's project when known.
+        return self._project_id
 
     def _on_message(self, message, last_turn):
         if message.kind in (_AUTHOR_KIND, _JUDGE_KIND):
@@ -891,11 +909,13 @@ class HuntingActorRegistry:
     per-hunt thread. `stop_all` reaps every spawned actor (idempotent)."""
 
     def __init__(self, run_id: str, *, checkpointer=None, model_factory=None,
-                 observe: bool = True, author_tools: Sequence = ()):
+                 observe: bool = True, author_tools: Sequence = (),
+                 project_id: str | None = None):
         self._run_id = run_id
         self._checkpointer = checkpointer
         self._model_factory = model_factory
         self._observe = observe
+        self._project_id = project_id
         self._author_tools = (
             list(author_tools) if author_tools else _lightrag_author_tools()
         )
@@ -910,6 +930,7 @@ class HuntingActorRegistry:
                 model_factory=self._model_factory,
                 observe=self._observe,
                 author_tools=self._author_tools,
+                project_id=self._project_id,
             )
             self._actors[hunt_id] = actor
         return actor

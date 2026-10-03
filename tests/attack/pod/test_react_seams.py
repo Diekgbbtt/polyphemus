@@ -263,6 +263,47 @@ def test_triager_seam_reads_the_note_and_returns_a_decision(tmp_path, monkeypatc
     assert "third-party miner verdict" in decision["note"]
 
 
+# --- the pod seams thread the project's usage scope (token attribution) --------
+
+def test_runner_turn_threads_the_pod_project_as_usage_scope(tmp_path, monkeypatch):
+    from polymerhus.app.llm.session import SessionTurn
+    from polymerhus.recon.domain.types import CaptureContext
+    import polymerhus.app.llm.session as S
+
+    seen = {}
+
+    async def fake_arun(role, thread, messages, *, checkpointer, **kw):
+        seen["usage_scope"] = kw.get("usage_scope")
+        return SessionTurn(content="done", messages=[], thread_id="t")
+
+    monkeypatch.setattr(S, "arun_session_turn", fake_arun)
+    hc = PodHarnessContext(
+        exec_fn=_exec(_OK), memory_store=PodMemoryStore(tmp_path), spec_id=SPEC_ID,
+        log=ExperimentLog(), variant_ref="v0", model_factory=_factory([]),
+        capture_context=CaptureContext(project_id="proj-1"))
+    _run(_drive_runner(SPEC, hc))
+    assert seen["usage_scope"] == "proj-1"
+
+
+def test_triager_turn_threads_the_pod_project_as_usage_scope(tmp_path, monkeypatch):
+    from polymerhus.recon.domain.types import CaptureContext
+    import polymerhus.app.llm.session as S
+
+    seen = {}
+
+    def fake_stateful(role, thread, messages, *, checkpointer, schema=None, **kw):
+        seen["usage_scope"] = kw.get("usage_scope")
+        return None
+
+    monkeypatch.setattr(S, "stateful_turn", fake_stateful)
+    hc = PodHarnessContext(
+        exec_fn=_exec(_OK), memory_store=PodMemoryStore(tmp_path), spec_id=SPEC_ID,
+        log=ExperimentLog(), variant_ref="v0", model_factory=_factory([]),
+        capture_context=CaptureContext(project_id="proj-1"))
+    _run(_drive_triager(SPEC, hc, hc.log))
+    assert seen["usage_scope"] == "proj-1"
+
+
 def test_triager_seam_degrades_to_a_safe_terminal_on_failure(tmp_path):
     log = ExperimentLog()
     store = PodMemoryStore(tmp_path)
