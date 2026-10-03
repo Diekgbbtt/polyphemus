@@ -198,11 +198,16 @@ def test_seeded_trial_blocks_on_a_missing_project(tmp_path) -> None:
         f"seeded project not found: {SEED}" in block
         for block in record.phases[0].blocks
     )
-    # No silent fallback: no create, no mutation, and no graph read for a
-    # missing project.
+    # No silent fallback: no create and no mutation. The blocked trial still
+    # performs its one best-effort final graph capture; the fake refuses that
+    # read (no route), so it is recorded unavailable without changing the
+    # blocked terminal.
     assert set(api_runner.methods_paths).isdisjoint(_forbidden_project_calls(SEED))
-    assert not any(c.path.endswith("/graph") for c in api_runner.calls)
+    graph_calls = [c for c in api_runner.calls if c.path.endswith("/graph")]
+    assert len(graph_calls) == 1
     assert not any(c.path.endswith("/hunting") for c in api_runner.calls)
+    assert record.project_graph["status"] == "unavailable"
+    assert record.project_graph["failure"] == "project_graph_unavailable"
 
 
 def test_seeded_trial_blocks_on_a_missing_l1(tmp_path) -> None:

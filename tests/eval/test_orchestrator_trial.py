@@ -7,6 +7,7 @@ the decisions through the seams.
 """
 from __future__ import annotations
 
+import hashlib
 from dataclasses import replace
 from pathlib import Path
 
@@ -1396,6 +1397,181 @@ def test_trial_record_is_written_atomically(tmp_path) -> None:
 
     written = Path(record.trial_dir, "trial.yaml")
     assert written in files.atomic
+
+
+# --- the final project-graph capture (real eval project artifacts, Task 2) -----
+
+VALID_PROJECT_GRAPH = {
+    "project_id": "pid",
+    "nodes": [
+        {"id": "n2", "name": "b", "type": "Endpoint", "properties": {}},
+        {"id": "n1", "name": "a", "type": "L1Service", "properties": {}},
+    ],
+    "links": [{"source": "n1", "target": "n2", "type": "USES"}],
+}
+
+
+class GraphWriteOrderStore(FileStore):
+    """Records write order so capture-before-record is provable."""
+
+    def __init__(self) -> None:
+        self.writes: list[Path] = []
+
+    def write_text_atomic(self, path, text) -> None:  # type: ignore[override]
+        self.writes.append(Path(path))
+        super().write_text_atomic(path, text)
+
+    def write_bytes_atomic(self, path, data) -> None:  # type: ignore[override]
+        self.writes.append(Path(path))
+        super().write_bytes_atomic(path, data)
+
+
+class UnwritableGraphStore(FileStore):
+    """An I/O failure on the graph write; the trial record still lands."""
+
+    def write_bytes_atomic(self, path, data) -> None:  # type: ignore[override]
+        raise OSError("disk full")
+
+
+class FinalGraphFailsApi(FakeApi):
+    """A `FakeApi` whose second graph read fails at the transport layer."""
+
+    def __init__(self, routes: dict, graph_payload: dict) -> None:
+        super().__init__(routes)
+        self._graph_payload = graph_payload
+        self.graph_calls = 0
+
+    def __call__(self, call):
+        if call.path.endswith("/graph"):
+            self.graph_calls += 1
+            self.calls.append(call)
+            if self.graph_calls >= 2:
+                raise api.ApiError(call, 0, "connection refused")
+            return self._graph_payload
+        return super().__call__(call)
+
+
+def _graph_run_routes(graph: dict) -> dict:
+    return {
+        "GET /projects/pid/graph": graph,
+        "POST /projects/pid/hunting": {"hunting_run_id": "h1"},
+        "GET /projects/pid/hunting/h1": {"status": "complete"},
+    }
+
+
+def test_finish_captures_project_graph_before_writing_record(tmp_path) -> None:
+    files = GraphWriteOrderStore()
+    api_runner = FakeApi(_graph_run_routes(VALID_PROJECT_GRAPH))
+
+    record = _trial(
+        tmp_path, api_runner, files=files, start_phase="hunting", project_id="pid"
+    ).run()
+
+    assert record.terminal == "complete"
+    graph_indices = [
+        index for index, call in enumerate(api_runner.calls) if call.path.endswith("/graph")
+    ]
+    # The hunting-entry gate read plus exactly one final capture read.
+    assert len(graph_indices) == 2
+    hunting_status = max(
+        index
+        for index, call in enumerate(api_runner.calls)
+        if call.path.endswith("/hunting/h1")
+    )
+    assert graph_indices[-1] > hunting_status
+
+    graph_path = Path(record.trial_dir) / "project-graph.json"
+    record_path = Path(record.trial_dir) / "trial.yaml"
+    assert files.writes.index(graph_path) < files.writes.index(record_path)
+    data = graph_path.read_bytes()
+    assert record.project_graph["status"] == "available"
+    assert record.project_graph["sha256"] == hashlib.sha256(data).hexdigest()
+    assert record.project_graph["node_count"] == 2
+    assert record.project_graph["link_count"] == 1
+    assert record.project_graph["failure"] is None
+    assert isinstance(record.project_graph["captured_at"], str)
+    assert record.project_graph["captured_at"]
+    written = yaml.safe_load(record_path.read_text())
+    assert written["project_graph"] == record.project_graph
+
+
+def test_graph_capture_failure_preserves_terminal_and_records_unavailable(tmp_path) -> None:
+    # (a) A structurally invalid response: the entry gate tolerates it (type
+    # only), but the capture rejects it and records a path-free invalid code.
+    api_runner = FakeApi(_graph_run_routes(GRAPH_L1_L0))
+    record = _trial(
+        tmp_path,
+        api_runner,
+        trial_id="t-invalid",
+        start_phase="hunting",
+        project_id="pid",
+    ).run()
+    assert record.terminal == "complete"
+    assert record.project_graph["status"] == "unavailable"
+    assert record.project_graph["failure"] == "project_graph_invalid"
+    assert record.project_graph["sha256"] is None
+    assert not (Path(record.trial_dir) / "project-graph.json").exists()
+    written = yaml.safe_load(Path(record.trial_dir, "trial.yaml").read_text())
+    assert written["terminal"] == "complete"
+    capture_dump = yaml.safe_dump(written["project_graph"])
+    assert str(tmp_path) not in capture_dump
+    assert "L1Service" not in capture_dump
+    assert "nodes" not in written["project_graph"]
+
+    # (b) An I/O failure on the graph write is isolated too.
+    api_runner = FakeApi(_graph_run_routes(VALID_PROJECT_GRAPH))
+    record = _trial(
+        tmp_path,
+        api_runner,
+        files=UnwritableGraphStore(),
+        trial_id="t-io",
+        start_phase="hunting",
+        project_id="pid",
+    ).run()
+    assert record.terminal == "complete"
+    assert record.project_graph["status"] == "unavailable"
+    assert record.project_graph["failure"] == "project_graph_unavailable"
+    assert record.project_graph["sha256"] is None
+    assert not (Path(record.trial_dir) / "project-graph.json").exists()
+    assert (Path(record.trial_dir) / "trial.yaml").exists()
+
+    # (c) An API transport failure on the final read is isolated.
+    api_runner = FinalGraphFailsApi(
+        _graph_run_routes(VALID_PROJECT_GRAPH), VALID_PROJECT_GRAPH
+    )
+    record = _trial(
+        tmp_path,
+        api_runner,
+        trial_id="t-api",
+        start_phase="hunting",
+        project_id="pid",
+    ).run()
+    assert record.terminal == "complete"
+    assert record.project_graph["status"] == "unavailable"
+    assert record.project_graph["failure"] == "project_graph_unavailable"
+    assert api_runner.graph_calls == 2
+    assert not (Path(record.trial_dir) / "project-graph.json").exists()
+    written = yaml.safe_load(Path(record.trial_dir, "trial.yaml").read_text())
+    capture_dump = yaml.safe_dump(written["project_graph"])
+    assert "connection refused" not in capture_dump
+    assert str(tmp_path) not in capture_dump
+
+
+def test_trial_record_project_graph_defaults_to_none(tmp_path) -> None:
+    record = trial.TrialRecord(
+        trial_id="t",
+        instance_id="i",
+        target_id="x",
+        project_id="p",
+        start_phase="recon",
+        terminal="complete",
+        phases=[],
+        started_at="a",
+        finished_at="b",
+    )
+
+    assert record.project_graph is None
+    assert record.to_dict()["project_graph"] is None
 
 
 def test_premined_source_resolution_uses_the_file_store_seam(tmp_path) -> None:

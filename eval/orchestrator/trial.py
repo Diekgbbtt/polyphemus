@@ -30,6 +30,14 @@ from orchestrator.files import (
 from orchestrator.ids import short_id
 from orchestrator.instances import InstanceError, InstancePaths
 from orchestrator.predicates import GateResult
+from orchestrator.project_graph import (
+    FAILURE_INVALID,
+    FAILURE_UNAVAILABLE,
+    PROJECT_GRAPH_FILENAME,
+    ProjectGraphError,
+    capture_project_graph,
+    unavailable_project_graph,
+)
 from orchestrator.setup import PreloadedArtifacts
 from orchestrator.workitems import WorkItemGateError
 
@@ -359,6 +367,11 @@ class TrialRecord:
     assessment: AssessmentRecord | None = None
     # D19/D20 (#272): the diagnosis state, paired with verdicts after assessment.
     diagnosis: DiagnosisRecord | None = None
+    # The final L0/L1 graph capture (real eval project artifacts, Task 2):
+    # `available` captures carry the digest and counts, a failed best-effort
+    # capture carries a stable path-free failure code. Additive, defaults None,
+    # so a #270 record still loads.
+    project_graph: dict | None = None
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -896,6 +909,9 @@ class Trial:
         cfg = self.config
         trial_id = cfg.trial_id or _default_trial_id(cfg, self._now)
         trial_dir = Path(cfg.runs_root) / cfg.target_id / trial_id
+        # The final graph read happens before the record is written, so a
+        # captured graph always belongs to a materialized Trial.
+        project_graph = self._capture_project_graph(project_id, trial_dir, self._now())
         intervention = [cfg.intervention] if cfg.intervention else []
         aggregated = intervention + list(notes) + [
             note for phase in phases for note in phase.notes
@@ -929,6 +945,7 @@ class Trial:
             eval_sha=cfg.eval_sha,
             stack_fingerprint=cfg.stack_fingerprint,
             trace_id=cfg.trace_id,
+            project_graph=project_graph,
         )
         import yaml  # lazy: the record is the one place the trial serializes
 
@@ -936,6 +953,37 @@ class Trial:
             trial_dir / "trial.yaml", yaml.safe_dump(record.to_dict(), sort_keys=False)
         )
         return record
+
+    def _capture_project_graph(
+        self, project_id: str, trial_dir: Path, captured_at: str
+    ) -> dict | None:
+        """One best-effort final graph read; never affects the Trial outcome.
+
+        A non-empty project id gets exactly one read of the read-only graph
+        endpoint (no retry). An API, validation, or I/O failure is collapsed to
+        a path-free unavailable/invalid capture, and any graph file left at the
+        destination is removed so an unavailable record never exposes stale
+        bytes. The terminal and the writing of `trial.yaml` are never touched.
+        """
+        if not project_id:
+            return None
+        destination = Path(trial_dir) / PROJECT_GRAPH_FILENAME
+        try:
+            payload = self._call(api.project_graph(project_id))
+            capture = capture_project_graph(
+                payload,
+                project_id=project_id,
+                captured_at=captured_at,
+                destination=destination,
+                files=self._files,
+            )
+        except ProjectGraphError:
+            _discard_graph_file(destination)
+            capture = unavailable_project_graph(FAILURE_INVALID)
+        except Exception:  # noqa: BLE001 - the auxiliary capture is best-effort
+            _discard_graph_file(destination)
+            capture = unavailable_project_graph(FAILURE_UNAVAILABLE)
+        return capture.to_dict()
 
     # --- seams ----------------------------------------------------------------
 
@@ -1053,6 +1101,14 @@ def _terminal_of(phase: PhaseRecord, cap: PollResult | None) -> str:
     if cap is not None and cap.status == "stopped":
         return "stopped"
     return phase.status or "complete"
+
+
+def _discard_graph_file(destination: Path) -> None:
+    """Remove a graph file a failed capture must not expose (best effort)."""
+    try:
+        Path(destination).unlink()
+    except OSError:
+        pass
 
 
 def _default_trial_id(cfg: TrialConfig, now: Callable[[], str]) -> str:
