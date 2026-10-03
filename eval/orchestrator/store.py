@@ -31,6 +31,7 @@ from orchestrator.files import FileStore
 from orchestrator.project_artifacts import (
     ProjectArtifact,
     ProjectArtifactError,
+    artifact_manifest,
     collect_project_artifacts,
 )
 from orchestrator.project_graph import PROJECT_GRAPH_FILENAME
@@ -600,6 +601,7 @@ def _stage_chain(
     files: FileStore,
     store: Path,
     staged: set[str],
+    core_paths: set[str],
 ) -> None:
     """Copy one evidence-chain source into staging, preserving its structure."""
     normalized = Path(relative).as_posix()
@@ -607,16 +609,19 @@ def _stage_chain(
     if files.is_dir(source):
         for path in files.walk_files(source):
             sub = path.relative_to(source).as_posix()
+            staged_relative = f"{normalized}/{sub}"
             _stage_bytes(
                 staging,
-                f"{normalized}/{sub}",
+                staged_relative,
                 files.read_bytes(path),
                 files,
                 store,
                 staged,
             )
+            core_paths.add(staged_relative)
         return
     _stage_bytes(staging, normalized, files.read_bytes(source), files, store, staged)
+    core_paths.add(normalized)
 
 
 def _verify_self_contained(dest: Path, files: FileStore, eval_sha: str, fingerprint: str) -> None:
@@ -682,8 +687,12 @@ def _write_staged_trial(
     raise `_AuxiliarySnapshotError`, which the caller degrades.
     """
     staged: set[str] = set()
+    # Core paths and exclusively-auxiliary paths are tracked separately so a
+    # fingerprint read failure can be degraded only for the latter.
+    core_paths: set[str] = set()
+    auxiliary_paths: set[str] = set()
     for relative in chain_sources:
-        _stage_chain(data_root, staging, relative, files, store, staged)
+        _stage_chain(data_root, staging, relative, files, store, staged, core_paths)
     _stage_bytes(
         staging,
         verdicts.VERDICTS_FILENAME,
@@ -692,6 +701,7 @@ def _write_staged_trial(
         store,
         staged,
     )
+    core_paths.add(verdicts.VERDICTS_FILENAME)
     if diagnoses_present:
         _stage_bytes(
             staging,
@@ -701,9 +711,17 @@ def _write_staged_trial(
             store,
             staged,
         )
+        core_paths.add(diagnosis.DIAGNOSES_FILENAME)
     if snapshot.available:
         _stage_project_snapshot(
-            staging, snapshot, data_root, files, store, project_id, staged
+            staging,
+            snapshot,
+            data_root,
+            files,
+            store,
+            project_id,
+            staged,
+            auxiliary_paths,
         )
 
     manifest = build_run_manifest(
@@ -713,7 +731,13 @@ def _write_staged_trial(
         diagnoses_present=diagnoses_present,
         project_snapshot=snapshot,
     )
-    snapshot_sha256 = _snapshot_sha256(staging, manifest, files)
+    snapshot_sha256 = _snapshot_sha256(
+        staging,
+        manifest,
+        files,
+        core_paths=core_paths,
+        auxiliary_paths=auxiliary_paths,
+    )
     manifest["project_snapshot"]["snapshot_sha256"] = snapshot_sha256
     manifest["project_artifacts"]["snapshot_sha256"] = snapshot_sha256
     _stage_text(
@@ -730,6 +754,7 @@ def _stage_project_snapshot(
     store: Path,
     project_id: str,
     staged: set[str],
+    auxiliary_paths: set[str],
 ) -> None:
     """Stage the validated captured graph and the artifact union (deduplicated)."""
     try:
@@ -743,12 +768,14 @@ def _stage_project_snapshot(
         )
     except OSError as exc:
         raise _AuxiliarySnapshotError("project_graph_unavailable") from exc
+    auxiliary_paths.add(PROJECT_GRAPH_FILENAME)
     for artifact in snapshot.artifacts:
         relative = f"{project_id}/{artifact.relative_path}"
         if relative in staged:
             # The evidence chain already copied this path; copy once.
             continue
         _stage_artifact(staging, relative, artifact, data_root, files, store, staged)
+        auxiliary_paths.add(relative)
 
 
 def _stage_artifact(
@@ -812,15 +839,12 @@ def _snapshot_sections(record: Mapping, snapshot: ProjectSnapshot | None) -> dic
                 "captured_at": snapshot.captured_at,
                 "snapshot_sha256": None,
             },
-            "project_artifacts": {
-                "status": "available",
-                "project_id": project_id,
-                "captured_at": snapshot.captured_at,
-                "snapshot_sha256": None,
-                "entries": [
-                    artifact.as_manifest_entry() for artifact in snapshot.artifacts
-                ],
-            },
+            "project_artifacts": artifact_manifest(
+                snapshot.artifacts,
+                project_id=project_id,
+                captured_at=snapshot.captured_at,
+                snapshot_sha256=None,
+            ),
             "project_graph": {
                 "status": "available",
                 "project_id": project_id,
@@ -963,13 +987,25 @@ def _verify_project_snapshot(
 # --- the stable snapshot fingerprint ------------------------------------------
 
 
-def _snapshot_sha256(staging: Path, manifest: Mapping, files: FileStore) -> str:
+def _snapshot_sha256(
+    staging: Path,
+    manifest: Mapping,
+    files: FileStore,
+    *,
+    core_paths: set[str] | frozenset[str] = frozenset(),
+    auxiliary_paths: set[str] | frozenset[str] = frozenset(),
+) -> str:
     """The time-independent fingerprint of the complete staged Trial payload.
 
     Sorted relative path + content digest of every non-manifest file, plus the
     canonical manifest payload with `copied_at`, `captured_at`, and
     `snapshot_sha256` removed, so identical inputs fingerprint equally across
     rematerializations and there is no self-referential digest.
+
+    A read failure is degraded to an auxiliary failure only when the path is
+    exclusively auxiliary (the captured graph or a non-evidence artifact). A
+    core path - including one shared with the evidence chain - re-raises, so a
+    core read failure is never mistaken for a degraded snapshot.
     """
     staged_files: list[list[str]] = []
     for path in sorted(Path(staging).rglob("*")):
@@ -978,7 +1014,18 @@ def _snapshot_sha256(staging: Path, manifest: Mapping, files: FileStore) -> str:
         relative = path.relative_to(staging).as_posix()
         if relative == RUN_MANIFEST:
             continue
-        staged_files.append([relative, hashlib.sha256(files.read_bytes(path)).hexdigest()])
+        try:
+            data = files.read_bytes(path)
+        except OSError as exc:
+            if relative in auxiliary_paths and relative not in core_paths:
+                code = (
+                    "project_graph_unavailable"
+                    if relative == PROJECT_GRAPH_FILENAME
+                    else "artifact_unreadable"
+                )
+                raise _AuxiliarySnapshotError(code) from exc
+            raise
+        staged_files.append([relative, hashlib.sha256(data).hexdigest()])
     payload = {"files": staged_files, "manifest": _strip_volatile(manifest)}
     canonical = json.dumps(payload, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()

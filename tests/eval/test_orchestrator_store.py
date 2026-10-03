@@ -664,6 +664,69 @@ def test_late_artifact_failure_publishes_core_only_snapshot(
     assert files.reads >= 2
 
 
+class _FingerprintFailureStore(FileStore):
+    """Raises `OSError` on the Nth read of a staged path matching `suffix`.
+
+    Catalog and copy reads touch the source tree (never `_staging/`), so the
+    failure lands specifically in the fingerprint pass over the staged tree.
+    """
+
+    def __init__(self, suffix: str, *, fail_on: int) -> None:
+        self._suffix = suffix
+        self._fail_on = fail_on
+        self.staged_reads = 0
+
+    def read_bytes(self, path):  # type: ignore[override]
+        candidate = Path(path)
+        if "_staging" in candidate.parts and candidate.as_posix().endswith(self._suffix):
+            self.staged_reads += 1
+            if self.staged_reads >= self._fail_on:
+                raise OSError("fingerprint read failure")
+        return super().read_bytes(path)
+
+
+def test_auxiliary_fingerprint_failure_publishes_core_only_snapshot(tmp_path) -> None:
+    trial_dir, data_root = _make_trial(tmp_path)
+    skill = _add_skill(data_root)  # a pure artifact, absent from the evidence chain
+    graph_meta = _add_graph(trial_dir)
+    _rewrite_record(trial_dir, project_graph=graph_meta)
+    # The copy and its first staged re-read succeed; the fingerprint re-read fails.
+    files = _FingerprintFailureStore("pid/skills/authn/SKILL.md", fail_on=2)
+
+    dest = store.materialize(
+        trial_dir, store=tmp_path / "store", data_root=data_root, files=files
+    )
+
+    manifest = yaml.safe_load((dest / store.RUN_MANIFEST).read_text(encoding="utf-8"))
+    assert manifest["schema_version"] == 2
+    for section in ("project_snapshot", "project_artifacts", "project_graph"):
+        assert manifest[section]["status"] == "unavailable", section
+        assert manifest[section]["failure"] == "artifact_unreadable", section
+    assert manifest["project_artifacts"]["entries"] == []
+    assert not (dest / "project-graph.json").exists()
+    assert not (dest / "pid/skills/authn/SKILL.md").exists()
+    # The validated core eval still published.
+    assert (dest / "verdicts.yaml").exists()
+    assert (dest / "pid/hunting/orchestration/hunt_configs/consumed/cfg.yaml").exists()
+    assert _staging_entries(tmp_path / "store") == []
+    assert str(tmp_path) not in yaml.safe_dump(manifest)
+    assert skill.exists()
+    assert files.staged_reads >= 2
+
+
+def test_core_fingerprint_failure_is_not_degraded(tmp_path) -> None:
+    trial_dir, data_root = _make_trial(tmp_path)
+    store_dir = tmp_path / "store"
+    # The very first staged read (`verdicts.yaml` in the fingerprint) fails.
+    files = _FingerprintFailureStore("verdicts.yaml", fail_on=1)
+
+    with pytest.raises(OSError):
+        store.materialize(trial_dir, store=store_dir, data_root=data_root, files=files)
+
+    assert not (store_dir / "jetlinks-1").exists()
+    assert _staging_entries(store_dir) == []
+
+
 def test_run_manifest_carries_the_trial_pointers(tmp_path) -> None:
     trial_dir, data_root = _make_trial(tmp_path)
     store_dir = tmp_path / "store"
