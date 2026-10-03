@@ -10,9 +10,10 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT" || exit 2
 
 fail=0
+pending_count=0
 pass() { printf 'PASS  %s\n' "$1"; }
 failed() { printf 'FAIL  %s\n' "$1"; fail=1; }
-pending() { printf 'PENDING  %s\n' "$1"; }
+pending() { printf 'PENDING  %s\n' "$1"; pending_count=$((pending_count + 1)); }
 
 echo "== W0+W1 completion checks ($(date -u +%Y-%m-%dT%H:%MZ)) =="
 
@@ -116,5 +117,12 @@ else
   pass "no em dashes in authored Markdown"
 fi
 
-echo "== $( [ "$fail" = 0 ] && echo ALL-CHECKS-PASS || echo FAILURES-PRESENT ) =="
+if [ "$fail" != 0 ]; then
+  summary="FAILURES-PRESENT"
+elif [ "$pending_count" != 0 ]; then
+  summary="NO-FAILURES ($pending_count pending)"
+else
+  summary="ALL-CHECKS-PASS"
+fi
+echo "== $summary =="
 exit "$fail"

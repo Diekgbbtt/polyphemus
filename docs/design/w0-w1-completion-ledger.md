@@ -24,7 +24,7 @@ Nothing is pushed; integration is a later human-merged PR.
 | A3 | Boundary reference ubiquitous | done | `COMMIT-A3` | `for f in <skill-concern docs>; do grep -q skills-variant-boundary.md "$f" && echo REF $f || echo MISS $f; done` | all `REF` |
 | A4 | Tracked home for the cross-stream doc | done | `COMMIT-A4` | `git ls-files docs/design/skills-system-decomposition.md; grep -rn skills-system-decomposition.md docs/design skills-unspurious` | tracked; 3 citations resolve |
 | A5 | Arsenal-gaps ticket(s) | done | `COMMIT-A5` | `gh issue view 303 --json number,state,labels; grep -n 303 skills-unspurious/SCREAMING-REPORT.md` | issue #303 OPEN (enhancement, needs-triage); report links it |
-| A6 | Open-item refresh | done | `COMMIT-A6` | `grep -rn 'awaiting review\|awaiting operator review\|for a future ticket' skills-unspurious/ docs/design/skills-*.md` | `NONE` |
+| A6 | Open-item refresh | done | `COMMIT-A6` | `grep -rn --exclude-dir=_completion 'awaiting review\|awaiting operator review\|for a future ticket' skills-unspurious/ docs/design/skills-*.md` | `NONE` |
 | B1 | Round-2 taxonomy map | pending | - | - | - |
 | B2 | Parent-conformance decision | pending | - | - | - |
 | B3 | `graphql` outlier confirmation | pending | - | - | - |
@@ -130,12 +130,14 @@ Output:
 
 ### A6 - open-item refresh
 
-Command: `grep -rn 'awaiting review\|awaiting operator review\|for a future ticket' skills-unspurious/ docs/design/skills-*.md`
+Command: `grep -rn --exclude-dir=_completion 'awaiting review\|awaiting operator review\|for a future ticket' skills-unspurious/ docs/design/skills-*.md`
 
 Output:
 ```
 NONE
 ```
+
+The checker's own pattern strings in `skills-unspurious/_completion/verify.sh` are excluded; they are grep expressions, not stale claims.
 
 Refreshed the README status/open-items section, the decomposition report's open questions, and the cross-stream status map and audit findings (each finding now carries its closure status).
 
@@ -147,7 +149,7 @@ Command: `bash skills-unspurious/_completion/verify.sh`
 
 Output:
 ```
-== W0+W1 completion checks (2026-10-03T11:55Z) ==
+== W0+W1 completion checks (2026-10-03T11:57Z) ==
 PASS  no stale 'awaiting operator review' in boundary/ontology
 PASS  stale agnosticism lines gone; llm-prompt-injection carries no Framework-Specific
 PASS  skills-ontology.md references the boundary
@@ -158,7 +160,15 @@ PENDING  defence-bypass / proxy-techniques families (C1)
 PASS  101 child SKILL.md present (found 101)
 PASS  every child frontmatter name equals its directory
 PASS  no em dashes in authored Markdown
-== ALL-CHECKS-PASS ==
+== NO-FAILURES (2 pending) ==
 exit=0
 ```
+
+## Independent verification
+
+### Phase A
+
+Adversarial independent reviewer (general agent) re-derived every claim from the branch, not the ledger.
+Verdict: A1 PASS, A2 PASS, A3 PASS, A4 PASS, A5 PASS, A6 PASS; cross-cutting checks PASS (101 children, `name` == directory, no em dashes, no out-of-scope changes in `96fb82a..HEAD`).
+Three minor discrepancies were raised and fixed in commit `COMMIT-REVIEW-A`: the phase summary line now reports pending items instead of "ALL-CHECKS-PASS"; the A6 evidence command excludes the checker's own pattern strings; audit finding 3 is past-tense.
 
