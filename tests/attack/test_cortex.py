@@ -3,8 +3,15 @@
 One shared verbatim, single-sourced from
 `attack/hunting/prompts/COGNITIVE_ARCHITECTURE_MAP.md`, must be present in all
 four hunting agents' served system prompts: the hunt-orchestrator, the hunter,
-the pod runner, and the pod triager. These tests pin the single source, the
-composition helper, and the presence and identity of the map in all four.
+the pod runner, and the pod triager.
+
+The injected verbatim is the concise conceptual core - the data domains and
+their abstract relationships - and the agents stay blind to internal codebase
+information. The full detail lives in the design document
+`docs/design/cortex-cognitive-architecture-map.md`. These tests pin the single
+source, the composition helper, the presence and identity of the map in all
+four, the domain-and-relationship shape, and the blindness to codebase
+identifiers.
 """
 from __future__ import annotations
 
@@ -29,6 +36,18 @@ ROLE_PROMPTS = (
      "triager_system_prompt"),
 )
 
+# Internal codebase identifiers the agents must stay blind to: tool names,
+# store paths, artifact/type names, layer labels, and source paths.
+FORBIDDEN_INTERNAL_TOKENS = (
+    "graph_view", "kb_query", "query_lightrag", "auth_store", "hunts_store",
+    "load_skill", "record_skill_lesson", "search_http_history",
+    "get_http_artifact", "hunts_store",
+    "memory.yaml", "notes.yaml", "http-artifact", "HuntConfig",
+    "TestImplementationSpec", "ExperimentLog", "PodExport", "KbObservation",
+    "client_side_js_architecture",
+    "L0", "L1", "docs/design", "cortex.py", ".md",
+)
+
 
 def _served_prompt(module_path: str, attr: str) -> str:
     import importlib
@@ -37,34 +56,52 @@ def _served_prompt(module_path: str, attr: str) -> str:
 
 
 def test_cortex_is_a_non_empty_single_source():
-    """The cortex is its own codebase file with the entity roles, the coupling
-    paths, the RDF<->KB mapping, and the pending register."""
+    """The cortex is its own codebase file with the data domains and their
+    abstract relationships."""
     body = cognitive_architecture_map()
     assert body.strip()
-    for marker in (
-        "Entities and their roles",
-        "The coupling paths",
-        "The RDF<->KB mapping",
-        "Pending register",
-    ):
+    for marker in ("The data domains", "How they relate"):
         assert marker in body, marker
 
 
-def test_cortex_carries_the_rdf_to_kb_mapping_pairs():
-    """The mapping section renders the landed notion-to-entity pairs."""
+def test_cortex_lists_the_six_data_domains():
     body = cognitive_architecture_map()
-    for entity in (
-        "VulnerabilityClass",
-        "AttackerCapability",
-        "AttackTechnique",
-        "PreconditionEnvironment",
-        "DefensiveControl",
+    for domain in (
+        "Target surface",
+        "Target context",
+        "Hunt memory",
+        "Request history",
+        "Testing knowledge",
+        "Procedural knowledge",
     ):
-        assert entity in body, entity
-    # the notion names the mapping keys on
-    for notion in ("testing methodology", "adversarial capabilities",
-                   "attack surface", "bypass techniques"):
-        assert notion in body, notion
+        assert domain in body, domain
+
+
+def test_target_context_is_one_domain_grouping_auth_and_rate_limit():
+    """The authentication state and the rate-limit posture are ONE target
+    context domain, never two distinct domains."""
+    body = cognitive_architecture_map()
+    assert "authentication state" in body
+    assert "rate-limit posture" in body
+    line = next(l for l in body.splitlines() if "Target context" in l)
+    assert "authentication state" in line
+    assert "rate-limit posture" in line
+
+
+def test_cortex_states_the_abstract_relationships_without_flows():
+    """The relationships are abstract; there are no explicit question -> tool
+    flows in the injected map."""
+    body = cognitive_architecture_map()
+    assert "notion sections" in body          # the abstract RDF<->KB relationship
+    assert "entity types" in body
+    assert "->" not in body                    # no explicit flow arrows
+    assert "?" not in body                     # no question -> entity -> tool lines
+
+
+def test_cortex_is_blind_to_internal_codebase_information():
+    body = cognitive_architecture_map()
+    for token in FORBIDDEN_INTERNAL_TOKENS:
+        assert token not in body, token
 
 
 def test_with_cortex_appends_the_map_exactly_once():
@@ -85,7 +122,6 @@ def test_cortex_is_present_in_every_hunting_agents_system_prompt(
     assert served.strip()
     assert served.count(cognitive_architecture_map()) == 1
     assert served.rstrip().endswith(cognitive_architecture_map().rstrip())
-    # the role's own discipline is a real prefix, not erased by the map
     assert served.strip() != cognitive_architecture_map().strip()
 
 
@@ -113,3 +149,15 @@ def test_role_prompt_files_do_not_duplicate_the_map():
     for name in ("prompts/hunt-orchestrator.md", "prompts/hunting-agent.md"):
         assert cognitive_architecture_map() not in (base / name).read_text(
             encoding="utf-8")
+
+
+def test_the_detailed_cortex_lives_in_its_design_document():
+    """The externalised detail is authored in the cortex design document."""
+    doc = (
+        Path(__file__).resolve().parents[2]
+        / "docs" / "design" / "cortex-cognitive-architecture-map.md"
+    )
+    body = doc.read_text(encoding="utf-8")
+    for entity in ("VulnerabilityClass", "AttackerCapability", "AttackTechnique",
+                   "PreconditionEnvironment", "DefensiveControl"):
+        assert entity in body, entity

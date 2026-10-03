@@ -1,16 +1,20 @@
 """The cognitive architecture map (the cortex, C1).
 
-One shared, meaning-dense verbatim, single-sourced from
+One shared verbatim, single-sourced from
 `prompts/COGNITIVE_ARCHITECTURE_MAP.md`, injected into every hunting agent's
 stable system prompt - the hunt-orchestrator, the hunter, the pod runner, and
 the pod triager - so all four reason through ONE map of the data layer.
 
+The injected verbatim is the concise conceptual core: the data domains and
+their abstract relationships, no tools, no flows, and no internal codebase
+information. The full detail (entity homes, per-role tool couplings, the
+RDF<->KB mapping, the pending register) lives in the design document
+`docs/design/cortex-cognitive-architecture-map.md`.
+
 Single-source discipline (the `L1_ONTOLOGY_PRIMER` / `QUERY_LIGHTRAG_DESCRIPTION`
 precedent): the map lives in its own file, is read by ONE accessor
 (`cognitive_architecture_map`), and is appended to each role's stable system
-prompt by ONE composition helper (`with_cortex`). No role forks the map; a role
-that currently lacks a surface is told the intended path and the pending grant,
-never a different map.
+prompt by ONE composition helper (`with_cortex`). No role forks the map.
 
 No I/O at import (CODING_STANDARD section 6): the file is read lazily on the
 first call and memoized. A missing file is a defect: FAIL-CLOSED (raise), so no
