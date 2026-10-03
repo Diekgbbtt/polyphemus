@@ -7,8 +7,8 @@ within a budget. The setup outcome chains into execution: a configuration-layer
 failure gets one bounded repair and a retry, anything else escalates (D28).
 
 Every effect is injected - the REST `ApiRunner`, the `FileStore` filesystem
-seam, the #269 `CommandRunner`, the clock, and the reachability probe - so the
-engine is exercised without a live stack. Import performs no I/O.
+seam, the #269 `CommandRunner`, and the clock - so the engine is exercised
+without a live stack. Import performs no I/O.
 """
 from __future__ import annotations
 
@@ -32,7 +32,6 @@ from orchestrator.instances import InstanceError, InstancePaths
 from orchestrator.predicates import GateResult
 from orchestrator.setup import PreloadedArtifacts
 from orchestrator.workitems import WorkItemGateError
-from orchestrator.targets.base import READY_UNREACHABLE
 
 CONFIGURATION = "configuration"
 ESCALATE = "escalate"
@@ -155,24 +154,6 @@ def front_url(config: TrialConfig) -> str:
     return f"http://{host}/"
 
 
-def make_reachability_probe(
-    paths: InstancePaths,
-    runner: CommandRunner,
-    url: str,
-    *,
-    max_time_s: int = 10,
-) -> Callable[[], bool]:
-    """Build the recon-entry reachability probe through the kali exec plane."""
-
-    def probe() -> bool:
-        command = routing.kali_probe_command(paths, url, max_time_s=max_time_s)
-        result = runner(command)
-        code = (result.stdout or "").strip()
-        return result.returncode == 0 and code not in READY_UNREACHABLE
-
-    return probe
-
-
 @dataclass(frozen=True)
 class TrialConfig:
     """One trial's knobs: the target, the phase entry, and the run budget."""
@@ -192,6 +173,11 @@ class TrialConfig:
     # poll" (a fresh trial); a resumed trial carries its record's baseline so
     # its count continues rather than resetting on the prior run's configs.
     cap_baseline: Sequence[str] | None = None
+    # The trial-wide token budget and its carried baseline, sibling to the cap:
+    # None budget means no usage call at all; None baseline means "snapshot the
+    # project total at the first check", a resumed trial carries its own.
+    token_budget: int | None = None
+    spend_baseline: int | None = None
     data_root: Path = Path("data")
     runs_root: Path = Path("eval/runs")
     trial_id: str | None = None
@@ -229,6 +215,10 @@ class PhaseRecord:
     entered: bool = False
     status: str | None = None
     run_id: str | None = None
+    # The run id the phase's stop verb expects, when it differs from `run_id`
+    # (the analysis stop is keyed by the recon run id, not the consumer id).
+    # The surfer names this id so its terminate is not a silent no-op.
+    stop_run_id: str | None = None
     blocks: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
     # Why the phase failed (a failed terminal, or a `complete` run whose
@@ -244,6 +234,15 @@ class PollResult:
     stop_count: int | None = None
     final_count: int | None = None
     overshoot: int | None = None
+
+
+@dataclass(frozen=True)
+class SpendResult:
+    """A token-budget stop: the trial spend, the overshoot, and the breakdown."""
+
+    spent: int
+    overshoot: int
+    by_agent: dict
 
 
 @dataclass
@@ -335,6 +334,14 @@ class TrialRecord:
     # new trial id snapshots a fresh one. Additive, defaults None, old records
     # still load.
     cap_baseline: list[str] | None = None
+    # The trial-wide token budget and its outcome: the sum spent against the
+    # carried baseline, the tokens spent past the bound (the post-stop re-read),
+    # and the per-agent breakdown. Additive, default None, old records load.
+    token_budget: int | None = None
+    spent_tokens: int | None = None
+    spend_overshoot: int | None = None
+    spend_baseline: int | None = None
+    spend_by_agent: dict | None = None
     notes: list[str] = field(default_factory=list)
     trial_dir: str | None = None
     # #273: the target-run grouping level of the artifact store (defaults to
@@ -387,7 +394,6 @@ class Trial:
         runner: CommandRunner | None = None,
         clock: Callable[[], float] | None = None,
         sleep: Callable[[float], None] | None = None,
-        reachable: Callable[[], bool] | None = None,
         now: Callable[[], str] | None = None,
     ) -> None:
         self.config = config
@@ -396,13 +402,16 @@ class Trial:
         self._runner = runner
         self._clock = clock or time.monotonic
         self._sleep = sleep or time.sleep
-        self._reachable = reachable
         self._now = now or subagents.utcnow
         # The trial-scoped cap baseline. A resumed trial arrives with one on the
         # config; a fresh trial has none and snapshots it at its first poll.
         self._cap_baseline: tuple[str, ...] | None = (
             tuple(config.cap_baseline) if config.cap_baseline is not None else None
         )
+        # The trial-wide token baseline: a resumed trial carries one on the
+        # config; a fresh trial snapshots the project total at its first check.
+        self._spend_baseline: int | None = config.spend_baseline
+        self._spend: SpendResult | None = None
 
     # --- plan mode ------------------------------------------------------------
 
@@ -545,6 +554,10 @@ class Trial:
                     terminal = "blocked"
                 elif phase.status == "timeout":
                     terminal = "timeout"
+                elif _spend_stopped(phase, self._spend):
+                    # A token-budget stop ends the trial here; unlike a natural
+                    # recon stop (which cannot occur) it never chains to hunting.
+                    terminal = "stopped"
                 elif _phase_failed(phase):
                     terminal = "failed"
                 else:
@@ -561,6 +574,10 @@ class Trial:
                     terminal = "blocked"
                 elif phase.status == "timeout":
                     terminal = "timeout"
+                elif _spend_stopped(phase, self._spend):
+                    # A token-budget stop ends the trial here; a natural analysis
+                    # `stopped` is not a spend stop, so it still chains.
+                    terminal = "stopped"
                 elif _phase_failed(phase):
                     terminal = "failed"
                 else:
@@ -692,11 +709,7 @@ class Trial:
     def _phase_recon(self, state: predicates.PhaseState) -> PhaseRecord:
         if self._api is None:
             raise TrialError("trial execution requires an API runner")
-        if self._reachable is None:
-            raise TrialError("recon entry requires a reachability probe")
-        gate: GateResult = predicates.recon_entry(
-            self._api, self._files, state, reachable=self._reachable
-        )
+        gate: GateResult = predicates.recon_entry(self._api, self._files, state)
         if not gate.ok:
             return PhaseRecord(phase="recon", blocks=list(gate.blocks))
         run_id = api.run_id_of(
@@ -705,7 +718,10 @@ class Trial:
             )
         )
         status = self._poll(
-            api.recon_status(state.project_id, run_id), api.RECON_TERMINAL
+            state.project_id,
+            api.recon_status(state.project_id, run_id),
+            api.RECON_TERMINAL,
+            spend=("recon", run_id),
         )
         # P8 liveness: a recon run that reports `complete` with no job rows, or
         # with every job failed, is a failed run - never chained into hunting.
@@ -721,6 +737,7 @@ class Trial:
             entered=True,
             status=status,
             run_id=run_id,
+            stop_run_id=run_id,
             notes=notes,
             failure=failure,
         )
@@ -735,14 +752,21 @@ class Trial:
             self._call(api.launch_analysis(state.project_id, state.recon_run_id))
         )
         status = self._poll(
+            state.project_id,
             api.analysis_status(state.project_id, state.recon_run_id),
             api.ANALYSIS_TERMINAL,
+            # The analysis stop is keyed by the recon run id, the same id the
+            # status read uses, not the surrogate `analysis_run_id`.
+            spend=("analysis", state.recon_run_id),
         )
         return PhaseRecord(
             phase="analysis",
             entered=True,
             status=status,
             run_id=analysis_run_id,
+            # The analysis stop is keyed by the recon run id, not the consumer
+            # surrogate; record it so the surfer stops the run the trial stopped.
+            stop_run_id=state.recon_run_id,
             notes=list(gate.notes),
         )
 
@@ -759,21 +783,63 @@ class Trial:
             entered=True,
             status=result.status,
             run_id=run_id,
+            stop_run_id=run_id,
             notes=list(gate.notes),
         )
         return phase, result
 
     # --- polling --------------------------------------------------------------
 
-    def _poll(self, status_call: api.ApiCall, terminal: frozenset) -> str:
+    def _poll(
+        self,
+        project_id: str,
+        status_call: api.ApiCall,
+        terminal: frozenset,
+        *,
+        spend: tuple[str, str] | None = None,
+    ) -> str:
         deadline = self._clock() + self.config.budget_s
         while True:
             status = api.status_of(self._call(status_call))
             if status in terminal:
                 return status
+            # The token budget is trial-wide: a spend stop ends any phase, so
+            # check it after the terminal and before the wall-clock timeout.
+            if spend is not None and self._check_spend(project_id, *spend):
+                return "stopped"
             if self._clock() >= deadline:
                 return "timeout"
             self._sleep(self.config.poll_s)
+
+    def _check_spend(self, project_id: str, run_kind: str, run_id: str) -> SpendResult | None:
+        """Enforce the trial-wide token budget; a `SpendResult` when it stops.
+
+        No configured budget means no API call at all, so an unbudgeted trial
+        pays nothing. The first check snapshots the project's cumulative token
+        total as the baseline; a resumed trial arrives with one and never
+        re-snapshots. On overflow the active run is stopped and the spend, the
+        post-stop overshoot, and the per-agent breakdown are recorded.
+        """
+        budget = self.config.token_budget
+        if budget is None:
+            return None
+        resp = self._call(api.usage(project_id))
+        total = api.usage_total(resp)
+        if self._spend_baseline is None:
+            self._spend_baseline = total
+        spent = max(0, total - self._spend_baseline)
+        if spent < budget:
+            return None
+        self._call(api.stop_run(project_id, run_kind, run_id))
+        # Re-read after the stop: the in-flight work may add tokens past the
+        # budget, which is the recorded overshoot.
+        final_total = api.usage_total(self._call(api.usage(project_id)))
+        self._spend = SpendResult(
+            spent=spent,
+            overshoot=max(0, final_total - self._spend_baseline - budget),
+            by_agent=api.usage_by_agent(resp),
+        )
+        return self._spend
 
     def _poll_hunting(self, project_id: str, run_id: str) -> PollResult:
         cfg = self.config
@@ -792,6 +858,10 @@ class Trial:
             status = api.status_of(self._call(api.hunting_status(project_id, run_id)))
             if status in api.HUNTING_TERMINAL:
                 return PollResult(status)
+            # Spend first, then the cap: a token-budget stop is trial-wide, so
+            # when both bounds trip on one poll the stop is attributed to spend.
+            if self._check_spend(project_id, "hunting", run_id):
+                return PollResult("stopped")
             count = sum(1 for name in names if name not in baseline)
             if cfg.hunt_config_budget is not None and count >= cfg.hunt_config_budget:
                 self._call(api.stop_hunting(project_id, run_id))
@@ -847,6 +917,11 @@ class Trial:
             cap_baseline=(
                 list(self._cap_baseline) if self._cap_baseline is not None else None
             ),
+            token_budget=cfg.token_budget,
+            spent_tokens=self._spend.spent if self._spend else None,
+            spend_overshoot=self._spend.overshoot if self._spend else None,
+            spend_baseline=self._spend_baseline,
+            spend_by_agent=self._spend.by_agent if self._spend else None,
             notes=aggregated,
             trial_dir=str(trial_dir),
             target_run_id=cfg.target_run_id or cfg.instance_id,
@@ -876,11 +951,16 @@ class Trial:
 
 
 def _hunting_plan_step(cfg: TrialConfig, project: str) -> TrialPlanStep:
-    cap = f"; stop at the consumed cap {cfg.hunt_config_budget}" if cfg.hunt_config_budget else ""
+    bounds = []
+    if cfg.hunt_config_budget:
+        bounds.append(f"stop at the consumed cap {cfg.hunt_config_budget}")
+    if cfg.token_budget:
+        bounds.append(f"stop at the token budget {cfg.token_budget}")
+    suffix = "; " + "; ".join(bounds) if bounds else ""
     return TrialPlanStep(
         "hunting entry + launch",
         calls=(api.launch_hunting(project),),
-        note=f"poll hunting to terminal{cap} (budget {cfg.budget_s:g}s)",
+        note=f"poll hunting to terminal{suffix} (budget {cfg.budget_s:g}s)",
     )
 
 
@@ -936,6 +1016,15 @@ def _premined_inboxes(cfg: TrialConfig, project: str) -> tuple[str, ...]:
 def _phase_failed(phase: PhaseRecord) -> bool:
     """True when a phase's terminal (or its liveness failure) is a failure."""
     return phase.failure is not None or phase.status in FAILED_TERMINALS
+
+
+def _spend_stopped(phase: PhaseRecord, spend: SpendResult | None) -> bool:
+    """True when a phase ended on a token-budget stop, not a natural stop.
+
+    Only a spend stop sets `spend`; a natural analysis `stopped` leaves it None,
+    so it keeps the normal chain into hunting.
+    """
+    return spend is not None and phase.status == "stopped"
 
 
 def _recon_failure(run: Mapping) -> str | None:

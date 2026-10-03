@@ -40,7 +40,7 @@ def load_challenge(challenge_dir: Path) -> tuple[dict, list[dict]]:
 
 
 def resolve_challenge_dir(target: str) -> Path:
-    root = Path(os.environ.get("EVAL_WEB_DIR", DEFAULT_WEB_DIR))
+    root = Path(os.environ.get("EVAL_WEB_DIR", DEFAULT_WEB_DIR)).expanduser()
     candidate = Path(target)
     if candidate.is_dir() and (candidate / "challenge.json").exists():
         return candidate

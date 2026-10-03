@@ -172,10 +172,7 @@ def _setup(store_dir: Path, *, instance_ids=("arm-a",)) -> object:
             instance_id=iid,
             targets=(
                 TargetRun(
-                    target_id="jetlinks-1",
-                    target_config=TargetConfig(
-                        lifecycle="targetctl", params={"target": "jetlinks"}
-                    ),
+                    target_key="webexploitbench/jetlinks", target_id="jetlinks-1"
                 ),
             ),
         )
@@ -404,6 +401,30 @@ def test_run_manifest_carries_the_trial_pointers(tmp_path) -> None:
     assert manifest["stack_fingerprint"] == FP
     assert manifest["copied_at"] == "2026-09-28T12:00:00+00:00"
     assert "pid/hunting/hunter/test-specs/fault-a" in manifest["chain_sources"]
+
+
+def test_run_manifest_carries_the_phase_stop_run_id(tmp_path) -> None:
+    # The stop verb's run id differs from the phase's consumer id for analysis,
+    # so the manifest must carry `stop_run_id` for a store reader to terminate.
+    record = _record_payload(
+        phases=[
+            {
+                "phase": "analysis",
+                "entered": True,
+                "status": "stopped",
+                "run_id": "a1",
+                "stop_run_id": "r0",
+            }
+        ]
+    )
+    trial_dir, data_root = _make_trial(tmp_path, record=record)
+
+    dest = store.materialize(
+        trial_dir, store=tmp_path / "store", data_root=data_root, files=FileStore()
+    )
+
+    manifest = yaml.safe_load((dest / "run-manifest.yaml").read_text(encoding="utf-8"))
+    assert manifest["phases"][0]["stop_run_id"] == "r0"
 
 
 def test_materialize_honours_an_explicit_target_run_id(tmp_path) -> None:

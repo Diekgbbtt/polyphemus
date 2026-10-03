@@ -30,7 +30,7 @@ class RecordingRunner:
 
     `routes` is an ordered mapping `needle -> FakeResult`: the first needle
     contained in the joined argv wins, else `default`. This is enough to model
-    read commands (targetctl output, `curl` status codes, `hostname -I`) while
+    read commands (targetctl output, `curl` status codes, `getent hosts`) while
     asserting the emitted command sequence.
     """
 
@@ -58,6 +58,12 @@ def recording_runner():
     return RecordingRunner
 
 
+@pytest.fixture(autouse=True)
+def _no_real_sleep(monkeypatch):
+    """Never sleep for real in the eval tier: a readiness poll must not hang a test."""
+    monkeypatch.setattr("time.sleep", lambda *_args, **_kwargs: None)
+
+
 @pytest.fixture
 def fake_result():
     """Return the result class so a test can build read responses."""
@@ -65,10 +71,16 @@ def fake_result():
 
 
 def sample_setup_dict() -> dict:
-    """A minimal valid `EvalSetup`: one instance, one `targetctl` target."""
+    """A minimal valid `EvalSetup`: one instance, one keyed `targetctl` target.
+
+    The target is addressed by `<dataset>/<target>` (spec #301); the bring-up
+    configuration lives in `eval/targets/<dataset>/<target>.yaml`, while the
+    inline `target_config` carries only the per-trial data dependencies.
+    """
     return {
         "schema_version": 1,
         "artifact_store": "/srv/eval-artifacts",
+        "datasets": ["webexploitbench"],
         "work_items": [
             {"name": "auth-bootstrap", "status": "complete"},
             {"name": "l1-surface", "status": "complete"},
@@ -80,14 +92,14 @@ def sample_setup_dict() -> dict:
                 "systems": "ph-arm-a",
                 "targets": [
                     {
+                        "target_key": "webexploitbench/jetlinks",
                         "target_id": "jetlinks-1",
                         "start_phase": "recon",
                         "hunt_config_budget": 10,
+                        "token_budget": 10,
                         "preloaded_hunting_artifacts": None,
                         "target_config": {
-                            "lifecycle": "targetctl",
-                            "params": {"target": "jetlinks"},
-                            "operator_kb": "eval/kbs/jetlinks/operator_kb.md",
+                            "operator_kb": "eval/data/webexploitbench/jetlinks/operator_kb.md",
                         },
                     }
                 ],

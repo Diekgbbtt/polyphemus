@@ -1,26 +1,33 @@
-"""Target lifecycle strategies (ticket #269, D9/D2, operator directive).
+"""Target lifecycle strategies (ticket #269, D9/D2, spec #301).
 
-One interface (`plan_up`/`up`/`plan_down`/`down`/`plan_status`/`status`) behind
-three strategies:
+One interface (`plan_up`/`up`/`plan_down`/`down`/`plan_status`/`status`, plus
+`await_ready`/`provision`/`reclaim`) behind three strategies:
 
-  * `targetctl` - the WebExploitBench lifecycle on the REMOTE workshop host,
-    deployed over ssh and fronted by that host's nginx on the synthetic Host;
+  * `targetctl` - the WebExploitBench lifecycle on the LOCAL eval host (D45),
+    run locally and fronted by the shared container nginx on the synthetic Host;
   * `image` and `compose` - local pullable containers, published on the host and
     aliased to `host.docker.internal` (the Docker host gateway) in the instance
     kali, so a loopback-only publish would be unreachable.
 
-Every command goes through the injected runner; the readiness probe is a read
-whose failure is fatal (an unreachable target is never a silent success).
+The bring-up data is resolved from a `TargetConfiguration` and its
+`BenchmarkDataset` helper (spec #301): the checkout/repo from the dataset, the
+compose/port/platform/reclaimable from the config. Every command goes through the
+injected runner; `up` never blocks on health, and `await_ready` verifies it under
+the helper's bounded plan (an unreachable target is never a silent success).
 """
 from __future__ import annotations
 
 import shlex
+from pathlib import Path
 
 import pytest
 
-from orchestrator import instances, routing, setup as setup_mod
+from orchestrator import docker, instances, routing
+from orchestrator.dataset import BenchmarkDataset
+from orchestrator.datasets.base import DatasetHelper
+from orchestrator.setup import Instance, TargetConfig, TargetRun
+from orchestrator.target_config import TargetConfiguration
 from orchestrator.targets import (
-    TargetError,
     TargetNotReadyError,
     TargetUpResult,
     build_strategy,
@@ -31,54 +38,137 @@ from orchestrator.targets.image import ImageError
 
 GATEWAY_LINE = "172.17.0.1 host.docker.internal\n"
 
+COMPOSE = """\
+name: pb_mock
+services:
+  web:
+    build:
+      context: ./setup_files
+      dockerfile: environment/Dockerfile
+    image: pentestbench-jetlinks:web
+"""
+
 
 def _noop(_seconds: float) -> None:
     pass
 
 
-def _strategy(tmp_path, *, lifecycle="targetctl", params=None):
-    if params is None:
-        params = {"target": "jetlinks"} if lifecycle == "targetctl" else {}
-    run = setup_mod.TargetRun(
-        target_id="t-1",
-        target_config=setup_mod.TargetConfig(lifecycle=lifecycle, params=params),
+def _dataset(
+    tmp_path,
+    *,
+    dataset_id="mock",
+    repo="https://example.invalid/repo.git",
+    platform_root="",
+    registry="",
+    exclude_services=(),
+    native_services=(),
+):
+    return BenchmarkDataset(
+        id=dataset_id,
+        repo=repo,
+        registry=registry,
+        platform_root=platform_root,
+        targets=("jetlinks", "img", "stack", "a b"),
+        exclude_services=tuple(exclude_services),
+        native_services=tuple(native_services),
+        eval_root=tmp_path / "eval",
     )
-    instance = setup_mod.Instance(instance_id="arm-a", targets=(run,))
+
+
+def _strategy(tmp_path, *, runner, config, dataset=None, env=None):
+    dataset = dataset or _dataset(tmp_path)
+    run = TargetRun(
+        target_key=f"{dataset.id}/{config.target}",
+        target_id="t-1",
+        target_config=TargetConfig(),
+    )
+    instance = Instance(instance_id="arm-a", targets=(run,))
     paths = instances.instance_paths(
         instance, tmp_path / "instances", repo=tmp_path / "repo", branch="eval"
     )
-    strategy = build_strategy(run, paths, env={}, sleep=_noop)
+    strategy = build_strategy(
+        config,
+        dataset,
+        DatasetHelper(dataset),
+        paths,
+        run,
+        env={} if env is None else env,
+        sleep=_noop,
+    )
     return strategy, paths
+
+
+def _targetctl(tmp_path, *, target="jetlinks", dataset=None, **kwargs):
+    kwargs.setdefault("compose", "docker-compose.yml")
+    kwargs.setdefault("images", (f"ph/mock/{target}:web",))
+    return _strategy(
+        tmp_path,
+        runner="targetctl",
+        config=TargetConfiguration(target=target, runner="targetctl", **kwargs),
+        dataset=dataset,
+    )
+
+
+def _image(tmp_path, **kwargs):
+    kwargs.setdefault("image", "nginx:alpine")
+    kwargs.setdefault("port", 18080)
+    kwargs.setdefault("images", ("ph/mock/img:web",))
+    return _strategy(
+        tmp_path, runner="image", config=TargetConfiguration(target="img", runner="image", **kwargs)
+    )
+
+
+def _compose(tmp_path, **kwargs):
+    kwargs.setdefault("compose", "target-compose.yml")
+    kwargs.setdefault("port", 18081)
+    kwargs.setdefault("images", ("ph/mock/stack:web",))
+    return _strategy(
+        tmp_path,
+        runner="compose",
+        config=TargetConfiguration(target="stack", runner="compose", **kwargs),
+    )
+
+
+def _write_compose(tmp_path, target, name="docker-compose.yml"):
+    bank = tmp_path / "platform" / "mock" / target
+    bank.mkdir(parents=True, exist_ok=True)
+    (bank / name).write_text(COMPOSE, encoding="utf-8")
+    return str(tmp_path / "platform" / "mock")
 
 
 # --- shared interface ---------------------------------------------------------
 
 
 def test_all_strategies_expose_the_same_interface(tmp_path) -> None:
-    for lifecycle, params in (
-        ("targetctl", {"target": "jetlinks"}),
-        ("image", {"image": "nginx:alpine", "port": 18080}),
-        ("compose", {"compose_file": "target-compose.yml", "port": 18081}),
-    ):
-        strategy, _ = _strategy(tmp_path, lifecycle=lifecycle, params=params)
-        for name in ("plan_up", "up", "plan_down", "down", "plan_status", "status"):
-            assert callable(getattr(strategy, name)), (lifecycle, name)
+    strategies = [_targetctl(tmp_path)[0], _image(tmp_path)[0], _compose(tmp_path)[0]]
+    for strategy in strategies:
+        for name in (
+            "plan_up",
+            "up",
+            "plan_down",
+            "down",
+            "plan_status",
+            "status",
+            "await_ready",
+            "provision",
+            "reclaim",
+        ):
+            assert callable(getattr(strategy, name))
 
 
-# --- targetctl (remote workshop host) ----------------------------------------
+# --- targetctl (local eval host) ---------------------------------------------
 
 
-def test_targetctl_up_deploys_remotely_and_registers_routing(
+def test_targetctl_up_deploys_locally_and_registers_routing(
     tmp_path, recording_runner, fake_result
 ) -> None:
-    strategy, paths = _strategy(tmp_path)
+    strategy, _ = _targetctl(tmp_path)
     runner = recording_runner(
         routes={
             "scripts/targetctl up": fake_result(
                 0, "Accessible URLs:\nUI: http://127.0.0.1:32768/\n"
             ),
-            "hostname -I": fake_result(0, "10.0.0.5 \n"),
-            "curl": fake_result(0, "200"),
+            "getent hosts": fake_result(0, GATEWAY_LINE),
         }
     )
 
@@ -91,17 +181,36 @@ def test_targetctl_up_deploys_remotely_and_registers_routing(
     assert result.ready is True
 
     texts = runner.argv_texts
-    assert any("worktree" not in t and "test -d" in t and "git clone" in t for t in texts)
+    # The checkout and the deploy run locally; no ssh anywhere.
+    assert not any(t.startswith("ssh") or " ssh " in t for t in texts)
+    assert any("test -d" in t and "git clone" in t for t in texts)
     assert any("scripts/targetctl build jetlinks" in t for t in texts)
     assert any("scripts/targetctl up jetlinks" in t for t in texts)
+    # The front conf is added to the shared container, not a host nginx.
+    assert any("ph-eval-front" in t and "nginx -s reload" in t for t in texts)
     assert any(f"server_name {result.host};" in (c.stdin or "") for c in runner.calls)
     assert any("docker exec" in t for t in texts)
+
+
+def test_targetctl_commands_select_the_amd64_platform(tmp_path) -> None:
+    """D46: an aarch64 host emulates the amd64 target via the platform env."""
+    strategy, _ = _targetctl(tmp_path)
+
+    for command in strategy.plan_up():
+        if (command.description or "").startswith("targetctl"):
+            assert command.env == {
+                "DOCKER_DEFAULT_PLATFORM": "linux/amd64",
+                "TARGETCTL_NO_WAIT_DEPS": "1",
+                "TARGETCTL_NO_BUILD": "1",
+                "TARGETCTL_EXCLUDE_SERVICES": "",
+                "TARGETCTL_NATIVE_SERVICES": "",
+            }
 
 
 def test_targetctl_plan_up_lists_every_command_without_a_runner(
     tmp_path, recording_runner
 ) -> None:
-    strategy, _ = _strategy(tmp_path)
+    strategy, _ = _targetctl(tmp_path)
     runner = recording_runner()
 
     plan = strategy.plan_up()
@@ -112,27 +221,35 @@ def test_targetctl_plan_up_lists_every_command_without_a_runner(
     assert any("server_name" in (c.stdin or "") for c in plan)
 
 
-def test_targetctl_readiness_failure_is_fatal(
+def test_targetctl_readiness_is_bounded_and_fatal_on_failure(
     tmp_path, recording_runner, fake_result
 ) -> None:
-    strategy, _ = _strategy(tmp_path)
+    strategy, _ = _targetctl(tmp_path)
     strategy.ready_retries = 2
     runner = recording_runner(
-        routes={
-            "scripts/targetctl up": fake_result(
-                0, "UI: http://127.0.0.1:32768/\n"
-            ),
-            "hostname -I": fake_result(0, "10.0.0.5 \n"),
-            "curl": fake_result(0, "502"),
-        }
+        routes={"ps -a --format json": fake_result(0, '[{"Service": "app", "State": "created"}]\n')}
     )
 
     with pytest.raises(TargetNotReadyError, match=strategy.host):
-        strategy.up(runner)
+        strategy.await_ready(runner)
+
+    # The bounded window: exactly `ready_retries` probes, never an unbounded wait.
+    assert len(runner.calls) == 2
+
+
+def test_targetctl_readiness_succeeds_on_a_healthy_service(
+    tmp_path, recording_runner, fake_result
+) -> None:
+    strategy, _ = _targetctl(tmp_path)
+    runner = recording_runner(
+        routes={"ps -a --format json": fake_result(0, '[{"Health": "healthy"}]\n')}
+    )
+
+    assert "ready" in strategy.await_ready(runner)
 
 
 def test_targetctl_up_without_a_url_is_fatal(tmp_path, recording_runner, fake_result) -> None:
-    strategy, _ = _strategy(tmp_path)
+    strategy, _ = _targetctl(tmp_path)
     runner = recording_runner(
         routes={"scripts/targetctl up": fake_result(0, "no url here\n")}
     )
@@ -141,38 +258,37 @@ def test_targetctl_up_without_a_url_is_fatal(tmp_path, recording_runner, fake_re
         strategy.up(runner)
 
 
-def test_targetctl_up_without_a_numeric_ip_is_fatal(
+def test_targetctl_gateway_resolution_failure_is_fatal(
     tmp_path, recording_runner, fake_result
 ) -> None:
-    """SP1: no numeric IP means abort before any alias command is issued."""
-    strategy, _ = _strategy(tmp_path)
+    """SP1: no numeric gateway means abort before any alias command is issued."""
+    strategy, _ = _targetctl(tmp_path)
     runner = recording_runner(
         routes={
             "scripts/targetctl up": fake_result(0, "UI: http://127.0.0.1:32768/\n"),
-            "hostname -I": fake_result(0, "  \n"),
-            "curl": fake_result(0, "200"),
+            "getent hosts": fake_result(1, stderr="Name or service not known"),
         }
     )
 
-    with pytest.raises(targetctl.TargetctlError, match="numeric IP"):
+    with pytest.raises(targetctl.TargetctlError, match="host.docker.internal"):
         strategy.up(runner)
 
-    # The up path aborted before touching kali: no docker-exec alias command.
-    assert not any("docker exec" in t for t in runner.argv_texts)
+    # The up path aborted before touching kali: no alias write.
     assert not any("alias" in (c.description or "") for c in runner.calls)
 
 
 def test_targetctl_down_removes_target_front_and_alias(
     tmp_path, recording_runner
 ) -> None:
-    strategy, _ = _strategy(tmp_path)
+    strategy, _ = _targetctl(tmp_path)
     runner = recording_runner()
 
     strategy.down(runner)
 
     texts = runner.argv_texts
     assert any("scripts/targetctl down jetlinks" in t for t in texts)
-    assert any("sudo rm -f" in t for t in texts)
+    # The front conf is removed from the shared container, not a host nginx.
+    assert any("ph-eval-front" in t and "rm -f" in t for t in texts)
     assert any("docker exec" in t for t in texts)
 
 
@@ -180,10 +296,9 @@ def test_targetctl_down_front_failure_is_best_effort_and_clears_alias(
     tmp_path, recording_runner, fake_result
 ) -> None:
     """SP3: a failed front removal must not abort the alias clear."""
-    strategy, _ = _strategy(tmp_path)
-    runner = recording_runner(
-        routes={"sudo rm -f": fake_result(1, stderr="nginx conf busy")}
-    )
+    strategy, _ = _targetctl(tmp_path)
+    conf = str(routing.front_conf_path("/etc/nginx/conf.d", strategy.host))
+    runner = recording_runner(routes={conf: fake_result(1, stderr="nginx conf busy")})
 
     with pytest.raises(targetctl.TargetctlError, match="front removal"):
         strategy.down(runner)
@@ -197,40 +312,48 @@ def test_targetctl_down_front_failure_is_best_effort_and_clears_alias(
 def test_targetctl_status_reads_targetctl_ps(
     tmp_path, recording_runner, fake_result
 ) -> None:
-    strategy, _ = _strategy(tmp_path)
+    strategy, _ = _targetctl(tmp_path)
     runner = recording_runner(default=fake_result(0, stdout="jetlinks running"))
 
     assert "jetlinks" in strategy.status(runner)
 
 
-def test_targetctl_quotes_interpolated_config(tmp_path) -> None:
-    """S5: remote_dir/repo_url/target are operator config and must be quoted."""
-    run = setup_mod.TargetRun(
-        target_id="t-1",
-        target_config=setup_mod.TargetConfig(
-            lifecycle="targetctl",
-            params={
-                "target": "a b",
-                "remote_dir": "/opt/a b",
-                "repo_url": "https://example.invalid/a b.git",
-            },
-        ),
+def test_targetctl_quotes_interpolated_config(tmp_path, recording_runner) -> None:
+    """S5: web_dir/repo_url are interpolated into a shell line and must be quoted."""
+    dataset = _dataset(
+        tmp_path, repo="https://example.invalid/a b.git", platform_root="/opt/a b"
     )
-    instance = setup_mod.Instance(instance_id="arm-a", targets=(run,))
-    paths = instances.instance_paths(
-        instance, tmp_path / "instances", repo=tmp_path / "repo", branch="eval"
+    config = TargetConfiguration(
+        target="a b", runner="targetctl", compose="c.yml", images=("ph/mock/a b:web",)
     )
-    strategy = build_strategy(run, paths, env={}, sleep=_noop)
+    strategy, _ = _strategy(tmp_path, runner="targetctl", config=config, dataset=dataset)
 
     plan = strategy.plan_up()
     checkout = " ".join(plan[0].argv)
-    targetctl_up = " ".join(
-        " ".join(c.argv) for c in plan if "targetctl" in " ".join(c.argv)
-    )
+    targetctl_cmds = [
+        c for c in plan if (c.description or "").startswith("targetctl")
+    ]
 
     assert shlex.quote("/opt/a b") in checkout
     assert shlex.quote("https://example.invalid/a b.git") in checkout
-    assert shlex.quote("a b") in targetctl_up
+    # The targetctl argv is an argv list: the target stays one unquoted element.
+    assert any("a b" in c.argv for c in targetctl_cmds)
+
+
+def test_targetctl_expands_a_tilde_platform_root(tmp_path) -> None:
+    """The checkout quotes the path and the argv never sees a shell, so `~` must
+    be expanded before either is built."""
+    dataset = _dataset(tmp_path, platform_root="~/w")
+    config = TargetConfiguration(
+        target="jetlinks", runner="targetctl", compose="c.yml", images=("ph/mock/jetlinks:web",)
+    )
+    strategy, _ = _strategy(tmp_path, runner="targetctl", config=config, dataset=dataset)
+
+    home = str(Path.home())
+    assert strategy.web_dir == f"{home}/w"
+    checkout = " ".join(strategy.plan_up()[0].argv)
+    assert home in checkout and "~" not in checkout
+    assert strategy.plan_status()[0].argv[0].startswith(home)
 
 
 def test_routing_constants_are_single_sourced() -> None:
@@ -249,15 +372,231 @@ def test_parse_targetctl_output_prefers_ui_url() -> None:
     assert targetctl.parse_targetctl_url(out) == "http://0.0.0.0:32768/"
 
 
+def test_parse_targetctl_output_accepts_a_path_bearing_url() -> None:
+    """ofbiz prints `http://0.0.0.0:<port>/webtools/control/main`; the port is
+    all the front needs, so a path must not be filtered out."""
+    out = "Accessible URLs for ofbiz:\nhttp://0.0.0.0:57743/webtools/control/main\n"
+
+    assert (
+        targetctl.parse_targetctl_url(out)
+        == "http://0.0.0.0:57743/webtools/control/main"
+    )
+    assert targetctl.url_port("http://0.0.0.0:57743/webtools/control/main") == "57743"
+
+
+# --- targetctl provision / reclaim -------------------------------------------
+
+
+def test_targetctl_provision_builds_and_binds_canonical_tags(
+    tmp_path, recording_runner, fake_result
+) -> None:
+    platform_root = _write_compose(tmp_path, "jetlinks")
+    dataset = _dataset(tmp_path, platform_root=platform_root)
+    config = TargetConfiguration(
+        target="jetlinks", runner="targetctl", compose="docker-compose.yml"
+    )
+    strategy, _ = _strategy(tmp_path, runner="targetctl", config=config, dataset=dataset)
+    runner = recording_runner(
+        routes={"image inspect": fake_result(1, stderr="No such image")}
+    )
+
+    outcomes = strategy.provision(runner)
+
+    assert [(o.tag, o.source) for o in outcomes] == [
+        ("ph/mock/jetlinks:web", docker.BUILD)
+    ]
+    texts = runner.argv_texts
+    assert any("scripts/targetctl build jetlinks" in t for t in texts)
+    assert "docker tag pentestbench-jetlinks:web ph/mock/jetlinks:web" in texts
+
+
+def test_targetctl_provision_pulls_and_binds_when_declared(
+    tmp_path, recording_runner, fake_result
+) -> None:
+    config = TargetConfiguration(
+        target="jetlinks",
+        runner="targetctl",
+        compose="docker-compose.yml",
+        images=("ph/mock/jetlinks:web",),
+        pull={"ph/mock/jetlinks:web": "reg/web:latest"},
+    )
+    strategy, _ = _strategy(tmp_path, runner="targetctl", config=config)
+    runner = recording_runner(
+        {
+            "reg/web:latest": fake_result(0, stdout="sha256:x\n"),
+            "image inspect": fake_result(1, stderr="No such image"),
+            "docker pull": fake_result(0),
+        }
+    )
+
+    outcomes = strategy.provision(runner)
+
+    assert [(o.tag, o.source, o.reference) for o in outcomes] == [
+        ("ph/mock/jetlinks:web", docker.PULL, "reg/web:latest")
+    ]
+    assert "docker tag reg/web:latest ph/mock/jetlinks:web" in runner.argv_texts
+
+
+def test_targetctl_provision_derives_pull_refs_from_the_registry(
+    tmp_path, recording_runner, fake_result
+) -> None:
+    """D48: a dataset registry resolves each built service to its ghcr tag; the
+    pulled image is bound to the canonical tag AND the compose reference."""
+    platform_root = _write_compose(tmp_path, "jetlinks")
+    dataset = _dataset(tmp_path, platform_root=platform_root, registry="ghcr.io/owner/webench")
+    config = TargetConfiguration(
+        target="jetlinks", runner="targetctl", compose="docker-compose.yml"
+    )
+    strategy, _ = _strategy(tmp_path, runner="targetctl", config=config, dataset=dataset)
+    runner = recording_runner(
+        routes={
+            "ghcr.io/owner/webench:jetlinks-web": fake_result(0, stdout="sha256:x\n"),
+            "image inspect": fake_result(1, stderr="No such image"),
+            "docker tag": fake_result(0),
+        }
+    )
+
+    outcomes = strategy.provision(runner)
+
+    assert [(o.tag, o.source, o.reference) for o in outcomes] == [
+        ("ph/mock/jetlinks:web", docker.PULL, "ghcr.io/owner/webench:jetlinks-web")
+    ]
+    assert "docker pull ghcr.io/owner/webench:jetlinks-web" in runner.argv_texts
+    assert "docker tag ghcr.io/owner/webench:jetlinks-web ph/mock/jetlinks:web" in runner.argv_texts
+    assert (
+        "docker tag ghcr.io/owner/webench:jetlinks-web pentestbench-jetlinks:web"
+        in runner.argv_texts
+    )
+
+
+TWO_SERVICE_COMPOSE = """\
+name: pb_mock
+services:
+  web:
+    build:
+      context: ./setup_files
+      dockerfile: environment/Dockerfile
+    image: pentestbench-mock-web:latest
+  evaluator:
+    build:
+      context: ./evaluator
+      dockerfile: Dockerfile
+    image: pentestbench-evaluator:latest
+"""
+
+
+def test_dataset_exclude_services_drops_the_evaluator_image(tmp_path) -> None:
+    """D49: a dataset-excluded service is not a built image, so it is never
+    tagged, pulled, or reclaimed."""
+    bank = tmp_path / "platform" / "mock" / "jetlinks"
+    bank.mkdir(parents=True, exist_ok=True)
+    (bank / "docker-compose.yml").write_text(TWO_SERVICE_COMPOSE, encoding="utf-8")
+    dataset = _dataset(
+        tmp_path,
+        platform_root=str(tmp_path / "platform" / "mock"),
+        exclude_services=("evaluator",),
+    )
+    config = TargetConfiguration(
+        target="jetlinks", runner="targetctl", compose="docker-compose.yml"
+    )
+    helper = DatasetHelper(dataset)
+
+    built = helper.built_images("jetlinks", config)
+
+    assert [(b.service, b.reference) for b in built] == [
+        ("web", "pentestbench-mock-web:latest")
+    ]
+    assert helper.canonical_tags("jetlinks", config) == ("ph/mock/jetlinks:web",)
+
+
+def test_target_exclude_services_merges_with_the_dataset(tmp_path) -> None:
+    """A target's own `exclude_services` adds to the dataset's, de-duplicated."""
+    bank = tmp_path / "platform" / "mock" / "jetlinks"
+    bank.mkdir(parents=True, exist_ok=True)
+    (bank / "docker-compose.yml").write_text(TWO_SERVICE_COMPOSE, encoding="utf-8")
+    dataset = _dataset(
+        tmp_path,
+        platform_root=str(tmp_path / "platform" / "mock"),
+        exclude_services=("web",),
+    )
+    config = TargetConfiguration(
+        target="jetlinks",
+        runner="targetctl",
+        compose="docker-compose.yml",
+        exclude_services=("evaluator",),
+    )
+    strategy, _ = _strategy(tmp_path, runner="targetctl", config=config, dataset=dataset)
+
+    assert strategy.exclude_services == ("web", "evaluator")
+    assert strategy.canonical_tags == ()
+
+
+def test_targetctl_env_carries_the_excluded_services(tmp_path) -> None:
+    """D49: the strategy passes the exclusions to `scripts/targetctl`."""
+    strategy, _ = _targetctl(tmp_path, exclude_services=("evaluator",))
+
+    for command in strategy.plan_up():
+        if (command.description or "").startswith("targetctl"):
+            assert command.env["TARGETCTL_EXCLUDE_SERVICES"] == "evaluator"
+
+
+def test_targetctl_env_carries_the_native_services(tmp_path) -> None:
+    """D50: arch-independent infra services are pinned native by targetctl."""
+    dataset = _dataset(tmp_path, native_services=("redis",))
+    strategy, _ = _targetctl(tmp_path, dataset=dataset)
+
+    for command in strategy.plan_up():
+        if (command.description or "").startswith("targetctl"):
+            assert command.env["TARGETCTL_NATIVE_SERVICES"] == "redis"
+
+
+def test_targetctl_readiness_reads_the_generated_compose(tmp_path) -> None:
+    """D49: with exclusions, the readiness poll reads the generated compose the
+    `up` used, not the original that still names the excluded service."""
+    strategy, _ = _targetctl(tmp_path, exclude_services=("evaluator",))
+    plan = strategy._readiness_plan()
+
+    assert ".targetctl/compose/" in " ".join(plan.probe.argv)
+    assert "evaluator" not in " ".join(plan.probe.argv)
+
+    plain, _ = _targetctl(tmp_path)
+    assert ".targetctl/compose/" not in " ".join(plain._readiness_plan().probe.argv)
+
+
+def test_targetctl_project_matches_the_server_scaffold(tmp_path) -> None:
+    """The readiness poll must name the project `scripts/targetctl` created
+    (`web_<sanitized target>`), or it reads a project that does not exist."""
+    from orchestrator.targets.targetctl import targetctl_project
+
+    assert targetctl_project("siyucms") == "web_siyucms"
+    assert targetctl_project("mogu-blog-v2") == "web_mogu_blog_v2"
+    assert targetctl_project("White-Jotter") == "web_white_jotter"
+
+    strategy, _ = _targetctl(tmp_path, exclude_services=("evaluator",))
+    plan = strategy._readiness_plan()
+    argv = " ".join(plan.probe.argv)
+
+    assert strategy.project == "web_jetlinks"
+    assert "-p web_jetlinks" in argv
+    assert "compose/web_jetlinks.yml" in argv
+
+
+def test_targetctl_reclaim_is_gated_on_reclaimable(tmp_path, recording_runner) -> None:
+    kept, _ = _targetctl(tmp_path, reclaimable=False)
+    runner = recording_runner()
+    assert kept.reclaim(runner) == ()
+    assert runner.calls == []
+
+    reclaimed, _ = _targetctl(tmp_path, reclaimable=True)
+    runner2 = recording_runner()
+    assert reclaimed.reclaim(runner2) == ("rm ph/mock/jetlinks:web",)
+
+
 # --- image (local pullable container) ----------------------------------------
 
 
 def test_image_up_down_status(tmp_path, recording_runner, fake_result) -> None:
-    strategy, _ = _strategy(
-        tmp_path,
-        lifecycle="image",
-        params={"image": "nginx:alpine", "port": 18080, "internal_port": 80},
-    )
+    strategy, _ = _image(tmp_path)
     runner = recording_runner(
         routes={"getent hosts": fake_result(0, GATEWAY_LINE), "curl": fake_result(0, "200")}
     )
@@ -282,6 +621,10 @@ def test_image_up_down_status(tmp_path, recording_runner, fake_result) -> None:
     conf_calls = [c for c in runner.calls if "nginx -s reload" in " ".join(c.argv)]
     assert conf_calls and f"server_name {strategy.host};" in (conf_calls[0].stdin or "")
 
+    # Readiness is a separate, bounded step and probes the published port.
+    assert "ready" in strategy.await_ready(runner)
+    assert any("127.0.0.1:18080" in t for t in runner.argv_texts)
+
     down_runner = recording_runner()
     strategy.down(down_runner)
     down_texts = down_runner.argv_texts
@@ -295,11 +638,7 @@ def test_image_up_down_status(tmp_path, recording_runner, fake_result) -> None:
 
 
 def test_image_plan_publishes_on_a_gateway_reachable_interface(tmp_path) -> None:
-    strategy, _ = _strategy(
-        tmp_path,
-        lifecycle="image",
-        params={"image": "nginx:alpine", "port": 18080, "internal_port": 8080},
-    )
+    strategy, _ = _image(tmp_path, internal_port=8080)
 
     run_cmd = strategy.plan_up()[0]
     publish = run_cmd.argv[run_cmd.argv.index("--publish") + 1]
@@ -312,11 +651,7 @@ def test_image_aliases_kali_to_a_numeric_gateway_address(
     tmp_path, recording_runner, fake_result
 ) -> None:
     """SP1/#269: kali is not on the host network; the alias must be numeric."""
-    strategy, _ = _strategy(
-        tmp_path,
-        lifecycle="image",
-        params={"image": "nginx:alpine", "port": 18080},
-    )
+    strategy, _ = _image(tmp_path)
     runner = recording_runner(
         routes={"getent hosts": fake_result(0, GATEWAY_LINE), "curl": fake_result(0, "200")}
     )
@@ -330,6 +665,8 @@ def test_image_aliases_kali_to_a_numeric_gateway_address(
     assert f"127.0.0.1 {result.host}" not in alias_text
     # The gateway is resolved inside kali via the injected runner.
     assert any("getent hosts host.docker.internal" in t for t in runner.argv_texts)
+
+    strategy.await_ready(runner)
     # The host-side readiness probe still runs on loopback.
     probe_text = " ".join(
         " ".join(command.argv)
@@ -343,16 +680,9 @@ def test_image_gateway_resolution_failure_is_fatal(
     tmp_path, recording_runner, fake_result
 ) -> None:
     """SP1: a failure to resolve the gateway must fail loudly, never write a name."""
-    strategy, _ = _strategy(
-        tmp_path,
-        lifecycle="image",
-        params={"image": "nginx:alpine", "port": 18080},
-    )
+    strategy, _ = _image(tmp_path)
     runner = recording_runner(
-        routes={
-            "getent hosts": fake_result(1, stderr="Name or service not known"),
-            "curl": fake_result(0, "200"),
-        }
+        routes={"getent hosts": fake_result(1, stderr="Name or service not known")}
     )
 
     with pytest.raises(ImageError, match="host.docker.internal"):
@@ -362,16 +692,9 @@ def test_image_gateway_resolution_failure_is_fatal(
 def test_image_non_numeric_gateway_output_is_fatal(
     tmp_path, recording_runner, fake_result
 ) -> None:
-    strategy, _ = _strategy(
-        tmp_path,
-        lifecycle="image",
-        params={"image": "nginx:alpine", "port": 18080},
-    )
+    strategy, _ = _image(tmp_path)
     runner = recording_runner(
-        routes={
-            "getent hosts": fake_result(0, "host.docker.internal\n"),
-            "curl": fake_result(0, "200"),
-        }
+        routes={"getent hosts": fake_result(0, "host.docker.internal\n")}
     )
 
     with pytest.raises(ImageError, match="numeric address"):
@@ -382,11 +705,7 @@ def test_image_down_treats_an_absent_container_as_success(
     tmp_path, recording_runner, fake_result
 ) -> None:
     """SP3: teardown after a failed/never-started run must not abort."""
-    strategy, _ = _strategy(
-        tmp_path,
-        lifecycle="image",
-        params={"image": "nginx:alpine", "port": 18080},
-    )
+    strategy, _ = _image(tmp_path)
     runner = recording_runner(
         routes={
             "docker rm -f": fake_result(
@@ -406,11 +725,7 @@ def test_image_down_reports_a_real_removal_failure_but_still_clears(
     tmp_path, recording_runner, fake_result
 ) -> None:
     """SP3: a genuine removal failure is reported after cleanup, not instead of it."""
-    strategy, _ = _strategy(
-        tmp_path,
-        lifecycle="image",
-        params={"image": "nginx:alpine", "port": 18080},
-    )
+    strategy, _ = _image(tmp_path)
     runner = recording_runner(
         routes={"docker rm -f": fake_result(1, stderr="permission denied")}
     )
@@ -422,15 +737,30 @@ def test_image_down_reports_a_real_removal_failure_but_still_clears(
     assert any("awk" in t for t in runner.argv_texts)
 
 
+def test_image_provision_pulls_and_binds(tmp_path, recording_runner, fake_result) -> None:
+    strategy, _ = _image(
+        tmp_path,
+        pull={"ph/mock/img:web": "reg/img:latest"},
+    )
+    runner = recording_runner(
+        {
+            "reg/img:latest": fake_result(0, stdout="sha256:x\n"),
+            "image inspect": fake_result(1, stderr="No such image"),
+            "docker pull": fake_result(0),
+        }
+    )
+
+    outcomes = strategy.provision(runner)
+
+    assert [(o.tag, o.source) for o in outcomes] == [("ph/mock/img:web", docker.PULL)]
+    assert "docker tag reg/img:latest ph/mock/img:web" in runner.argv_texts
+
+
 # --- compose (local pullable stack) ------------------------------------------
 
 
 def test_compose_up_down_status(tmp_path, recording_runner, fake_result) -> None:
-    strategy, paths = _strategy(
-        tmp_path,
-        lifecycle="compose",
-        params={"compose_file": "target-compose.yml", "port": 18081},
-    )
+    strategy, _ = _compose(tmp_path)
     runner = recording_runner(
         routes={"getent hosts": fake_result(0, GATEWAY_LINE), "curl": fake_result(0, "200")}
     )
@@ -455,11 +785,7 @@ def test_compose_up_down_status(tmp_path, recording_runner, fake_result) -> None
 
 
 def test_compose_plan_up_uses_its_own_project(tmp_path) -> None:
-    strategy, paths = _strategy(
-        tmp_path,
-        lifecycle="compose",
-        params={"compose_file": "target-compose.yml", "port": 18081},
-    )
+    strategy, paths = _compose(tmp_path)
 
     plan = strategy.plan_up()
     up_text = " ".join(plan[0].argv)
@@ -472,11 +798,7 @@ def test_compose_aliases_kali_to_a_numeric_gateway_address(
     tmp_path, recording_runner, fake_result
 ) -> None:
     """SP1/#269: kali is not on the host network; the alias must be numeric."""
-    strategy, _ = _strategy(
-        tmp_path,
-        lifecycle="compose",
-        params={"compose_file": "target-compose.yml", "port": 18081},
-    )
+    strategy, _ = _compose(tmp_path)
     runner = recording_runner(
         routes={"getent hosts": fake_result(0, GATEWAY_LINE), "curl": fake_result(0, "200")}
     )
@@ -492,16 +814,9 @@ def test_compose_aliases_kali_to_a_numeric_gateway_address(
 def test_compose_gateway_resolution_failure_is_fatal(
     tmp_path, recording_runner, fake_result
 ) -> None:
-    strategy, _ = _strategy(
-        tmp_path,
-        lifecycle="compose",
-        params={"compose_file": "target-compose.yml", "port": 18081},
-    )
+    strategy, _ = _compose(tmp_path)
     runner = recording_runner(
-        routes={
-            "getent hosts": fake_result(1, stderr="server misbehaving"),
-            "curl": fake_result(0, "200"),
-        }
+        routes={"getent hosts": fake_result(1, stderr="server misbehaving")}
     )
 
     with pytest.raises(ComposeTargetError, match="host.docker.internal"):
@@ -511,11 +826,7 @@ def test_compose_gateway_resolution_failure_is_fatal(
 def test_compose_down_reports_failure_but_still_clears(
     tmp_path, recording_runner, fake_result
 ) -> None:
-    strategy, _ = _strategy(
-        tmp_path,
-        lifecycle="compose",
-        params={"compose_file": "target-compose.yml", "port": 18081},
-    )
+    strategy, _ = _compose(tmp_path)
     runner = recording_runner(
         routes={"down -v --remove-orphans": fake_result(1, stderr="compose boom")}
     )
@@ -524,3 +835,35 @@ def test_compose_down_reports_failure_but_still_clears(
         strategy.down(runner)
 
     assert any("awk" in t for t in runner.argv_texts)
+
+
+def test_compose_provision_builds_and_binds_canonical_tags(
+    tmp_path, recording_runner, fake_result
+) -> None:
+    platform_root = _write_compose(tmp_path, "stack", name="target-compose.yml")
+    dataset = _dataset(tmp_path, platform_root=platform_root)
+    config = TargetConfiguration(
+        target="stack", runner="compose", compose="target-compose.yml", port=18081
+    )
+    strategy, _ = _strategy(tmp_path, runner="compose", config=config, dataset=dataset)
+    runner = recording_runner(
+        routes={"image inspect": fake_result(1, stderr="No such image")}
+    )
+
+    outcomes = strategy.provision(runner)
+
+    assert [(o.tag, o.source) for o in outcomes] == [("ph/mock/stack:web", docker.BUILD)]
+    texts = runner.argv_texts
+    assert any("docker compose" in t and t.endswith("build") for t in texts)
+    assert "docker tag pentestbench-jetlinks:web ph/mock/stack:web" in texts
+
+
+def test_compose_reclaim_is_gated_on_reclaimable(tmp_path, recording_runner) -> None:
+    kept, _ = _compose(tmp_path, reclaimable=False)
+    runner = recording_runner()
+    assert kept.reclaim(runner) == ()
+    assert runner.calls == []
+
+    reclaimed, _ = _compose(tmp_path, reclaimable=True)
+    runner2 = recording_runner()
+    assert reclaimed.reclaim(runner2) == ("rm ph/mock/stack:web",)

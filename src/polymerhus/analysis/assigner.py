@@ -566,7 +566,7 @@ def default_invoke_fn():
     return invoke
 
 
-def stateful_invoke_fn(run_id: str, checkpointer):
+def stateful_invoke_fn(run_id: str, checkpointer, project_id: str | None = None):
     """The STATEFUL Assigner call (#94): the `assigner` role runs as a session whose
     context PROGRESSES across the run's chunks, resuming from its own per-run checkpoint
     (`AnalysisSession(run_id, "assigner")`, distinct from every other agent's
@@ -596,7 +596,8 @@ def stateful_invoke_fn(run_id: str, checkpointer):
     def invoke(messages):
         return stateful_turn("assigner", address, messages,
                              checkpointer=checkpointer, schema=L1DeltaBatch,
-                             middleware=middleware, extra_tags=[run_id])
+                             middleware=middleware, extra_tags=[run_id],
+                             usage_scope=project_id)
 
     return invoke
 

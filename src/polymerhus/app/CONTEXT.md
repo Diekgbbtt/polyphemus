@@ -7,7 +7,7 @@ It is explicitly not a bounded-context glossary: the meaning of what these modul
 
 ## Sub-modules
 
-- `llm/` - the LLM client layer: the provider table and client construction (`providers.py`), the role registry and the one-shot/session seams (`roles.py`, `session.py`, `actor.py`), parsing-error recovery at the session seam (`parsing_recovery.py`), capability negotiation (`capability.py`, `negotiation.py`), reasoning replay (`reasoning.py`), context compaction (`compaction.py`), the product-skill loader (`skills.py`), the gateway sync (`sync.py`, `sync_mapping.py`), and the conversation scope (`conversation.py`).
+- `llm/` - the LLM client layer: the provider table and client construction (`providers.py`), the role registry and the one-shot/session seams (`roles.py`, `session.py`, `actor.py`), parsing-error recovery at the session seam (`parsing_recovery.py`), the token-usage ledger (`usage.py`), capability negotiation (`capability.py`, `negotiation.py`), reasoning replay (`reasoning.py`), context compaction (`compaction.py`), the product-skill loader (`skills.py`), the gateway sync (`sync.py`, `sync_mapping.py`), and the conversation scope (`conversation.py`).
 - `auth/` - the per-project shared auth store and its agent tool (`store.py`, `tool.py`, `records.py`); the operator seed face is a thin adapter over the same seam (`project_management/api.py`).
 - `data_root.py` - the one layout owner for the app-owned data root (`<repo>/data/`): every store resolves its bucket through `project_dir`, so no module hand-builds a path.
 - `runtime.py` - the module runtime/registry: run holds and the session lifecycle.
@@ -44,5 +44,6 @@ It is explicitly not a bounded-context glossary: the meaning of what these modul
 
 ## Glossary
 
+- **usage ledger** - the process-wide, per-project, per-agent token accumulator (`app/llm/usage.py`) the session seam records into and the app API exposes read-only; a missing/blank project id lands in the unscoped bucket, which a project snapshot never returns.
 - **voluntary function calling** - the A6 negotiated rung for a model whose upstream refuses a forced `tool_choice`: the schema tool is bound, the choice is not forced, the provider decides (a relaxed model rewrites the force to `"auto"` at bind time).
 - **capability override** - the operator-declared correction of a registry claim, via `LLM_CAPABILITY_OVERRIDES` (e.g. a thinking-mode relay refusing a forced tool choice that models.dev cannot express).

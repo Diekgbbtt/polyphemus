@@ -1,10 +1,25 @@
-"""The `targetctl` strategy: WebExploitBench on the REMOTE workshop host.
+"""The `targetctl` strategy: WebExploitBench on the LOCAL eval host.
 
-Deployment is issued over ssh (operator directive) and fronted by that host's
-nginx on the synthetic Host: `targetctl` publishes on a random host port, so
-nginx is both the stable bare-domain face and the TLS-capable front. One conf
-file per synthetic Host means concurrent instances never overwrite each other's
-front. The inner-kali alias makes resolution deterministic for the recon fleet.
+WebExploitBench targets run on the same host as the eval orchestrator (D45):
+the platform scaffold - the dataset checkout, `scripts/targetctl`, and the
+target images - lives at the dataset's platform root. Each target is fronted on
+`http://<synthetic-host>/` (port 80) by the shared host-level nginx container
+(`orchestrator/front.py`), exactly like the `image` and `compose` strategies,
+and the instance kali aliases the synthetic Host to the Docker host gateway
+resolved to a NUMERIC address. `targetctl` publishes on a random host port, so
+the front is both the stable bare-domain face and the port discriminator.
+
+The bring-up data now comes from the resolved domain objects (spec #301): the
+checkout and repo from the `BenchmarkDataset` (`platform_root`, `repo`), the
+target name, compose, platform, and `reclaimable` from the
+`TargetConfiguration`. Provisioning binds the target's canonical tags by
+store -> pull -> build; reclaim removes exactly those tags, and only when the
+target is reclaimable. Readiness is the helper's bounded plan, never a blocking
+`up`.
+
+On an aarch64 eval host the targets are still amd64 (WebExploitBench is defined
+for amd64 base images), so every target command runs with
+`DOCKER_DEFAULT_PLATFORM=linux/amd64` and the host's qemu binfmt emulation (D46).
 """
 from __future__ import annotations
 
@@ -12,33 +27,38 @@ import os
 import re
 import shlex
 import time
+from dataclasses import replace
 from pathlib import Path
 from typing import Mapping
 from urllib.parse import urlparse
 
-from orchestrator import routing
+from orchestrator import docker as docker_images
+from orchestrator import front, routing
 from orchestrator.commands import Command, CommandRunner, require_ok
+from orchestrator.datasets.base import canonical_tag
+from orchestrator.docker import ProvisionOutcome
+from orchestrator.readiness import wait_readiness
 from orchestrator.targets.base import (
     Sleep,
     TargetContext,
     TargetError,
     TargetNotReadyError,
     TargetUpResult,
-    wait_ready,
 )
 
-DEFAULT_SSH_HOST = "ubuntu@dj-viscon-workshop-1.vsos.ethz.ch"
-DEFAULT_REMOTE_DIR = "~/WebExploitBench"
+# The local platform scaffold: the dataset checkout the target is built from.
+DEFAULT_WEB_DIR = "~/WebExploitBench"
 DEFAULT_REPO_URL = "https://github.com/AgentCyberRange/WebExploitBench.git"
-DEFAULT_NGINX_CONF_DIR = "/etc/nginx/conf.d"
 DEFAULT_READY_RETRIES = 60
 DEFAULT_READY_INTERVAL_S = 5.0
+# WebExploitBench is defined for amd64 base images; the eval host emulates them
+# (D46), so every target command selects the amd64 platform explicitly.
+DEFAULT_PLATFORM = "linux/amd64"
 PLAN_PORT = "<published-port>"
 PLAN_IP = "<target-ip>"
 
 _UI_URL_RE = re.compile(r"UI:\s*(https?://\S+)")
 _ANY_URL_RE = re.compile(r"https?://\S+")
-_LOOPBACK_HOSTS = ("0.0.0.0", "127.0.0.1", "localhost")
 
 
 class TargetctlError(TargetError):
@@ -48,25 +68,19 @@ class TargetctlError(TargetError):
 def parse_targetctl_url(output: str) -> str:
     """Pick the accessible URL from `targetctl up` output.
 
-    Prefer an explicit `UI:` line; otherwise the first URL with no path (a bare
-    host:port), matching the shape `targetctl` prints.
+    Prefer an explicit `UI:` line; otherwise the first URL that carries a port.
+    A target may expose a path (ofbiz prints
+    `http://0.0.0.0:<port>/webtools/control/main`), so the path is not a filter:
+    only the port is needed to point the front at the backend.
     """
     match = _UI_URL_RE.search(output)
     if match:
         return match.group(1)
     for candidate in _ANY_URL_RE.finditer(output):
         url = candidate.group(0)
-        parsed = urlparse(url)
-        if parsed.path in ("", "/"):
+        if urlparse(url).port is not None:
             return url
     raise TargetctlError("targetctl output carries no accessible URL")
-
-
-def rewrite_public_host(url: str, public_host: str) -> str:
-    """Rewrite a loopback/bind-all host in `url` to the workshop public host."""
-    for loopback in _LOOPBACK_HOSTS:
-        url = url.replace(f"http://{loopback}:", f"http://{public_host}:")
-    return url
 
 
 def url_port(url: str) -> str:
@@ -76,8 +90,18 @@ def url_port(url: str) -> str:
     return str(port)
 
 
+def targetctl_project(target: str) -> str:
+    """The compose project `scripts/targetctl` names a target, `web_<sanitized>`.
+
+    The server scaffold lowercases the target and replaces every non-alphanumeric
+    character with `_` (`project_name`/`sanitize_project_part`). The readiness
+    poll and the generated-compose path must use the same name (D49).
+    """
+    return "web_" + re.sub(r"[^a-z0-9]", "_", target.lower())
+
+
 class TargetctlStrategy:
-    """One WebExploitBench target run on the remote workshop host."""
+    """One WebExploitBench target run on the local eval host."""
 
     def __init__(
         self,
@@ -86,45 +110,56 @@ class TargetctlStrategy:
         env: Mapping[str, str] | None = None,
         sleep: Sleep | None = None,
     ) -> None:
-        params = context.run.target_config.params
+        config = context.target_config
         environment = os.environ if env is None else env
         self.context = context
+        self.config = config
         self.host = context.host
         self.paths = context.paths
+        self.target = config.target
+        # The platform root is the dataset's checkout; a `~`-anchored root is
+        # expanded here because the checkout runs through `shlex.quote` (which
+        # quotes the tilde literal) and the targetctl argv never goes through a
+        # shell, so a literal `~/...` would never resolve.
+        if context.dataset.platform_root:
+            web_dir = str(context.dataset.bank_root())
+        else:
+            web_dir = DEFAULT_WEB_DIR
+        self.web_dir = os.path.expanduser(environment.get("EVAL_WEB_DIR") or web_dir)
+        self.repo_url = str(context.dataset.repo or DEFAULT_REPO_URL)
+        self.platform = str(
+            config.platform
+            or environment.get("EVAL_TARGET_PLATFORM")
+            or DEFAULT_PLATFORM
+        )
+        # A per-target window (config) wins over the orchestrator-wide env; the
+        # default (60 x 5s) is enough once targets run natively on amd64 (D48).
+        self.ready_retries = config.ready_retries or int(
+            environment.get("EVAL_READY_RETRIES") or DEFAULT_READY_RETRIES
+        )
+        self.ready_interval_s = config.ready_interval_s or float(
+            environment.get("EVAL_READY_INTERVAL_S") or DEFAULT_READY_INTERVAL_S
+        )
+        # The D45 server scaffold owns the compose project name (`web_<target>`);
+        # the readiness poll and the generated-compose path must speak it, or they
+        # address a project/file that does not exist (D49).
+        self.project = targetctl_project(self.target)
+        # D49: the dataset's excluded services (the WebExploitBench evaluator)
+        # merged with any the target itself excludes, de-duplicated, order-stable.
+        excluded: list[str] = []
+        for service in (*context.dataset.exclude_services, *config.exclude_services):
+            if service not in excluded:
+                excluded.append(service)
+        self.exclude_services = tuple(excluded)
+        # The dataset's arch-independent infra services run natively on the eval
+        # host, not under emulation: qemu-user leaks mmap addresses above the
+        # guest's 47-bit user VA and jemalloc (redis) sign-extends one into an
+        # unmapped write. `scripts/targetctl` pins these services to the host
+        # platform; the vulnerable target services stay on `self.platform`.
+        self.native_services = tuple(context.dataset.native_services)
+        self.canonical_tags = context.helper.canonical_tags(self.target, config)
+        self.reclaimable = config.reclaimable
         self._sleep = sleep or time.sleep
-        self.target = str(params["target"])
-        self.ssh_host = str(
-            params.get("ssh_host") or environment.get("EVAL_SSH_HOST") or DEFAULT_SSH_HOST
-        )
-        self.remote_dir = str(
-            params.get("remote_dir")
-            or environment.get("EVAL_REMOTE_DIR")
-            or DEFAULT_REMOTE_DIR
-        )
-        self.repo_url = str(params.get("repo_url") or DEFAULT_REPO_URL)
-        self.nginx_conf_dir = str(
-            params.get("nginx_conf_dir")
-            or environment.get("EVAL_NGINX_CONF_DIR")
-            or DEFAULT_NGINX_CONF_DIR
-        )
-        self.ready_retries = int(
-            params.get("ready_retries")
-            or environment.get("EVAL_READY_RETRIES")
-            or DEFAULT_READY_RETRIES
-        )
-        self.ready_interval_s = float(
-            params.get("ready_interval_s")
-            or environment.get("EVAL_READY_INTERVAL_S")
-            or DEFAULT_READY_INTERVAL_S
-        )
-
-    @property
-    def public_host(self) -> str:
-        return self.ssh_host.rsplit("@", 1)[-1]
-
-    @property
-    def front_conf(self) -> Path:
-        return routing.front_conf_path(self.nginx_conf_dir, self.host)
 
     @property
     def front_url(self) -> str:
@@ -132,33 +167,83 @@ class TargetctlStrategy:
 
     # --- command builders (shared by plan and execute) ------------------------
 
-    def _ssh(self, remote_command: str, *, description: str) -> Command:
-        return routing.ssh_command(self.ssh_host, remote_command, description=description)
+    def _env(self) -> dict[str, str]:
+        return {
+            "DOCKER_DEFAULT_PLATFORM": self.platform,
+            # The benchmark's own `up` waits for dependency healthchecks, which
+            # under amd64 emulation blocks for minutes and hides a ready stack
+            # behind a slow one. targetctl then starts the dependency chain in
+            # order without waiting; the orchestrator asserts readiness itself,
+            # under a bounded window, once `up` returns.
+            "TARGETCTL_NO_WAIT_DEPS": "1",
+            # D48: the chain provisions every image (store -> pull -> build)
+            # before `up`. Compose v5 otherwise rebuilds a pulled image that
+            # lacks Compose's own labels, so `up` is told never to build; the
+            # explicit `targetctl build` step stays the only build path.
+            "TARGETCTL_NO_BUILD": "1",
+            # D49: services kept out of the target's stack. `scripts/targetctl`
+            # renders them behind a Compose `profiles` gate, so `up` never starts
+            # them without editing the frozen upstream compose.
+            "TARGETCTL_EXCLUDE_SERVICES": ",".join(self.exclude_services),
+            # Arch-independent infra services run natively. `scripts/targetctl`
+            # pins each to the host platform in its generated compose, overriding
+            # `DOCKER_DEFAULT_PLATFORM`, so redis is not emulated (and does not
+            # fault under qemu-user).
+            "TARGETCTL_NATIVE_SERVICES": ",".join(self.native_services),
+        }
 
     def _checkout_cmd(self) -> Command:
-        # S5: quote interpolated config; remote_dir/repo_url may carry spaces or
+        # S5: quote interpolated config; web_dir/repo_url may carry spaces or
         # shell metacharacters and are operator-supplied.
-        remote_dir = shlex.quote(self.remote_dir)
-        remote = (
-            f"test -d {remote_dir}/.git || "
-            f"(git clone --depth 1 {shlex.quote(self.repo_url)} {remote_dir})"
+        web_dir = shlex.quote(self.web_dir)
+        # The bundled targets vendor their codebase as git submodules, and
+        # `targetctl build` refuses an uninitialized one, so the clone recurses
+        # (and an existing checkout is repaired in place).
+        script = (
+            f"test -d {web_dir}/.git || "
+            f"(git clone --depth 1 --recurse-submodules "
+            f"{shlex.quote(self.repo_url)} {web_dir})"
         )
-        return self._ssh(remote, description=f"ensure {self.remote_dir}")
+        return Command(
+            argv=("sh", "-c", script),
+            description=f"ensure {self.web_dir}",
+        )
 
     def _targetctl(self, *args: str) -> Command:
-        quoted = " ".join(shlex.quote(arg) for arg in args)
-        remote = f"cd {shlex.quote(self.remote_dir)} && scripts/targetctl {quoted}"
-        return self._ssh(remote, description=f"targetctl {' '.join(args)}")
-
-    def _ip_cmd(self) -> Command:
-        return self._ssh("hostname -I | awk '{print $1}'", description="target ip")
-
-    def _probe_cmd(self, port: int | str) -> Command:
-        remote = (
-            "curl -sS -o /dev/null -w '%{http_code}' --max-time 10 "
-            f"-H 'Host: {self.host}' http://127.0.0.1:{port}/"
+        script = str(Path(self.web_dir) / "scripts" / "targetctl")
+        return Command(
+            argv=(script, *args),
+            env=self._env(),
+            description=f"targetctl {' '.join(args)}",
         )
-        return self._ssh(remote, description=f"probe {self.host}")
+
+    def _readiness_plan(self):
+        return self.context.helper.readiness_plan(
+            self.target,
+            self.config,
+            project=self.project,
+            port=self.config.port,
+            host=self.host,
+            retries=self.ready_retries,
+            interval_s=self.ready_interval_s,
+            # D49: when services are excluded, `scripts/targetctl` runs `up` from
+            # a generated compose; the readiness poll must read that same stack,
+            # not the original (which still names the excluded service).
+            compose_file=self._effective_compose_path(),
+        )
+
+    def _effective_compose_path(self) -> str | None:
+        """The generated compose `scripts/targetctl` writes, or None.
+
+        `scripts/targetctl` places it at
+        `<web_dir>/.targetctl/compose/<project>.yml` (D49). None when nothing is
+        excluded, so the poll reads the target's own compose.
+        """
+        if not self.exclude_services:
+            return None
+        return str(
+            Path(self.web_dir) / ".targetctl" / "compose" / f"{self.project}.yml"
+        )
 
     # --- lifecycle ------------------------------------------------------------
 
@@ -167,9 +252,9 @@ class TargetctlStrategy:
             self._checkout_cmd(),
             self._targetctl("build", self.target),
             self._targetctl("up", self.target),
-            routing.plan_front_apply(self.ssh_host, self.front_conf, self.host, PLAN_PORT),
-            self._probe_cmd(PLAN_PORT),
-            self._ip_cmd(),
+            front.plan_conf_apply(self.host, PLAN_PORT),
+            self._readiness_plan().probe,
+            routing.plan_gateway_resolve(self.paths),
             routing.kali_alias_command(self.paths, self.host, PLAN_IP),
         ]
 
@@ -181,55 +266,37 @@ class TargetctlStrategy:
 
         up_cmd = self._targetctl("up", self.target)
         output = require_ok(run(up_cmd), up_cmd, error=TargetctlError).stdout
-        backend = rewrite_public_host(parse_targetctl_url(output), self.public_host)
-        port = url_port(backend)
+        port = url_port(parse_targetctl_url(output))
+        backend = f"http://{routing.LOOPBACK}:{port}"
 
-        front = routing.plan_front_apply(self.ssh_host, self.front_conf, self.host, port)
-        require_ok(run(front), front, error=TargetctlError)
+        front_conf = front.plan_conf_apply(self.host, port)
+        require_ok(run(front_conf), front_conf, error=TargetctlError)
 
-        ready = wait_ready(
-            run,
-            self._probe_cmd(port),
-            retries=self.ready_retries,
-            interval_s=self.ready_interval_s,
-            sleep=self._sleep,
-        )
-        if not ready:
-            raise TargetNotReadyError(
-                f"target {self.target!r} did not answer at {self.front_url} "
-                f"after {self.ready_retries} probes"
-            )
-
-        alias = routing.kali_alias_command(self.paths, self.host, self._resolve_ip(run))
+        alias = routing.kali_alias_command(self.paths, self.host, self._gateway_address(run))
         require_ok(run(alias), alias, error=TargetctlError)
         return TargetUpResult(
             host=self.host, front_url=self.front_url, backend=backend, ready=True
         )
 
-    def _resolve_ip(self, run: CommandRunner) -> str:
-        """The workshop host's numeric IP, or a loud failure.
-
-        The alias is written into kali's `/etc/hosts`, whose address column has
-        no resolver: a hostname (e.g. `public_host`) would silently point
-        nowhere. If `hostname -I` yields no numeric address the up path aborts
-        here, before any alias command is built.
-        """
-        ip_cmd = self._ip_cmd()
-        result = run(ip_cmd)
-        remote_ip = result.stdout.strip().split()[0] if result.stdout.strip() else ""
-        if not routing.is_numeric_address(remote_ip):
-            detail = result.stderr.strip() or result.stdout.strip()
-            raise TargetctlError(
-                f"target {self.target!r}: no numeric IP for {self.host} from "
-                f"`hostname -I` (got {detail!r}); refusing to write a non-numeric "
-                "alias into kali /etc/hosts"
+    def await_ready(self, run: CommandRunner) -> str:
+        plan = self._readiness_plan()
+        if not wait_readiness(run, plan, sleep=self._sleep):
+            raise TargetNotReadyError(
+                f"target {self.target!r} did not become ready at {self.front_url}"
             )
-        return remote_ip
+        return f"{plan.kind} ready"
+
+    def _gateway_address(self, run: CommandRunner) -> str:
+        """Resolve the Docker host gateway to a numeric address, failing loudly (SP1)."""
+        try:
+            return routing.resolve_gateway(run, self.paths)
+        except routing.RoutingError as exc:
+            raise TargetctlError(str(exc)) from exc
 
     def plan_down(self) -> list[Command]:
         return [
             self._targetctl("down", self.target),
-            routing.plan_front_remove(self.ssh_host, self.front_conf),
+            front.plan_conf_remove(self.host),
             routing.kali_clear_command(self.paths, self.host),
         ]
 
@@ -240,8 +307,8 @@ class TargetctlStrategy:
         # cleanup has run, so the orchestrator can report and continue.
         down_cmd = self._targetctl("down", self.target)
         down_result = run(down_cmd)
-        front = routing.plan_front_remove(self.ssh_host, self.front_conf)
-        front_result = run(front)
+        front_conf = front.plan_conf_remove(self.host)
+        front_result = run(front_conf)
         clear = routing.kali_clear_command(self.paths, self.host)
         clear_result = run(clear)
         errors: list[str] = []
@@ -267,3 +334,94 @@ class TargetctlStrategy:
     def status(self, run: CommandRunner) -> str:
         command = self._targetctl("ps", self.target)
         return require_ok(run(command), command, error=TargetctlError).stdout
+
+    # --- image lifecycle (the chain's store/pull/build/reclaim seam) ----------
+
+    def _wrap(self, command: Command) -> Command:
+        """Run a docker primitive locally, selecting the target platform (D46)."""
+        return replace(command, env={**(command.env or {}), **self._env()})
+
+    def _compose_refs(self) -> dict[str, str]:
+        """canonical tag -> the compose's own built reference for that service.
+
+        The mapping is read lazily (only when the store and pull paths both miss)
+        so a fully present or fully pulled target never touches the compose file.
+        """
+        built = self.context.helper.built_images(self.target, self.config)
+        return {
+            canonical_tag(self.context.dataset.id, self.target, item.service): item.reference
+            for item in built
+        }
+
+    def _pull_refs(self) -> dict[str, str]:
+        """canonical tag -> pull reference: explicit config first, then registry.
+
+        An explicit `config.pull` wins; otherwise a dataset that declares a
+        `registry` resolves each built service to `<registry>:<target>-<service>`,
+        the tag the CI image workflow pushes (D48). No registry leaves the target
+        to build on the host.
+        """
+        refs = dict(self.config.pull)
+        registry = self.context.dataset.registry
+        if not registry:
+            return refs
+        for item in self.context.helper.built_images(self.target, self.config):
+            tag = canonical_tag(self.context.dataset.id, self.target, item.service)
+            reference = docker_images.registry_reference(registry, self.target, item.service)
+            if reference:
+                refs.setdefault(tag, reference)
+        return refs
+
+    def provision(self, run: CommandRunner) -> tuple[ProvisionOutcome, ...]:
+        """Bind this target's canonical tags by store -> pull -> build.
+
+        A store hit is left alone; a declared pull reference is pulled and bound;
+        otherwise `targetctl build` runs (once) and the produced compose images
+        are bound to their canonical tags.
+        """
+
+        def build() -> dict[str, str]:
+            command = self._targetctl("build", self.target)
+            require_ok(run(command), command, error=TargetctlError)
+            return self._compose_refs()
+
+        outcomes = docker_images.provision_tags(
+            run,
+            self.canonical_tags,
+            pull_refs=self._pull_refs(),
+            build=build,
+            wrap=self._wrap,
+            error=TargetctlError,
+        )
+        # The compose names its own image references, not the canonical tags, so
+        # a pulled registry image must also carry the compose reference for the
+        # target's own `up` to find it locally. A target that declares its own
+        # `images` and has no readable compose has nothing to rebind.
+        try:
+            compose_refs = self._compose_refs()
+        except (OSError, ValueError):
+            compose_refs = {}
+        for outcome in outcomes:
+            if outcome.source != docker_images.PULL:
+                continue
+            compose_ref = compose_refs.get(outcome.tag)
+            if not compose_ref:
+                continue
+            command = self._wrap(docker_images.plan_tag(outcome.reference, compose_ref))
+            require_ok(run(command), command, error=TargetctlError)
+        return outcomes
+
+    def reclaim(self, run: CommandRunner) -> tuple[str, ...]:
+        """Remove this target's canonical tags; best-effort and opt-in.
+
+        Only a `reclaimable` target is reclaimed, so a base or shared image is
+        never removed by a target that did not opt in. An absent image is
+        success; a genuine removal failure is reported through the label rather
+        than aborting the chain.
+        """
+        if not self.reclaimable:
+            return ()
+        labels: list[str] = []
+        for tag in self.canonical_tags:
+            labels.extend(docker_images.remove(run, tag, wrap=self._wrap))
+        return tuple(labels)

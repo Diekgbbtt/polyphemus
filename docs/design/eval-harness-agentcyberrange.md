@@ -1,5 +1,11 @@
 # Eval Harness Adaptation Study: AgentCyberRange to polymerhus Vulnerability-Discovery Evaluation
 
+> **Status (2026-10-02, D49): the WebExploitBench evaluator is dropped.**
+> This study concluded the native oracle cannot be invoked verbatim (it checks exploit effects and WebExploitBench-shaped reports; polymerhus is discovery-only and produces neither).
+> The platform carries that finding to its end: the `evaluator` service is cut from every target stack, and polymerhus scores through its own background assessment subagent instead.
+> The oracle analysis below stays as the research record that justified the decision.
+> See `eval-multi-instance-decisions.md` D49.
+
 *Research report. Primary sources only: the CAGE source tree, the WebExploitBench source tree, the PostExploitBench source tree, the arXiv paper 2606.14295, and the polymerhus local source tree. No repo was modified or committed to during this study.*
 
 *Goal of the study: design the minimal-adaptation path that reuses as much of the AgentCyberRange (CAGE + WebExploitBench) oracle, target-deployment, and orchestration machinery as possible to evaluate polymerhus's vulnerability-DISCOVERY capability only (no exploitation, no post-exploitation), against WebExploitBench live targets.*

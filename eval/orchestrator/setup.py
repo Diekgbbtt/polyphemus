@@ -17,33 +17,12 @@ from typing import Mapping
 
 import yaml
 
+from orchestrator.dataset import resolve_target_key
+
 SCHEMA_VERSION = 1
 
-LIFECYCLES = ("targetctl", "image", "compose")
 PHASES = ("recon", "analysis", "hunting")
 WORK_ITEM_STATUSES = ("complete", "pending", "incomplete")
-
-# Strategy parameters each lifecycle accepts; the required subset is enforced
-# below. Keeping this a single constant means validation and the operator
-# manual cannot drift.
-LIFECYCLE_PARAMS: Mapping[str, tuple[str, ...]] = {
-    "targetctl": (
-        "target",
-        "ssh_host",
-        "remote_dir",
-        "repo_url",
-        "nginx_conf_dir",
-        "ready_retries",
-        "ready_interval_s",
-    ),
-    "image": ("image", "port", "internal_port", "name", "ready_path"),
-    "compose": ("compose_file", "port", "project", "cwd", "ready_path"),
-}
-REQUIRED_LIFECYCLE_PARAMS: Mapping[str, tuple[str, ...]] = {
-    "targetctl": ("target",),
-    "image": ("image", "port"),
-    "compose": ("compose_file", "port"),
-}
 
 
 class SetupError(ValueError):
@@ -102,6 +81,12 @@ class TargetConfig:
     operator_kb: str | None = None
     auth: Mapping[str, object] | None = None
     l1_surface: Mapping[str, object] | None = None
+    # The image build recipe: when set, the target's app image is built from this
+    # Dockerfile, overwriting the pull path. `dockerfile_context` is the build
+    # context directory; unset means the Dockerfile's own parent (which is only
+    # correct when the Dockerfile copies nothing from a wider directory).
+    dockerfile: str | None = None
+    dockerfile_context: str | None = None
 
 
 @dataclass(frozen=True)
@@ -133,13 +118,38 @@ class PreloadedArtifacts:
 
 
 @dataclass(frozen=True)
-class TargetRun:
-    """The evaluation of one `Target` on one instance: config, phase, cap, seeds."""
+class TargetConfig:
+    """The per-trial data configuration of a Target (seed, KB, auth, L1).
 
+    The bring-up configuration lives separately, in the target's
+    `eval/targets/<dataset>/<target>.yaml` (spec #301); this object carries only
+    the per-trial data dependencies, which default to the target's
+    `eval/data/<dataset>/<target>/` directory when unset.
+    """
+
+    target_seed: str | None = None
+    operator_kb: str | None = None
+    auth: Mapping[str, object] | None = None
+    l1_surface: Mapping[str, object] | None = None
+
+
+@dataclass(frozen=True)
+class TargetRun:
+    """The evaluation of one `<dataset>/<target>` on one instance (spec #301).
+
+    `target_key` is the composite dataset/target reference; `target_id` is the
+    trial identity used by the artifact store and the CLI, defaulting to the
+    target segment. The bring-up configuration and the dataset are resolved from
+    the key.
+    """
+
+    target_key: str
     target_id: str
-    target_config: TargetConfig
+    target_config: TargetConfig = field(default_factory=TargetConfig)
     start_phase: str = "recon"
     hunt_config_budget: int | None = None
+    # The per-trial bound on the project's token spend (spec token tracking).
+    token_budget: int | None = None
     preloaded_hunting_artifacts: PreloadedArtifacts | None = None
     # #273: the target-run identity (the artifact store's middle level). Unset
     # means the trial record defaults it to the instance id.
@@ -148,6 +158,14 @@ class TargetRun:
     # instance) instead of creating one. Set means the trial enters at hunting;
     # it must be path-safe and unique within the setup.
     existing_project_id: str | None = None
+
+    @property
+    def dataset_id(self) -> str:
+        return self.target_key.split("/", 1)[0]
+
+    @property
+    def target(self) -> str:
+        return self.target_key.split("/", 1)[1]
 
 
 @dataclass(frozen=True)
@@ -167,6 +185,9 @@ class EvalSetup:
     schema_version: int
     artifact_store: str
     instances: tuple[Instance, ...]
+    # The benchmark datasets in play, by key (`eval/datasets/<key>.yaml`). Each
+    # target's `target_key` names one of these plus its target (spec #301).
+    datasets: tuple[str, ...] = ()
     work_items: tuple[WorkItem, ...] = ()
     # #274: declared per-artifact-class migrations/rebuilds the alignment step
     # resolves a decider's action against. Absent means nothing is declared.
@@ -214,6 +235,19 @@ def _optional_str(mapping: Mapping, key: str, where: str) -> str | None:
     return value
 
 
+def _string_tuple(mapping: Mapping, key: str, where: str) -> tuple[str, ...]:
+    """A list of non-empty strings; absent is the empty tuple."""
+    if key not in mapping or mapping[key] is None:
+        return ()
+    value = mapping[key]
+    if not isinstance(value, list):
+        raise SetupError(f"{where}.{key}: expected a list of strings")
+    for item in value:
+        if not isinstance(item, str) or not item:
+            raise SetupError(f"{where}.{key}: expected non-empty strings, got {item!r}")
+    return tuple(value)
+
+
 def is_path_safe_id(value: object) -> bool:
     """True when `value` is one safe path segment.
 
@@ -256,7 +290,14 @@ def parse_eval_setup(payload: object) -> EvalSetup:
 
     artifact_store = _str_field(root, "artifact_store", "EvalSetup", required=True)
 
-    allowed = ("schema_version", "artifact_store", "instances", "work_items", "alignment")
+    allowed = (
+        "schema_version",
+        "artifact_store",
+        "datasets",
+        "instances",
+        "work_items",
+        "alignment",
+    )
     _check_keys(root, allowed, "EvalSetup")
 
     raw_instances = _require(root, "instances", "EvalSetup")
@@ -293,10 +334,18 @@ def parse_eval_setup(payload: object) -> EvalSetup:
 
     work_items = tuple(_parse_work_item(item, i) for i, item in enumerate(root.get("work_items", []) or []))
 
+    datasets = _string_tuple(root, "datasets", "EvalSetup")
+    for dataset in datasets:
+        if not is_path_safe_id(dataset):
+            raise SetupError(
+                f"EvalSetup.datasets: expected path-safe identifiers, got {dataset!r}"
+            )
+
     return EvalSetup(
         schema_version=_schema,
         artifact_store=artifact_store,
         instances=instances,
+        datasets=datasets,
         work_items=work_items,
         alignment=_parse_alignment(root.get("alignment"), "EvalSetup.alignment"),
     )
@@ -330,18 +379,24 @@ def _parse_target_run(payload: object, where: str) -> TargetRun:
     _check_keys(
         mapping,
         (
+            "target_key",
             "target_id",
             "target_config",
             "start_phase",
             "hunt_config_budget",
+            "token_budget",
             "preloaded_hunting_artifacts",
             "target_run_id",
             "existing_project_id",
         ),
         where,
     )
-    target_id = _str_field(mapping, "target_id", where, required=True)
-    target_config = _parse_target_config(_require(mapping, "target_config", where), f"{where}.target_config")
+    target_key = _str_field(mapping, "target_key", where, required=True)
+    dataset_id, target = resolve_target_key(target_key)
+    target_id = _optional_str(mapping, "target_id", where) or target
+    if not is_path_safe_id(target_id):
+        raise SetupError(f"{where}.target_id: expected a path-safe identifier, got {target_id!r}")
+    target_config = _parse_target_config(mapping.get("target_config"), f"{where}.target_config")
 
     existing_project_id = _path_safe(mapping, "existing_project_id", where)
     raw_start_phase = mapping.get("start_phase")
@@ -365,11 +420,19 @@ def _parse_target_run(payload: object, where: str) -> TargetRun:
     if budget is not None and (not isinstance(budget, int) or isinstance(budget, bool)):
         raise SetupError(f"{where}.hunt_config_budget: expected an integer or null")
 
+    token_budget = mapping.get("token_budget")
+    if token_budget is not None and (
+        not isinstance(token_budget, int) or isinstance(token_budget, bool)
+    ):
+        raise SetupError(f"{where}.token_budget: expected an integer or null")
+
     return TargetRun(
+        target_key=target_key,
         target_id=target_id,
         target_config=target_config,
         start_phase=start_phase,
         hunt_config_budget=budget,
+        token_budget=token_budget,
         preloaded_hunting_artifacts=_parse_preloaded_artifacts(
             mapping.get("preloaded_hunting_artifacts"),
             f"{where}.preloaded_hunting_artifacts",
@@ -422,37 +485,21 @@ def _parse_preloaded_test_spec(payload: object, where: str) -> PreloadedTestSpec
 
 
 def _parse_target_config(payload: object, where: str) -> TargetConfig:
+    """The per-trial data configuration (spec #301); all fields optional.
+
+    The bring-up configuration is not here: it lives in the target's
+    `eval/targets/<dataset>/<target>.yaml`. This object carries only per-trial
+    data dependencies, which default to the target's data directory.
+    """
+    if payload is None:
+        return TargetConfig()
     mapping = _mapping(payload, where)
-    _check_keys(
-        mapping,
-        ("lifecycle", "params", "target_seed", "operator_kb", "auth", "l1_surface"),
-        where,
-    )
-    lifecycle = _require(mapping, "lifecycle", where)
-    if lifecycle not in LIFECYCLES:
-        raise SetupError(
-            f"{where}.lifecycle: expected one of {', '.join(LIFECYCLES)}, got {lifecycle!r}"
-        )
-
-    params = mapping.get("params", {}) or {}
-    params = _mapping(params, f"{where}.params")
-    _check_keys(params, LIFECYCLE_PARAMS[lifecycle], f"{where}.params")
-    for required in REQUIRED_LIFECYCLE_PARAMS[lifecycle]:
-        if required not in params:
-            raise SetupError(
-                f"{where}.params: missing required strategy parameter {required!r} "
-                f"for lifecycle {lifecycle!r}"
-            )
-
-    auth = _maybe_mapping(mapping, "auth", where)
-    l1_surface = _maybe_mapping(mapping, "l1_surface", where)
+    _check_keys(mapping, ("target_seed", "operator_kb", "auth", "l1_surface"), where)
     return TargetConfig(
-        lifecycle=lifecycle,
-        params=dict(params),
         target_seed=_optional_str(mapping, "target_seed", where),
         operator_kb=_optional_str(mapping, "operator_kb", where),
-        auth=auth,
-        l1_surface=l1_surface,
+        auth=_maybe_mapping(mapping, "auth", where),
+        l1_surface=_maybe_mapping(mapping, "l1_surface", where),
     )
 
 

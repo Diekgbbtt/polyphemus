@@ -18,7 +18,6 @@ from orchestrator.ids import short_id
 from orchestrator.instances import InstancePaths
 
 SYNTHETIC_SUFFIX = ".target"
-SSH_OPTS = ("-o", "BatchMode=yes", "-o", "ConnectTimeout=15")
 
 # Single-sourced (S1/S2): the host loopback the host-side readiness probes use,
 # and the Docker host gateway kali reaches host-published ports through. Kali is
@@ -57,9 +56,8 @@ def synthetic_host(identity: str) -> str:
 def nginx_front_block(host: str, port: int | str, *, backend_host: str = LOOPBACK) -> str:
     """The nginx server block: `server_name <host>` -> `backend_host:port`.
 
-    `backend_host` defaults to loopback (the remote workshop host, where nginx
-    and the target share a network namespace) and is the Docker host gateway
-    for the local front container, which reaches host-published ports that way.
+    `backend_host` defaults to loopback and is the Docker host gateway for the
+    shared front container, which reaches host-published target ports that way.
     """
     return (
         "server {\n"
@@ -81,44 +79,6 @@ def front_conf_path(conf_dir: str | Path, host: str) -> Path:
     return Path(conf_dir) / f"eval-target-{host}.conf"
 
 
-def ssh_command(
-    ssh_host: str,
-    remote_command: str,
-    *,
-    stdin: str | None = None,
-    description: str = "",
-) -> Command:
-    """The one ssh command builder shared by `routing` and `targetctl` (S2)."""
-    return Command(
-        argv=("ssh", *SSH_OPTS, ssh_host, remote_command),
-        stdin=stdin,
-        description=description,
-    )
-
-
-def plan_front_apply(ssh_host: str, conf_path: str | Path, host: str, port: int | str) -> Command:
-    """Write the per-host front block remotely and reload nginx."""
-    quoted = shlex.quote(str(conf_path))
-    remote = (
-        f"sudo tee {quoted} >/dev/null && sudo nginx -t && sudo systemctl reload nginx"
-    )
-    return ssh_command(
-        ssh_host,
-        remote,
-        stdin=nginx_front_block(host, port),
-        description=f"front {host} -> {LOOPBACK}:{port}",
-    )
-
-
-def plan_front_remove(ssh_host: str, conf_path: str | Path) -> Command:
-    """Remove the per-host front block remotely and reload nginx."""
-    quoted = shlex.quote(str(conf_path))
-    remote = f"sudo rm -f {quoted} && sudo nginx -t && sudo systemctl reload nginx"
-    return ssh_command(
-        ssh_host, remote, stdin=None, description=f"remove front {conf_path}"
-    )
-
-
 def _compose_ps_kali(paths: InstancePaths) -> str:
     files = " ".join(f"-f {compose_file}" for compose_file in paths.compose_files)
     return f"docker compose -p {paths.compose_project} {files} ps -q kali"
@@ -127,9 +87,13 @@ def _compose_ps_kali(paths: InstancePaths) -> str:
 def _rewrite_hosts(host: str) -> str:
     # /etc/hosts is a docker bind mount: sed -i cannot rename it, so rewrite
     # through a temp file and truncate-write back (the hosts.sh technique).
+    # Match the host by exact FIELD equality, not a regex: the `.` in
+    # `t-<short>.target` is a regex metacharacter, so `/[[:space:]]host$/` could
+    # match an unintended line. `-v host=` keeps the pattern literal.
+    program = "{ for (i = 2; i <= NF; i++) if ($i == host) next } { print }"
     return (
-        f"awk '!/[[:space:]]{host}$/' /etc/hosts > /tmp/hosts.tmp "
-        "&& cat /tmp/hosts.tmp > /etc/hosts"
+        f"awk -v host={shlex.quote(host)} {shlex.quote(program)} "
+        "/etc/hosts > /tmp/hosts.tmp && cat /tmp/hosts.tmp > /etc/hosts"
     )
 
 
@@ -221,22 +185,6 @@ def kali_hosts_command(paths: InstancePaths) -> Command:
         paths,
         "cat /etc/hosts",
         description=f"read {paths.compose_project} kali /etc/hosts",
-    )
-
-
-def kali_probe_command(paths: InstancePaths, url: str, *, max_time_s: int = 10) -> Command:
-    """Probe a URL from INSIDE that instance's kali (the phase-entry check).
-
-    A target the recon fleet cannot reach is a failed run, not an empty
-    finding, so the recon predicate probes through the same exec plane the
-    pipeline uses. The command answers the HTTP status on stdout.
-    """
-    inner = (
-        f"curl -sS -o /dev/null -w '%{{http_code}}' --max-time {int(max_time_s)} "
-        f"{shlex.quote(url)}"
-    )
-    return _kali_exec_command(
-        paths, inner, description=f"probe {url} from {paths.compose_project} kali"
     )
 
 

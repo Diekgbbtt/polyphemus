@@ -226,6 +226,7 @@ async def run_session_agent(
     model_factory=None,
     observe: bool = True,
     extra_tags: Sequence[str] | None = None,
+    usage_scope: str | None = None,
     on_turn_degraded: Callable[[str, Exception], Awaitable[None] | None] | None = None,
     context: dict | None = None,
 ) -> AgentRunResult:
@@ -254,7 +255,8 @@ async def run_session_agent(
     turn_kwargs = dict(
         checkpointer=checkpointer, tools=tools, response_format=response_format,
         system_prompt=system_prompt, middleware=middleware, store=store,
-        model_factory=model_factory, observe=observe, extra_tags=extra_tags, context=context,
+        model_factory=model_factory, observe=observe, extra_tags=extra_tags,
+        usage_scope=usage_scope, context=context,
     )
 
     async def _run_turn_attempt(messages: Sequence[BaseMessage], *,

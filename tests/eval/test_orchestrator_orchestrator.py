@@ -1,11 +1,14 @@
-"""The orchestrator skeleton over a whole `EvalSetup` (ticket #269).
+"""The orchestrator skeleton over a whole `EvalSetup` (ticket #269, spec #301).
 
 `plan()` is pure: it builds every command without a runner, so an operator can
-inspect a run before it touches ssh, docker, or git. `up`/`down` gate the
-eval-wide work items, then drive instances and their serial target pipelines.
+inspect a run before it touches docker or git. `up`/`down` gate the eval-wide
+work items, then drive instances and their serial target pipelines. Per target,
+the orchestrator resolves the dataset/target configuration from the setup's eval
+root and verifies readiness through the strategy's bounded plan.
 """
 from __future__ import annotations
 
+import yaml
 import pytest
 
 from orchestrator import orchestrator, routing
@@ -13,23 +16,105 @@ from orchestrator.setup import parse_eval_setup
 from orchestrator.workitems import WorkItemGateError
 
 
-def _config(tmp_path):
-    return orchestrator.OrchestratorConfig(
-        repo=tmp_path / "repo", instances_root=tmp_path / "instances"
+def _target_config(target, runner, **kwargs):
+    payload = {"target": target, "runner": runner}
+    payload.update(kwargs)
+    return payload
+
+
+_TARGETS = {
+    "jetlinks": _target_config(
+        "jetlinks", "targetctl", compose="docker-compose.yml",
+        images=["ph/mock/jetlinks:web"],
+    ),
+    "siyucms": _target_config(
+        "siyucms", "targetctl", compose="docker-compose.yml",
+        images=["ph/mock/siyucms:web"],
+    ),
+    "img": _target_config(
+        "img", "image", image="nginx:alpine", port=18080, images=["ph/mock/img:web"]
+    ),
+    "stack": _target_config(
+        "stack", "compose", compose="target-compose.yml", port=18081,
+        images=["ph/mock/stack:web"],
+    ),
+}
+
+
+def _write_eval_root(tmp_path):
+    root = tmp_path / "eval"
+    (root / "datasets").mkdir(parents=True, exist_ok=True)
+    (root / "targets" / "mock").mkdir(parents=True, exist_ok=True)
+    (root / "datasets" / "mock.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "id": "mock",
+                "repo": "https://example.invalid/repo.git",
+                "targets": list(_TARGETS),
+            }
+        ),
+        encoding="utf-8",
+    )
+    for target, payload in _TARGETS.items():
+        (root / "targets" / "mock" / f"{target}.yaml").write_text(
+            yaml.safe_dump(payload), encoding="utf-8"
+        )
+    return root
+
+
+def _setup_dict(*, targets=None, instance_id="arm-a"):
+    targets = targets or [{"target_key": "mock/jetlinks", "target_id": "jetlinks-1"}]
+    return {
+        "schema_version": 1,
+        "artifact_store": "/srv/eval-artifacts",
+        "datasets": ["mock"],
+        "work_items": [
+            {"name": "auth-bootstrap", "status": "complete"},
+            {"name": "l1-surface", "status": "complete"},
+        ],
+        "instances": [
+            {
+                "instance_id": instance_id,
+                "env_file": f"{instance_id}/.env",
+                "systems": f"ph-{instance_id}",
+                "targets": [
+                    {
+                        **target,
+                        "start_phase": "recon",
+                        "hunt_config_budget": 10,
+                    }
+                    for target in targets
+                ],
+            }
+        ],
+    }
+
+
+def _local_setup(*, instance_id="arm-a", key="mock/img", target_id="img-1"):
+    return _setup_dict(
+        instance_id=instance_id, targets=[{"target_key": key, "target_id": target_id}]
     )
 
 
-def _orchestrator(sample_setup, tmp_path, *, runner=None):
+def _config(tmp_path):
+    return orchestrator.OrchestratorConfig(
+        repo=tmp_path / "repo",
+        instances_root=tmp_path / "instances",
+        eval_root=_write_eval_root(tmp_path),
+    )
+
+
+def _orchestrator(setup_dict, tmp_path, *, runner=None):
     return orchestrator.Orchestrator(
-        parse_eval_setup(sample_setup), _config(tmp_path), runner=runner
+        parse_eval_setup(setup_dict), _config(tmp_path), runner=runner
     )
 
 
 def test_plan_builds_instance_and_target_commands_without_a_runner(
-    sample_setup, tmp_path, recording_runner
+    tmp_path, recording_runner
 ) -> None:
     runner = recording_runner()
-    plan = _orchestrator(sample_setup, tmp_path, runner=runner).plan()
+    plan = _orchestrator(_setup_dict(), tmp_path, runner=runner).plan()
 
     assert runner.calls == []
     commands = [c for step in plan for c in step.commands]
@@ -41,29 +126,28 @@ def test_plan_builds_instance_and_target_commands_without_a_runner(
 
 
 def test_up_refuses_when_a_required_work_item_is_incomplete(
-    sample_setup, tmp_path, recording_runner
+    tmp_path, recording_runner
 ) -> None:
-    sample_setup["work_items"][0]["status"] = "incomplete"
+    setup = _setup_dict()
+    setup["work_items"][0]["status"] = "incomplete"
     runner = recording_runner()
 
     with pytest.raises(WorkItemGateError, match="auth-bootstrap"):
-        _orchestrator(sample_setup, tmp_path, runner=runner).up()
+        _orchestrator(setup, tmp_path, runner=runner).up()
 
     assert runner.calls == []
 
 
-def test_up_drives_the_instance_and_target(
-    sample_setup, tmp_path, recording_runner, fake_result
-) -> None:
+def test_up_drives_the_instance_and_target(tmp_path, recording_runner, fake_result) -> None:
     runner = recording_runner(
         routes={
             "scripts/targetctl up": fake_result(0, "UI: http://127.0.0.1:32768/\n"),
-            "hostname -I": fake_result(0, "10.0.0.5 \n"),
-            "curl": fake_result(0, "200"),
+            "getent hosts": fake_result(0, "172.17.0.1 host.docker.internal\n"),
+            "ps -a --format json": fake_result(0, '[{"Health": "healthy"}]\n'),
         }
     )
 
-    results = _orchestrator(sample_setup, tmp_path, runner=runner).up()
+    results = _orchestrator(_setup_dict(), tmp_path, runner=runner).up()
 
     (instance_result,) = results
     assert instance_result.instance_id == "arm-a"
@@ -75,14 +159,12 @@ def test_up_drives_the_instance_and_target(
     assert any("scripts/targetctl up jetlinks" in t for t in texts)
 
 
-def test_down_removes_targets_then_the_instance(
-    sample_setup, tmp_path, recording_runner
-) -> None:
+def test_down_removes_targets_then_the_instance(tmp_path, recording_runner) -> None:
     runner = recording_runner()
     # A real teardown follows a bring-up that created the worktree.
     (tmp_path / "instances" / "arm-a").mkdir(parents=True)
 
-    _orchestrator(sample_setup, tmp_path, runner=runner).down()
+    _orchestrator(_setup_dict(), tmp_path, runner=runner).down()
 
     texts = runner.argv_texts
     assert any("scripts/targetctl down jetlinks" in t for t in texts)
@@ -91,7 +173,7 @@ def test_down_removes_targets_then_the_instance(
 
 
 def test_status_reports_target_host_front_url_and_kali_aliases(
-    sample_setup, tmp_path, recording_runner, fake_result
+    tmp_path, recording_runner, fake_result
 ) -> None:
     """#269: status must report the synthetic host, its front URL, and the live aliases."""
     host = routing.synthetic_host("arm-a/jetlinks-1")
@@ -104,7 +186,7 @@ def test_status_reports_target_host_front_url_and_kali_aliases(
         default=fake_result(0, stdout="running\n"),
     )
 
-    report = _orchestrator(sample_setup, tmp_path, runner=runner).status()
+    report = _orchestrator(_setup_dict(), tmp_path, runner=runner).status()
 
     entry = report["arm-a"]
     assert "running" in entry["stack"]
@@ -116,12 +198,12 @@ def test_status_reports_target_host_front_url_and_kali_aliases(
 
 
 def test_down_is_idempotent_when_the_worktree_is_absent(
-    sample_setup, tmp_path, recording_runner
+    tmp_path, recording_runner
 ) -> None:
     """#269: teardown must not fail because the instance worktree never existed."""
     runner = recording_runner()
 
-    _orchestrator(sample_setup, tmp_path, runner=runner).down()
+    _orchestrator(_setup_dict(), tmp_path, runner=runner).down()
 
     texts = runner.argv_texts
     assert any("scripts/targetctl down jetlinks" in t for t in texts)
@@ -130,39 +212,6 @@ def test_down_is_idempotent_when_the_worktree_is_absent(
 
 
 # --- SP2: the shared host-level front for local targets -----------------------
-
-
-def _local_setup(instance_id="arm-a", lifecycle="image", target_id="img-1"):
-    params = (
-        {"image": "nginx:alpine", "port": 18080}
-        if lifecycle == "image"
-        else {"compose_file": "target-compose.yml", "port": 18081}
-    )
-    return {
-        "schema_version": 1,
-        "artifact_store": "/srv/eval-artifacts",
-        "work_items": [
-            {"name": "auth-bootstrap", "status": "complete"},
-            {"name": "l1-surface", "status": "complete"},
-        ],
-        "instances": [
-            {
-                "instance_id": instance_id,
-                "env_file": f"{instance_id}/.env",
-                "systems": f"ph-{instance_id}",
-                "targets": [
-                    {
-                        "target_id": target_id,
-                        "start_phase": "recon",
-                        "hunt_config_budget": 10,
-                        "preloaded_hunting_artifacts": None,
-                        "target_config": {"lifecycle": lifecycle, "params": params},
-                    }
-                ],
-            }
-        ],
-    }
-
 
 GATEWAY_LINE = "172.17.0.1 host.docker.internal\n"
 
@@ -185,20 +234,23 @@ def test_up_ensures_the_shared_front_before_a_local_target(
     assert any("nginx -s reload" in t for t in texts)
 
 
-def test_up_does_not_create_the_front_without_local_targets(
-    sample_setup, tmp_path, recording_runner, fake_result
+def test_up_creates_the_front_for_a_targetctl_target(
+    tmp_path, recording_runner, fake_result
 ) -> None:
+    """D45: `targetctl` is local now, so it too is fronted by the shared container."""
     runner = recording_runner(
         routes={
             "scripts/targetctl up": fake_result(0, "UI: http://127.0.0.1:32768/\n"),
-            "hostname -I": fake_result(0, "10.0.0.5 \n"),
-            "curl": fake_result(0, "200"),
+            "getent hosts": fake_result(0, GATEWAY_LINE),
+            "ps -a --format json": fake_result(0, '[{"Health": "healthy"}]\n'),
         }
     )
 
-    _orchestrator(sample_setup, tmp_path, runner=runner).up()
+    _orchestrator(_setup_dict(), tmp_path, runner=runner).up()
 
-    assert not any("ph-eval-front" in t for t in runner.argv_texts)
+    texts = runner.argv_texts
+    assert any("docker run -d --name ph-eval-front" in t for t in texts)
+    assert any("ph-eval-front" in t and "nginx -s reload" in t for t in texts)
 
 
 def test_plan_lists_the_front_container_for_local_targets(
@@ -208,9 +260,7 @@ def test_plan_lists_the_front_container_for_local_targets(
 
     labels = [step.label for step in plan]
     assert any("front container" in label for label in labels)
-    commands = " ".join(
-        " ".join(c.argv) for step in plan for c in step.commands
-    )
+    commands = " ".join(" ".join(c.argv) for step in plan for c in step.commands)
     assert "ph-eval-front" in commands
 
 
@@ -226,22 +276,16 @@ def test_down_removes_the_shared_front_after_local_targets(
 
 
 def test_down_continues_after_one_target_failure(
-    sample_setup, tmp_path, recording_runner, fake_result
+    tmp_path, recording_runner, fake_result
 ) -> None:
     """SP3: one target's failure must not strand the rest of the teardown."""
     (tmp_path / "instances" / "arm-a").mkdir(parents=True)
-    setup = sample_setup
-    second = {
-        "target_id": "t-2",
-        "start_phase": "recon",
-        "hunt_config_budget": 10,
-        "preloaded_hunting_artifacts": None,
-        "target_config": {
-            "lifecycle": "targetctl",
-            "params": {"target": "siyucms"},
-        },
-    }
-    setup["instances"][0]["targets"].append(second)
+    setup = _setup_dict(
+        targets=[
+            {"target_key": "mock/jetlinks", "target_id": "jetlinks-1"},
+            {"target_key": "mock/siyucms", "target_id": "t-2"},
+        ]
+    )
     h2 = routing.synthetic_host("arm-a/t-2")
     conf2 = str(routing.front_conf_path("/etc/nginx/conf.d", h2))
     runner = recording_runner(routes={conf2: fake_result(1, stderr="front stuck")})

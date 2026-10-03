@@ -137,6 +137,17 @@ def get_app_state(project_id: str | None = None) -> dict:
         raise HTTPException(status_code=404, detail="unknown project")
 
 
+@router.get("/projects/{project_id}/usage")
+def get_project_usage(project_id: str) -> dict:
+    """The project's cumulative token spend, read straight from the process-wide
+    usage ledger. Read-only, NO database access: an unknown/empty project returns
+    zeros/empty and is never validated into a 404, so the eval harness queries
+    only its own project and the ledger is the single source."""
+    from polymerhus.app.llm.usage import usage_ledger
+
+    return usage_ledger().snapshot(project_id)
+
+
 @router.put("/projects/{project_id}/settings")
 def update_settings(project_id: str, body: SettingsUpdate) -> dict:
     try:

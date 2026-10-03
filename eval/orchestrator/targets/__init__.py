@@ -1,16 +1,19 @@
-"""Target lifecycle strategies behind one interface (D9).
+"""Target lifecycle strategies behind one interface (D9, spec #301).
 
-`build_strategy` selects the implementation from the `TargetConfig.lifecycle`
-and allocates the TargetRun's unique synthetic Host (D2). Importing this
-package performs no I/O.
+`build_strategy` selects the implementation from the resolved
+`TargetConfiguration.runner` and allocates the TargetRun's unique synthetic Host
+(D2) from `<instance_id>/<target_id>`. Importing this package performs no I/O.
 """
 from __future__ import annotations
 
 from typing import Mapping
 
 from orchestrator import routing
+from orchestrator.dataset import BenchmarkDataset
+from orchestrator.datasets.base import DatasetHelper
 from orchestrator.instances import InstancePaths
 from orchestrator.setup import TargetRun
+from orchestrator.target_config import TargetConfiguration
 from orchestrator.targets import compose as compose_strategy
 from orchestrator.targets import image as image_strategy
 from orchestrator.targets import targetctl as targetctl_strategy
@@ -39,20 +42,35 @@ __all__ = [
 
 
 def build_strategy(
-    run: TargetRun,
+    target_config: TargetConfiguration,
+    dataset: BenchmarkDataset,
+    helper: DatasetHelper,
     paths: InstancePaths,
+    run: TargetRun,
     *,
     env: Mapping[str, str] | None = None,
     sleep: Sleep | None = None,
 ) -> TargetStrategy:
-    """Build the strategy for one TargetRun, with its synthetic Host allocated."""
+    """Build the strategy for one TargetRun, with its synthetic Host allocated.
+
+    The bring-up configuration (`target_config`), its dataset, and the dataset's
+    helper are all resolved by the caller (the orchestrator); here we only select
+    the runner implementation and seed the shared context.
+    """
     identity = f"{paths.instance.instance_id}/{run.target_id}"
-    context = TargetContext(paths=paths, host=routing.synthetic_host(identity), run=run)
-    lifecycle = run.target_config.lifecycle
-    if lifecycle == "targetctl":
+    context = TargetContext(
+        paths=paths,
+        host=routing.synthetic_host(identity),
+        run=run,
+        target_config=target_config,
+        dataset=dataset,
+        helper=helper,
+    )
+    runner = target_config.runner
+    if runner == "targetctl":
         return targetctl_strategy.TargetctlStrategy(context, env=env, sleep=sleep)
-    if lifecycle == "image":
+    if runner == "image":
         return image_strategy.ImageStrategy(context, sleep=sleep)
-    if lifecycle == "compose":
+    if runner == "compose":
         return compose_strategy.ComposeStrategy(context, sleep=sleep)
-    raise TargetError(f"unknown target lifecycle: {lifecycle!r}")
+    raise TargetError(f"unknown target runner: {runner!r}")

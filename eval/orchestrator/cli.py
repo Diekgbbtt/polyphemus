@@ -18,8 +18,17 @@ from typing import Callable, Sequence, TextIO
 
 import yaml
 
-from orchestrator import api, assessment, diagnosis, evidence, instances, monitor, routing, store, subagents, surfer, trial, verdicts
+from orchestrator import api, assessment, chain as chain_mod, diagnosis, evidence, instances, monitor, routing, store, subagents, surfer, trial, verdicts
 from orchestrator import alignment
+from orchestrator.dataset import (
+    BenchmarkDataset,
+    DatasetError,
+    load_benchmark_dataset,
+    resolve_target_key,
+)
+from orchestrator.datasets import helper_for
+from orchestrator.target_config import load_target_configuration
+from orchestrator.targets import build_strategy
 from orchestrator.commands import LocalRunner
 from orchestrator.files import FileStore
 from orchestrator.instances import InstanceError
@@ -56,6 +65,7 @@ DiagnoseDispatchFactory = Callable[[tuple[str, ...]], diagnosis.SubagentDispatch
 IssueBankFactory = Callable[[], diagnosis.IssueBank]
 _HANDLED = (
     SetupError,
+    DatasetError,
     WorkItemGateError,
     InstanceError,
     TargetError,
@@ -214,6 +224,24 @@ def _parser() -> argparse.ArgumentParser:
         default=float(os.environ.get("EVAL_MONITOR_BUDGET_S", 3600.0)),
         help="the wait between a node's dispatch and its re-dispatch/escalation "
         "decision",
+    )
+
+    # --- the target chain (multi-target scaffold) -----------------------------
+    chain_parser = sub.add_parser(
+        "next-target",
+        help="advance the chain: reclaim the previous image, pull the next, "
+        "bring it up, verify health",
+    )
+    _common_args(chain_parser)
+    chain_parser.add_argument("--instance", required=True, help="the instance id")
+    chain_parser.add_argument(
+        "--target", required=True, help="the target_id to advance the chain to"
+    )
+    chain_parser.add_argument(
+        "--chain-state",
+        default=os.environ.get("EVAL_CHAIN_STATE"),
+        help="the chain position file (default: "
+        "<instances-root>/<instance_id>/chain-state.yaml)",
     )
 
     # --- the diagnosis verbs (#272) -------------------------------------------
@@ -466,6 +494,94 @@ def _find_target(instance: Instance, target_id: str) -> TargetRun:
     )
 
 
+# --- the keyed dataset/target resolution (spec #301) --------------------------
+
+
+def _dataset_path(repo: Path, dataset_id: str) -> Path:
+    return Path(repo) / "eval" / "datasets" / f"{dataset_id}.yaml"
+
+
+def _load_datasets(setup: EvalSetup, repo: Path) -> dict[str, BenchmarkDataset]:
+    """Every dataset the setup lists, by key, resolved under `<repo>/eval/datasets`."""
+    return {
+        dataset_id: load_benchmark_dataset(_dataset_path(repo, dataset_id))
+        for dataset_id in setup.datasets
+    }
+
+
+def _resolve_dataset(
+    setup: EvalSetup,
+    run: TargetRun,
+    *,
+    repo: Path,
+    datasets: dict[str, BenchmarkDataset] | None = None,
+) -> BenchmarkDataset:
+    """The dataset a run's `<dataset>/<target>` key names, validated against the setup."""
+    dataset_id, target = resolve_target_key(run.target_key)
+    if datasets is None:
+        datasets = _load_datasets(setup, repo)
+    dataset = datasets.get(dataset_id)
+    if dataset is None:
+        raise SetupError(
+            f"target {run.target_id!r} names dataset {dataset_id!r}, which the "
+            "EvalSetup does not list in `datasets`"
+        )
+    dataset.require_target(target)
+    return dataset
+
+
+def _dataset_and_config(
+    setup: EvalSetup,
+    run: TargetRun,
+    *,
+    repo: Path,
+    datasets: dict[str, BenchmarkDataset] | None = None,
+):
+    """The `(dataset, target_config)` a run's key resolves to, config read fresh."""
+    dataset = _resolve_dataset(setup, run, repo=repo, datasets=datasets)
+    _, target = resolve_target_key(run.target_key)
+    config = load_target_configuration(dataset.target_config_search(target))
+    return dataset, config
+
+
+def _strategy_for_factory(
+    setup: EvalSetup,
+    paths: "instances.InstancePaths",
+    repo: Path,
+    *,
+    env=None,
+    sleep=None,
+):
+    """A `TargetRun` -> strategy builder bound to one instance's paths.
+
+    The datasets and their helpers are resolved once per factory; each step loads
+    its target config from the run's key, so the chain and the config cannot
+    drift. `build_strategy`'s frozen signature is `(target_config, dataset,
+    helper, paths, run, ...)`.
+    """
+    datasets = _load_datasets(setup, repo)
+    helpers = {key: helper_for(dataset) for key, dataset in datasets.items()}
+
+    def build(run: TargetRun):
+        dataset, config = _dataset_and_config(setup, run, repo=repo, datasets=datasets)
+        return build_strategy(
+            config, dataset, helpers[dataset.id], paths, run, env=env, sleep=sleep
+        )
+
+    return build
+
+
+def _operator_kb(setup: EvalSetup, run: TargetRun, repo: Path) -> str | None:
+    """The run's operator KB, or the dataset's data-dir default when it carries one."""
+    declared = run.target_config.operator_kb
+    if declared:
+        candidate = Path(declared)
+        return str(candidate if candidate.is_absolute() else Path(repo) / candidate)
+    dataset = _resolve_dataset(setup, run, repo=repo)
+    default = dataset.data_dir(run.target) / "operator_kb.md"
+    return str(default) if default.is_file() else None
+
+
 def _resolve_data_root(args) -> Path:
     if args.data_root:
         return Path(args.data_root)
@@ -486,10 +602,7 @@ def _trial_config(args, setup: EvalSetup, config: OrchestratorConfig) -> tuple[
         branch=config.branch,
         compose_files=config.compose_files,
     )
-    kb = None
-    if run.target_config.operator_kb:
-        candidate = Path(run.target_config.operator_kb)
-        kb = str(candidate if candidate.is_absolute() else Path(args.repo) / candidate)
+    kb = _operator_kb(setup, run, args.repo)
     scaffold = None
     if run.start_phase == "recon" and kb:
         scaffold = trial.ScaffoldSpec(cwd=str(paths.worktree), kb=kb)
@@ -537,6 +650,7 @@ def _trial_config(args, setup: EvalSetup, config: OrchestratorConfig) -> tuple[
         auth_surface=run.target_config.auth is not None,
         preloaded_hunting_artifacts=run.preloaded_hunting_artifacts,
         hunt_config_budget=run.hunt_config_budget,
+        token_budget=run.token_budget,
         target_run_id=target_run_id,
         data_root=data_root,
         runs_root=Path(args.runs_root),
@@ -563,8 +677,7 @@ def _run_trial(args, setup: EvalSetup, config: OrchestratorConfig, out: TextIO, 
 
     runner = runner_factory()
     api_runner = api_factory(args.api)
-    probe = trial.make_reachability_probe(paths, runner, trial.front_url(cfg))
-    engine = trial.Trial(cfg, api_runner=api_runner, runner=runner, reachable=probe)
+    engine = trial.Trial(cfg, api_runner=api_runner, runner=runner)
     orchestrator = Orchestrator(setup, config, runner=runner)
     record = engine.run(
         bring_up=orchestrator.up,
@@ -584,6 +697,12 @@ def _run_trial(args, setup: EvalSetup, config: OrchestratorConfig, out: TextIO, 
         print(
             f"  cap {record.cap}: stopped at {record.stop_count}, "
             f"final {record.final_count} (overshoot {record.overshoot})",
+            file=out,
+        )
+    if record.token_budget is not None and record.spent_tokens is not None:
+        print(
+            f"  spend {record.spent_tokens} tokens "
+            f"(overshoot {record.spend_overshoot})",
             file=out,
         )
     # I2: a failed or timed-out run is a handled failure (the record is written
@@ -613,12 +732,8 @@ def _find_target_run(setup: EvalSetup, target_id: str) -> TargetRun:
 def _ground_truth_for(args, run: TargetRun) -> Path:
     if args.ground_truth:
         return Path(args.ground_truth)
-    target = run.target_config.params.get("target")
-    if not target:
-        raise assessment.AssessmentError(
-            f"target {run.target_id!r} declares no ground-truth name; pass --ground-truth"
-        )
-    return assessment.resolve_ground_truth(str(target))
+    # The target segment of the key is the ground-truth name gt.py resolves.
+    return assessment.resolve_ground_truth(run.target)
 
 
 def _assessment_data_root(args) -> Path:
@@ -1283,6 +1398,68 @@ def _run_monitor(
     return 1 if escalated else 0
 
 
+# --- the target chain (multi-target scaffold) ---------------------------------
+
+
+def _run_next_target(
+    args,
+    setup: EvalSetup,
+    config: OrchestratorConfig,
+    out: TextIO,
+    err: TextIO,
+    runner_factory: RunnerFactory,
+) -> int:
+    """Advance one instance's chain by one target; print the step or the trace."""
+    instance = _find_instance(setup, args.instance)
+    paths = instances.instance_paths(
+        instance,
+        config.instances_root,
+        repo=config.repo,
+        branch=config.branch,
+        compose_files=config.compose_files,
+    )
+    state_path = (
+        Path(args.chain_state)
+        if args.chain_state
+        else Path(args.instances_root) / instance.instance_id / "chain-state.yaml"
+    )
+    chain = chain_mod.Chain(
+        instance=instance,
+        paths=paths,
+        strategy_for=_strategy_for_factory(
+            setup, paths, config.repo, env=os.environ
+        ),
+        runner=runner_factory(),
+        files=FileStore(),
+        state_path=state_path,
+    )
+    try:
+        step = chain.next_target(args.target)
+    except chain_mod.TargetFailure as failure:
+        # The full inspectable trace: the step log, the command error, and the
+        # Python traceback, so the orchestrator sees exactly what failed.
+        print(json.dumps(failure.report(), indent=2), file=err)
+        return 1
+    print(
+        json.dumps(
+            {
+                "target_id": step.target_id,
+                "previous": step.previous,
+                "images": list(step.images),
+                "reclaimed": list(step.reclaimed),
+                "pulled": list(step.pulled),
+                "host": step.up.host,
+                "front_url": step.up.front_url,
+                "backend": step.up.backend,
+                "health": step.health,
+            },
+            indent=2,
+        ),
+        file=out,
+    )
+    return 0
+
+
 # --- artifact store (#273) ----------------------------------------------------
 
 
@@ -1623,6 +1800,7 @@ def _resume_trial(args, setup: EvalSetup, config: OrchestratorConfig,
         poll_s=args.poll_s,
         project_id=plan.project_id,
         recon_run=plan.recon_run_id,
+        existing_project_id=None,
         eval_sha=args.eval_sha,
         stack_fingerprint=args.stack_fingerprint,
         trace_id=args.trace_id,
@@ -1634,14 +1812,14 @@ def _resume_trial(args, setup: EvalSetup, config: OrchestratorConfig,
         cfg,
         start_phase=plan.start_phase,
         intervention=plan.intervention,
-        # A resumed trial keeps its recorded trial-scoped baseline; only a new
+        # A resumed trial keeps its recorded trial-scoped baselines; only a new
         # trial snapshots a fresh one (D8/D16).
         cap_baseline=plan.cap_baseline,
+        spend_baseline=plan.spend_baseline,
     )
     runner = runner_factory()
     api_runner = (api_factory or (lambda base: api.HttpApiRunner(base)))(args.api)
-    probe = trial.make_reachability_probe(paths, runner, trial.front_url(cfg))
-    engine = trial.Trial(cfg, api_runner=api_runner, runner=runner, reachable=probe)
+    engine = trial.Trial(cfg, api_runner=api_runner, runner=runner)
     orchestrator = Orchestrator(setup, config, runner=runner)
     record = engine.run(
         bring_up=orchestrator.up, repair=trial.InstanceRepair(paths, runner)
@@ -1769,6 +1947,7 @@ def main(
             repo=Path(args.repo),
             instances_root=Path(args.instances_root),
             branch=args.branch,
+            eval_root=Path(args.repo) / "eval",
         )
         if args.verb == "alignment":
             return _run_alignment_resolve(args, out)
@@ -1807,6 +1986,8 @@ def main(
                 args, setup, out, err, runner_factory, dispatch_factory,
                 diagnose_dispatch_factory,
             )
+        if args.verb == "next-target":
+            return _run_next_target(args, setup, config, out, err, runner_factory)
 
         dry_run = args.verb == "plan" or getattr(args, "dry_run", False)
         if dry_run:

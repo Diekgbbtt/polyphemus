@@ -79,6 +79,33 @@ class SeqListFileStore(FileStore):
         return len(FileStore.list_files(self, directory))
 
 
+class SeqUsageApi(FakeApi):
+    """A `FakeApi` whose usage route pops a scripted token total per call.
+
+    The token-budget poll reads the usage endpoint once per check, plus one
+    re-read after a stop for the overshoot, so scripting the totals models the
+    baseline snapshot, the consumption, and the in-flight overshoot.
+    """
+
+    def __init__(self, routes: dict | None = None, totals=()):
+        super().__init__(routes)
+        self._totals = list(totals)
+        self.usage_calls = 0
+
+    def __call__(self, call):
+        if call.path.endswith("/usage"):
+            self.usage_calls += 1
+            total = self._totals.pop(0) if self._totals else 0
+            self.calls.append(call)
+            return {
+                "project_id": "pid",
+                "total_tokens": total,
+                "calls": 1,
+                "by_agent": {"recon": {"total_tokens": total}},
+            }
+        return super().__call__(call)
+
+
 class AtomicFileStore(FileStore):
     """Records the atomic writes, so the trial record's writer is provable."""
 
@@ -132,7 +159,6 @@ def _trial(
     files=None,
     runner=None,
     clock=None,
-    reachable=None,
     **overrides,
 ) -> trial.Trial:
     clock = clock or FakeClock()
@@ -143,7 +169,6 @@ def _trial(
         runner=runner,
         clock=clock,
         sleep=clock.sleep,
-        reachable=reachable or (lambda: True),
     )
 
 
@@ -264,14 +289,13 @@ def test_recon_entry_block_records_a_blocked_terminal(tmp_path) -> None:
     assert not any(c.path.endswith("/recon") for c in api_runner.calls)
 
 
-def test_run_uses_the_injected_reachability_probe(tmp_path) -> None:
+def test_run_proceeds_without_a_reachability_probe(tmp_path) -> None:
     api_runner = FakeApi(_full_routes())
 
-    record = _trial(tmp_path, api_runner, reachable=lambda: False).run()
+    record = _trial(tmp_path, api_runner).run()
 
-    assert record.terminal == "blocked"
-    assert any("reachable" in b for b in record.phases[0].blocks)
-    assert not any(c.path.endswith("/recon") for c in api_runner.calls)
+    assert record.terminal == "complete"
+    assert any(c.path.endswith("/recon") for c in api_runner.calls)
 
 
 # --- the hunting cap ----------------------------------------------------------
@@ -508,7 +532,6 @@ def test_a_resumed_trial_keeps_its_baseline_and_does_not_reset_the_count(
         ),
         clock=resumed_clock,
         sleep=resumed_clock.sleep,
-        reachable=lambda: True,
     ).run()
 
     # Had the baseline reset, iteration one would clear the cap (empty count)
@@ -518,6 +541,239 @@ def test_a_resumed_trial_keeps_its_baseline_and_does_not_reset_the_count(
     assert resumed.stop_count == 2
     assert resumed.final_count == 2
     assert resumed.overshoot == 0
+
+
+# --- the trial-wide token budget ----------------------------------------------
+
+
+def _usage_routes() -> dict:
+    return {
+        "GET /projects/pid/hunting/h1": {"status": "running"},
+        "POST /projects/pid/hunting/h1/stop": {"stopping": True},
+        "POST /projects/pid/hunting": {"hunting_run_id": "h1"},
+        "GET /projects/pid/graph": GRAPH_L1_L0,
+    }
+
+
+def test_no_token_budget_makes_no_usage_call(tmp_path) -> None:
+    api_runner = SeqUsageApi()
+
+    t = _trial(tmp_path, api_runner, project_id="pid", token_budget=None)
+
+    assert t._check_spend("pid", "recon", "r1") is None
+    assert api_runner.usage_calls == 0
+
+
+def test_the_spend_check_returns_a_spend_result_on_a_stop(tmp_path) -> None:
+    # The spec contract is `SpendResult | None`: a stop returns the result, a
+    # below-budget check returns None. Call sites only test truthiness.
+    api_runner = SeqUsageApi(_usage_routes(), totals=[1500, 1700])
+
+    t = _trial(
+        tmp_path, api_runner, project_id="pid", token_budget=500, spend_baseline=1000
+    )
+
+    result = t._check_spend("pid", "hunting", "h1")
+
+    assert isinstance(result, trial.SpendResult)
+    assert result.spent == 500
+    assert result.overshoot == 200
+
+
+def test_token_budget_stops_the_run_and_records_the_spend(tmp_path) -> None:
+    # The first read snapshots the baseline (1000); the second read reaches the
+    # budget (500 spent); the third is the post-stop re-read for the overshoot.
+    api_runner = SeqUsageApi(_usage_routes(), totals=[1000, 1500, 1500])
+
+    record = _trial(
+        tmp_path,
+        api_runner,
+        start_phase="hunting",
+        project_id="pid",
+        token_budget=500,
+    ).run()
+
+    stop = next(c for c in api_runner.calls if c.path.endswith("/stop"))
+    assert stop.path == "/projects/pid/hunting/h1/stop"
+    assert record.terminal == "stopped"
+    assert record.token_budget == 500
+    assert record.spend_baseline == 1000
+    assert record.spent_tokens == 500
+    assert record.spend_overshoot == 0
+    assert record.spend_by_agent == {"recon": {"total_tokens": 1500}}
+    written = yaml.safe_load(Path(record.trial_dir, "trial.yaml").read_text())
+    assert written["spent_tokens"] == 500
+    assert written["spend_baseline"] == 1000
+
+
+def test_the_baseline_is_the_project_total_at_the_first_check(tmp_path) -> None:
+    api_runner = SeqUsageApi(_usage_routes(), totals=[1000, 1500, 1500])
+
+    record = _trial(
+        tmp_path,
+        api_runner,
+        start_phase="hunting",
+        project_id="pid",
+        token_budget=500,
+    ).run()
+
+    # The project started at 1000: only the 500 consumed during the trial count.
+    assert record.spend_baseline == 1000
+    assert record.spent_tokens == 500
+
+
+def test_the_token_budget_is_trial_wide_and_stops_recon(tmp_path) -> None:
+    api_runner = SeqUsageApi(
+        {
+            "GET /projects/pid/recon/r1": {"status": "running"},
+            "POST /projects/pid/recon/r1/stop": {"stopped": True},
+            "POST /projects/pid/recon": {"run_id": "r1"},
+            "GET /projects/pid/graph": GRAPH_L1_L0,
+            "GET /projects": PROJECTS,
+        },
+        totals=[1000, 1500, 1500],
+    )
+
+    record = _trial(
+        tmp_path,
+        api_runner,
+        start_phase="recon",
+        project_id="pid",
+        token_budget=500,
+    ).run()
+
+    stop = next(c for c in api_runner.calls if c.path.endswith("/stop"))
+    assert stop.path == "/projects/pid/recon/r1/stop"
+    assert record.terminal == "stopped"
+    assert [p.phase for p in record.phases] == ["recon"]
+    assert record.phases[0].status == "stopped"
+    assert record.spent_tokens == 500
+    # A recon stop never chains into hunting.
+    assert not any(c.path.endswith("/hunting") for c in api_runner.calls)
+
+
+def test_an_analysis_token_stop_names_the_recon_run_id(tmp_path) -> None:
+    # The analysis stop endpoint is keyed by the recon run id; the surrogate
+    # `analysis_run_id` is only the launch handle. The record must carry the id
+    # the stop verb expects, or the surfer's terminate is a silent no-op.
+    api_runner = SeqUsageApi(
+        {
+            "GET /projects/pid/recon/r0": {
+                "status": "complete",
+                "per_job": [{"job": "crawl", "status": "complete"}],
+                "stats": {},
+            },
+            "POST /projects/pid/analysis/r0/stop": {"stopped": True},
+            "POST /projects/pid/analysis": {"analysis_run_id": "a1"},
+            "GET /projects/pid/analysis/r0": {"status": "draining"},
+            "GET /projects/pid/graph": GRAPH_L1_L0,
+        },
+        totals=[1000, 1500, 1500],
+    )
+
+    record = _trial(
+        tmp_path,
+        api_runner,
+        start_phase="analysis",
+        project_id="pid",
+        recon_run_id="r0",
+        token_budget=500,
+    ).run()
+
+    stop = next(c for c in api_runner.calls if c.path.endswith("/stop"))
+    assert stop.path == "/projects/pid/analysis/r0/stop"
+    assert record.terminal == "stopped"
+    assert [p.phase for p in record.phases] == ["analysis"]
+    # The analysis consumer id is the surrogate; the recon id is the stop key.
+    assert record.phases[0].run_id == "a1"
+    assert record.phases[0].stop_run_id == "r0"
+    # The analysis stop ends the trial; it never chains into hunting.
+    assert not any(c.path.endswith("/hunting") for c in api_runner.calls)
+
+
+def test_a_resumed_trial_does_not_re_snapshot_the_baseline(tmp_path) -> None:
+    api_runner = SeqUsageApi(_usage_routes(), totals=[1500, 1500])
+
+    record = _trial(
+        tmp_path,
+        api_runner,
+        start_phase="hunting",
+        project_id="pid",
+        token_budget=500,
+        spend_baseline=1000,
+    ).run()
+
+    # Against the carried 1000 baseline the first read already clears the
+    # budget; a fresh snapshot at 1500 would spend zero and never stop.
+    assert record.terminal == "stopped"
+    assert record.spend_baseline == 1000
+    assert record.spent_tokens == 500
+    assert api_runner.usage_calls == 2
+
+
+def test_the_spend_overshoot_counts_tokens_spent_past_the_budget(tmp_path) -> None:
+    api_runner = SeqUsageApi(_usage_routes(), totals=[1000, 1500, 1700])
+
+    record = _trial(
+        tmp_path,
+        api_runner,
+        start_phase="hunting",
+        project_id="pid",
+        token_budget=500,
+    ).run()
+
+    # 1700 total - 1000 baseline - 500 budget = 200 spent past the bound.
+    assert record.spent_tokens == 500
+    assert record.spend_overshoot == 200
+
+
+def test_the_spend_check_runs_before_the_cap_in_hunting(tmp_path) -> None:
+    api_runner = SeqUsageApi(_usage_routes(), totals=[1000, 1500, 1500])
+    files = _cap_store(
+        tmp_path, [["c0.yaml"], ["c0.yaml", "new.yaml"], ["c0.yaml", "new.yaml"]]
+    )
+
+    record = _trial(
+        tmp_path,
+        api_runner,
+        files=files,
+        start_phase="hunting",
+        project_id="pid",
+        hunt_config_budget=1,
+        token_budget=500,
+    ).run()
+
+    # Both bounds trip on the second poll. The spend check runs first, so the
+    # stop is attributed to spend (the cap would leave spent_tokens None).
+    assert record.terminal == "stopped"
+    assert record.spent_tokens == 500
+    assert sum(1 for c in api_runner.calls if c.path.endswith("/stop")) == 1
+
+
+def test_a_malformed_usage_payload_never_falsely_stops(tmp_path) -> None:
+    # The usage endpoint is advisory: a malformed total reads as zero, so the
+    # trial times out rather than falsely tripping the budget.
+    api_runner = FakeApi(
+        {
+            "GET /projects/pid/usage": {"total_tokens": "not-an-int", "by_agent": "oops"},
+            "GET /projects/pid/hunting/h1": {"status": "running"},
+            "POST /projects/pid/hunting": {"hunting_run_id": "h1"},
+            "GET /projects/pid/graph": GRAPH_L1_L0,
+        }
+    )
+
+    record = _trial(
+        tmp_path,
+        api_runner,
+        start_phase="hunting",
+        project_id="pid",
+        token_budget=500,
+        budget_s=25.0,
+        poll_s=10.0,
+    ).run()
+
+    assert record.terminal == "timeout"
+    assert not any(c.path.endswith("/stop") for c in api_runner.calls)
 
 
 # --- pre-mined artifacts ------------------------------------------------------
@@ -717,50 +973,6 @@ def test_scaffold_command_runs_through_the_command_runner(
     }
 
 
-def test_reachability_probe_maps_the_kali_http_code(tmp_path) -> None:
-    from orchestrator import instances
-    from orchestrator.setup import parse_eval_setup
-
-    setup = parse_eval_setup(
-        {
-            "schema_version": 1,
-            "artifact_store": "/srv/a",
-            "instances": [
-                {
-                    "instance_id": "arm-a",
-                    "targets": [
-                        {
-                            "target_id": "t1",
-                            "target_config": {
-                                "lifecycle": "image",
-                                "params": {"image": "nginx", "port": 18080},
-                            },
-                        }
-                    ],
-                }
-            ],
-        }
-    )
-    paths = instances.instance_paths(
-        setup.instances[0], tmp_path / "instances", repo=tmp_path, branch="eval"
-    )
-
-    class Runner:
-        def __init__(self, code):
-            self.code = code
-            self.calls = []
-
-        def __call__(self, command):
-            self.calls.append(command)
-            return CommandResult(0, self.code)
-
-    happy = Runner("200")
-    assert trial.make_reachability_probe(paths, happy, "http://t-x.target/")() is True
-    assert any("curl" in " ".join(c.argv) for c in happy.calls)
-    assert trial.make_reachability_probe(paths, Runner("502"), "http://x/")() is False
-    assert trial.make_reachability_probe(paths, Runner(""), "http://x/")() is False
-
-
 def test_front_url_is_the_synthetic_host(tmp_path) -> None:
     cfg = _config(tmp_path)
     assert trial.front_url(cfg) == f"http://{routing.synthetic_host('arm-a/t1')}/"
@@ -776,6 +988,13 @@ def test_plan_lists_the_calls_without_reading(tmp_path) -> None:
     assert "POST /projects" in text
     assert "with_analysis" in text
     assert "poll" in text.lower()
+
+
+def test_the_plan_names_the_token_budget_when_set(tmp_path) -> None:
+    plan = _trial(tmp_path, api_runner=None, token_budget=1234).plan()
+
+    note = next(s.note for s in plan.steps if s.label == "hunting entry + launch")
+    assert "token budget 1234" in note
 
 
 # --- chaining: setup outcome -> repair or escalate ----------------------------
@@ -895,11 +1114,8 @@ def _instance_paths(tmp_path):
                     "instance_id": "arm-a",
                     "targets": [
                         {
+                            "target_key": "mock/webmock",
                             "target_id": "t1",
-                            "target_config": {
-                                "lifecycle": "image",
-                                "params": {"image": "nginx", "port": 18080},
-                            },
                         }
                     ],
                 }

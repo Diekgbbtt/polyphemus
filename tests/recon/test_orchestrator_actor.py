@@ -448,3 +448,5 @@ def test_a6_gateway_verdict_uses_the_negotiated_strategy(monkeypatch, tmp_path):
     assert calls == {"role_id": "job_orchestrator", "schema": GatewayVerdict,
                      "tools_bound": True}
     assert seen["response_format"] is sentinel
+    # The gateway's turning tokens are scoped to its project in the usage ledger.
+    assert seen["usage_scope"] == "p1"

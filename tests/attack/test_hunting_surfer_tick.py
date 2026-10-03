@@ -598,3 +598,37 @@ class _NullManager:
 
     def schedule(self, module, coro, *, name):
         raise RuntimeError("no active runtime manager")
+
+
+# --- the hunter idle loop threads the project's usage scope --------------------
+
+def test_hunter_idle_loop_threads_the_project_as_usage_scope(tmp_path, monkeypatch):
+    """The idle-loop session's tokens are attributed to the run's project."""
+    import contextlib
+    import types
+
+    import polymerhus.app.llm.actor as _A
+    import polymerhus.app.llm.checkpoints as _CP
+    from polymerhus.attack.hunting.surfer import _run_hunter_idle
+
+    seen = {}
+
+    async def fake_run_session_agent(role, thread, initial, **kw):
+        seen.update(kw)
+        return None
+
+    monkeypatch.setattr(_A, "run_session_agent", fake_run_session_agent)
+    monkeypatch.setattr(_CP, "get_session_checkpointer", lambda: object())
+    monkeypatch.setattr(_CP, "module_context", lambda *_: contextlib.nullcontext())
+    binding = types.SimpleNamespace(tools=[], middleware=[], context={})
+    monkeypatch.setattr(
+        "polymerhus.app.auth.seams.auth_capable_binding", lambda *a, **k: binding)
+
+    config = types.SimpleNamespace(hunt_id="hunt-1")
+    config_key = "k1"
+    state = RunDispatchState()
+    state.hunter_inboxes[config_key] = _A.AgentInbox()
+    asyncio.run(_run_hunter_idle(
+        project_id=PROJECT, run_id=RUN, config=config, config_key=config_key,
+        hunter_store=HunterMemoryStore(tmp_path / "hunter"), state=state))
+    assert seen["usage_scope"] == PROJECT

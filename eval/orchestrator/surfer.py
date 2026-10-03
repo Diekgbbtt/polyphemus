@@ -64,7 +64,8 @@ DECISION_KINDS = (TERMINATE, DESTROY, FIX, ESCALATE)
 FAILURE_SIGNAL = "failure_signal"
 FAILED_RUN = "failed_run"
 CAP_REACHED = "cap_reached"
-TRIGGER_KINDS = (FAILURE_SIGNAL, FAILED_RUN, CAP_REACHED)
+TOKEN_BUDGET_REACHED = "token_budget_reached"
+TRIGGER_KINDS = (FAILURE_SIGNAL, FAILED_RUN, CAP_REACHED, TOKEN_BUDGET_REACHED)
 
 # The bounded repair vocabulary. `env` is configuration-layer; the data-layer
 # repair re-places the target's pre-mined hunting artifacts into the pipeline's
@@ -268,6 +269,9 @@ class Trigger:
     # The trial-scoped cap baseline the record counted against, carried into a
     # resumed trial so its count continues rather than resetting (D8/D16).
     cap_baseline: tuple[str, ...] | None = None
+    # The trial-scoped spend baseline the record counted against, carried into a
+    # resumed trial so its spend continues rather than resetting.
+    spend_baseline: int | None = None
 
     def to_dict(self) -> dict:
         return {key: value for key, value in asdict(self).items() if value is not None}
@@ -376,6 +380,7 @@ class SurferStateSource:
         signals: list[Trigger] = []
         failed: list[Trigger] = []
         caps: list[Trigger] = []
+        spends: list[Trigger] = []
         valid: list[Mapping] = []
         for record in records:
             error = _record_shape_error(record)
@@ -386,6 +391,7 @@ class SurferStateSource:
                 continue
             valid.append(record)
             caps.extend(cap_triggers(record))
+            spends.extend(spend_triggers(record))
             trigger = failed_run_trigger(record)
             if trigger is not None:
                 failed.append(trigger)
@@ -403,7 +409,7 @@ class SurferStateSource:
             )
         return SurfacedState(
             idle=app.idle,
-            triggers=tuple(signals + failed + caps),
+            triggers=tuple(signals + failed + caps + spends),
             projects=tuple(app.projects),
         )
 
@@ -493,6 +499,59 @@ def _cap_baseline(record: Mapping) -> tuple[str, ...] | None:
     return tuple(value)
 
 
+def spend_triggers(record: Mapping) -> list[Trigger]:
+    """Token-budget-reached triggers from the trial engine's own spend accounting.
+
+    The trigger names the run the trial stopped in (the phase whose status is
+    `stopped`, defaulting to hunting) so `terminate` can actually stop it.
+    """
+    budget = record.get("token_budget")
+    spent = record.get("spent_tokens")
+    if not isinstance(budget, int) or not isinstance(spent, int) or spent < budget:
+        return []
+    phase = _stopped_phase(record)
+    if phase is not None:
+        run_kind = str(phase.get("phase") or "hunting")
+        run_id = _phase_stop_run_id(phase)
+    else:
+        run_kind = "hunting"
+        run_id = _hunting_run_id(record)
+    return [
+        _trigger(
+            TOKEN_BUDGET_REACHED,
+            record,
+            detail=(
+                f"token budget {budget} reached (spent {spent}, "
+                f"overshoot {record.get('spend_overshoot')})"
+            ),
+            run_kind=run_kind,
+            run_id=run_id,
+            start_phase=run_kind,
+            spend_baseline=_spend_baseline(record),
+        )
+    ]
+
+
+def _stopped_phase(record: Mapping) -> Mapping | None:
+    """The phase whose run the trial stopped, when one is recorded."""
+    for phase in phase_mappings(record):
+        if phase.get("status") == "stopped":
+            return phase
+    return None
+
+
+def _spend_baseline(record: Mapping) -> int | None:
+    """The record's persisted spend baseline, when it is a plain int.
+
+    A missing, non-int, or bool baseline is treated as absent (the resumed trial
+    snapshots a fresh one), never as a crash (I3).
+    """
+    value = record.get("spend_baseline")
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value
+
+
 def failed_run_trigger(record: Mapping) -> Trigger | None:
     """A failed/interrupted run trigger from the record's phase terminals."""
     for phase in phase_mappings(record):
@@ -509,6 +568,7 @@ def failed_run_trigger(record: Mapping) -> Trigger | None:
                 run_id=phase.get("run_id"),
                 start_phase=resume_phase(record),
                 cap_baseline=_cap_baseline(record),
+                spend_baseline=_spend_baseline(record),
             )
     if record.get("terminal") == "failed":
         return _trigger(
@@ -517,6 +577,7 @@ def failed_run_trigger(record: Mapping) -> Trigger | None:
             detail="trial terminal failed",
             start_phase=resume_phase(record),
             cap_baseline=_cap_baseline(record),
+            spend_baseline=_spend_baseline(record),
         )
     return None
 
@@ -588,10 +649,19 @@ def _recon_run_id(record: Mapping) -> str | None:
     return record.get("recon_run_id")
 
 
+def _phase_stop_run_id(phase: Mapping) -> str | None:
+    """The run id a phase's stop verb expects: `stop_run_id`, else `run_id`.
+
+    The analysis stop is keyed by the recon run id, recorded as `stop_run_id`;
+    recon and hunting carry the same id in both fields.
+    """
+    return phase.get("stop_run_id") or phase.get("run_id")
+
+
 def _hunting_run_id(record: Mapping) -> str | None:
     for phase in phase_mappings(record):
         if phase.get("phase") == "hunting":
-            return phase.get("run_id")
+            return _phase_stop_run_id(phase)
     return record.get("hunting_run_id")
 
 
@@ -800,6 +870,9 @@ class ResumePlan:
     # The resumed trial's carried-over cap baseline (D8/D16): both the trial
     # engine and the CLI thread it into the new `TrialConfig`.
     cap_baseline: tuple[str, ...] | None = None
+    # The resumed trial's carried-over spend baseline: the CLI threads it into
+    # the new `TrialConfig` so a resume does not reset the token budget.
+    spend_baseline: int | None = None
 
 
 class TrialResumer(Protocol):
@@ -1054,6 +1127,7 @@ class Surfer:
             start_phase=start_phase,
             recon_run_id=primary.recon_run_id,
             cap_baseline=primary.cap_baseline,
+            spend_baseline=primary.spend_baseline,
             intervention=(
                 f"surfer: fix {repair} on trigger {primary.kind}; resumed at {start_phase}"
             ),

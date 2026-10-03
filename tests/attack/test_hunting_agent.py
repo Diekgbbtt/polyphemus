@@ -294,7 +294,8 @@ def _run_stubbed_dispatch(monkeypatch, turns):
     async def fake_turn(role_id, thread_id, new_messages, *, checkpointer,
                         tools=(), **kw):
         calls.append({"role_id": role_id, "new_messages": list(new_messages),
-                      "system_prompt": kw.get("system_prompt")})
+                      "system_prompt": kw.get("system_prompt"),
+                      "usage_scope": kw.get("usage_scope")})
         reply = turns[min(cursor["i"], len(turns) - 1)]
         cursor["i"] += 1
         return S.SessionTurn(content=reply.get("answer", ""),
@@ -324,6 +325,15 @@ def test_skill_body_rides_system_prompt_not_first_human_message(monkeypatch):
     assert calls[0]["system_prompt"] == skill
     first_human = calls[0]["new_messages"][0].content
     assert skill not in first_human
+
+
+def test_hunter_turns_thread_the_project_as_usage_scope(monkeypatch):
+    """The hunter's tokens are attributed to the harness's project in the ledger."""
+    from langchain_core.messages import AIMessage  # noqa: PLC0415
+
+    _, calls = _run_stubbed_dispatch(
+        monkeypatch, [{"answer": "done", "message": AIMessage(content="done")}])
+    assert calls[0]["usage_scope"] == "proj-a"
 
 
 def test_skill_includes_the_off_path_examples_companion():

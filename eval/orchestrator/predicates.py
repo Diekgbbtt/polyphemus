@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Mapping
+from typing import Mapping
 
 from orchestrator import api
 from orchestrator.files import (
@@ -68,18 +68,21 @@ def recon_entry(
     api_runner: api.ApiRunner,
     files: FileStore,
     state: PhaseState,
-    *,
-    reachable: Callable[[], bool],
 ) -> GateResult:
-    """Recon entry (D13): project, seed, L1 scaffold, reachability, and - when
-    the target declares an auth surface - the project `authn` skill and the
-    seeded `AuthContext` (overview AND credentials).
+    """Recon entry (D13): project, seed, L1 scaffold, and - when the target
+    declares an auth surface - the project `authn` skill and the seeded
+    `AuthContext` (overview AND credentials).
+
+    Reachability is NOT re-verified here: the target shares a Docker network that
+    egresses to the underlying host and reaches loopback, and its readiness was
+    already asserted by the stack's own health check (`orchestrator/readiness.py`),
+    so a runtime kali probe would only duplicate that gate.
 
     Every missing prerequisite is accumulated in a stable order (project ->
-    settings -> scaffold -> reachability -> authn skill -> overview ->
-    credentials) so one gate call reports the full work list. The scaffold and
-    auth reads are only issued when the project exists; a missing project
-    already reports the whole dependent subtree.
+    settings -> scaffold -> authn skill -> overview -> credentials) so one gate
+    call reports the full work list. The scaffold and auth reads are only issued
+    when the project exists; a missing project already reports the whole
+    dependent subtree.
     """
     blocks: list[str] = []
     projects = api_runner(api.list_projects())
@@ -94,9 +97,6 @@ def recon_entry(
         graph = api_runner(api.project_graph(state.project_id))
         if api.graph_counts(graph).services <= 0:
             blocks.append("L1 scaffold incomplete: 0 services")
-
-    if not reachable():
-        blocks.append("target not reachable from kali")
 
     if state.auth_surface:
         if state.data_root is None:

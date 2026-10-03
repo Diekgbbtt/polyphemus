@@ -1,9 +1,12 @@
-"""The one target-lifecycle interface and its shared readiness probe (D9).
+"""The one target-lifecycle interface and its shared readiness seam (D9, spec #301).
 
 `targetctl`, `image`, and `compose` all present `plan_up`/`up`/`plan_down`/
-`down`/`plan_status`/`status`. `up` returns the front URL and the backend URL;
-`down` removes everything it created; a readiness failure is fatal - an
-unreachable target is never a silent success.
+`down`/`plan_status`/`status`, plus the image lifecycle (`provision`/`reclaim`)
+and the bounded readiness check (`await_ready`). `up` returns the front URL and
+the backend URL and NEVER blocks on health - readiness is verified separately by
+`await_ready` through the dataset helper's bounded plan, so a slow or broken
+healthcheck can never hang the chain. `down` removes everything it created; a
+readiness failure is fatal - an unreachable target is never a silent success.
 """
 from __future__ import annotations
 
@@ -12,11 +15,24 @@ from dataclasses import dataclass
 from typing import Callable, Protocol
 
 from orchestrator.commands import Command, CommandRunner
+from orchestrator.dataset import BenchmarkDataset
+from orchestrator.datasets.base import DatasetHelper
+from orchestrator.docker import ProvisionOutcome
 from orchestrator.instances import InstancePaths
+from orchestrator.readiness import READY_UNREACHABLE, ReadinessPlan, wait_readiness
 from orchestrator.setup import TargetRun
+from orchestrator.target_config import TargetConfiguration
 
-# The nginx front still answering "backend not ready" while the app boots.
-READY_UNREACHABLE = frozenset({"", "000", "502", "503", "504"})
+__all__ = [
+    "READY_UNREACHABLE",
+    "Sleep",
+    "TargetContext",
+    "TargetError",
+    "TargetNotReadyError",
+    "TargetStrategy",
+    "TargetUpResult",
+    "wait_ready",
+]
 
 
 class TargetError(RuntimeError):
@@ -39,15 +55,27 @@ class TargetUpResult:
 
 @dataclass(frozen=True)
 class TargetContext:
-    """The instance and TargetRun a strategy acts on, plus the synthetic Host."""
+    """Everything a strategy acts on: the instance paths, the synthetic Host, the
+    TargetRun, and the resolved dataset/target-config/helper triple (spec #301).
+
+    `target_config` is the bring-up configuration (`TargetConfiguration`);
+    `dataset` and `helper` are its BenchmarkDataset and per-dataset helper.
+    """
 
     paths: InstancePaths
     host: str
     run: TargetRun
+    target_config: TargetConfiguration
+    dataset: BenchmarkDataset
+    helper: DatasetHelper
 
 
 class TargetStrategy(Protocol):
     host: str
+    # The canonical image tags this target owns, and whether teardown may reclaim
+    # them (spec #301, `TargetConfiguration.reclaimable`).
+    canonical_tags: tuple[str, ...]
+    reclaimable: bool
 
     def plan_up(self) -> list[Command]: ...
     def up(self, run: CommandRunner) -> TargetUpResult: ...
@@ -55,6 +83,14 @@ class TargetStrategy(Protocol):
     def down(self, run: CommandRunner) -> None: ...
     def plan_status(self) -> list[Command]: ...
     def status(self, run: CommandRunner) -> str: ...
+    # Bounded, non-blocking readiness: run the helper's plan under its window and
+    # raise TargetNotReadyError when it never answers.
+    def await_ready(self, run: CommandRunner) -> str: ...
+    # The chain's image lifecycle seam: bind the target's canonical tags by
+    # store -> pull -> build before it starts, and reclaim them after it stops
+    # (only when reclaimable). `reclaim` returns the removal labels.
+    def provision(self, run: CommandRunner) -> tuple[ProvisionOutcome, ...]: ...
+    def reclaim(self, run: CommandRunner) -> tuple[str, ...]: ...
 
 
 Sleep = Callable[[float], None]
@@ -68,10 +104,6 @@ def wait_ready(
     interval_s: float,
     sleep: Sleep = time.sleep,
 ) -> bool:
-    """Poll `probe` until it answers with a non-front code, up to `retries` times."""
-    for _attempt in range(retries):
-        result = run(probe)
-        if (result.stdout or "").strip() not in READY_UNREACHABLE:
-            return True
-        sleep(interval_s)
-    return False
+    """Poll an HTTP probe under a bounded window (delegates to `readiness`)."""
+    plan = ReadinessPlan(probe=probe, retries=retries, interval_s=interval_s, kind="http")
+    return wait_readiness(run, plan, sleep=sleep)

@@ -1,0 +1,182 @@
+name: webench-images
+
+# The native amd64 image plane (D48). WebExploitBench targets are amd64-only,
+# and the eval host is aarch64, so building them there runs every Dockerfile
+# under qemu: slow, and fatal for the EOL Debian bullseye suites whose security
+# pool now 404s. This workflow builds each target on a native amd64 runner,
+# pins Debian apt sources to snapshot.debian.org (eval/apt_snapshot.py), and
+# pushes every built service to the GitHub Container Registry as
+# `ghcr.io/<owner>/webench:<target>-<service>` - the exact reference the chain's
+# registry pull resolves (orchestrator/docker.py, datasets/webexploitbench.yaml).
+#
+# The eval server then pulls instead of building (docker.py precedence:
+# store -> pull -> build), so no target Dockerfile runs under emulation.
+#
+# Required permissions: packages: write (the job's GITHUB_TOKEN pushes ghcr).
+
+on:
+  workflow_dispatch:
+    inputs:
+      targets:
+        description: "Space-separated targets, or 'all'"
+        type: string
+        default: "all"
+        required: false
+
+permissions:
+  contents: read
+  packages: write
+
+# Serialise runs so two pushes cannot race on the same mutable tags.
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.select.outputs.matrix }}
+    steps:
+      - id: select
+        env:
+          ALL_TARGETS: >-
+            comfyui jetlinks prestashop siyucms white-jotter dataease dify
+            geoserver mogu-blog-v2 ofbiz openmetadata openremote phpbb wordpress
+            youlai-mall
+          REQUESTED: ${{ inputs.targets }}
+        run: |
+          set -euo pipefail
+          requested="${REQUESTED:-all}"
+          if [ "${requested}" = "all" ]; then
+            selected="${ALL_TARGETS}"
+          else
+            selected="${requested}"
+          fi
+          matrix="$(printf '%s\n' ${selected} | jq -R . | jq -sc '{target: .}')"
+          echo "matrix=${matrix}" >> "${GITHUB_OUTPUT}"
+          echo "Selected targets: ${selected}"
+
+  build:
+    needs: plan
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    env:
+      TARGET: ${{ matrix.target }}
+    steps:
+      - name: Set the lowercase registry reference
+        # Docker rejects an uppercase repository name; the owner may be
+        # `Diekgbbtt`. The dataset registry is `ghcr.io/diekgbbtt/webench`.
+        run: |
+          owner="$(printf '%s' "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
+          echo "REGISTRY=ghcr.io/${owner}/webench" >> "$GITHUB_ENV"
+
+      - name: Check out polymerhus (for the apt patcher)
+        uses: actions/checkout@v4
+
+      - name: Check out WebExploitBench with submodules
+        uses: actions/checkout@v4
+        with:
+          repository: AgentCyberRange/WebExploitBench
+          path: webench
+          submodules: recursive
+          # The repo tracks binary assets (archives, jars, the canary DB dumps)
+          # with Git LFS; without this the working tree holds LFS pointers and a
+          # seed import feeds `version https://git-lfs...` to MySQL.
+          lfs: true
+
+      - name: Fetch the target from Hugging Face when it is not bundled
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          set -euo pipefail
+          # The git repo bundles only 5 targets; the other 10 live on Hugging
+          # Face, each as a single top-level `<target>.pack.tar.gz`. Fetch just
+          # this target's pack and unpack it, exactly as `scripts/fetch` does.
+          if [ -d "webench/${TARGET}" ]; then
+            echo "${TARGET} is bundled in the checkout"
+            exit 0
+          fi
+          if [ -z "${HF_TOKEN:-}" ]; then
+            echo "::error::${TARGET} is not bundled and HF_TOKEN is not set"
+            exit 1
+          fi
+          python3 -m pip install --quiet -U huggingface_hub
+          hf download AgentCyberRange/WebExploitBench --repo-type dataset \
+            --local-dir webench --include "${TARGET}.pack.tar.gz"
+          archive="webench/${TARGET}.pack.tar.gz"
+          test -f "${archive}" || { echo "::error::${archive} was not downloaded"; exit 1; }
+          rm -rf "webench/${TARGET}"
+          mkdir -p "webench/${TARGET}"
+          # -m stamps extracted files with the current time: the export zeroes
+          # mtimes, which a later `mvn package` turns into an invalid ZIP date.
+          tar -xmzf "${archive}" -C "webench/${TARGET}"
+          rm -f "${archive}"
+
+      - name: Pin Debian apt sources to snapshot.debian.org
+        run: python3 eval/apt_snapshot.py webench
+
+      - name: Install the dataset parser dependency
+        run: python3 -m pip install --quiet pyyaml
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build the target
+        run: |
+          set -euo pipefail
+          compose="webench/${TARGET}/docker-compose.cage.yml"
+          test -f "${compose}" || { echo "::error::missing ${compose}"; exit 1; }
+          docker compose -f "${compose}" build
+
+      - name: Tag and push every built service
+        run: |
+          set -euo pipefail
+          # A large image can take many minutes to build, so the login token may
+          # have aged out; refresh it before pushing.
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          compose="webench/${TARGET}/docker-compose.cage.yml"
+          # The same rule the dataset helper derives: a service that declares
+          # both build: and image: is a canonical image; its registry tag is
+          # `<target>-<service>` in the single `webench` repository. Services the
+          # dataset excludes (D49: the `evaluator`) are never built nor pushed,
+          # so the harness never derives a pull reference for them either.
+          excluded="$(python3 -c 'import yaml; d=yaml.safe_load(open("eval/datasets/webexploitbench.yaml")); print(",".join(d.get("exclude_services") or []))')"
+          services="$(docker compose -f "${compose}" config --format json \
+            | jq -r --arg excluded "${excluded}" '
+                ($excluded | split(",")) as $ex
+                | .services | to_entries[]
+                | select(.value.build != null and .value.image != null)
+                | .key as $k
+                | select(( $ex | index($k) ) == null)
+                | "\(.key)\t\(.value.image)"')"
+          if [ -z "${services}" ]; then
+            # A target whose only build+image service is excluded (D49: the
+            # `evaluator`, as in openmetadata) has nothing of its own to build
+            # or push; its other services pull public images at `up`.
+            echo "${TARGET} declares no built service; nothing to push"
+            exit 0
+          fi
+          while IFS=$'\t' read -r service image; do
+            [ -n "${service}" ] || continue
+            ref="${REGISTRY}:${TARGET}-${service}"
+            echo "Pushing ${image} -> ${ref}"
+            docker tag "${image}" "${ref}"
+            # A large push can fail transiently ("unknown blob"); retry it.
+            pushed=0
+            for attempt in 1 2 3; do
+              if docker push "${ref}"; then pushed=1; break; fi
+              echo "::warning::push of ${ref} failed (attempt ${attempt}); retrying"
+              sleep $((attempt * 15))
+            done
+            if [ "${pushed}" -ne 1 ]; then
+              echo "::error::push of ${ref} failed after 3 attempts"
+              exit 1
+            fi
+          done <<< "${services}"

@@ -149,6 +149,23 @@ def test_hunt_session_context_reads_the_bound_binding_only_inside_a_hunt():
     assert HL.hunt_session_context() is None
 
 
+def test_hunter_turn_threads_the_hunt_project_as_usage_scope(monkeypatch):
+    """The bound project rides the hunter's stateful turn as `usage_scope`, so its
+    tokens land in the project's ledger bucket."""
+    import polymerhus.app.llm.session as S
+
+    seen = {}
+
+    def fake_stateful_turn(role, thread, messages, *, checkpointer, schema=None, **kw):
+        seen["usage_scope"] = kw.get("usage_scope")
+        return '{"ok": true}'
+
+    monkeypatch.setattr(S, "stateful_turn", fake_stateful_turn)
+    with HL.hunt_session("run1", "hunt-A", project_id="proj-1"):
+        HL.build_author_fn()("author prompt")
+    assert seen["usage_scope"] == "proj-1"
+
+
 # --- the rich projection render (candidates-rewrite T5, spec 3.7) -------------
 
 def test_render_projection_renders_rich_slots_sorted():

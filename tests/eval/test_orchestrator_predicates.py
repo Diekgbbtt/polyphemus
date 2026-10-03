@@ -65,7 +65,7 @@ def test_recon_entry_permits_a_prepared_anonymous_project(tmp_path) -> None:
     state = predicates.PhaseState(project_id=PROJECT, target_seed="t.test")
 
     result = predicates.recon_entry(
-        _routed(), FileStore(), state, reachable=lambda: True
+        _routed(), FileStore(), state
     )
 
     assert result.ok
@@ -77,7 +77,7 @@ def test_recon_entry_blocks_when_the_project_is_unknown(tmp_path) -> None:
     state = predicates.PhaseState(project_id=PROJECT, target_seed="t.test")
 
     result = predicates.recon_entry(
-        api_runner, FileStore(), state, reachable=lambda: True
+        api_runner, FileStore(), state
     )
 
     assert not result.ok
@@ -90,7 +90,7 @@ def test_recon_entry_blocks_without_a_target_seed() -> None:
     state = predicates.PhaseState(project_id=PROJECT, target_seed=None)
 
     result = predicates.recon_entry(
-        _routed(), FileStore(), state, reachable=lambda: True
+        _routed(), FileStore(), state
     )
 
     assert not result.ok
@@ -102,22 +102,11 @@ def test_recon_entry_blocks_without_an_l1_scaffold() -> None:
     state = predicates.PhaseState(project_id=PROJECT, target_seed="t.test")
 
     result = predicates.recon_entry(
-        api_runner, FileStore(), state, reachable=lambda: True
+        api_runner, FileStore(), state
     )
 
     assert not result.ok
     assert "L1 scaffold" in result.reason
-
-
-def test_recon_entry_blocks_when_the_target_is_unreachable() -> None:
-    state = predicates.PhaseState(project_id=PROJECT, target_seed="t.test")
-
-    result = predicates.recon_entry(
-        _routed(), FileStore(), state, reachable=lambda: False
-    )
-
-    assert not result.ok
-    assert "reachable" in result.reason
 
 
 def test_recon_entry_blocks_an_auth_surface_without_the_authn_skill(tmp_path) -> None:
@@ -133,7 +122,6 @@ def test_recon_entry_blocks_an_auth_surface_without_the_authn_skill(tmp_path) ->
         _routed(**{"GET /projects/pid/auth": {"overview": "sign in", "accounts": [{"name": "a"}]}}),
         files,
         state,
-        reachable=lambda: True,
     )
 
     assert not result.ok
@@ -145,7 +133,6 @@ def test_recon_entry_blocks_an_auth_surface_without_the_authn_skill(tmp_path) ->
         _routed(**{"GET /projects/pid/auth": {"overview": "sign in", "accounts": [{"name": "a"}]}}),
         files,
         state,
-        reachable=lambda: True,
     )
     assert result.ok
 
@@ -166,7 +153,6 @@ def test_recon_entry_blocks_an_auth_surface_without_overview_or_credentials(
         _routed(**{"GET /projects/pid/auth": {"overview": None, "accounts": [{"name": "a"}]}}),
         files,
         state,
-        reachable=lambda: True,
     )
     assert not no_overview.ok and "overview" in no_overview.reason
 
@@ -174,7 +160,6 @@ def test_recon_entry_blocks_an_auth_surface_without_overview_or_credentials(
         _routed(**{"GET /projects/pid/auth": {"overview": "sign in", "accounts": []}}),
         files,
         state,
-        reachable=lambda: True,
     )
     assert not no_credentials.ok and "credentials" in no_credentials.reason
 
@@ -188,7 +173,7 @@ def test_recon_entry_ignores_auth_state_without_a_declared_auth_surface(
     api_runner = _routed()
 
     result = predicates.recon_entry(
-        api_runner, FileStore(), state, reachable=lambda: True
+        api_runner, FileStore(), state
     )
 
     assert result.ok
@@ -197,20 +182,17 @@ def test_recon_entry_ignores_auth_state_without_a_declared_auth_surface(
 
 
 def test_recon_entry_accumulates_every_independent_block() -> None:
-    # Project, seed, and reachability are independent: all three are reported in
-    # the stable order even though the project read fails first.
+    # Project and seed are independent: both are reported in the stable order
+    # even though the project read fails first.
     api_runner = FakeApi({"GET /projects": {"projects": []}})
     state = predicates.PhaseState(project_id=PROJECT, target_seed=None)
 
-    result = predicates.recon_entry(
-        api_runner, FileStore(), state, reachable=lambda: False
-    )
+    result = predicates.recon_entry(api_runner, FileStore(), state)
 
     assert not result.ok
     assert result.blocks == (
         f"project not found: {PROJECT}",
         "settings.target_seed is not set",
-        "target not reachable from kali",
     )
     # A missing project skips the scaffold/auth reads (its dependent subtree).
     assert [c.display() for c in api_runner.calls] == ["GET /projects"]
@@ -231,7 +213,6 @@ def test_recon_entry_accumulates_the_auth_surface_blocks(tmp_path) -> None:
         ),
         files,
         state,
-        reachable=lambda: True,
     )
 
     assert not result.ok

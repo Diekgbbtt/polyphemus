@@ -104,6 +104,7 @@ A thin in-repo driver. For each `(target, pass@k attempt)` cell:
 9. **Teardown**: `DELETE` the target via the setup pipeline; record the trial record (per-vuln breakdown + pipeline run ids + timing). Repeat for pass@k with a fresh project and a fresh target instance.
 
 Reuse from CAGE where it is genuinely free: serve-mode target bring-up and the WebExploitBench evaluator infrastructure. The harness itself is the orchestrator; CAGE's agent container, in-container proxy, and agent adapters are dropped (see `eval-harness-agentcyberrange.md` C.7).
+Correction (2026-10-02, D49): the evaluator infrastructure is not reused either - the `evaluator` service is dropped from every target stack because nothing produces the exploit it consumes. The oracle is the judge agent (step 8). See `eval-multi-instance-decisions.md` D49.
 
 Parallelism: one shared polymerhus stack, `project_id` partitions all graph state; the recon executor concurrency caps must accommodate the trial fan-out.
 

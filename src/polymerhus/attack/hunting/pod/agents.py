@@ -133,6 +133,7 @@ async def default_runner_step_fn(spec: dict, messages: list, tool_calls: int) ->
         ctx.address.role_id, ctx.address, list(messages),
         checkpointer=ctx.checkpointer, tools=tools + binding.tools, middleware=mw,
         context=binding.context,
+        usage_scope=getattr(hc.capture_context, "project_id", "") or "",
         system_prompt=load_pod_runner_skill(), model_factory=hc.model_factory)
     new_obs = len(hc.log.raw_observations) - before_obs
     content = str(getattr(turn, "content", None) or "")
@@ -174,6 +175,7 @@ async def default_triager_fn(spec: dict, observation: RawObservation,
             ctx.address.role_id, ctx.address, delta,
             checkpointer=ctx.checkpointer, schema=TriagerDecision,
             tools=tools + binding.tools, context=binding.context,
+            usage_scope=getattr(hc.capture_context, "project_id", "") or "",
             system_prompt=load_pod_triager_skill(),
             middleware=list(pod_middleware()) + binding.middleware,
             model_factory=hc.model_factory)

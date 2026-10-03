@@ -25,11 +25,8 @@ def _setup_payload() -> dict:
                 "env_file": "arm-a/.env",
                 "targets": [
                     {
+                        "target_key": "webexploitbench/jetlinks",
                         "target_id": "jetlinks-1",
-                        "target_config": {
-                            "lifecycle": "targetctl",
-                            "params": {"target": "jetlinks"},
-                        },
                     }
                 ],
             }

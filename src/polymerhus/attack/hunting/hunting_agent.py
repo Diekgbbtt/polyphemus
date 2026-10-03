@@ -542,6 +542,7 @@ def build_hunting_agent(
                     model_factory=model_factory,
                     observe=observe,
                     extra_tags=[run_id],
+                    usage_scope=project_id,
                 )
             except Exception as exc:  # noqa: BLE001 - O3/C2/C3: degrade, never raise
                 logger.warning("hunt %s step degraded (%s)", hunt_id, exc, exc_info=True)
@@ -644,7 +645,7 @@ def build_hunting_agent(
             # Convergence: no hand-written agent span - the dispatch trace rides
             # the handler (attributed session turns, run tag for the join) while
             # the step records below carry their own explicit run correlation.
-            with hunt_session(run_id, hunt_id):
+            with hunt_session(run_id, hunt_id, project_id=project_id):
                 with module_context("hunting"):
                     cp = checkpointer if checkpointer is not None else get_session_checkpointer()
                     mw = middleware if middleware is not None else [build_hunter_compaction_middleware()]

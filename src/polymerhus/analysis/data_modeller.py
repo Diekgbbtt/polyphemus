@@ -685,7 +685,7 @@ def _default_invoke_fn(messages, *, schema=None):
     return invoke_role("analyser", messages, schema=schema)
 
 
-def stateful_invoke_fn(run_id: str, checkpointer):
+def stateful_invoke_fn(run_id: str, checkpointer, project_id: str | None = None):
     """The STATEFUL data-modeller call (#94): the `data_modeller` role runs as a session
     resuming from its OWN per-run checkpoint (`AnalysisSession(run_id, "data_modeller")`, distinct from every other agent's), so its call chain and
     every chunk append to ONE growing context. Structured turns go through `ToolStrategy`
@@ -709,7 +709,8 @@ def stateful_invoke_fn(run_id: str, checkpointer):
     def invoke(messages, *, schema=None):
         return stateful_turn("data_modeller", address, messages,
                              checkpointer=checkpointer, schema=schema,
-                             middleware=middleware, extra_tags=[run_id])
+                             middleware=middleware, extra_tags=[run_id],
+                             usage_scope=project_id)
 
     return invoke
 

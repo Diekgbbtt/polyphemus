@@ -301,6 +301,205 @@ def test_a_failed_hunting_resume_plan_carries_the_record_baseline(tmp_path) -> N
     assert resumer.plans[0].cap_baseline == ("old.yaml",)
 
 
+# --- the trial-wide token budget ----------------------------------------------
+
+
+def test_token_budget_reached_is_detected_from_the_record() -> None:
+    record = {
+        "instance_id": "arm-a",
+        "target_id": "t1",
+        "project_id": "pid",
+        "terminal": "stopped",
+        "start_phase": "hunting",
+        "phases": [{"phase": "hunting", "status": "stopped", "run_id": "h1"}],
+        "token_budget": 500,
+        "spent_tokens": 600,
+        "spend_overshoot": 100,
+    }
+    source = surfer.SurferStateSource(
+        app_state=lambda: AppState(idle=True, projects=()),
+        trial_log=StaticTrialLog([record]),
+        signals=surfer.CreditExhaustionReader(),
+        evidence=lambda: (),
+    )
+
+    state = source.assert_state()
+
+    assert [t.kind for t in state.triggers] == [surfer.TOKEN_BUDGET_REACHED]
+    assert state.triggers[0].start_phase == "hunting"
+    assert state.triggers[0].project_id == "pid"
+    assert "500" in state.triggers[0].detail
+    assert "600" in state.triggers[0].detail
+    # The spend trigger names the stopped run so `terminate` can stop it.
+    assert state.triggers[0].run_kind == "hunting"
+    assert state.triggers[0].run_id == "h1"
+
+
+def test_the_spend_trigger_names_the_phase_it_stopped_in() -> None:
+    record = {
+        "instance_id": "arm-a",
+        "target_id": "t1",
+        "project_id": "pid",
+        "phases": [{"phase": "recon", "status": "stopped", "run_id": "r1"}],
+        "token_budget": 500,
+        "spent_tokens": 600,
+    }
+
+    triggers = surfer.spend_triggers(record)
+
+    assert triggers[0].run_kind == "recon"
+    assert triggers[0].run_id == "r1"
+    assert triggers[0].start_phase == "recon"
+
+
+def test_the_spend_trigger_names_the_recon_run_for_an_analysis_stop() -> None:
+    # The analysis stop endpoint is keyed by the recon run id, so the trigger
+    # must use the phase's `stop_run_id`, not the surrogate analysis run id.
+    record = {
+        "instance_id": "arm-a",
+        "target_id": "t1",
+        "project_id": "pid",
+        "phases": [
+            {
+                "phase": "analysis",
+                "status": "stopped",
+                "run_id": "a1",
+                "stop_run_id": "r0",
+            }
+        ],
+        "token_budget": 500,
+        "spent_tokens": 600,
+    }
+
+    triggers = surfer.spend_triggers(record)
+
+    assert triggers[0].run_kind == "analysis"
+    assert triggers[0].run_id == "r0"
+    assert triggers[0].start_phase == "analysis"
+
+
+def test_the_spend_trigger_carries_the_record_baseline() -> None:
+    """The resume path reads the persisted baseline off the spend record."""
+    record = {
+        "instance_id": "arm-a",
+        "target_id": "t1",
+        "project_id": "pid",
+        "phases": [{"phase": "hunting", "status": "stopped", "run_id": "h1"}],
+        "token_budget": 500,
+        "spent_tokens": 600,
+        "spend_baseline": 1000,
+    }
+
+    triggers = surfer.spend_triggers(record)
+
+    assert triggers[0].spend_baseline == 1000
+
+
+def test_a_malformed_spend_baseline_is_ignored() -> None:
+    record = {
+        "instance_id": "arm-a",
+        "target_id": "t1",
+        "project_id": "pid",
+        "phases": [{"phase": "hunting", "status": "stopped", "run_id": "h1"}],
+        "token_budget": 500,
+        "spent_tokens": 600,
+        "spend_baseline": "not-an-int",
+    }
+
+    assert surfer.spend_triggers(record)[0].spend_baseline is None
+
+
+def test_a_missing_spend_baseline_is_ignored() -> None:
+    record = {
+        "instance_id": "arm-a",
+        "target_id": "t1",
+        "project_id": "pid",
+        "phases": [{"phase": "hunting", "status": "stopped", "run_id": "h1"}],
+        "token_budget": 500,
+        "spent_tokens": 600,
+    }
+
+    assert surfer.spend_triggers(record)[0].spend_baseline is None
+
+
+def test_a_spend_below_budget_is_not_a_trigger() -> None:
+    record = {
+        "instance_id": "arm-a",
+        "target_id": "t1",
+        "project_id": "pid",
+        "phases": [{"phase": "hunting", "status": "stopped", "run_id": "h1"}],
+        "token_budget": 500,
+        "spent_tokens": 499,
+    }
+
+    assert surfer.spend_triggers(record) == []
+
+
+def test_no_token_budget_is_not_a_trigger() -> None:
+    record = {
+        "instance_id": "arm-a",
+        "target_id": "t1",
+        "project_id": "pid",
+        "phases": [{"phase": "hunting", "status": "stopped", "run_id": "h1"}],
+        "spent_tokens": 600,
+    }
+
+    assert surfer.spend_triggers(record) == []
+
+
+def test_a_token_stop_resume_plan_carries_the_spend_baseline(tmp_path) -> None:
+    """A resumed trial keeps the record's spend baseline, not a fresh snapshot."""
+    record = {
+        "instance_id": "arm-a",
+        "target_id": "t1",
+        "project_id": "pid",
+        "terminal": "stopped",
+        "start_phase": "hunting",
+        "phases": [{"phase": "hunting", "status": "stopped", "run_id": "h1"}],
+        "token_budget": 500,
+        "spent_tokens": 600,
+        "spend_baseline": 1000,
+    }
+    trigger = surfer.spend_triggers(record)[0]
+    asserter = StaticAsserter(state_with(trigger))
+    decider = StaticDecider(surfer.SurferDecision(surfer.FIX, repair=surfer.REPAIR_ENV))
+    kit = FakeRepairKit(supported=("env",))
+    resumer = RecordingResumer()
+
+    make_surfer(
+        asserter, decider, tmp_path=tmp_path, repair_kit=kit, resumer=resumer
+    ).cycle()
+
+    assert resumer.plans[0].spend_baseline == 1000
+
+
+def test_a_failed_hunting_resume_plan_carries_the_spend_baseline(tmp_path) -> None:
+    """A failed-run trigger also carries the record's spend baseline."""
+    record = {
+        "instance_id": "arm-a",
+        "target_id": "t1",
+        "project_id": "pid",
+        "terminal": "failed",
+        "start_phase": "hunting",
+        "phases": [
+            {"phase": "hunting", "status": "failed", "run_id": "h1", "failure": None}
+        ],
+        "spend_baseline": 1000,
+    }
+    trigger = surfer.failed_run_trigger(record)
+    assert trigger is not None and trigger.spend_baseline == 1000
+    asserter = StaticAsserter(state_with(trigger))
+    decider = StaticDecider(surfer.SurferDecision(surfer.FIX, repair=surfer.REPAIR_ENV))
+    kit = FakeRepairKit(supported=("env",))
+    resumer = RecordingResumer()
+
+    make_surfer(
+        asserter, decider, tmp_path=tmp_path, repair_kit=kit, resumer=resumer
+    ).cycle()
+
+    assert resumer.plans[0].spend_baseline == 1000
+
+
 def test_a_failed_run_is_detected_from_the_record_phase(tmp_path) -> None:
     record = {
         "instance_id": "arm-a",
@@ -679,6 +878,37 @@ def test_terminate_stops_the_named_runs_through_the_api(tmp_path) -> None:
     assert outcome.escalated is False
     assert api_runner.paths == ["POST /projects/pid/recon/r1/stop"]
     assert kit.applied == []
+
+
+def test_terminate_stops_an_analysis_spend_trigger_by_recon_run_id(tmp_path) -> None:
+    record = {
+        "instance_id": "arm-a",
+        "target_id": "t1",
+        "project_id": "pid",
+        "phases": [
+            {
+                "phase": "analysis",
+                "status": "stopped",
+                "run_id": "a1",
+                "stop_run_id": "r0",
+            }
+        ],
+        "token_budget": 500,
+        "spent_tokens": 600,
+    }
+    trigger = surfer.spend_triggers(record)[0]
+    asserter = StaticAsserter(state_with(trigger))
+    api_runner = FakeApi()
+    decider = StaticDecider(surfer.SurferDecision(surfer.TERMINATE, reason="budget blown"))
+    kit = FakeRepairKit()
+
+    outcome = make_surfer(
+        asserter, decider, tmp_path=tmp_path, api_runner=api_runner, repair_kit=kit
+    ).cycle()
+
+    assert outcome.action == surfer.TERMINATE
+    assert outcome.escalated is False
+    assert api_runner.paths == ["POST /projects/pid/analysis/r0/stop"]
 
 
 def test_destroy_tears_the_instance_down_through_instances_down(

@@ -189,6 +189,7 @@ def _build_agent(
     from langchain.agents import create_agent
 
     from polymerhus.app.llm.parsing_recovery import parsing_recovery_middleware
+    from polymerhus.app.llm.usage import usage_middleware
 
     if model_factory is not None:
         model = model_factory(role_id)
@@ -205,17 +206,29 @@ def _build_agent(
     # loop-exit node - every caller after_model hook (the compaction ledger)
     # runs before it, and its `jump_to="model"` is honoured by the model-to-tools
     # routing. Always present: an unanswered invalid call poisons the thread.
-    kwargs["middleware"] = [parsing_recovery_middleware(), *list(middleware or ())]
+    kwargs["middleware"] = [parsing_recovery_middleware(), usage_middleware(),
+                            *list(middleware or ())]
     if store is not None:
         kwargs["store"] = store
     return create_agent(model, **kwargs)
 
 
 def _turn_config(role_id: str, thread_id: str, observe: bool,
-                 extra_tags: Sequence[str] | None = None) -> dict:
-    config: dict = {"configurable": {"thread_id": thread_id}}
-    return _observe_config(config, role_id, thread_id,
-                           extra_tags=extra_tags) if observe else config
+                 extra_tags: Sequence[str] | None = None,
+                 usage_scope: str | None = None) -> dict:
+    """Build the turn's run config. The Langfuse callbacks/tags ride only when
+    `observe` is on (unchanged); `role_id` - and `usage_scope` when given - are
+    ALWAYS present, so the usage middleware attributes a turn whether or not it
+    is traced."""
+    if observe:
+        config = _observe_config({"configurable": {"thread_id": thread_id}},
+                                 role_id, thread_id, extra_tags=extra_tags)
+    else:
+        config: dict = {"configurable": {"thread_id": thread_id},
+                        "metadata": {"role_id": role_id}}
+    if usage_scope is not None:
+        config.setdefault("metadata", {})["usage_scope"] = usage_scope
+    return config
 
 
 # #280: the resumption gate. The upstream enforces POSITIONAL adjacency between an
@@ -471,6 +484,7 @@ def run_session_turn(
     read_timeout_s: float | None = None,
     reasoning_budget_chars: int | None = None,
     extra_tags: Sequence[str] | None = None,
+    usage_scope: str | None = None,
     context: dict | None = None,
 ) -> SessionTurn:
     """Run one resumable, tool-calling turn of a session-mode role (sync).
@@ -494,6 +508,9 @@ def run_session_turn(
 
     `extra_tags` appends caller-owned join keys (the bare run id) to the recorded
     `langfuse_tags` (default None = today's tags, unchanged).
+    `usage_scope` (default None) is the project id the turn's token usage is
+    attributed to in the process-wide usage ledger; it is recorded whether or not
+    `observe` is on.
     `thread_id` is a typed `SessionAddress` (`session_address.py`) - or, for
     back-compat, a raw thread-id string - so a caller can pass the address directly;
     the composed id reaches the conversation scope and every config/metadata seam."""
@@ -508,7 +525,8 @@ def run_session_turn(
             middleware=middleware, store=store, checkpointer=checkpointer,
             model_factory=model_factory, read_timeout_s=read_timeout_s,
         )
-        config = _turn_config(role_id, thread_id, observe, extra_tags=extra_tags)
+        config = _turn_config(role_id, thread_id, observe, extra_tags=extra_tags,
+                              usage_scope=usage_scope)
         if checkpointer is not None:
             _read_pending_resumption(agent, config)
         if observe and checkpointer is not None:
@@ -564,12 +582,13 @@ async def arun_session_turn(
     read_timeout_s: float | None = None,
     reasoning_budget_chars: int | None = None,
     extra_tags: Sequence[str] | None = None,
+    usage_scope: str | None = None,
     context: dict | None = None,
 ) -> SessionTurn:
     """Async-native turn (`astream`) - the entry point an async-native PARENT
     coordinator uses (ratified #94: the hunt-orchestrator first), so it can spawn
     and monitor child sessions without blocking its own loop. Identical contract to
-    `run_session_turn` (including `extra_tags`); pass an async checkpointer
+    `run_session_turn` (including `extra_tags` and `usage_scope`); pass an async checkpointer
     (`AsyncPostgresSaver`, already used by the analysis supervisor) in production.
     `read_timeout_s` (default None) bounds the turn's model calls per-attempt -
     the escalating-budget seam #186 rides: the actor runtime re-invokes this with
@@ -597,7 +616,8 @@ async def arun_session_turn(
             middleware=middleware, store=store, checkpointer=checkpointer,
             model_factory=model_factory, read_timeout_s=read_timeout_s,
         )
-        config = _turn_config(role_id, thread_id, observe, extra_tags=extra_tags)
+        config = _turn_config(role_id, thread_id, observe, extra_tags=extra_tags,
+                              usage_scope=usage_scope)
         if checkpointer is not None:
             await _aread_pending_resumption(agent, config)
         if observe and checkpointer is not None:
@@ -784,6 +804,7 @@ def stateful_turn(
     observe: bool = True,
     reasoning_budget_chars: int | None = None,
     extra_tags: Sequence[str] | None = None,
+    usage_scope: str | None = None,
     context: dict | None = None,
     tools: Sequence = (),
 ):
@@ -808,7 +829,11 @@ def stateful_turn(
     instead of degrading to None. The recovery is itself streamed and single-bounded
     (a re-blackloop is cut), and its output + the failed reasoning fold into the native
     turn-end compaction. Fail-open preserved: recovery failure degrades to None exactly
-    as before."""
+    as before.
+
+    `usage_scope` (default None) is the project id the turn's token usage is
+    attributed to in the process-wide usage ledger, threaded to the session turn
+    (and any blackloop recovery) independent of `observe`."""
     response_format = (structured_response_format(role_id, schema, tools_bound=bool(tools))
                        if schema is not None else None)
     thread_id = _as_thread_id(thread)
@@ -818,7 +843,8 @@ def stateful_turn(
             checkpointer=checkpointer, response_format=response_format,
             system_prompt=system_prompt, model_factory=model_factory, observe=observe,
             middleware=middleware, reasoning_budget_chars=reasoning_budget_chars,
-            extra_tags=extra_tags, context=context, tools=tools,
+            extra_tags=extra_tags, usage_scope=usage_scope,
+            context=context, tools=tools,
         )
         # T2 (#214): the blackloop signature - the streamed cut, or a turn that
         # completed EMPTY-CONTENT while still emitting reasoning (the silent-empty
@@ -830,7 +856,7 @@ def stateful_turn(
                 checkpointer=checkpointer, response_format=response_format,
                 system_prompt=system_prompt, model_factory=model_factory, observe=observe,
                 middleware=middleware, reasoning_budget_chars=reasoning_budget_chars,
-                context=context, tools=tools,
+                usage_scope=usage_scope, context=context, tools=tools,
                 shape="streamed_cut" if turn.blackloop else "empty_content",
                 cut_point_chars=len(turn.reasoning),
             )
@@ -847,7 +873,7 @@ def stateful_turn(
                 checkpointer=checkpointer, response_format=response_format,
                 system_prompt=system_prompt, model_factory=model_factory, observe=observe,
                 middleware=middleware, reasoning_budget_chars=reasoning_budget_chars,
-                context=context, tools=tools,
+                usage_scope=usage_scope, context=context, tools=tools,
                 shape="length_finish", cut_point_chars=len(failed_reasoning),
             )
             if recovered is not None:
@@ -986,6 +1012,7 @@ def _recover_blackloop(
     observe: bool,
     middleware: Sequence,
     reasoning_budget_chars: int | None,
+    usage_scope: str | None = None,
     context: dict | None = None,
     tools: Sequence = (),
     shape: str,
@@ -1021,6 +1048,7 @@ def _recover_blackloop(
             checkpointer=checkpointer, response_format=response_format,
             system_prompt=system_prompt, model_factory=model_factory, observe=observe,
             middleware=middleware, reasoning_budget_chars=reasoning_budget_chars,
+            usage_scope=usage_scope,
             context=context, tools=tools,
         )
     except Exception as exc:  # noqa: BLE001 - fail-open: recovery failure degrades

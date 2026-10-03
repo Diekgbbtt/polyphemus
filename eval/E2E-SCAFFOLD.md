@@ -17,7 +17,7 @@ PYTHONPATH=eval python3 -m orchestrator trial eval/setups/first.yaml eval-server
 Observed plan summary (from the committed setup, no execution):
 
 - instance `eval-server-1` (`ph-dd131acc`): worktree add -> env preflight -> compose render -> `up -d`
-- target `eval-server-1/comfyui-1` (`targetctl`): checkout `~/WebExploitBench` -> `targetctl build comfyui` -> `targetctl up comfyui` -> front conf `eval-target-t-1fc05262.target.conf` -> readiness probe -> workshop IP -> kali alias
+- target `eval-server-1/comfyui-1` (`webexploitbench/comfyui`, `targetctl`, local): platform bank `~/WebExploitBench` -> `targetctl build comfyui` -> `targetctl up comfyui` -> front conf `eval-target-t-1fc05262.target.conf` in the shared `ph-eval-front` container -> bounded readiness probe -> Docker host gateway -> kali alias
 - trial: create project -> settings (`target_seed=t-1fc05262.target`, operator KB) -> deterministic L1 scaffold -> recon entry + launch -> hunting entry + launch (cap 10)
 
 ## 1. Identities and paths this run uses
@@ -25,9 +25,9 @@ Observed plan summary (from the committed setup, no execution):
 | Thing | Value | Where it comes from |
 |---|---|---|
 | Instance | `eval-server-1` | `first.yaml` |
-| Target | `comfyui-1` (WebExploitBench `comfyui`) | `first.yaml` |
+| Target | `comfyui-1` (`webexploitbench/comfyui`) | `first.yaml` (`target_key`) |
 | Synthetic Host (the seed) | `t-1fc05262.target` | derived: `sha1("eval-server-1/comfyui-1")[:8]`; written to the front `server_name` and aliased in kali |
-| Front URL | `http://t-1fc05262.target/` | remote workshop nginx on :80 |
+| Front URL | `http://t-1fc05262.target/` | the shared `ph-eval-front` container on :80 (D45) |
 | Instance worktree | `<EVAL_INSTANCES_ROOT>/eval-server-1` | `--instances-root` (default `eval/instances`) |
 | Instance `.env` | `<instance worktree>/.env` | manually managed; see the checklist |
 | Data root | `<instance worktree>/data` = `$EVAL_DATA_ROOT` | the compose `./data` bind; passed explicitly as `--data-root`/`EVAL_DATA_ROOT` (see B12). `store materialize` derives the same path from `--instances-root` + the instance id, but the trial/assess/diagnose verbs default to `<repo>/data`, so it must be passed explicitly. |
@@ -48,9 +48,9 @@ A run attempted with one missing fails loud; none is silently defaulted.
 |---|---|---|---|
 | B1 | Eval-server access and the canonical checkout path (`EVAL_REPO`, e.g. `/opt/polymerhus-dev`) with the `eval` branch present | instance up | `git worktree add` runs against it |
 | B2 | The instance `.env` at `<EVAL_INSTANCES_ROOT>/eval-server-1/.env` | instance up | The preflight fills missing keys from `.env.example` but never creates the file (exit 2 if absent). It must exist before `up`. Required keys: `NEO4J_URI`, `NEO4J_USER`, `NEO4J_PASSWORD`, `POSTGRES_DSN`, `KALI_MCP_URL`, and the nine `LLM_<ROLE>` model keys. Provider `API_KEY_<PROVIDER>` for every provider those roles select, plus `LANGFUSE_*` for traces. |
-| B3 | SSH key and host for the workshop host (`EVAL_SSH_HOST`, default `ubuntu@dj-viscon-workshop-1.vsos.ethz.ch`) with passwordless sudo for nginx conf writes | target routed | The front writes `/etc/nginx/conf.d/eval-target-t-1fc05262.target.conf` and reloads nginx |
-| B4 | The workshop checkout `~/WebExploitBench` with the `comfyui` target built (targetctl clones if missing) | target routed | `targetctl build/up comfyui` runs there |
-| B5 | The ground-truth checkout `~/WebExploitBench` on the eval server (or `EVAL_WEB_DIR`) | assessment, diagnosis | `gt.py` reads `<EVAL_WEB_DIR>/comfyui/challenge.json`; the KB is committed at `eval/kbs/comfyui/operator_kb.md` |
+| B3 | The eval host runs Docker with amd64 binfmt emulation registered (`docker run --privileged tonistiigi/binfmt --install amd64`; D46) | target built/run | WebExploitBench base images are amd64-only; the host is aarch64, so the targets run emulated |
+| B4 | The local WebExploitBench checkout `~/WebExploitBench` (or `EVAL_WEB_DIR`) with the `comfyui` target built (targetctl clones if missing) | target routed | `targetctl build/up comfyui` runs locally; the front is the shared `ph-eval-front` container (no ssh, no host nginx) |
+| B5 | The same local checkout serves ground truth (`EVAL_WEB_DIR`, default `~/WebExploitBench`; D45) | assessment, diagnosis | `gt.py` reads `<EVAL_WEB_DIR>/comfyui/challenge.json`; the KB is committed at `eval/data/webexploitbench/comfyui/operator_kb.md` |
 | B6 | LLM provider credits/keys for the roles in B2 | trial | Recon/analysis/hunting spend them |
 | B7 | `EVAL_SHA` and `EVAL_STACK_FINGERPRINT` | trial, store | The `eval` branch commit and the daemon's stack fingerprint of the running (post-advance) tree. Read the SHA with `git -C "$EVAL_REPO" rev-parse eval`; read the fingerprint from the advance daemon heartbeat's `decision.fingerprints.dev` - the post-advance/running side, which pairs with the now-current SHA. Do NOT use `decision.fingerprints.eval`: that is the pre-advance fingerprint and would pair the new SHA with a stale stack. Both are mandatory: `store materialize` refuses `identity_missing`, and every verdict and diagnosis row must carry them. |
 | B8 | `EVAL_ASSESS_COMMAND` and `EVAL_DIAGNOSE_COMMAND` | assessment, diagnosis | Shell lines with the documented placeholders (OPERATOR.md 2.9/2.10); no command means `assessment_no_command` / `diagnosis_no_command` escalation |
@@ -80,8 +80,8 @@ export EVAL_REPO=<canonical checkout>
 export EVAL_INSTANCES_ROOT=eval/instances
 export EVAL_DATA_ROOT="$EVAL_INSTANCES_ROOT/eval-server-1/data"
 export EVAL_BRANCH=eval
-export EVAL_SSH_HOST=ubuntu@dj-viscon-workshop-1.vsos.ethz.ch
 export EVAL_WEB_DIR=~/WebExploitBench
+export EVAL_TARGET_PLATFORM=linux/amd64
 export PH_API=http://localhost:8080
 export EVAL_SHA=$(git -C "$EVAL_REPO" rev-parse eval)
 export EVAL_STACK_FINGERPRINT=<daemon heartbeat decision.fingerprints.dev>
@@ -124,7 +124,7 @@ PYTHONPATH=eval python3 -m orchestrator status eval/setups/first.yaml
 ```
 
 Needs: B1, B2, B3, B4.
-Expected: the work-item gate passes (only required items are gated; `auth-bootstrap` is `required: false` for comfyui); per instance `instance eval-server-1: up`; per target `target t-1fc05262.target: http://t-1fc05262.target/ -> http://<workshop-ip>:<port>`; `status` shows `kali aliases: t-1fc05262.target -> <workshop-ip>`.
+Expected: the work-item gate passes (only required items are gated; `auth-bootstrap` is `required: false` for comfyui); per instance `instance eval-server-1: up`; per target `target t-1fc05262.target: http://t-1fc05262.target/ -> http://127.0.0.1:<port>`; `status` shows `kali aliases: t-1fc05262.target -> <gateway-ip>`.
 Failure paths: `WorkItemGateError` names the incomplete item; `InstanceError` on the worktree/preflight/render/compose (`env_preflight: error:` names a missing `.env`); `TargetctlError`/`TargetNotReadyError` on build/up/front/readiness; `RoutingError` refuses a non-numeric alias address.
 Every failure prints `orchestrator: error: ...` and exits 1.
 
@@ -216,7 +216,7 @@ Accept the scaffold for execution when:
 
 - every bootstrap item B1-B12 is answered by name (no doubles, no placeholders);
 - `plan ... --dry-run` and `trial ... --dry-run` match section 1 and section 3;
-- the target is deployed at the workshop host and answers on `http://t-1fc05262.target/` from the instance kali before recon launches.
+- the target is deployed on the eval host (emulated amd64) and answers on `http://t-1fc05262.target/` from the instance kali before recon launches.
 
 Reject (and report the gap) when:
 

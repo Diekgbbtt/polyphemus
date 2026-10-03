@@ -9,10 +9,10 @@
 *2026-09-25.* One `PolyphemusInstance` owns its own agent + kali + postgres + neo4j + lightrag. The verified collisions live in the shared data plane (neo4j `:Observation` not project-partitioned, one global LightRAG workspace, a project-less ingestion registry, a process-global module control plane, a single litellm writer), so duplicating only the exec plane would leave them unaddressed.
 
 ### D2 - Routing discriminator: a unique synthetic Host per `TargetRun`
-*2026-09-25.* Each target run gets a unique synthetic Host (e.g. `t-<short>.target`), written into the workshop nginx `server_name` and aliased into that instance's kali `/etc/hosts`. Distinct published ports were rejected (they break the platform's bare-domain scope gate).
+*2026-09-25.* Each target run gets a unique synthetic Host (e.g. `t-<short>.target`), written into the target front's `server_name` and aliased into that instance's kali `/etc/hosts`. Distinct published ports were rejected (they break the platform's bare-domain scope gate). (Amended by D45: the front is the local `ph-eval-front` container for every lifecycle, not the workshop nginx.)
 
 ### D3 - Canonical terms
-*2026-09-25.* `PolyphemusInstance` (one polymerhus deployment, identified by uuid and defined by its `.env`), `Trial` (fresh target instance + fresh project per attempt), `Target` (the evaluated application; WebExploitBench calls it a `challenge`). Glossary: `tools/eval/CONTEXT.md`. `System` stays reserved for the L1 node.
+*2026-09-25.* `PolyphemusInstance` (one polymerhus deployment, identified by uuid and defined by its `.env`), `Trial` (fresh target instance + fresh project per attempt), `Target` (the evaluated application; WebExploitBench calls it a `challenge`). Glossary: `eval/CONTEXT.md`. `System` stays reserved for the L1 node.
 
 ### D4 - Config topology
 *2026-09-25.* One `EvalSetup` per evaluation. Each instance has an `InstanceConfiguration` that references a manually managed `.env` file.
@@ -32,6 +32,7 @@
 
 ### D9 - Target agnosticity: strategy-typed lifecycle
 *2026-09-25.* A strategy-typed lifecycle (`targetctl` for WebExploitBench, `image`/`compose` for pullable containers) behind one interface, selected by the target descriptor. Accepted provisionally; see **R2**.
+*2026-10-01 (amended by D43).* The lifecycle interface gains an image-provisioning seam with a strict precedence; the strategy still selects by the target descriptor, but how the image is obtained is decided by the target's build recipe and the dataset registry, not by the strategy alone. The precedence itself is restated by D47 as store -> pull -> build.
 
 ### D10 - No machine resource limits; one instance at a time
 *2026-09-28.* Co-located instances are **not** cgroup-capped. Normally only one instance runs, and the operator accepts the contention in the exceptional case. Host-published port offsets remain necessary (R3) so host-side tooling addresses the right instance.
@@ -215,3 +216,141 @@ Per-instance clones (D11) multiplied by the `eval` branch (D23) means N checkout
 - Q41 alignment handoff -> confirmed: daemon does the mechanical advance and enforces the fail-closed gate; the orchestrator decides and executes everything else.
 - New **R17 - env-schema drift**: a locally sourced `.env` can fall behind the compose interpolation schema; mitigated by D41 (overlay + preflight + keyset check); renames are reported, not auto-removed.
 - Grill closed 2026-09-28. Carried into the spec: R2 (target agnosticity), R16, R17, the ADR's still-open items (alert threshold, manifest review discipline, env-rename reporting, PR-contract note), and D33's analysis-layer failure-mode extension.
+
+## Round-6 decisions (multi-target chain and image provisioning, 2026-10-01)
+
+### D42 - The orchestrator is the control plane; the chain advances through `next_target`
+*2026-10-01.* The eval orchestrator agent governs the run end to end through exactly two tools. `next_target` advances the target chain one target at a time: it tears the active target down, reclaims its image, provisions the next target's image, brings it up, and verifies its health. `eval_monitor` remains the post-execution workflow tick (D6/D15). The symbolic layer still runs the phases and owns state; the agent never runs a phase and never polls the API (D5). One instance runs its targets serially; the chain position is persisted (`ChainState`) so a later tick resumes at the right target. A failed `next_target` surfaces its full trace (step log, command error, traceback) and the run moves on to the next target, so one unprovisionable target never aborts the chain.
+
+### D43 - Target image provisioning precedence: build > pull > present > fail-hard
+*2026-10-01.* Amends D9. Before a target starts, its image is provisioned by a strict precedence:
+1. **build** - a Dockerfile declared on the target config (`dockerfile`, with `dockerfile_context` for the build context) builds the app image, overwriting any pull; the Dockerfile's `FROM` supplies its base.
+2. **pull** - otherwise a configured dataset registry pulls each image (qualified by the registry, verified present).
+3. **present** - otherwise the image must already be present locally; a missing image is a hard failure for that target, and the chain moves on (D42).
+Build and pull are confirmed with `docker image inspect`; present is confirmed by tag only, so it is the weakest tier.
+*Amended 2026-10-02 by D47.* The precedence is now store -> pull -> build: a local image under the target's canonical tag is the first tier and is left alone, pull is the second, and the target's own build is the last fallback. The D43 reliability evaluation (tag vs content identity, pull drift, multi-image targets) still holds.
+**Critical reliability evaluation.** (a) *Build context*: a bare Dockerfile path is insufficient - a Dockerfile that `COPY`s sibling files needs the real context, so `dockerfile_context` is a first-class field; defaulting to the Dockerfile's parent is a documented footgun. (b) *Tag vs content identity*: build and pull can both yield an image under the same tag with different content (base digest, source revision), so the provisioning path and the resolved image id are recorded on the step; comparability across paths is not assumed. (c) *Pull drift*: a tag can be repointed, so a tag-pull is not drift-free; digest pinning is the intended hardening (carried as an open item). (d) *Present is unverified*: it confirms a tag exists, not that it is the expected image - acceptable only as an explicit operator opt-in, recorded as the weakest tier. (e) *Multi-image targets*: one `dockerfile` builds one image, so a target needing several built images (e.g. jetlinks' app + attacker-stage) can express only the primary build; the rest fall to pull/present. A per-image build map is the future extension. (f) *Security*: building an untrusted Dockerfile runs its build steps as root; acceptable on the isolated eval host, noted here.
+
+### D44 - `TargetDataset` owns the shared location addressing
+*2026-10-01.* The registry host + URL path, the remote repo, and the ground-truth root are one fact per dataset, not per target. A `TargetDataset` (`name`, `repo`, `registry`, `ground_truth`) parents the targets and their ground truth; `EvalSetup` references it, and `TargetRun` carries each target's image identifier **as-is**. The pull reference is `dataset.registry` joined to the identifier; an empty registry means the dataset publishes no images, so targets are built (D43). This keeps a shared fact in one place and out of the external `challenge.json`, which is WebExploitBench's artifact, not polymerhus's domain.
+*Superseded 2026-10-02 by D47.* The embedded `TargetDataset` value object and the per-target lifecycle `params` are replaced by the keyed `BenchmarkDataset` + `TargetConfiguration` layer; the shared-location intent (one repo, registry, and platform root per dataset) is retained.
+
+### Rejected: the environment-affordance check
+*2026-10-01.* An environment-affordance gate (disk/docker/registry probing that chose prebuild-all vs on-demand before any pull) was implemented and then removed. It existed only in uncommitted code, so no prior decision is amended; the durable decisions are D42/D43. The operator's ruling: the chain defaults to reclaim-then-provision per target, and the image precedence (D43) is the gate - not a separate affordance probe.
+
+## Round-7 decisions (local target host and aarch64 emulation, 2026-10-01)
+
+### D45 - The target host is the eval server; the platform scaffold is local
+*2026-10-01.* The workshop host is a single shared x86_64 box that saturates under even one large target, so the whole target platform scaffold - the WebExploitBench checkout, `scripts/targetctl`, `scripts/fetch`, the built `pentestbench-*` images, and the target front - moves onto the eval server itself. The `targetctl` strategy stops reaching a remote host and runs locally: the checkout is a local `git clone`, deployment is a local `scripts/targetctl build/up/down/ps`, and the per-target front is the shared `ph-eval-front` container (the same front `image` and `compose` already use) rather than a per-host nginx reached over ssh. The synthetic-Host alias resolves the Docker host gateway to a numeric address (SP1), exactly like the local strategies. This removes the ssh coupling (`EVAL_SSH_HOST`, `EVAL_REMOTE_DIR`, `EVAL_NGINX_CONF_DIR`, the workshop sudo path) and unifies all three lifecycles behind one local front. The eval server's own capacity and the chain's reclaim-then-provision discipline (D42/D43) bound the load: one target at a time, its image reclaimed before the next.
+Consequence: the ground-truth checkout (`EVAL_WEB_DIR`) and the target-runtime checkout are now the same local directory, so `gt.py` and `targetctl` resolve the same `~/WebExploitBench`.
+
+### D46 - amd64 targets on the aarch64 eval host run under qemu binfmt emulation
+*2026-10-01.* The eval host is aarch64 while WebExploitBench's base images (`mysql:5.7`, `elasticsearch:6.8.11`, `node:10-buster`, the `pentestbench-*` builds, the jetlinks/mogu Aliyun images) are amd64-only. Two options were weighed: (a) emulate amd64 via qemu binfmt; (b) swap each target's base images for aarch64 equivalents.
+**(b) is rejected**: several bases have no aarch64 variant (mysql:5.7 never shipped arm64; elasticsearch:6.8 has no arm64; the Aliyun images are amd64-only), so it is infeasible for several targets, would fork each Dockerfile, and would change the benchmark's images - invalidating the cross-run comparison the eval exists to make.
+**(a) is chosen**: register `qemu-x86_64` with binfmt_misc (`docker run --privileged tonistiigi/binfmt --install amd64`) once per host, and select the target platform explicitly. Docker auto-emulates an already-amd64 image on run, but a build or pull must be told the platform, so every target lifecycle command runs with `DOCKER_DEFAULT_PLATFORM=linux/amd64` (targetctl: the `scripts/targetctl` env; image: `docker run --platform`; compose: the compose env). The platform is scoped to the target commands, never the polymerhus instance stack, which stays native aarch64.
+Tradeoff: emulation is slower than native and can stress the host on heavy images, but it preserves the benchmark exactly and needs no per-target maintenance. The platform is a per-lifecycle `platform` parameter (default `linux/amd64` for targetctl, native for image/compose).
+
+## Round-8 observations (full-dataset build and chain e2e on the eval host, 2026-10-02)
+
+With an approved Hugging Face token the full 15-target dataset fetched onto the eval host (`scripts/fetch`), the batch built and started each target, and the chain e2e then advanced every target with a per-target health check through the shared front on :80.
+
+**Wiring verified.** `targetctl` built and started targets locally; the chain (`next_target`) tore the previous target down, reclaimed its image, built and started the next, wrote the shared `ph-eval-front` conf, aliased the synthetic Host in the running instance's kali, and health-checked it. `comfyui` (`t-1fc05262.target`) and `jetlinks` answered `200` through the front; `prestashop` answered `500` (app not ready).
+
+**8 of 15 built and ran**: comfyui, jetlinks, prestashop, geoserver, ofbiz, openmetadata, openremote, wordpress.
+**7 failed to build**, none from the wiring or the arch choice:
+- `siyucms`, `phpbb`: a stale Debian bullseye `security.debian.org` 404 (a removed `curl` point release) in the base image's `apt-get update`.
+- `white-jotter`, `mogu-blog-v2`, `youlai-mall`: Maven Central timeouts / SSL handshake failures (very slow registry egress from the eval host).
+- `dataease`, `dify`: amd64 emulation crashes (`V8 lfstack.push` in a Node build; `uv sync` exit 139 = SIGSEGV).
+
+**`docker compose up -d` blocks under emulation.** Several targets declare `depends_on: condition: service_healthy`; a healthcheck that never passes under slow emulated startup makes `up -d` wait indefinitely, so `targetctl up` hangs (bounded by the per-target timeout). This is the dominant failure mode for the heavier targets, and it is a host/emulation limit, not a defect in the local target host.
+
+**Follow-up hardening** (does not change the benchmark images): a build-time registry mirror/cache and a Debian snapshot for the bullseye targets; a raised readiness window or a healthcheck-tolerant `up` for the emulated services; and confirmation that the emulation SIGSEGVs are qemu/Node-version specific before relying on those targets.
+
+## Round-9 decision (the keyed dataset and target configuration model, spec #301, 2026-10-02)
+
+### D47 - The benchmark dataset is a first-class keyed artifact; target bring-up is a separate config
+*2026-10-02.* Spec #301 replaces the embedded `TargetDataset` value object and the per-target lifecycle `params` with a keyed two-layer model.
+The delta, its module seams, and the migration order are recorded in `docs/design/eval-dataset-domain-model-impact-map.md`.
+
+- **Keyed, first-class `BenchmarkDataset`** (`orchestrator/dataset.py`, `eval/datasets/<id>.yaml`): `id`, `repo`, `registry`, `platform_root`, `targets[]`.
+  It supersedes the embedded value object and lives in its own artifact, so a dataset is referenced by key and can be repo-local or an external checkout used in place.
+- **`Target key`** `<dataset>/<target>`: the one identifier indexing the target's bring-up configuration (`eval/targets/<dataset>/<target>.yaml`), its platform bank entry (`<platform_root>/<target>/`), and its data dependencies (`eval/data/<dataset>/<target>/`).
+  `EvalSetup.datasets` lists the datasets by key; `TargetRun` carries only `target_key`, `target_id`, the per-trial data (`TargetConfig`), and the runtime fields.
+- **`TargetConfiguration`** (`orchestrator/target_config.py`): the target's own bring-up attributes - compose, image set, pull references, checker, `reclaimable`, and runner.
+  The old per-target lifecycle `params` are gone; validation moves here.
+- **Canonical image tagging** (`orchestrator/datasets/base.py`): the dataset helper derives the target's images from the compose (services declaring both `build:` and `image:`) and binds each to `ph/<dataset>/<target>[:<service>]`.
+  That tag is the one key the store check and reclaim speak.
+- **Store -> pull -> build precedence** (`orchestrator/docker.py`, `orchestrator/chain.py`): a store hit under the canonical tag is left alone (never pulled, rebuilt, or reclaimed by provisioning); otherwise a declared pull reference is fetched and bound; otherwise the target's own build produces it and the produced image is bound.
+  Build is the last fallback, not the first; this supersedes D43's build-first ordering.
+- **Bounded per-target readiness** (`orchestrator/readiness.py`): `up` never blocks on health; the chain verifies readiness under a bounded window, defaulting to the compose's own health and allowing a port probe or a named per-dataset checker.
+- **Opt-in `reclaimable`**: a target's own canonical tags are removed at teardown and after a failed up only when the target opts in (default false); a target that does not opt in leaves its images in the store.
+
+Supersedes D44 (the embedded `TargetDataset`) and the per-target lifecycle `params` and build-first precedence of D9/D43 in the parts above.
+
+## Round-9 observation (the exhaustive compose readiness check, 2026-10-02)
+
+The readiness checker now asserts the stack's OWN health, exhaustively.
+`docker compose ps -a --format json` lists every service, including one-shot init services that have exited and services not yet started; a service is ready only when it is `healthy`, or `running` with no healthcheck, or `exited` with code 0.
+`created`, `starting`, `unhealthy`, `restarting`, and a non-zero exit are all not ready.
+Without `-a`, compose reports only running containers, so a single running service read as a ready stack; with `-a` a not-yet-started dependent can never be mistaken for a ready one, and the functional `depends_on` conditions are asserted as the platform declares them.
+
+An HTTP 5xx (500 included) is removed as a valid readiness signal: a server-side error is a live but broken app, never a ready target.
+The runtime kali reachability gate is dropped from the recon-entry predicate (`predicates.recon_entry`): the target shares a Docker network that egresses to the host and reaches loopback, and its readiness was already asserted by the stack's own health check, so a second kali probe only duplicated the gate.
+
+### The synthetic-Host pointing mechanism (assessment)
+
+The synthetic Host `t-<short>.target` reaches a target through three hops, all verified live on the eval host:
+
+1. the instance's kali resolves the Host from its own `/etc/hosts`, where `routing.kali_alias_command` writes `<gateway-ip> <host>`;
+2. `<gateway-ip>` is the numeric answer of `getent hosts host.docker.internal` inside kali (SP1: `/etc/hosts` has no resolver, so a hostname in its address column is refused);
+3. the shared front (`ph-eval-front`, host `:80`) matches `server_name <host>` and proxies to `host.docker.internal:<published-port>`; the target publishes on `0.0.0.0:<published-port>`.
+
+Determinism and reliability:
+
+- The alias is re-resolved on every `up`, so a changed gateway address is picked up; `kali_clear_command` removes it on teardown.
+- `host.docker.internal` inside kali resolves to `172.17.0.1` (docker0), NOT kali's own network gateway (`172.28.0.1` on `polymerhus-net`). The cross-bridge hop works because the host forwards between bridges (`net.ipv4.ip_forward = 1`); both addresses were reachable from kali in the live check.
+- The alias is runtime state in kali's writable layer, so it is lost on a kali recreation; only the declarative `extra_hosts` (`host.docker.internal`, `soupmarket.shop`) survive. This is the `hosts.sh` design carried into `routing.py`: the alias is "runtime-only (ephemeral, lost on container recreation), which is exactly right for a temporary harness". It is a known, accepted debt: a target stays reachable only while its instance's kali is not recreated, and the chain re-aliases on each `up`.
+- The host is matched by exact field equality, not a regex, so the `.` in `t-<short>.target` cannot match an unintended `/etc/hosts` line.
+- The `/etc/hosts` rewrite is a non-atomic truncate-write (the bind-mount constraint forbids `sed -i`); a crash mid-write could truncate kali's `/etc/hosts`.
+
+## Round-10 decisions (the native amd64 image plane, 2026-10-02)
+
+### D48 - Target images are built natively on amd64 in CI and pulled from ghcr
+*2026-10-02.* WebExploitBench targets are amd64-only and the eval host is aarch64 (D46). Building on the host ran every Dockerfile under qemu: slow, and fatal for the EOL Debian bullseye suites, whose security pool now 404s. The build moves off the host.
+
+- **Build**: `.github/workflows/webench-images.yml` builds each target on a native amd64 `ubuntu-latest` runner and pushes every service that declares both `build:` and `image:` to `ghcr.io/<owner>/webench:<target>-<service>`.
+- **Apt snapshot**: `eval/apt_snapshot.py` rewrites each Debian apt source in the checkout to a fixed `snapshot.debian.org` timestamp before the build, so the EOL bullseye packages exist forever and the build is reproducible.
+- **Pull**: the dataset declares `registry: ghcr.io/diekgbbtt/webench`; the targetctl strategy derives a pull reference per canonical tag (`docker.registry_reference`) and pulls instead of building. A pulled image is bound to the canonical tag (store/reclaim) AND to the compose reference, so the target's own `up` finds it locally.
+- **Precedence unchanged**: store -> pull -> build (D47). The build fallback remains for a dataset with no registry.
+
+Supersedes the build half of D46: the host no longer builds amd64 images under qemu. The run half of D46 still holds while the host is aarch64.
+
+**Readiness**: the default window stays 60 x 5s; a target may raise it with `ready_retries` / `ready_interval_s` (a slow JVM, a large stack). The per-target override wins over `EVAL_READY_RETRIES` / `EVAL_READY_INTERVAL_S`.
+
+### D49 - The WebExploitBench evaluator is dropped; polymerhus scores through its own assessment
+*2026-10-02.* The WebExploitBench `evaluator` is the benchmark's native oracle: an HTTP service (`POST /done/<vuln_id>`) that runs each challenge's `verify.py` against an `agent_output` payload and returns `{"status": bool}`.
+It is dropped from the eval platform, and its artifacts are removed.
+
+Rationale - the oracle cannot be fed:
+
+- **The evaluator consumes a submitted exploit, and no component produces one.** The native verifiers check exploit EFFECTS on the target (an SSRF-listener hit, an RCE canary process, an XSS `alert()` dialog, a written file) or WebExploitBench-shaped `final_answer/<id>/vulnerability.json` reports.
+  polymerhus is discovery-only: it hunts for vulnerabilities and persists evidence; it never runs an exploit and never emits a WebExploitBench report.
+  The exploit module that would submit a PoC is not implemented.
+  With no producer for its input contract, the evaluator can never return `true`.
+- **The oracle already exists, one layer up.** polymerhus scores a trial through the background assessment subagent (`orchestrator/assessment.py`), which reads the persisted run evidence and writes `verdicts.yaml` (`identified | partial | missed`).
+  The evaluator was never wired into the orchestrator: the chain never called `/done/<vuln_id>`, and no proof-of-concept replay path existed.
+  A second oracle that nothing invokes is dead weight, not redundancy.
+- **The two are unrelated systems.** The evaluator is the benchmark author's external acceptance oracle (intra-challenge, deterministic, effect-based); the assessor is polymerhus's self-assessment oracle (evidence-grounded, LLM, phase-mapped).
+  They share a vocabulary (`identified`/`missed`) and nothing else.
+  Keeping both would duplicate the decision with no independent producer for either.
+
+Consequences:
+
+- The evaluator is excluded from every target stack, so the exhaustive readiness check (Round-9) asserts only the target's own services and their transitive `depends_on`.
+  This also removes the amd64-under-qemu blocker of D46 for the runtime plane: the evaluator's Go `docker` CLI was the one process that segfaulted under emulation.
+- **Mechanism**: a target may declare `exclude_services` in its `TargetConfiguration`; the `targetctl` strategy renders a Compose `profiles` override that keeps the named services out of `up` without editing the frozen upstream compose.
+  The `webexploitbench` targets that carry an `evaluator` service declare `exclude_services: [evaluator]`.
+- The `webench-images` CI workflow stops building the evaluator image, and the harness stops deriving a pull reference for it.
+
+**Deleted artifacts**: the evaluator service from each target stack; `pentestbench-evaluator:latest` and `ghcr.io/diekgbbtt/webench:<target>-evaluator` images; the evaluator's compose references in the per-target pull/build sets; the evaluator rows in the harness design docs and the per-target research notes.
+The upstream `_common/evaluator/` source stays in the external dataset checkout (it is the benchmark's own file, used in place, never authored here); only the platform's dependency on it is removed.

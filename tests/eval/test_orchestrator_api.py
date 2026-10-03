@@ -47,6 +47,24 @@ def test_call_builders_encode_the_ph_py_semantics() -> None:
     assert api.list_projects() == api.ApiCall("GET", "/projects")
 
 
+def test_usage_and_stop_run_builders() -> None:
+    assert api.usage("p") == api.ApiCall("GET", "/projects/p/usage")
+    assert api.stop_run("p", "recon", "r1") == api.ApiCall(
+        "POST", "/projects/p/recon/r1/stop"
+    )
+    assert api.stop_run("p", "analysis", "a1") == api.ApiCall(
+        "POST", "/projects/p/analysis/a1/stop"
+    )
+    assert api.stop_run("p", "hunting", "h1") == api.ApiCall(
+        "POST", "/projects/p/hunting/h1/stop"
+    )
+
+
+def test_stop_run_rejects_an_unknown_kind() -> None:
+    with pytest.raises(ValueError, match="run_kind"):
+        api.stop_run("p", "exploit", "x1")
+
+
 def test_call_display_renders_method_path_and_body() -> None:
     call = api.create_project("eval-t1")
     assert call.display() == 'POST /projects json={"name": "eval-t1"}'
@@ -66,6 +84,32 @@ def test_response_parsers_read_the_wire_shapes() -> None:
     assert api.status_of({}) is None
     assert api.per_job_rows({"per_job": [{"job": "crawl"}]}) == [{"job": "crawl"}]
     assert api.per_job_rows({}) == []
+
+
+def test_usage_parsers_read_the_wire_shapes() -> None:
+    by_agent = {
+        "recon": {
+            "input_tokens": 10,
+            "output_tokens": 32,
+            "total_tokens": 42,
+            "calls": 3,
+        }
+    }
+    response = {"project_id": "p", "total_tokens": 42, "calls": 3, "by_agent": by_agent}
+
+    assert api.usage_total(response) == 42
+    assert api.usage_by_agent(response) == by_agent
+
+
+def test_usage_parsers_default_when_absent_or_malformed() -> None:
+    assert api.usage_total({}) == 0
+    assert api.usage_total({"total_tokens": "many"}) == 0
+    assert api.usage_total({"total_tokens": True}) == 0
+    assert api.usage_total(None) == 0
+    assert api.usage_by_agent({}) == {}
+    assert api.usage_by_agent({"by_agent": None}) == {}
+    assert api.usage_by_agent({"by_agent": "nope"}) == {}
+    assert api.usage_by_agent(None) == {}
 
 
 def test_terminal_vocabularies_match_the_repository() -> None:
