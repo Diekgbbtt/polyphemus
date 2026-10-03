@@ -148,6 +148,8 @@ class TargetRun:
     target_config: TargetConfig = field(default_factory=TargetConfig)
     start_phase: str = "recon"
     hunt_config_budget: int | None = None
+    # The per-trial bound on the project's token spend (spec token tracking).
+    token_budget: int | None = None
     preloaded_hunting_artifacts: PreloadedArtifacts | None = None
     # #273: the target-run identity (the artifact store's middle level). Unset
     # means the trial record defaults it to the instance id.
@@ -382,6 +384,7 @@ def _parse_target_run(payload: object, where: str) -> TargetRun:
             "target_config",
             "start_phase",
             "hunt_config_budget",
+            "token_budget",
             "preloaded_hunting_artifacts",
             "target_run_id",
             "existing_project_id",
@@ -417,12 +420,19 @@ def _parse_target_run(payload: object, where: str) -> TargetRun:
     if budget is not None and (not isinstance(budget, int) or isinstance(budget, bool)):
         raise SetupError(f"{where}.hunt_config_budget: expected an integer or null")
 
+    token_budget = mapping.get("token_budget")
+    if token_budget is not None and (
+        not isinstance(token_budget, int) or isinstance(token_budget, bool)
+    ):
+        raise SetupError(f"{where}.token_budget: expected an integer or null")
+
     return TargetRun(
         target_key=target_key,
         target_id=target_id,
         target_config=target_config,
         start_phase=start_phase,
         hunt_config_budget=budget,
+        token_budget=token_budget,
         preloaded_hunting_artifacts=_parse_preloaded_artifacts(
             mapping.get("preloaded_hunting_artifacts"),
             f"{where}.preloaded_hunting_artifacts",

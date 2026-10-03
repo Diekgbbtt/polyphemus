@@ -37,6 +37,7 @@ def test_parses_a_valid_setup(sample_setup) -> None:
     assert run.target_id == "jetlinks-1"
     assert run.start_phase == "recon"
     assert run.hunt_config_budget == 10
+    assert run.token_budget == 10
     assert run.target_config.operator_kb == (
         "eval/data/webexploitbench/jetlinks/operator_kb.md"
     )
@@ -222,6 +223,36 @@ def test_bad_start_phase_is_named(sample_setup) -> None:
     _target(sample_setup)["start_phase"] = "exploit"
 
     with pytest.raises(setup_mod.SetupError, match="start_phase"):
+        setup_mod.parse_eval_setup(sample_setup)
+
+
+def test_parses_a_valid_token_budget(sample_setup) -> None:
+    _target(sample_setup)["token_budget"] = 5000
+
+    (run,) = setup_mod.parse_eval_setup(sample_setup).instances[0].targets
+
+    assert run.token_budget == 5000
+
+
+def test_token_budget_defaults_to_none(sample_setup) -> None:
+    _target(sample_setup).pop("token_budget")
+
+    (run,) = setup_mod.parse_eval_setup(sample_setup).instances[0].targets
+
+    assert run.token_budget is None
+
+
+def test_token_budget_non_int_is_named(sample_setup) -> None:
+    _target(sample_setup)["token_budget"] = "lots"
+
+    with pytest.raises(setup_mod.SetupError, match="token_budget"):
+        setup_mod.parse_eval_setup(sample_setup)
+
+
+def test_token_budget_bool_is_named(sample_setup) -> None:
+    _target(sample_setup)["token_budget"] = True
+
+    with pytest.raises(setup_mod.SetupError, match="token_budget"):
         setup_mod.parse_eval_setup(sample_setup)
 
 

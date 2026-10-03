@@ -184,6 +184,17 @@ def stop_hunting(project_id: str, hunting_run_id: str) -> ApiCall:
     return ApiCall("POST", f"/projects/{project_id}/hunting/{hunting_run_id}/stop")
 
 
+# The run kinds whose stop verb shares one path shape. Each kind is its own
+# path segment, so a new kind needs a new endpoint, not a generic routing rule.
+_RUN_KINDS = ("recon", "analysis", "hunting")
+
+
+def stop_run(project_id: str, run_kind: str, run_id: str) -> ApiCall:
+    if run_kind not in _RUN_KINDS:
+        raise ValueError(f"unknown run_kind: {run_kind!r}")
+    return ApiCall("POST", f"/projects/{project_id}/{run_kind}/{run_id}/stop")
+
+
 def project_graph(project_id: str) -> ApiCall:
     return ApiCall("GET", f"/projects/{project_id}/graph")
 
@@ -191,6 +202,10 @@ def project_graph(project_id: str) -> ApiCall:
 def app_state(project_id: str | None = None) -> ApiCall:
     path = "/app-state" if project_id is None else f"/app-state?project_id={project_id}"
     return ApiCall("GET", path)
+
+
+def usage(project_id: str) -> ApiCall:
+    return ApiCall("GET", f"/projects/{project_id}/usage")
 
 
 # --- response parsers ---------------------------------------------------------
@@ -222,6 +237,20 @@ def status_of(response: Mapping) -> str | None:
 
 def per_job_rows(response: Mapping) -> list:
     return (response or {}).get("per_job") or []
+
+
+def usage_total(response: Mapping) -> int:
+    """The project's cumulative token total; a malformed value reads as zero."""
+    value = (response or {}).get("total_tokens")
+    if isinstance(value, bool) or not isinstance(value, int):
+        return 0
+    return value
+
+
+def usage_by_agent(response: Mapping) -> dict:
+    """The per-agent token breakdown; an absent or malformed value reads empty."""
+    value = (response or {}).get("by_agent")
+    return dict(value) if isinstance(value, Mapping) else {}
 
 
 def recon_terminal(status: str | None) -> bool:
