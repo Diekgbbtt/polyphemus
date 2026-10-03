@@ -38,10 +38,11 @@ def _drive_turn(monkeypatch, turn_fn, **kwargs):
     seen = {}
     real_turn_config = S._turn_config
 
-    def recording_turn_config(role_id, thread_id, observe, extra_tags=None):
+    def recording_turn_config(role_id, thread_id, observe, extra_tags=None,
+                              usage_scope=None):
         seen["extra_tags"] = extra_tags
         return real_turn_config(role_id, thread_id, observe,
-                                extra_tags=extra_tags)
+                                extra_tags=extra_tags, usage_scope=usage_scope)
 
     monkeypatch.setattr(S, "_turn_config", recording_turn_config)
     saver = InMemorySaver()

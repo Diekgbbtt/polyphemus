@@ -766,6 +766,7 @@ def build_chat_model(provider: str, model: str, *, temperature: float = 0,
                                          default_headers=headers or None,
                                          callbacks=get_langfuse_callbacks(),
                                          relax_forced_tool_choice=relax_forced_tool_choice,
+                                         stream_usage=True,
                                          **extra)
 
 def validate_llm_config(roles: Sequence[Role] | None = None) -> None:

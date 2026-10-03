@@ -135,6 +135,17 @@ def test_build_chat_model_respects_llm_max_completion_tokens_override(monkeypatc
             P.max_completion_tokens()
 
 
+def test_build_chat_model_enables_stream_usage(monkeypatch):
+    """Streamed turns must report token usage: `stream_usage=True` makes the
+    client ask the provider for `stream_options.include_usage`, so the default
+    streamed session mode still lands `usage_metadata` on the reply (the usage
+    ledger's single source)."""
+    monkeypatch.delenv("LLM_GATEWAY_URL", raising=False)
+    monkeypatch.setenv("API_KEY_SWISSAI", "tok")
+    m = P.build_chat_model("swissai", "meta-llama/Llama-3.3-70B-Instruct")
+    assert m.stream_usage is True
+
+
 def test_build_chat_model_sets_base_url_and_key(monkeypatch):
     """Direct mode: the base_url is `PROVIDERS[provider]`. `LLM_GATEWAY_URL` is
     pinned UNSET so a gateway-configured shell cannot silently flip this test
