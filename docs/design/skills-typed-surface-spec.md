@@ -2,6 +2,8 @@
 
 The contract for authoring, loading, and serving product skills in polymerhus: the typed surface of the loader, the skill lifecycle, and the decisions a future skill author must respect. Supersedes `jobs-tools-skills-taxonomy.md` sections 4-5 (the `skill_for(role, job)` selection model and module-routing layout, retired when role prompts moved to module `prompts/` dirs). Companion decision record: `skill-runtime-loading-222-decisions.md`. Convention single source: `skills/README.md`.
 
+Related taxonomy: the decomposed W0 suite (`skills-unspurious/`) is governed by the variant boundary (`docs/design/skills-variant-boundary.md`) and the ontology (`docs/design/skills-ontology.md`). This spec's loader contract is flat; the nested path of that suite is the W4 extension.
+
 ## Problem Statement
 
 Two defects accumulated around product skills. First, agent ROLE PROMPTS (system prompts: the triager discipline, the crawl discipline, the hunting-agent/orchestrator prompts, the analysis proposer prompts) lived as `SKILL.md` files under `skills/`, forcing cross-module imports of a recon-owned loader and blurring "who the agent is" with "knowledge the agent loads". Second, the remaining genuine skills carried a repo-dialect frontmatter no external consumer understands, and loading them at runtime rested on convention rather than mechanism.

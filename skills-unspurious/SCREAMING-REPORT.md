@@ -2,6 +2,8 @@
 
 *Phase 2 deliverable (W0), 2026-09-28. Source copied verbatim from `/Users/diekgbbtt/purple-swan/skills` (source left untouched). One entry per source skill; every removal is quoted or precisely described ("no silent loss").*
 
+*Companion authorities: the variant boundary (`docs/design/skills-variant-boundary.md`) and the ontology (`docs/design/skills-ontology.md`).*
+
 *Correction (W0+W1 completion): this report was written before commit `fc90ad3`, which dropped all non-RDF sections (`## Validation`, `## Impact`, `## Post-Exploitation`, `## Exploitation Scenarios`, `## Framework-Specific`). The `llm-prompt-injection` `## Framework-Specific` line below originally deferred the block to a later agnosticism pass; it now records that the block was dropped in `fc90ad3`, and the current skill carries no such section.*
 
 ## 1. Source verification and the group-tree fold

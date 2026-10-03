@@ -21,7 +21,7 @@ Nothing is pushed; integration is a later human-merged PR.
 |---|---|---|---|---|---|
 | A1 | Mark the validated documents accepted | done | `COMMIT-A1` | `grep -rn 'proposed, awaiting operator review' docs/design/skills-variant-boundary.md docs/design/skills-ontology.md` | `NONE` (no stale status) |
 | A2 | Fix the stale agnosticism lines | done | `COMMIT-A2` | `grep -rn 'block stays\|left in place and flagged' skills-unspurious/; grep -rn '^## Framework-Specific' skills-unspurious/llm-prompt-injection/` | `NONE`; `NONE` (skill carries no such section) |
-| A3 | Boundary reference ubiquitous | pending | - | - | - |
+| A3 | Boundary reference ubiquitous | done | `COMMIT-A3` | `for f in <skill-concern docs>; do grep -q skills-variant-boundary.md "$f" && echo REF $f || echo MISS $f; done` | all `REF` |
 | A4 | Tracked home for the cross-stream doc | pending | - | - | - |
 | A5 | Arsenal-gaps ticket(s) | pending | - | - | - |
 | A6 | Open-item refresh | pending | - | - | - |
@@ -73,4 +73,23 @@ NONE
 ```
 
 Corrected lines (4, including the correction note): `grep -rn 'dropped with every non-RDF section in `fc90ad3`' skills-unspurious/` returns `INVENTORY.md:85`, `SCREAMING-REPORT.md` (note + batch E), `_migration/reports/batch-E.md:18`.
+
+### A3 - boundary reference ubiquitous
+
+Command: sweep every skill-concern document for `skills-variant-boundary.md`.
+
+Output (all references present):
+```
+REF   docs/design/skills-ontology.md
+REF   docs/design/skills-typed-surface-spec.md
+REF   skills-unspurious/README.md
+REF   skills-unspurious/INVENTORY.md
+REF   skills-unspurious/SCREAMING-REPORT.md
+REF   skills-unspurious/DECOMPOSITION-REPORT.md
+REF   skills-unspurious/_analysis/SPEC.md
+REF   skills-unspurious/_authoring/SPEC.md
+REF   skills-unspurious/_analysis/LEDGER.md
+REF   skills-unspurious/_authoring/LEDGER.md
+REF   docs/design/w0-w1-completion-ledger.md
+```
 

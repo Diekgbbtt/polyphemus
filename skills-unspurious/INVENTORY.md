@@ -4,6 +4,7 @@
 *Classification against the operator's discard rule: "all the skills not covering web vulnerability testing procedures, or relevant network-based bypass/proxy techniques must be discarded".*
 *Each skill was read in full before classifying; the rationale cites its own body, not its name.*
 *Borderline cases are put to the operator, never guessed (see the `BORDERLINE` table).*
+*Companion authorities: the variant boundary (`docs/design/skills-variant-boundary.md`) and the ontology (`docs/design/skills-ontology.md`).*
 
 ## Verification of the source counts and prior-art claims
 
