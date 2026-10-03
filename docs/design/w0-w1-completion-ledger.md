@@ -22,7 +22,7 @@ Nothing is pushed; integration is a later human-merged PR.
 | A1 | Mark the validated documents accepted | done | `COMMIT-A1` | `grep -rn 'proposed, awaiting operator review' docs/design/skills-variant-boundary.md docs/design/skills-ontology.md` | `NONE` (no stale status) |
 | A2 | Fix the stale agnosticism lines | done | `COMMIT-A2` | `grep -rn 'block stays\|left in place and flagged' skills-unspurious/; grep -rn '^## Framework-Specific' skills-unspurious/llm-prompt-injection/` | `NONE`; `NONE` (skill carries no such section) |
 | A3 | Boundary reference ubiquitous | done | `COMMIT-A3` | `for f in <skill-concern docs>; do grep -q skills-variant-boundary.md "$f" && echo REF $f || echo MISS $f; done` | all `REF` |
-| A4 | Tracked home for the cross-stream doc | pending | - | - | - |
+| A4 | Tracked home for the cross-stream doc | done | `COMMIT-A4` | `git ls-files docs/design/skills-system-decomposition.md; grep -rn skills-system-decomposition.md docs/design skills-unspurious` | tracked; 3 citations resolve |
 | A5 | Arsenal-gaps ticket(s) | pending | - | - | - |
 | A6 | Open-item refresh | pending | - | - | - |
 | B1 | Round-2 taxonomy map | pending | - | - | - |
@@ -91,5 +91,23 @@ REF   skills-unspurious/_authoring/SPEC.md
 REF   skills-unspurious/_analysis/LEDGER.md
 REF   skills-unspurious/_authoring/LEDGER.md
 REF   docs/design/w0-w1-completion-ledger.md
+```
+
+### A4 - tracked home for the cross-stream doc
+
+Command: `git ls-files docs/design/skills-system-decomposition.md`
+
+Output:
+```
+docs/design/skills-system-decomposition.md
+```
+
+Command: `grep -rn 'skills-system-decomposition.md' docs/design/ skills-unspurious/` (excluding the doc itself)
+
+Output (3 citations, all now resolve to a tracked path):
+```
+docs/design/skills-variant-boundary.md:144:The **RDF notions** (`docs/design/skills-system-decomposition.md`) are the skill's sections; ...
+docs/design/skills-ontology.md:13:- The **RDF notions** (the ordered skill sections) are in `docs/design/skills-system-decomposition.md`, component C2 and its provisional glossary.
+skills-unspurious/_analysis/SPEC.md:104:RDF notions (from `docs/design/skills-system-decomposition.md`): ...
 ```
 
