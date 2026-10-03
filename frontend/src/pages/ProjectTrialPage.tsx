@@ -3,6 +3,7 @@ import { evalPaths } from "../eval/EvalBreadcrumbs"
 import { useEvalData } from "../eval/EvalDataProvider"
 import { TrialProjectGraph } from "../eval/TrialProjectGraph"
 import type { EvalTrial } from "../eval/types"
+import { projectPaths } from "../projectPaths"
 
 function outcomeCounts(trial: EvalTrial): { identified: number; partial: number; missed: number } {
   const counts = { identified: 0, partial: 0, missed: 0 }
@@ -108,17 +109,43 @@ export function ProjectTrialPage() {
       />
       <section aria-label="Hunting" className="project-trial-section">
         <h2>Hunting</h2>
-        <p className="eval-status">
-          Hunting artifacts · <span className="eval-ref">{artifacts.status}</span> ·{" "}
-          {artifacts.hunting} entries
-        </p>
+        {artifacts.status === "available" ? (
+          <p className="project-artifacts-link">
+            <Link
+              to={`${projectPaths.artifacts(
+                projectId,
+                trial.target_id,
+                trial.target_run_id,
+                trial.trial_id,
+              )}#hunting`}
+            >
+              Hunting
+            </Link>{" "}
+            <span className="eval-status">{artifacts.hunting} artifacts</span>
+          </p>
+        ) : (
+          <p className="eval-status">Hunting artifacts not available ({artifacts.status}).</p>
+        )}
       </section>
       <section aria-label="Skills" className="project-trial-section">
         <h2>Skills</h2>
-        <p className="eval-status">
-          Project skills · <span className="eval-ref">{artifacts.status}</span> ·{" "}
-          {artifacts.skills} entries
-        </p>
+        {artifacts.status === "available" ? (
+          <p className="project-artifacts-link">
+            <Link
+              to={`${projectPaths.artifacts(
+                projectId,
+                trial.target_id,
+                trial.target_run_id,
+                trial.trial_id,
+              )}#skills`}
+            >
+              Skills
+            </Link>{" "}
+            <span className="eval-status">{artifacts.skills} artifacts</span>
+          </p>
+        ) : (
+          <p className="eval-status">Project skills not available ({artifacts.status}).</p>
+        )}
       </section>
     </div>
   )

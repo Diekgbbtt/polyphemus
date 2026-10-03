@@ -20,6 +20,15 @@ export const evalPaths = {
     trial_id: string,
     artifact: string,
   ) => `/eval/trials/${enc(target_id)}/${enc(target_run_id)}/${enc(trial_id)}/${artifact}`,
+  projectArtifacts: (target_id: string, target_run_id: string, trial_id: string) =>
+    `/eval/trials/${enc(target_id)}/${enc(target_run_id)}/${enc(trial_id)}/project-artifacts`,
+  projectArtifact: (
+    target_id: string,
+    target_run_id: string,
+    trial_id: string,
+    artifact_id: string,
+  ) =>
+    `/eval/trials/${enc(target_id)}/${enc(target_run_id)}/${enc(trial_id)}/project-artifacts/${enc(artifact_id)}`,
   version: (eval_sha: string, stack_fingerprint: string) =>
     `/eval/versions/${enc(eval_sha)}/${enc(stack_fingerprint)}`,
   vulnerabilities: "/eval/vulnerabilities",

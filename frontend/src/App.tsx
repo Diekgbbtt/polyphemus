@@ -5,6 +5,7 @@ import { RunsPage } from "./pages/RunsPage"
 import { ProjectEvalLayout } from "./pages/ProjectEvalLayout"
 import { ProjectEvalsPage } from "./pages/ProjectEvalsPage"
 import { ProjectTrialPage } from "./pages/ProjectTrialPage"
+import { ProjectArtifactsPage } from "./eval/ProjectArtifactsPage"
 import { EvalPage } from "./eval/EvalPage"
 import { EvalDashboard } from "./eval/EvalDashboard"
 import { DatasetPage } from "./eval/DatasetPage"
@@ -28,6 +29,11 @@ export function AppRoutes() {
           path=":targetId/:targetRunId/:trialId"
           element={<ProjectTrialPage />}
         />
+        {/* The primary, project-scoped artifact index. */}
+        <Route
+          path=":targetId/:targetRunId/:trialId/artifacts"
+          element={<ProjectArtifactsPage variant="workspace" />}
+        />
       </Route>
       {/* The eval layout holds one data provider for every child route. */}
       <Route path="/eval" element={<EvalPage />}>
@@ -35,6 +41,11 @@ export function AppRoutes() {
         <Route path="datasets/:datasetId" element={<DatasetPage />} />
         <Route path="targets/:targetId" element={<TargetPage />} />
         <Route path="trials/:targetId/:targetRunId/:trialId" element={<TrialPage />} />
+        {/* The compatibility artifact index for the eval routes. */}
+        <Route
+          path="trials/:targetId/:targetRunId/:trialId/project-artifacts"
+          element={<ProjectArtifactsPage variant="eval" />}
+        />
         {/* The four materialized artifacts, each with its own readable view. */}
         <Route
           path="trials/:targetId/:targetRunId/:trialId/manifest"

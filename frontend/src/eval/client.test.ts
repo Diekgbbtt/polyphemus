@@ -1,5 +1,11 @@
 import { afterEach, expect, test, vi } from "vitest"
-import { getSnapshot, getTrialProjectGraph } from "./client"
+import {
+  getProjectArtifact,
+  getProjectArtifacts,
+  getSnapshot,
+  getTrialProjectGraph,
+  projectArtifactContentUrl,
+} from "./client"
 
 const SNAPSHOT = {
   dataset: { id: "webexploitbench", name: "WebExploitBench" },
@@ -118,4 +124,75 @@ test("getTrialProjectGraph falls back safely for a non-JSON body", async () => {
   await expect(getTrialProjectGraph("t", "r", "trial")).rejects.toThrow(
     "/trials/t/r/trial/project-graph -> 500",
   )
+})
+
+// --- the project-artifact inventory --------------------------------------------
+
+const INVENTORY = {
+  status: "available",
+  project_id: "proj-1",
+  groups: [],
+}
+
+test("getProjectArtifacts encodes every segment and uses the eval base", async () => {
+  vi.stubEnv("VITE_EVAL_API_BASE_URL", "http://eval.test")
+  vi.stubEnv("VITE_AGENT_BASE_URL", "http://agent.test")
+  const { calls } = stubFetchDetailed(INVENTORY)
+
+  await getProjectArtifacts("t 1", "r/2", "x?y")
+
+  expect(calls).toEqual(["http://eval.test/trials/t%201/r%2F2/x%3Fy/artifacts"])
+})
+
+test("getProjectArtifact encodes the artifact id separately", async () => {
+  vi.stubEnv("VITE_EVAL_API_BASE_URL", "")
+  vi.stubEnv("VITE_AGENT_BASE_URL", "http://agent.test")
+  const { calls } = stubFetchDetailed({ entry: {}, preview: {}, content_url: "/x" })
+
+  await getProjectArtifact("t", "r", "trial", "a/b?c")
+
+  expect(calls).toEqual(["/trials/t/r/trial/artifacts/a%2Fb%3Fc"])
+})
+
+test("getProjectArtifacts and getProjectArtifact forward the AbortSignal", async () => {
+  vi.stubEnv("VITE_EVAL_API_BASE_URL", "")
+  const { inits } = stubFetchDetailed(INVENTORY)
+  const listController = new AbortController()
+  const detailController = new AbortController()
+
+  await getProjectArtifacts("t", "r", "trial", listController.signal)
+  await getProjectArtifact("t", "r", "trial", "id", detailController.signal)
+
+  expect(inits[0].signal).toBe(listController.signal)
+  expect(inits[1].signal).toBe(detailController.signal)
+})
+
+test("getProjectArtifacts rejects with the stable failure detail", async () => {
+  vi.stubEnv("VITE_EVAL_API_BASE_URL", "")
+  stubFetchDetailed({ detail: "artifact_unsafe" }, 409)
+
+  await expect(getProjectArtifacts("t", "r", "trial")).rejects.toThrow("artifact_unsafe")
+})
+
+test("getProjectArtifacts falls back safely for a non-JSON body", async () => {
+  vi.stubEnv("VITE_EVAL_API_BASE_URL", "")
+  stubFetchDetailed("<html>nope</html>", 500)
+
+  await expect(getProjectArtifacts("t", "r", "trial")).rejects.toThrow(
+    "/trials/t/r/trial/artifacts -> 500",
+  )
+})
+
+test("projectArtifactContentUrl is exact and performs no fetch", () => {
+  vi.stubEnv("VITE_EVAL_API_BASE_URL", "http://eval.test")
+  let fetched = false
+  globalThis.fetch = (() => {
+    fetched = true
+    return Promise.resolve(new Response("{}"))
+  }) as typeof fetch
+
+  const url = projectArtifactContentUrl("t 1", "r/2", "x?y", "a/b")
+
+  expect(url).toBe("http://eval.test/trials/t%201/r%2F2/x%3Fy/artifacts/a%2Fb/content")
+  expect(fetched).toBe(false)
 })

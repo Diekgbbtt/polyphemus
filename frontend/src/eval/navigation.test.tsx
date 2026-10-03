@@ -813,3 +813,43 @@ test("the eval Trial shows no project link when project_id is null", async () =>
   )
   expect(screen.queryByRole("link", { name: "Open project workspace" })).toBeNull()
 })
+
+// --- the project-artifact entry points ------------------------------------------
+
+test("the workspace Trial links Hunting and Skills to the artifact index", async () => {
+  stubFetch(SNAPSHOT)
+  goto("/p/proj-comfyui-1/evals/comfyui-1/run-demo-a/trial-1")
+
+  await waitFor(() =>
+    expect(screen.getByRole("link", { name: "Hunting" })).toBeDefined(),
+  )
+  expect(screen.getByRole("link", { name: "Hunting" }).getAttribute("href")).toBe(
+    "/p/proj-comfyui-1/evals/comfyui-1/run-demo-a/trial-1/artifacts#hunting",
+  )
+  expect(screen.getByRole("link", { name: "Skills" }).getAttribute("href")).toBe(
+    "/p/proj-comfyui-1/evals/comfyui-1/run-demo-a/trial-1/artifacts#skills",
+  )
+})
+
+test("the eval Trial links its project artifacts summary", async () => {
+  stubFetch(SNAPSHOT)
+  goto("/eval/trials/comfyui-1/run-demo-a/trial-1")
+
+  await waitFor(() =>
+    expect(screen.getByRole("link", { name: /hunting/i })).toBeDefined(),
+  )
+  expect(screen.getByRole("link", { name: /hunting/i }).getAttribute("href")).toBe(
+    "/eval/trials/comfyui-1/run-demo-a/trial-1/project-artifacts",
+  )
+})
+
+test("an unavailable eval-Trial summary shows a notice without a broken link", async () => {
+  stubFetch(SNAPSHOT)
+  // The degraded trial has no published project snapshot.
+  goto("/eval/trials/white-jotter-1/run-demo-a/trial-1")
+
+  await waitFor(() =>
+    expect(screen.getByText(/project artifacts not available/i)).toBeDefined(),
+  )
+  expect(screen.queryByRole("link", { name: /hunting/i })).toBeNull()
+})

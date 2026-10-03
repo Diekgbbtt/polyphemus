@@ -86,6 +86,28 @@ export function TrialPage() {
         </section>
       )}
 
+      <section aria-label="Project artifacts" className="eval-artifacts-summary">
+        <h2>Project artifacts</h2>
+        {trial.artifact_summary.status === "available" ? (
+          <p>
+            <Link
+              to={evalPaths.projectArtifacts(
+                trial.target_id,
+                trial.target_run_id,
+                trial.trial_id,
+              )}
+            >
+              {trial.artifact_summary.hunting} hunting · {trial.artifact_summary.skills} skills
+            </Link>
+          </p>
+        ) : (
+          <p className="eval-notice">
+            Project artifacts not available for this Trial (
+            <span className="eval-ref">{trial.artifact_summary.status}</span>).
+          </p>
+        )}
+      </section>
+
       <section aria-label="Artifacts">
         <h2>Materialized artifacts</h2>
         <ul className="eval-artifacts">

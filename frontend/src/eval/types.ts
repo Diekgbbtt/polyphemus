@@ -113,6 +113,63 @@ export interface HistoricalProjectGraph {
   graph: GraphData
 }
 
+export type ProjectArtifactCategory = "hunting" | "skill"
+
+export type ProjectArtifactKind =
+  | "hunt_config"
+  | "test_spec"
+  | "pod_variant"
+  | "experiment_log"
+  | "pod_export"
+  | "skill_procedure"
+  | "skill_reference"
+  | "skill_script"
+  | "skill_asset"
+
+export type ProjectArtifactRepresentation = "yaml" | "markdown" | "text" | "binary"
+
+// One inventory entry, exactly as the manifest carries it. No host path and no
+// source handle ever appears here.
+export interface ProjectArtifactEntry {
+  artifact_id: string
+  category: ProjectArtifactCategory
+  kind: ProjectArtifactKind
+  relative_path: string
+  media_type: string
+  size_bytes: number
+  sha256: string
+  representation: ProjectArtifactRepresentation
+}
+
+export interface ProjectArtifactGroup {
+  key: string
+  label: string
+  category: ProjectArtifactCategory
+  entries: ProjectArtifactEntry[]
+  children: ProjectArtifactGroup[]
+}
+
+export interface ProjectArtifactInventory {
+  status: "available"
+  project_id: string
+  groups: ProjectArtifactGroup[]
+}
+
+// `parsed` is whatever JSON-safe value the API decoded (object, array, scalar
+// or null): never a filesystem handle.
+export interface ProjectArtifactPreview {
+  text: string | null
+  parsed: unknown
+  truncated: boolean
+  parse_error: string | null
+}
+
+export interface ProjectArtifactDetail {
+  entry: ProjectArtifactEntry
+  preview: ProjectArtifactPreview
+  content_url: string
+}
+
 export interface EvalTrial {
   target_id: string
   target_run_id: string
