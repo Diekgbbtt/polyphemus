@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
 from .projection import DEFAULT_DATASET_ID, DEFAULT_DATASET_NAME, build_snapshot
+from .project_graph import HistoricalProjectGraphError, read_project_graph
 
 ENV_STORE = "EVAL_ARTIFACT_STORE"
 ENV_DATASET_ID = "EVAL_DATASET_ID"
@@ -49,6 +50,11 @@ class SnapshotSource(Protocol):
     def snapshot(self) -> dict[str, Any]:
         """The eval snapshot (the `/snapshot` JSON body)."""
 
+    def get_project_graph(
+        self, target_id: str, target_run_id: str, trial_id: str
+    ) -> dict[str, Any]:
+        """The historical project graph for one fully-identified Trial."""
+
     def health(self) -> SourceHealth:
         """The source's own health."""
 
@@ -72,6 +78,13 @@ class ArtifactStoreSnapshotSource:
         return build_snapshot(
             self.store, dataset_id=self.dataset_id, dataset_name=self.dataset_name
         )
+
+    def get_project_graph(
+        self, target_id: str, target_run_id: str, trial_id: str
+    ) -> dict[str, Any]:
+        if not self.store:
+            raise SnapshotSourceUnavailable(f"{ENV_STORE} is not configured")
+        return read_project_graph(self.store, target_id, target_run_id, trial_id)
 
     def health(self) -> SourceHealth:
         configured = bool(self.store)

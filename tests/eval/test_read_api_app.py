@@ -133,7 +133,10 @@ def test_dataset_is_configurable(
     assert body["dataset"] == {"id": "custom-set", "name": "Custom Set"}
 
 
-@pytest.mark.parametrize("path", ["/snapshot", "/health"])
+@pytest.mark.parametrize(
+    "path",
+    ["/snapshot", "/health", "/trials/jetlinks-1/run-a/t1/project-graph"],
+)
 @pytest.mark.parametrize("method", ["post", "put", "patch", "delete"])
 def test_read_endpoints_reject_mutation(
     client: TestClient, path: str, method: str
@@ -142,10 +145,14 @@ def test_read_endpoints_reject_mutation(
     assert res.status_code == 405
 
 
-def test_only_get_snapshot_and_health_are_exposed() -> None:
+def test_only_get_routes_are_exposed() -> None:
     exposed = {(route.path, tuple(sorted(route.methods))) for route in app_module.app.routes}
 
-    assert exposed == {("/snapshot", ("GET",)), ("/health", ("GET",))}
+    assert exposed == {
+        ("/snapshot", ("GET",)),
+        ("/health", ("GET",)),
+        ("/trials/{target_id}/{target_run_id}/{trial_id}/project-graph", ("GET",)),
+    }
 
 
 # --- the source seam -----------------------------------------------------------
