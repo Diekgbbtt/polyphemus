@@ -44,9 +44,10 @@ _SKILL_SUPPORT_DIRS = (
     ("assets", KIND_SKILL_ASSET),
 )
 
-# Dynamic segments (`<fault_key>`, `<spec_id>`, `<skill_name>`) and the
-# project id must each be one path-safe segment.
+# The project id must be one path-safe segment.
 _SAFE_SEGMENT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+# Characters that can change the meaning of a path segment: separators and NUL.
+_PATH_SEPARATORS = ("/", "\\", "\x00")
 
 _DEFAULT_MEDIA = ("application/octet-stream", "binary")
 # Explicit extension -> (media type, representation), before the fallback.
@@ -270,6 +271,23 @@ def _require_safe_segment(segment: str, *, where: str) -> str:
     return segment
 
 
+def _require_safe_dynamic_segment(segment: str, *, where: str) -> str:
+    """A path-safe single segment for `<fault_key>`, `<spec_id>`, `<skill_name>`.
+
+    Domain identifiers may carry punctuation (`fault:http:request`,
+    `fault::auth`, `spec:variant`, `skill:name`), so this validates path safety
+    instead of a restrictive character allowlist: no empty/`.`/`..`, no path
+    separators or NUL, and no control characters.
+    """
+    if not isinstance(segment, str) or not segment or segment in (".", ".."):
+        raise ProjectArtifactError(f"unsafe {where}", failure="artifact_unsafe")
+    if any(char in segment for char in _PATH_SEPARATORS):
+        raise ProjectArtifactError(f"unsafe {where}", failure="artifact_unsafe")
+    if any(ord(char) < 32 or ord(char) == 127 for char in segment):
+        raise ProjectArtifactError(f"unsafe {where}", failure="artifact_unsafe")
+    return segment
+
+
 # --- traversal ----------------------------------------------------------------
 
 
@@ -342,7 +360,7 @@ def _child_dirs(
                 failure="artifact_unsafe",
             )
         if files.is_dir(entry):
-            _require_safe_segment(entry.name, where=where)
+            _require_safe_dynamic_segment(entry.name, where=where)
             found.append(entry)
     return found
 
@@ -442,7 +460,7 @@ def _collect_skills(
             )
         if not files.is_dir(skill_dir):
             continue
-        _require_safe_segment(skill_dir.name, where="skill_name")
+        _require_safe_dynamic_segment(skill_dir.name, where="skill_name")
         skill_md = skill_dir / "SKILL.md"
         if files.is_symlink(skill_md):
             raise ProjectArtifactError(

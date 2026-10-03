@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 
+from orchestrator import project_artifacts
 from orchestrator.files import FileStore
 from orchestrator.project_artifacts import (
     ProjectArtifact,
@@ -164,6 +165,44 @@ def test_excludes_neighboring_project_files(tmp_path: Path) -> None:
     assert "skills/authn/references/notes.txt" in relative
 
 
+def test_accepts_domain_punctuation_in_dynamic_segments(tmp_path: Path) -> None:
+    project = tmp_path / PROJECT_ID
+    _write(
+        project,
+        "hunting/hunter/test-specs/fault:http:request/produced/a.yaml",
+        "a: 1\n",
+    )
+    _write(project, "hunting/hunter/test-specs/fault::auth/consumed/b.yaml", "b: 1\n")
+    _write(project, "hunting/test-executor-pod/spec:variant/variants/v.yaml", "v: 1\n")
+    _write(project, "hunting/test-executor-pod/spec:variant/export.yaml", "e: 1\n")
+    _write(project, "skills/skill:name/SKILL.md", "# skill\n")
+    _write(project, "skills/skill:name/scripts/run:me.sh", "echo run\n")
+
+    artifacts = collect_project_artifacts(tmp_path, PROJECT_ID, files=FileStore())
+
+    expected = sorted(
+        [
+            "hunting/hunter/test-specs/fault:http:request/produced/a.yaml",
+            "hunting/hunter/test-specs/fault::auth/consumed/b.yaml",
+            "hunting/test-executor-pod/spec:variant/export.yaml",
+            "hunting/test-executor-pod/spec:variant/variants/v.yaml",
+            "skills/skill:name/SKILL.md",
+            "skills/skill:name/scripts/run:me.sh",
+        ]
+    )
+    assert [a.relative_path for a in artifacts] == expected
+
+    kinds = {a.relative_path: a.kind for a in artifacts}
+    assert kinds["hunting/hunter/test-specs/fault:http:request/produced/a.yaml"] == "test_spec"
+    assert kinds["hunting/hunter/test-specs/fault::auth/consumed/b.yaml"] == "test_spec"
+    assert kinds["hunting/test-executor-pod/spec:variant/variants/v.yaml"] == "pod_variant"
+    assert kinds["hunting/test-executor-pod/spec:variant/export.yaml"] == "pod_export"
+    assert kinds["skills/skill:name/SKILL.md"] == "skill_procedure"
+    assert kinds["skills/skill:name/scripts/run:me.sh"] == "skill_script"
+    for artifact in artifacts:
+        assert artifact.artifact_id == hashlib.sha256(artifact.relative_path.encode()).hexdigest()
+
+
 def test_missing_optional_directories_are_empty(tmp_path: Path) -> None:
     files = FileStore()
 
@@ -202,19 +241,42 @@ def test_rejects_unsafe_project_and_dynamic_segments(tmp_path: Path) -> None:
     _build_full_project(tmp_path)
     files = FileStore()
 
-    for bad_project in ("..", "../evil", "a/b", "", "/abs", "nested/..", ".hidden"):
+    for bad_project in (
+        ".",
+        "..",
+        "../evil",
+        "a/b",
+        "",
+        "/abs",
+        "nested/..",
+        ".hidden",
+        "back\\slash",
+        "nul\x00id",
+        "ctrl\x01id",
+    ):
         with pytest.raises(ProjectArtifactError) as excinfo:
             collect_project_artifacts(tmp_path, bad_project, files=files)
         assert excinfo.value.failure == "artifact_unsafe"
         assert str(tmp_path) not in str(excinfo.value)
 
-    unsafe_skill = tmp_path / PROJECT_ID / "skills" / "bad name"
-    unsafe_skill.mkdir(parents=True)
-    (unsafe_skill / "SKILL.md").write_text("# bad\n", encoding="utf-8")
-    with pytest.raises(ProjectArtifactError) as excinfo:
-        collect_project_artifacts(tmp_path, PROJECT_ID, files=files)
-    assert excinfo.value.failure == "artifact_unsafe"
-    assert str(tmp_path) not in str(excinfo.value)
+    # Everything that is not a safe single path segment is rejected for the
+    # dynamic families too (fault key, spec id, skill name).
+    for bad_segment in (".", "..", "a/b", "back\\slash", "nul\x00id", "ctrl\x01id"):
+        with pytest.raises(ProjectArtifactError) as excinfo:
+            project_artifacts._require_safe_dynamic_segment(bad_segment, where="skill_name")
+        assert excinfo.value.failure == "artifact_unsafe"
+
+    # End to end, through a real (creatable) unsafe directory name.
+    for bad_name in ("back\\slash", "ctrl\x01name"):
+        unsafe_skill = tmp_path / PROJECT_ID / "skills" / bad_name
+        unsafe_skill.mkdir(parents=True)
+        (unsafe_skill / "SKILL.md").write_text("# bad\n", encoding="utf-8")
+        with pytest.raises(ProjectArtifactError) as excinfo:
+            collect_project_artifacts(tmp_path, PROJECT_ID, files=files)
+        assert excinfo.value.failure == "artifact_unsafe"
+        assert str(tmp_path) not in str(excinfo.value)
+        (unsafe_skill / "SKILL.md").unlink()
+        unsafe_skill.rmdir()
 
 
 def test_rejects_special_or_escaped_files(tmp_path: Path) -> None:
