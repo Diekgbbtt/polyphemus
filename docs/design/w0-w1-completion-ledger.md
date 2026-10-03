@@ -20,7 +20,7 @@ Nothing is pushed; integration is a later human-merged PR.
 | ID | Task | Status | Commit | Verification command | Observed output |
 |---|---|---|---|---|---|
 | A1 | Mark the validated documents accepted | done | `COMMIT-A1` | `grep -rn 'proposed, awaiting operator review' docs/design/skills-variant-boundary.md docs/design/skills-ontology.md` | `NONE` (no stale status) |
-| A2 | Fix the stale agnosticism lines | pending | - | - | - |
+| A2 | Fix the stale agnosticism lines | done | `COMMIT-A2` | `grep -rn 'block stays\|left in place and flagged' skills-unspurious/; grep -rn '^## Framework-Specific' skills-unspurious/llm-prompt-injection/` | `NONE`; `NONE` (skill carries no such section) |
 | A3 | Boundary reference ubiquitous | pending | - | - | - |
 | A4 | Tracked home for the cross-stream doc | pending | - | - | - |
 | A5 | Arsenal-gaps ticket(s) | pending | - | - | - |
@@ -55,4 +55,22 @@ docs/design/skills-ontology.md:3:*Status: validated by the operator in session `
 skills-unspurious/_analysis/LEDGER.md:7:*The operator validated the boundary and all 29 analyses in session `ses_f181eb14bffei9Y8v5O30nGDjG` (2026-09-28); the boundary status line now records that validation.*
 skills-unspurious/_authoring/LEDGER.md:9:*The authoring contract is the operator-validated ontology ...
 ```
+
+### A2 - stale agnosticism lines
+
+Command: `grep -rn 'block stays\|left in place and flagged' skills-unspurious/`
+
+Output:
+```
+NONE
+```
+
+Command: `grep -rn '^## Framework-Specific' skills-unspurious/llm-prompt-injection/`
+
+Output:
+```
+NONE
+```
+
+Corrected lines (4, including the correction note): `grep -rn 'dropped with every non-RDF section in `fc90ad3`' skills-unspurious/` returns `INVENTORY.md:85`, `SCREAMING-REPORT.md` (note + batch E), `_migration/reports/batch-E.md:18`.
 

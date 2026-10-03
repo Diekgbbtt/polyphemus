@@ -2,6 +2,8 @@
 
 *Phase 2 deliverable (W0), 2026-09-28. Source copied verbatim from `/Users/diekgbbtt/purple-swan/skills` (source left untouched). One entry per source skill; every removal is quoted or precisely described ("no silent loss").*
 
+*Correction (W0+W1 completion): this report was written before commit `fc90ad3`, which dropped all non-RDF sections (`## Validation`, `## Impact`, `## Post-Exploitation`, `## Exploitation Scenarios`, `## Framework-Specific`). The `llm-prompt-injection` `## Framework-Specific` line below originally deferred the block to a later agnosticism pass; it now records that the block was dropped in `fc90ad3`, and the current skill carries no such section.*
+
 ## 1. Source verification and the group-tree fold
 
 - 50 skill directories with `SKILL.md`; 7 group directories (`cloud`, `frameworks`, `protocols`, `reconnaissance`, `technologies`, `tooling`, `vulnerabilities`); `reconnaissance/` empty but for `.gitkeep`.
@@ -21,7 +23,7 @@
 |---|---|---|
 | `oauth` | KEEP | De-spuriated: source tooling removed. |
 | `subdomain-takeover` | KEEP | De-spuriated: `Special Contexts` folded, absent tool swapped. |
-| `llm-prompt-injection` | KEEP | De-spuriated: high-value targets extracted; framework-specific block flagged for the agnosticism pass. |
+| `llm-prompt-injection` | KEEP | De-spuriated: high-value targets extracted; the framework-specific block was later dropped with every non-RDF section in `fc90ad3`. |
 | `cve-exploitation` | DISCARD | Product-specific version-to-CVE workflow, not a vulnerability class. |
 | `low-hanging-fruit` | DISCARD (content extracted) | Its CORS, CSP, WAF-bypass, header, and enumeration material was extracted to `_migration/bypass-proxy-techniques/low-hanging-fruit.md` for projection into the proxy/bypass-technique notions; its per-target severity table and finding workflow were not bypass content and were dropped. |
 
@@ -296,7 +298,7 @@ Also absent from the arsenal but referenced only in DISCARDED skills: `semgrep`,
 - **Arsenal:** no absent tools named and no command lines changed.
 - **Special contexts:** none present.
 - **High-value targets:** extracted verbatim to _migration/high-value-targets/llm-prompt-injection.md and removed from the body.
-- **Other removals:** none, but the `## Framework-Specific` section (LangChain/OpenAI/LlamaIndex/NeMo) is technology-stack-specific material left in place and flagged for the variant/agnosticism pass.
+- **Other removals:** none at de-spuriation time; the `## Framework-Specific` section (LangChain/OpenAI/LlamaIndex/NeMo) was still present here, and was then dropped with every non-RDF section in `fc90ad3` (correction: the current skill carries no such section).
 - **Arsenal gaps:** none.
 
 ## two-principal-authz

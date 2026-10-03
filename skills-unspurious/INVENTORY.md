@@ -82,7 +82,7 @@
 | Skill | Ruling | Rationale and action |
 |---|---|---|
 | `cve-exploitation` | DISCARD | Product-specific version-to-CVE workflow, not a vulnerability class. Deleted. |
-| `llm-prompt-injection` | KEEP | An emerging web vulnerability class; de-spuriated and its high-value targets extracted. Its `## Framework-Specific` block stays, flagged for the agnosticism pass. |
+| `llm-prompt-injection` | KEEP | An emerging web vulnerability class; de-spuriated and its high-value targets extracted. Its `## Framework-Specific` block was later dropped with every non-RDF section in `fc90ad3`; the current skill carries no such section. |
 | `low-hanging-fruit` | DISCARD (content extracted) | Per-target hygiene checklist, not a vulnerability-class procedure. Its CORS/CSP/WAF-bypass/header/enumeration material was extracted to `_migration/bypass-proxy-techniques/low-hanging-fruit.md` for projection into the proxy/bypass-technique notions; the severity table and finding workflow were dropped. |
 | `oauth` | KEEP | Genuine web vulnerability class; source tooling (`jwt_tool`, Burp EsPReSSO) removed and adapted to `python3`/`curl`. |
 | `subdomain-takeover` | KEEP | Genuine web vulnerability class; `Special Contexts` folded and the absent `nuclei` swapped for `httpx`. |

@@ -15,7 +15,7 @@
 - **Arsenal:** no absent tools named and no command lines changed.
 - **Special contexts:** none present.
 - **High-value targets:** extracted verbatim to _migration/high-value-targets/llm-prompt-injection.md and removed from the body.
-- **Other removals:** none, but the `## Framework-Specific` section (LangChain/OpenAI/LlamaIndex/NeMo) is technology-stack-specific material left in place and flagged for the variant/agnosticism pass.
+- **Other removals:** none at de-spuriation time; the `## Framework-Specific` section (LangChain/OpenAI/LlamaIndex/NeMo) was still present here, and was then dropped with every non-RDF section in `fc90ad3` (correction: the current skill carries no such section).
 - **Arsenal gaps:** none.
 
 ## two-principal-authz
