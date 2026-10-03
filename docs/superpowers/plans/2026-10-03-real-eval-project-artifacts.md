@@ -518,6 +518,10 @@ Tests to write: Route/contract tests plus every named boundary and adversarial c
 
 ### Task 7: Unified project hub and completed-Trial navigation
 
+**Implementation state:** Complete in `78932131`; independently verified with
+55 focused frontend tests, the complete 73-test frontend suite, and the
+production build passing.
+
 **Files:**
 - Create: `frontend/src/projectPaths.ts`
 - Create: `frontend/src/pages/ProjectNav.tsx`
@@ -536,45 +540,45 @@ Tests to write: Route/contract tests plus every named boundary and adversarial c
 - Produces: URL-encoding `projectPaths.live`, `projectPaths.runs`, `projectPaths.evals`, `projectPaths.trial`, `projectPaths.artifacts`, and `projectPaths.artifact`; routes `/p/:projectId`, `/p/:projectId/runs`, `/p/:projectId/evals`, and `/p/:projectId/evals/:targetId/:targetRunId/:trialId`.
 - `ProjectEvalLayout` owns one `EvalDataProvider` for its child routes; `ProjectEvalsPage` filters by exact `project_id`; `ProjectTrialPage` rejects a route/project mismatch instead of displaying another project's Trial.
 
-- [ ] **Step 1: Write failing route-helper and project-filter tests**
+- [x] **Step 1: Write failing route-helper and project-filter tests**
 
 Assert every path segment is URL-encoded, one project's list excludes all
 other Trials, ordering uses newest `project_graph_summary.captured_at` then
 `copied_at` with stable full-identity tie-breakers, and duplicate `trial_id`
 values under different target tuples remain distinct links.
 
-- [ ] **Step 2: Run the focused tests and observe missing hub routes**
+- [x] **Step 2: Run the focused tests and observe missing hub routes**
 
 Run: `cd frontend && npm test -- src/pages/ProjectEvalsPage.test.tsx src/eval/navigation.test.tsx`
 
 Expected: FAIL because project eval paths/pages do not exist.
 
-- [ ] **Step 3: Implement shared project navigation and eval layout**
+- [x] **Step 3: Implement shared project navigation and eval layout**
 
 Add accessible Graph, Runs, and Eval Trials links to the existing live pages.
 Mount one `EvalDataProvider` around the `/p/:projectId/evals` subtree with the
 same loading/error behavior as the eval shell, without adding project data to
 the eval snapshot or issuing duplicate snapshot requests per child route.
 
-- [ ] **Step 4: Implement project Trial list and workspace shell**
+- [x] **Step 4: Implement project Trial list and workspace shell**
 
 Render only completed materialized Trials matching the route project. The
 workspace shows identity, eval outcome, project snapshot availability, links
 to the existing `/eval/...` Trial, and reserved Graph / Hunting / Skills
 sections for Tasks 8-10. A mismatched or unknown tuple gets a not-found state.
 
-- [ ] **Step 5: Add reciprocal navigation from the eval Trial page**
+- [x] **Step 5: Add reciprocal navigation from the eval Trial page**
 
 When `project_id` exists, link to the full project Trial route. Preserve every
 existing `/eval/...` route and breadcrumb; do not redirect old deep links.
 
-- [ ] **Step 6: Run hub/navigation tests and the frontend build**
+- [x] **Step 6: Run hub/navigation tests and the frontend build**
 
 Run: `cd frontend && npm test -- src/pages/ProjectEvalsPage.test.tsx src/eval/navigation.test.tsx src/eval/EvalPage.test.tsx && npm run build`
 
 Expected: all tests PASS and the build exits 0.
 
-- [ ] **Step 7: Commit the unified hub**
+- [x] **Step 7: Commit the unified hub**
 
 ```bash
 git add frontend/src/projectPaths.ts frontend/src/pages/ProjectNav.tsx frontend/src/pages/ProjectEvalLayout.tsx frontend/src/pages/ProjectEvalsPage.tsx frontend/src/pages/ProjectTrialPage.tsx frontend/src/pages/ProjectEvalsPage.test.tsx frontend/src/pages/GraphPage.tsx frontend/src/pages/RunsPage.tsx frontend/src/eval/TrialPage.tsx frontend/src/App.tsx frontend/src/eval/eval.css
