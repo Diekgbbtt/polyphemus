@@ -16,6 +16,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
+from .artifacts import (
+    ArtifactDownload,
+    ArtifactLookupError,
+    get_artifact,
+    list_artifacts,
+    stream_artifact,
+)
 from .projection import DEFAULT_DATASET_ID, DEFAULT_DATASET_NAME, build_snapshot
 from .project_graph import HistoricalProjectGraphError, read_project_graph
 
@@ -55,6 +62,21 @@ class SnapshotSource(Protocol):
     ) -> dict[str, Any]:
         """The historical project graph for one fully-identified Trial."""
 
+    def list_artifacts(
+        self, target_id: str, target_run_id: str, trial_id: str
+    ) -> dict[str, Any]:
+        """The grouped artifact inventory for one fully-identified Trial."""
+
+    def get_artifact(
+        self, target_id: str, target_run_id: str, trial_id: str, artifact_id: str
+    ) -> dict[str, Any]:
+        """Metadata plus one safe representation for one inventory artifact id."""
+
+    def stream_artifact(
+        self, target_id: str, target_run_id: str, trial_id: str, artifact_id: str
+    ) -> ArtifactDownload:
+        """A bounded chunk iterator over one artifact's re-verified raw bytes."""
+
     def health(self) -> SourceHealth:
         """The source's own health."""
 
@@ -85,6 +107,27 @@ class ArtifactStoreSnapshotSource:
         if not self.store:
             raise SnapshotSourceUnavailable(f"{ENV_STORE} is not configured")
         return read_project_graph(self.store, target_id, target_run_id, trial_id)
+
+    def list_artifacts(
+        self, target_id: str, target_run_id: str, trial_id: str
+    ) -> dict[str, Any]:
+        if not self.store:
+            raise SnapshotSourceUnavailable(f"{ENV_STORE} is not configured")
+        return list_artifacts(self.store, target_id, target_run_id, trial_id)
+
+    def get_artifact(
+        self, target_id: str, target_run_id: str, trial_id: str, artifact_id: str
+    ) -> dict[str, Any]:
+        if not self.store:
+            raise SnapshotSourceUnavailable(f"{ENV_STORE} is not configured")
+        return get_artifact(self.store, target_id, target_run_id, trial_id, artifact_id)
+
+    def stream_artifact(
+        self, target_id: str, target_run_id: str, trial_id: str, artifact_id: str
+    ) -> ArtifactDownload:
+        if not self.store:
+            raise SnapshotSourceUnavailable(f"{ENV_STORE} is not configured")
+        return stream_artifact(self.store, target_id, target_run_id, trial_id, artifact_id)
 
     def health(self) -> SourceHealth:
         configured = bool(self.store)

@@ -135,7 +135,14 @@ def test_dataset_is_configurable(
 
 @pytest.mark.parametrize(
     "path",
-    ["/snapshot", "/health", "/trials/jetlinks-1/run-a/t1/project-graph"],
+    [
+        "/snapshot",
+        "/health",
+        "/trials/jetlinks-1/run-a/t1/project-graph",
+        "/trials/jetlinks-1/run-a/t1/artifacts",
+        "/trials/jetlinks-1/run-a/t1/artifacts/" + "0" * 64,
+        "/trials/jetlinks-1/run-a/t1/artifacts/" + "0" * 64 + "/content",
+    ],
 )
 @pytest.mark.parametrize("method", ["post", "put", "patch", "delete"])
 def test_read_endpoints_reject_mutation(
@@ -152,6 +159,15 @@ def test_only_get_routes_are_exposed() -> None:
         ("/snapshot", ("GET",)),
         ("/health", ("GET",)),
         ("/trials/{target_id}/{target_run_id}/{trial_id}/project-graph", ("GET",)),
+        ("/trials/{target_id}/{target_run_id}/{trial_id}/artifacts", ("GET",)),
+        (
+            "/trials/{target_id}/{target_run_id}/{trial_id}/artifacts/{artifact_id}",
+            ("GET",),
+        ),
+        (
+            "/trials/{target_id}/{target_run_id}/{trial_id}/artifacts/{artifact_id}/content",
+            ("GET",),
+        ),
     }
 
 
