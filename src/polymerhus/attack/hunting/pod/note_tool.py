@@ -62,10 +62,16 @@ class NoteToolSpec(BaseModel):
 
     operation: str = "write"
     # write (order/kind required on a write; None on a read = no filter):
-    order: int | None = None
-    note_name: str = ""
-    kind: str | None = None
-    body: str = ""
+    order: int | None = Field(
+        default=None, description="The variant ordinal; required on a write.")
+    note_name: str = Field(
+        default="", description="The note's name; ignored on a read.")
+    kind: str | None = Field(
+        default=None,
+        description="The note kind; required on a write (defaults to "
+                    "freeform).")
+    body: str = Field(
+        default="", description="The note body; required on a write.")
     classification: str | None = None
     symptom_status: str | None = None
     kb_primitives_used: list[str] = Field(default_factory=list)

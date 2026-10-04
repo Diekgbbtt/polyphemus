@@ -313,9 +313,9 @@ def _tool_store(tmp_path):
 def test_C16_hunts_store_write_create(tmp_path):
     _, tool, _ = _tool_store(tmp_path)
     out = json.loads(tool.invoke({
-        "command": "write", "mode": "create",
-        "fault_keyword": "f1", "strategy_keyword": "probe",
-        "spec": _fault("F1", status="hypothesised"),
+        "command": "write",
+        "spec": {**_fault("F1", status="hypothesised"),
+                 "fault_keyword": "f1", "strategy_keyword": "probe"},
     }))
     assert out["ok"] is True
     assert out["status"] == "hypothesised"
@@ -326,9 +326,9 @@ def test_C16_hunts_store_write_create(tmp_path):
 def test_C17_duplicate_create_denoted_signal(tmp_path):
     _, tool, _ = _tool_store(tmp_path)
     write = {
-        "command": "write", "mode": "create",
-        "fault_keyword": "f1", "strategy_keyword": "probe",
-        "spec": _fault("F1", status="hypothesised"),
+        "command": "write",
+        "spec": {**_fault("F1", status="hypothesised"),
+                 "fault_keyword": "f1", "strategy_keyword": "probe"},
     }
     assert json.loads(tool.invoke(write))["ok"] is True
     out = json.loads(tool.invoke(write))
@@ -340,17 +340,17 @@ def test_C17_duplicate_create_denoted_signal(tmp_path):
 def test_C18_hunts_store_invalid_args(tmp_path):
     _, tool, _ = _tool_store(tmp_path)
     out = json.loads(tool.invoke({
-        "command": "write", "mode": "create",
-        "fault_keyword": "", "strategy_keyword": "",
-        "spec": _fault("F1", status="hypothesised"),
+        "command": "write",
+        "spec": {**_fault("F1", status="hypothesised"),
+                 "fault_keyword": "", "strategy_keyword": ""},
     }))
-    assert out["ok"] is False and out["error"] == "invalid_args"
+    assert out["ok"] is False and out["error"] == "hunts_store_write_rejected"
     out = json.loads(tool.invoke({
-        "command": "write", "mode": "create",
-        "fault_keyword": "f1", "strategy_keyword": "probe",
-        "spec": {"fault_id": "F1", "status": "open"},
+        "command": "write",
+        "spec": {"fault_id": "F1", "status": "open",
+                 "fault_keyword": "f1", "strategy_keyword": "probe"},
     }))
-    assert out["ok"] is False and out["error"] == "invalid_args"
+    assert out["ok"] is False and out["error"] == "hunts_store_write_rejected"
     # a read needs no key: it is bound to the hunt's own config (#298)
     out = json.loads(tool.invoke({"command": "read"}))
     assert out["specs"] == [] and "error" not in out
@@ -359,9 +359,9 @@ def test_C18_hunts_store_invalid_args(tmp_path):
 def test_C19_tool_read_filters_produce_projection(tmp_path):
     _, tool, _ = _tool_store(tmp_path)
     tool.invoke({
-        "command": "write", "mode": "create",
-        "fault_keyword": "f1", "strategy_keyword": "probe",
-        "spec": _spec("F1", "S1", status="specified"),
+        "command": "write",
+        "spec": {**_spec("F1", "S1", status="specified"),
+                 "fault_keyword": "f1", "strategy_keyword": "probe"},
     })
     out = json.loads(tool.invoke({
         "command": "read",
@@ -388,9 +388,9 @@ def test_C21_absent_store_degrades_fail_open(tmp_path):
     store_tool = HuntsStoreTool(store=None, project_id=PROJECT, fault_key=FAULT_KEY)
     notes_tool = NotesTool(store=None, project_id=PROJECT, fault_key=FAULT_KEY)
     out = json.loads(store_tool.invoke({
-        "command": "write", "mode": "create",
-        "fault_keyword": "f1", "strategy_keyword": "probe",
-        "spec": _fault("F1", status="hypothesised"),
+        "command": "write",
+        "spec": {**_fault("F1", status="hypothesised"),
+                 "fault_keyword": "f1", "strategy_keyword": "probe"},
     }))
     assert out["error"] == "store_unavailable" and out["degraded"] is True
     out = json.loads(notes_tool.invoke({
@@ -403,9 +403,9 @@ def test_C21_absent_store_degrades_fail_open(tmp_path):
 def test_C22_read_failure_degrades_to_empty_set(tmp_path):
     _, tool, _ = _tool_store(tmp_path)
     tool.invoke({
-        "command": "write", "mode": "create",
-        "fault_keyword": "f1", "strategy_keyword": "probe",
-        "spec": _fault("F1", status="hypothesised"),
+        "command": "write",
+        "spec": {**_fault("F1", status="hypothesised"),
+                 "fault_keyword": "f1", "strategy_keyword": "probe"},
     })
     f = tmp_path / PROJECT / "hunting" / "hunter" / "test-specs" / FAULT_KEY / "produced" / "f1_probe.yaml"
     f.write_text("{{{{{{{{")
@@ -436,9 +436,9 @@ def test_C23_config_key_is_bound_not_a_request_field(tmp_path):
     store = HunterMemoryStore(root_dir=tmp_path)
     bound = HuntsStoreTool(store=store, project_id=PROJECT, fault_key=_CANON_KEY)
     out = json.loads(bound.invoke({
-        "command": "write", "mode": "create",
-        "fault_keyword": "f1", "strategy_keyword": "probe",
-        "spec": _fault("F1", status="hypothesised"),
+        "command": "write",
+        "spec": {**_fault("F1", status="hypothesised"),
+                 "fault_keyword": "f1", "strategy_keyword": "probe"},
     }))
     assert out["ok"] is True, out
     assert out["path"].endswith(
@@ -448,9 +448,9 @@ def test_C23_config_key_is_bound_not_a_request_field(tmp_path):
     unbound = HuntsStoreTool(store=HunterMemoryStore(root_dir=tmp_path / "u"),
                              project_id=PROJECT)
     out = json.loads(unbound.invoke({
-        "command": "write", "mode": "create",
-        "fault_keyword": "f1", "strategy_keyword": "probe",
-        "spec": _fault("F1", status="hypothesised"),
+        "command": "write",
+        "spec": {**_fault("F1", status="hypothesised"),
+                 "fault_keyword": "f1", "strategy_keyword": "probe"},
     }))
     assert out["ok"] is False and out["error"] == "invalid_args"
     assert not (tmp_path / "u" / PROJECT / "hunting" / "hunter" / "test-specs").exists()
@@ -463,9 +463,9 @@ def test_C24_binding_accepts_the_semantic_twin(tmp_path):
     store = HunterMemoryStore(root_dir=tmp_path)
     tool = HuntsStoreTool(store=store, project_id=PROJECT, fault_key=_CANON_TWIN)
     out = json.loads(tool.invoke({
-        "command": "write", "mode": "create",
-        "fault_keyword": "f1", "strategy_keyword": "probe",
-        "spec": _fault("F1", status="hypothesised"),
+        "command": "write",
+        "spec": {**_fault("F1", status="hypothesised"),
+                 "fault_keyword": "f1", "strategy_keyword": "probe"},
     }))
     assert out["ok"] is True, out
     assert out["path"].endswith(

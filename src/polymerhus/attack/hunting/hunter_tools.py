@@ -190,7 +190,7 @@ ExecFn = Callable[[str, int], ExecResult]
 # clause, a wrong-typed `evidence`, a stray `provenance` key) are passed to it
 # as the `extra_rejection=` callback.
 
-_HUNTER_WRITE_INTENT_FIELDS = ("mode", "spec", "fault_keyword", "strategy_keyword")
+_HUNTER_WRITE_INTENT_FIELDS = ("spec",)
 _NOTES_WRITE_INTENT_FIELDS = ("action", "note_name", "kind", "body")
 
 
@@ -239,15 +239,21 @@ def _notes_extra_rejection(tool_input: dict, errors: list) -> dict | None:
 class HuntsStoreArgs(BaseModel):
     """The `hunts_store` tool's ARGS contract: `read` / `write` cmds.
 
-    `write` takes the fault/spec object carrying the `status` verbatim
-    (`hypothesised | verified | dropped | specified`); `mode="create"` FAILS on
-    a duplicate (the novelty gate, G4), `mode="update"` overwrites in place
-    (G5). `read` filters by optional `statuses`/`attributes`, never the whole
-    surface (spec 5). The hunt's OWN config identity (its 3-part config key,
-    G4/ADR Q13) is BOUND at the tool construction (#298) - it is never a
-    request field, so the hunter can only address its own config; the write
-    that names the produced spec file takes the agent-authored
-    `fault_keyword` / `strategy_keyword`.
+    The WRITE payload is the ONE `spec` object (converged on the hunt
+    orchestrator's single-payload `hunt_config` contract, #164/#298): it
+    carries the `status` verbatim (`hypothesised | verified | dropped |
+    specified`) and the file-name identity attributes `fault_keyword` /
+    `strategy_keyword`. The symbolic layer DERIVES
+    `<fault_keyword>_<strategy_keyword>.yaml` from them, so they are never
+    separate request fields whose requiredness the surface could omit.
+    `status="hypothesised"` creates the draft (a duplicate FAILS - the novelty
+    gate, G4); every other status re-authors in place (G5). A payload missing a
+    derivation input is a coded `hunts_store_write_rejected` naming the field.
+
+    `read` filters by optional `statuses`/`attributes`, never the whole surface
+    (spec 5). The hunt's OWN config identity (its 3-part config key, G4/ADR
+    Q13) is BOUND at the tool construction (#298) - it is never a request field,
+    so the hunter can only address its own config.
 
     The authored `spec` carries a `TestImplementationSpec` (the D4 handoff).
     Its `target_identity` is the target's identity object - `{"url": <base
@@ -265,18 +271,16 @@ class HuntsStoreArgs(BaseModel):
     attributes: list[str] = Field(
         default_factory=list,
         description="Read projection: return only these attributes per spec.")
-    # -- write path ----------------------------------------------------------
-    mode: Literal["create", "update"] = Field(
-        default="create",
-        description="Write mode: 'create' fails on a duplicate (G4), 'update' "
-                    "re-authors in place (G5).")
+    # -- write path (ONE payload) --------------------------------------------
     spec: dict = Field(
         default_factory=dict,
-        description="The authored spec object carrying the status verbatim.")
-    fault_keyword: str = Field(
-        default="", description="Names the produced spec file.")
-    strategy_keyword: str = Field(
-        default="", description="Names the produced spec file.")
+        description="Write payload: the authored spec object. It MUST carry "
+                    "`status` (hypothesised | verified | dropped | specified) "
+                    "and the file-name identity attributes `fault_keyword` and "
+                    "`strategy_keyword`; the spec file name "
+                    "`<fault_keyword>_<strategy_keyword>.yaml` is DERIVED from "
+                    "them. A payload missing one is rejected with a coded "
+                    "`hunts_store_write_rejected` error naming the field.")
 
     model_config = ConfigDict(extra="forbid")
 
@@ -330,7 +334,9 @@ class NotesArgs(BaseModel):
         description="The write option: 'append' a new note, 'update' or "
                     "'delete' an existing one.")
     note_name: str = Field(
-        default="", description="The note's name, unique within the fault_key.")
+        default="",
+        description="The note's name, unique within the fault_key (required on "
+                    "a write; ignored on a read).")
     kind: str = Field(
         default="freeform",
         description="The note kind: hypothesis_refusal | "
@@ -375,17 +381,21 @@ class HuntsStoreTool(StoreToolBase):
     description: str = (
         "The hunt's status-bearing memory seam, bound to THIS hunt's own "
         "config (you never supply the config key). Commands: read / write.\n"
-        "write takes the fault/spec object carrying the status verbatim "
-        "(hypothesised | verified | dropped | specified), plus the "
-        "fault_keyword / strategy_keyword that name the produced spec file. "
+        "write takes ONE payload, `spec` - the authored spec object. It MUST "
+        "carry the status verbatim (hypothesised | verified | dropped | "
+        "specified) and the file-name identity attributes `fault_keyword` / "
+        "`strategy_keyword`; the spec file name is DERIVED from them, never "
+        "authored as a file name. status=hypothesised creates the draft - a "
+        "duplicate FAILS with a duplicate_spec dedup signal when the spec file "
+        "already exists (reflect on overlap and merge or refresh - do not "
+        "duplicate); verified / dropped / specified re-author the existing file "
+        "in place. A payload missing a required attribute is rejected with a "
+        "coded hunts_store_write_rejected error naming the field. "
         "The authored spec's target_identity is "
         "the target identity object: {'url': <base url>, 'unit_id': <L1 "
         "service/system identity>} - author the url from the projected L0 "
         "attack surface (read via graph_view); the pod probes that url and "
-        "INIT-rejects a spec without it. mode=create FAILS with a duplicate_spec "
-        "dedup signal when the spec file already exists (reflect on overlap and "
-        "merge or refresh - do not duplicate); mode=update re-authors the "
-        "existing file in place. read takes optional "
+        "INIT-rejects a spec without it. read takes optional "
         "statuses / attributes filters and returns the fault's produced specs - "
         "never the whole surface."
     )
@@ -437,32 +447,54 @@ class HuntsStoreTool(StoreToolBase):
                                "detail": str(exc)})
         return json.dumps({"specs": specs})
 
+    @staticmethod
+    def _write_rejected(fields: list[str], detail: str) -> str:
+        """The coded contract rejection (#164): a machine error code plus the
+        field name(s) the agent must supply - never a silent degenerate-name
+        write, never a bare pydantic error (the `coded_teaching_rejection`
+        convention, shared with the orchestrator's `hunts_store`)."""
+        return json.dumps({
+            "ok": False, "error": "hunts_store_write_rejected",
+            "fields": list(fields), "detail": detail, "rejected": True,
+        })
+
     def _write(self, args: HuntsStoreArgs) -> str:
         if self._store is None:
             return self._unavailable(args)
         if not self._fault_key:
             return self._unbound()
-        if not args.fault_keyword or not args.strategy_keyword:
-            return json.dumps({"ok": False, "error": "invalid_args",
-                               "detail": "write needs fault_keyword, "
-                                         "strategy_keyword"})
         spec = args.spec
         if not isinstance(spec, dict) or not spec:
-            return json.dumps({"ok": False, "error": "invalid_args",
-                               "detail": "write needs the fault/spec object "
-                                         "carrying the status attribute"})
+            return self._write_rejected(
+                ["spec"],
+                "write needs the spec object carrying status + fault_keyword "
+                "+ strategy_keyword")
+        # The file-name identity is derived from the payload's own attributes
+        # (the symbolic layer owns the symbol, #164): a missing derivation
+        # input is a coded contract rejection, never a degenerate-name write.
+        missing = [f for f in ("fault_keyword", "strategy_keyword")
+                   if not spec.get(f)]
+        if missing:
+            return self._write_rejected(
+                missing,
+                f"the spec payload must carry the file-name identity "
+                f"attribute(s) {', '.join(missing)}; the spec file name "
+                f"<fault_keyword>_<strategy_keyword>.yaml is DERIVED from them")
         if spec.get("status") not in FAULT_STATUSES:
-            return json.dumps({
-                "ok": False, "error": "invalid_args",
-                "detail": f"status must be one of {FAULT_STATUSES}; got "
-                          f"{spec.get('status')!r}",
-            })
+            return self._write_rejected(
+                ["status"],
+                f"status must be one of {FAULT_STATUSES}; got "
+                f"{spec.get('status')!r}")
+        # The write mode is derived from the status (the orchestrator's
+        # status-driven write): hypothesised creates the draft (the novelty
+        # gate), every other lifecycle state re-authors in place.
+        mode = "create" if spec["status"] == "hypothesised" else "update"
         try:
             path = self._store.write_spec(
                 self._project_id, self._fault_key,
-                fault_keyword=args.fault_keyword,
-                strategy_keyword=args.strategy_keyword,
-                spec=spec, mode=args.mode,
+                fault_keyword=spec["fault_keyword"],
+                strategy_keyword=spec["strategy_keyword"],
+                spec=spec, mode=mode,
             )
         except DuplicateSpecError as exc:
             # The denoted dedup signal (G4): the model reflects and merges or

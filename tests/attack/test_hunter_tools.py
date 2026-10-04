@@ -117,14 +117,61 @@ def test_note_provenance_is_extra_forbid(tmp_path):
 
 def test_hunts_store_missing_command_with_write_intent_is_a_teaching_rejection(tmp_path):
     """The same required-`command` pattern on `hunts_store` (uniform contract):
-    write-intent fields without `command` -> coded teaching rejection."""
+    the write payload without `command` -> coded teaching rejection."""
     store = HunterMemoryStore(root_dir=tmp_path)
-    out = json.loads(_hunts(store, mode="create",
-                            fault_keyword="f1", strategy_keyword="probe",
-                            spec={"fault_id": "F1", "status": "hypothesised"}))
+    out = json.loads(_hunts(store, spec={"status": "hypothesised",
+                                         "fault_keyword": "f1",
+                                         "strategy_keyword": "probe"}))
     assert out["ok"] is False
     assert out["error"] == "hunts_store_args_rejected"
     assert "command" in out["detail"] and "write" in out["detail"]
+    assert store.read_specs(PROJECT, FAULT_KEY) == []
+
+
+# --- the single-payload store write (the run-2d4a5bf9 defect) -----------------
+
+def test_hunts_store_write_payload_is_one_spec_object(tmp_path):
+    """The write payload is the ONE `spec` object; the file-name identity
+    (`fault_keyword` / `strategy_keyword`) and the write mode ride INSIDE it.
+    The schema exposes no separate top-level write symbols - the hunter
+    converges on the orchestrator's single-payload `hunt_config` pattern, so a
+    write-required field can never sit optional-and-unexplained on the surface.
+    """
+    fields = HuntsStoreTool(store=None, project_id=PROJECT).args_schema.model_fields
+    assert "spec" in fields
+    for gone in ("fault_keyword", "strategy_keyword", "mode"):
+        assert gone not in fields, gone
+
+
+def test_hunts_store_write_derives_the_file_name_from_the_spec_identity(tmp_path):
+    """The store derives `<fault_keyword>_<strategy_keyword>.yaml` in the
+    symbolic layer from the identity INSIDE the spec payload; a valid write
+    lands and the identity is not a separate request field."""
+    store = HunterMemoryStore(root_dir=tmp_path)
+    out = json.loads(_hunts(store, command="write",
+                            spec={"status": "hypothesised",
+                                  "fault_keyword": "cwe1220-owner-binding",
+                                  "strategy_keyword": "cwe1220-owner-binding",
+                                  "fault_class": "CWE-1220"}))
+    assert out["ok"] is True
+    assert out["status"] == "hypothesised"
+    specs = store.read_specs(PROJECT, FAULT_KEY)
+    assert len(specs) == 1
+    assert specs[0]["fault_class"] == "CWE-1220"
+
+
+def test_hunts_store_write_missing_identity_is_a_coded_rejection(tmp_path):
+    """The exact run-2d4a5bf9 defect: the model authored the spec but omitted
+    the second file-name keyword. The write must FAIL with a coded,
+    field-naming `hunts_store_write_rejected` (never a silent degenerate-name
+    write, never a bare pydantic error), so the model corrects on the retry."""
+    store = HunterMemoryStore(root_dir=tmp_path)
+    out = json.loads(_hunts(store, command="write",
+                            spec={"status": "hypothesised",
+                                  "fault_keyword": "cwe1220-owner-binding"}))
+    assert out["ok"] is False
+    assert out["error"] == "hunts_store_write_rejected"
+    assert out["fields"] == ["strategy_keyword"]
     assert store.read_specs(PROJECT, FAULT_KEY) == []
 
 
@@ -142,10 +189,10 @@ def test_unknown_parameter_still_raises_the_rejected_call(tmp_path):
                       "kind": "freeform", "body": "b", "bogus": 1})
     hunts = HuntsStoreTool(store=store, project_id=PROJECT)
     with pytest.raises(ValidationError):
-        hunts.invoke({"command": "write", "mode": "create",
-                      "fault_keyword": "f1",
-                      "strategy_keyword": "probe",
-                      "spec": {"status": "hypothesised"}, "bogus": 1})
+        hunts.invoke({"command": "write",
+                      "spec": {"status": "hypothesised",
+                               "fault_keyword": "f1",
+                               "strategy_keyword": "probe"}, "bogus": 1})
 
 
 # --- #292: the conciseness directive in the hunter tool descriptions -----------

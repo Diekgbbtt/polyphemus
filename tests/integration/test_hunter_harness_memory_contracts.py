@@ -45,33 +45,28 @@ def _produced(tmp_path):
     return tmp_path / PROJECT / "hunting" / "hunter" / "test-specs" / FAULT_KEY / "produced"
 
 
+def _write(fault_keyword, strategy_keyword, spec):
+    """A `hunts_store` write tool call: ONE `spec` payload carrying the
+    file-name identity (the single-payload contract, #164)."""
+    return _tool_call("hunts_store", {
+        "command": "write",
+        "spec": {**spec, "fault_keyword": fault_keyword,
+                 "strategy_keyword": strategy_keyword},
+    })
+
+
 # --- E1: the full lifecycle over the real store --------------------------------
 
 
 def test_H1_full_lifecycle_over_the_real_store(tmp_path):
     store = build_memory_store(tmp_path)
     steps = [
-        _tool_call("hunts_store", {
-            "command": "write", "mode": "create",
-            "fault_keyword": "f1", "strategy_keyword": "probe",
-            "spec": _fault("F1", status="hypothesised", mechanism="m1")}),
-        _tool_call("hunts_store", {
-            "command": "write", "mode": "update",
-            "fault_keyword": "f1", "strategy_keyword": "probe",
-            "spec": _fault("F1", status="verified", mechanism="m1",
-                           supports=["evidence-1"])}),
-        _tool_call("hunts_store", {
-            "command": "write", "mode": "update",
-            "fault_keyword": "f1", "strategy_keyword": "probe",
-            "spec": _spec("F1", "S1", status="specified")}),
-        _tool_call("hunts_store", {
-            "command": "write", "mode": "create",
-            "fault_keyword": "f2", "strategy_keyword": "probe",
-            "spec": _fault("F2", status="hypothesised", mechanism="m2")}),
-        _tool_call("hunts_store", {
-            "command": "write", "mode": "update",
-            "fault_keyword": "f2", "strategy_keyword": "probe",
-            "spec": _fault("F2", status="dropped", mechanism="m2")}),
+        _write("f1", "probe", _fault("F1", status="hypothesised", mechanism="m1")),
+        _write("f1", "probe", _fault("F1", status="verified", mechanism="m1",
+                                     supports=["evidence-1"])),
+        _write("f1", "probe", _spec("F1", "S1", status="specified")),
+        _write("f2", "probe", _fault("F2", status="hypothesised", mechanism="m2")),
+        _write("f2", "probe", _fault("F2", status="dropped", mechanism="m2")),
         _answer("candidate set exhausted"),
     ]
     agent = build_hunter_agent(store, steps=steps)
@@ -99,10 +94,7 @@ def test_H1_full_lifecycle_over_the_real_store(tmp_path):
 def test_H2_fault_and_note_share_the_identifier_over_the_real_pipeline(tmp_path):
     store = build_memory_store(tmp_path)
     steps = [
-        _tool_call("hunts_store", {
-            "command": "write", "mode": "create",
-            "fault_keyword": "f1", "strategy_keyword": "probe",
-            "spec": _fault("F1", status="hypothesised")}),
+        _write("f1", "probe", _fault("F1", status="hypothesised")),
         _tool_call("notes", {
             "command": "write", "action": "append",
             "note_name": "decision", "kind": "freeform",
@@ -142,18 +134,9 @@ def test_H3_all_memory_capabilities_through_the_tool_surface(tmp_path):
     seen: list = []
     steps = [
         # hunts_store write create -> update -> update (the lifecycle)
-        _tool_call("hunts_store", {
-            "command": "write", "mode": "create",
-            "fault_keyword": "f1", "strategy_keyword": "probe",
-            "spec": _fault("F1", status="hypothesised")}),
-        _tool_call("hunts_store", {
-            "command": "write", "mode": "update",
-            "fault_keyword": "f1", "strategy_keyword": "probe",
-            "spec": _fault("F1", status="verified", supports=["evidence-1"])}),
-        _tool_call("hunts_store", {
-            "command": "write", "mode": "update",
-            "fault_keyword": "f1", "strategy_keyword": "probe",
-            "spec": _spec("F1", "S1", status="specified")}),
+        _write("f1", "probe", _fault("F1", status="hypothesised")),
+        _write("f1", "probe", _fault("F1", status="verified", supports=["evidence-1"])),
+        _write("f1", "probe", _spec("F1", "S1", status="specified")),
         # hunts_store read by fault_key with statuses + attributes
         _tool_call("hunts_store", {
             "command": "read",
@@ -208,27 +191,12 @@ def test_H4_phase_hints_ride_tool_responses_and_graph_tracks_the_loop(tmp_path):
         # a grounding-phase kb_query rides the D3 retrieval-gap check
         _tool_call("kb_query", {
             "scenario_id": "s1", "attack_goal": "g", "concern": "c"}),
-        _tool_call("hunts_store", {
-            "command": "write", "mode": "create",
-            "fault_keyword": "f1", "strategy_keyword": "probe",
-            "spec": _fault("F1", status="hypothesised", mechanism="m1")}),
-        _tool_call("hunts_store", {
-            "command": "write", "mode": "update",
-            "fault_keyword": "f1", "strategy_keyword": "probe",
-            "spec": _fault("F1", status="verified", mechanism="m1",
-                           supports=["evidence-1"])}),
-        _tool_call("hunts_store", {
-            "command": "write", "mode": "update",
-            "fault_keyword": "f1", "strategy_keyword": "probe",
-            "spec": _spec("F1", "S1", status="specified")}),
-        _tool_call("hunts_store", {
-            "command": "write", "mode": "create",
-            "fault_keyword": "f2", "strategy_keyword": "probe",
-            "spec": _fault("F2", status="hypothesised", mechanism="m2")}),
-        _tool_call("hunts_store", {
-            "command": "write", "mode": "update",
-            "fault_keyword": "f2", "strategy_keyword": "probe",
-            "spec": _fault("F2", status="dropped", mechanism="m2")}),
+        _write("f1", "probe", _fault("F1", status="hypothesised", mechanism="m1")),
+        _write("f1", "probe", _fault("F1", status="verified", mechanism="m1",
+                                     supports=["evidence-1"])),
+        _write("f1", "probe", _spec("F1", "S1", status="specified")),
+        _write("f2", "probe", _fault("F2", status="hypothesised", mechanism="m2")),
+        _write("f2", "probe", _fault("F2", status="dropped", mechanism="m2")),
         _answer("concluded"),
     ]
     agent = build_hunter_agent(store, steps=steps, seen=seen)
