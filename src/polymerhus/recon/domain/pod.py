@@ -589,6 +589,14 @@ def _exec_result_from_artifact(artifact, *, content=None, duration_ms: int = 0) 
     )
 
 
+# The MCP streamable-HTTP read timeout must EXCEED the server's own per-command
+# bound (`EXEC_TIMEOUT_S`), or the client gives up while the server is still
+# running the command. They were equal (300s each), so a command that ran to its
+# bound raced the client and surfaced as an `httpx.ReadTimeout` that broke the
+# MCP session; the margin also covers a per-call `timeout_s` the hunter passes.
+_MCP_READ_TIMEOUT_S = EXEC_TIMEOUT_S + 60
+
+
 def default_exec_fn(
     command: str, session_id: str, timeout_s: int, capture_context=None
 ) -> ExecResult:
@@ -613,9 +621,19 @@ def default_exec_fn(
     if trace_metadata is not None:
         tool_config["metadata"] = trace_metadata
 
-    async def _run():
+    async def _invoke():
         client = MultiServerMCPClient(
-            {"kali": {"url": config.KALI_MCP_URL, "transport": "streamable_http"}}
+            {
+                "kali": {
+                    "url": config.KALI_MCP_URL,
+                    "transport": "streamable_http",
+                    # `sse_read_timeout` is the streamable-HTTP read timeout
+                    # (langchain-mcp-adapters passes it to
+                    # `httpx.Timeout(read=...)`); without it the default 300s
+                    # ties the server's own bound and races it.
+                    "sse_read_timeout": _MCP_READ_TIMEOUT_S,
+                }
+            }
         )
         tools = await client.get_tools()
         exec_tool = next(t for t in tools if t.name == "execute_command")
@@ -634,6 +652,21 @@ def default_exec_fn(
             },
             config=tool_config,
         )
+
+    async def _run():
+        # A broken MCP session (a transport error or a task-group teardown)
+        # raises out of `ainvoke`; the command's own failure never does (a tool
+        # error rides the result). Re-handshake ONCE with a fresh client so one
+        # poisoned session does not surface as an `exec_failed` for the caller.
+        # Every attempt builds its own client, so the retry is a clean session.
+        try:
+            return await _invoke()
+        except Exception as exc:  # noqa: BLE001 - retry a broken session once
+            logger.warning(
+                "exec MCP session failed (%s: %s); re-handshaking once",
+                type(exc).__name__, exc,
+            )
+            return await _invoke()
 
     start = time.monotonic()
     result = run_coro_blocking(_run())

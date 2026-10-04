@@ -10,8 +10,9 @@ Capture is fail-open: if the namespace lease, proxy or store is unavailable the
 command still runs and the result carries a ``capture_warning``. Model-facing
 views are sanitized; raw bodies never cross this boundary.
 """
-import json, os, re, shlex, subprocess, tempfile, time
+import functools, json, os, re, shlex, subprocess, tempfile, time
 
+import anyio
 from fastmcp import FastMCP
 
 os.environ["PATH"] = ":".join([
@@ -19,6 +20,20 @@ os.environ["PATH"] = ":".join([
 ])
 
 mcp = FastMCP("kali-exec")
+
+
+async def _offload(fn, /, *args, **kwargs):
+    """Run a blocking implementation in a worker thread.
+
+    Every tool below is ``async def`` for one reason: FastMCP's
+    ``FunctionTool.run`` invokes a SYNC tool body directly on the event loop
+    (via ``TypeAdapter.validate_python``), so one long ``execute_command``
+    (a hanging curl, a slow target) stalls the ENTIRE MCP server for its
+    duration and every other session's request queues behind it. An async
+    body is awaited instead, so ``anyio.to_thread.run_sync`` moves the
+    blocking work off the loop and concurrent requests keep flowing.
+    """
+    return await anyio.to_thread.run_sync(functools.partial(fn, *args, **kwargs))
 _ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 
 _STEEL_TOKEN = re.compile(r"\bsteel\b")
@@ -98,7 +113,7 @@ def _error_payload(exc: Exception) -> dict:
     return {"error": "invalid_request", "detail": str(exc)}
 
 
-def execute_command(
+async def execute_command(
     command: str,
     session_id: str,
     timeout_s: int = 300,
@@ -116,7 +131,8 @@ def execute_command(
     (command, session_id) keep working unchanged.
     """
     try:
-        result = _get_service().execute(
+        result = await _offload(
+            _get_service().execute,
             command,
             session_id,
             timeout_s,
@@ -142,7 +158,7 @@ def execute_command(
     return result
 
 
-def search_http_history(
+async def search_http_history(
     project_id: str,
     filters: list | None = None,
     cursor: str | None = None,
@@ -151,24 +167,27 @@ def search_http_history(
 ) -> dict:
     """Search recorded HTTP transactions for one project (sanitized rows)."""
     try:
-        return _get_service().search(
+        return await _offload(
+            _get_service().search,
             project_id, filters=filters, cursor=cursor, limit=limit, text=text
         )
     except Exception as exc:  # noqa: BLE001
         return _error_payload(exc)
 
 
-def get_http_artifact(
+async def get_http_artifact(
     project_id: str, artifact_id: str, include_body: bool = False
 ) -> dict:
     """Fetch one recorded artifact, sanitized. include_body is refused here."""
     try:
-        return _get_service().get(project_id, artifact_id, include_body=include_body)
+        return await _offload(
+            _get_service().get, project_id, artifact_id, include_body=include_body
+        )
     except Exception as exc:  # noqa: BLE001
         return _error_payload(exc)
 
 
-def replay_http_request(
+async def replay_http_request(
     project_id: str,
     artifact_id: str,
     overrides: dict | None = None,
@@ -181,15 +200,17 @@ def replay_http_request(
         context = (
             CaptureContext(**capture_context) if isinstance(capture_context, dict) else None
         )
-        return _get_service().replay(project_id, artifact_id, overrides or {}, context)
+        return await _offload(
+            _get_service().replay, project_id, artifact_id, overrides or {}, context
+        )
     except Exception as exc:  # noqa: BLE001
         return _error_payload(exc)
 
 
-def proxy_status() -> dict:
+async def proxy_status() -> dict:
     """Per-component health: MCP, proxy, routing, namespace pool and store."""
     try:
-        return _get_service().proxy_status()
+        return await _offload(_get_service().proxy_status)
     except Exception as exc:  # noqa: BLE001
         return {
             "ok": False,
@@ -349,20 +370,8 @@ def _run_script(script: str, script_lang: str, session_id: str, timeout_s: int) 
         f.write(script)
     return _run(f"{_SCRIPT_RUNNERS[script_lang]} {shlex.quote(f.name)}", session_id, timeout_s)
 
-@mcp.tool()
-def steel_exec(command: str = "", script: str = "", script_lang: str = "sh",
-               session_id: str = "steel", timeout_s: int = 600) -> dict:
-    """Run a steel CLI command or automation script in /work/{session_id} and
-    return the unchanged {stdout, stderr, returncode, duration_ms} envelope.
-    Exactly one of command/script; commands must carry the steel token.
-    Guards, in order: pinned steel version re-check; longest steel --timeout
-    must sit below timeout_s (default 600, steel clock authoritative); a
-    command-mode start on a name the live session catalogue reports is refused
-    with `<name> is already used`; a variadic command (fill/type/setvalue/
-    select/upload/batch) without the `--` boundary is refused, because clap
-    would silently fold a trailing flag into the value. Scripts carry timeout
-    ordering, unique names, and the boundary by skill construction and are
-    never scanned."""
+def _steel_exec_sync(command: str = "", script: str = "", script_lang: str = "sh",
+                     session_id: str = "steel", timeout_s: int = 600) -> dict:
     if bool(command) == bool(script):
         return _refused("ambiguous-input", "pass exactly one of command or script")
     if command:
@@ -390,6 +399,25 @@ def steel_exec(command: str = "", script: str = "", script_lang: str = "sh",
         return _refused("steel-version-mismatch",
                         f"need steel {_STEEL_VERSION_PIN}")
     return _run_script(script, script_lang, session_id, timeout_s)
+
+
+@mcp.tool()
+async def steel_exec(command: str = "", script: str = "", script_lang: str = "sh",
+                     session_id: str = "steel", timeout_s: int = 600) -> dict:
+    """Run a steel CLI command or automation script in /work/{session_id} and
+    return the unchanged {stdout, stderr, returncode, duration_ms} envelope.
+    Exactly one of command/script; commands must carry the steel token.
+    Guards, in order: pinned steel version re-check; longest steel --timeout
+    must sit below timeout_s (default 600, steel clock authoritative); a
+    command-mode start on a name the live session catalogue reports is refused
+    with `<name> is already used`; a variadic command (fill/type/setvalue/
+    select/upload/batch) without the `--` boundary is refused, because clap
+    would silently fold a trailing flag into the value. Scripts carry timeout
+    ordering, unique names, and the boundary by skill construction and are
+    never scanned."""
+    return await _offload(_steel_exec_sync, command=command, script=script,
+                          script_lang=script_lang, session_id=session_id,
+                          timeout_s=timeout_s)
 
 
 for _fn in (

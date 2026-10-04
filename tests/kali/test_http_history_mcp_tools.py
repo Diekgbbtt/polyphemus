@@ -1,6 +1,8 @@
 """The MCP tool bodies: backward compatibility, fail-open capture, not_found."""
 from __future__ import annotations
 
+import asyncio
+
 import kali.mcp_server as mcp_server
 from kali.http_history.config import HttpHistoryConfig
 from kali.http_history.models import (
@@ -78,13 +80,33 @@ def _service(tmp_path, lease_manager, runner):
     )
 
 
+def test_tools_are_async_so_a_long_command_never_blocks_the_server():
+    # FastMCP's FunctionTool.run invokes a SYNC tool body directly on the event
+    # loop (via TypeAdapter.validate_python), so one long execute_command stalls
+    # the ENTIRE MCP server and every concurrent request queues behind it (the
+    # observed exec failure). The tool bodies MUST stay `async def` so
+    # `_offload` moves the blocking work to a worker thread.
+    import inspect
+
+    for fn in (
+        mcp_server.execute_command,
+        mcp_server.search_http_history,
+        mcp_server.get_http_artifact,
+        mcp_server.replay_http_request,
+        mcp_server.proxy_status,
+        # `@mcp.tool()` rebinds `steel_exec` to the FunctionTool; its body is `.fn`.
+        getattr(mcp_server.steel_exec, "fn", mcp_server.steel_exec),
+    ):
+        assert inspect.iscoroutinefunction(fn), f"{fn} must be async"
+
+
 def test_execute_command_keeps_the_legacy_shape(tmp_path, monkeypatch):
     def runner(command, session_id, timeout_s, namespace=None):
         return ExecOutcome(stdout="hello", stderr="", returncode=0, duration_ms=3)
 
     service = _service(tmp_path, FakeLeaseManager(), runner)
     monkeypatch.setattr(mcp_server, "_SERVICE", service)
-    out = mcp_server.execute_command("echo hello", "run1-pod1")
+    out = asyncio.run(mcp_server.execute_command("echo hello", "run1-pod1"))
     assert out["stdout"] == "hello"
     assert out["returncode"] == 0
     assert "duration_ms" in out
@@ -98,9 +120,9 @@ def test_execute_command_correlates_refs(tmp_path, monkeypatch):
     manager = CapturingManager(runner)
     service = _service(tmp_path, manager, runner)
     monkeypatch.setattr(mcp_server, "_SERVICE", service)
-    out = mcp_server.execute_command(
+    out = asyncio.run(mcp_server.execute_command(
         "curl https://target.example/", "s1", project_id="proj-1", run_id="r1", variant_ref="v0"
-    )
+    ))
     assert out["returncode"] == 0
     assert out["http_artifact_refs"] == ["http_01J0000000000000000000000C"]
     assert manager.released  # the lease is always returned
@@ -116,7 +138,7 @@ def test_capture_failure_does_not_prevent_execution(tmp_path, monkeypatch):
 
     service = _service(tmp_path, BoomManager(), runner)
     monkeypatch.setattr(mcp_server, "_SERVICE", service)
-    out = mcp_server.execute_command("true", "s1", project_id="proj-1")
+    out = asyncio.run(mcp_server.execute_command("true", "s1", project_id="proj-1"))
     assert out["stdout"] == "ran anyway"
     assert out["returncode"] == 0
     assert "capture unavailable" in out["capture_warning"]
@@ -126,16 +148,16 @@ def test_search_get_and_status_tools(tmp_path, monkeypatch):
     runner = _capturing_runner(tmp_path)
     service = _service(tmp_path, CapturingManager(runner), runner)
     monkeypatch.setattr(mcp_server, "_SERVICE", service)
-    mcp_server.execute_command("probe", "s1", project_id="proj-1")
+    asyncio.run(mcp_server.execute_command("probe", "s1", project_id="proj-1"))
 
-    page = mcp_server.search_http_history("proj-1", filters=[])
+    page = asyncio.run(mcp_server.search_http_history("proj-1", filters=[]))
     assert page["summaries"][0]["artifact_id"] == "http_01J0000000000000000000000C"
-    view = mcp_server.get_http_artifact("proj-1", "http_01J0000000000000000000000C")
+    view = asyncio.run(mcp_server.get_http_artifact("proj-1", "http_01J0000000000000000000000C"))
     assert view["request"]["method"] == "GET"
-    assert mcp_server.get_http_artifact("proj-2", "http_01J0000000000000000000000C") == {
+    assert asyncio.run(mcp_server.get_http_artifact("proj-2", "http_01J0000000000000000000000C")) == {
         "error": "not_found",
         "detail": "artifact 'http_01J0000000000000000000000C' not found in project 'proj-2'",
     }
-    status = mcp_server.proxy_status()
+    status = asyncio.run(mcp_server.proxy_status())
     assert status["ok"] is True
     assert status["namespaces"]["pool_size"] == 4
