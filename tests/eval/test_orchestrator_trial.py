@@ -221,6 +221,18 @@ def test_recon_trial_runs_recon_then_hunting_and_records(tmp_path) -> None:
     assert written["terminal"] == "complete"
 
 
+def test_recon_trial_enables_streamed_analysis_in_settings(tmp_path) -> None:
+    # #321: the batched/post-recon path is obsolete; every fresh trial turns on
+    # settings.recon.streaming_analysis so recon's per-job chunks feed the queued
+    # analysis consumer and the L1 AGGREGATES get written.
+    api_runner = FakeApi(_full_routes())
+
+    _trial(tmp_path, api_runner).run()
+
+    settings = next(c for c in api_runner.calls if c.path == "/projects/pid/settings")
+    assert settings.body["recon"]["streaming_analysis"] is True
+
+
 def test_analysis_entry_skips_recon_and_launches_analysis(tmp_path) -> None:
     api_runner = FakeApi(
         {

@@ -666,6 +666,10 @@ def _trial_config(args, setup: EvalSetup, config: OrchestratorConfig) -> tuple[
         data_root=data_root,
         runs_root=Path(args.runs_root),
         with_analysis=True,
+        # The streamed-analysis gate (settings.recon.streaming_analysis): ON for
+        # every trial - the batched/post-recon path is obsolete and a recon run
+        # without it mints no L1 edges (#321).
+        streaming_analysis=True,
         budget_s=args.budget_s,
         poll_s=args.poll_s,
         project_id=args.project_id,

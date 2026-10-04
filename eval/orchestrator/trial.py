@@ -181,6 +181,13 @@ class TrialConfig:
     # #273). Defaults to the instance id: one instance evaluates one target run.
     target_run_id: str | None = None
     with_analysis: bool = True
+    # The analysis is STREAMED during recon (settings.recon.streaming_analysis):
+    # each producing job pushes its curated payload into the run's FIFO and the
+    # queued analysis consumer drains it (analyse_chunked -> assigner ->
+    # mechanism_typist -> data_modeller, whose AGGREGATES reach the L1 curator).
+    # The old batched/post-recon path is obsolete, so this defaults ON: a recon
+    # run without it mints no L1 edges (the #321 zero-AGGREGATES root cause).
+    streaming_analysis: bool = True
     budget_s: float = 7200.0
     poll_s: float = 15.0
     # Resume: reuse an existing project and/or drain an existing recon run.
@@ -442,10 +449,13 @@ class Trial:
                 settings["target_seed"] = cfg.target_seed
             if cfg.operator_kb:
                 settings["operator_kb"] = f"<file:{cfg.operator_kb}>"
-            if settings:
-                steps.append(
-                    TrialPlanStep("settings", calls=(api.put_settings(project, settings),))
-                )
+            # The streamed-analysis gate (settings.recon.streaming_analysis): the
+            # batched/post-recon path is obsolete, so every fresh trial turns it
+            # on. The PUT deep-merges, so this never wipes target_seed/operator_kb.
+            settings["streaming_analysis"] = cfg.streaming_analysis
+            steps.append(
+                TrialPlanStep("settings", calls=(api.put_settings(project, settings),))
+            )
             if cfg.auth_surface and cfg.data_dir is not None:
                 steps.append(
                     TrialPlanStep(
@@ -651,8 +661,10 @@ class Trial:
                     settings["target_seed"] = cfg.target_seed
                 if cfg.operator_kb and self._files.exists(cfg.operator_kb):
                     settings["operator_kb"] = self._files.read_text(cfg.operator_kb)
-                if settings:
-                    self._call(api.put_settings(project_id, settings))
+                # The streamed-analysis gate (see TrialConfig.streaming_analysis):
+                # the batched/post-recon path is obsolete, so it is always on.
+                settings["streaming_analysis"] = cfg.streaming_analysis
+                self._call(api.put_settings(project_id, settings))
 
             # The pre-built data dependencies land by direct file write through
             # the multipart endpoints (a MOUNT the agent finds at startup), then
