@@ -15,14 +15,23 @@ langchain algorithm (`AgentExecutor.handle_parsing_errors`, never ported to
 error `ToolMessage` and routes back to the model, so the checkpoint trail is
 CONTRACT-VALID and the next request pairs every wired tool call.
 
-- `after_model` / `aafter_model` inspect the LAST message - the model's just-produced
-  reply - and answer its invalid calls ONLY when that message IS the tool-call request,
-  then jump back to the model for a BOUNDED in-turn retry; valid `tool_calls` are never
-  touched (ToolNode owns those and runs after `after_model`). The answer is appended at
-  the tail, so answering a call that is not the tail request would append a `tool`
-  message with no adjacent call - an orphan answer the upstream rejects with HTTP 400
-  (#280 follow-up: the old whole-trail scan crossed a stop boundary and did exactly
-  that).
+- `after_model` / `aafter_model` answer the invalid calls of the TAIL REQUEST - the
+  last assistant tool-call request whose only trailing messages are its own `tool`
+  answers. Walking back over trailing `ToolMessage`s is what makes the seam robust to
+  the structured-output path (F13): `create_agent._handle_model_output` appends an
+  answer `ToolMessage` for the structured call INSIDE the model node, so a sibling
+  malformed ordinary call (the observed `graph_view` case) would otherwise sit one
+  message behind the literal tail and stay unanswered. The answer is still appended at
+  the tail; a `HumanMessage` (or a later assistant message) is a stop boundary and is
+  never crossed, so a stale answer against a pre-boundary call is not written - the
+  orphan answer the upstream rejects with HTTP 400 (#280 follow-up: the old whole-trail
+  scan crossed a stop boundary and did exactly that).
+  The jump back to the model for the BOUNDED in-turn retry is suppressed when the turn
+  is already resolving (a trailing `tool` answer) or a VALID `tool_calls` entry is
+  still unanswered (ToolNode must run it) - jumping in either case would bypass the
+  tools routing and leave that valid call unanswered, a fresh poison. The invalid call
+  is still answered in both cases, so the wire stays paired. Valid `tool_calls` are
+  never touched (ToolNode owns those and runs after `after_model`).
 - `before_model` / `abefore_model` reconcile a RESUMED turn positionally: only when
   the session seam saw pending `next` nodes before invoking (#280) does it insert
   each missing answer immediately after its assistant call, because the upstream
@@ -90,23 +99,65 @@ def _answered_ids(messages: Sequence[BaseMessage]) -> set[str]:
             if isinstance(m, ToolMessage) and m.tool_call_id}
 
 
-def unanswered_invalid_tool_calls(messages: Sequence[BaseMessage]) -> list[dict]:
-    """The unanswered invalid tool calls of the LAST message - and ONLY when that last
-    message IS the tool-call request (the model's just-produced reply).
+def _tail_request(messages: Sequence[BaseMessage]) -> AIMessage | None:
+    """The last assistant tool-call request that is still the active tail.
 
-    The answer is APPENDED at the tail, so it may only be written for a request that
-    is itself the tail. Answering a call carried by an EARLIER message appends a `tool`
-    message with no adjacent call - an orphan answer, which the upstream rejects with
-    HTTP 400 ("Messages with role 'tool' must be a response to a preceding message
-    with 'tool_calls'"). That post-turn-stop orphan is the #280 follow-up: the old
-    whole-trail scan crossed a stop boundary and answered a call that was no longer the
-    tail. Only `invalid_tool_calls` are considered (valid `tool_calls` belong to
-    ToolNode, which runs after `after_model`); a call with no id cannot be answered and
-    is skipped."""
+    Walk back over any TRAILING `ToolMessage`s: a `tool` answer may only follow the
+    assistant call it answers, so trailing answers are part of the request's own
+    window. This matters because the framework's structured-output handling
+    (`create_agent._handle_model_output`) appends an answer `ToolMessage` for the
+    structured call INSIDE the model node - a sibling malformed call on that same
+    assistant message would otherwise sit one message behind the literal tail and be
+    invisible to the recovery (#280 follow-up residual, F13).
+
+    The walk stops at the first non-tool message. That message is a request only when
+    it is an `AIMessage`; a `HumanMessage` (or a later `AIMessage`) is a stop boundary
+    and is never crossed, so a stale pre-boundary call is still left alone."""
+    idx = len(messages) - 1
+    while idx >= 0 and isinstance(messages[idx], ToolMessage):
+        idx -= 1
+    if idx < 0:
+        return None
+    candidate = messages[idx]
+    if not isinstance(candidate, AIMessage):
+        return None
+    return candidate
+
+
+def _has_unanswered_valid_tool_calls(
+    messages: Sequence[BaseMessage], request: AIMessage
+) -> bool:
+    """Whether the tail request still carries a VALID `tool_calls` entry that no
+    `ToolMessage` answers - i.e. ToolNode still has work to do for it. The recovery
+    must not `jump_to="model"` in that case, because the jump bypasses the tools
+    routing and would leave the valid call unanswered (a fresh poison)."""
+    answered = _answered_ids(messages)
+    for call in getattr(request, "tool_calls", None) or ():
+        call_id = _call_field(call, "id")
+        if call_id and call_id not in answered:
+            return True
+    return False
+
+
+def unanswered_invalid_tool_calls(messages: Sequence[BaseMessage]) -> list[dict]:
+    """The unanswered invalid tool calls of the TAIL REQUEST - the last assistant
+    tool-call request that has no stop boundary after it.
+
+    The answer is APPENDED at the tail, so it may only be written for a request whose
+    trailing messages are its own `tool` answers (or nothing). Answering a call whose
+    message sits before a stop boundary (a later `HumanMessage` or `AIMessage`) appends
+    a `tool` message with no adjacent call - an orphan answer, which the upstream
+    rejects with HTTP 400 ("Messages with role 'tool' must be a response to a preceding
+    message with 'tool_calls'"). That post-turn-stop orphan is the #280 follow-up: the
+    old whole-trail scan crossed a stop boundary and answered a call that was no longer
+    the tail. Trailing `tool` answers are allowed because the structured-output path
+    appends one for its own call before `after_model` runs; only `invalid_tool_calls`
+    are considered (valid `tool_calls` belong to ToolNode, which runs after
+    `after_model`); a call with no id cannot be answered and is skipped."""
     if not messages:
         return []
-    last = messages[-1]
-    if not isinstance(last, AIMessage):
+    last = _tail_request(messages)
+    if last is None:
         return []
     answered = _answered_ids(messages)
     pending: list[dict] = []
@@ -221,10 +272,17 @@ def parsing_recovery_middleware():
 
         @hook_config(can_jump_to=["model"])
         def after_model(self, state, runtime=None):
-            """Answer the LAST message's (the tail request's) new invalid calls and
-            jump back to the model for a bounded retry; once the bound is reached,
-            answer without jumping so the turn ends on a valid trail. A request that
-            is not the tail is never answered."""
+            """Answer the TAIL REQUEST's new invalid calls and jump back to the model
+            for a bounded retry; once the bound is reached, answer without jumping so
+            the turn ends on a valid trail.
+
+            The jump is suppressed when the answer is appended behind the framework's
+            own processing: a trailing `ToolMessage` (the structured-output path
+            answered its call first) means the turn is already resolving, and a
+            still-unanswered VALID `tool_calls` entry means ToolNode has work to do -
+            jumping would bypass the tools routing and leave it unanswered. In both
+            cases the invalid call is still answered, so the wire stays paired. A
+            request that sits before a stop boundary is never answered."""
             try:
                 answers = self._detect(state)
                 if answers is None:
@@ -234,12 +292,19 @@ def parsing_recovery_middleware():
                     self._answers_this_turn = 0
                     return None
                 self._answers_this_turn += 1
-                jump = self._answers_this_turn <= max_answers
+                messages = state.get("messages") if isinstance(state, dict) else []
+                request = _tail_request(messages)
+                resolving = request is None or messages[-1] is not request
+                pending_valid = (request is not None
+                                 and _has_unanswered_valid_tool_calls(messages, request))
+                jump = (self._answers_this_turn <= max_answers
+                        and not resolving and not pending_valid)
                 logger.warning(
                     "parsing-error recovery: answering %d unanswered invalid "
                     "tool call(s) %s%s", len(answers),
                     [a.tool_call_id for a in answers],
-                    "" if jump else " (retry bound reached; ending the turn)")
+                    "" if jump else " (no in-turn retry: the turn is resolving or a "
+                                    "valid call is still pending)")
                 if jump:
                     return {"messages": answers, "jump_to": "model"}
                 return {"messages": answers}
