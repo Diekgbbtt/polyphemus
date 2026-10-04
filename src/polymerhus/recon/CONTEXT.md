@@ -88,7 +88,8 @@ _Avoid_: task, step.
 
 **Consumption set**:
 The deliberately-derived input set a Job is fanned out over - WHAT a job probes, as opposed to the probe itself.
-Declared per job by `JobSpec.consumption` and derived by the single composed `batching.derive_consumption_set` pipeline (malformed-path exclusion via the curator gate's predicate, route-cluster dedup to one representative per `(baseurl, method, path-template)`, restapi-first ordering, pack into pod inputs).
+Declared per job by `JobSpec.consumption` and derived by the single composed `batching.derive_consumption_set` pipeline (malformed-path exclusion via the curator gate's predicate, route-cluster dedup to one representative per `(baseurl, method, path-template)`, restapi-first ordering, then pack into pod inputs).
+The `pack` stage is the pod-shape choice: `none` (raw 1:1), `one_pod` (the whole set in one pod, #208), `scan_targets` (kiterunner API-root prefixes), or `batches` - the endpoint-reduce seam (first-party filter, exact-URL dedup, fingerprinted-basename dedup) that distributes the survivors across `<= MAX_PODS` batch pods. jsluice and arjun both ride `batches` (#37): arjun's pod count is bounded rather than one pod per endpoint.
 Profile preference inside a consumption set is ORDERING only, never exclusion: a `webapp` endpoint is still probed, after `restapi` ones - the reprofile probe (with its request-shape adaptation, #208) decides what each endpoint IS.
 `MAX_JOB_ASSETS` is a ceiling over the deliberately-ordered set, not a relevance filter; a derivation failure degrades to the blunt capped 1:1 with a loud warning (fail-open), never a raised exception.
 _Avoid_: input population (the raw read-back before derivation), truncation (the pre-#37 blunt cap).

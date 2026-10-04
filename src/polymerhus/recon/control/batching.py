@@ -1,15 +1,22 @@
-"""Bundle reduction + pod batching for high-volume, per-item jobs (D17/Q6).
+"""Endpoint reduction + pod batching for high-volume, per-item jobs (D17/Q6, #37).
 
-jsluice must analyze every first-party JS bundle, but a large target yields
-hundreds (houseofhr: 653 distinct bundle paths) against a fixed `MAX_PODS`
-budget. One-pod-per-bundle blows the budget ~33x, so instead we BATCH: cheap
-reductions first, then distribute the survivors across `<= max_pods` pods, each
-pod running one command over its whole batch (`build_jsluice_command`).
+Two jobs ride this seam: jsluice (analyze every first-party JS bundle) and arjun
+(parameter discovery on the endpoint set, #37). A large target yields hundreds of
+inputs (houseofhr: 653 distinct bundle paths; jetlinks: 168 surviving endpoints)
+against a fixed `MAX_PODS` budget. One-pod-per-input blows the budget, so instead
+we BATCH: cheap reductions first, then distribute the survivors across
+`<= max_pods` pods, each pod running one command over its whole batch
+(`build_jsluice_command`, `build_arjun_command`).
+
+The reduction is deliberately ENDPOINT-GENERIC: it takes any list of asset dicts
+that carry a URL (`endpoint_url`: `url`, else `baseurl`+`path`) and is not tied to
+JS bundles. jsluice feeds it bundle Endpoints; arjun feeds it the route-deduped
+Endpoint population.
 
 Reductions (cheapest, before batching):
-  1. same-origin / first-party filter - drop third-party CDN bundles that are
-     out of scope and carry no value (`assets.allegrostatic.com`, tag managers);
-  2. dedup by exact bundle URL;
+  1. same-origin / first-party filter - drop third-party hosts that are out of
+     scope and carry no value (`assets.allegrostatic.com`, tag managers);
+  2. dedup by exact URL;
   3. dedup FINGERPRINTED basenames across hosts - the same content-hashed SPA
      bundle set duplicated across tenant subdomains collapses to one scan. A
      generic basename (`main.js`, `index.js` with no hash) is NOT deduped
@@ -55,9 +62,12 @@ def _is_fingerprinted(filename: str) -> bool:
     return ext in _BUNDLE_EXTS and bool(_BUNDLER_MARKER_RE.search(filename))
 
 
-def bundle_url(asset: dict) -> str | None:
-    """The absolute bundle URL an Endpoint asset points at: its `url` prop, else
-    reconstructed from `baseurl` + `path`. `None` if neither is derivable."""
+def endpoint_url(asset: dict) -> str | None:
+    """The absolute URL an Endpoint asset points at: its `url` prop, else
+    reconstructed from `baseurl` + `path`. `None` if neither is derivable.
+
+    Endpoint-generic (not bundle-specific): jsluice feeds it bundle Endpoints,
+    arjun feeds it the route-deduped Endpoint population (#37)."""
     url = asset.get("url")
     if isinstance(url, str) and url:
         return url
@@ -89,12 +99,12 @@ def _basename(url: str) -> str:
     return name or url
 
 
-def reduce_bundles(assets: list[dict], *, apex_registrable: str | None = None) -> list[str]:
-    """Apply the three cheap reductions and return the surviving bundle URLs in
-    stable first-seen order."""
+def reduce_endpoints(assets: list[dict], *, apex_registrable: str | None = None) -> list[str]:
+    """Apply the three cheap reductions and return the surviving endpoint URLs in
+    stable first-seen order. Endpoint-generic (jsluice bundles OR arjun routes)."""
     urls: list[str] = []
     for a in assets:
-        u = bundle_url(a)
+        u = endpoint_url(a)
         if u is not None:
             urls.append(u)
 
@@ -142,26 +152,62 @@ def build_batch_assets(
     that bends the one-input-asset-per-pod model: the pipeline swaps the raw
     per-bundle assets for these before pod fan-out, so the existing 1:1
     `preprocess_fn` cap maps one batch -> one pod."""
-    reduced = reduce_bundles(assets, apex_registrable=apex_registrable)
+    reduced = reduce_endpoints(assets, apex_registrable=apex_registrable)
     return [{"batch": batch} for batch in build_batches(reduced, max_pods)]
 
 
-def build_jsluice_command(bundle_urls: list[str]) -> str:
+def build_jsluice_command(urls: list[str]) -> str:
     """Self-contained pod command: base64-embed `scripts/jsluice_scan.py` and
     run it over the batch's bundle URLs (shell-quoted argv). Embedding keeps the
     command portable - no Kali-image rebuild to ship the scanner."""
     script_b64 = base64.b64encode(_RUNNER.read_bytes()).decode()
-    args = " ".join(shlex.quote(u) for u in bundle_urls)
+    args = " ".join(shlex.quote(u) for u in urls)
     cmd = f"echo {script_b64} | base64 -d | python3 - {args}"
     return cmd.rstrip()
 
 
-def build_batch_command(job: JobSpec, batch: list[str]) -> str:
-    """Build the pod command for a batched job. Dispatches on tool; jsluice is
-    the only batched tool today, but the seam is explicit so a future batched
-    tool registers here rather than special-casing the pod configurator."""
+def build_arjun_command(
+    urls: list[str], *, session_id: str, extra: dict | None = None
+) -> str:
+    """Self-contained pod command: batch arjun over a list of endpoint URLs via
+    `-i` (import file, one URL per line), one arjun process per batch pod.
+
+    Mirrors the 1:1 arjun template's two load-bearing details: the `printf '{}'`
+    seed (arjun writes NO `-oJ` file on a zero-findings batch, so a bare
+    `&& cat` would fail the pod on a valid "found nothing" result) and the
+    stdout suppression (`>/dev/null`, else the parser sees `[!]` progress lines
+    ahead of the JSON). Serializes the auth feed's flat projection into arjun's
+    `--headers` flag, exactly as `fill_template` does for the 1:1 path.
+
+    The URL list is base64-embedded so it survives shell quoting, and the import
+    file + output land in the pod's own `/work/{session}` workdir (unique per
+    pod, so concurrent batches never collide)."""
+    from polymerhus.recon.control.auth_feed import serialize_auth_flags
+
+    auth_flags = ""
+    if (extra or {}).get("auth_context"):
+        auth_flags = serialize_auth_flags(extra["auth_context"], "arjun")
+    urls_b64 = base64.b64encode("\n".join(urls).encode()).decode()
+    return (
+        f"printf '{{}}' > /work/{session_id}/arjun.json "
+        f"&& echo {urls_b64} | base64 -d > /work/{session_id}/arjun_urls.txt "
+        f"&& arjun -i /work/{session_id}/arjun_urls.txt --rate-limit 5 "
+        f"-oJ /work/{session_id}/arjun.json {auth_flags} >/dev/null "
+        f"&& cat /work/{session_id}/arjun.json"
+    )
+
+
+def build_batch_command(
+    job: JobSpec, batch: list[str], *, session_id: str = "", extra: dict | None = None
+) -> str:
+    """Build the pod command for a batched job. Dispatches on tool; the seam is
+    explicit so a batched tool registers here rather than special-casing the pod
+    configurator. `session_id`/`extra` carry the per-pod workdir key and the auth
+    projection for tools that need a file (`-i`) or request auth (arjun)."""
     if job.tool == "jsluice":
         return build_jsluice_command(batch)
+    if job.tool == "arjun":
+        return build_arjun_command(batch, session_id=session_id, extra=extra)
     raise ValueError(f"no batch command builder registered for tool {job.tool!r}")
 
 
@@ -328,7 +374,8 @@ def derive_consumption_set(
       3. `order_restapi_first` - stable partition moving `profile == "restapi"`
          assets first. ORDERING only, never exclusion: every survivor is still
          probed (corrected record 2).
-      4. `pack` - `batches` (jsluice reduce + pack into `<= max_pods` pods),
+      4. `pack` - `batches` (endpoint reduce + pack into `<= max_pods` pods;
+         jsluice bundles AND arjun routes, #37),
          `one_pod` (the whole set, bounded by `set_cap`, into ONE pod_input -
          #208 C7: the cap bounds the probe SET, not the pod count),
          `scan_targets` (kiterunner API-root prefixes, top-`api_cap`), or

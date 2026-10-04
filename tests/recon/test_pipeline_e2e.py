@@ -329,7 +329,17 @@ def test_pipeline_e2e_httpx_to_arjun_prop_dependent_target():
     # correctly all along.
     arjun_commands = [c for c in exec_fn.commands if "arjun" in c]
     assert arjun_commands, "no arjun command was executed"
-    assert any("-u https://" in c for c in arjun_commands)
+    # arjun is BATCHED (#37): the real URLs ride the base64-embedded `-i` import
+    # file, not a `-u` template fill. Decode the blob and assert the Endpoint's
+    # `url` prop reached it - the same fidelity the old `-u https://` check made.
+    import base64 as _b64
+
+    arjun_urls: list[str] = []
+    for c in arjun_commands:
+        blob = c.split("echo ", 1)[1].split(" |", 1)[0]
+        arjun_urls.extend(_b64.b64decode(blob).decode().splitlines())
+    assert any(u.startswith("https://") for u in arjun_urls), arjun_urls
+    assert any("-i /work/" in c and "arjun_urls.txt" in c for c in arjun_commands)
     # No UNRESOLVED placeholder survives into the real command. Checking for a
     # bare "{" is wrong now: the template legitimately contains a literal `{}`
     # (the printf-seeded empty JSON), so match the `{name}` placeholder shape.

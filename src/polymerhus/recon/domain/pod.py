@@ -328,11 +328,16 @@ def build_pod_graph(*, exec_fn, curate_fn, triage_fn):
         extra = dict(state.get("extra") or {})
         input_asset = state["input_asset"]
         if job.batch and "batch" in input_asset:
-            # Batched job (jsluice, D17/Q6): the pod runs one command over a
-            # list of bundle URLs, not a single-asset template fill.
+            # Batched job (jsluice bundles, arjun routes - D17/Q6, #37): the pod
+            # runs one command over a list of URLs, not a single-asset template
+            # fill. `session_id`/`extra` reach the builder so arjun can write its
+            # `-i` import file + `-oJ` output into the pod workdir and serialize
+            # its auth headers.
             from polymerhus.recon.control.batching import build_batch_command
 
-            command = build_batch_command(job, input_asset["batch"])
+            command = build_batch_command(
+                job, input_asset["batch"], session_id=state["session_id"], extra=extra
+            )
         elif job.endpoint_profiling:
             # #208 one-pod reprofile: the pod runs ONE httpx exec over the FULL
             # dedup'd endpoint set (the whole reprofile pass in a single pod).
@@ -340,7 +345,7 @@ def build_pod_graph(*, exec_fn, curate_fn, triage_fn):
             # workdir and probes it via `httpx -l`, then cats the `-o` JSON
             # file - the established `/work/{session}` file + cat persistence
             # pattern. `endpoints` extracts each asset's probe URL via the
-            # shared bundle_url helper (url, else baseurl+path). The dispatch
+            # shared endpoint_url helper (url, else baseurl+path). The dispatch
             # is TOTAL: an endpoint_profiling job MUST arrive with its packed
             # `endpoints` set (the preprocess packs it into ONE pod_input); a
             # mis-shaped dispatch raises rather than silently probing nothing.
@@ -350,9 +355,9 @@ def build_pod_graph(*, exec_fn, curate_fn, triage_fn):
                     "'endpoints' set - default_preprocess_fn must pack the dedup'd "
                     "probe set into ONE pod_input (#208)"
                 )
-            from polymerhus.recon.control.batching import bundle_url
+            from polymerhus.recon.control.batching import endpoint_url
 
-            urls = [u for u in (bundle_url(e) for e in input_asset["endpoints"]) if u is not None]
+            urls = [u for u in (endpoint_url(e) for e in input_asset["endpoints"]) if u is not None]
             command = fill_template(
                 job.command_template, input_asset, extra,
                 session_id=state["session_id"], tool=job.tool, endpoints=urls,

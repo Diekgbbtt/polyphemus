@@ -131,13 +131,13 @@ def default_preprocess_fn(
         # are wrapped in the job's pack shape instead of passed through bare.
         # Scan-target and plain jobs run the raw assets 1:1 (a kiterunner pod
         # fills `{target}` from the asset's own url - degraded but runnable).
-        from polymerhus.recon.control.batching import bundle_url
+        from polymerhus.recon.control.batching import endpoint_url
 
         raw = list(input_assets or [])
         if job.consumption.pack == "one_pod":
             derived = [{"endpoints": raw}]
         elif job.consumption.pack == "batches":
-            urls = [u for u in (bundle_url(a) for a in raw) if u is not None]
+            urls = [u for u in (endpoint_url(a) for a in raw) if u is not None]
             derived = [{"batch": urls}] if urls else []
         else:
             derived = raw

@@ -1,14 +1,15 @@
 import base64
 
 from polymerhus.recon.control.batching import (
+    build_arjun_command,
     build_batch_assets,
     build_batch_command,
     build_batches,
     build_jsluice_command,
-    bundle_url,
+    endpoint_url,
     is_first_party,
     prepare_endpoint_profile_assets,
-    reduce_bundles,
+    reduce_endpoints,
 )
 from polymerhus.recon.control.jobs import JOBS
 
@@ -24,17 +25,17 @@ def _ep(url=None, baseurl=None, path=None):
     return a
 
 
-# ------------------------------ bundle_url -------------------------------- #
-def test_bundle_url_prefers_url_prop():
-    assert bundle_url(_ep(url="https://h/a.js", baseurl="https://h", path="/a.js")) == "https://h/a.js"
+# ------------------------------ endpoint_url -------------------------------- #
+def test_endpoint_url_prefers_url_prop():
+    assert endpoint_url(_ep(url="https://h/a.js", baseurl="https://h", path="/a.js")) == "https://h/a.js"
 
 
-def test_bundle_url_reconstructs_from_baseurl_and_path():
-    assert bundle_url(_ep(baseurl="https://h", path="/x/a.js")) == "https://h/x/a.js"
+def test_endpoint_url_reconstructs_from_baseurl_and_path():
+    assert endpoint_url(_ep(baseurl="https://h", path="/x/a.js")) == "https://h/x/a.js"
 
 
-def test_bundle_url_none_when_underivable():
-    assert bundle_url({"method": "GET"}) is None
+def test_endpoint_url_none_when_underivable():
+    assert endpoint_url({"method": "GET"}) is None
 
 
 # ---------------------------- first-party -------------------------------- #
@@ -56,7 +57,7 @@ def test_reduce_dedups_exact_url_and_fingerprinted_basename_across_hosts():
         _ep(url="https://b.houseofhr.com/static/app.a1b2c3d4.js"),  # same fp basename, other host
         _ep(url="https://a.houseofhr.com/static/vendor.9c1d2e3f.js"),
     ]
-    out = reduce_bundles(assets, apex_registrable="houseofhr.com")
+    out = reduce_endpoints(assets, apex_registrable="houseofhr.com")
     assert out == [
         "https://a.houseofhr.com/static/app.a1b2c3d4.js",
         "https://a.houseofhr.com/static/vendor.9c1d2e3f.js",
@@ -71,7 +72,7 @@ def test_reduce_keeps_generic_basename_per_host_across_hosts():
         _ep(url="https://b.houseofhr.com/main.js"),
         _ep(url="https://c.houseofhr.com/index.js"),
     ]
-    out = reduce_bundles(assets, apex_registrable="houseofhr.com")
+    out = reduce_endpoints(assets, apex_registrable="houseofhr.com")
     assert out == [
         "https://a.houseofhr.com/main.js",
         "https://b.houseofhr.com/main.js",
@@ -85,7 +86,7 @@ def test_reduce_generic_basename_still_dedups_exact_url():
         _ep(url="https://a.houseofhr.com/main.js"),
         _ep(url="https://a.houseofhr.com/main.js"),
     ]
-    out = reduce_bundles(assets, apex_registrable="houseofhr.com")
+    out = reduce_endpoints(assets, apex_registrable="houseofhr.com")
     assert out == ["https://a.houseofhr.com/main.js"]
 
 
@@ -96,7 +97,7 @@ def test_reduce_dedups_hashless_bundler_marker_basename_across_hosts():
         _ep(url="https://a.houseofhr.com/runtime.js"),
         _ep(url="https://b.houseofhr.com/runtime.js"),
     ]
-    out = reduce_bundles(assets, apex_registrable="houseofhr.com")
+    out = reduce_endpoints(assets, apex_registrable="houseofhr.com")
     assert out == ["https://a.houseofhr.com/runtime.js"]
 
 
@@ -105,13 +106,13 @@ def test_reduce_drops_third_party_when_apex_given():
         _ep(url="https://a.houseofhr.com/app.js"),
         _ep(url="https://assets.allegrostatic.com/lib.js"),
     ]
-    out = reduce_bundles(assets, apex_registrable="houseofhr.com")
+    out = reduce_endpoints(assets, apex_registrable="houseofhr.com")
     assert out == ["https://a.houseofhr.com/app.js"]
 
 
 def test_reduce_keeps_all_when_no_apex():
     assets = [_ep(url="https://a/x.js"), _ep(url="https://b/y.js")]
-    assert reduce_bundles(assets, apex_registrable=None) == ["https://a/x.js", "https://b/y.js"]
+    assert reduce_endpoints(assets, apex_registrable=None) == ["https://a/x.js", "https://b/y.js"]
 
 
 # ---------------------------- build_batches ------------------------------ #
@@ -163,6 +164,36 @@ def test_build_jsluice_command_embeds_runner_and_quoted_urls():
 def test_build_batch_command_dispatches_jsluice():
     cmd = build_batch_command(JOBS["jsluice"], ["https://h/a.js"])
     assert "python3 -" in cmd
+
+
+def test_build_arjun_command_seeds_imports_and_cats():
+    urls = ["https://h/account", "https://h/api"]
+    cmd = build_arjun_command(urls, session_id="s1", extra={})
+    # The zero-findings seed: arjun writes no `-oJ` file on a clean batch, so a
+    # bare `&& cat` would fail the pod (the AMV-14 trap).
+    assert "printf '{}' > /work/s1/arjun.json" in cmd
+    # The URL list is base64-embedded and decoded into the `-i` import file.
+    assert "| base64 -d > /work/s1/arjun_urls.txt" in cmd
+    assert "arjun -i /work/s1/arjun_urls.txt --rate-limit 5" in cmd
+    assert "-oJ /work/s1/arjun.json" in cmd
+    assert ">/dev/null" in cmd  # arjun's `[!]` progress must not reach the parser
+    assert cmd.rstrip().endswith("cat /work/s1/arjun.json")
+    blob = cmd.split("echo ", 1)[1].split(" |", 1)[0]
+    assert base64.b64decode(blob).decode() == "https://h/account\nhttps://h/api"
+
+
+def test_build_arjun_command_serializes_auth_headers():
+    cmd = build_arjun_command(
+        ["https://h/api"],
+        session_id="s2",
+        extra={"auth_context": {"Authorization": "Bearer tok"}},
+    )
+    assert "--headers" in cmd
+
+
+def test_build_batch_command_dispatches_arjun():
+    cmd = build_batch_command(JOBS["arjun"], ["https://h/api"], session_id="s3", extra={})
+    assert "arjun -i /work/s3/arjun_urls.txt" in cmd
 
 
 def test_build_batch_command_unknown_tool_raises():

@@ -392,8 +392,8 @@ JOBS: dict[str, JobSpec] = {
             # 5 rps is the chosen point: ~52s per URL leaves ~6x headroom under
             # EXEC_TIMEOUT_S=300, while cutting the per-process burst ~13x from the
             # measured ~65 rps of the unlimited default. That default matters more
-            # than it looks - arjun is unbatched and runs MAX_PODS=20 pods at once,
-            # so the aggregate burst against a single host is ~1300 rps unlimited
+            # than it looks - arjun runs up to MAX_PODS=20 batch pods at once, so
+            # the aggregate burst against a single host is ~1300 rps unlimited
             # vs ~100 rps here.
             # NOT `--stable`: it forces threads=1 AND injects a random 3-10s delay
             # before EVERY request (arjun/core/requester.py), i.e. 13-43 min per URL
@@ -407,22 +407,27 @@ JOBS: dict[str, JobSpec] = {
         ),
         produces=["Parameter"],
         consumes="Endpoint",
-        # #37: arjun finally declares its input set instead of falling through
-        # the silent 1:1 fallback. Route-cluster dedup (one probe per
+        # #37: arjun declares its input set instead of falling through the
+        # silent 1:1 fallback. Route-cluster dedup (one probe per
         # (baseurl, method, path-template) - NO root `/` materialisation,
         # NO already-profiled skip: a profile is orthogonal to parameters) +
         # the curator gate's malformed-path exclusion (P3) + restapi-first
         # ordering (ordering only, never exclusion - `webapp` is still probed).
-        # Still `pack="none"`: one pod per surviving endpoint. 404/403/401 are
-        # KEPT (Q6): an error status means the request shape may be wrong,
-        # exactly where probing must go.
+        # `pack="batches"` (the jsluice seam, #37): the reduced endpoint set is
+        # distributed into `<= MAX_PODS` batch pods, each running ONE arjun
+        # process over its URL list via `-i` (`build_arjun_command`), so the job
+        # can never fan out one pod per endpoint. This bounds arjun's pod count
+        # and wall-clock (measured ~21s/URL x ~8 URLs/batch stays under
+        # EXEC_TIMEOUT_S=300) - the bottleneck fix. 404/403/401 are KEPT (Q6):
+        # an error status means the request shape may be wrong, exactly where
+        # probing must go.
         consumption=ConsumptionOptions(
             route_dedup=True,
             materialise_root=False,
             skip_profiled=False,
             drop_malformed=True,
             order_restapi_first=True,
-            pack="none",
+            pack="batches",
         ),
         use_auth=True,
     ),
