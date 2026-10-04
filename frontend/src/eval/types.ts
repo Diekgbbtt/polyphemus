@@ -231,6 +231,69 @@ export interface EvalDegradedTrial {
   reason: string
 }
 
+// --- resolved (unified Target -> Trial workspace) ------------------------------
+
+// Which read-only source answered a resolved request. The UI labels these
+// `Captured with Trial` and `Saved for project`; schema details never surface.
+export type ResolvedSource = "trial_snapshot" | "project_storage"
+
+export interface ResolvedProjectGraphAvailable {
+  status: "available"
+  source: ResolvedSource
+  project_id: string | null
+  captured_at: string | null
+  fallback_reason: string | null
+  sha256: string | null
+  graph: GraphData
+}
+
+export interface ResolvedProjectGraphUnavailable {
+  status: "unavailable"
+  source: ResolvedSource
+  project_id: string | null
+  captured_at: null
+  fallback_reason: string | null
+  reason: string
+}
+
+export type ResolvedProjectGraph =
+  | ResolvedProjectGraphAvailable
+  | ResolvedProjectGraphUnavailable
+
+export interface ResolvedArtifactInventoryAvailable {
+  status: "available"
+  source: ResolvedSource
+  project_id: string | null
+  fallback_reason: string | null
+  groups: ProjectArtifactGroup[]
+}
+
+export interface ResolvedArtifactInventoryUnavailable {
+  status: "unavailable"
+  source: ResolvedSource
+  project_id: string | null
+  fallback_reason: string | null
+  reason: string
+  groups: []
+}
+
+export type ResolvedArtifactInventory =
+  | ResolvedArtifactInventoryAvailable
+  | ResolvedArtifactInventoryUnavailable
+
+// A resolved detail is the same wire shape as the strict one: the content URL
+// it carries is already bound to the entry digest.
+export type ResolvedArtifactDetail = ProjectArtifactDetail
+
+// A raw project directory no projected Trial proves belongs to this instance.
+export interface UnassignedSavedData {
+  project_id: string
+  status: "available" | "unavailable"
+  hunting: number
+  skills: number
+  reason?: string
+}
+
 export interface EvalCoverageTargets {
   tested: number
   with_identified: number
@@ -259,4 +322,6 @@ export interface EvalSnapshot {
   coverage: EvalCoverage
   successes: EvalSuccess[]
   degraded_trials: EvalDegradedTrial[]
+  // Optional for older fixtures/servers; the current backend always emits it.
+  unassigned_saved_data?: UnassignedSavedData[]
 }

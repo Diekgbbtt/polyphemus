@@ -2,9 +2,13 @@ import { afterEach, expect, test, vi } from "vitest"
 import {
   getProjectArtifact,
   getProjectArtifacts,
+  getResolvedArtifact,
+  getResolvedArtifacts,
+  getResolvedTrialGraph,
   getSnapshot,
   getTrialProjectGraph,
   projectArtifactContentUrl,
+  resolvedArtifactContentUrl,
 } from "./client"
 
 const SNAPSHOT = {
@@ -194,5 +198,68 @@ test("projectArtifactContentUrl is exact and performs no fetch", () => {
   const url = projectArtifactContentUrl("t 1", "r/2", "x?y", "a/b")
 
   expect(url).toBe("http://eval.test/trials/t%201/r%2F2/x%3Fy/artifacts/a%2Fb/content")
+  expect(fetched).toBe(false)
+})
+
+// --- the resolved endpoints (unified workspace) --------------------------------
+
+const RESOLVED_GRAPH = {
+  status: "available",
+  source: "project_storage",
+  project_id: "proj-1",
+  captured_at: null,
+  fallback_reason: "project_graph_unavailable",
+  sha256: null,
+  graph: { project_id: "proj-1", nodes: [], links: [] },
+}
+
+test("getResolvedTrialGraph encodes the full identity on the eval base", async () => {
+  vi.stubEnv("VITE_EVAL_API_BASE_URL", "http://eval.test")
+  vi.stubEnv("VITE_AGENT_BASE_URL", "http://agent.test")
+  const { calls, inits } = stubFetchDetailed(RESOLVED_GRAPH)
+  const controller = new AbortController()
+
+  const graph = await getResolvedTrialGraph("t 1", "r/2", "x?y", controller.signal)
+
+  expect(calls).toEqual([
+    "http://eval.test/trials/t%201/r%2F2/x%3Fy/resolved-graph",
+  ])
+  expect(inits[0].signal).toBe(controller.signal)
+  expect(graph.source).toBe("project_storage")
+})
+
+test("getResolvedArtifacts and getResolvedArtifact encode ids separately", async () => {
+  vi.stubEnv("VITE_EVAL_API_BASE_URL", "")
+  const inventory = { calls: [] as string[] }
+  globalThis.fetch = (async (url: unknown) => {
+    inventory.calls.push(String(url))
+    return new Response(
+      JSON.stringify({ status: "available", source: "project_storage", groups: [] }),
+    )
+  }) as typeof fetch
+
+  await getResolvedArtifacts("t", "r", "trial")
+  await getResolvedArtifact("t", "r", "trial", "a/b?c")
+
+  expect(inventory.calls).toEqual([
+    "/trials/t/r/trial/resolved-artifacts",
+    "/trials/t/r/trial/resolved-artifacts/a%2Fb%3Fc",
+  ])
+})
+
+test("resolvedArtifactContentUrl binds the detail digest and never fetches", () => {
+  vi.stubEnv("VITE_EVAL_API_BASE_URL", "http://eval.test")
+  let fetched = false
+  globalThis.fetch = (() => {
+    fetched = true
+    return Promise.resolve(new Response("{}"))
+  }) as typeof fetch
+
+  const url = resolvedArtifactContentUrl("t 1", "r/2", "x?y", "a/b", "sha 256")
+
+  expect(url).toBe(
+    "http://eval.test/trials/t%201/r%2F2/x%3Fy/resolved-artifacts/a%2Fb/content" +
+      "?expected_sha256=sha%20256",
+  )
   expect(fetched).toBe(false)
 })

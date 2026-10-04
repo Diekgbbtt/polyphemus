@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import { afterEach, expect, test } from "vitest"
 import { App } from "../App"
+import { targetPaths } from "../projectPaths"
 import type { EvalSnapshot } from "./types"
 
 // A compact corpus that mirrors the demo generator: a shared eval_sha under two
@@ -314,6 +315,19 @@ function stubFetch(body: unknown, status = 200) {
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status })
 }
+
+// --- canonical target paths ----------------------------------------------------
+
+test("canonical target paths encode every identifier", () => {
+  expect(targetPaths.target("comfyui-1")).toBe("/targets/comfyui-1")
+  expect(targetPaths.target("a/b")).toBe("/targets/a%2Fb")
+  expect(targetPaths.trial("t 1", "r/2", "x?y")).toBe(
+    "/targets/t%201/trials/r%2F2/x%3Fy",
+  )
+  expect(targetPaths.trialArtifact("t", "r", "trial", "a/b")).toBe(
+    "/targets/t/trials/r/trial/artifacts/a%2Fb",
+  )
+})
 
 // A per-path fetch stub: the first route whose needle is a substring of the
 // request URL wins. The catalog loads `/projects` and `/snapshot` independently.

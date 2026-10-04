@@ -24,3 +24,19 @@ export const projectPaths = {
     artifactId: string,
   ) => `${projectPaths.artifacts(projectId, targetId, targetRunId, trialId)}/${enc(artifactId)}`,
 }
+
+// The canonical Target -> Trial routes. The Target is the primary entity; a
+// Trial is identified by its full (target, run, trial) identity, never by the
+// internal project id it happens to share.
+export const targetPaths = {
+  target: (targetId: string) => `/targets/${enc(targetId)}`,
+  trial: (targetId: string, targetRunId: string, trialId: string) =>
+    `/targets/${enc(targetId)}/trials/${enc(targetRunId)}/${enc(trialId)}`,
+  trialArtifact: (
+    targetId: string,
+    targetRunId: string,
+    trialId: string,
+    artifactId: string,
+  ) =>
+    `${targetPaths.trial(targetId, targetRunId, trialId)}/artifacts/${enc(artifactId)}`,
+}

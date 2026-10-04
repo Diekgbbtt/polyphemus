@@ -3,6 +3,9 @@ import type {
   HistoricalProjectGraph,
   ProjectArtifactDetail,
   ProjectArtifactInventory,
+  ResolvedArtifactDetail,
+  ResolvedArtifactInventory,
+  ResolvedProjectGraph,
 } from "./types"
 
 // The eval read API is its own service, so its base URL is deliberately
@@ -97,5 +100,68 @@ export function projectArtifactContentUrl(
   return (
     `${evalApiBaseUrl()}${trialPath(targetId, targetRunId, trialId)}` +
     `/artifacts/${encodeURIComponent(artifactId)}/content`
+  )
+}
+
+// --- resolved endpoints (unified Target -> Trial workspace) --------------------
+
+// The unified graph of one Trial. The eval API decides between the immutable
+// Trial capture and the matching instance's current project graph; the browser
+// never chooses a source and never talks to the live agent for a Trial.
+export async function getResolvedTrialGraph(
+  targetId: string,
+  targetRunId: string,
+  trialId: string,
+  signal?: AbortSignal,
+): Promise<ResolvedProjectGraph> {
+  const path = `${trialPath(targetId, targetRunId, trialId)}/resolved-graph`
+  const res = await fetch(`${evalApiBaseUrl()}${path}`, { signal })
+  if (!res.ok) throw new Error(await failureText(res, path))
+  return (await res.json()) as ResolvedProjectGraph
+}
+
+// The unified artifact inventory of one Trial: the immutable capture when it
+// exists, otherwise the allowlisted raw project directory.
+export async function getResolvedArtifacts(
+  targetId: string,
+  targetRunId: string,
+  trialId: string,
+  signal?: AbortSignal,
+): Promise<ResolvedArtifactInventory> {
+  const path = `${trialPath(targetId, targetRunId, trialId)}/resolved-artifacts`
+  const res = await fetch(`${evalApiBaseUrl()}${path}`, { signal })
+  if (!res.ok) throw new Error(await failureText(res, path))
+  return (await res.json()) as ResolvedArtifactInventory
+}
+
+// One resolved artifact's metadata plus its one safe representation.
+export async function getResolvedArtifact(
+  targetId: string,
+  targetRunId: string,
+  trialId: string,
+  artifactId: string,
+  signal?: AbortSignal,
+): Promise<ResolvedArtifactDetail> {
+  const path =
+    `${trialPath(targetId, targetRunId, trialId)}/resolved-artifacts/` +
+    `${encodeURIComponent(artifactId)}`
+  const res = await fetch(`${evalApiBaseUrl()}${path}`, { signal })
+  if (!res.ok) throw new Error(await failureText(res, path))
+  return (await res.json()) as ResolvedArtifactDetail
+}
+
+// The raw content URL for a resolved artifact, bound to the digest the detail
+// returned. Pure: it builds a URL and never fetches.
+export function resolvedArtifactContentUrl(
+  targetId: string,
+  targetRunId: string,
+  trialId: string,
+  artifactId: string,
+  sha256: string,
+): string {
+  return (
+    `${evalApiBaseUrl()}${trialPath(targetId, targetRunId, trialId)}` +
+    `/resolved-artifacts/${encodeURIComponent(artifactId)}/content` +
+    `?expected_sha256=${encodeURIComponent(sha256)}`
   )
 }
