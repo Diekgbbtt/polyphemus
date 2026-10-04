@@ -700,3 +700,26 @@ def test_source_factory_injection_is_honored(tmp_path: Path) -> None:
 
     assert client.get(_list_url()).status_code == 200
     assert calls == 1
+
+
+def test_strict_endpoint_stays_the_integrity_report_for_incoherent_capture(
+    tmp_path: Path,
+) -> None:
+    """The strict historical contract is unchanged by the resolved layer.
+
+    An incoherent snapshot fingerprint is a resolved-layer fallback trigger, but
+    the strict `/artifacts` endpoint keeps serving the manifest inventory so
+    operators still have an integrity diagnostic.
+    """
+    store = tmp_path / "store"
+    _build_trial(store)
+    _tamper_entry(store, "hunting/orchestration/hunt_configs/produced/prod.yaml")
+
+    manifest_path = store / TARGET / RUN / TRIAL / "run-manifest.yaml"
+    manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+    manifest["project_artifacts"]["snapshot_sha256"] = "incoherent"
+    manifest_path.write_text(yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8")
+
+    res = _client(store).get(_list_url())
+    assert res.status_code == 200
+    assert res.json()["status"] == "available"

@@ -112,11 +112,7 @@ def list_artifacts(
     """The grouped inventory of one fully-identified, available Trial snapshot."""
     trial_dir = _resolve_trial(store, target_id, target_run_id, trial_id)
     project_id, entries = _load_inventory(trial_dir)
-    return {
-        "status": "available",
-        "project_id": project_id,
-        "groups": _build_groups(entries),
-    }
+    return _inventory_body(project_id, entries)
 
 
 def get_artifact(
@@ -130,12 +126,13 @@ def get_artifact(
     trial_dir = _resolve_trial(store, target_id, target_run_id, trial_id)
     project_id, entries = _load_inventory(trial_dir)
     entry = _find_entry(entries, artifact_id)
-    path = _verified_artifact(trial_dir, project_id, entry)
-    return {
-        "entry": dict(entry),
-        "preview": _preview(path, entry),
-        "content_url": _content_url(target_id, target_run_id, trial_id, entry["artifact_id"]),
-    }
+    return _detail_body(
+        trial_dir / project_id,
+        entry,
+        content_url=_content_url(
+            target_id, target_run_id, trial_id, entry["artifact_id"]
+        ),
+    )
 
 
 def stream_artifact(
@@ -149,14 +146,7 @@ def stream_artifact(
     trial_dir = _resolve_trial(store, target_id, target_run_id, trial_id)
     project_id, entries = _load_inventory(trial_dir)
     entry = _find_entry(entries, artifact_id)
-    path = _verified_artifact(trial_dir, project_id, entry)
-    return ArtifactDownload(
-        filename=_safe_filename(entry["relative_path"]),
-        media_type=entry["media_type"],
-        size_bytes=entry["size_bytes"],
-        chunks=_iter_file(path),
-        attachment=_is_attachment(entry),
-    )
+    return _download(trial_dir / project_id, entry)
 
 
 # --- Trial and manifest resolution ----------------------------------------------
@@ -176,8 +166,17 @@ def _resolve_trial(
     return trial_dir
 
 
-def _load_inventory(trial_dir: Path) -> tuple[str, list[dict]]:
-    """The manifest's project id and its validated, allowlisted inventory entries."""
+def _load_inventory(
+    trial_dir: Path, *, require_coherent: bool = False
+) -> tuple[str, list[dict]]:
+    """The manifest's project id and its validated, allowlisted inventory entries.
+
+    The strict historical contract accepts a schema-v2 capture whose sections
+    are individually available. `require_coherent=True` additionally demands
+    the atomic snapshot fingerprint (`project_snapshot.snapshot_sha256` ==
+    `project_artifacts.snapshot_sha256`); the resolved layer uses that stricter
+    form so a digest-inconsistent capture is never served as a Trial snapshot.
+    """
     manifest_path = trial_dir / MANIFEST_FILENAME
     if not manifest_path.is_file():
         raise _error(SNAPSHOT_UNAVAILABLE, 409)
@@ -206,6 +205,15 @@ def _load_inventory(trial_dir: Path) -> tuple[str, list[dict]]:
         raise _error(ARTIFACT_UNSAFE, 409)
     if any(section.get("project_id") != project_id for section in sections):
         raise _error(ARTIFACT_UNSAFE, 409)
+
+    if require_coherent:
+        snapshot_fingerprint = snapshot.get("snapshot_sha256")
+        artifacts_fingerprint = artifacts.get("snapshot_sha256")
+        if (
+            not _is_text(snapshot_fingerprint)
+            or snapshot_fingerprint != artifacts_fingerprint
+        ):
+            raise _error(SNAPSHOT_UNAVAILABLE, 409)
 
     raw_entries = artifacts.get("entries")
     if not isinstance(raw_entries, list):
@@ -267,6 +275,45 @@ def _find_entry(entries: list[dict], artifact_id: object) -> dict:
             if entry["artifact_id"] == artifact_id:
                 return entry
     raise _error(ARTIFACT_NOT_FOUND, 404)
+
+
+# --- shared rendering over any trusted, validated inventory ----------------------
+
+
+def _inventory_body(project_id: str, entries: list[dict]) -> dict[str, Any]:
+    """The grouped inventory body shared by strict and resolved callers."""
+    return {
+        "status": "available",
+        "project_id": project_id,
+        "groups": _build_groups(entries),
+    }
+
+
+def _detail_body(project_root: Path, entry: Mapping, *, content_url: str) -> dict[str, Any]:
+    """Metadata plus one bounded preview for one validated entry.
+
+    `project_root` is the trusted directory the entry's `relative_path` is
+    rooted at; it is never serialized. `content_url` is supplied by the caller
+    so a resolved caller can bind the digest it just returned.
+    """
+    path = _verified_artifact(project_root, entry)
+    return {
+        "entry": dict(entry),
+        "preview": _preview(path, entry),
+        "content_url": content_url,
+    }
+
+
+def _download(project_root: Path, entry: Mapping) -> ArtifactDownload:
+    """A bounded stream over one validated, re-verified artifact."""
+    path = _verified_artifact(project_root, entry)
+    return ArtifactDownload(
+        filename=_safe_filename(entry["relative_path"]),
+        media_type=entry["media_type"],
+        size_bytes=entry["size_bytes"],
+        chunks=_iter_file(path),
+        attachment=_is_attachment(entry),
+    )
 
 
 # --- allowlist and file verification --------------------------------------------
@@ -333,10 +380,10 @@ def _allowlist_group(relative_path: str, kind: str) -> tuple[str, ...] | None:
     return None
 
 
-def _verified_artifact(trial_dir: Path, project_id: str, entry: Mapping) -> Path:
+def _verified_artifact(project_root: Path, entry: Mapping) -> Path:
     """Re-check path safety, type, size, and digest; return the verified path."""
-    target = trial_dir / project_id / entry["relative_path"]
-    if not _is_within(trial_dir, target):
+    target = project_root / entry["relative_path"]
+    if not _is_within(project_root, target):
         raise _error(ARTIFACT_UNSAFE, 409)
     if target.is_symlink():
         raise _error(ARTIFACT_UNSAFE, 409)
