@@ -22,6 +22,18 @@ from polymerhus.app.llm.usage import UsageLedger, usage_ledger, usage_middleware
 _USAGE = {"input_tokens": 11, "output_tokens": 7, "total_tokens": 18}
 
 
+def _empty(project_id: str) -> dict:
+    """The zero surface a project with no recorded calls returns."""
+    return {
+        "project_id": project_id,
+        "context_tokens": {"cached": 0, "uncached": 0},
+        "generated_tokens": {"reasoning": 0, "visible": 0},
+        "total_tokens": 0,
+        "calls": 0,
+        "by_agent": {},
+    }
+
+
 class _UsageFakeChatModel(BaseChatModel):
     """A scripted chat model whose reply carries fixed `usage_metadata`, so a
     real `create_agent` run observable to the middleware records tokens."""
@@ -62,12 +74,76 @@ def test_record_accumulates_across_calls_for_one_agent():
                                          "total_tokens": 5})
     snap = ledger.snapshot("proj-1")
     assert snap["project_id"] == "proj-1"
+    assert snap["context_tokens"] == {"cached": 0, "uncached": 13}
+    assert snap["generated_tokens"] == {"reasoning": 0, "visible": 7}
     assert snap["total_tokens"] == 20
     assert snap["calls"] == 2
     assert snap["by_agent"] == {
-        "assigner": {"input_tokens": 13, "output_tokens": 7,
+        "assigner": {"context_tokens": {"cached": 0, "uncached": 13},
+                     "generated_tokens": {"reasoning": 0, "visible": 7},
                      "total_tokens": 20, "calls": 2},
     }
+
+
+def test_record_decomposes_the_two_axes_from_real_usage_metadata():
+    # Worked example from ticket F16 (a comfyui trial-1 aggregate of 264
+    # generations): 92% of input was cache reads, invisible on the old surface.
+    # The expected axes are taken from the ticket, not recomputed here.
+    ledger = UsageLedger()
+    ledger.record("proj-1", "comfy-gen", {
+        "input_tokens": 12_991_082,
+        "output_tokens": 215_821,
+        "total_tokens": 13_206_903,
+        "input_token_details": {"cache_read": 12_002_944, "cache_creation": 0},
+        "output_token_details": {"reasoning": 135_011},
+    })
+    snap = ledger.snapshot("proj-1")
+    assert snap["context_tokens"] == {"cached": 12_002_944, "uncached": 988_138}
+    assert snap["generated_tokens"] == {"reasoning": 135_011, "visible": 80_810}
+    assert snap["total_tokens"] == 13_206_903
+    assert snap["calls"] == 1
+    assert snap["by_agent"]["comfy-gen"] == {
+        "context_tokens": {"cached": 12_002_944, "uncached": 988_138},
+        "generated_tokens": {"reasoning": 135_011, "visible": 80_810},
+        "total_tokens": 13_206_903,
+        "calls": 1,
+    }
+
+
+def test_cache_creation_is_folded_into_uncached_context():
+    # context.uncached = fresh input (input - cache_read) + cache_creation.
+    ledger = UsageLedger()
+    ledger.record("proj-1", "assigner", {
+        "input_tokens": 100, "output_tokens": 0, "total_tokens": 100,
+        "input_token_details": {"cache_read": 40, "cache_creation": 25},
+    })
+    snap = ledger.snapshot("proj-1")
+    assert snap["context_tokens"] == {"cached": 40, "uncached": 85}
+    assert snap["total_tokens"] == 125
+
+
+def test_reasoning_larger_than_output_clamps_visible_to_zero():
+    # A malformed payload must never yield a negative `visible`; reasoning is a
+    # subset of output, so it is clamped to output and the axis still sums.
+    ledger = UsageLedger()
+    ledger.record("proj-1", "assigner", {
+        "input_tokens": 0, "output_tokens": 10, "total_tokens": 10,
+        "output_token_details": {"reasoning": 30},
+    })
+    snap = ledger.snapshot("proj-1")
+    assert snap["generated_tokens"] == {"reasoning": 10, "visible": 0}
+    assert snap["total_tokens"] == 10
+
+
+def test_cache_read_larger_than_input_never_produces_negative_uncached():
+    ledger = UsageLedger()
+    ledger.record("proj-1", "assigner", {
+        "input_tokens": 10, "output_tokens": 0, "total_tokens": 10,
+        "input_token_details": {"cache_read": 50},
+    })
+    snap = ledger.snapshot("proj-1")
+    assert snap["context_tokens"] == {"cached": 10, "uncached": 0}
+    assert snap["total_tokens"] == 10
 
 
 def test_two_agents_in_one_project_are_broken_out():
@@ -80,7 +156,7 @@ def test_two_agents_in_one_project_are_broken_out():
     assert snap["total_tokens"] == 15
     assert snap["calls"] == 2
     assert snap["by_agent"]["assigner"]["total_tokens"] == 10
-    assert snap["by_agent"]["triager"]["output_tokens"] == 4
+    assert snap["by_agent"]["triager"]["generated_tokens"]["visible"] == 4
 
 
 def test_unscoped_bucket_is_excluded_from_a_project_snapshot():
@@ -100,8 +176,7 @@ def test_unscoped_bucket_is_excluded_from_a_project_snapshot():
 def test_unknown_project_returns_zeros_and_empty_breakdown():
     ledger = UsageLedger()
     snap = ledger.snapshot("never-seen")
-    assert snap == {"project_id": "never-seen", "total_tokens": 0, "calls": 0,
-                    "by_agent": {}}
+    assert snap == _empty("never-seen")
 
 
 def test_none_or_empty_usage_is_a_no_op():
@@ -131,12 +206,7 @@ def test_a_partial_total_falls_back_to_input_plus_output():
 def test_a_non_mapping_usage_payload_is_swallowed():
     ledger = UsageLedger()
     ledger.record("proj-1", "assigner", "not-a-mapping")  # type: ignore[arg-type]
-    assert ledger.snapshot("proj-1") == {
-        "project_id": "proj-1",
-        "total_tokens": 0,
-        "calls": 0,
-        "by_agent": {},
-    }
+    assert ledger.snapshot("proj-1") == _empty("proj-1")
 
 
 def test_concurrent_record_and_snapshot_stay_consistent():
@@ -171,8 +241,7 @@ def test_reset_clears_all_state():
     ledger.record("proj-1", "assigner", {"input_tokens": 4, "output_tokens": 4,
                                          "total_tokens": 8})
     ledger.reset()
-    assert ledger.snapshot("proj-1") == {
-        "project_id": "proj-1", "total_tokens": 0, "calls": 0, "by_agent": {}}
+    assert ledger.snapshot("proj-1") == _empty("proj-1")
 
 
 # --- TokenUsageMiddleware: records a real create_agent run's usage -----------
@@ -193,7 +262,8 @@ def test_middleware_records_usage_for_an_invoked_agent_run():
     assert snap["calls"] == 1
     assert snap["total_tokens"] == 18
     assert snap["by_agent"] == {
-        "assigner": {"input_tokens": 11, "output_tokens": 7,
+        "assigner": {"context_tokens": {"cached": 0, "uncached": 11},
+                     "generated_tokens": {"reasoning": 0, "visible": 7},
                      "total_tokens": 18, "calls": 1},
     }
 
@@ -287,7 +357,8 @@ def test_session_turn_records_usage_even_when_observe_is_false():
     snap = usage_ledger().snapshot("proj-1")
     assert snap["total_tokens"] == 18
     assert snap["by_agent"] == {
-        "assigner": {"input_tokens": 11, "output_tokens": 7,
+        "assigner": {"context_tokens": {"cached": 0, "uncached": 11},
+                     "generated_tokens": {"reasoning": 0, "visible": 7},
                      "total_tokens": 18, "calls": 1},
     }
 

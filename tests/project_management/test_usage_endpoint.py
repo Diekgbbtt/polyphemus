@@ -35,15 +35,36 @@ def test_usage_returns_totals_and_per_agent_breakdown():
     assert resp.status_code == 200
     assert resp.json() == {
         "project_id": "proj-1",
+        "context_tokens": {"cached": 0, "uncached": 11},
+        "generated_tokens": {"reasoning": 0, "visible": 9},
         "total_tokens": 20,
         "calls": 2,
         "by_agent": {
-            "analyser": {"input_tokens": 10, "output_tokens": 5,
+            "analyser": {"context_tokens": {"cached": 0, "uncached": 10},
+                         "generated_tokens": {"reasoning": 0, "visible": 5},
                          "total_tokens": 15, "calls": 1},
-            "triager": {"input_tokens": 1, "output_tokens": 4,
+            "triager": {"context_tokens": {"cached": 0, "uncached": 1},
+                        "generated_tokens": {"reasoning": 0, "visible": 4},
                         "total_tokens": 5, "calls": 1},
         },
     }
+
+
+def test_usage_endpoint_exposes_the_cache_and_reasoning_axes():
+    # The ticket's F16 evidence, over the real HTTP endpoint: the aggregate
+    # surface must show that 92% of input was cache reads, not fold it away.
+    usage_ledger().record("proj-1", "comfy-gen", {
+        "input_tokens": 12_991_082,
+        "output_tokens": 215_821,
+        "total_tokens": 13_206_903,
+        "input_token_details": {"cache_read": 12_002_944},
+        "output_token_details": {"reasoning": 135_011},
+    })
+
+    body = client.get("/projects/proj-1/usage").json()
+
+    assert body["context_tokens"] == {"cached": 12_002_944, "uncached": 988_138}
+    assert body["generated_tokens"] == {"reasoning": 135_011, "visible": 80_810}
 
 
 def test_usage_for_an_empty_project_returns_zeros_and_never_404s():
@@ -51,7 +72,11 @@ def test_usage_for_an_empty_project_returns_zeros_and_never_404s():
 
     assert resp.status_code == 200
     assert resp.json() == {
-        "project_id": "never-seen", "total_tokens": 0, "calls": 0,
+        "project_id": "never-seen",
+        "context_tokens": {"cached": 0, "uncached": 0},
+        "generated_tokens": {"reasoning": 0, "visible": 0},
+        "total_tokens": 0,
+        "calls": 0,
         "by_agent": {},
     }
 

@@ -139,10 +139,13 @@ def get_app_state(project_id: str | None = None) -> dict:
 
 @router.get("/projects/{project_id}/usage")
 def get_project_usage(project_id: str) -> dict:
-    """The project's cumulative token spend, read straight from the process-wide
-    usage ledger. Read-only, NO database access: an unknown/empty project returns
-    zeros/empty and is never validated into a 404, so the eval harness queries
-    only its own project and the ledger is the single source."""
+    """The project's cumulative token spend as a two-axis typed surface, read
+    straight from the process-wide usage ledger: `context_tokens` (`cached` +
+    `uncached`) and `generated_tokens` (`reasoning` + `visible`), plus the budget
+    scalar `total_tokens` and a per-agent breakdown. Read-only, NO database
+    access: an unknown/empty project returns zeros/empty and is never validated
+    into a 404, so the eval harness queries only its own project and the ledger
+    is the single source."""
     from polymerhus.app.llm.usage import usage_ledger
 
     return usage_ledger().snapshot(project_id)
