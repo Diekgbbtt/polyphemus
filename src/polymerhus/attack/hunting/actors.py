@@ -246,7 +246,11 @@ _HUNTS_STORE_DESCRIPTION = (
     "stays on disk, G6). The payload MUST carry the identity attributes "
     "`unit_id` and `fault_class`, plus `vulnerability_class` (which MAY be "
     "empty for a carried-bare draft): the config file name and hunt id are "
-    "DERIVED from them, never authored as a file name. A payload missing "
+    "DERIVED from them, never authored as a file name. The hypothesise seeds "
+    "are TOP-LEVEL `rationale` + `research_direction` config attributes (the "
+    "former `prompt_template` wrapper is flattened); a ratify payload that "
+    "omits or empties them keeps the pair's canonical seeds (the symbolic "
+    "layer fills them), so you never re-author them. A payload missing "
     "`unit_id` or `fault_class` is rejected with a coded "
     "`hunts_store_write_rejected` error naming the missing attribute - correct "
     "it and retry."
@@ -282,7 +286,9 @@ class OrchestratorHuntsStoreArgs(BaseModel):
         default_factory=dict,
         description="Write payload: the hunt config object; its `status` "
                     "attribute ('hypothesised' | 'ratified' | 'dropped') "
-                    "drives the write.")
+                    "drives the write. The hypothesise seeds are TOP-LEVEL "
+                    "`rationale` + `research_direction` (never nested in a "
+                    "`prompt_template` object).")
 
     model_config = ConfigDict(extra="forbid")
 

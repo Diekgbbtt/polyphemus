@@ -46,7 +46,7 @@ The failure mode this pattern forbids is the one in section 1: composing a symbo
 The write payload (`OrchestratorHuntsStoreArgs.hunt_config`) carries the values and the identity attributes.
 
 - Required identity attributes: `unit_id`, `fault_class`, `vulnerability_class`.
-- Values: `status`, `prompt_template.rationale`, `prompt_template.research_direction`, `preconditions`, `observed_defences`.
+- Values: `status`, `rationale`, `research_direction` (top-level since the 2026-10-04 flatten, section 9), `preconditions`, `observed_defences`.
 - The store derives the file name `<unit_id>_<fault_class>_<vulnerability_class>.yaml`, the semantic key, and `hunt_id` (section 5) from the validated identity; a missing identity attribute is a coded rejection.
 - Orchestrator-owned fields (`surface_context`, `prior_hunt_insights`) are applied by the symbolic layer on the write seam, per the #201 carve-out extended.
 
@@ -68,7 +68,7 @@ The write payload (`OrchestratorHuntsStoreArgs.hunt_config`) carries the values 
 - `vulnerability_class` - agent-authored (the elicited identity axis); an empty class is the legitimate carried-bare degrade.
 - `hunt_id` - derived deterministically from `(unit_id, fault_class, vulnerability_class)`; the former `uuid4` base plus `-i` fan-out order element is removed (it added a cross-run collision surface while carrying no information beyond the identity).
 - `prompt_template.l0_evidence` - **REMOVED**. It was the candidate applies-witness (a two-string deterministic+LLM witness belonging to the fault-match), which overlapped with the unit surface evidence; the witness is folded into the orchestrator-owned `surface_context`.
-- `prompt_template.rationale`, `prompt_template.research_direction` - values, agent-authored.
+- `rationale`, `research_direction` - values, agent-authored; TOP-LEVEL fields since the 2026-10-04 flatten (section 9). The `prompt_template` wrapper is **REMOVED**.
 - `surface_context` - orchestrator-owned deterministic assembly (#201); now also carries the folded applies-witness.
 - `preconditions`, `observed_defences` - values, ratify-filled.
 - `sub_fault_ids` - **REMOVED**. It carried bare folded CWE ids that the hunter has no tool to resolve (`kb_query` is the methodology KB, not the fault catalogue), so it was noise for test-implementation authoring; the fold material stays in the orchestrator's materialisation facet.
@@ -100,3 +100,19 @@ The fix generalises Rule 1 to the payload SHAPE: a store write takes ONE payload
 - The symbolic layer still owns the file name: `<fault_keyword>_<strategy_keyword>.yaml`, sanitised and derived from the payload's attributes.
 
 This supersedes the "they stay in the request contract" clause of section 4.2 (the attributes stay agent-authored, but they are payload members, not request fields).
+
+## 9. The `prompt_template` flatten (2026-10-04)
+
+A third instance of the same boundary failure surfaced live. The orchestrator's ratify write overwrote the minted draft with a payload that omitted `prompt_template`; the store persisted the body unvalidated, and the surfer's `HuntConfig.model_validate` refused it every tick while `run_work_remaining` still counted `status: ratified` as work - the section-1 deadlock, one field over.
+
+The root: `HuntPromptTemplate` was a container wrapping exactly two plain strings (`rationale`, `research_direction`). It carried no structure worth owning, yet the #294 agent-sole-write model made the model re-supply the CONTAINER on every write - a symbol/assembly the harness already held (the mint builds it from the direction).
+
+The fix removes the container rather than adding another injection seam.
+
+- `HuntPromptTemplate` is **REMOVED**; `rationale` and `research_direction` are TOP-LEVEL `HuntConfig` fields.
+- The hypothesise write carries the seeds as top-level attributes (the minted draft's canonical content).
+- The ratify write is the one write where the model may omit them: the write seam (`SurfaceContextStore`) fills a MISSING/EMPTY `rationale` / `research_direction` from the pair's minted draft (threaded via `set_projection(seed=...)`), so a ratify payload can never lose the pair's canonical seeds. A model-authored value is kept (the seed fills, never overwrites).
+- `_HUNTS_STORE_DESCRIPTION`, `OrchestratorHuntsStoreArgs.hunt_config`, the gate/ratify prompts, and the hunter render are updated to the top-level shape.
+- **The dispatch predicate and the work predicate are unified.** `surfer._ratified_config` is the ONE validity predicate: a config is dispatchable work only when `status == "ratified"` AND it parses as a `HuntConfig`. `run_work_remaining` and `build_run_dispatch` both use it, so a malformed `ratified` body is refused, stays produced (at-least-once), is logged once, and can neither hot-loop the mover nor wedge the quiesce. Before this, the two predicates disagreed (work = status alone; dispatch = status + validation) - the docstring's "never disagree" claim was false.
+
+The rule this confirms: a harness-held assembly is either INJECTED on the write seam (like `surface_context`, `prior_hunt_insights`, the pair's seeds) or FLATTENED into plain values; it is never left as a container the model must re-author. And whatever the write seam validates, the read/dispatch seam must validate with the SAME predicate.

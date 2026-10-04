@@ -617,7 +617,7 @@ def test_integration_c11_mint_fanout_per_distinct_class():
         hunt_id_for(SERVICE_A, FAULT_352, "IDOR")]
     assert [c.vulnerability_class for c in configs] == ["CSRF", "IDOR"]
     assert all(c.status == "hypothesised" for c in configs)
-    assert all(c.prompt_template.research_direction == "probe CSRF vs IDOR" for c in configs)
+    assert all(c.research_direction == "probe CSRF vs IDOR" for c in configs)
     assert all(c.preconditions == [] for c in configs)
     assert all(c.observed_defences == [] for c in configs)
     # oracle is the class not the raw string count: adding a third emission of
@@ -655,12 +655,12 @@ def test_integration_c12_mint_collapse_and_bare_degrade():
     configs_bare = mint_hunt_config(direction_empty, surface_context={}, prior_hunt_insights=[])
     assert len(configs_bare) == 1
     assert configs_bare[0].vulnerability_class == ""
-    assert configs_bare[0].prompt_template.research_direction == "probe bare"
+    assert configs_bare[0].research_direction == "probe bare"
     # the reworked fields + the #202 lean shape all present
     for cfg in configs_dup + configs_bare:
         assert hasattr(cfg, "status") and cfg.status == "hypothesised"
         assert hasattr(cfg, "vulnerability_class")
-        assert hasattr(cfg.prompt_template, "research_direction")
+        assert hasattr(cfg, "research_direction")
         assert hasattr(cfg, "surface_context")
         assert hasattr(cfg, "observed_defences")
         assert hasattr(cfg, "preconditions")

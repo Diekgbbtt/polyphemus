@@ -74,7 +74,7 @@ Every NL field of the config means exactly this - produce it by walking the stat
 
 ## What a hypothesised draft carries (the HuntConfig format)
 
-The hypothesise write submits a draft config per surviving vulnerability class: the identity attributes `unit_id`, `fault_class`, and `vulnerability_class` (the class is the identity axis; empty for a carried-bare draft), `status="hypothesised"`, and the hypothesise-phase seeds `prompt_template.rationale` + `research_direction` - ONLY. The config file name, the semantic key, and `hunt_id` are DERIVED by the harness from those identity attributes, never authored by you. The parameter-set slots (`surface_context` with a Service's edge_degree replaced by its connected DataItems and the candidate's applies-witness folded as `fault_evidence`, `prior_hunt_insights`) are harness-assembled on the write seam (#201/#298); in the ratify upsert you supply the ratification fields (`observed_defences` + `preconditions`), and `prior_hunt_insights` carries the DOWNSTREAM hunter specs + pod verdicts by config_key. Never write a `HuntConfig` yourself outside `hunts_store(write)`.
+The hypothesise write submits a draft config per surviving vulnerability class: the identity attributes `unit_id`, `fault_class`, and `vulnerability_class` (the class is the identity axis; empty for a carried-bare draft), `status="hypothesised"`, and the hypothesise-phase seeds `rationale` + `research_direction` (both TOP-LEVEL config attributes) - ONLY. The config file name, the semantic key, and `hunt_id` are DERIVED by the harness from those identity attributes, never authored by you. The parameter-set slots (`surface_context` with a Service's edge_degree replaced by its connected DataItems and the candidate's applies-witness folded as `fault_evidence`, `prior_hunt_insights`) are harness-assembled on the write seam (#201/#298); in the ratify upsert you supply the ratification fields (`observed_defences` + `preconditions`), and `prior_hunt_insights` carries the DOWNSTREAM hunter specs + pod verdicts by config_key. Never write a `HuntConfig` yourself outside `hunts_store(write)`.
 
 ## Worked example (few-shot)
 
@@ -135,7 +135,7 @@ CARRIED direction (hypothesise-phase seeds)
   research_direction: "the state-changing WebPresentation surface at this locus is feasible to test for missing per-form token verification - the sibling asymmetry shows per-form rendering, not perimeter protection"
   vulnerability_classes: ["CSRF"]
   -> hunts_store(write, config{unit_id, fault_class, vulnerability_class: "CSRF",
-     status: "hypothesised", prompt_template: {rationale, research_direction}})
+     status: "hypothesised", rationale, research_direction})
      at the hypothesise phase. The file name + hunt_id are derived by the harness.
 
 RATIFY (the next phase, a later turn)

@@ -276,7 +276,6 @@ def test_gate_prompt_opens_with_the_l1_ontology_primer():
     of the edge-type glossary (system kinds, edge families, DataRelationship
     kinds) - those are self-explanatory (G9)."""
     from polymerhus.attack.hunting.hunt_orchestrator import (
-        HuntPromptTemplate,
         PhaseTurnInput,
     )
     from polymerhus.attack.hunting.llm import (
@@ -302,7 +301,7 @@ def test_gate_prompt_opens_with_the_l1_ontology_primer():
     draft = HuntConfig(
         hunt_id="h1", unit_id=SERVICE_A, fault_class="CWE-352",
         vulnerability_class="CSRF", status="hypothesised",
-        prompt_template=HuntPromptTemplate(rationale="r", research_direction="rd"),
+        rationale="r", research_direction="rd",
     )
     turn = PhaseTurnInput(pair=pair, configs=[draft])
     for text in (_compose_ratify_prompt(turn), _compose_note_prompt(turn)):
@@ -598,7 +597,7 @@ def test_hunts_store_write_hypothesised_creates_and_carries_the_ratify_hint(tmp_
     config = {
         "unit_id": SERVICE_A, "fault_class": "CWE-352",
         "vulnerability_class": "CSRF", "status": "hypothesised",
-        "prompt_template": {"rationale": "r", "research_direction": "rd"},
+        "rationale": "r", "research_direction": "rd",
     }
     out = by_name["hunts_store"].invoke({"cmd": "write", "hunt_config": config})
     assert out["acknowledged"] is True
@@ -624,7 +623,7 @@ def test_hunts_store_write_ratified_upserts_and_carries_only_the_note_hint(tmp_p
     draft = {
         "unit_id": SERVICE_A, "fault_class": "CWE-352",
         "vulnerability_class": "CSRF", "status": "hypothesised",
-        "prompt_template": {"rationale": "r", "research_direction": "rd"},
+        "rationale": "r", "research_direction": "rd",
     }
     by_name["hunts_store"].invoke({"cmd": "write", "hunt_config": draft})
     ratified = {**draft, "status": "ratified",
@@ -652,7 +651,7 @@ def test_hunts_store_write_dropped_marks_the_orphan_on_disk(tmp_path):
     draft = {
         "unit_id": SERVICE_A, "fault_class": "CWE-352",
         "vulnerability_class": "CSRF", "status": "hypothesised",
-        "prompt_template": {"rationale": "r", "research_direction": "rd"},
+        "rationale": "r", "research_direction": "rd",
     }
     by_name["hunts_store"].invoke({"cmd": "write", "hunt_config": draft})
     out = by_name["hunts_store"].invoke(
@@ -1069,7 +1068,7 @@ def test_structured_schemas_and_tool_surface_unchanged():
         )[0]
     assert config.status == "hypothesised"
     assert config.vulnerability_class == "CSRF"
-    assert config.prompt_template.rationale == "r"
+    assert config.rationale == "r"
     assert config.preconditions == []
     assert config.observed_defences == []
 

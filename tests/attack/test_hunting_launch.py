@@ -20,7 +20,6 @@ import pytest
 from polymerhus.attack.hunting import runtime as hunting_runtime
 from polymerhus.attack.hunting.hunt_orchestrator import (
     HuntConfig,
-    HuntPromptTemplate,
     OrchestratorReport,
 )
 from polymerhus.attack.hunting.hunt_store import (
@@ -41,9 +40,8 @@ def _config() -> HuntConfig:
         unit_id=UNIT,
         fault_class=FAULT,
         vulnerability_class=CLASS,
-        prompt_template=HuntPromptTemplate(
-            rationale="r", research_direction="rd",
-        ),
+        rationale="r",
+        research_direction="rd",
     )
 
 

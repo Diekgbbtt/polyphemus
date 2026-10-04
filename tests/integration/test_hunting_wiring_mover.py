@@ -101,7 +101,8 @@ def _config(**overrides) -> dict:
         "fault_class": CWE,
         "status": "ratified",
         "vulnerability_class": CLASS,
-        "prompt_template": {"rationale": "r", "research_direction": "rd"},
+        "rationale": "r",
+        "research_direction": "rd",
     }
     data.update(overrides)
     return data

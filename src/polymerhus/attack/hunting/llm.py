@@ -523,12 +523,12 @@ def _compose_gate_prompt(inp: GateInput) -> str:
         "  The hypothesise write (spec 3.3): call hunts_store(write, config, "
         "status='hypothesised') with ONE draft per surviving class, carrying the "
         "identity attributes unit_id + fault_class + vulnerability_class (the "
-        "class may be empty for a carried-bare draft) and rationale + "
-        "research_direction ONLY - the file name and hunt_id are DERIVED by the "
-        "harness from the identity, never authored. A payload missing unit_id or "
-        "fault_class is rejected with a coded error. The preconditions / "
-        "observed-defences analysis is the RATIFICATION phase's work (the next "
-        "phase) - never filled at this hypothesise turn.",
+        "class may be empty for a carried-bare draft) and the TOP-LEVEL "
+        "rationale + research_direction attributes ONLY - the file name and "
+        "hunt_id are DERIVED by the harness from the identity, never authored. A "
+        "payload missing unit_id or fault_class is rejected with a coded error. "
+        "The preconditions / observed-defences analysis is the RATIFICATION "
+        "phase's work (the next phase) - never filled at this hypothesise turn.",
         "",
         "Return one direction per candidate: set carried true/false, and for a "
         "carried direction fill rationale, research_direction, and "
@@ -555,18 +555,20 @@ def _compose_ratify_prompt(inp: PhaseTurnInput) -> str:
         f"Hypothesised drafts to ratify: {len(inp.configs)}",
     ]
     for config in inp.configs:
-        template = config.prompt_template
         lines += [
             f"  - config {config.hunt_id} "
             f"[vulnerability_class={config.vulnerability_class!r}, "
             f"status={config.status!r}]",
-            f"    rationale: {template.rationale or '(none)'}",
-            f"    research_direction: {template.research_direction or '(none)'}",
+            f"    rationale: {config.rationale or '(none)'}",
+            f"    research_direction: {config.research_direction or '(none)'}",
         ]
     lines += [
         "",
         "Ratification contract: you may call hunts_store(write, config) "
-        "multiple times to update/delete/create configs. End ratification by a "
+        "multiple times to update/delete/create configs. The hypothesise seeds "
+        "(rationale / research_direction) carry forward automatically - the "
+        "symbolic layer keeps the pair's canonical values when your write omits "
+        "them, so you need not re-author them. End ratification by a "
         "hunts_store write carrying status='ratified' and, very likely, the "
         "filled preconditions (the test's preconditions - the attacker's "
         "existing capabilities AND the environment conditions the test needs, "
@@ -595,12 +597,11 @@ def _compose_note_prompt(inp: PhaseTurnInput) -> str:
         f"Ratified configs to note: {len(inp.configs)}",
     ]
     for config in inp.configs:
-        template = config.prompt_template
         lines += [
             f"  - config {config.hunt_id} "
             f"[vulnerability_class={config.vulnerability_class!r}]",
-            f"    rationale: {template.rationale or '(none)'}",
-            f"    research_direction: {template.research_direction or '(none)'}",
+            f"    rationale: {config.rationale or '(none)'}",
+            f"    research_direction: {config.research_direction or '(none)'}",
         ]
     lines += [
         "",

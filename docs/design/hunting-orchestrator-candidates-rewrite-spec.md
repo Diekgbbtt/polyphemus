@@ -230,7 +230,9 @@ triple (`hunt_id_for`) - there is no uuid base and no `-i` fan-out order element
 `fault_class` is a contract violation (coded tool rejection), never a silently-composed degenerate file name.
 `prompt_template.l0_evidence` is REMOVED (the candidate's applies-witness is folded into the harness-owned
 `surface_context` as `fault_evidence`), and `HuntConfig.sub_fault_ids` is REMOVED (bare folded CWE ids the hunter
-cannot resolve). The full boundary and the universal pattern are recorded in
+cannot resolve). As of the 2026-10-04 flatten the `prompt_template` wrapper itself is REMOVED: `rationale` and
+`research_direction` are top-level `HuntConfig` fields, and the write seam fills them from the pair's minted draft on
+a ratify write that omits them. The full boundary and the universal pattern are recorded in
 `docs/design/hunting-store-write-decisions.md`.
 
 - **N configs per pass** (Q2/Q12): one `HuntConfig` per distinct **vulnerability class** the model elicited for that

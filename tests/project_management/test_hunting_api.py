@@ -312,7 +312,7 @@ def test_hunt_launch_enqueues_via_the_launcher_seam(monkeypatch):
     assert config.unit_id == "Service:slug:a"
     assert config.fault_class == "fault-x"
     assert config.vulnerability_class == "CSRF"
-    assert config.prompt_template.research_direction == "rd"
+    assert config.research_direction == "rd"
 
 
 def test_hunt_launch_derives_hunt_id_ignoring_caller_fields(monkeypatch):

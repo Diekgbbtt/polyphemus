@@ -323,9 +323,8 @@ def test_mint_hunt_config_mints_a_hypothesised_draft():
     assert config.fault_class == FAULT_X
     assert config.status == "hypothesised"
     assert config.vulnerability_class == ""
-    template = config.prompt_template
-    assert template.rationale == "r"
-    assert template.research_direction == ""
+    assert config.rationale == "r"
+    assert config.research_direction == ""
     # the ratification-phase fields are empty in the hypothesised draft
     assert config.preconditions == []
     assert config.observed_defences == []
@@ -335,7 +334,7 @@ def test_mint_hunt_config_mints_a_hypothesised_draft():
 
 
 def test_surface_context_folds_the_candidate_applies_witness():
-    """#298: the former `prompt_template.l0_evidence` slot is gone; the
+    """#298: the former `l0_evidence` slot is gone; the
     candidate's applies-witness rides the orchestrator-owned `surface_context`
     as `fault_evidence` (ONE L0-evidence field)."""
     from polymerhus.attack.hunting.hunt_orchestrator import _surface_context_for
@@ -382,6 +381,49 @@ def test_surface_context_store_injects_prior_hunt_insights():
     assert cleared["prior_hunt_insights"] == []
 
 
+def test_hunt_config_flattens_prompt_template_into_top_level_seeds():
+    """2026-10-04: the two-string `HuntPromptTemplate` wrapper is FLATTENED -
+    `rationale` and `research_direction` are top-level `HuntConfig` fields, so
+    there is no model/harness container-ownership boundary left to omit (the
+    defect that left a ratified config unratifiable)."""
+    config = mint_hunt_config(
+        direction=_carry(_candidate(deterministic_witness=None)),
+        surface_context={}, prior_hunt_insights=[],
+        )[0]
+    assert config.rationale == "r"
+    assert config.research_direction == ""
+    assert not hasattr(config, "prompt_template")
+
+
+def test_surface_context_store_fills_missing_seeds_from_the_pair():
+    """The flattened seeds (`rationale` / `research_direction`) are symbolic-owned
+    at the RATIFY turn: the seam fills a MISSING/EMPTY payload slot from the
+    pair's minted draft, so a ratify write can never lose them (the deadlock the
+    `prompt_template` omission caused). A model-authored value is KEPT (the seed
+    fills, never overwrites), and a hypothesise turn (no seed threaded) leaves
+    the payload untouched."""
+    from polymerhus.attack.hunting.hunt_orchestrator import SurfaceContextStore
+
+    seam = SurfaceContextStore(_MemoryStore(), surface=[])
+    seam.set_projection(None, seed=("draft rationale", "draft direction"))
+    # a payload omitting the seeds gets the pair's canonical values
+    filled = seam._inject({"unit_id": "u", "status": "ratified"})
+    assert filled["rationale"] == "draft rationale"
+    assert filled["research_direction"] == "draft direction"
+    # an empty string is filled too
+    filled_empty = seam._inject({"rationale": "", "research_direction": ""})
+    assert filled_empty["rationale"] == "draft rationale"
+    assert filled_empty["research_direction"] == "draft direction"
+    # a model-authored value is kept
+    kept = seam._inject({"rationale": "refined", "research_direction": "d"})
+    assert kept["rationale"] == "refined"
+    assert kept["research_direction"] == "d"
+    # no seed threaded (the hypothesise turn): the payload is untouched
+    seam.set_projection(None)
+    bare = seam._inject({"unit_id": "u"})
+    assert "rationale" not in bare and "research_direction" not in bare
+
+
 # --- The risk-descending schedule (the fault_risk policy) -----------------------
 
 def test_schedule_processes_the_riskiest_fault_first():
@@ -421,7 +463,7 @@ def test_mint_fans_out_one_config_per_distinct_class():
     assert [c.vulnerability_class for c in configs] == ["csrf", "idor", "ssti"]
     # every fan-out config is a hypothesised draft
     assert all(c.status == "hypothesised" for c in configs)
-    assert all(c.prompt_template.rationale == "r" for c in configs)
+    assert all(c.rationale == "r" for c in configs)
     # the seeding identity persists on every fan-out config
     assert {c.unit_id for c in configs} == {SERVICE_A}
     assert {c.fault_class for c in configs} == {FAULT_X}
@@ -457,7 +499,7 @@ def test_mint_without_classes_is_the_carried_bare_fallback():
     config = configs[0]
     assert config.hunt_id == hunt_id_for(SERVICE_A, FAULT_X, "")
     assert config.vulnerability_class == ""
-    assert config.prompt_template.research_direction == \
+    assert config.research_direction == \
         "csrf hygiene across state-changing flows"
     assert config.status == "hypothesised"
 
@@ -490,9 +532,8 @@ def test_mint_passes_research_direction_and_preserves_the_identity_slots():
         hunt_id_for(SERVICE_A, FAULT_X, "csrf")]
     assert [c.vulnerability_class for c in configs] == ["idor", "csrf"]
     for config in configs:
-        template = config.prompt_template
-        assert template.rationale == "r"
-        assert template.research_direction == "enumerating the receipts resource"
+        assert config.rationale == "r"
+        assert config.research_direction == "enumerating the receipts resource"
         assert config.status == "hypothesised"
         assert config.preconditions == []
         assert config.observed_defences == []
@@ -1420,7 +1461,7 @@ def test_carried_bare_direction_with_rationale_is_still_minted():
     configs = store.read_configs("project-1")
     assert len(configs) == 1
     assert configs[0]["vulnerability_class"] == ""
-    assert configs[0]["prompt_template"]["rationale"] == "plausible at this locus"
+    assert configs[0]["rationale"] == "plausible at this locus"
 
 
 # --- #202: the lean HuntConfig (three-goal, no redundant slots) --------------

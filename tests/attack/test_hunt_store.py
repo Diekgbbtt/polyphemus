@@ -36,7 +36,8 @@ def _config(**overrides) -> dict:
         "fault_class": CWE,
         "status": "hypothesised",
         "vulnerability_class": CLASS,
-        "prompt_template": {"rationale": "r", "research_direction": "rd"},
+        "rationale": "r",
+        "research_direction": "rd",
         "surface_context": {},
         "observed_defences": [],
         "preconditions": [],
@@ -363,16 +364,15 @@ def test_read_configs_searches_produced_and_consumed(tmp_path):
 
 def test_config_read_round_trips_the_full_config(tmp_path):
     store = HuntStore(tmp_path)
-    config = _config(prompt_template={
-        "rationale": "the catalogue surface is public",
-        "research_direction": "enumerate the receipts resource",
-    })
+    config = _config(
+        rationale="the catalogue surface is public",
+        research_direction="enumerate the receipts resource",
+    )
     store.write_config(PROJECT, config)
     out = store.read_configs(PROJECT)[0]
     assert out["unit_id"] == UNIT
     assert out["status"] == "hypothesised"
-    assert out["prompt_template"]["research_direction"] == \
-        "enumerate the receipts resource"
+    assert out["research_direction"] == "enumerate the receipts resource"
 
 
 def test_read_failures_are_fail_open(tmp_path):

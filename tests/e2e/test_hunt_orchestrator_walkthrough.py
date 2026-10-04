@@ -380,8 +380,8 @@ def test_live_gate_turn_reasons_over_the_rich_render(session, project, tmp_path)
         config_recs = store.read_configs(project)
         assert len(config_recs) == 1
         cfg = config_recs[0]
-        assert cfg["prompt_template"]["rationale"]
-        assert cfg["prompt_template"]["research_direction"]
+        assert cfg["rationale"]
+        assert cfg["research_direction"]
         # the live turn may end the config at the hypothesised draft or the
         # ratify phase may amend it to ratified - both are the config lifecycle
         assert cfg["status"] in ("hypothesised", "ratified")

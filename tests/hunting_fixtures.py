@@ -17,7 +17,6 @@ from pydantic import PrivateAttr
 
 from polymerhus.attack.hunting.hunt_orchestrator import (
     HuntConfig,
-    HuntPromptTemplate,
 )
 from polymerhus.attack.hunting.hunt_store import semantic_key
 from polymerhus.attack.hunting.hunter_memory import HunterMemoryStore
@@ -104,10 +103,8 @@ def _hunt_config(**overrides) -> HuntConfig:
         unit_id=UNIT_ID,
         fault_class=FAULT_CLASS,
         vulnerability_class=VULNERABILITY_CLASS,
-        prompt_template=HuntPromptTemplate(
-            rationale=f"{FAULT_CLASS} applies to {UNIT_ID} because ...",
-            research_direction="CSRF feasibility reasoning at the state-changing form locus",
-        ),
+        rationale=f"{FAULT_CLASS} applies to {UNIT_ID} because ...",
+        research_direction="CSRF feasibility reasoning at the state-changing form locus",
         surface_context={"cards": [], "fault_evidence": ["GET /api/a answers 200"]},
         observed_defences=["perimeter WAF on /api/*"],
         preconditions=["an authenticated session is obtainable"],

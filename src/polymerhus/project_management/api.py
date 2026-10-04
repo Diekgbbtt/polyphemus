@@ -772,7 +772,6 @@ async def launch_hunt_only(project_id: str, body: HuntingHuntLaunch) -> dict:
     from polymerhus.attack.hunting import runtime as hunting_runtime
     from polymerhus.attack.hunting.hunt_orchestrator import (
         HuntConfig,
-        HuntPromptTemplate,
         hunt_id_for,
     )
     from polymerhus.attack.hunting.hunt_store import DuplicateConfigError
@@ -787,9 +786,8 @@ async def launch_hunt_only(project_id: str, body: HuntingHuntLaunch) -> dict:
         unit_id=body.unit_id,
         fault_class=body.fault_class,
         vulnerability_class=body.vulnerability_class,
-        prompt_template=HuntPromptTemplate(
-            rationale=body.rationale, research_direction=body.research_direction,
-        ),
+        rationale=body.rationale,
+        research_direction=body.research_direction,
     )
     try:
         key = await asyncio.to_thread(

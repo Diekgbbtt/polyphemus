@@ -72,9 +72,8 @@ def _config(**overrides) -> dict:
         "fault_class": CWE,
         "status": "ratified",
         "vulnerability_class": CLASS,
-        "prompt_template": {
-            "rationale": "r", "research_direction": "rd",
-        },
+        "rationale": "r",
+        "research_direction": "rd",
     }
     data.update(overrides)
     return data
@@ -300,6 +299,39 @@ def test_undispatchable_statuses_are_not_work(stores):
     assert report.refused == 3               # the builder answered None for each
     assert len(hunt.read_produced_configs(PROJECT)) == 2   # stayed produced
     assert hunter.produced_spec_files(PROJECT, FAULT_KEY) == ["sqli_blind"]
+
+
+def test_unratifiable_ratified_config_is_not_work_and_is_refused(stores):
+    """The deadlock-class regression: a `status == "ratified"` config that fails
+    `HuntConfig.model_validate` is NOT dispatchable work. `run_work_remaining`
+    and `build_run_dispatch` share `_ratified_config`, so it neither hot-loops
+    the mover nor wedges the quiesce - it is refused and stays produced
+    (at-least-once). Before the fix the work predicate gated on `status` alone,
+    so a malformed ratified body counted as work but never dispatched: the
+    surfer retried every tick and the run never quiesced."""
+    from polymerhus.attack.hunting.hunt_store import config_file_name
+
+    hunt, hunter = stores
+    _write_config(hunt)
+    # corrupt the produced body so it no longer validates (drop the required
+    # `hunt_id`), keeping `status: ratified` - the class-1 malformed leftover
+    path = hunt._produced_dir(PROJECT) / config_file_name(UNIT, CWE, CLASS)
+    HuntStore._dump_yaml_atomic(
+        path, {"unit_id": UNIT, "fault_class": CWE, "status": "ratified"})
+
+    assert run_work_remaining(PROJECT, hunt_store=hunt, hunter_store=hunter) is False
+    control = RecordingControlPlane()
+    report = run_delivery_tick(
+        PROJECT, RUN, hunt_store=hunt, hunter_store=hunter,
+        control=control, coro_for=_real_coro_for(hunt, hunter),
+    )
+    assert report.dispatched == 1 and report.admitted == 0 and report.refused == 1
+    assert len(hunt.read_produced_configs(PROJECT)) == 1   # stayed produced
+    # quiesce is REACHABLE despite the malformed leftover (no wedge)
+    assert asyncio.run(is_run_quiesced(
+        PROJECT, RUN, hunt_store=hunt, hunter_store=hunter,
+        control=RecordingControlPlane(), state=RunDispatchState(),
+    )) is True
 
 
 # --- the shell: refusal is at-least-once, never dropped -------------------------

@@ -154,6 +154,39 @@ def _read_config_body(hunt_store: HuntStore, project_id: str, key: str) -> dict 
     return records[0] if records else None
 
 
+# The keys already logged as unratifiable, so a malformed body is refused
+# LOUDLY ONCE, not once per tick (the mover retries every tick).
+_WARNED_UNRATIFIABLE: set[str] = set()
+
+
+def _ratified_config(hunt_store: HuntStore, project_id: str, key: str):
+    """The produced config as a validated `HuntConfig`, or None.
+
+    This is the ONE validity predicate shared by `run_work_remaining` and
+    `_config_dispatch`, so the quiesce check and the dispatch decision can never
+    disagree: a config is dispatchable work ONLY when it is `status == "ratified"`
+    AND parses as a `HuntConfig`. A `ratified` config that fails validation (a
+    malformed body the write seam should have prevented) is NOT dispatchable work
+    - it is refused and left in produced/ (at-least-once), never counted as
+    pending, so it can neither hot-loop the mover nor wedge the run's quiesce
+    (the deadlock class the #298 write-seam validation closed on the write side).
+    The refusal is logged once per key."""
+    body = _read_config_body(hunt_store, project_id, key)
+    if not body or body.get("status") != "ratified":
+        return None
+    from polymerhus.attack.hunting.hunt_orchestrator import HuntConfig  # noqa: PLC0415
+    try:
+        return HuntConfig.model_validate(body)
+    except Exception as exc:  # noqa: BLE001 - a malformed body is refused, never dispatched
+        if key not in _WARNED_UNRATIFIABLE:
+            _WARNED_UNRATIFIABLE.add(key)
+            logger.warning(
+                "surfer: produced config %s not ratifiable (%s); refused "
+                "(not counted as work)", key, exc,
+            )
+        return None
+
+
 def _read_spec_body(
     hunter_store: HunterMemoryStore,
     project_id: str,
@@ -182,15 +215,16 @@ def run_work_remaining(
     hunter_store: HunterMemoryStore,
 ) -> bool:
     """True when a DISPATCHABLE produced item remains: a produced hunt config
-    carrying `status == "ratified"` or a produced spec carrying
-    `status == "specified"`. A hypothesised draft, a dropped config (G6 stays on
-    disk, never dispatchable), or a not-yet-specified spec contributes NOTHING
-    - those can never dispatch and must never hold the run's quiesce open. The
-    status gate is exactly the one `build_run_dispatch` applies, so the quiesce
-    predicate and the dispatch decision can never disagree."""
+    that is `status == "ratified"` AND validates as a `HuntConfig`, or a produced
+    spec carrying `status == "specified"`. A hypothesised draft, a dropped config
+    (G6 stays on disk, never dispatchable), a not-yet-specified spec, or a
+    `ratified` config that fails validation (refused, not work) contributes
+    NOTHING - those can never dispatch and must never hold the run's quiesce open.
+    The config gate is exactly `_ratified_config`, the ONE predicate
+    `build_run_dispatch` also applies, so the quiesce predicate and the dispatch
+    decision can never disagree."""
     for key, _name in hunt_store.read_produced_configs(project_id):
-        body = _read_config_body(hunt_store, project_id, key)
-        if body and body.get("status") == "ratified":
+        if _ratified_config(hunt_store, project_id, key) is not None:
             return True
     for fault_key in hunter_store.list_fault_keys(project_id):
         for spec_file in hunter_store.produced_spec_files(project_id, fault_key):
@@ -308,18 +342,11 @@ def build_run_dispatch(
         return None
 
     def _config_dispatch(item: HuntConfigItem) -> Any:
-        body = _read_config_body(hunt_store, project_id, item.config_key)
-        if not body or body.get("status") != "ratified":
-            # hypothesised draft / dropped config: not dispatchable, at-least-once
-            return None
-        from polymerhus.attack.hunting.hunt_orchestrator import HuntConfig  # noqa: PLC0415
-        try:
-            config = HuntConfig.model_validate(body)
-        except Exception as exc:  # noqa: BLE001 - a malformed body is refused, never dispatched
-            logger.warning(
-                "surfer: produced config %s not ratifiable (%s); retried",
-                item.config_key, exc,
-            )
+        # hypothesised draft / dropped config / unratifiable body: not
+        # dispatchable, at-least-once (stays in produced/, never counted as work
+        # by `run_work_remaining` - the SAME `_ratified_config` predicate).
+        config = _ratified_config(hunt_store, project_id, item.config_key)
+        if config is None:
             return None
         inbox = AgentInbox()
         state.hunter_inboxes[item.config_key] = inbox

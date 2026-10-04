@@ -43,7 +43,7 @@ import time
 from pathlib import Path
 
 from polymerhus.attack.hunting.hunt_orchestrator import (
-    HuntConfig, HuntPromptTemplate,
+    HuntConfig,
 )
 from polymerhus.attack.hunting.hunter_memory import HunterMemoryStore
 from polymerhus.attack.hunting.hunting_agent import build_sync_hunting_agent
@@ -57,12 +57,9 @@ config = HuntConfig(
     hunt_id="hunt-live-e1",
     unit_id=unit_id,
     fault_class="fault-x",
-    prompt_template=HuntPromptTemplate(
-        rationale=("fault-x applies to slug-a because it exposes an unvalidated "
-                   "parameter surface over the public REST api"),
-        l0_evidence=["GET /api/a answers 200"],
-        research_direction="probe the state-changing form for token verification",
-    ),
+    rationale=("fault-x applies to slug-a because it exposes an unvalidated "
+               "parameter surface over the public REST api"),
+    research_direction="probe the state-changing form for token verification",
         surface_context={"cards": [{
         "kind": "Service",
         "key": {"business_function_slug": "a"},

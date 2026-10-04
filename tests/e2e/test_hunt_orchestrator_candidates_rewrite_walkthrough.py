@@ -765,7 +765,7 @@ def test_e2e_e8_q2_accuracy_coverage(tmp_path):
     # pruned key absent: none
 
 
-# --- E9: Q3 detail depth: HuntConfig prompt_template sufficient --------------
+# --- E9: Q3 detail depth: HuntConfig seeds sufficient ------------------------
 
 def test_e2e_e9_q3_detail_depth(tmp_path):
     """E9 - Q3 detail depth: HuntConfig fields sufficient for DECOMPOSE blind
@@ -792,13 +792,12 @@ def test_e2e_e9_q3_detail_depth(tmp_path):
     configs = store.read_configs("proj-e9")
     assert len(configs) >= 2
     for cfg in configs:
-        tpl = cfg["prompt_template"]
-        assert len(tpl["research_direction"]) > 20
-        assert "CSRF" in tpl["research_direction"]
+        assert len(cfg["research_direction"]) > 20
+        assert "CSRF" in cfg["research_direction"]
         assert cfg["vulnerability_class"] == "CSRF"
         assert cfg["status"] == "ratified"
-        assert len(tpl["rationale"]) > 0
-        assert all(len(s) > 0 for s in tpl["rationale"].split())
+        assert len(cfg["rationale"]) > 0
+        assert all(len(s) > 0 for s in cfg["rationale"].split())
     # semantic: blind HuntingAgent dry-run would produce TestVariant - we
     # simulate by asserting ratified configs carry the class-level seeds (no
     # locale leak check here, covered in E13)
@@ -972,9 +971,8 @@ def test_e2e_e13_q7_reflection_strategy(tmp_path):
     # forbidden locale tokens via oracle list
     forbidden = ["Origin:", "/state-change", "attacker.site", "payload"]
     for cfg in configs:
-        # config is HuntConfig dump: research_direction lives under prompt_template
-        pt = cfg.get("prompt_template") or {}
-        rd = pt.get("research_direction") or cfg.get("research_direction") or ""
+        # config is HuntConfig dump: research_direction is a top-level field
+        rd = cfg.get("research_direction") or ""
         assert "CSRF" in rd
         assert all(tok not in rd for tok in forbidden)
     # judge Q7 from observed trace: reflection markers present, research_direction

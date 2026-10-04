@@ -219,8 +219,9 @@ def seed_hunt_config(project_id: str, *, unit_id: str, fault_class: str,
     The seeded body MUST satisfy the real `HuntConfig.model_validate` surface
     (the surfer refuses an unratifiable ratified config and the run wedges on
     the retained produced item - the at-least-once contract), so the required
-    `hunt_id` and `prompt_template` slots ship by default, mirroring the
-    orchestrator mint. It also carries a real adapted surface card + caveats
+    `hunt_id` and the top-level `rationale` / `research_direction` slots ship by
+    default, mirroring the orchestrator mint. It also carries a real adapted
+    surface card + caveats
     + a tool-registry entry so a dispatched HUNTER runs genuine multi-turn
     research (a bare 4-key config makes the graph short-circuit in ~1-2s and
     no live hunter session is ever observable - the same INIT defect the pod
@@ -230,9 +231,7 @@ def seed_hunt_config(project_id: str, *, unit_id: str, fault_class: str,
         "hunt_id": f"{unit_id}::{fault_class}",
         "unit_id": unit_id, "fault_class": fault_class,
         "vulnerability_class": vulnerability_class, "status": status,
-        "prompt_template": {
-            "rationale": "seeded", "research_direction": "",
-        },
+        "rationale": "seeded", "research_direction": "",
         "surface_context": {
             "cards": [
                 f"{unit_id}: spine service for {vulnerability_class} probing; "

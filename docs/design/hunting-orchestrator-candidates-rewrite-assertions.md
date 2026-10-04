@@ -82,14 +82,14 @@
 - **seam:** `attack/hunting/hunt_orchestrator.py::mint_hunt_config` <-> `attack/hunting/hunt_orchestrator.py::_distinct_vulnerability_classes`
 - **delivery semantic:** success (2 classes CSRF vs IDOR)
 - **input:** `direction=EnvisionedDirection(unit_id="Service:slug:a", fault_class="CWE-352", research_direction="probe CSRF vs IDOR", vulnerability_classes=["CSRF", "IDOR"])` where CSRF/IDOR are elicited web-vulnerability classes, `hunt_id="abc123"`
-- **observable:** returns list length 2; `[0].hunt_id=="abc123"` carries class CSRF, `[1].hunt_id=="abc123-1"` carries IDOR; each config `status=="hypothesised"`, `vulnerability_class` equals its class, both share `prompt_template.research_direction=="probe CSRF vs IDOR"`, `l0_evidence==["llm: form Z no token"]`, `adversarial_capabilities==[]` and `technique_primitives==[]` (the ratification-phase fields stay empty on the draft); oracle is the class not the raw string count, so a third emission of the same class would not increase the fan-out.
+- **observable:** returns list length 2; `[0].hunt_id=="abc123"` carries class CSRF, `[1].hunt_id=="abc123-1"` carries IDOR; each config `status=="hypothesised"`, `vulnerability_class` equals its class, both share `research_direction=="probe CSRF vs IDOR"`, `l0_evidence==["llm: form Z no token"]`, `adversarial_capabilities==[]` and `technique_primitives==[]` (the ratification-phase fields stay empty on the draft); oracle is the class not the raw string count, so a third emission of the same class would not increase the fan-out.
 - **yields:** `test_integration_c11_mint_fanout_per_distinct_class`
 
 ### C12 - mint collapses same-class duplicates and empty degrades to carried-bare
 - **seam:** `attack/hunting/hunt_orchestrator.py::_distinct_vulnerability_classes` <-> `attack/hunting/hunt_orchestrator.py::mint_hunt_config`
 - **delivery semantic:** duplicate + empty
 - **input:** a) `vulnerability_classes=["CSRF", "CSRF"]`; b) `vulnerability_classes=[]` or with `[""]`
-- **observable:** a) exactly 1 hypothesised HuntConfig with `hunt_id=="base"` and `vulnerability_class=="CSRF"`; b) exactly 1 hypothesised draft with `vulnerability_class==""` and `research_direction` passed through; HuntConfig validates via Pydantic with the reworked slots (`status`, `vulnerability_class`, `prompt_template.rationale|research_direction|l0_evidence`, `surface_context`, `target_caveats`, `prior_hunt_insights`, `tool_registry`, `adversarial_capabilities`, `assumptions`, `technique_primitives`) all present; oracle is the class not the raw string count.
+- **observable:** a) exactly 1 hypothesised HuntConfig with `hunt_id=="base"` and `vulnerability_class=="CSRF"`; b) exactly 1 hypothesised draft with `vulnerability_class==""` and `research_direction` passed through; HuntConfig validates via Pydantic with the reworked slots (`status`, `vulnerability_class`, `rationale|research_direction`, `surface_context`, `target_caveats`, `prior_hunt_insights`, `tool_registry`, `adversarial_capabilities`, `assumptions`, `technique_primitives`) all present; oracle is the class not the raw string count.
 - **yields:** `test_integration_c12_mint_collapse_and_bare_degrade`
 
 ### C12b - minted config surface_context shows connected DataItems, not edge_degree (ADR G5 operator correction)
@@ -237,12 +237,12 @@
 - **observed:** `HuntStore.read_configs("proj-e8")` grouped by revival key: coverage 100%, duplicate 0
 - **yields:** `test_e2e_e8_q2_accuracy_coverage`
 
-### E9 - Q3 detail depth: HuntConfig prompt_template sufficient for DECOMPOSE
+### E9 - Q3 detail depth: HuntConfig seeds sufficient for DECOMPOSE
 - **grounds:** spec 3.5 extension + Q8 concretisation
 - **entry seam:** `arun_orchestration` -> downstream `HuntConfig` read-back
 - **input:** same E1 input with stub emitting `research_direction="probe state-changing form for missing anti-CSRF token verification at WebPresentation boundary"`, `vulnerability_classes=["CSRF"]`
 - **live edge:** none for harness fields; the semantic blind HuntingAgent DECOMPOSE judge is the operator-ratified future gate (currently simulated - the harness asserts the class-level seeds that would feed it)
-- **criterion/metric:** harness: each ratified HuntConfig `prompt_template.research_direction` len>20 AND contains the class token `CSRF`, `vulnerability_class=="CSRF"`, `status=="ratified"`, `prompt_template.rationale` non-empty with every word non-empty. Metric: fields_present + research_direction length >20 + class-token presence. Hidden assumption: string presence is a proxy for usefulness - the blind DECOMPOSE judge (a ratified HuntingAgent version) is the semantic gate, currently a mechanisation gap.
+- **criterion/metric:** harness: each ratified HuntConfig `research_direction` len>20 AND contains the class token `CSRF`, `vulnerability_class=="CSRF"`, `status=="ratified"`, `rationale` non-empty with every word non-empty. Metric: fields_present + research_direction length >20 + class-token presence. Hidden assumption: string presence is a proxy for usefulness - the blind DECOMPOSE judge (a ratified HuntingAgent version) is the semantic gate, currently a mechanisation gap.
 - **terminal:** harness: the pass produces >=2 ratified configs, each passing the field checks
 - **observed:** harness field-length + class-token checks over the store's ratified configs
 - **yields:** `test_e2e_e9_q3_detail_depth` (harness green; blind judge simulated, not yet mechanised)

@@ -136,7 +136,7 @@ export PYTHONPATH=src
 .venv/bin/python - <<'PY'
 import asyncio, json, time
 from langgraph.checkpoint.memory import InMemorySaver
-from polymerhus.attack.hunting.hunt_orchestrator import HuntConfig, HuntPromptTemplate
+from polymerhus.attack.hunting.hunt_orchestrator import HuntConfig
 from polymerhus.attack.hunting.hunting_agent import compose_authoring_prompt
 from polymerhus.attack.hunting.actors import HuntingActorRegistry
 
@@ -144,15 +144,10 @@ cfg = HuntConfig(
     hunt_id="t2-live",
     unit_id="Service:slug:account-api",
     fault_class="fault-x",
-    prompt_template=HuntPromptTemplate(
-        rationale="bounded comparison of GraphQL vs REST object-level authorization",
-        extension_points=["object id tampering"],
-        assumptions=["object identifiers are client supplied"],
-        supposed_payload_vectors=["GET /api/users/{id}", "query { user(id: 124) }"],
-        l0_evidence=["WSTG-APIT-02", "WSTG-APIT-99"],
-    ),
+    rationale="bounded comparison of GraphQL vs REST object-level authorization",
+    research_direction="compare object-level authorization across the GraphQL and REST surfaces",
     surface_context={"cards": [{"title": "Account API", "technology_stack": ["HTTP JSON API", "GraphQL"]}]},
-    target_caveats=["authorization-boundary comparison only; no cross-tenant access"],
+    observed_defences=["authorization-boundary comparison only; no cross-tenant access"],
 )
 prompt = compose_authoring_prompt(
     cfg, {"kb": "WSTG-APIT-02 (object ID tampering); WSTG-APIT-99 (GraphQL)."},

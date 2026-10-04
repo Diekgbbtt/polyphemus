@@ -407,35 +407,18 @@ class NoteDecision(BaseModel):
     notes: list[NoteRecord] = Field(default_factory=list)
 
 
-class HuntPromptTemplate(BaseModel):
-    """Part 1 of the five-part HuntConfig parameter set (Q8/D3): the fault-matching
-    `rationale` and the class-level `research_direction` (G1 feasibility prose -
-    verbatim reasoning WHY the fault is feasible at this locus, never technique
-    words, #202) - the hypothesise-phase content of the config. The
-    preconditions / observed-defences analysis is NOT a template slot: it rides
-    the config level (`HuntConfig.preconditions` / `observed_defences`, the
-    ratification-phase fields, #202), and the concrete-fault slots
-    (`extension_points`, `supposed_payload_vectors`, per-class candidates) are
-    removed - the #164 hunter owns that stretch. The former `l0_evidence` slot
-    is REMOVED (#298): the candidate's applies-witness is folded into the
-    orchestrator-owned `surface_context` (`fault_evidence`), so the config
-    carries one L0-evidence field, not two."""
-
-    rationale: str = ""
-    research_direction: str = ""
-
-
 class HuntConfig(BaseModel):
     """The declarative config the hunting agent consumes (D3): the parameter
-    set - prompt template, wide surface context (adapted index-card, a
-    Service's edge_degree transformed to its connected DataItems), the
-    ratification-phase `preconditions` + `observed_defences`, and the
-    downstream prior-hunt insights (the hunter memory's TestImplementationSpecs
-    + Q16 pod exports by config_key, shallow-projected, #202) - plus the
-    orchestrator's stretch as of the typing rework: `status` (the config
-    lifecycle `hypothesised -> ratified | dropped`; the mint writes
-    hypothesised drafts), `vulnerability_class` (the config's identity axis,
-    one config per elicited class; the naming IS the initial concretisation).
+    set - the hypothesise-phase content (`rationale` + `research_direction`),
+    wide surface context (adapted index-card, a Service's edge_degree
+    transformed to its connected DataItems), the ratification-phase
+    `preconditions` + `observed_defences`, and the downstream prior-hunt
+    insights (the hunter memory's TestImplementationSpecs + Q16 pod exports by
+    config_key, shallow-projected, #202) - plus the orchestrator's stretch as of
+    the typing rework: `status` (the config lifecycle `hypothesised ->
+    ratified | dropped`; the mint writes hypothesised drafts),
+    `vulnerability_class` (the config's identity axis, one config per elicited
+    class; the naming IS the initial concretisation).
 
     The config is oriented by the three goals (#202): (G1) feasibility of that
     fault at that unit - `rationale`, `research_direction`, `vulnerability_class`,
@@ -445,14 +428,22 @@ class HuntConfig(BaseModel):
     further-concretisation material - `prior_hunt_insights`. `tool_registry` /
     `adversarial_capabilities` / `assumptions` / `technique_primitives` /
     `target_caveats` are removed (#202), and `sub_fault_ids` is removed (#298 -
-    bare folded CWE ids the hunter cannot resolve were noise)."""
+    bare folded CWE ids the hunter cannot resolve were noise).
+
+    The former `HuntPromptTemplate` wrapper is FLATTENED (2026-10-04): it carried
+    exactly two plain strings, so `rationale` and `research_direction` are
+    top-level config fields - the container added a model/harness ownership
+    boundary with no structure to own. The former `l0_evidence` slot is REMOVED
+    (#298): the candidate's applies-witness is folded into the orchestrator-owned
+    `surface_context` (`fault_evidence`)."""
 
     hunt_id: str
     unit_id: str
     fault_class: str
     status: ConfigStatus = "hypothesised"
     vulnerability_class: str = ""
-    prompt_template: HuntPromptTemplate
+    rationale: str = ""
+    research_direction: str = ""
     surface_context: dict = Field(default_factory=dict)
     observed_defences: list[str] = Field(default_factory=list)
     preconditions: list[str] = Field(default_factory=list)
@@ -791,8 +782,8 @@ def _surface_context_for(surface, projection, *, applies_witness=None) -> dict:
     the adapted index-card list (the `{"cards": [...]}` wrapper shape) with the
     config's target unit card expanded - `edge_degree` -> connected DataItems AND
     the aggregated L0 Endpoints under the parent unit - plus the candidate's
-    applies-witness folded as `fault_evidence` (the former `prompt_template.
-    l0_evidence` slot, so the config carries ONE L0-evidence field). Owned by the
+    applies-witness folded as `fault_evidence` (the former `l0_evidence` slot, so
+    the config carries ONE L0-evidence field). Owned by the
     HARNESS (the deterministic typed-assembly ruling): the hypothesise mint and
     the ratify upsert both use it, so the model never re-authors the shape. An
     absent projection degrades to the card unchanged, an absent witness to no
@@ -843,6 +834,7 @@ class SurfaceContextStore:
         self._projection: object | None = None
         self._applies_witness: object | None = None
         self._prior_hunt_insights: object | None = None
+        self._seed: tuple[str, str] | None = None
         self.write_failures = 0
         self.duplicate_config_writes = 0
 
@@ -856,18 +848,28 @@ class SurfaceContextStore:
         self._projection = None
         self._applies_witness = None
         self._prior_hunt_insights = None
+        self._seed = None
         self.reset_counters()
 
     def set_projection(self, projection, *, applies_witness=None,
-                       prior_hunt_insights=None) -> None:
-        """Thread the current pair's rich projection, its applies-witness, AND the
-        pair's orchestrator-assembled `prior_hunt_insights` onto the seam for the
-        next turn (the surface context is per-unit, the witness folds into it as
-        `fault_evidence`, and the prior-hunt insights are harness-owned downstream
-        material - all three are applied on the write seam, #201/#298)."""
+                       prior_hunt_insights=None, seed=None) -> None:
+        """Thread the current pair's rich projection, its applies-witness, the
+        pair's orchestrator-assembled `prior_hunt_insights`, AND its hypothesise
+        seeds `(rationale, research_direction)` onto the seam for the next turn
+        (the surface context is per-unit, the witness folds into it as
+        `fault_evidence`, and the prior-hunt insights + seeds are harness-held
+        material - all are applied on the write seam, #201/#298).
+
+        `seed` is the pair's minted `(rationale, research_direction)` - the
+        symbolic layer's canonical hypothesise content. It is threaded at the
+        RATIFY turn (the drafts exist there) so a ratify payload that omits or
+        empties the seeds can never overwrite them on disk; it is None at the
+        hypothesise turn (the draft does not exist before that turn, so the
+        model authors the seeds directly)."""
         self._projection = projection
         self._applies_witness = applies_witness
         self._prior_hunt_insights = prior_hunt_insights
+        self._seed = seed
 
     def reset_counters(self) -> None:
         """Zero the observed-write counters (the pass snapshots them)."""
@@ -876,26 +878,39 @@ class SurfaceContextStore:
 
     def _inject(self, config):
         """Return a copy of `config` (a `HuntConfig` or a dict) carrying the
-        harness-assembled deterministic `surface_context` AND the pair's
-        `prior_hunt_insights` (orchestrator-owned, #201/#298); the caller's
-        object is never mutated. The prior-hunt insights are applied only when
-        the seam threaded them (a turn with no pair context leaves the config's
-        own value untouched)."""
+        harness-assembled deterministic `surface_context`, the pair's
+        `prior_hunt_insights` (orchestrator-owned, #201/#298), AND the pair's
+        hypothesise seeds `(rationale, research_direction)` when the seam threaded
+        them; the caller's object is never mutated. The insights and seeds are
+        applied only when the seam threaded them (a turn with no pair context
+        leaves the config's own value untouched); a seed fills a MISSING/EMPTY
+        payload slot, never overwrites a value the model authored."""
         context = _surface_context_for(
             self.surface, self._projection,
             applies_witness=self._applies_witness)
         insights = (list(self._prior_hunt_insights)
                     if self._prior_hunt_insights is not None else None)
+        seed = self._seed
         if isinstance(config, dict):
             out = dict(config)
             out["surface_context"] = context
             if insights is not None:
                 out["prior_hunt_insights"] = insights
+            if seed is not None:
+                if not out.get("rationale"):
+                    out["rationale"] = seed[0]
+                if not out.get("research_direction"):
+                    out["research_direction"] = seed[1]
             return out
         amended = config.model_copy(deep=True)
         amended.surface_context = context
         if insights is not None:
             amended.prior_hunt_insights = insights
+        if seed is not None:
+            if not amended.rationale:
+                amended.rationale = seed[0]
+            if not amended.research_direction:
+                amended.research_direction = seed[1]
         return amended
 
     def _counted(self, method, *args, **kwargs):
@@ -977,8 +992,9 @@ def mint_hunt_config(
     fan-out: ONE `HuntConfig` per distinct elicited `vulnerability_class` (the
     config's identity axis, spec 3.5), after the (LLM-owned, Q16) same-class
     merge. Each minted config is a HYPOTHESISED draft (default `status`): the
-    prompt template maps the direction's hypothesise-phase seeds verbatim
-    (rationale -> rationale, research_direction passes through), while the
+    top-level `rationale` / `research_direction` map the direction's
+    hypothesise-phase seeds verbatim (rationale -> rationale, research_direction
+    passes through), while the
     ratification-phase fields - `preconditions`, `observed_defences` - stay empty
     (the ratification phase fills them, R3.4). The wide surface context (adapted
     index-card, with the caller's applies-witness already folded as
@@ -1007,10 +1023,8 @@ def mint_hunt_config(
             fault_class=direction.fault_class,
             status=status,
             vulnerability_class=cls,
-            prompt_template=HuntPromptTemplate(
-                rationale=direction.rationale,
-                research_direction=direction.research_direction,
-            ),
+            rationale=direction.rationale,
+            research_direction=direction.research_direction,
             surface_context=surface_context,
             observed_defences=list(observed_defences),
             preconditions=list(preconditions),
@@ -1574,13 +1588,18 @@ async def arun_orchestration(
                 # seam for the ratify turn, so the agent's write carries the
                 # deterministic surface context (aggregates re-injected) with the
                 # pair's applies-witness folded as `fault_evidence` and its
-                # prior-hunt insights (#298). The insights ride the minted drafts
-                # (assembled at the hypothesise phase for the same pair).
+                # prior-hunt insights (#298). The insights AND the hypothesise
+                # seeds ride the minted drafts (assembled at the hypothesise
+                # phase for the same pair): a ratify payload that omits/empties
+                # `rationale` / `research_direction` can never lose them (the
+                # symbolic layer owns the pair's canonical seeds).
                 store_seam.set_projection(
                     (state.get("projections") or {}).get(pair.unit_id),
                     applies_witness=pair.applies_witnesses,
                     prior_hunt_insights=(drafts[0].prior_hunt_insights
-                                         if drafts else None))
+                                         if drafts else None),
+                    seed=((drafts[0].rationale, drafts[0].research_direction)
+                          if drafts else None))
             out = await _phase_turn(ratify_fn, _phase_input(pair, drafts, state),
                                     phase="ratify")
             decision = out if isinstance(out, RatifyDecision) else RatifyDecision()

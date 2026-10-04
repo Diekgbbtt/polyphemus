@@ -244,7 +244,7 @@ def _config_gaps(config: HuntConfig) -> list[str]:
     # shape (a card carrying `kind`) count as present (#201)
     if not (sc.get("cards") or sc.get("kind")):
         gaps.append("surface context missing (no adapted index cards); grounding degraded")
-    if not config.prompt_template.rationale:
+    if not config.rationale:
         gaps.append("orchestrator rationale missing; grounding degraded")
     if not config.observed_defences:
         gaps.append("observed target defences missing; falsification grounding degraded")
@@ -302,7 +302,6 @@ def _compose_grounding(config: HuntConfig) -> str:
     `adversarial_capabilities`, `assumptions`, `tool_registry`, the renamed
     `target_caveats`) are gone - the #164 hunter owns the concrete-fault
     stretch."""
-    tpl = config.prompt_template
     surface = config.surface_context or {}
     # The surface context is the adapted index-card: the ratified configs carry
     # it DIRECTLY (kind/key/label/spine/data_items/system_edges/aggregated_endpoints);
@@ -321,11 +320,11 @@ def _compose_grounding(config: HuntConfig) -> str:
     return (
         f"You are dispatched to hunt {config.unit_id} for fault class "
         f"{config.fault_class}.\n"
-        f"Orchestrator's fault-matching rationale: {tpl.rationale or '(none)'}\n"
+        f"Orchestrator's fault-matching rationale: {config.rationale or '(none)'}\n"
         f"Vulnerability class (the initial concretisation): "
         f"{config.vulnerability_class or '(none)'}\n"
         f"Class-level research direction (feasibility): "
-        f"{tpl.research_direction or '(none)'}\n"
+        f"{config.research_direction or '(none)'}\n"
         f"L0 fault-applicability evidence: {_fmt_list(fault_evidence)}\n"
         f"Adapted surface context (index card of {config.unit_id}): "
         f"{surface_text}\n"
