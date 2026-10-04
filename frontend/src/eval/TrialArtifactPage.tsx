@@ -2,7 +2,13 @@ import type { ReactNode } from "react"
 import { Link, useParams } from "react-router-dom"
 import { EvalBreadcrumbs, evalPaths } from "./EvalBreadcrumbs"
 import { useEvalData } from "./EvalDataProvider"
-import type { EvalDiagnosis, EvalTrial, EvalVerdict, VerdictKind } from "./types"
+import {
+  DiagnosesView,
+  EvidenceList,
+  VerdictList,
+  isSafeRef,
+} from "./TrialResults"
+import type { EvalTrial, EvalVerdict, VerdictKind } from "./types"
 
 // Must match the id TargetPage puts on each TargetRun group.
 function targetRunAnchor(targetRunId: string): string {
@@ -28,13 +34,6 @@ export interface Vulnerability {
   vuln_id: string
   verdict: EvalVerdict
   evidence: string[]
-}
-
-// A reference the projection would never emit: absolute, escaping, or a URL.
-// Belt and braces - the server already allows only relative, path-safe refs.
-function isSafeRef(ref: string): boolean {
-  if (!ref || ref.startsWith("/") || ref.includes("\\") || ref.includes("://")) return false
-  return !ref.split("/").some((part) => part === "..")
 }
 
 // One entry per vulnerability. A vuln repeated within the trial keeps its
@@ -193,83 +192,6 @@ export function summarizeArtifact(trial: EvalTrial, artifact: TrialArtifact): Ar
   }
 }
 
-function percent(confidence: number): string {
-  return `${Math.round(confidence * 100)}%`
-}
-
-function MatchList({ verdict }: { verdict: EvalVerdict }) {
-  const { unit, fault_class, symptom } = verdict.matched
-  return (
-    <dl className="eval-match" aria-label={`Match for ${verdict.vuln_id}`}>
-      <div>
-        <dt>Verdict</dt>
-        <dd>{verdict.identified}</dd>
-      </div>
-      <div>
-        <dt>Confidence</dt>
-        <dd>{percent(verdict.confidence)}</dd>
-      </div>
-      <div>
-        <dt>Unit</dt>
-        <dd>{unit ?? "—"}</dd>
-      </div>
-      <div>
-        <dt>Fault class</dt>
-        <dd>{fault_class ?? "—"}</dd>
-      </div>
-      <div>
-        <dt>Symptom</dt>
-        <dd>{symptom ?? "—"}</dd>
-      </div>
-    </dl>
-  )
-}
-
-function EvidenceList({ refs }: { refs: string[] }) {
-  if (refs.length === 0) {
-    return <p className="eval-hint">No evidence references were materialized for this vulnerability.</p>
-  }
-  return (
-    <ul className="eval-evidence">
-      {refs.map((ref) => (
-        <li key={ref}>
-          <span className="eval-ref">{ref}</span>
-        </li>
-      ))}
-    </ul>
-  )
-}
-
-function DiagnosisArticle({ diagnosis }: { diagnosis: EvalDiagnosis }) {
-  const cause = diagnosis.root_cause
-  return (
-    <article className="eval-diagnosis">
-      <h3>
-        <span className="eval-ref">{diagnosis.vuln}</span> — {diagnosis.failure_mode}
-      </h3>
-      <p>{diagnosis.diagnosis_overview}</p>
-      <p className="eval-diagnosis-cause">
-        Root cause: <strong>{cause.type}</strong>
-        {cause.combination_of.length > 0 && <> + {cause.combination_of.join(" + ")}</>}
-      </p>
-      {cause.extended_description && <p>{cause.extended_description}</p>}
-      {diagnosis.closest_issue && (
-        <p className="eval-diagnosis-issue">
-          Closest issue: {diagnosis.closest_issue.repo}#{diagnosis.closest_issue.number} —{" "}
-          {diagnosis.closest_issue.title}
-        </p>
-      )}
-      {diagnosis.proposed_issue && (
-        <p className="eval-diagnosis-issue">
-          Proposed issue: {diagnosis.proposed_issue.title}
-          {diagnosis.proposed_issue.labels.length > 0 &&
-            ` [${diagnosis.proposed_issue.labels.join(", ")}]`}
-        </p>
-      )}
-    </article>
-  )
-}
-
 // The artifact's own content. An unavailable, not-required or empty artifact
 // renders nothing here: the header's status line already states it plainly.
 function ArtifactBody({ trial, artifact }: { trial: EvalTrial; artifact: TrialArtifact }) {
@@ -346,39 +268,14 @@ function ArtifactBody({ trial, artifact }: { trial: EvalTrial; artifact: TrialAr
 
   if (artifact === "verdicts") {
     if (trial.verdicts.length === 0) return null
-    // Every materialized row, in order and with its cardinality: two rows that
-    // share a vuln_id stay two distinct entries, each with its own verdict,
-    // confidence, match and evidence. The row number is a render-time
-    // identifier only - the data itself is never modified or merged.
-    return (
-      <ul className="eval-artifacts">
-        {trial.verdicts.map((verdict, index) => (
-          <li key={`${verdict.vuln_id}#${index}`} className="eval-artifact-entry">
-            <h3>
-              <span className="eval-row-index">row {index + 1}</span>
-              <span className="eval-ref">{verdict.vuln_id}</span>
-              <span className={`eval-badge eval-badge-${verdict.identified}`}>
-                {verdict.identified}
-              </span>
-            </h3>
-            <MatchList verdict={verdict} />
-            <h4>Evidence</h4>
-            <EvidenceList refs={verdict.evidence.filter(isSafeRef)} />
-          </li>
-        ))}
-      </ul>
-    )
+    // The shared presentation: every materialized row stays distinct, and any
+    // diagnosis that names the same vulnerability is paired beneath it.
+    return <VerdictList trial={trial} />
   }
 
   if (artifact === "diagnoses") {
     if (trial.diagnoses.length === 0) return null
-    return (
-      <>
-        {trial.diagnoses.map((diagnosis) => (
-          <DiagnosisArticle key={diagnosis.vuln} diagnosis={diagnosis} />
-        ))}
-      </>
-    )
+    return <DiagnosesView trial={trial} />
   }
 
   const groups = groupVulnerabilities(trial).filter((entry) => entry.evidence.length > 0)
