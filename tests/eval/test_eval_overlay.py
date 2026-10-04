@@ -32,6 +32,10 @@ COMPLETE_ENV = {
     "LLM_HUNTING_HUNTER": "opencode:manual/test",
     "LLM_POD_RUNNER": "opencode:manual/test",
     "LLM_POD_TRIAGER": "opencode:manual/test",
+    "LLM_CAPABILITY_OVERRIDES": (
+        '{"opencode-go/deepseek-v4.1-flash": {"supports_structured_output": false, '
+        '"supports_forced_tool_choice": false}}'
+    ),
 }
 
 BASE_SERVICES = {"agent", "kali", "postgres", "neo4j", "lightrag"}

@@ -14,6 +14,12 @@
 #   `resolve_role` raises unless the role's key holds `<provider>:<model>`
 #   (the `LLM_<ROLE>` contract, #240); one key per distinct `model_key`
 #   across `ROLES` and `HUNTING_ROLES`.
+# - `LLM_CAPABILITY_OVERRIDES` (A6): the eval roles run
+#   `opencode-go/deepseek-v4.1-flash`, whose relay refuses
+#   `response_format=json_schema` and a forced `tool_choice` despite models.dev;
+#   the app fail-opens on an absent override, so eval makes it required here and
+#   `env_preflight.py` asserts the value is correct for the relay (a missing or
+#   wrong override silently degrades the compaction summariser - F12).
 # - Provider `API_KEY_<PROVIDER>` vars are deliberately NOT listed: which key
 #   is needed depends on the provider each role selects, which compose cannot
 #   express, and app boot (`validate_llm_config`) already fails naming the
@@ -45,6 +51,7 @@ services:
       LLM_HUNTING_HUNTER: ${LLM_HUNTING_HUNTER:?LLM_HUNTING_HUNTER is required - '<provider>:<model>' in the instance .env}
       LLM_POD_RUNNER: ${LLM_POD_RUNNER:?LLM_POD_RUNNER is required - '<provider>:<model>' in the instance .env}
       LLM_POD_TRIAGER: ${LLM_POD_TRIAGER:?LLM_POD_TRIAGER is required - '<provider>:<model>' in the instance .env}
+      LLM_CAPABILITY_OVERRIDES: ${LLM_CAPABILITY_OVERRIDES:?LLM_CAPABILITY_OVERRIDES is required - the A6 capability override for the eval relay; run eval/env_preflight.py}
 
   tests:
     env_file:
