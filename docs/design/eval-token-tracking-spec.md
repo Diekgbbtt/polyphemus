@@ -52,8 +52,8 @@ Tokens only. Cost is out of scope.
 
 - **New module** `src/polymerhus/app/llm/usage.py`:
   - `UsageLedger`: a process-wide, thread-safe accumulator keyed by `(project_id, agent)`.
-    Each entry holds `input_tokens`, `output_tokens`, `total_tokens`, and `calls`.
-    Methods: `record(project_id, agent, usage)` (fail-open), `snapshot(project_id)` returning the project total plus a per-agent breakdown, and `reset()` (tests).
+    Each entry holds the two-axis typed surface (`context_tokens` = `cached` + `uncached`; `generated_tokens` = `reasoning` + `visible`), the scalar `total_tokens`, and `calls` (F16, below).
+    Methods: `record(project_id, agent, usage)` (fail-open), `snapshot(project_id)` returning the project's aggregated surface plus a per-agent breakdown, and `reset()` (tests).
     Missing/None `project_id` records under an `"unscoped"` bucket that the project endpoint never returns.
   - `TokenUsageMiddleware(AgentMiddleware)`: records each model call's usage in `wrap_model_call`/`awrap_model_call` by reading `response.result`'s `usage_metadata`; `after_model` is the documented fallback if the streamed path does not surface usage in `wrap_model_call`.
     Reads identity from `langgraph.config.get_config()`: `metadata["role_id"]` and `metadata["usage_scope"]`.
@@ -64,8 +64,32 @@ Tokens only. Cost is out of scope.
   Callers that run within a project pass their `project_id` as `usage_scope`.
 - **Streamed usage**: `build_chat_model` constructs `ReasoningPreservingChatOpenAI(..., stream_usage=True)` so the default streamed session mode reports usage.
 - **App API**: `GET /projects/{project_id}/usage` in `src/polymerhus/project_management/api.py`, beside `GET /app-state`.
-  Read-only, no database access: returns `{"project_id", "total_tokens", "calls", "by_agent": {agent: {...}}}`; an unknown/empty project returns zeros.
+  Read-only, no database access: returns `{"project_id", "context_tokens", "generated_tokens", "total_tokens", "calls", "by_agent": {agent: {...}}}`; an unknown/empty project returns zeros.
   It never validates project existence (no DB), so the eval queries only its own project.
+
+### Token surface representation (F16, 2026-10-04)
+
+The ledger started as a scalar surface (`input_tokens`, `output_tokens`, `total_tokens`, `calls` per agent).
+It dropped the cache/reasoning detail the SDK's `usage_metadata` already carries (`input_token_details.cache_read`, `input_token_details.cache_creation`, `output_token_details.reasoning`), which `compaction.py` already reads.
+Evidence: a comfyui trial-1 aggregate of 264 generations was `input=12,991,082 / output=215,821 / fresh_input=988,138 / cache_read=12,002,944 / reasoning=135,011` - 92% of input was cache reads, invisible on the surface.
+The app ledger matched Langfuse within 0.2%, so this was a surface/representation gap, not a tracking bug.
+
+**Decided representation (operator-ratified):** a two-axis typed surface.
+
+- `context_tokens` (input) = `cached` (`input_token_details.cache_read`) + `uncached` (fresh input, i.e. `input_tokens - cache_read`, plus `input_token_details.cache_creation`).
+- `generated_tokens` (output) = `reasoning` (`output_token_details.reasoning`) + `visible` (`output_tokens - reasoning`).
+- `total_tokens` = context + generated, kept as the trial's budget scalar.
+
+Each sub-component pair is clamped (cache_read to input, reasoning to output) so a malformed provider payload can never yield a negative component; the pairs still sum to the model's input (plus cache_creation) and output, so `total_tokens` remains the faithful budget scalar.
+
+**Rejected alternative (do not implement):** a single `produced_tokens` decomposed into cached / not-cached.
+It is internally inconsistent because cache is an input-side property while "produced" means output, conflating context read with generated output.
+
+**Provider-normalization caveats (recorded, not hidden).**
+The axis reads use the SDK's canonical detail keys (`input_token_details.cache_read`, `input_token_details.cache_creation`, `output_token_details.reasoning`).
+On the pinned `langchain_openai` (the gateway path) `cache_creation` is never populated - OpenAI has no such field - so it is always 0 there; the read is kept for integrations that do report it.
+`langchain_openai` prefixes those detail keys with the service tier (`priority_cache_read` / `priority_reasoning`) only when a priority/flex tier is negotiated; no request in this tree sets one, so the standard-tier key applies.
+If a tier-prefixed payload ever arrives, the axes still total correctly (an unread `cache_read` folds into `uncached`); only the cached/uncached split is coarsened. A tier-aware read is a follow-up if a live run shows it.
 
 ### Eval side
 
@@ -88,13 +112,16 @@ Tokens only. Cost is out of scope.
 - **Token spend**: the tokens a trial's project consumed, measured as the delta between the project's cumulative token total at a poll and the trial's **spend baseline**.
 - **Token budget**: the per-`Target`-declared bound on a trial's token spend; on overflow the trial stops the active run and terminates `stopped`.
 - **Spend baseline**: the project's cumulative token total at the trial's first spend poll; persisted (`spend_baseline`) and carried across a resume.
-- **Usage ledger**: the process-wide, per-project, per-agent token accumulator the app exposes at `GET /projects/{id}/usage`.
+- **Usage ledger**: the process-wide, per-project, per-agent token accumulator the app exposes at `GET /projects/{id}/usage` as the two-axis typed surface (`context_tokens` and `generated_tokens`) plus the budget scalar `total_tokens`.
+- **Context tokens**: the input axis - `cached` (`input_token_details.cache_read`) plus `uncached` (fresh input plus `cache_creation`).
+- **Generated tokens**: the output axis - `reasoning` (`output_token_details.reasoning`) plus `visible` (output minus reasoning).
 
 ## Testing Decisions
 
 - Test external behaviour only: the middleware's observable effect on the ledger and the API; the eval's observable effect on the record and the stop call.
-- **App unit tests**: a fake model emits fixed `usage_metadata`; assert the ledger totals and per-agent breakdown; assert an unscoped record is excluded from a project snapshot; assert the middleware fails open when the config is absent.
-- **App API tests**: `GET /projects/{id}/usage` via `TestClient` after recording into the ledger; assert zeros for an empty project.
+- **App unit tests**: a fake model emits fixed `usage_metadata`; assert the ledger's two axes and per-agent breakdown; assert an unscoped record is excluded from a project snapshot; assert the middleware fails open when the config is absent.
+  F16 pins the worked example (`input=12,991,082 / output=215,821 / cache_read=12,002,944 / reasoning=135,011` -> `cached=12,002,944 / uncached=988,138 / reasoning=135,011 / visible=80,810`), `cache_creation` folding into `uncached`, and the clamp guards (`cache_read > input`, `reasoning > output`) against a negative component.
+- **App API tests**: `GET /projects/{id}/usage` via `TestClient` after recording into the ledger; assert the two axes and zeros for an empty project.
 - **Eval unit tests**: mirror the cap tests in `tests/eval/test_orchestrator_trial.py` with a `FakeApi` that serves a usage payload; assert the stop call, the recorded spend/overshoot/by-agent, the baseline snapshot, and resume carry-over.
 - **Eval setup tests**: `token_budget` parses and rejects a non-int, mirroring `hunt_config_budget`.
 - **Eval surfer tests**: a token stop is detected from the record and carries the baseline.

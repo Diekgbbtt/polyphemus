@@ -205,7 +205,10 @@ def occupancy_from_message(message: BaseMessage) -> UsageSnapshot | None:
     output_tokens = usage.get("output_tokens")
     output_tokens = output_tokens if isinstance(output_tokens, int) else 0
     odt = usage.get("output_token_details")
-    reasoning = odt.get("reasoning_tokens") if isinstance(odt, dict) else None
+    # The SDK's native reasoning key is `reasoning` (langchain-core
+    # OutputTokenDetails); the raw OpenAI wire field is
+    # `completion_tokens_details.reasoning_tokens`, which langchain normalizes.
+    reasoning = odt.get("reasoning") if isinstance(odt, dict) else None
     reasoning = reasoning if isinstance(reasoning, int) else None
     return UsageSnapshot(
         base_input=input_tokens + cache_read,

@@ -52,7 +52,7 @@ def _usage(input_tokens, output_tokens=0, cache_read=0, reasoning=None):
     if cache_read:
         md["input_token_details"] = {"cache_read": cache_read}
     if reasoning is not None:
-        md["output_token_details"] = {"reasoning_tokens": reasoning}
+        md["output_token_details"] = {"reasoning": reasoning}
     return md
 
 

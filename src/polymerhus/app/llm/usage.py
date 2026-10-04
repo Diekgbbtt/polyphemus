@@ -6,6 +6,14 @@ PROCESS-WIDE and in-memory (it dies with the app process); the app API exposes
 it read-only at `GET /projects/{id}/usage`, and the eval harness bounds a trial
 by reading that endpoint.
 
+The surface is a two-axis typed decomposition, not a scalar: `context_tokens`
+(input) splits into `cached` (cache_read) and `uncached` (fresh input plus
+cache_creation), and `generated_tokens` (output) splits into `reasoning`
+(output_token_details.reasoning) and `visible` (output minus reasoning). The
+scalar `total_tokens` = context + generated stays the trial's budget scalar. The
+axes are recorded per call so a mostly-cache-read context is visible rather than
+folded into one opaque input number (ticket F16).
+
 The ledger is keyed by `(project_id, agent)`. A missing/blank project id records
 under the `"unscoped"` sentinel bucket, which a project snapshot never returns:
 one-shot/role calls that run outside a project stay visible in aggregate but can
@@ -33,19 +41,74 @@ project snapshot."""
 
 
 def _int_field(usage: Mapping, key: str) -> int:
+    """A non-negative int from the usage mapping, or 0 when absent/malformed
+    (a bool is rejected, never treated as 0/1)."""
     value = usage.get(key)
     if isinstance(value, bool) or not isinstance(value, int):
         return 0
-    return value
+    return max(0, value)
+
+
+def _detail_int(usage: Mapping, detail_key: str, field: str) -> int:
+    """A non-negative int from a nested `usage_metadata` detail mapping, or 0 when
+    the detail is absent/malformed. `input_token_details` / `output_token_details`
+    are the SDK's native cache/reasoning carriers."""
+    details = usage.get(detail_key)
+    if not isinstance(details, Mapping):
+        return 0
+    return _int_field(details, field)
+
+
+def _axis_totals(usage: Mapping) -> dict[str, int]:
+    """One call's two-axis token decomposition (the ratified representation).
+
+    Context (input) = `cached` (cache_read) + `uncached` (fresh input plus
+    cache_creation); generated (output) = `reasoning`
+    (output_token_details.reasoning) + `visible` (output minus reasoning). Each
+    pair is clamped so a malformed payload can never yield a negative component,
+    and the pairs still sum to the model's input (plus cache_creation) and
+    output, so `total_tokens` - context + generated - stays the faithful budget
+    scalar."""
+    input_tokens = _int_field(usage, "input_tokens")
+    output_tokens = _int_field(usage, "output_tokens")
+    cache_read = _detail_int(usage, "input_token_details", "cache_read")
+    cache_creation = _detail_int(usage, "input_token_details", "cache_creation")
+    cached = min(cache_read, input_tokens)
+    uncached = (input_tokens - cached) + cache_creation
+    reasoning = min(
+        _detail_int(usage, "output_token_details", "reasoning"), output_tokens)
+    visible = output_tokens - reasoning
+    return {
+        "cached": cached,
+        "uncached": uncached,
+        "reasoning": reasoning,
+        "visible": visible,
+        "total_tokens": cached + uncached + reasoning + visible,
+    }
+
+
+def _entry_surface(entry: Mapping) -> dict[str, Any]:
+    """One ledger entry's public two-axis shape (nested context/generated plus the
+    scalar budget total and call count)."""
+    return {
+        "context_tokens": {"cached": entry["cached"],
+                           "uncached": entry["uncached"]},
+        "generated_tokens": {"reasoning": entry["reasoning"],
+                             "visible": entry["visible"]},
+        "total_tokens": entry["total_tokens"],
+        "calls": entry["calls"],
+    }
 
 
 class UsageLedger:
     """A process-wide, thread-safe token accumulator keyed by `(project_id, agent)`.
 
-    Each entry holds `input_tokens`, `output_tokens`, `total_tokens`, and `calls`
-    (all int). `record` is fail-open and a None/empty usage is a no-op; `snapshot`
-    returns the project total plus the per-agent breakdown, excluding the
-    `"unscoped"` bucket; `reset` clears all state (tests)."""
+    Each entry holds the two-axis surface - `context_tokens` (`cached` +
+    `uncached`) and `generated_tokens` (`reasoning` + `visible`) - plus the budget
+    scalar `total_tokens` and `calls`. `record` is fail-open and a None/empty usage
+    is a no-op; `snapshot` returns the project's aggregated surface plus the
+    per-agent breakdown, excluding the `"unscoped"` bucket; `reset` clears all
+    state (tests)."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -59,44 +122,49 @@ class UsageLedger:
         try:
             if not usage:
                 return
-            input_tokens = _int_field(usage, "input_tokens")
-            output_tokens = _int_field(usage, "output_tokens")
-            # A present-but-invalid total must not record zero: fall back to the
-            # input + output sum so the budget is never silently defeated.
-            total_tokens = _int_field(usage, "total_tokens") or (
-                input_tokens + output_tokens
-            )
+            totals = _axis_totals(usage)
             key = (project_id or _UNSCOPED, agent)
             with self._lock:
                 entry = self._entries.get(key)
                 if entry is None:
-                    entry = {"input_tokens": 0, "output_tokens": 0,
-                             "total_tokens": 0, "calls": 0}
+                    entry = {"cached": 0, "uncached": 0, "reasoning": 0,
+                             "visible": 0, "total_tokens": 0, "calls": 0}
                     self._entries[key] = entry
-                entry["input_tokens"] += input_tokens
-                entry["output_tokens"] += output_tokens
-                entry["total_tokens"] += total_tokens
+                for field in ("cached", "uncached", "reasoning", "visible",
+                              "total_tokens"):
+                    entry[field] += totals[field]
                 entry["calls"] += 1
         except Exception:  # noqa: BLE001 - fail-open: never break the turn
             logger.warning("usage record failed; call left unaccounted",
                            exc_info=True)
 
     def snapshot(self, project_id: str) -> dict[str, Any]:
-        """The project's cumulative total plus its per-agent breakdown. The
-        `"unscoped"` bucket is never included; an unknown project returns
+        """The project's aggregated two-axis surface plus its per-agent breakdown.
+        The `"unscoped"` bucket is never included; an unknown project returns
         zeros/empty."""
+        totals = {"cached": 0, "uncached": 0, "reasoning": 0, "visible": 0}
         total_tokens = 0
         calls = 0
-        by_agent: dict[str, dict[str, int]] = {}
+        by_agent: dict[str, dict[str, Any]] = {}
         with self._lock:
             for (pid, agent), entry in self._entries.items():
                 if pid != project_id or pid == _UNSCOPED:
                     continue
-                by_agent[agent] = dict(entry)
+                by_agent[agent] = _entry_surface(entry)
+                for axis in totals:
+                    totals[axis] += entry[axis]
                 total_tokens += entry["total_tokens"]
                 calls += entry["calls"]
-        return {"project_id": project_id, "total_tokens": total_tokens,
-                "calls": calls, "by_agent": by_agent}
+        return {
+            "project_id": project_id,
+            "context_tokens": {"cached": totals["cached"],
+                               "uncached": totals["uncached"]},
+            "generated_tokens": {"reasoning": totals["reasoning"],
+                                 "visible": totals["visible"]},
+            "total_tokens": total_tokens,
+            "calls": calls,
+            "by_agent": by_agent,
+        }
 
     def reset(self) -> None:
         """Clear all state (tests)."""

@@ -46,6 +46,6 @@ It is explicitly not a bounded-context glossary: the meaning of what these modul
 
 ## Glossary
 
-- **usage ledger** - the process-wide, per-project, per-agent token accumulator (`app/llm/usage.py`) the session seam records into and the app API exposes read-only; a missing/blank project id lands in the unscoped bucket, which a project snapshot never returns.
+- **usage ledger** - the process-wide, per-project, per-agent token accumulator (`app/llm/usage.py`) the session seam records into and the app API exposes read-only as a two-axis typed surface: `context_tokens` (`cached` from `input_token_details.cache_read`, `uncached` from fresh input plus `cache_creation`) and `generated_tokens` (`reasoning` from `output_token_details.reasoning`, `visible` from output minus reasoning), while the scalar `total_tokens` (context + generated) stays the trial budget scalar; a missing/blank project id lands in the unscoped bucket, which a project snapshot never returns.
 - **voluntary function calling** - the A6 negotiated rung for a model whose upstream refuses a forced `tool_choice`: the schema tool is bound, the choice is not forced, the provider decides (a relaxed model rewrites the force to `"auto"` at bind time).
 - **capability override** - the operator-declared correction of a registry claim, via `LLM_CAPABILITY_OVERRIDES` (e.g. a thinking-mode relay refusing a forced tool choice that models.dev cannot express).
