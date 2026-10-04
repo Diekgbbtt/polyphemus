@@ -24,20 +24,26 @@ confirms one.
 
 ## How to build `QuerySpecV1`
 
-Derive every field from the HuntConfig - no retrieved text, no invented
-fields.
+Derive every field from the HuntConfig. Pass ONLY the fields below - the tool
+binds the real QuerySpecV1, and a field outside it is not part of the query
+contract. In particular, the config's vulnerability class and fault class are
+not top-level query fields: fold them into the concern and the attack goal. No
+retrieved text, no invented fields.
 
 - `scenario_id`: identifies the current hunt or hypothesis.
-- `attack_goal`: the attack objective declared by the HuntConfig.
-- `concern`: the security concern under investigation.
+- `attack_goal`: the attack objective, from the config's research direction.
+- `concern`: the security concern under investigation - the config's
+  vulnerability class plus its rationale.
 - `technology_stack`: the technology stack of the testable unit.
 - `target_refs`: references to the target (components/surfaces).
-- `input_vectors`: presumed input vectors, from `supposed_payload_vectors`.
-- `known_facts`: known and verified facts (e.g. L0).
+- `input_vectors`: presumed input vectors, read from the target surface.
+- `known_facts`: known and verified facts (e.g. L0 evidence).
 - `acceptable_technique_families`: technique families acceptable for the methodology.
 - `unsupported_claims`: claims the tool must not treat as confirmed.
 - `evidence`: L0/L1 references with summaries, the provenance constraint.
-- `expected_no_hypothesis`: true when the absence of a hypothesis is expected.
+- `expected_no_hypothesis`: true when the absence of a hypothesis is expected;
+  leave it out normally (it defaults to false).
+- `retrieval`: optional retrieval parameters; omit to use the defaults.
 
 ## Response
 

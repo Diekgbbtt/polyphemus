@@ -37,6 +37,11 @@ from lightrag.query_spec import QuerySpecV1, RetrievalConfigV1, R_A
 # the pod and hunter tool surfaces (pod/tools.py, hunter_tools.py) so the
 # description cannot drift between sites. The ontology list must match the real
 # `lightrag.ontology.ENTITY_TYPES`.
+#
+# The args contract is the real `QuerySpecV1` (#322): the field list below is read
+# from the model itself, so the description cites exactly the schema the tool
+# binds and can never drift from it.
+_QUERY_SPEC_FIELD_LIST = ", ".join(QuerySpecV1.model_fields)
 QUERY_LIGHTRAG_DESCRIPTION = (
     "Retrieve web-application testing methodology from the LightRAG knowledge "
     "base when specific knowledge is missing from your reasoning. Query it for "
@@ -49,7 +54,9 @@ QUERY_LIGHTRAG_DESCRIPTION = (
     "explanations (type, canonical name, prose) with provenance references and "
     "knowledge gaps. Answers may enrich beyond the retrieved context - confirm "
     "concrete target parameters on the target. An empty or degraded result "
-    "means the KB has nothing further - continue on your own grounding."
+    "means the KB has nothing further - continue on your own grounding. "
+    f"Pass the query as a QuerySpecV1 object; its fields are: "
+    f"{_QUERY_SPEC_FIELD_LIST}."
 )
 
 

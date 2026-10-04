@@ -195,6 +195,18 @@ design:
    `docs/observability-langfuse.md` and the lightrag design doc for the
    observation details.
 
+3. **Args-contract drift (#322)** - the hunter carried a stale local
+   `KbQuerySpec` mirror of `QuerySpecV1` that lacked `expected_no_hypothesis`,
+   while the shared usage skill (`skills/lightrag-query/SKILL.md`) documented
+   the real contract; every hunter `kb_query` that passed the documented
+   field degraded to the `tool_failed` fallback (run `09c0f4c8`). The fix
+   RETIRES the local args mirror: the hunter tool binds the real
+   `lightrag.query_spec.QuerySpecV1`, the same contract the pod wrapper and
+   the real tool bind, and the canonical description appends the field list
+   read from `QuerySpecV1.model_fields`. The schema, the description, and the
+   skill field list are now single-sourced; a regression test pins the
+   agreement. See `docs/design/kb-query-contract-322-adr.md`.
+
 ### The author-lane recording seam (grey pt 8)
 
 The hunter has no D6 log, so its author-lane `kb_query` reads land a

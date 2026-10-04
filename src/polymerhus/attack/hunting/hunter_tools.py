@@ -27,13 +27,16 @@ Contract + degradation (spec 5, spec 9):
   with the full usage contract in its description. Absent or raising -> a
   denoted fail-open error, never a raise into the turn; write-shaped calls are
   rejected (the single-sourced `_WRITE_SHAPED` guard).
-- `kb_query` - the LightRAG tool (R1): the args schema is a LOCAL minimal mirror
-  of `QuerySpecV1` and the response a dict shaped like `AnswerBundleV1` (copied
-  from the `lightrag-probe` worktree's `query_spec.py` / `generation.py`),
-  WIRED from scratch onto the real `query_lightrag` tool (the lightrag branch's
-  single KB tool, always-bound as of #197 - the `HUNTING_LIGHTRAG_TOOL` opt-in
-  flag is REMOVED). An injected `kb_query` seam (the contract tier) is used when
-  the real tool is unavailable; empty/raising
+- `kb_query` - the LightRAG tool (R1): the args schema is the REAL `QuerySpecV1`
+  (the lightrag branch's query contract, imported - never a local mirror) and
+  the response a dict shaped like `AnswerBundleV1`, WIRED from scratch onto the
+  real `query_lightrag` tool (the lightrag branch's single KB tool, always-bound
+  as of #197 - the `HUNTING_LIGHTRAG_TOOL` opt-in flag is REMOVED). The local
+  `KbQuerySpec` mirror is RETIRED (#322): it lacked `expected_no_hypothesis`, so
+  the shared usage skill (which documents `QuerySpecV1`) sent fields the mirror
+  forbade and every `kb_query` degraded. One contract now serves the hunter, the
+  pod, and the real tool. An injected `kb_query` seam (the contract tier) is used
+  when the real tool is unavailable; empty/raising
   -> a denoted degraded bundle (C2/C3). The `lightrag.tool` description
   constant is imported at module top (I/O-free); the real tool is built lazily.
 - `exec` - the Kali-container exec tool (R2): `EXEC_TIMEOUT_S` per call (the
@@ -56,6 +59,7 @@ import json
 from typing import Any, Callable, Literal
 
 from langchain_core.tools import BaseTool
+from lightrag.query_spec import QuerySpecV1
 from lightrag.tool import QUERY_LIGHTRAG_DESCRIPTION
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -85,55 +89,14 @@ from polymerhus.recon.domain.types import ExecResult
 # here, while the HARNESS-level probe frequency stays unbounded (R2b).
 
 
-# --- the kb_query local mirrors of the LightRAG types (R1) --------------------
+# --- the kb_query response envelope (R1) --------------------------------------
 
-# Local minimal mirrors of `lightrag-probe`'s `QuerySpecV1` / `AnswerBundleV1`
-# (`lightrag/query_spec.py` / `generation.py`). The `lightrag` package lives at
-# the repo root; the mirror stays the local args/response contract - when the
-# opt-in flag is on, `KbQueryTool` invokes the real `build_lightrag_tool`. The
-# mirror copies the field shapes verbatim so the swap is mechanical.
-
-
-class HunterRetrievalConfig(BaseModel):
-    """Mirror of `RetrievalConfigV1`: per-mode retrieval parameters."""
-
-    mode: Literal["naive", "mix"] = "naive"
-    chunk_top_k: int = Field(default=20, ge=1, le=100)
-    top_k: int = Field(default=20, ge=1, le=100)
-    max_total_tokens: int = Field(default=8000, ge=1000, le=32000)
-
-
-class HunterEvidenceRef(BaseModel):
-    """Mirror of `EvidenceRefV1`: one evidence-backed observation reference."""
-
-    ref: str
-    summary: str
-
-
-class KbQuerySpec(BaseModel):
-    """The `kb_query` args contract: a LOCAL minimal mirror of `QuerySpecV1`.
-
-    Replicates the QuerySpecV1 shape (`scenario_id`, `attack_goal`, `concern`,
-    `technology_stack`, `target_refs`, `input_vectors`, `known_facts`,
-    `acceptable_technique_families`, `unsupported_claims`, `evidence`,
-    `retrieval`) so the seam is typed until the LightRAG integration lands and
-    the real `QuerySpecV1` swaps in (R1). `extra="forbid"` (the pod's D84-22
-    discipline): a parameter outside this contract FAILS before `_run`.
-    """
-
-    scenario_id: str
-    attack_goal: str
-    concern: str
-    technology_stack: list[str] = Field(default_factory=list)
-    target_refs: list[str] = Field(default_factory=list)
-    input_vectors: list[str] = Field(default_factory=list)
-    known_facts: list[str] = Field(default_factory=list)
-    acceptable_technique_families: list[str] = Field(default_factory=list)
-    unsupported_claims: list[str] = Field(default_factory=list)
-    evidence: list[HunterEvidenceRef] = Field(default_factory=list)
-    retrieval: HunterRetrievalConfig = Field(default_factory=HunterRetrievalConfig)
-
-    model_config = ConfigDict(extra="forbid")
+# The args contract is the REAL `lightrag.query_spec.QuerySpecV1` (#322) - the
+# same schema the pod's `query_lightrag` wrapper and the real tool bind - so the
+# hunter, the pod, the shared usage skill, and the canonical description can
+# never disagree about the KB query fields. Only the response keeps a local
+# tolerant envelope (`KbAnswerBundle`, below): it accepts the injected seam's
+# dict and the real tool's `AnswerBundleV1` JSON alike.
 
 
 class KbAnswerBundle(BaseModel):
@@ -141,9 +104,8 @@ class KbAnswerBundle(BaseModel):
 
     Tolerant of the real bundle's sub-shapes (`ontology_explanations` entries
     are kept as dicts); the top-level scalar fields must be present or the seam
-    result degrades (C2/C3). Swapped for the real `AnswerBundleV1` when the
-    LightRAG integration lands.
-    """
+    result degrades (C2/C3). The args contract is the real `QuerySpecV1`; only
+    the response shape keeps a tolerant local envelope."""
 
     schema_version: str = "lightrag-answer/v2"
     scenario_id: str = ""
@@ -162,9 +124,9 @@ class KbAnswerBundle(BaseModel):
 # (cypher, params) -> rows. Absent/raising -> fail-open (G8a, spec 9).
 GraphViewFn = Callable[[str, dict], list[dict]]
 
-# The `kb_query` seam: (KbQuerySpec) -> AnswerBundleV1-shaped dict. Empty/raising
+# The `kb_query` seam: (QuerySpecV1) -> AnswerBundleV1-shaped dict. Empty/raising
 # -> the degraded bundle (C2/C3).
-KbQueryFn = Callable[[KbQuerySpec], dict]
+KbQueryFn = Callable[[QuerySpecV1], dict]
 
 # The `exec` seam, reused verbatim from the pod (`pod/tools.py::ExecFn`):
 # (command, timeout_s) -> ExecResult. Absent -> fail-open.
@@ -662,27 +624,29 @@ class NotesTool(StoreNotesTool):
 class KbQueryTool(BaseTool):
     """The LightRAG knowledge-base tool (R1, spec 5): a typed `QuerySpecV1`-shaped
     query -> an `AnswerBundleV1`-shaped bundle, consumed directly in the author
-    lane. The KB is a testing-METHODOLOGY knowledge base (WSTG + writeups) - the
-    tool's single canonical description (`QUERY_LIGHTRAG_DESCRIPTION`, imported
-    from `lightrag.tool`) emphasises retrieving methodology, never adjudicating
-    a bug. WIRED from scratch onto the real `query_lightrag` tool (the lightrag
-    branch's single KB tool, ALWAYS attempted as of #197 - the
-    `HUNTING_LIGHTRAG_TOOL` opt-in flag is REMOVED): the real tool is built
-    lazily and invoked (fail-open to a degraded bundle); when unavailable the
-    injected `kb_fn` seam (the contract tier) is used.
+    lane. The args schema IS the real `lightrag.query_spec.QuerySpecV1` (#322) -
+    the same contract the pod and the real tool bind, so the usage skill and the
+    canonical description cannot drift. The KB is a testing-METHODOLOGY knowledge
+    base (WSTG + writeups) - the tool's single canonical description
+    (`QUERY_LIGHTRAG_DESCRIPTION`, imported from `lightrag.tool`) emphasises
+    retrieving methodology, never adjudicating a bug. WIRED from scratch onto the
+    real `query_lightrag` tool (the lightrag branch's single KB tool, ALWAYS
+    attempted as of #197 - the `HUNTING_LIGHTRAG_TOOL` opt-in flag is REMOVED):
+    the real tool is built lazily and invoked (fail-open to a degraded bundle);
+    when unavailable the injected `kb_fn` seam (the contract tier) is used.
     Empty/raising -> a denoted degraded bundle (C2/C3), never a raise into the
     turn."""
 
     name: str = "kb_query"
     description: str = QUERY_LIGHTRAG_DESCRIPTION
-    args_schema: type[BaseModel] = KbQuerySpec
+    args_schema: type[BaseModel] = QuerySpecV1
 
     def __init__(self, *, kb_fn: KbQueryFn | None = None, **kwargs):
         super().__init__(**kwargs)
         self._kb_fn = kb_fn
 
     @staticmethod
-    def _degraded_bundle(spec: KbQuerySpec, reason: str) -> dict:
+    def _degraded_bundle(spec: QuerySpecV1, reason: str) -> dict:
         return {
             "schema_version": "lightrag-answer/v2",
             "scenario_id": spec.scenario_id,
@@ -708,7 +672,7 @@ class KbQueryTool(BaseTool):
     def _run(self, **kwargs: Any) -> str:
         from lightrag.observability import kb_observation_span
 
-        spec = KbQuerySpec(**kwargs)
+        spec = QuerySpecV1(**kwargs)
         entity_names: list[str] = []
         provenance: list[str] = []
         with kb_observation_span(
@@ -734,7 +698,7 @@ class KbQueryTool(BaseTool):
             )
         return text
 
-    def _kb_query_text(self, spec: KbQuerySpec) -> str:
+    def _kb_query_text(self, spec: QuerySpecV1) -> str:
         """Resolve one `kb_query` to its AnswerBundle-shaped JSON text (the real
         tool when available, else the injected seam, else the degraded bundle).
         Fail-open (C2/C3): never raises into the turn."""
@@ -935,9 +899,6 @@ __all__ = [
     "GraphViewFn",
     "KbQueryFn",
     "ExecFn",
-    "HunterRetrievalConfig",
-    "HunterEvidenceRef",
-    "KbQuerySpec",
     "KbAnswerBundle",
     "HuntsStoreArgs",
     "NoteProvenance",
