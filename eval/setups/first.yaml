@@ -64,6 +64,9 @@ instances:
       - target_key: webexploitbench/comfyui
         target_id: comfyui-1
         start_phase: recon
+        # The trial-wide token cap, counted on NEW tokens only (generated output
+        # + non-cached input, `capped_tokens`); 25M roofs a comfyui run.
+        token_budget: 25000000
         # The hunting cap, counted from the consumed hunt-configs directory
         # (pre-mined files included). 10 configs bounds a 6-vuln challenge.
         hunt_config_budget: 10
