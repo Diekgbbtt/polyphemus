@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route } from "react-router-dom"
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom"
 import { ProjectsPage } from "./pages/ProjectsPage"
 import { GraphPage } from "./pages/GraphPage"
 import { RunsPage } from "./pages/RunsPage"
@@ -21,6 +21,8 @@ export function AppRoutes() {
   return (
     <Routes>
       <Route path="/" element={<ProjectsPage />} />
+      {/* `/p` is the legacy bare project path: the catalog now owns `/`. */}
+      <Route path="/p" element={<Navigate to="/" replace />} />
       <Route path="/p/:projectId" element={<GraphPage />} />
       <Route path="/p/:projectId/runs" element={<RunsPage />} />
       {/* The project eval subtree shares one provider for list and detail. */}

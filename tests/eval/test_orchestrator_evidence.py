@@ -217,6 +217,66 @@ def test_validate_rejects_an_absolute_or_traversing_path(tmp_path) -> None:
         evidence.validate_evidence(chain, root, files=files)
 
 
+def test_validate_accepts_a_canonical_pod_export(tmp_path) -> None:
+    files = FileStore()
+    root = seed_chain(tmp_path, files)
+    chain = evidence.resolve_evidence(root, _target(), files=files)
+
+    assert chain.pod_export == "pid/hunting/test-executor-pod/sqli_error/run1.yaml"
+    evidence.validate_evidence(chain, root, files=files)
+
+
+@pytest.mark.parametrize(
+    "nested",
+    ["variants/v0.yaml", "experiment-log/0.yaml", "nested/deep/v0.yaml"],
+)
+def test_validate_rejects_a_nested_path_as_the_pod_export(tmp_path, nested) -> None:
+    files = FileStore()
+    root = seed_chain(tmp_path, files)
+    nested_path = pod_spec_dir(root, "pid", "sqli_error") / nested
+    files.write_text(nested_path, "not-an-export: true\n")
+    chain = evidence.EvidenceChain(
+        hunt_config="pid/hunting/orchestration/hunt_configs/produced/unit_CWE-89_sqli.yaml",
+        spec_dir="pid/hunting/hunter/test-specs/unit_CWE-89_sqli",
+        experiment_logs=("pid/hunting/test-executor-pod/sqli_error/experiment-log/0.yaml",),
+        pod_export=f"pid/hunting/test-executor-pod/sqli_error/{nested}",
+    )
+
+    with pytest.raises(evidence.EvidenceError, match="pod_export"):
+        evidence.validate_evidence(chain, root, files=files)
+    # The nested file really exists: the *path shape* is what is rejected.
+    assert nested_path.is_file()
+
+
+def test_validate_rejects_a_directory_where_a_pod_export_is_required(tmp_path) -> None:
+    files = FileStore()
+    root = seed_chain(tmp_path, files)
+    (
+        root / "pid/hunting/test-executor-pod/sqli_error/run2.yaml"
+    ).mkdir(parents=True, exist_ok=True)
+    chain = evidence.EvidenceChain(
+        hunt_config="pid/hunting/orchestration/hunt_configs/produced/unit_CWE-89_sqli.yaml",
+        spec_dir="pid/hunting/hunter/test-specs/unit_CWE-89_sqli",
+        experiment_logs=("pid/hunting/test-executor-pod/sqli_error/experiment-log/0.yaml",),
+        pod_export="pid/hunting/test-executor-pod/sqli_error/run2.yaml",
+    )
+
+    with pytest.raises(evidence.EvidenceError, match="pod_export"):
+        evidence.validate_evidence(chain, root, files=files)
+
+
+def test_resolve_rejects_a_nested_pod_export_name(tmp_path) -> None:
+    files = FileStore()
+    root = seed_chain(tmp_path, files)
+    files.write_text(
+        pod_spec_dir(root, "pid", "sqli_error") / "variants" / "v0.yaml",
+        "variant: 0\n",
+    )
+
+    with pytest.raises(evidence.EvidenceError, match="pod_export"):
+        evidence.resolve_evidence(root, _target(pod_export="variants/v0"), files=files)
+
+
 # --- the observability reasoning seam ------------------------------------------
 
 

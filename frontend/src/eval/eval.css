@@ -610,13 +610,9 @@
   color: #f2b8b5;
 }
 
-/* Keyboard focus stays visible on every interactive element. */
-.eval a:focus-visible,
-.eval button:focus-visible,
-.eval [tabindex]:focus-visible {
-  outline: 2px solid #8ab4f8;
-  outline-offset: 2px;
-}
+/* Keyboard-focus, project-nav, and graph-view rules are shared across every
+   route; they live in site.css (imported from main.tsx) so a page never has to
+   import this stylesheet to get them. */
 
 @media (max-width: 40rem) {
   .eval {
@@ -632,28 +628,6 @@
 }
 
 /* --- project workspace ------------------------------------------------------- */
-
-.project-nav {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 1rem;
-}
-
-.project-nav a {
-  color: #8ab4f8;
-  text-decoration: none;
-}
-
-.project-nav a:hover {
-  text-decoration: underline;
-}
-
-/* The current section is named as text too, so color is not the only signal. */
-.project-nav a[aria-current="page"] {
-  color: #e8eaed;
-  font-weight: 600;
-  border-bottom: 2px solid #8ab4f8;
-}
 
 .project-eval-list {
   list-style: none;
@@ -680,38 +654,6 @@
   border-top: 1px solid #23272d;
   margin-top: 1.5rem;
   padding-top: 1rem;
-}
-
-/* --- the shared graph view (live and historical) ----------------------------- */
-
-.graph-view {
-  display: grid;
-  gap: 0.75rem;
-}
-
-.graph-view-toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.75rem;
-}
-
-.graph-view-source {
-  font-weight: 600;
-  color: #e8eaed;
-}
-
-.graph-view-captured {
-  color: #9aa0a6;
-}
-
-.graph-live-link a {
-  color: #8ab4f8;
-  text-decoration: none;
-}
-
-.graph-live-link a:hover {
-  text-decoration: underline;
 }
 
 /* --- the historical artifact index ------------------------------------------- */
@@ -895,9 +837,6 @@
 }
 
 @media (max-width: 40rem) {
-  .project-nav {
-    width: 100%;
-  }
   .eval-topbar {
     align-items: flex-start;
   }

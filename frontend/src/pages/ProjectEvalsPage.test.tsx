@@ -333,6 +333,66 @@ test("the project trial links to the existing eval Trial route", async () => {
   expect(screen.getByRole("heading", { name: "Skills" })).toBeDefined()
 })
 
+test("the workspace accepts the stopped-at-cap schema-v2 contract", async () => {
+  stubFetch(
+    snapshot([
+      trial({
+        target_id: "comfyui-1",
+        target_run_id: "run-demo-real-shape",
+        trial_id: "trial-stopped-cap-10",
+        start_phase: "recon",
+        terminal: "stopped",
+        phases: [
+          { phase: "recon", status: "complete", run_id: "demo-real-recon" },
+          { phase: "hunting", status: "stopped", run_id: "demo-real-hunt" },
+        ],
+        verdicts: [
+          {
+            vuln_id: "DEMO-CVE-2024-5001",
+            identified: "missed",
+            confidence: 0,
+            matched: { unit: null, fault_class: null, symptom: null },
+            evidence: [],
+          },
+          {
+            vuln_id: "DEMO-CVE-2024-5002",
+            identified: "missed",
+            confidence: 0,
+            matched: { unit: null, fault_class: null, symptom: null },
+            evidence: [],
+          },
+          {
+            vuln_id: "DEMO-CVE-2024-5003",
+            identified: "missed",
+            confidence: 0,
+            matched: { unit: null, fault_class: null, symptom: null },
+            evidence: [],
+          },
+        ],
+        artifact_summary: { status: "available", hunting: 21, skills: 0 },
+        project_graph_summary: {
+          status: "available",
+          nodes: 3,
+          links: 2,
+          captured_at: "2024-01-01T00:00:00+00:00",
+        },
+      }),
+    ]),
+  )
+  goto("/p/proj-a/evals/comfyui-1/run-demo-real-shape/trial-stopped-cap-10")
+
+  await waitFor(() =>
+    expect(
+      screen.getByRole("heading", { name: /Trial trial-stopped-cap-10/ }),
+    ).toBeDefined(),
+  )
+  expect(screen.getByText("stopped")).toBeDefined()
+  expect(screen.getByText("0 identified / 0 partial / 3 missed")).toBeDefined()
+  expect(screen.getByText("21 artifacts")).toBeDefined()
+  expect(screen.getByText("0 artifacts")).toBeDefined()
+  expect(screen.getByText(/available · 3 nodes \/ 2 links/)).toBeDefined()
+})
+
 // --- the project shell -----------------------------------------------------------
 
 test("GraphPage and RunsPage expose the shared project navigation", async () => {

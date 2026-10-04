@@ -311,6 +311,25 @@ function stubFetch(body: unknown, status = 200) {
     new Response(JSON.stringify(body), { status })) as typeof fetch
 }
 
+function json(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), { status })
+}
+
+// A per-path fetch stub: the first route whose needle is a substring of the
+// request URL wins. The catalog loads `/projects` and `/snapshot` independently.
+function routeFetch(routes: Array<[string, () => Response | Promise<Response>]>): string[] {
+  const calls: string[] = []
+  globalThis.fetch = (async (input: unknown) => {
+    const url = String(input)
+    calls.push(url)
+    for (const [needle, handler] of routes) {
+      if (url.includes(needle)) return handler()
+    }
+    throw new Error(`unexpected fetch: ${url}`)
+  }) as typeof fetch
+  return calls
+}
+
 function goto(path: string) {
   window.history.pushState({}, "", path)
   render(<App />)
@@ -785,8 +804,67 @@ test("the non-eval routes still render", async () => {
   stubFetch({ projects: [] })
   goto("/")
 
-  await waitFor(() => expect(screen.getByText("Projects")).toBeDefined())
+  await waitFor(() =>
+    expect(screen.getByRole("heading", { name: "Projects" })).toBeDefined(),
+  )
   expect(screen.queryByText("Targets (machines)")).toBeNull()
+})
+
+test("/p redirects to the project catalog at /", async () => {
+  routeFetch([
+    ["/projects", () => json({ projects: [] })],
+    ["/snapshot", () => json(SNAPSHOT)],
+  ])
+  goto("/p")
+
+  await waitFor(() =>
+    expect(screen.getByRole("heading", { name: "Projects" })).toBeDefined(),
+  )
+  expect(window.location.pathname).toBe("/")
+})
+
+test("a project card links to its eval workspace and latest trial", async () => {
+  routeFetch([
+    ["/projects", () => json({ detail: "unavailable" }, 503)],
+    ["/snapshot", () => json(SNAPSHOT)],
+  ])
+  goto("/")
+
+  const workspace = await screen.findByRole("link", { name: "proj-comfyui-1" })
+  expect(workspace.getAttribute("href")).toBe("/p/proj-comfyui-1/evals")
+  // SNAPSHOT's newest comfyui-1 Trial is run-demo-c/trial-1 (captured 01-03).
+  const latest = screen.getByRole("link", { name: /latest trial/i })
+  expect(latest.getAttribute("href")).toBe(
+    "/p/proj-comfyui-1/evals/comfyui-1/run-demo-c/trial-1",
+  )
+})
+
+test("the global nav moves between projects and evaluations", async () => {
+  routeFetch([
+    ["/projects", () => json({ projects: [] })],
+    ["/snapshot", () => json(SNAPSHOT)],
+  ])
+  goto("/p/proj-comfyui-1/evals")
+
+  const home = await screen.findByRole("link", { name: "Home" })
+  expect(home.getAttribute("href")).toBe("/")
+  expect(screen.getByRole("link", { name: "Projects" }).getAttribute("href")).toBe("/")
+  const evaluations = screen.getByRole("link", { name: "Evaluations" })
+  expect(evaluations.getAttribute("href")).toBe("/eval")
+
+  fireEvent.click(evaluations)
+  await waitFor(() =>
+    expect(screen.getByRole("heading", { name: "WebExploitBench" })).toBeDefined(),
+  )
+})
+
+test("the eval shell also exposes the global nav", async () => {
+  routeFetch([["/snapshot", () => json(SNAPSHOT)]])
+  goto("/eval")
+
+  await waitFor(() => expect(screen.getByRole("link", { name: "Home" })).toBeDefined())
+  expect(screen.getByRole("link", { name: "Projects" }).getAttribute("href")).toBe("/")
+  expect(screen.getByRole("link", { name: "Evaluations" }).getAttribute("href")).toBe("/eval")
 })
 
 // --- reciprocal link to the project workspace ----------------------------------

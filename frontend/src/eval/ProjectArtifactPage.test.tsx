@@ -205,6 +205,28 @@ test("renders a generic YAML tree for objects, arrays, scalars, and null", () =>
   }
 })
 
+test("renders the ExperimentLog detail with the generic YAML tree", () => {
+  render(
+    <ProjectArtifactRenderer
+      detail={detail({
+        entry: entry({
+          kind: "experiment_log",
+          relative_path:
+            "hunting/test-executor-pod/demo-authz-cwe1220-anon-id/experiment-log/order-0.yaml",
+        }),
+        preview: preview({
+          parsed: { order: 0, observation: "synthetic observation", clean: true },
+        }),
+      })}
+    />,
+  )
+
+  expect(screen.getByRole("heading", { name: "YAML" })).toBeDefined()
+  for (const value of ["order", "0", "observation", "synthetic observation", "clean", "true"]) {
+    expect(screen.getByText(value)).toBeDefined()
+  }
+})
+
 // --- markdown and code safety ---------------------------------------------------
 
 test("markdown skips active content and unsafe URLs", () => {

@@ -129,6 +129,81 @@ function evalTrial(overrides: Partial<EvalTrial> = {}): EvalTrial {
   }
 }
 
+// The inventory shape the read API serves for one stopped-at-cap schema-v2
+// Trial: hunting groups only, grouped exactly as `_build_groups` would.
+const REAL_SHAPE_INVENTORY: ProjectArtifactInventory = {
+  status: "available",
+  project_id: "p1",
+  groups: [
+    group({
+      key: "hunt-configs",
+      label: "Hunt configs",
+      children: [
+        group({
+          key: "hunt-configs/consumed",
+          label: "Consumed",
+          entries: [
+            entry({
+              artifact_id: "hc1",
+              relative_path:
+                "hunting/orchestration/hunt_configs/consumed/" +
+                "AuthorizationSystem:__singleton___CWE-1220_IDOR.yaml",
+            }),
+          ],
+        }),
+      ],
+    }),
+    group({
+      key: "test-specs",
+      label: "Test specs",
+      children: [
+        group({
+          key: "test-specs/demo-authz::CWE-1220::idor",
+          label: "demo-authz::CWE-1220::idor",
+          children: [
+            group({
+              key: "test-specs/demo-authz::CWE-1220::idor/consumed",
+              label: "Consumed",
+              entries: [
+                entry({
+                  artifact_id: "ts1",
+                  kind: "test_spec",
+                  relative_path:
+                    "hunting/hunter/test-specs/demo-authz::CWE-1220::idor/consumed/anon-id.yaml",
+                }),
+              ],
+            }),
+          ],
+        }),
+      ],
+    }),
+    group({
+      key: "pod-executions",
+      label: "Pod executions",
+      children: [
+        group({
+          key: "pod-executions/demo-authz-cwe1220-anon-id",
+          label: "demo-authz-cwe1220-anon-id",
+          entries: [
+            entry({
+              artifact_id: "pv1",
+              kind: "pod_variant",
+              relative_path:
+                "hunting/test-executor-pod/demo-authz-cwe1220-anon-id/variants/v0.yaml",
+            }),
+            entry({
+              artifact_id: "el1",
+              kind: "experiment_log",
+              relative_path:
+                "hunting/test-executor-pod/demo-authz-cwe1220-anon-id/experiment-log/order-0.yaml",
+            }),
+          ],
+        }),
+      ],
+    }),
+  ],
+}
+
 function evalSnapshot(trials: EvalTrial[]): EvalSnapshot {
   return {
     dataset: { id: "webexploitbench", name: "WebExploitBench" },
@@ -241,6 +316,48 @@ test("renders the grouped inventory with entry metadata and links", async () => 
   // Only the list request: no detail and no content fetch here.
   expect(calls.filter((url) => url.includes("/artifacts"))).toHaveLength(1)
   expect(calls.some((url) => url.includes("/content"))).toBe(false)
+})
+
+test("renders a hunting-only real-shape inventory without skill artifacts", async () => {
+  routeFetch([
+    [
+      "/snapshot",
+      () =>
+        json(
+          evalSnapshot([
+            evalTrial({
+              artifact_summary: { status: "available", hunting: 21, skills: 0 },
+            }),
+          ]),
+        ),
+    ],
+    ["/artifacts", () => json(REAL_SHAPE_INVENTORY)],
+  ])
+  goto("/p/p1/evals/t/r/trial-1/artifacts")
+
+  await waitFor(() =>
+    expect(screen.getByRole("heading", { name: "Hunting" })).toBeDefined(),
+  )
+  expect(screen.getByRole("heading", { name: "Hunt configs" })).toBeDefined()
+  expect(screen.getByRole("heading", { name: "Test specs" })).toBeDefined()
+  expect(screen.getByRole("heading", { name: "Pod executions" })).toBeDefined()
+  expect(
+    screen.getByRole("heading", { name: "demo-authz::CWE-1220::idor" }),
+  ).toBeDefined()
+  expect(screen.getAllByRole("heading", { name: "Consumed" }).length).toBeGreaterThan(0)
+
+  const variant = screen.getByRole("link", {
+    name: "hunting/test-executor-pod/demo-authz-cwe1220-anon-id/variants/v0.yaml",
+  })
+  expect(variant.closest("li")?.textContent).toContain("Pod variant")
+  const log = screen.getByRole("link", {
+    name: "hunting/test-executor-pod/demo-authz-cwe1220-anon-id/experiment-log/order-0.yaml",
+  })
+  expect(log.closest("li")?.textContent).toContain("Experiment log")
+
+  // No skill artifact is catalogued: the section is present but empty.
+  expect(screen.getByRole("heading", { name: "Skills", level: 2 })).toBeDefined()
+  expect(screen.getByText("No artifacts in this section.")).toBeDefined()
 })
 
 test("the workspace page keeps the trial identity visible", async () => {

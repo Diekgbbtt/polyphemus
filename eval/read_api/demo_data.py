@@ -50,9 +50,11 @@ DATASET_NAME = "WebExploitBench"
 # Clearly-synthetic identity: no real SHA, no real stack fingerprint.
 DEMO_SHA_A = "demo-sha-a"
 DEMO_SHA_B = "demo-sha-b"
+DEMO_SHA_C = "demo-sha-c"
 DEMO_ENV_X = "demo-env-x"
 DEMO_ENV_Y = "demo-env-y"
 DEMO_ENV_Z = "demo-env-z"
+DEMO_ENV_W = "demo-env-w"
 # A fixed timestamp keeps the output byte-identical across runs.
 DEMO_COPIED_AT = "2024-01-01T00:00:00+00:00"
 # The captured graph carries the same fixed clock (never a real timestamp).
@@ -64,10 +66,45 @@ DEMO_ASSET_BYTES = b"\x89PNG\r\n\x1a\nSYNTHETIC DEMO ASSET\n"
 # The (synthetic) issue-bank hit the demo diagnoses "match".
 DEMO_ISSUE = {"repo": "org/polyphemus-demo", "number": 7, "title": "[demo] issue"}
 
-# The three shapes the demo corpus demonstrates.
+# The four shapes the demo corpus demonstrates.
 FULL_PIPELINE = "full-pipeline"
 HUNTING_ONLY = "hunting-only"
+STOPPED_AT_CAP = "stopped-at-cap"
 FAILURE_INJECTION = "failure-injection"
+
+# The two hunting/skill inventory profiles a demo Trial can carry.
+STANDARD_INVENTORY = "standard"
+# Mirrors the recent real eval: 10 consumed hunt configs, 5 hunter test specs
+# (2 produced / 3 consumed), 3 pod variants, 3 experiment logs, no pod exports
+# and no skill artifacts.
+REAL_SHAPE_INVENTORY = "real-shape"
+
+# The stopped-at-cap trial's inventory names. They are synthetic but keep the
+# domain punctuation (`:` and `::`) the real fault families and spec ids use.
+REAL_HUNT_CONFIG_NAMES = (
+    "AuthorizationSystem:__singleton___CWE-1220_IDOR",
+    "AuthorizationSystem:__singleton___CWE-1220_Missing Function-Level Access Control",
+    "AuthorizationSystem:__singleton___CWE-266_Privilege Escalation",
+    "AuthorizationSystem:__singleton___CWE-268_RCE",
+    "AuthenticationMechanism:__singleton___CWE-266_Privilege Escalation",
+    "IdentificationSystem:__singleton___CWE-266_Account Takeover",
+    "IntegrationSystem:git_CWE-266_Supply Chain Attack",
+    "IntegrationSystem:model downloader_CWE-266_Arbitrary File Write",
+    "IntegrationSystem:remote catalog fetcher_CWE-266_Supply Chain Attack",
+    "IntegrationSystem:sharing providers_CWE-266_Credential Disclosure",
+)
+# (fault_key, side, spec names): 3 consumed specs across two families and 2
+# produced specs in the second family.
+REAL_SPEC_FAMILIES = (
+    ("demo-authz::CWE-1220::idor", "consumed", ("anon-id",)),
+    ("demo-integration::CWE-266::supply-chain", "consumed", ("git-clone", "remote-fetch")),
+    ("demo-integration::CWE-266::supply-chain", "produced", ("model-fetch", "catalog-fetch")),
+)
+REAL_POD_SPEC_IDS = (
+    "demo-authz-cwe1220-anon-id",
+    "demo-integration-cwe266-git-clone",
+    "demo-integration-cwe266-model-fetch",
+)
 
 # Prepended to every generated file so a human opening one sees the disclaimer.
 BANNER = (
@@ -104,6 +141,9 @@ class TrialSpec:
     # `verdicts is None` is the failure injection: no verdicts.yaml at all.
     verdicts: tuple[VerdictSpec, ...] | None
     diagnoses: tuple[dict, ...] = ()
+    # Which hunting/skill inventory the trial carries. The real-shape profile
+    # mirrors the recent real eval (see REAL_SHAPE_INVENTORY).
+    inventory: str = STANDARD_INVENTORY
 
     @property
     def project_id(self) -> str:
@@ -115,12 +155,13 @@ class TrialSpec:
 
 
 def demo_trials() -> tuple[TrialSpec, ...]:
-    """The fixed demo corpus: 3 Targets, 5 Trials, 5/2/4 identified/partial/missed.
+    """The fixed demo corpus: 3 Targets, 6 Trials, 5/2/7 identified/partial/missed.
 
     It deliberately demonstrates a shared version+environment pair across two
     Targets, the same `eval_sha` under different fingerprints, two TargetRuns on
     one Target, a full recon -> analysis -> hunting run beside a seeded
-    hunting-only one, and one intentionally interrupted trial.
+    hunting-only one, a run stopped at the hunting cap with the real eval's
+    artifact shape, and one intentionally interrupted trial.
     """
 
     def dx(
@@ -325,6 +366,55 @@ def demo_trials() -> tuple[TrialSpec, ...]:
             (("recon", "complete", "demo-recon"), ("analysis", "interrupted", "demo-analysis")),
             None,
         ),
+        # comfyui-1 / run-demo-real-shape / trial-stopped-cap-10: the domain
+        # shape of the recent real eval - a recon -> hunting run stopped at the
+        # hunting cap. It never reached assessment, so every verdict is missed
+        # with no evidence chain, and it carries a hunting-only artifact
+        # inventory (10 hunt configs, 5 test specs, 3 pod variants, 3 experiment
+        # logs, no pod exports and no skills).
+        TrialSpec(
+            "comfyui-1",
+            "run-demo-real-shape",
+            "trial-stopped-cap-10",
+            DEMO_SHA_C,
+            DEMO_ENV_W,
+            STOPPED_AT_CAP,
+            "recon",
+            "stopped",
+            (
+                ("recon", "complete", "demo-real-recon"),
+                ("hunting", "stopped", "demo-real-hunt"),
+            ),
+            (
+                VerdictSpec("DEMO-CVE-2024-5001", "missed", 0.0, None, None, None),
+                VerdictSpec("DEMO-CVE-2024-5002", "missed", 0.0, None, None, None),
+                VerdictSpec("DEMO-CVE-2024-5003", "missed", 0.0, None, None, None),
+            ),
+            (
+                dx(
+                    "DEMO-CVE-2024-5001",
+                    "surface_gap",
+                    "missing_component",
+                    "the cap stopped hunting before the authz family",
+                    "the hunting run hit its cap before staging the authz family",
+                ),
+                dx(
+                    "DEMO-CVE-2024-5002",
+                    "pod_diverged_trajectory",
+                    "implementation_defect",
+                    "the pod left the downloader family after one empty probe",
+                    "the trajectory stopped before the callback surface",
+                ),
+                dx(
+                    "DEMO-CVE-2024-5003",
+                    "surface_gap",
+                    "missing_component",
+                    "the cap stopped hunting before the roster family",
+                    "the hunting run hit its cap before staging the roster family",
+                ),
+            ),
+            inventory=REAL_SHAPE_INVENTORY,
+        ),
     )
 
 
@@ -342,6 +432,8 @@ def generate(output: str | Path) -> Path:
 
         rows: list[dict] = []
         chains: dict[str, dict] = {}
+        if spec.inventory == REAL_SHAPE_INVENTORY:
+            _materialize_real_shape_inventory(trial_dir, spec)
         if spec.verdicts is not None:
             for verdict in spec.verdicts:
                 chain = None
@@ -357,7 +449,12 @@ def generate(output: str | Path) -> Path:
 
         snapshot = None
         if spec.verdicts:
-            snapshot = _materialize_project_snapshot(files, trial_dir, spec, chains)
+            if spec.inventory == REAL_SHAPE_INVENTORY:
+                snapshot = _capture_project_snapshot(
+                    files, trial_dir, spec, _real_shape_unit_slugs()
+                )
+            else:
+                snapshot = _materialize_project_snapshot(files, trial_dir, spec, chains)
 
         manifest = artifact_store.build_run_manifest(
             _record(spec),
@@ -518,19 +615,59 @@ def _materialize_chain(
     }
 
 
+def _materialize_real_shape_inventory(
+    trial_dir: Path,
+    spec: TrialSpec,
+) -> None:
+    """Write the real-eval artifact inventory for one stopped-at-cap trial.
+
+    Mirrors the recent real run: 10 consumed hunt configs, 5 hunter test specs
+    (2 produced / 3 consumed), 3 pod variants and 3 experiment logs, with no pod
+    exports and no skill artifacts. Every path comes from the `orchestrator.files`
+    layout helpers; ids, digests, sizes and inventory counts are never written
+    here - `_capture_project_snapshot` derives them. The trial's verdicts are
+    all missed, so it fabricates no positive evidence chain: it writes the
+    inventory and nothing else.
+    """
+    project_id = spec.project_id
+    common = {"synthetic": True, "trial_id": spec.trial_id}
+
+    for name in REAL_HUNT_CONFIG_NAMES:
+        _write_yaml(
+            artifact_files.hunt_configs_dir(trial_dir, project_id, "consumed")
+            / f"{name}.yaml",
+            {**common, "kind": "hunt-config", "family": name},
+        )
+
+    for fault_key, side, names in REAL_SPEC_FAMILIES:
+        directory = artifact_files.hunter_test_specs_fault_dir(
+            trial_dir, project_id, fault_key, side
+        )
+        for name in names:
+            _write_yaml(directory / f"{name}.yaml", {**common, "kind": "test-spec"})
+
+    for spec_id in REAL_POD_SPEC_IDS:
+        _write_yaml(
+            artifact_files.pod_variants_dir(trial_dir, project_id, spec_id) / "v0.yaml",
+            {**common, "kind": "pod-variant", "spec_id": spec_id},
+        )
+        _write_yaml(
+            artifact_files.pod_experiment_logs_dir(trial_dir, project_id, spec_id)
+            / "order-0.yaml",
+            {**common, "kind": "experiment-log", "spec_id": spec_id, "order": 0},
+        )
+
+
 def _materialize_project_snapshot(
     files: artifact_files.FileStore,
     trial_dir: Path,
     spec: TrialSpec,
     chains: dict[str, dict],
 ) -> artifact_store.ProjectSnapshot:
-    """A complete, deterministic schema-v2 project snapshot for one demo trial.
+    """The standard demo body (one variant per chain plus a skill bundle), then capture.
 
-    Everything is produced through the production helpers: the graph through
-    `capture_project_graph` (canonical bytes + digest), the inventory through
-    `collect_project_artifacts` (real ids, digests, media types and
-    representations), and the manifest sections through
-    `store.build_run_manifest`. No id, digest, count or entry is hand-authored.
+    The capture itself is `_capture_project_snapshot`, so the graph and the
+    allowlisted inventory always come from the production helpers.
     """
     project_root = trial_dir / spec.project_id
     for vuln_id in sorted(chains):
@@ -562,7 +699,26 @@ def _materialize_project_snapshot(
     )
     _write_bytes(skill_dir / "assets" / "marker.bin", DEMO_ASSET_BYTES)
 
-    payload = _graph_payload(spec, chains)
+    return _capture_project_snapshot(
+        files, trial_dir, spec, [_slug(vuln_id) for vuln_id in chains]
+    )
+
+
+def _capture_project_snapshot(
+    files: artifact_files.FileStore,
+    trial_dir: Path,
+    spec: TrialSpec,
+    unit_slugs: Sequence[str],
+) -> artifact_store.ProjectSnapshot:
+    """A complete, deterministic schema-v2 project snapshot for one demo trial.
+
+    Everything is produced through the production helpers: the graph through
+    `capture_project_graph` (canonical bytes + digest), the inventory through
+    `collect_project_artifacts` (real ids, digests, media types and
+    representations), and the manifest sections through
+    `store.build_run_manifest`. No id, digest, count or entry is hand-authored.
+    """
+    payload = _graph_payload(spec, unit_slugs)
     destination = trial_dir / artifact_graph.PROJECT_GRAPH_FILENAME
     capture = artifact_graph.capture_project_graph(
         payload,
@@ -585,9 +741,26 @@ def _materialize_project_snapshot(
     )
 
 
-def _graph_payload(spec: TrialSpec, chains: dict[str, dict]) -> dict:
-    """A deterministic L0/L1 `GraphData` payload for one demo trial."""
-    slugs = sorted({_slug(vuln_id) for vuln_id in chains})
+def _real_shape_unit_slugs() -> list[str]:
+    """The graph's L1 units for the stopped-at-cap trial: its fault families.
+
+    The trial has no positive verdict chain to seed the graph, so its units
+    come from the fault families its hunting inventory produced - keeping the
+    graph non-empty without inventing a verdict.
+    """
+    return [_slug(fault_key) for fault_key, _, _ in REAL_SPEC_FAMILIES]
+
+
+def _graph_payload(spec: TrialSpec, unit_slugs: Sequence[str]) -> dict:
+    """A deterministic L0/L1 `GraphData` payload for one demo trial.
+
+    Uses the production vocabulary only - the L1 node types the frontend
+    projection recognises, the recon layer's L0 labels, and its relationship
+    names - so the L0-only, L1-only and combined views each render a meaningful
+    subgraph: the service `AGGREGATES` its endpoints (cross-layer), and one
+    endpoint `HAS_PARAMETER` a parameter (L0-L0).
+    """
+    slugs = sorted(set(unit_slugs))
     service_id = f"service:{spec.target_id}"
     nodes = [
         {
@@ -597,24 +770,44 @@ def _graph_payload(spec: TrialSpec, chains: dict[str, dict]) -> dict:
             "properties": {"synthetic": True},
         }
     ]
+    links: list[dict] = []
     for slug in slugs:
+        endpoint_id = f"endpoint:{slug}"
         nodes.append(
             {
-                "id": f"unit:{slug}",
+                "id": endpoint_id,
                 "name": slug,
-                "type": "L1Unit",
+                "type": "Endpoint",
                 "properties": {"synthetic": True},
             }
         )
-    links = [
-        {
-            "source": service_id,
-            "target": f"unit:{slug}",
-            "type": "contains",
-            "properties": {"synthetic": True},
-        }
-        for slug in slugs
-    ]
+        links.append(
+            {
+                "source": service_id,
+                "target": endpoint_id,
+                "type": "AGGREGATES",
+                "properties": {"synthetic": True},
+            }
+        )
+    if slugs:
+        # One L0-L0 edge so the L0-only projection is not edge-less.
+        parameter_id = f"parameter:{spec.target_id}"
+        nodes.append(
+            {
+                "id": parameter_id,
+                "name": f"{spec.target_id} demo parameter",
+                "type": "Parameter",
+                "properties": {"synthetic": True},
+            }
+        )
+        links.append(
+            {
+                "source": f"endpoint:{slugs[0]}",
+                "target": parameter_id,
+                "type": "HAS_PARAMETER",
+                "properties": {"synthetic": True},
+            }
+        )
     return {"project_id": spec.project_id, "nodes": nodes, "links": links}
 
 

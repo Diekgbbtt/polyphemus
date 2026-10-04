@@ -1,6 +1,27 @@
 import { Link } from "react-router-dom"
 import { projectPaths } from "../projectPaths"
 
+export type GlobalSection = "home" | "projects" | "evaluations"
+
+// The site-wide entry points. Both the project shells and the eval shell render
+// it, so a user can always move between the catalog and the evaluations - even
+// when the live agent is unavailable.
+export function GlobalNav({ active }: { active?: GlobalSection }) {
+  return (
+    <nav className="global-nav" aria-label="Global">
+      <Link to="/" aria-current={active === "home" ? "page" : undefined}>
+        Home
+      </Link>
+      <Link to="/" aria-current={active === "projects" ? "page" : undefined}>
+        Projects
+      </Link>
+      <Link to="/eval" aria-current={active === "evaluations" ? "page" : undefined}>
+        Evaluations
+      </Link>
+    </nav>
+  )
+}
+
 export type ProjectSection = "graph" | "runs" | "evals"
 
 // The shared project navigation: the one entry point for the live graph, the
@@ -13,16 +34,19 @@ export function ProjectNav({
   active?: ProjectSection
 }) {
   return (
-    <nav className="project-nav" aria-label="Project sections">
-      <Link to={projectPaths.live(projectId)} aria-current={active === "graph" ? "page" : undefined}>
-        Graph
-      </Link>
-      <Link to={projectPaths.runs(projectId)} aria-current={active === "runs" ? "page" : undefined}>
-        Runs
-      </Link>
-      <Link to={projectPaths.evals(projectId)} aria-current={active === "evals" ? "page" : undefined}>
-        Eval Trials
-      </Link>
-    </nav>
+    <div className="project-nav-shell">
+      <GlobalNav />
+      <nav className="project-nav" aria-label="Project sections">
+        <Link to={projectPaths.live(projectId)} aria-current={active === "graph" ? "page" : undefined}>
+          Graph
+        </Link>
+        <Link to={projectPaths.runs(projectId)} aria-current={active === "runs" ? "page" : undefined}>
+          Runs
+        </Link>
+        <Link to={projectPaths.evals(projectId)} aria-current={active === "evals" ? "page" : undefined}>
+          Eval Trials
+        </Link>
+      </nav>
+    </div>
   )
 }

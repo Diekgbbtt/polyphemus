@@ -7,6 +7,19 @@ import { projectGraph, layerKey, type LayerVisibility } from "./projection"
 // Bookkeeping keys that carry no attack-surface meaning for a viewer.
 const HIDDEN_KEYS = new Set(["project_id", "id", "element_id"])
 
+// The shared dark-theme edge treatment, used by BOTH the live project graph and
+// the historical Trial snapshot (they render through this one canvas).
+//
+// Root cause this fixes: a `GraphLink` carries only `{source, target, type}` -
+// no `color` - and react-force-graph passes `linkColor` through `accessor-fn`,
+// which treats EVERY string as a property name (`link["#8ab4f8"]` -> undefined)
+// before falling back to `rgba(0,0,0,0.15)`, a near-invisible black on the dark
+// canvas. `linkColor` must therefore be a CALLBACK returning the color, paired
+// with a width above the library default (1), to keep every edge legible.
+export const GRAPH_LINK_COLOR = "#8ab4f8"
+export const GRAPH_LINK_WIDTH = 2
+export const GRAPH_BACKGROUND_COLOR = "#0b0d10"
+
 function escapeHtml(s: string): string {
   return s
     .replace(/&/g, "&amp;")
@@ -75,15 +88,23 @@ export function GraphCanvas({
   }, [nodes, links, key])
 
   return (
-    <ForceGraph2D
-      // Remount on a layer change so the simulation restarts from the fresh
-      // copies rather than the previous projection's already-mutated ones.
-      key={key}
-      graphData={graphData as { nodes: object[]; links: object[] }}
-      nodeId="id"
-      nodeLabel={nodeTooltip}
-      nodeColor={(n: object) => nodeColor((n as GraphNode).type)}
-      linkLabel={(l: object) => (l as GraphLink).type}
-    />
+    <div className="graph-canvas">
+      <ForceGraph2D
+        // Remount on a layer change so the simulation restarts from the fresh
+        // copies rather than the previous projection's already-mutated ones.
+        key={key}
+        graphData={graphData as { nodes: object[]; links: object[] }}
+        nodeId="id"
+        nodeLabel={nodeTooltip}
+        nodeColor={(n: object) => nodeColor((n as GraphNode).type)}
+        linkLabel={(l: object) => (l as GraphLink).type}
+        // Explicit, high-contrast edges - never the library's black fallback.
+        // A callback, not the bare string: accessor-fn would treat the string
+        // as a property name and read `link["#8ab4f8"]` (undefined).
+        linkColor={() => GRAPH_LINK_COLOR}
+        linkWidth={GRAPH_LINK_WIDTH}
+        backgroundColor={GRAPH_BACKGROUND_COLOR}
+      />
+    </div>
   )
 }

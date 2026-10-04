@@ -95,3 +95,30 @@ test("projectGraph never mutates its input", () => {
   for (const layers of [L0_ONLY, L1_ONLY, NEITHER, BOTH]) projectGraph(DATA, layers)
   expect(JSON.stringify(DATA)).toBe(before)
 })
+
+// The demo generator's exact graph shape: L1Service -AGGREGATES-> Endpoint
+// (cross-layer) plus Endpoint -HAS_PARAMETER-> Parameter (L0-L0). Every
+// projection must stay non-empty, which is what makes the demo navigable when
+// the live agent is down.
+const DEMO_SHAPE: GraphData = {
+  project_id: "demo",
+  nodes: [
+    node("service:comfyui-1", "L1Service"),
+    node("endpoint:alpha", "Endpoint"),
+    node("endpoint:beta", "Endpoint"),
+    node("parameter:comfyui-1", "Parameter"),
+  ],
+  links: [
+    link("service:comfyui-1", "endpoint:alpha", "AGGREGATES"),
+    link("service:comfyui-1", "endpoint:beta", "AGGREGATES"),
+    link("endpoint:alpha", "parameter:comfyui-1", "HAS_PARAMETER"),
+  ],
+}
+
+test("the demo graph shape projects non-empty L0, L1, and combined", () => {
+  for (const layers of [BOTH, L0_ONLY, L1_ONLY]) {
+    const { nodes, links } = projectGraph(DEMO_SHAPE, layers)
+    expect(nodes.length).toBeGreaterThan(0)
+    expect(links.length).toBeGreaterThan(0)
+  }
+})

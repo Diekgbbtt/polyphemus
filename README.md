@@ -206,26 +206,31 @@ referenced hunt config, spec family, experiment log and pod export really exists
 trial at the same relative paths `orchestrator.files` addresses — so `verdicts.yaml` and
 `diagnoses.yaml` pass the production readers, pairing rule included.
 
-The five trials are: `comfyui-1` (a full recon → analysis → hunting run with 2 identified + 1
-partial, plus a seeded **hunting-only** run with 1 identified + 1 missed), `jetlinks-1` (another
-full pipeline run, 2 identified + 1 missed), and `white-jotter-1` (a resumed analysis → hunting
-run with 1 partial + 2 missed, plus the deliberately broken trial below). One
-version+environment pair is shared across two Targets (`demo-sha-a` + `demo-env-x`), the same
-`eval_sha` appears under a different fingerprint (`demo-sha-a` + `demo-env-z`), and one Target
-carries two TargetRuns. Expected `/snapshot` summary:
+The six trials are: `comfyui-1` (a full recon → analysis → hunting run with 2 identified + 1
+partial, a seeded **hunting-only** run with 1 identified + 1 missed, and `run-demo-real-shape` — a
+recon → hunting run stopped at the hunting cap with 3 missed verdicts — no evidence chain, since
+it never reached assessment — and the recent real eval's 21-artifact hunting-only inventory: 10
+consumed hunt configs, 5 test specs (2 produced / 3 consumed), 3 pod variants and 3 experiment
+logs, with no pod exports and no skills), `jetlinks-1` (another full pipeline run, 2 identified +
+1 missed), and
+`white-jotter-1` (a resumed analysis → hunting run with 1 partial + 2 missed, plus the
+deliberately broken trial below). One version+environment pair is shared across two Targets
+(`demo-sha-a` + `demo-env-x`), the same `eval_sha` appears under a different fingerprint
+(`demo-sha-a` + `demo-env-z`), and one Target carries two TargetRuns. Expected `/snapshot`
+summary:
 
-    {"targets": 3, "trials": 5, "identified": 5, "partial": 2, "missed": 4, "degraded": 1}
+    {"targets": 3, "trials": 6, "identified": 5, "partial": 2, "missed": 7, "degraded": 1}
 
 **`white-jotter-1/run-demo-b/trial-2` is intentional failure injection**, not the output of a
 successful materialization: it models an interrupted run (`terminal: interrupted`) whose
 `verdicts.yaml` was never written, so it carries a manifest and nothing else — no verdicts, no
-diagnoses, no chain files. It exists only to keep the degraded path exercised; the other four
+diagnoses, no chain files. It exists only to keep the degraded path exercised; the other five
 trials are valid, self-contained materializations.
 
 The dashboard also reports deduplicated `coverage` (one entry per
 `(target_id, vuln_id)`, precedence `identified > partial > missed`): targets
 `{tested: 3, with_identified: 2, without_identified: 1}` and vulnerabilities
-`{total: 9, found: 5, not_found: 4, partial: 1}` (partial is a subset of not_found).
+`{total: 12, found: 5, not_found: 7, partial: 1}` (partial is a subset of not_found).
 
 #### One-command demo stack (Docker Compose)
 
@@ -244,7 +249,7 @@ completes) and `eval-dashboard` (Vite on `0.0.0.0:5173`, started only after the 
 Then open **http://localhost:5173/eval**. The API is directly reachable at
 `http://localhost:8090/health` (`{"status":"ok",…}`) and `http://localhost:8090/snapshot` (the
 dataset, targets, trials, versions, coverage and identified vulnerabilities; expected summary
-`{"targets":3,"trials":5,"identified":5,"partial":2,"missed":4,"degraded":1}`).
+`{"targets":3,"trials":6,"identified":5,"partial":2,"missed":7,"degraded":1}`).
 
 Both ports bind to loopback only and can be moved when they are taken:
 

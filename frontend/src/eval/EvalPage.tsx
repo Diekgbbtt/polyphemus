@@ -1,4 +1,5 @@
 import { Link, Outlet } from "react-router-dom"
+import { GlobalNav } from "../pages/ProjectNav"
 import { evalPaths } from "./EvalBreadcrumbs"
 import { EvalDataProvider, useEvalData } from "./EvalDataProvider"
 import "./eval.css"
@@ -18,6 +19,7 @@ function EvalShell() {
   return (
     <main className="eval">
       <header className="eval-topbar">
+        <GlobalNav active="evaluations" />
         <p className="eval-eyebrow">Evaluation</p>
         <nav className="eval-topnav" aria-label="Eval sections">
           <Link to={evalPaths.dashboard}>Dashboard</Link>

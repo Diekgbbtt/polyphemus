@@ -34,6 +34,12 @@ from orchestrator.files import (
 # The agent workflow phases a reasoning ref maps to, in output order.
 PHASES = ("recon", "analysis", "hunting")
 
+# The pod-export contract: a terminal `<run_id>.yaml` sitting directly under
+# `<project_id>/hunting/test-executor-pod/<spec_id>/`. The two nested families
+# below live beside it and are never pod exports, even when the file exists.
+_POD_ROOT_PARTS = ("hunting", "test-executor-pod")
+_POD_NESTED_DIRS = ("variants", "experiment-log")
+
 _REASONING_FIELDS = ("phase", "decision_node", "rationale", "observation_ref")
 
 
@@ -178,16 +184,22 @@ def resolve_evidence(
 
 
 def validate_evidence(chain: EvidenceChain, data_root: str | Path, *, files: FileStore) -> None:
-    """Check every chain path is data-root-relative and present on disk."""
+    """Check every chain path is data-root-relative, canonical, and present on disk.
+
+    A `pod_export` is the pod's terminal record: a regular `.yaml` file sitting
+    directly under its `<spec_id>` directory. A variant (`variants/`) or an
+    experiment log (`experiment-log/`) is never a pod export, even when the file
+    exists.
+    """
     root = Path(data_root)
     for label, path in (
         ("hunt_config", chain.hunt_config),
         ("spec_dir", chain.spec_dir),
-        ("pod_export", chain.pod_export),
     ):
         resolved = _resolve_relative(root, path, label)
         if not files.exists(resolved):
             raise EvidenceError(f"{label}: {path!r} does not resolve under the data root")
+    _validate_pod_export(root, chain.pod_export, files=files)
     if not chain.experiment_logs:
         raise EvidenceError("experiment_logs: a positive verdict needs at least one log")
     for path in chain.experiment_logs:
@@ -196,6 +208,41 @@ def validate_evidence(chain: EvidenceChain, data_root: str | Path, *, files: Fil
             raise EvidenceError(
                 f"experiment_logs: {path!r} does not resolve under the data root"
             )
+
+
+def _pod_export_segments(relative: str) -> tuple[str, str, str] | None:
+    """The `(project_id, spec_id, run_id)` of a canonical pod-export path.
+
+    Canonical is exactly
+    `<project_id>/hunting/test-executor-pod/<spec_id>/<run_id>.yaml`: five
+    segments, a `.yaml` filename, and no nested directory. A variant, an
+    experiment log, or any deeper path returns None.
+    """
+    parts = relative.split("/")
+    if len(parts) != 5:
+        return None
+    project, hunting, pod_root, spec_id, filename = parts
+    if (hunting, pod_root) != _POD_ROOT_PARTS:
+        return None
+    if not project or project in (".", ".."):
+        return None
+    if not spec_id or spec_id in _POD_NESTED_DIRS or spec_id in (".", ".."):
+        return None
+    if not filename.endswith(".yaml") or filename == ".yaml":
+        return None
+    return project, spec_id, filename[:-5]
+
+
+def _validate_pod_export(root: Path, relative: str, *, files: FileStore) -> None:
+    """The pod_export must be a canonical, regular `<run_id>.yaml` record."""
+    resolved = _resolve_relative(root, relative, "pod_export")
+    if _pod_export_segments(relative) is None:
+        raise EvidenceError(
+            "pod_export: must be a terminal "
+            "<project_id>/hunting/test-executor-pod/<spec_id>/<run_id>.yaml record"
+        )
+    if files.is_symlink(resolved) or not files.is_file(resolved):
+        raise EvidenceError("pod_export: must be a regular .yaml file")
 
 
 # --- internals ----------------------------------------------------------------
@@ -220,8 +267,15 @@ def _resolve_pod_export(
 ) -> str:
     spec_dir = pod_spec_dir(root, project, spec_id)
     if name is not None:
-        candidate = spec_dir / (name if name.endswith(".yaml") else f"{name}.yaml")
-        if not files.exists(candidate):
+        stem = name[:-5] if name.endswith(".yaml") else name
+        # A pod export is a direct `<run_id>.yaml` child; a nested name such as
+        # `variants/v0` is never one, even though the file may exist.
+        if "/" in name or "\\" in name or stem in ("", ".", ".."):
+            raise EvidenceError(
+                f"pod_export: {name!r} must be a direct <run_id>.yaml record"
+            )
+        candidate = spec_dir / f"{stem}.yaml"
+        if not files.is_file(candidate):
             raise EvidenceError(f"pod_export: {name!r} does not resolve under the data root")
         return _relative(root, candidate)
 

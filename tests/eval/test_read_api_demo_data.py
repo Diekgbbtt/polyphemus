@@ -15,12 +15,15 @@ import json
 from pathlib import Path
 
 import yaml
+from fastapi.testclient import TestClient
 
 from orchestrator import diagnosis as orchestrator_diagnosis
 from orchestrator import files as orchestrator_files
 from orchestrator import store as orchestrator_store
 from orchestrator import verdicts as orchestrator_verdicts
+from read_api import app as app_module
 from read_api import demo_data
+from read_api import source as source_module
 from read_api.projection import build_snapshot
 
 MANIFEST = "run-manifest.yaml"
@@ -86,7 +89,10 @@ def test_generator_creates_the_declared_corpus(tmp_path: Path) -> None:
     root = demo_data.generate(tmp_path / "store")
 
     assert _tree(root) == {
-        "comfyui-1": {"run-demo-a": ["trial-1", "trial-2"]},
+        "comfyui-1": {
+            "run-demo-a": ["trial-1", "trial-2"],
+            "run-demo-real-shape": ["trial-stopped-cap-10"],
+        },
         "jetlinks-1": {"run-demo-a": ["trial-1"]},
         "white-jotter-1": {"run-demo-a": ["trial-1"], "run-demo-b": ["trial-2"]},
     }
@@ -97,10 +103,10 @@ def test_snapshot_summary_matches_the_demo_contract(tmp_path: Path) -> None:
 
     assert build_snapshot(root)["summary"] == {
         "targets": 3,
-        "trials": 5,
+        "trials": 6,
         "identified": 5,
         "partial": 2,
-        "missed": 4,
+        "missed": 7,
         "degraded": 1,
     }
 
@@ -112,9 +118,9 @@ def test_deduplicated_coverage_matches_the_demo_contract(tmp_path: Path) -> None
 
     assert coverage["targets"] == {"tested": 3, "with_identified": 2, "without_identified": 1}
     assert coverage["vulnerabilities"] == {
-        "total": 9,
+        "total": 12,
         "found": 5,
-        "not_found": 4,
+        "not_found": 7,
         "partial": 1,
     }
 
@@ -141,10 +147,10 @@ def test_targets_have_deterministic_counts(tmp_path: Path) -> None:
     targets = {t["target_id"]: t for t in build_snapshot(root)["targets"]}
     assert targets["comfyui-1"] == {
         "target_id": "comfyui-1",
-        "trial_count": 2,
+        "trial_count": 3,
         "identified_count": 3,
         "partial_count": 1,
-        "missed_count": 1,
+        "missed_count": 4,
     }
     assert targets["jetlinks-1"] == {
         "target_id": "jetlinks-1",
@@ -171,6 +177,7 @@ def test_versions_demonstrate_the_declared_scenarios(tmp_path: Path) -> None:
         ("demo-sha-a", "demo-env-x"),
         ("demo-sha-a", "demo-env-z"),
         ("demo-sha-b", "demo-env-y"),
+        ("demo-sha-c", "demo-env-w"),
     ]
     shared = versions[0]
     assert shared["targets"] == ["comfyui-1", "jetlinks-1"]
@@ -213,7 +220,7 @@ def test_partial_and_missed_verdicts_are_preserved_on_their_trials(tmp_path: Pat
     ]
     assert verdicts.count("identified") == 5
     assert verdicts.count("partial") == 2
-    assert verdicts.count("missed") == 4
+    assert verdicts.count("missed") == 7
 
 
 # --- fidelity to the real materializer -----------------------------------------
@@ -241,7 +248,7 @@ def test_manifests_use_the_real_builder_contract(tmp_path: Path) -> None:
     )
 
     manifests = sorted(root.rglob(MANIFEST))
-    assert len(manifests) == 5
+    assert len(manifests) == 6
     for path in manifests:
         document = yaml.safe_load(path.read_text(encoding="utf-8"))
         assert list(document) == list(reference)
@@ -267,8 +274,12 @@ def test_chain_sources_equal_the_unique_evidence_references(tmp_path: Path) -> N
         rows = _verdict_rows(trial_dir) if (trial_dir / VERDICTS).is_file() else []
 
         assert manifest["chain_sources"] == _chain_refs(rows)
-        if rows:
-            assert manifest["chain_sources"], "a trial with verdicts names its chain"
+        positive = [row for row in rows if row["identified"] in ("identified", "partial")]
+        if positive:
+            assert manifest["chain_sources"], "a positive verdict names its chain"
+        if rows and not positive:
+            # A missed-only trial (the stopped-at-cap run) honestly names none.
+            assert manifest["chain_sources"] == []
         assert manifest["diagnoses_present"] is (trial_dir / DIAGNOSES).is_file()
 
 
@@ -335,7 +346,7 @@ def test_diagnoses_pair_with_partial_and_missed(tmp_path: Path) -> None:
                 diagnosis["proposed_issue"] is None
             )
         diagnosed += len(got)
-    assert diagnosed == 6
+    assert diagnosed == 9
 
 
 def test_only_positive_and_ambiguous_verdicts_carry_a_chain(tmp_path: Path) -> None:
@@ -350,7 +361,7 @@ def test_only_positive_and_ambiguous_verdicts_carry_a_chain(tmp_path: Path) -> N
                 assert row["evidence_chain"] is None
             else:
                 assert row["evidence_chain"] is not None
-    assert missed == 4
+    assert missed == 7
 
 
 def test_the_corpus_covers_the_declared_scenarios(tmp_path: Path) -> None:
@@ -378,6 +389,17 @@ def test_the_corpus_covers_the_declared_scenarios(tmp_path: Path) -> None:
     assert not (broken_dir / DIAGNOSES).exists()
     # No chain was written for the interrupted run at all.
     assert not (broken_dir / broken.project_id).exists()
+
+    capped = [s for s in specs if s.scenario == demo_data.STOPPED_AT_CAP]
+    assert len(capped) == 1
+    run = capped[0]
+    assert run.start_phase == "recon"
+    assert run.terminal == "stopped"
+    assert [(phase, status) for phase, status, _ in run.phases] == [
+        ("recon", "complete"),
+        ("hunting", "stopped"),
+    ]
+    assert run.inventory == demo_data.REAL_SHAPE_INVENTORY
 
 
 def test_evidence_references_are_synthetic_and_relative(tmp_path: Path) -> None:
@@ -440,10 +462,13 @@ def test_demo_project_snapshot_counts_are_stable(tmp_path: Path) -> None:
     # hunting = 5 per chained verdict (config, spec, variant, log, export);
     # skills = 4 (SKILL.md, reference, script, asset); graph = 1 service + units.
     expected = {
-        ("comfyui-1", "run-demo-a", "trial-1"): (15, 4, 4, 3),
-        ("comfyui-1", "run-demo-a", "trial-2"): (5, 4, 2, 1),
-        ("jetlinks-1", "run-demo-a", "trial-1"): (10, 4, 3, 2),
-        ("white-jotter-1", "run-demo-a", "trial-1"): (5, 4, 2, 1),
+        ("comfyui-1", "run-demo-a", "trial-1"): (15, 4, 5, 4),
+        ("comfyui-1", "run-demo-a", "trial-2"): (5, 4, 3, 2),
+        ("jetlinks-1", "run-demo-a", "trial-1"): (10, 4, 4, 3),
+        ("white-jotter-1", "run-demo-a", "trial-1"): (5, 4, 3, 2),
+        # The real-shape run: 10 configs + 5 specs + 3 variants + 3 logs, no
+        # skills.
+        ("comfyui-1", "run-demo-real-shape", "trial-stopped-cap-10"): (21, 0, 4, 3),
     }
     for key, (hunting, skills, nodes, links) in expected.items():
         trial = by_key[key]
@@ -603,3 +628,257 @@ def test_no_absolute_paths_leak_into_the_snapshot(tmp_path: Path) -> None:
     for value in _walk(snap):
         if isinstance(value, str):
             assert not value.startswith("/"), value
+
+
+# --- the stopped-at-cap real-shape trial ---------------------------------------
+
+# One schema-v2 Trial mirrors the domain shape of the recent real eval: a
+# recon -> hunting run stopped at the hunting cap, a 10/5/3/3 hunting inventory
+# with no pod exports and no skills, and exactly one verdict of each outcome.
+REAL_SHAPE_KEY = ("comfyui-1", "run-demo-real-shape", "trial-stopped-cap-10")
+REAL_SHAPE_PROJECT = "demo-project-comfyui-1"
+
+
+def _real_shape_dir(root: Path) -> Path:
+    return root.joinpath(*REAL_SHAPE_KEY)
+
+
+def _entries_by_kind(trial_dir: Path) -> dict[str, list[dict]]:
+    by_kind: dict[str, list[dict]] = {}
+    for entry in _manifest(trial_dir)["project_artifacts"]["entries"]:
+        by_kind.setdefault(entry["kind"], []).append(entry)
+    return by_kind
+
+
+def test_real_shape_trial_mirrors_the_stopped_run(tmp_path: Path) -> None:
+    root = demo_data.generate(tmp_path / "store")
+    manifest = _manifest(_real_shape_dir(root))
+
+    assert (
+        manifest["target_id"],
+        manifest["target_run_id"],
+        manifest["trial_id"],
+    ) == REAL_SHAPE_KEY
+    assert manifest["project_id"] == REAL_SHAPE_PROJECT
+    assert manifest["start_phase"] == "recon"
+    assert manifest["terminal"] == "stopped"
+    assert [(phase["phase"], phase["status"]) for phase in manifest["phases"]] == [
+        ("recon", "complete"),
+        ("hunting", "stopped"),
+    ]
+    # Clearly synthetic identity: no real SHA and no real stack fingerprint.
+    assert manifest["eval_sha"].startswith("demo-")
+    assert manifest["stack_fingerprint"].startswith("demo-")
+
+
+def test_real_shape_inventory_matches_the_real_eval(tmp_path: Path) -> None:
+    root = demo_data.generate(tmp_path / "store")
+    by_kind = _entries_by_kind(_real_shape_dir(root))
+
+    assert sum(len(entries) for entries in by_kind.values()) == 21
+    assert len(by_kind["hunt_config"]) == 10
+    assert len(by_kind["test_spec"]) == 5
+    assert len(by_kind["pod_variant"]) == 3
+    assert len(by_kind["experiment_log"]) == 3
+    assert "pod_export" not in by_kind
+    assert not any(
+        entry["category"] == "skill"
+        for entries in by_kind.values()
+        for entry in entries
+    )
+    produced = [e for e in by_kind["test_spec"] if "/produced/" in e["relative_path"]]
+    consumed = [e for e in by_kind["test_spec"] if "/consumed/" in e["relative_path"]]
+    assert (len(produced), len(consumed)) == (2, 3)
+    for entries in by_kind.values():
+        for entry in entries:
+            # The manifest entry path is project-relative (the catalog strips
+            # the project id); the evidence chain carries the trial-relative one.
+            assert entry["relative_path"].startswith("hunting/")
+            assert not entry["relative_path"].startswith("/")
+            assert ".." not in entry["relative_path"].split("/")
+
+
+def test_real_shape_trial_is_a_complete_schema_v2_trial(tmp_path: Path) -> None:
+    root = demo_data.generate(tmp_path / "store")
+    trial = next(
+        trial
+        for trial in build_snapshot(root)["trials"]
+        if (trial["target_id"], trial["target_run_id"], trial["trial_id"]) == REAL_SHAPE_KEY
+    )
+
+    assert trial["availability"] == "complete"
+    assert trial["artifact_summary"] == {"status": "available", "hunting": 21, "skills": 0}
+    graph = trial["project_graph_summary"]
+    assert graph["status"] == "available"
+    assert graph["nodes"] > 0
+    assert graph["links"] > 0
+    assert sorted(v["identified"] for v in trial["verdicts"]) == [
+        "missed",
+        "missed",
+        "missed",
+    ]
+    # No positive evidence: every verdict is missed, so every chain is null.
+    assert trial["verdicts"]
+    assert all(v["evidence"] == [] for v in trial["verdicts"])
+    # Exactly one diagnosis per missed verdict.
+    assert sorted(d["vuln"] for d in trial["diagnoses"]) == [
+        "DEMO-CVE-2024-5001",
+        "DEMO-CVE-2024-5002",
+        "DEMO-CVE-2024-5003",
+    ]
+
+
+def test_real_shape_verdicts_are_three_missed_with_null_chains(tmp_path: Path) -> None:
+    root = demo_data.generate(tmp_path / "store")
+    trial_dir = _real_shape_dir(root)
+
+    rows = _verdict_rows(trial_dir)
+
+    assert [row["identified"] for row in rows] == ["missed", "missed", "missed"]
+    assert all(row["evidence_chain"] is None for row in rows)
+    # A missed-only trial has no chain_sources at all.
+    assert _manifest(trial_dir)["chain_sources"] == []
+
+
+def test_real_shape_graph_is_non_empty(tmp_path: Path) -> None:
+    root = demo_data.generate(tmp_path / "store")
+    trial_dir = _real_shape_dir(root)
+
+    graph = json.loads((trial_dir / "project-graph.json").read_text(encoding="utf-8"))
+    assert graph["project_id"] == REAL_SHAPE_PROJECT
+    assert graph["nodes"]
+    assert graph["links"]
+    for node in graph["nodes"]:
+        assert isinstance(node["id"], str) and node["id"]
+        assert isinstance(node["type"], str) and node["type"]
+        assert isinstance(node["properties"], dict)
+    for link in graph["links"]:
+        assert link["source"] and link["target"] and link["type"]
+
+
+# The production graph's L0/L1 vocabulary (kept in sync with the frontend
+# `colors.ts` palette + `projection.ts` L1 set and the backend relationship
+# names). The demo graph must speak exactly this language.
+L0_TYPES = frozenset(
+    {
+        "Domain", "Subdomain", "IP", "Port", "Service", "DNSRecord", "BaseURL",
+        "Endpoint", "Parameter", "Technology", "Certificate", "Header", "Secret",
+        "ExternalDomain", "Traceroute", "Observation",
+    }
+)
+L1_TYPES = frozenset(
+    {"L1Service", "L1System", "L1DataItem", "L1TestableUnit", "SystemKind", "DataRelationshipKind"}
+)
+EDGE_TYPES = frozenset(
+    {
+        "AGGREGATES", "SURFACES_AT", "EVIDENCED_BY", "HAS_OBSERVATION",
+        "HAS_PARAMETER", "HAS_HEADER", "BELONGS_TO", "DERIVED_FROM",
+        "PRODUCES", "CONSUMES",
+    }
+)
+CROSS_LAYER_EDGES = frozenset({"AGGREGATES", "SURFACES_AT", "EVIDENCED_BY"})
+
+
+def _project_graph(graph: dict, *, l0: bool, l1: bool) -> tuple[list[dict], list[dict]]:
+    """The frontend `projectGraph` projection, so the demo graph is checked as rendered."""
+    type_by_id = {node["id"]: node["type"] for node in graph["nodes"]}
+    is_l1 = lambda node_id: type_by_id.get(node_id) in L1_TYPES  # noqa: E731
+    if l0 and l1:
+        return graph["nodes"], graph["links"]
+    if not l0 and not l1:
+        return [], []
+    if l0:
+        nodes = [n for n in graph["nodes"] if n["type"] not in L1_TYPES]
+        kept = {n["id"] for n in nodes}
+        links = [
+            link
+            for link in graph["links"]
+            if str(link["source"]) in kept and str(link["target"]) in kept
+        ]
+        return nodes, links
+    anchored: set[str] = set()
+    for link in graph["links"]:
+        if link["type"] not in CROSS_LAYER_EDGES:
+            continue
+        source, target = str(link["source"]), str(link["target"])
+        if is_l1(source) and not is_l1(target):
+            anchored.add(target)
+        if is_l1(target) and not is_l1(source):
+            anchored.add(source)
+    kept = {node["id"] for node in graph["nodes"] if node["type"] in L1_TYPES or node["id"] in anchored}
+    nodes = [node for node in graph["nodes"] if node["id"] in kept]
+    links = [
+        link
+        for link in graph["links"]
+        if str(link["source"]) in kept
+        and str(link["target"]) in kept
+        and (is_l1(str(link["source"])) or is_l1(str(link["target"])))
+    ]
+    return nodes, links
+
+
+def test_generated_graphs_use_production_types_and_project_meaningfully(tmp_path: Path) -> None:
+    root = demo_data.generate(tmp_path / "store")
+    graphs = sorted(root.glob("*/*/*/project-graph.json"))
+    assert graphs, "every complete demo trial captures a graph"
+
+    for path in graphs:
+        graph = json.loads(path.read_text(encoding="utf-8"))
+        for node in graph["nodes"]:
+            assert node["type"] in (L0_TYPES | L1_TYPES), (path, node["type"])
+        for link in graph["links"]:
+            assert link["type"] in EDGE_TYPES, (path, link["type"])
+        # Every projection (L0-only, L1-only, both) is non-empty in nodes and edges.
+        for l0, l1 in ((True, False), (False, True), (True, True)):
+            nodes, links = _project_graph(graph, l0=l0, l1=l1)
+            assert nodes, (path.name, l0, l1, "nodes")
+            assert links, (path.name, l0, l1, "links")
+
+
+def test_real_shape_trial_is_served_by_the_read_api(tmp_path: Path) -> None:
+    root = demo_data.generate(tmp_path / "store")
+    client = TestClient(
+        app_module.create_app(lambda: source_module.ArtifactStoreSnapshotSource(root))
+    )
+    target, run, trial = REAL_SHAPE_KEY
+
+    snapshot = client.get("/snapshot")
+    assert snapshot.status_code == 200
+    row = next(
+        item
+        for item in snapshot.json()["trials"]
+        if (item["target_id"], item["target_run_id"], item["trial_id"]) == REAL_SHAPE_KEY
+    )
+    assert row["project_id"] == REAL_SHAPE_PROJECT
+    assert row["artifact_summary"] == {"status": "available", "hunting": 21, "skills": 0}
+
+    graph = client.get(f"/trials/{target}/{run}/{trial}/project-graph")
+    assert graph.status_code == 200
+    assert graph.json()["status"] == "available"
+    assert graph.json()["graph"]["nodes"]
+
+    inventory = client.get(f"/trials/{target}/{run}/{trial}/artifacts")
+    assert inventory.status_code == 200
+    body = inventory.json()
+    assert body["project_id"] == REAL_SHAPE_PROJECT
+    entries = [
+        entry
+        for group in _walk(body["groups"])
+        if isinstance(group, dict) and "entries" in group
+        for entry in group["entries"]
+    ]
+    assert len(entries) == 21
+
+    # Every one of the 21 artifacts has a readable detail and content endpoint.
+    for entry in entries:
+        artifact_id = entry["artifact_id"]
+        detail = client.get(
+            f"/trials/{target}/{run}/{trial}/artifacts/{artifact_id}"
+        )
+        assert detail.status_code == 200, artifact_id
+        assert detail.json()["entry"]["artifact_id"] == artifact_id
+        content = client.get(
+            f"/trials/{target}/{run}/{trial}/artifacts/{artifact_id}/content"
+        )
+        assert content.status_code == 200, artifact_id
+    assert str(root) not in snapshot.text

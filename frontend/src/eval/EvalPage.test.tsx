@@ -229,6 +229,8 @@ test("the non-eval routes are unchanged", async () => {
   stubFetch({ projects: [] })
   goto("/")
 
-  await waitFor(() => expect(screen.getByText("Projects")).toBeDefined())
+  await waitFor(() =>
+    expect(screen.getByRole("heading", { name: "Projects" })).toBeDefined(),
+  )
   expect(screen.queryByText("WebExploitBench")).toBeNull()
 })
