@@ -11,6 +11,7 @@ the inspectable trace a failure hands back to the orchestrator.
 from __future__ import annotations
 
 import pytest
+import yaml
 
 from orchestrator import chain as chain_mod
 from orchestrator.commands import CommandResult
@@ -126,7 +127,9 @@ def test_first_target_provisions_ups_and_verifies(tmp_path):
 
 
 def test_second_target_reclaims_a_reclaimable_previous_then_provisions(tmp_path):
-    chain, strategies = _build(tmp_path, ["a", "b"], reclaimable="a")
+    # A third target keeps "b" mid-chain, so its active_target is preserved;
+    # the terminal clearing is pinned by its own tests below.
+    chain, strategies = _build(tmp_path, ["a", "b", "c"], reclaimable="a")
     chain.next_target("a")
     strategies["a"].calls.clear()
 
@@ -237,3 +240,68 @@ def test_state_persists_across_chain_instances(tmp_path):
     chain2, _ = _build(tmp_path, ["a", "b"])
     assert chain2.state.active_target == "a"
     assert chain2.state.completed == ("a",)
+
+
+# --- terminal chain state (F10) ----------------------------------------------
+
+
+def test_completed_chain_clears_the_active_target(tmp_path):
+    """F10: once every target is complete, no target is active.
+
+    A completed chain leaves no target to advance to, so `active_target` must
+    be cleared rather than left pointing at the last target of the run.
+    """
+    chain, _ = _build(tmp_path, ["a", "b"])
+    chain.next_target("a")
+
+    chain.next_target("b")
+
+    assert chain.state.active_target is None
+    assert chain.state.completed == ("a", "b")
+    on_disk = yaml.safe_load((tmp_path / "chain-state.yaml").read_text(encoding="utf-8"))
+    assert on_disk == {
+        "instance_id": "eval-server-1",
+        "active_target": None,
+        "completed": ["a", "b"],
+    }
+
+
+def test_completed_chain_clears_the_active_target_after_its_last_target(tmp_path):
+    """The terminal transition happens on the last target in the declared order."""
+    chain, _ = _build(tmp_path, ["a"])
+
+    chain.next_target("a")
+
+    assert chain.state.active_target is None
+    assert chain.state.completed == ("a",)
+
+
+def test_rerun_after_a_completed_chain_does_not_teardown_a_stale_target(tmp_path):
+    """F10: the stale active target must not make a re-run tear it down again.
+
+    Before the fix, a completed chain left `active_target` set, so the next
+    run's first `next_target` tore down a target that was already done.
+    """
+    chain, strategies = _build(tmp_path, ["a", "b"])
+    chain.next_target("a")
+    chain.next_target("b")
+    strategies["a"].calls.clear()
+    strategies["b"].calls.clear()
+
+    step = chain.next_target("a")
+
+    assert step.previous is None
+    assert "down" not in strategies["a"].calls
+    assert strategies["a"].calls == ["provision", "up", "await_ready"]
+
+
+def test_partial_chain_keeps_the_active_target_for_resume(tmp_path):
+    """A chain that did not finish keeps its position, so a resume tears it down."""
+    chain, _ = _build(tmp_path, ["a", "b", "c"])
+    chain.next_target("a")
+    chain.next_target("b")
+
+    resumed, _ = _build(tmp_path, ["a", "b", "c"])
+
+    assert resumed.state.active_target == "b"
+    assert resumed.state.completed == ("a", "b")

@@ -35,7 +35,14 @@ from orchestrator.targets.base import TargetError, TargetStrategy, TargetUpResul
 
 @dataclass(frozen=True)
 class ChainState:
-    """The chain's durable position: which target is up, which are done."""
+    """The chain's durable position: which target is up, which are done.
+
+    `active_target` is the target the chain has most recently advanced to, kept
+    so a resume knows which target to tear down first. Once every declared
+    target is `completed` the chain is terminal: nothing is left to advance to,
+    so `active_target` is cleared to `None` (F10). A partial chain keeps its
+    position so a resume tears the active target down and continues.
+    """
 
     instance_id: str
     active_target: str | None = None
@@ -159,6 +166,11 @@ class Chain:
     def _strategy(self, run: TargetRun) -> TargetStrategy:
         return self._strategy_for(run)
 
+    def _terminal(self, completed: tuple[str, ...]) -> bool:
+        """True once every declared target is complete: the chain has ended."""
+        declared = {run.target_id for run in self.instance.targets}
+        return declared <= set(completed)
+
     # --- steps ----------------------------------------------------------------
 
     def next_target(self, target_id: str) -> TargetStep:
@@ -180,8 +192,12 @@ class Chain:
             health = self._health(strategy)
             self._bind_artifacts(run)
             completed = tuple(dict.fromkeys((*self.state.completed, target_id)))
+            # A chain with every declared target done is terminal: it has no
+            # further target to advance to, so clear the active target rather
+            # than leave a stale one that a re-run would tear down (F10).
+            active_target = None if self._terminal(completed) else target_id
             self.state = replace(
-                self.state, active_target=target_id, completed=completed
+                self.state, active_target=active_target, completed=completed
             )
             self._save()
             return TargetStep(
