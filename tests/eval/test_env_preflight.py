@@ -234,15 +234,6 @@ def test_real_overlay_required_set_matches_the_no_default_contract(
     assert required == sorted(hard_reads | role_keys | {preflight.CAPABILITY_OVERRIDES_KEY})
 
 
-def _capability_env(preflight, value: str) -> dict[str, str]:
-    import json
-
-    return {
-        "AAA": "one",
-        preflight.CAPABILITY_OVERRIDES_KEY: value,
-    }
-
-
 def _capability_overlay(tmp_path: Path, preflight) -> Path:
     key = preflight.CAPABILITY_OVERRIDES_KEY
     return write(
@@ -252,8 +243,6 @@ def _capability_overlay(tmp_path: Path, preflight) -> Path:
 
 
 def test_capability_override_correct_passes(tmp_path: Path, preflight) -> None:
-    import json
-
     value = json.dumps(preflight.REQUIRED_CAPABILITY_OVERRIDES)
     example = write(tmp_path / ".env.example", f"AAA=one\n{preflight.CAPABILITY_OVERRIDES_KEY}={value}\n")
     env = write(tmp_path / ".env", "AAA=one\n")
@@ -286,8 +275,6 @@ def test_capability_override_absent_is_reported_and_fails(
 def test_capability_override_wrong_flags_is_reported_and_fails(
     tmp_path: Path, preflight
 ) -> None:
-    import json
-
     wrong = json.dumps(
         {"opencode-go/deepseek-v4.1-flash": {"supports_structured_output": True,
                                              "supports_forced_tool_choice": True}}
@@ -325,8 +312,6 @@ def test_capability_override_malformed_json_is_reported(
 def test_capability_override_extra_providers_are_allowed(
     tmp_path: Path, preflight
 ) -> None:
-    import json
-
     value = json.dumps(
         {
             **preflight.REQUIRED_CAPABILITY_OVERRIDES,

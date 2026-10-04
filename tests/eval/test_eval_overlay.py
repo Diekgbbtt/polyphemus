@@ -154,9 +154,10 @@ def test_eval_overlay_reaches_the_agent_with_the_quoted_capability_override(
     """The canonical single-quoted spelling resolves on the compose path too.
 
     `.env.example` quotes the override for shell safety; compose's env_file
-    reader strips the surrounding quotes, so the agent receives the bare JSON.
-    This pins both the composition root (the overlay declares the variable on
-    the `agent` service) and the resolved value.
+    reader strips the surrounding quotes, so a service receives the bare JSON.
+    The overlay's own requirement on the `agent` service is proven separately by
+    `test_eval_overlay_fails_loud_on_missing_capability_override`; this test
+    pins only the quote-stripping of the resolved value.
     """
     project = stage(tmp_path, COMPLETE_ENV)
 
