@@ -85,6 +85,12 @@ Each sub-component pair is clamped (cache_read to input, reasoning to output) so
 **Rejected alternative (do not implement):** a single `produced_tokens` decomposed into cached / not-cached.
 It is internally inconsistent because cache is an input-side property while "produced" means output, conflating context read with generated output.
 
+**Provider-normalization caveats (recorded, not hidden).**
+The axis reads use the SDK's canonical detail keys (`input_token_details.cache_read`, `input_token_details.cache_creation`, `output_token_details.reasoning`).
+On the pinned `langchain_openai` (the gateway path) `cache_creation` is never populated - OpenAI has no such field - so it is always 0 there; the read is kept for integrations that do report it.
+`langchain_openai` prefixes those detail keys with the service tier (`priority_cache_read` / `priority_reasoning`) only when a priority/flex tier is negotiated; no request in this tree sets one, so the standard-tier key applies.
+If a tier-prefixed payload ever arrives, the axes still total correctly (an unread `cache_read` folds into `uncached`); only the cached/uncached split is coarsened. A tier-aware read is a follow-up if a live run shows it.
+
 ### Eval side
 
 - **Declaration**: `TargetRun.token_budget: int | None = None`; YAML key `token_budget` added to the target-run allow-list and validated as `int | None` (bool rejected).
