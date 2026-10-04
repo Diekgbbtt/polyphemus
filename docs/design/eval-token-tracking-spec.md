@@ -95,7 +95,8 @@ It is internally inconsistent because cache is an input-side property while "pro
 
 **Provider-normalization caveats (recorded, not hidden).**
 The axis reads use the SDK's canonical detail keys (`input_token_details.cache_read`, `input_token_details.cache_creation`, `output_token_details.reasoning`).
-On the pinned `langchain_openai` (the gateway path) `cache_creation` is never populated - OpenAI has no such field - so it is always 0 there; the read is kept for integrations that do report it, but it is additive NOWHERE (inclusive input already carries it).
+On the pinned `langchain_openai` (the gateway path) `cache_creation` is never populated - OpenAI has no such field - so it is always 0 there.
+The corrected axis read does NOT read `input_token_details.cache_creation` at all: on the inclusive path it is already inside `input_tokens`, and adding it would double-count it; an exclusive provider that reports it is outside the supported set (below).
 `langchain_openai` prefixes those detail keys with the service tier (`priority_cache_read` / `priority_reasoning`) only when a priority/flex tier is negotiated; no request in this tree sets one, so the standard-tier key applies.
 If a tier-prefixed payload ever arrives, the axes still total correctly (an unread `cache_read` folds into `uncached`); only the cached/uncached split is coarsened. A tier-aware read is a follow-up if a live run shows it.
 A provider whose `input_tokens` EXCLUDES cache_read is NOT fully supported: the code detects only the unambiguous signature `cache_read > input_tokens`, where it keeps both (conservative, never drops cache_read); the ambiguous case undercounts the cached portion and is documented, not overclaimed.
