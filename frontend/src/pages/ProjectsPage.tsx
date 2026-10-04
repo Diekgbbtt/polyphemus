@@ -58,6 +58,20 @@ export function buildCatalog(
   )
 }
 
+// The one visible source label for a catalog entry: which sources actually
+// back this project. The text carries the meaning, so the badge's colour is
+// never the only indicator.
+export function projectSource(entry: Pick<CatalogEntry, "hasLive" | "hasEvals">): {
+  label: string
+  modifier: string
+} {
+  if (entry.hasLive && entry.hasEvals) {
+    return { label: "Live + Eval", modifier: "live-eval" }
+  }
+  if (entry.hasEvals) return { label: "Eval only", modifier: "eval-only" }
+  return { label: "Live only", modifier: "live-only" }
+}
+
 // The unified project catalog. It loads the live runtime and the eval snapshot
 // independently: either can fail without blanking the page, and an eval-only
 // project links to its eval workspace rather than an unavailable live graph.
@@ -126,11 +140,17 @@ export function ProjectsPage() {
             ? projectPaths.evals(entry.project_id)
             : projectPaths.live(entry.project_id)
           const latest = entry.latestTrial
+          const source = projectSource(entry)
           return (
             <li key={entry.project_id} className="project-entry">
               <div className="project-entry-identity">
                 <h2 className="project-entry-name">
                   <Link to={workspace}>{entry.name}</Link>
+                  <span
+                    className={`project-entry-badge project-entry-badge--${source.modifier}`}
+                  >
+                    {source.label}
+                  </span>
                 </h2>
                 <span className="project-entry-id eval-ref">{entry.project_id}</span>
               </div>

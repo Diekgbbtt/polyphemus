@@ -1,8 +1,8 @@
-import { render, screen, waitFor } from "@testing-library/react"
+import { render, screen, waitFor, within } from "@testing-library/react"
 import { MemoryRouter } from "react-router-dom"
 import { afterEach, expect, test } from "vitest"
 import { ProjectsPage } from "./pages/ProjectsPage"
-import type { EvalSnapshot } from "./eval/types"
+import type { EvalSnapshot, EvalTrial } from "./eval/types"
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status })
@@ -56,6 +56,17 @@ function stubCatalog(live: Response, snapshot: Response) {
   }) as typeof fetch
 }
 
+// A second synthetic Trial, so one snapshot covers the "Live + Eval" project
+// (`proj-both`) beside the eval-only one (`proj-eval`).
+function evalTrial(project_id: string, trial_id: string): EvalTrial {
+  return { ...SNAPSHOT.trials[0], project_id, trial_id }
+}
+
+const SNAPSHOT_BOTH: EvalSnapshot = {
+  ...SNAPSHOT,
+  trials: [evalTrial("proj-both", "trial-b"), evalTrial("proj-eval", "trial-1")],
+}
+
 afterEach(() => {
   window.history.pushState({}, "", "/")
 })
@@ -105,4 +116,58 @@ test("live and eval projects merge into one card", async () => {
   }
   expect(screen.getAllByText("Shared Project")).toHaveLength(1)
   expect(screen.getByText("Live Only")).toBeDefined()
+})
+
+test("every project entry names its source and keeps source-appropriate actions", async () => {
+  stubCatalog(
+    json({
+      projects: [
+        { project_id: "proj-both", name: "Shared Project", created_at: "2024-01-01T00:00:00+00:00" },
+        { project_id: "live-only", name: "Live Only", created_at: "2024-01-01T00:00:00+00:00" },
+      ],
+    }),
+    json(SNAPSHOT_BOTH),
+  )
+  render(
+    <MemoryRouter>
+      <ProjectsPage />
+    </MemoryRouter>,
+  )
+  await waitFor(() => expect(screen.getByText("Shared Project")).toBeDefined())
+
+  // One row per project_id: live + eval, eval only, live only.
+  const rows = screen.getAllByRole("listitem")
+  expect(rows).toHaveLength(3)
+  const rowFor = (projectId: string) =>
+    rows.find((row) => within(row).queryAllByText(projectId).length > 0)!
+
+  // Exactly one badge per row, with a textual label and a state modifier class.
+  const badgeFor = (projectId: string) => {
+    const badges = rowFor(projectId).querySelectorAll(".project-entry-badge")
+    expect(badges).toHaveLength(1)
+    return badges[0] as HTMLElement
+  }
+  const linkFor = (projectId: string, name: string) => {
+    const link = within(rowFor(projectId)).queryByRole("link", { name })
+    return link === null ? null : link.getAttribute("href")
+  }
+
+  expect(badgeFor("proj-both").textContent).toBe("Live + Eval")
+  expect(badgeFor("proj-both").className).toContain("project-entry-badge--live-eval")
+  expect(linkFor("proj-both", "Evaluations")).toBe("/p/proj-both/evals")
+  expect(linkFor("proj-both", "Latest trial")).toBe("/p/proj-both/evals/comfyui-1/run-a/trial-b")
+  expect(linkFor("proj-both", "Live graph")).toBe("/p/proj-both")
+
+  expect(badgeFor("proj-eval").textContent).toBe("Eval only")
+  expect(badgeFor("proj-eval").className).toContain("project-entry-badge--eval-only")
+  expect(linkFor("proj-eval", "Evaluations")).toBe("/p/proj-eval/evals")
+  expect(linkFor("proj-eval", "Latest trial")).toBe("/p/proj-eval/evals/comfyui-1/run-a/trial-1")
+  // An eval-only project has no live graph to open.
+  expect(linkFor("proj-eval", "Live graph")).toBeNull()
+
+  expect(badgeFor("live-only").textContent).toBe("Live only")
+  expect(badgeFor("live-only").className).toContain("project-entry-badge--live-only")
+  expect(linkFor("live-only", "Live graph")).toBe("/p/live-only")
+  expect(linkFor("live-only", "Evaluations")).toBeNull()
+  expect(linkFor("live-only", "Latest trial")).toBeNull()
 })

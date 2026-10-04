@@ -177,6 +177,42 @@ button:focus-visible,
   overflow-wrap: anywhere;
 }
 
+/* The source badge names which sources actually back the project - live,
+   materialized eval, or both. The text is the indicator and the colour only
+   reinforces it, so the state is never communicated by colour alone. */
+.project-entry-badge {
+  display: inline-block;
+  margin-left: 0.5rem;
+  padding: 0.1rem 0.45rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.project-entry-badge--live-eval {
+  color: #8ab4f8;
+  border-color: rgba(138, 180, 248, 0.45);
+  background: rgba(138, 180, 248, 0.12);
+}
+
+.project-entry-badge--eval-only {
+  color: #c58af9;
+  border-color: rgba(197, 138, 249, 0.45);
+  background: rgba(197, 138, 249, 0.12);
+}
+
+.project-entry-badge--live-only {
+  color: #81c995;
+  border-color: rgba(129, 201, 149, 0.45);
+  background: rgba(129, 201, 149, 0.12);
+}
+
 .project-entry-actions {
   display: flex;
   flex-wrap: wrap;
