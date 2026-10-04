@@ -109,11 +109,9 @@ export function ProjectTrialPage() {
       )}
 
       <TrialProjectGraph
-        projectId={projectId}
         targetId={trial.target_id}
         targetRunId={trial.target_run_id}
         trialId={trial.trial_id}
-        summary={graph}
       />
       {artifacts.status === "available" && (
         <>

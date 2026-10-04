@@ -1,14 +1,17 @@
 import { useEffect, useState } from "react"
-import { Link } from "react-router-dom"
 import type { GraphData } from "../api/types"
-import { getGraph, HttpError } from "../api/client"
 import { GraphView } from "../graph/GraphView"
-import { projectPaths } from "../projectPaths"
-import { getTrialProjectGraph } from "./client"
-import type { ProjectGraphSummary } from "./types"
+import { getResolvedTrialGraph } from "./client"
+import type { ResolvedProjectGraph } from "./types"
 
-// The current graph is not the Trial's history, and says so.
-const CURRENT_LABEL = "Current L0/L1 — not captured with Trial"
+// The two sources the resolved endpoint reports. The browser never chooses
+// between them; it only labels what the server resolved. These are the only
+// labels a Trial ever shows, never a schema-version term.
+const SOURCE_LABEL: Record<ResolvedProjectGraph["source"], string> = {
+  trial_snapshot: "Captured with Trial",
+  project_storage: "Saved for project",
+}
+
 const NO_GRAPH = "No graph available"
 
 function isAbortError(error: unknown): boolean {
@@ -19,38 +22,44 @@ function isAbortError(error: unknown): boolean {
   )
 }
 
-function isEmptyGraph(graph: GraphData | null | undefined): boolean {
-  return !graph || !Array.isArray(graph.nodes) || graph.nodes.length === 0
-}
-
 type GraphState =
   | { kind: "loading" }
   | { kind: "error"; message: string }
-  | { kind: "missing" }
-  | { kind: "ready"; graph: GraphData; capturedAt: string | null }
+  | { kind: "unavailable" }
+  | { kind: "ready"; graph: GraphData; label: string; capturedAt: string | null }
+
+// Turn the resolved wire contract into a render state. Only a graph that
+// actually carries nodes is drawn; an empty body and an unavailable contract
+// both become the simple missing state, so an empty canvas is never shown.
+function readyState(resolved: ResolvedProjectGraph): GraphState {
+  if (resolved.status === "available" && resolved.graph.nodes.length > 0) {
+    return {
+      kind: "ready",
+      graph: resolved.graph,
+      label: SOURCE_LABEL[resolved.source],
+      capturedAt: resolved.captured_at,
+    }
+  }
+  return { kind: "unavailable" }
+}
 
 // The graph section of one Trial.
 //
-// Schema-v2 Trials carry an immutable historical graph: it is the only source
-// used, and a failure to load it stays an error - it never silently becomes
-// live data. A Trial without a captured graph (the schema-v1 data the eval
-// currently produces) instead shows the project's *current* L0/L1 graph, from
-// the existing live endpoint, labelled as current data. An empty or missing
-// live graph renders the simple unavailable state rather than an empty canvas.
+// It consumes only the resolved Trial endpoint: the server decides between the
+// immutable capture written beside the Trial and the matching instance's
+// current project graph, and reports which one it used. The component never
+// calls the live agent graph client, so a Trial from another instance can never
+// reach this server's project data. A failure here stays an error inside this
+// section and never silently becomes a different source.
 export function TrialProjectGraph({
-  projectId,
   targetId,
   targetRunId,
   trialId,
-  summary,
 }: {
-  projectId: string
   targetId: string
   targetRunId: string
   trialId: string
-  summary: ProjectGraphSummary
 }) {
-  const historical = summary.status === "available"
   const [state, setState] = useState<GraphState>({ kind: "loading" })
 
   useEffect(() => {
@@ -59,29 +68,13 @@ export function TrialProjectGraph({
     // A tuple change always starts from a clean slate.
     setState({ kind: "loading" })
 
-    const request: Promise<{ graph: GraphData; capturedAt: string | null }> = historical
-      ? getTrialProjectGraph(targetId, targetRunId, trialId, controller.signal).then(
-          (response) => ({ graph: response.graph, capturedAt: response.captured_at }),
-        )
-      : getGraph(projectId, controller.signal).then((graph) => ({ graph, capturedAt: null }))
-
-    request
-      .then(({ graph, capturedAt }) => {
+    getResolvedTrialGraph(targetId, targetRunId, trialId, controller.signal)
+      .then((resolved) => {
         if (!active) return
-        if (!historical && isEmptyGraph(graph)) {
-          setState({ kind: "missing" })
-          return
-        }
-        setState({ kind: "ready", graph, capturedAt })
+        setState(readyState(resolved))
       })
       .catch((cause: unknown) => {
         if (!active || isAbortError(cause)) return
-        // Only a live 404 means "this project has no current graph". A
-        // historical failure is always an error and never a fallback.
-        if (!historical && cause instanceof HttpError && cause.status === 404) {
-          setState({ kind: "missing" })
-          return
-        }
         setState({
           kind: "error",
           message: cause instanceof Error ? cause.message : String(cause),
@@ -92,36 +85,22 @@ export function TrialProjectGraph({
       active = false
       controller.abort()
     }
-  }, [historical, projectId, targetId, targetRunId, trialId])
+  }, [targetId, targetRunId, trialId])
 
   return (
     <section aria-label="Graph" className="project-trial-section">
       <h2>Graph</h2>
-      <p className="graph-live-link">
-        <Link to={projectPaths.live(projectId)}>Open live graph</Link>
-      </p>
-      {historical ? (
+      {state.kind === "loading" && <p>Loading graph...</p>}
+      {state.kind === "error" && <p role="alert">Graph error: {state.message}</p>}
+      {state.kind === "unavailable" && <p className="eval-status">{NO_GRAPH}</p>}
+      {state.kind === "ready" && (
         <GraphView
-          data={state.kind === "ready" ? state.graph : null}
-          loading={state.kind === "loading"}
-          error={state.kind === "error" ? state.message : null}
-          label="Trial snapshot"
-          capturedAt={state.kind === "ready" ? state.capturedAt : null}
+          data={state.graph}
+          loading={false}
+          error={null}
+          label={state.label}
+          capturedAt={state.capturedAt}
         />
-      ) : (
-        <>
-          {state.kind === "loading" && <p>Loading graph...</p>}
-          {state.kind === "error" && <p role="alert">Graph error: {state.message}</p>}
-          {state.kind === "missing" && <p className="eval-status">{NO_GRAPH}</p>}
-          {state.kind === "ready" && (
-            <GraphView
-              data={state.graph}
-              loading={false}
-              error={null}
-              label={CURRENT_LABEL}
-            />
-          )}
-        </>
       )}
     </section>
   )

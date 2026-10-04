@@ -1,9 +1,7 @@
 import { render, screen, waitFor } from "@testing-library/react"
 import { MemoryRouter } from "react-router-dom"
 import { expect, test, vi } from "vitest"
-import { App } from "../App"
 import { TrialProjectGraph } from "./TrialProjectGraph"
-import type { EvalSnapshot, EvalTrial, ProjectGraphSummary } from "./types"
 
 // The canvas is a bitmap; a text stub lets these tests assert which nodes the
 // shared graph view actually received.
@@ -13,30 +11,46 @@ vi.mock("../graph/GraphCanvas", () => ({
   ),
 }))
 
-const AVAILABLE: ProjectGraphSummary = {
-  status: "available",
-  nodes: 1,
-  links: 0,
-  captured_at: "2024-05-05T00:00:00+00:00",
-}
-
-const UNAVAILABLE: ProjectGraphSummary = {
-  status: "project_snapshot_unavailable",
-  nodes: 0,
-  links: 0,
-  captured_at: null,
-}
-
-function graphResponse(ids: string[], capturedAt = AVAILABLE.captured_at) {
+function capturedGraph(ids: string[], capturedAt = "2024-05-05T00:00:00+00:00") {
   return {
     status: "available",
+    source: "trial_snapshot",
+    project_id: "p1",
     captured_at: capturedAt,
+    fallback_reason: null,
     sha256: "graph-digest",
     graph: {
       project_id: "p1",
       nodes: ids.map((id) => ({ id, name: id, type: "L1Unit", properties: {} })),
       links: [],
     },
+  }
+}
+
+function currentGraph(ids: string[]) {
+  return {
+    status: "available",
+    source: "project_storage",
+    project_id: "p1",
+    captured_at: null,
+    fallback_reason: null,
+    sha256: null,
+    graph: {
+      project_id: "p1",
+      nodes: ids.map((id) => ({ id, name: id, type: "L1Unit", properties: {} })),
+      links: [],
+    },
+  }
+}
+
+function unavailable(reason = "project_graph_unavailable", source = "project_storage") {
+  return {
+    status: "unavailable",
+    source,
+    project_id: "p1",
+    captured_at: null,
+    fallback_reason: null,
+    reason,
   }
 }
 
@@ -61,70 +75,25 @@ function routeFetch(
   return { calls, signals }
 }
 
-function renderGraph(
-  overrides: Partial<{
-    projectId: string
-    targetId: string
-    targetRunId: string
-    trialId: string
-    summary: ProjectGraphSummary
-  }> = {},
-) {
+function renderGraph(overrides: Partial<{
+  targetId: string
+  targetRunId: string
+  trialId: string
+}> = {}) {
   return render(
     <MemoryRouter>
       <TrialProjectGraph
-        projectId={overrides.projectId ?? "p1"}
         targetId={overrides.targetId ?? "t"}
         targetRunId={overrides.targetRunId ?? "r"}
         trialId={overrides.trialId ?? "trial-1"}
-        summary={overrides.summary ?? AVAILABLE}
       />
     </MemoryRouter>,
   )
 }
 
-function evalTrial(overrides: Partial<EvalTrial> = {}): EvalTrial {
-  return {
-    target_id: "t",
-    target_run_id: "r",
-    trial_id: "trial-1",
-    instance_id: "inst-1",
-    project_id: "p1",
-    start_phase: "recon",
-    terminal: "complete",
-    copied_at: "2024-01-01T00:00:00+00:00",
-    phases: [],
-    eval_sha: "sha-x",
-    stack_fingerprint: "fp-x",
-    verdicts: [],
-    diagnoses: [],
-    availability: "complete",
-    reason: null,
-    artifact_summary: { status: "available", hunting: 0, skills: 0 },
-    project_graph_summary: AVAILABLE,
-    ...overrides,
-  }
-}
-
-function evalSnapshot(trials: EvalTrial[]): EvalSnapshot {
-  return {
-    dataset: { id: "webexploitbench", name: "WebExploitBench" },
-    summary: { targets: 1, trials: trials.length, identified: 0, partial: 0, missed: 0, degraded: 0 },
-    targets: [],
-    trials,
-    versions: [],
-    coverage: {
-      targets: { tested: 0, with_identified: 0, without_identified: 0 },
-      vulnerabilities: { total: 0, found: 0, not_found: 0, partial: 0 },
-    },
-    successes: [],
-    degraded_trials: [],
-  }
-}
-
-test("loads the historical graph with its label, capture time, and live link", async () => {
+test("loads only the resolved graph and labels a capture with its source and time", async () => {
   const { calls } = routeFetch([
-    ["/project-graph", () => json(graphResponse(["trial-only"]))],
+    ["/resolved-graph", () => json(capturedGraph(["trial-only"]))],
   ])
 
   renderGraph()
@@ -132,100 +101,76 @@ test("loads the historical graph with its label, capture time, and live link", a
   await waitFor(() =>
     expect(screen.getByTestId("graph-canvas").textContent).toBe("trial-only"),
   )
-  expect(screen.getByText("Trial snapshot")).toBeDefined()
+  expect(screen.getByText("Captured with Trial")).toBeDefined()
+  expect(screen.queryByText("Saved for project")).toBeNull()
   expect(screen.getByText(/2024-05-05/)).toBeDefined()
-  expect(screen.getByRole("link", { name: /live graph/i }).getAttribute("href")).toBe("/p/p1")
+  // The layer controls stay available on a ready graph.
+  expect(screen.getByRole("button", { name: "L0" })).toBeDefined()
+  expect(screen.getByRole("button", { name: "L1" })).toBeDefined()
+  // The browser never talks to the live agent for a Trial.
   expect(calls).toHaveLength(1)
-  expect(calls[0]).toBe("/trials/t/r/trial-1/project-graph")
+  expect(calls[0]).toBe("/trials/t/r/trial-1/resolved-graph")
   expect(calls.some((url) => url.includes("/projects/p1/graph"))).toBe(false)
   expect(calls.some((url) => url.includes("/artifacts"))).toBe(false)
+  expect(screen.queryByRole("link", { name: /live graph/i })).toBeNull()
 })
 
-test("renders the empty state for an empty historical graph", async () => {
-  routeFetch([["/project-graph", () => json(graphResponse([]))]])
+test("labels a project-storage source as saved for the project", async () => {
+  routeFetch([["/resolved-graph", () => json(currentGraph(["saved-only"]))]])
 
   renderGraph()
 
-  await waitFor(() => expect(screen.getByText(/No assets yet/i)).toBeDefined())
-})
-
-test("an unavailable summary falls back to the current live graph only", async () => {
-  const { calls } = routeFetch([
-    [
-      "/projects/p1/graph",
-      () =>
-        json({
-          project_id: "p1",
-          nodes: [{ id: "live-only", name: "live", type: "L1Service", properties: {} }],
-          links: [],
-        }),
-    ],
-  ])
-
-  renderGraph({ summary: UNAVAILABLE })
-
   await waitFor(() =>
-    expect(screen.getByTestId("graph-canvas").textContent).toBe("live-only"),
+    expect(screen.getByTestId("graph-canvas").textContent).toBe("saved-only"),
   )
-  // The fallback is labelled as current data, never as the Trial snapshot.
-  expect(screen.getByText("Current L0/L1 — not captured with Trial")).toBeDefined()
-  expect(screen.queryByText("Trial snapshot")).toBeNull()
-  expect(calls).toEqual(["/projects/p1/graph"])
+  expect(screen.getByText("Saved for project")).toBeDefined()
+  expect(screen.queryByText("Captured with Trial")).toBeNull()
 })
 
-test("an empty live graph renders no canvas", async () => {
-  routeFetch([
-    ["/projects/p1/graph", () => json({ project_id: "p1", nodes: [], links: [] })],
-  ])
+test("renders the unavailable contract with no canvas and no error", async () => {
+  routeFetch([["/resolved-graph", () => json(unavailable("project_graph_empty"))]])
 
-  renderGraph({ summary: UNAVAILABLE })
-
-  await waitFor(() => expect(screen.getByText("No graph available")).toBeDefined())
-  expect(screen.queryByTestId("graph-canvas")).toBeNull()
-})
-
-test("a 404 live graph renders no canvas and no error", async () => {
-  routeFetch([["/projects/p1/graph", () => json({ detail: "unknown project" }, 404)]])
-
-  renderGraph({ summary: UNAVAILABLE })
+  renderGraph()
 
   await waitFor(() => expect(screen.getByText("No graph available")).toBeDefined())
   expect(screen.queryByTestId("graph-canvas")).toBeNull()
   expect(screen.queryByRole("alert")).toBeNull()
 })
 
-test("a failing live graph that is not a 404 stays an error", async () => {
-  routeFetch([["/projects/p1/graph", () => json({ detail: "boom" }, 500)]])
+test("an empty available graph renders no canvas", async () => {
+  routeFetch([["/resolved-graph", () => json(capturedGraph([]))]])
 
-  renderGraph({ summary: UNAVAILABLE })
+  renderGraph()
 
-  await waitFor(() => expect(screen.getByRole("alert")).toBeDefined())
-  expect(screen.getByRole("alert").textContent).toMatch(/500/)
+  await waitFor(() => expect(screen.getByText("No graph available")).toBeDefined())
   expect(screen.queryByTestId("graph-canvas")).toBeNull()
-  expect(screen.queryByText("No graph available")).toBeNull()
 })
 
-test("an API error never falls back to the live graph", async () => {
-  const { calls } = routeFetch([
-    [
-      "/projects/p1/graph",
-      () =>
-        json({
-          project_id: "p1",
-          nodes: [{ id: "live-only", name: "live", type: "L1Unit", properties: {} }],
-          links: [],
-        }),
-    ],
-    ["/project-graph", () => json({ detail: "project_graph_unavailable" }, 409)],
-  ])
+test("a request failure is an error confined to the graph section", async () => {
+  routeFetch([["/resolved-graph", () => json({ detail: "project_graph_invalid" }, 409)]])
 
   renderGraph()
 
   await waitFor(() => expect(screen.getByRole("alert")).toBeDefined())
-  expect(screen.getByRole("alert").textContent).toMatch(/project_graph_unavailable/)
+  expect(screen.getByRole("alert").textContent).toMatch(/project_graph_invalid/)
   expect(screen.queryByTestId("graph-canvas")).toBeNull()
-  expect(screen.queryByText(/live-only/)).toBeNull()
-  expect(calls.some((url) => url.includes("/projects/p1/graph"))).toBe(false)
+  expect(screen.queryByText("No graph available")).toBeNull()
+  // The failure is contained by the graph section, not the whole page.
+  const section = screen.getByRole("region", { name: "Graph" })
+  expect(section.contains(screen.getByRole("alert"))).toBe(true)
+})
+
+test("never calls the live agent graph client on a direct Trial refresh", async () => {
+  const { calls } = routeFetch([
+    ["/resolved-graph", () => json(currentGraph(["saved-only"]))],
+  ])
+
+  renderGraph()
+
+  await waitFor(() =>
+    expect(screen.getByTestId("graph-canvas").textContent).toBe("saved-only"),
+  )
+  expect(calls.every((url) => url.includes("/resolved-graph"))).toBe(true)
 })
 
 test("aborts the old request and ignores a late response on a tuple change", async () => {
@@ -234,29 +179,17 @@ test("aborts the old request and ignores a late response on a tuple change", asy
     resolveFirst = resolve
   })
   const { signals } = routeFetch([
-    ["/trial-1/project-graph", () => first],
-    ["/trial-2/project-graph", () => json(graphResponse(["trial-two"]))],
+    ["/trial-1/resolved-graph", () => first],
+    ["/trial-2/resolved-graph", () => json(capturedGraph(["trial-two"]))],
   ])
   const { rerender } = render(
     <MemoryRouter>
-      <TrialProjectGraph
-        projectId="p1"
-        targetId="t"
-        targetRunId="r"
-        trialId="trial-1"
-        summary={AVAILABLE}
-      />
+      <TrialProjectGraph targetId="t" targetRunId="r" trialId="trial-1" />
     </MemoryRouter>,
   )
   rerender(
     <MemoryRouter>
-      <TrialProjectGraph
-        projectId="p1"
-        targetId="t"
-        targetRunId="r"
-        trialId="trial-2"
-        summary={AVAILABLE}
-      />
+      <TrialProjectGraph targetId="t" targetRunId="r" trialId="trial-2" />
     </MemoryRouter>,
   )
 
@@ -266,34 +199,9 @@ test("aborts the old request and ignores a late response on a tuple change", asy
   expect(signals[0].aborted).toBe(true)
 
   // The mock ignores the abort and resolves late: it must not overwrite trial-2.
-  resolveFirst?.(json(graphResponse(["trial-one"])))
+  resolveFirst?.(json(capturedGraph(["trial-one"])))
   await Promise.resolve()
   await Promise.resolve()
   expect(screen.getByTestId("graph-canvas").textContent).toBe("trial-two")
   expect(screen.queryByText(/trial-one/)).toBeNull()
-})
-
-test("a direct refresh of the workspace route loads only the historical graph", async () => {
-  const { calls } = routeFetch([
-    ["/snapshot", () => json(evalSnapshot([evalTrial()]))],
-    [
-      "/projects/p1/graph",
-      () =>
-        json({
-          project_id: "p1",
-          nodes: [{ id: "live-only", name: "live", type: "L1Unit", properties: {} }],
-          links: [],
-        }),
-    ],
-    ["/project-graph", () => json(graphResponse(["trial-only"]))],
-  ])
-  window.history.pushState({}, "", "/p/p1/evals/t/r/trial-1")
-  render(<App />)
-
-  await waitFor(() =>
-    expect(screen.getByTestId("graph-canvas").textContent).toBe("trial-only"),
-  )
-  expect(calls.some((url) => url.includes("/projects/p1/graph"))).toBe(false)
-  expect(calls.filter((url) => url.endsWith("/snapshot"))).toHaveLength(1)
-  window.history.pushState({}, "", "/")
 })
