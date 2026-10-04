@@ -335,6 +335,20 @@ branch in two worktrees); the daemon fast-forwards each detached HEAD. Every
 target run gets a unique synthetic Host (`t-<short>.target`), written into the
 target front and aliased in that instance's kali.
 
+**The A6 capability override (required).** The eval roles run
+`opencode-go/deepseek-v4.1-flash`, whose relay deterministically refuses
+`response_format=json_schema` and a forced `tool_choice` even though models.dev
+claims structured output. Without the `LLM_CAPABILITY_OVERRIDES` correction,
+every `invoke_role(..., schema=...)` and the compaction summariser resolve to
+the `json_schema` rung and 400, so compaction never converges (the F12
+signature: `summary_status=failed`, `reclaimed=0`). The canonical value is in
+`.env.example` (the preflight fills it into a fresh instance `.env`),
+`eval/docker-compose.eval.yml` requires it on the agent service, and
+`eval/env_preflight.py` asserts it is correct for the relay - a missing or wrong
+value fails `up` before a run. See ADR A6
+(`docs/design/capability-adaptive-client-99-decisions.md`) and issues #285/#299
+(the same relay's transient bare-400) and #246 (the durable negotiation fix).
+
 The first committed setup is `eval/setups/first.yaml` (one instance, the
 `webexploitbench/comfyui` target); the operator bootstrap and the per-step
 acceptance criteria for running it live are in `eval/E2E-SCAFFOLD.md`.

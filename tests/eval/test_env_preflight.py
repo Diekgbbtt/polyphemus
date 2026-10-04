@@ -210,7 +210,9 @@ def test_real_overlay_required_set_matches_the_no_default_contract(
 
     # Derived from the real contract, not a second literal: the five hard
     # `os.environ[...]` reads in app/config.py plus one key per distinct
-    # `model_key` across ROLES and HUNTING_ROLES in app/llm/providers.py.
+    # `model_key` across ROLES and HUNTING_ROLES in app/llm/providers.py, plus
+    # the A6 capability override the eval deployment requires (its absence is
+    # the silent summariser degradation this preflight fails on).
     # Provider API keys are deliberately absent: they are per-provider and app
     # boot (validate_llm_config) already names the missing one.
     config_src = (REPO_ROOT / "src" / "polymerhus" / "app" / "config.py").read_text(
@@ -227,7 +229,140 @@ def test_real_overlay_required_set_matches_the_no_default_contract(
         "POSTGRES_DSN",
         "KALI_MCP_URL",
     }
-    assert required == sorted(hard_reads | role_keys)
+    assert required == sorted(hard_reads | role_keys | {preflight.CAPABILITY_OVERRIDES_KEY})
+
+
+def _capability_env(preflight, value: str) -> dict[str, str]:
+    import json
+
+    return {
+        "AAA": "one",
+        preflight.CAPABILITY_OVERRIDES_KEY: value,
+    }
+
+
+def _capability_overlay(tmp_path: Path, preflight) -> Path:
+    key = preflight.CAPABILITY_OVERRIDES_KEY
+    return write(
+        tmp_path / "overlay.yml",
+        f"services:\n  agent:\n    environment:\n      {key}: ${{{key}:?{key} is required}}\n",
+    )
+
+
+def test_capability_override_correct_passes(tmp_path: Path, preflight) -> None:
+    import json
+
+    value = json.dumps(preflight.REQUIRED_CAPABILITY_OVERRIDES)
+    example = write(tmp_path / ".env.example", f"AAA=one\n{preflight.CAPABILITY_OVERRIDES_KEY}={value}\n")
+    env = write(tmp_path / ".env", "AAA=one\n")
+    overlay = _capability_overlay(tmp_path, preflight)
+
+    result = preflight.run(env, example, overlay)
+
+    assert result.capability_findings == []
+    assert result.exit_code == 0
+
+
+def test_capability_override_absent_is_reported_and_fails(
+    tmp_path: Path, preflight
+) -> None:
+    example = write(tmp_path / ".env.example", "AAA=one\n")
+    env = write(tmp_path / ".env", "AAA=one\n")
+    overlay = _capability_overlay(tmp_path, preflight)
+
+    result = preflight.run(env, example, overlay)
+
+    # The generic required check and the A6 correctness check both fire; the
+    # finding names the override so the degradation is not silent.
+    assert any(
+        preflight.CAPABILITY_OVERRIDES_KEY in finding
+        for finding in result.capability_findings
+    )
+    assert result.exit_code != 0
+
+
+def test_capability_override_wrong_flags_is_reported_and_fails(
+    tmp_path: Path, preflight
+) -> None:
+    import json
+
+    wrong = json.dumps(
+        {"opencode-go/deepseek-v4.1-flash": {"supports_structured_output": True,
+                                             "supports_forced_tool_choice": True}}
+    )
+    example = write(
+        tmp_path / ".env.example", f"AAA=one\n{preflight.CAPABILITY_OVERRIDES_KEY}={wrong}\n"
+    )
+    env = write(tmp_path / ".env", "AAA=one\n")
+    overlay = _capability_overlay(tmp_path, preflight)
+
+    result = preflight.run(env, example, overlay)
+
+    assert any("supports_structured_output" in finding for finding in result.capability_findings)
+    assert result.exit_code != 0
+
+
+def test_capability_override_malformed_json_is_reported(
+    tmp_path: Path, preflight
+) -> None:
+    example = write(
+        tmp_path / ".env.example", f"AAA=one\n{preflight.CAPABILITY_OVERRIDES_KEY}=not json\n"
+    )
+    env = write(tmp_path / ".env", "AAA=one\n")
+    overlay = _capability_overlay(tmp_path, preflight)
+
+    result = preflight.run(env, example, overlay)
+
+    assert any(
+        preflight.CAPABILITY_OVERRIDES_KEY in finding
+        for finding in result.capability_findings
+    )
+    assert result.exit_code != 0
+
+
+def test_capability_override_extra_providers_are_allowed(
+    tmp_path: Path, preflight
+) -> None:
+    import json
+
+    value = json.dumps(
+        {
+            **preflight.REQUIRED_CAPABILITY_OVERRIDES,
+            "other-provider/other-model": {"supports_structured_output": False},
+        }
+    )
+    example = write(
+        tmp_path / ".env.example", f"AAA=one\n{preflight.CAPABILITY_OVERRIDES_KEY}={value}\n"
+    )
+    env = write(tmp_path / ".env", "AAA=one\n")
+    overlay = _capability_overlay(tmp_path, preflight)
+
+    result = preflight.run(env, example, overlay)
+
+    assert result.capability_findings == []
+    assert result.exit_code == 0
+
+
+def test_capability_override_not_checked_without_the_overlay_requirement(
+    tmp_path: Path, preflight
+) -> None:
+    example = write(tmp_path / ".env.example", "AAA=one\n")
+    env = write(tmp_path / ".env", "AAA=one\n")
+    overlay = write(tmp_path / "overlay.yml", "services: {}\n")
+
+    result = preflight.run(env, example, overlay)
+
+    assert result.capability_findings == []
+    assert result.exit_code == 0
+
+
+def test_real_example_carries_the_canonical_capability_override(preflight) -> None:
+    example = preflight.parse_assignments(REPO_ROOT / ".env.example")
+    overlay = REPO_ROOT / "eval" / "docker-compose.eval.yml"
+
+    findings = preflight.capability_override_findings(example, overlay)
+
+    assert findings == []
 
 
 def test_real_example_as_key_source(tmp_path: Path, preflight) -> None:

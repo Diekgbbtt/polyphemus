@@ -243,7 +243,15 @@ _Avoid_: lock, freeze, pause
 
 **Eval compose overlay**:
 `docker-compose.eval.yml`: it requires the per-instance `.env`, fails loud on missing required interpolation, and pairs with the preflight that fills missing keys without clobbering operator values.
+It also requires the **required capability override** on the agent service, and the preflight asserts that override is correct for the eval relay.
 _Avoid_: prod compose, eval env
+
+**Required capability override**:
+The committed `LLM_CAPABILITY_OVERRIDES` value the eval deployment requires for its relay (`opencode-go/deepseek-v4.1-flash`), because models.dev wrongly claims that relay supports `json_schema` and a forced tool choice (ADR A6).
+Its absence sends the compaction summariser and every schema-bound `invoke_role` to the `json_schema` rung, which 400s (the F12 signature: `summary_status=failed`, `reclaimed=0`).
+The canonical value is in `.env.example`, the **Eval compose overlay** requires it, and `eval/env_preflight.py` asserts it (`REQUIRED_CAPABILITY_OVERRIDES`).
+The app-layer term is **capability override** in `src/polymerhus/app/CONTEXT.md`.
+_Avoid_: capability flag, model quirk
 
 **Root cause type**:
 The typed locus of a diagnosis: `implementation_defect`, `design_defect`, `missing_component`, `kb_coverage_gap`, or `skill_defect` (combinable).
