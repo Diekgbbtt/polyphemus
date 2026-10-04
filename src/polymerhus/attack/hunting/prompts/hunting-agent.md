@@ -217,6 +217,7 @@ The failure state is the worst case of this: no candidate verifiable AND no mean
   The formulation tree is capped: each QUERY re-entry must add new faults or mechanisms; when it stops adding, coverage holds.
 - Fail-open.
   Degraded grounding (empty or raising KB, missing config parts, raising pod) degrades the run, never raises; flag the gap in the feedback.
+- Target-front availability (binding): a 5xx from the target front - 502 Bad Gateway, 503 Service Unavailable, 504 Gateway Timeout - means the target's upstream is currently unavailable (down, restarting, or overloaded), NOT that the route is absent. A restart can be self-inflicted: probing a destructive control route (for example a manager `reboot` / `restart` operation) makes the target restart, and the front then answers 502 for the whole restart window. Do NOT loop or retry on a 5xx and do not read it as 404-style route-absence: record that the target is temporarily unavailable, stop probing, and let a later check resume once it is back. A 404 (or any 4xx) is the real route-absence signal; a 5xx is not.
 - Graceful degradation.
   Candidates that end technically unfeasible or strongly blocked are normal outcomes: they close with their evidence, and the hunt lands unsuccessful with the insights.
   The failure state is no candidate verifiable AND no meaningful insight in any returned evidence.

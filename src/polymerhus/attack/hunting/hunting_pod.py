@@ -27,6 +27,8 @@ from typing import Any
 
 import httpx
 
+from polymerhus.attack.hunting.hunting_status import is_target_unavailable
+
 logger = logging.getLogger(__name__)
 
 _METHODS = {"GET", "HEAD"}
@@ -291,17 +293,18 @@ class HuntingHttpPod:
         return {"verdict": verdict, "evidence": evidence}
 
 
-DEFENCE_STATUSES = frozenset({429, 503})
-
-
 def _defence_signal(status) -> str | None:
     """A defence that is not an application verdict: rate limiting or a
-    server-side block. Never `denied`, never `allowed` - inconclusive."""
+    server-side block. Never `denied`, never `allowed` - inconclusive. The
+    target-front gateway family (502/503/504) is a `server-error` (inconclusive)
+    through the shared #323 set, so the pod and the hunter classify it alike.
+    `503 Service Unavailable` is an availability signal, not rate limiting (the
+    old conflated `{429, 503}` set is retired)."""
     if not isinstance(status, int):
         return None
-    if status in DEFENCE_STATUSES:
+    if status == 429:
         return "rate-limited"
-    if 500 <= status < 600:
+    if is_target_unavailable(status) or 500 <= status < 600:
         return "server-error"
     return None
 

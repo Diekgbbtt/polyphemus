@@ -136,6 +136,9 @@ What serves every target on `http://<synthetic-host>/` - the bare domain on the 
 It is the shared host-level `ph-eval-front` nginx container bound to host port 80, carrying one conf per synthetic Host that proxies to the target's published port over the Docker host gateway.
 `targetctl`, `image`, and `compose` all use it (D45): no host nginx and no ssh.
 The container is created before the first target and removed after the last.
+When a target's upstream is down or restarting, the front answers `502 Bad Gateway` (the nginx default page); that is EXPECTED front behaviour, not a defect and not route-absence (an absent route answers `404`).
+A target restart can be self-inflicted: probing a destructive control route (e.g. ComfyUI-Manager's `/api/manager/reboot`, which `os.execv`s the ComfyUI process) closes the upstream for the restart window, during which every path answers `502`.
+The hunting layer treats a front `5xx` as upstream-unavailable and stops probing rather than looping (`attack/hunting/hunting_status.py`, #323, `docs/design/hunting-target-front-availability-adr.md`).
 _Avoid_: proxy, reverse proxy, gateway
 
 **Work item**:

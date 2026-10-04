@@ -73,6 +73,7 @@ from .http_history_contract import (
     SEARCH_HTTP_HISTORY_DESCRIPTION,
 )
 from .hunter_state import FAULT_STATUSES
+from .hunting_status import TARGET_UNAVAILABLE_DIRECTIVE
 from .tool_contract import (
     NotesFieldMap,
     StoreNotesTool,
@@ -751,7 +752,8 @@ class ExecTool(BaseTool):
         "the spec's payload_vector_space carries a request_ref, do NOT re-create "
         "that request by hand here: a hand-written curl loses the replay lineage "
         "(derived_from / replay_kind stay null and the artifact looks like "
-        "original traffic) - the pod's replay path is what preserves it."
+        "original traffic) - the pod's replay path is what preserves it.\n\n"
+        f"{TARGET_UNAVAILABLE_DIRECTIVE}"
     )
     args_schema: type[BaseModel] = ExecArgs
 
