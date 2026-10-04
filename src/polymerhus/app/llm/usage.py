@@ -7,12 +7,21 @@ it read-only at `GET /projects/{id}/usage`, and the eval harness bounds a trial
 by reading that endpoint.
 
 The surface is a two-axis typed decomposition, not a scalar: `context_tokens`
-(input) splits into `cached` (cache_read) and `uncached` (fresh input plus
-cache_creation), and `generated_tokens` (output) splits into `reasoning`
-(output_token_details.reasoning) and `visible` (output minus reasoning). The
-scalar `total_tokens` = context + generated stays the trial's budget scalar. The
-axes are recorded per call so a mostly-cache-read context is visible rather than
-folded into one opaque input number (ticket F16).
+(input) splits into `cached` (cache_read) and `uncached` (fresh input), and
+`generated_tokens` (output) splits into `reasoning`
+(output_token_details.reasoning) and `visible` (output minus reasoning). On the
+pinned path `input_tokens` is INCLUSIVE of cache_read (LiteLLM's `prompt_tokens`
+folds in cache_read and cache_creation; langchain_openai sets
+`input_tokens = prompt_tokens`), so `uncached = input_tokens - cache_read`.
+
+Three scalars ride the surface: `total_tokens` = context + generated (the raw
+total, cache included), and `capped_tokens` = generated + uncached =
+`total_tokens - cached` (the new tokens a call produced - generated output plus
+the fresh input it read, excluding cache reads). The trial token budget counts
+`capped_tokens`, so a mostly-cache-read context cannot consume the budget it was
+not responsible for (ticket F16 follow-up). The axes are recorded per call so a
+mostly-cache-read context is visible rather than folded into one opaque input
+number (ticket F16).
 
 The ledger is keyed by `(project_id, agent)`. A missing/blank project id records
 under the `"unscoped"` sentinel bucket, which a project snapshot never returns:
@@ -62,40 +71,55 @@ def _detail_int(usage: Mapping, detail_key: str, field: str) -> int:
 def _axis_totals(usage: Mapping) -> dict[str, int]:
     """One call's two-axis token decomposition (the ratified representation).
 
-    Context (input) = `cached` (cache_read) + `uncached` (fresh input plus
-    cache_creation); generated (output) = `reasoning`
-    (output_token_details.reasoning) + `visible` (output minus reasoning). Each
-    pair is clamped so a malformed payload can never yield a negative component,
-    and the pairs still sum to the model's input (plus cache_creation) and
-    output, so `total_tokens` - context + generated - stays the faithful budget
-    scalar."""
+    Context (input) = `cached` (cache_read) + `uncached` (fresh input); generated
+    (output) = `reasoning` (output_token_details.reasoning) + `visible` (output
+    minus reasoning). On the pinned LiteLLM/langchain-openai path `input_tokens`
+    is INCLUSIVE of cache_read, so `uncached = input_tokens - cache_read`; no
+    component is negative, and `total_tokens` (context + generated) stays the
+    faithful raw total. `capped_tokens` = generated + uncached = total - cached is
+    the new-token axis the trial budget counts.
+
+    A provider whose `input_tokens` EXCLUDES cache_read (it is not a subset) is
+    detected only in the unambiguous case `cache_read > input_tokens`; then the
+    cache_read is kept separate rather than clamped away. The ambiguous exclusive
+    case is a documented non-goal (see the spec's provider-normalization caveats)."""
     input_tokens = _int_field(usage, "input_tokens")
     output_tokens = _int_field(usage, "output_tokens")
     cache_read = _detail_int(usage, "input_token_details", "cache_read")
-    cache_creation = _detail_int(usage, "input_token_details", "cache_creation")
-    cached = min(cache_read, input_tokens)
-    uncached = (input_tokens - cached) + cache_creation
     reasoning = min(
         _detail_int(usage, "output_token_details", "reasoning"), output_tokens)
     visible = output_tokens - reasoning
+    if cache_read > input_tokens:
+        # Exclusive convention: cache_read is not part of input_tokens. The
+        # pinned path never lands here (cache_read is a subset of prompt_tokens);
+        # keeping both is the conservative, non-dropping read.
+        cached = cache_read
+        uncached = input_tokens
+    else:
+        # Inclusive convention (pinned): input_tokens already contains cache_read.
+        cached = cache_read
+        uncached = input_tokens - cache_read
+    generated = reasoning + visible
     return {
         "cached": cached,
         "uncached": uncached,
         "reasoning": reasoning,
         "visible": visible,
-        "total_tokens": cached + uncached + reasoning + visible,
+        "total_tokens": cached + uncached + generated,
+        "capped_tokens": generated + uncached,
     }
 
 
 def _entry_surface(entry: Mapping) -> dict[str, Any]:
     """One ledger entry's public two-axis shape (nested context/generated plus the
-    scalar budget total and call count)."""
+    scalar raw total, the capped budget axis, and the call count)."""
     return {
         "context_tokens": {"cached": entry["cached"],
                            "uncached": entry["uncached"]},
         "generated_tokens": {"reasoning": entry["reasoning"],
                              "visible": entry["visible"]},
         "total_tokens": entry["total_tokens"],
+        "capped_tokens": entry["capped_tokens"],
         "calls": entry["calls"],
     }
 
@@ -104,11 +128,11 @@ class UsageLedger:
     """A process-wide, thread-safe token accumulator keyed by `(project_id, agent)`.
 
     Each entry holds the two-axis surface - `context_tokens` (`cached` +
-    `uncached`) and `generated_tokens` (`reasoning` + `visible`) - plus the budget
-    scalar `total_tokens` and `calls`. `record` is fail-open and a None/empty usage
-    is a no-op; `snapshot` returns the project's aggregated surface plus the
-    per-agent breakdown, excluding the `"unscoped"` bucket; `reset` clears all
-    state (tests)."""
+    `uncached`) and `generated_tokens` (`reasoning` + `visible`) - plus the raw
+    `total_tokens`, the `capped_tokens` budget axis, and `calls`. `record` is
+    fail-open and a None/empty usage is a no-op; `snapshot` returns the project's
+    aggregated surface plus the per-agent breakdown, excluding the `"unscoped"`
+    bucket; `reset` clears all state (tests)."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -128,10 +152,11 @@ class UsageLedger:
                 entry = self._entries.get(key)
                 if entry is None:
                     entry = {"cached": 0, "uncached": 0, "reasoning": 0,
-                             "visible": 0, "total_tokens": 0, "calls": 0}
+                             "visible": 0, "total_tokens": 0, "capped_tokens": 0,
+                             "calls": 0}
                     self._entries[key] = entry
                 for field in ("cached", "uncached", "reasoning", "visible",
-                              "total_tokens"):
+                              "total_tokens", "capped_tokens"):
                     entry[field] += totals[field]
                 entry["calls"] += 1
         except Exception:  # noqa: BLE001 - fail-open: never break the turn
@@ -144,6 +169,7 @@ class UsageLedger:
         zeros/empty."""
         totals = {"cached": 0, "uncached": 0, "reasoning": 0, "visible": 0}
         total_tokens = 0
+        capped_tokens = 0
         calls = 0
         by_agent: dict[str, dict[str, Any]] = {}
         with self._lock:
@@ -154,6 +180,7 @@ class UsageLedger:
                 for axis in totals:
                     totals[axis] += entry[axis]
                 total_tokens += entry["total_tokens"]
+                capped_tokens += entry["capped_tokens"]
                 calls += entry["calls"]
         return {
             "project_id": project_id,
@@ -162,6 +189,7 @@ class UsageLedger:
             "generated_tokens": {"reasoning": totals["reasoning"],
                                  "visible": totals["visible"]},
             "total_tokens": total_tokens,
+            "capped_tokens": capped_tokens,
             "calls": calls,
             "by_agent": by_agent,
         }

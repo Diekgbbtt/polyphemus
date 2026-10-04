@@ -59,16 +59,18 @@ def _usage(input_tokens, output_tokens=0, cache_read=0, reasoning=None):
 # --- occupancy accounting (pure) ---------------------------------------------
 
 def test_occupancy_sums_base_and_migrating_output():
-    """One step's occupancy is the real base (input + cache-read) plus the response
-    output that migrates into the next prompt. `input_tokens` alone under-counts
-    once caching engages - cache-read is added, never ignored."""
+    """One step's occupancy is the real base (`input_tokens`) plus the response
+    output that migrates into the next prompt. On the pinned path `input_tokens`
+    is INCLUSIVE of cache-read (LiteLLM's `prompt_tokens`), so base_input is
+    `input_tokens` alone - adding `cache_read` would double-count 92% of a cached
+    prompt. cache-read stays recorded as observability, never a gate."""
     snap = C.occupancy_from_message(
         AIMessage(content="r", usage_metadata=_usage(1000, output_tokens=50, cache_read=40))
     )
     assert snap is not None
-    assert snap.base_input == 1040
+    assert snap.base_input == 1000
     assert snap.migrating_output == 50
-    assert snap.occupancy == 1090
+    assert snap.occupancy == 1050
     assert snap.cache_read == 40
 
 
@@ -229,7 +231,7 @@ def test_after_model_updates_ledger_through_the_real_loop():
     )
     entry = mw.ledger.entry(thread_id)
     assert entry is not None
-    assert entry.occupancy == 1090
+    assert entry.occupancy == 1050
     assert entry.over_budget is False
 
 

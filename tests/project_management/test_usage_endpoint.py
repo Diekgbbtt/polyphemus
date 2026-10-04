@@ -38,14 +38,15 @@ def test_usage_returns_totals_and_per_agent_breakdown():
         "context_tokens": {"cached": 0, "uncached": 11},
         "generated_tokens": {"reasoning": 0, "visible": 9},
         "total_tokens": 20,
+        "capped_tokens": 20,
         "calls": 2,
         "by_agent": {
             "analyser": {"context_tokens": {"cached": 0, "uncached": 10},
                          "generated_tokens": {"reasoning": 0, "visible": 5},
-                         "total_tokens": 15, "calls": 1},
+                         "total_tokens": 15, "capped_tokens": 15, "calls": 1},
             "triager": {"context_tokens": {"cached": 0, "uncached": 1},
                         "generated_tokens": {"reasoning": 0, "visible": 4},
-                        "total_tokens": 5, "calls": 1},
+                        "total_tokens": 5, "capped_tokens": 5, "calls": 1},
         },
     }
 
@@ -65,6 +66,9 @@ def test_usage_endpoint_exposes_the_cache_and_reasoning_axes():
 
     assert body["context_tokens"] == {"cached": 12_002_944, "uncached": 988_138}
     assert body["generated_tokens"] == {"reasoning": 135_011, "visible": 80_810}
+    # The capped (budget) axis excludes the 12M cache-read context: new tokens only.
+    assert body["total_tokens"] == 13_206_903
+    assert body["capped_tokens"] == 1_203_959
 
 
 def test_usage_for_an_empty_project_returns_zeros_and_never_404s():
@@ -76,6 +80,7 @@ def test_usage_for_an_empty_project_returns_zeros_and_never_404s():
         "context_tokens": {"cached": 0, "uncached": 0},
         "generated_tokens": {"reasoning": 0, "visible": 0},
         "total_tokens": 0,
+        "capped_tokens": 0,
         "calls": 0,
         "by_agent": {},
     }

@@ -99,6 +99,7 @@ class SeqUsageApi(FakeApi):
             return {
                 "project_id": "pid",
                 "total_tokens": total,
+                "capped_tokens": total,
                 "calls": 1,
                 "by_agent": {"recon": {"total_tokens": total}},
             }
@@ -579,6 +580,40 @@ def test_the_spend_check_returns_a_spend_result_on_a_stop(tmp_path) -> None:
     assert result.overshoot == 200
 
 
+def test_the_budget_counts_capped_tokens_not_the_cache_heavy_raw_total(tmp_path) -> None:
+    # The raw total is over budget from the first read, but it is almost all
+    # cache reads, so the capped axis (generated + uncached) decides the stop.
+    # Counting the raw total would stop the trial at ~zero new tokens - the
+    # half-occupancy bug the cap fix removes.
+    class RawHeavyApi(FakeApi):
+        def __init__(self, routes, capped_seq):
+            super().__init__(routes)
+            self._capped = list(capped_seq)
+            self.usage_calls = 0
+
+        def __call__(self, call):
+            if call.path.endswith("/usage"):
+                self.usage_calls += 1
+                capped = self._capped.pop(0)
+                self.calls.append(call)
+                return {
+                    "project_id": "pid",
+                    "total_tokens": 50_000_000,
+                    "capped_tokens": capped,
+                    "calls": 1,
+                    "by_agent": {},
+                }
+            return super().__call__(call)
+
+    api_runner = RawHeavyApi(_usage_routes(), capped_seq=[10, 100])
+    t = _trial(tmp_path, api_runner, project_id="pid", token_budget=500)
+
+    # Baseline capped 10 (raw 50M ignored), then capped 100 -> spent 90 < 500.
+    assert t._check_spend("pid", "hunting", "h1") is None
+    assert t._check_spend("pid", "hunting", "h1") is None
+    assert not any(c.path.endswith("/stop") for c in api_runner.calls)
+
+
 def test_token_budget_stops_the_run_and_records_the_spend(tmp_path) -> None:
     # The first read snapshots the baseline (1000); the second read reaches the
     # budget (500 spent); the third is the post-stop re-read for the overshoot.
@@ -750,11 +785,11 @@ def test_the_spend_check_runs_before_the_cap_in_hunting(tmp_path) -> None:
 
 
 def test_a_malformed_usage_payload_never_falsely_stops(tmp_path) -> None:
-    # The usage endpoint is advisory: a malformed total reads as zero, so the
-    # trial times out rather than falsely tripping the budget.
+    # The usage endpoint is advisory: a malformed capped value reads as zero, so
+    # the trial times out rather than falsely tripping the budget.
     api_runner = FakeApi(
         {
-            "GET /projects/pid/usage": {"total_tokens": "not-an-int", "by_agent": "oops"},
+            "GET /projects/pid/usage": {"capped_tokens": "not-an-int", "by_agent": "oops"},
             "GET /projects/pid/hunting/h1": {"status": "running"},
             "POST /projects/pid/hunting": {"hunting_run_id": "h1"},
             "GET /projects/pid/graph": GRAPH_L1_L0,

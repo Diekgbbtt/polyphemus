@@ -109,9 +109,11 @@ def test_usage_parsers_read_the_wire_shapes() -> None:
             "calls": 3,
         }
     }
-    response = {"project_id": "p", "total_tokens": 42, "calls": 3, "by_agent": by_agent}
+    response = {"project_id": "p", "total_tokens": 42, "capped_tokens": 17,
+                "calls": 3, "by_agent": by_agent}
 
     assert api.usage_total(response) == 42
+    assert api.usage_capped(response) == 17
     assert api.usage_by_agent(response) == by_agent
 
 
@@ -120,6 +122,10 @@ def test_usage_parsers_default_when_absent_or_malformed() -> None:
     assert api.usage_total({"total_tokens": "many"}) == 0
     assert api.usage_total({"total_tokens": True}) == 0
     assert api.usage_total(None) == 0
+    assert api.usage_capped({}) == 0
+    assert api.usage_capped({"capped_tokens": "many"}) == 0
+    assert api.usage_capped({"capped_tokens": True}) == 0
+    assert api.usage_capped(None) == 0
     assert api.usage_by_agent({}) == {}
     assert api.usage_by_agent({"by_agent": None}) == {}
     assert api.usage_by_agent({"by_agent": "nope"}) == {}

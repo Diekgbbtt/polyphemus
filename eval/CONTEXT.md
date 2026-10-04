@@ -139,15 +139,16 @@ The baseline is the set of consumed names already present at the trial's first h
 _Avoid_: budget, limit
 
 **Token budget**:
-The per-`Target`-declared bound on a `Trial`'s token spend, the sibling of the Hunting cap and enforced trial-wide: every phase poll reads the project's cumulative token spend from the app usage surface, and when the spend over the trial's baseline reaches the budget the trial stops the active run and terminates `stopped`.
+The per-`Target`-declared bound on a `Trial`'s token spend, the sibling of the Hunting cap and enforced trial-wide: every phase poll reads the project's cumulative **capped-token** spend from the app usage surface (`capped_tokens` - generated output plus uncached input, i.e. `total_tokens - cached`), and when the spend over the trial's baseline reaches the budget the trial stops the active run and terminates `stopped`.
+Counting capped tokens (not the raw total) stops context the model re-read from consuming the budget for new work.
 _Avoid_: cap, limit
 
 **Token spend**:
-The tokens a `Trial`'s project consumed, measured as the delta between the project's cumulative total on the app usage surface (`GET /projects/{id}/usage`) and the trial's spend baseline.
+The capped tokens a `Trial`'s project produced, measured as the delta between the project's cumulative `capped_tokens` on the app usage surface (`GET /projects/{id}/usage`) and the trial's spend baseline.
 _Avoid_: cost, usage
 
 **Spend baseline**:
-The project's cumulative token total at the trial's first spend poll; persisted in the trial record (`spend_baseline`) and carried across a resume, so a resumed or seeded trial never re-counts a prior run's spend.
+The project's cumulative `capped_tokens` at the trial's first spend poll; persisted in the trial record (`spend_baseline`) and carried across a resume, so a resumed or seeded trial never re-counts a prior run's spend.
 _Avoid_: cap baseline, offset
 
 **Pre-mined hunting artifacts**:

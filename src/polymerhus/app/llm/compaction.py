@@ -37,10 +37,12 @@ The load-bearing principles (ADR `docs/design/context-compaction-95-decisions.md
 - **Threshold (D2)**: a builder parameter reading the `LLM_COMPACTION_THRESHOLD`
   env override, default 0.90; an unusable value fails fast (LLMConfigError).
 - **Occupancy (D3)**: the provider's own `usage_metadata`, per model step:
-  `input_tokens + input_token_details.cache_read` (input alone under-counts once
-  caching engages), plus what migrates into the next prompt - the step's output
-  tokens (reasoning sits on the output side, a subset, recorded not double-counted)
-  and any trailing tool payload (no usage record, but occupies the next prompt).
+  `input_tokens` (INCLUSIVE of `input_token_details.cache_read` on the pinned
+  LiteLLM/langchain-openai path, where `prompt_tokens = fresh + cache_read`), plus
+  what migrates into the next prompt - the step's output tokens (reasoning sits on
+  the output side, a subset, recorded not double-counted) and any trailing tool
+  payload (no usage record, but occupies the next prompt).
+  `cache_read` is recorded as observability, never added again.
   `count_tokens_approximately` is the fail-open fallback when usage is absent.
 - **Cache-track is observability, never a gate (D11 item 3)**: cache-read is
   recorded on the ledger, never load-bearing on its own.
@@ -172,10 +174,12 @@ def resolve_window(
 class UsageSnapshot:
     """One model step's occupancy, read from its real usage metadata (D3).
 
-    `base_input` = input_tokens + cache_read (what the model actually saw);
-    `migrating_output` = the response's output tokens (what moves into the next
-    prompt); `reasoning_tokens` is a SUBSET of output - recorded for observability,
-    never added again. `occupancy` is the step's occupied window."""
+    `base_input` = `input_tokens` (what the model actually saw); on the pinned
+    path `input_tokens` is INCLUSIVE of `cache_read`, so it is never added again;
+    `cache_read` is carried for observability only. `migrating_output` = the
+    response's output tokens (what moves into the next prompt); `reasoning_tokens`
+    is a SUBSET of output - recorded for observability, never added again.
+    `occupancy` is the step's occupied window."""
 
     base_input: int
     cache_read: int
@@ -211,7 +215,7 @@ def occupancy_from_message(message: BaseMessage) -> UsageSnapshot | None:
     reasoning = odt.get("reasoning") if isinstance(odt, dict) else None
     reasoning = reasoning if isinstance(reasoning, int) else None
     return UsageSnapshot(
-        base_input=input_tokens + cache_read,
+        base_input=input_tokens,
         cache_read=cache_read,
         migrating_output=output_tokens,
         reasoning_tokens=reasoning,

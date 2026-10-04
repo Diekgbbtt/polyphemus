@@ -173,8 +173,9 @@ def _trial_routes() -> dict:
             "ok": True, "services_written": 3, "systems_written": 2,
         },
         # The trial-wide token budget reads the usage seam each poll. A constant
-        # total snapshots the baseline and never reaches the budget.
-        "GET /projects/pid/usage": {"total_tokens": 1000, "by_agent": {}},
+        # capped total snapshots the baseline and never reaches the budget.
+        "GET /projects/pid/usage": {"total_tokens": 1000, "capped_tokens": 1000,
+                                    "by_agent": {}},
     }
 
 

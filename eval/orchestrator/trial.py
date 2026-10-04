@@ -843,9 +843,12 @@ class Trial:
     def _check_spend(self, project_id: str, run_kind: str, run_id: str) -> SpendResult | None:
         """Enforce the trial-wide token budget; a `SpendResult` when it stops.
 
-        No configured budget means no API call at all, so an unbudgeted trial
-        pays nothing. The first check snapshots the project's cumulative token
-        total as the baseline; a resumed trial arrives with one and never
+        The budget counts CAPPED tokens - generated output plus uncached (fresh)
+        input, i.e. `total_tokens - cached` - never raw totals: cache reads are
+        context the model re-read, not new tokens, so they must not consume the
+        budget. No configured budget means no API call at all, so an unbudgeted
+        trial pays nothing. The first check snapshots the project's cumulative
+        capped total as the baseline; a resumed trial arrives with one and never
         re-snapshots. On overflow the active run is stopped and the spend, the
         post-stop overshoot, and the per-agent breakdown are recorded.
         """
@@ -853,7 +856,7 @@ class Trial:
         if budget is None:
             return None
         resp = self._call(api.usage(project_id))
-        total = api.usage_total(resp)
+        total = api.usage_capped(resp)
         if self._spend_baseline is None:
             self._spend_baseline = total
         spent = max(0, total - self._spend_baseline)
@@ -862,7 +865,7 @@ class Trial:
         self._call(api.stop_run(project_id, run_kind, run_id))
         # Re-read after the stop: the in-flight work may add tokens past the
         # budget, which is the recorded overshoot.
-        final_total = api.usage_total(self._call(api.usage(project_id)))
+        final_total = api.usage_capped(self._call(api.usage(project_id)))
         self._spend = SpendResult(
             spent=spent,
             overshoot=max(0, final_total - self._spend_baseline - budget),

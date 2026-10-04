@@ -29,6 +29,7 @@ def _empty(project_id: str) -> dict:
         "context_tokens": {"cached": 0, "uncached": 0},
         "generated_tokens": {"reasoning": 0, "visible": 0},
         "total_tokens": 0,
+        "capped_tokens": 0,
         "calls": 0,
         "by_agent": {},
     }
@@ -77,11 +78,12 @@ def test_record_accumulates_across_calls_for_one_agent():
     assert snap["context_tokens"] == {"cached": 0, "uncached": 13}
     assert snap["generated_tokens"] == {"reasoning": 0, "visible": 7}
     assert snap["total_tokens"] == 20
+    assert snap["capped_tokens"] == 20
     assert snap["calls"] == 2
     assert snap["by_agent"] == {
         "assigner": {"context_tokens": {"cached": 0, "uncached": 13},
                      "generated_tokens": {"reasoning": 0, "visible": 7},
-                     "total_tokens": 20, "calls": 2},
+                     "total_tokens": 20, "capped_tokens": 20, "calls": 2},
     }
 
 
@@ -101,25 +103,57 @@ def test_record_decomposes_the_two_axes_from_real_usage_metadata():
     assert snap["context_tokens"] == {"cached": 12_002_944, "uncached": 988_138}
     assert snap["generated_tokens"] == {"reasoning": 135_011, "visible": 80_810}
     assert snap["total_tokens"] == 13_206_903
+    # capped = generated + uncached = total - cached: the cache-read 92% of input
+    # is context the trial re-read, not new tokens it produced.
+    assert snap["capped_tokens"] == 1_203_959
     assert snap["calls"] == 1
     assert snap["by_agent"]["comfy-gen"] == {
         "context_tokens": {"cached": 12_002_944, "uncached": 988_138},
         "generated_tokens": {"reasoning": 135_011, "visible": 80_810},
         "total_tokens": 13_206_903,
+        "capped_tokens": 1_203_959,
         "calls": 1,
     }
 
 
-def test_cache_creation_is_folded_into_uncached_context():
-    # context.uncached = fresh input (input - cache_read) + cache_creation.
+def test_capped_tokens_is_generated_plus_uncached_and_never_exceeds_total():
+    # The cap axis: new tokens a trial produced - generated output plus the
+    # uncached (fresh) input it read - equals `total - cached` and can never
+    # exceed the raw total (cached is non-negative). A mostly-cached context must
+    # therefore NOT dominate the capped budget.
+    ledger = UsageLedger()
+    ledger.record("proj-1", "assigner", {
+        "input_tokens": 1000, "output_tokens": 200, "total_tokens": 1200,
+        "input_token_details": {"cache_read": 900},
+        "output_token_details": {"reasoning": 50},
+    })
+    snap = ledger.snapshot("proj-1")
+    capped = snap["capped_tokens"]
+    assert capped == (
+        snap["generated_tokens"]["reasoning"]
+        + snap["generated_tokens"]["visible"]
+        + snap["context_tokens"]["uncached"]
+    )
+    assert capped == snap["total_tokens"] - snap["context_tokens"]["cached"]
+    assert capped == 200 + 100
+    assert capped <= snap["total_tokens"]
+
+
+def test_cache_creation_is_already_inside_inclusive_input():
+    # On the pinned path `input_tokens` is INCLUSIVE: LiteLLM's `prompt_tokens`
+    # already folds in cache_creation and cache_read, and langchain_openai sets
+    # `input_tokens = prompt_tokens`. So `uncached = input - cache_read` is the
+    # fresh-plus-cache-creation remainder; adding `cache_creation` again would
+    # double-count it.
     ledger = UsageLedger()
     ledger.record("proj-1", "assigner", {
         "input_tokens": 100, "output_tokens": 0, "total_tokens": 100,
         "input_token_details": {"cache_read": 40, "cache_creation": 25},
     })
     snap = ledger.snapshot("proj-1")
-    assert snap["context_tokens"] == {"cached": 40, "uncached": 85}
-    assert snap["total_tokens"] == 125
+    assert snap["context_tokens"] == {"cached": 40, "uncached": 60}
+    assert snap["total_tokens"] == 100
+    assert snap["capped_tokens"] == 60
 
 
 def test_reasoning_larger_than_output_clamps_visible_to_zero():
@@ -135,15 +169,21 @@ def test_reasoning_larger_than_output_clamps_visible_to_zero():
     assert snap["total_tokens"] == 10
 
 
-def test_cache_read_larger_than_input_never_produces_negative_uncached():
+def test_cache_read_larger_than_input_is_kept_not_dropped():
+    # The pinned path never lands here (cache_read is a subset of input). If a
+    # provider EXCLUDES cache_read from input_tokens, cache_read can exceed it;
+    # the exclusive signature is detectable, so the cache_read is kept (not
+    # clamped away) and the fresh input is labelled uncached. Undercounting would
+    # let a runaway trial evade the capped budget.
     ledger = UsageLedger()
     ledger.record("proj-1", "assigner", {
         "input_tokens": 10, "output_tokens": 0, "total_tokens": 10,
         "input_token_details": {"cache_read": 50},
     })
     snap = ledger.snapshot("proj-1")
-    assert snap["context_tokens"] == {"cached": 10, "uncached": 0}
-    assert snap["total_tokens"] == 10
+    assert snap["context_tokens"] == {"cached": 50, "uncached": 10}
+    assert snap["total_tokens"] == 60
+    assert snap["capped_tokens"] == 10
 
 
 def test_two_agents_in_one_project_are_broken_out():
@@ -264,7 +304,7 @@ def test_middleware_records_usage_for_an_invoked_agent_run():
     assert snap["by_agent"] == {
         "assigner": {"context_tokens": {"cached": 0, "uncached": 11},
                      "generated_tokens": {"reasoning": 0, "visible": 7},
-                     "total_tokens": 18, "calls": 1},
+                     "total_tokens": 18, "capped_tokens": 18, "calls": 1},
     }
 
 
@@ -359,7 +399,7 @@ def test_session_turn_records_usage_even_when_observe_is_false():
     assert snap["by_agent"] == {
         "assigner": {"context_tokens": {"cached": 0, "uncached": 11},
                      "generated_tokens": {"reasoning": 0, "visible": 7},
-                     "total_tokens": 18, "calls": 1},
+                     "total_tokens": 18, "capped_tokens": 18, "calls": 1},
     }
 
 

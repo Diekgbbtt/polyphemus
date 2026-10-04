@@ -299,8 +299,21 @@ def per_job_rows(response: Mapping) -> list:
 
 
 def usage_total(response: Mapping) -> int:
-    """The project's cumulative token total; a malformed value reads as zero."""
+    """The project's cumulative raw token total (cache included); malformed -> zero."""
     value = (response or {}).get("total_tokens")
+    if isinstance(value, bool) or not isinstance(value, int):
+        return 0
+    return value
+
+
+def usage_capped(response: Mapping) -> int:
+    """The project's cumulative capped-token total - generated output plus
+    uncached input, i.e. `total_tokens - cached` (the trial budget axis).
+
+    This is the scalar the trial stop counts: cache reads are context the model
+    re-read, not new tokens, so they never consume the budget. A malformed or
+    absent value reads as zero (advisory), mirroring `usage_total`."""
+    value = (response or {}).get("capped_tokens")
     if isinstance(value, bool) or not isinstance(value, int):
         return 0
     return value

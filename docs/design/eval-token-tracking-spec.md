@@ -52,7 +52,7 @@ Tokens only. Cost is out of scope.
 
 - **New module** `src/polymerhus/app/llm/usage.py`:
   - `UsageLedger`: a process-wide, thread-safe accumulator keyed by `(project_id, agent)`.
-    Each entry holds the two-axis typed surface (`context_tokens` = `cached` + `uncached`; `generated_tokens` = `reasoning` + `visible`), the scalar `total_tokens`, and `calls` (F16, below).
+    Each entry holds the two-axis typed surface (`context_tokens` = `cached` + `uncached`; `generated_tokens` = `reasoning` + `visible`), the scalars `total_tokens` (raw) and `capped_tokens` (the budget axis), and `calls` (F16, below).
     Methods: `record(project_id, agent, usage)` (fail-open), `snapshot(project_id)` returning the project's aggregated surface plus a per-agent breakdown, and `reset()` (tests).
     Missing/None `project_id` records under an `"unscoped"` bucket that the project endpoint never returns.
   - `TokenUsageMiddleware(AgentMiddleware)`: records each model call's usage in `wrap_model_call`/`awrap_model_call` by reading `response.result`'s `usage_metadata`; `after_model` is the documented fallback if the streamed path does not surface usage in `wrap_model_call`.
@@ -64,7 +64,7 @@ Tokens only. Cost is out of scope.
   Callers that run within a project pass their `project_id` as `usage_scope`.
 - **Streamed usage**: `build_chat_model` constructs `ReasoningPreservingChatOpenAI(..., stream_usage=True)` so the default streamed session mode reports usage.
 - **App API**: `GET /projects/{project_id}/usage` in `src/polymerhus/project_management/api.py`, beside `GET /app-state`.
-  Read-only, no database access: returns `{"project_id", "context_tokens", "generated_tokens", "total_tokens", "calls", "by_agent": {agent: {...}}}`; an unknown/empty project returns zeros.
+  Read-only, no database access: returns `{"project_id", "context_tokens", "generated_tokens", "total_tokens", "capped_tokens", "calls", "by_agent": {agent: {...}}}`; an unknown/empty project returns zeros.
   It never validates project existence (no DB), so the eval queries only its own project.
 
 ### Token surface representation (F16, 2026-10-04)
@@ -76,29 +76,39 @@ The app ledger matched Langfuse within 0.2%, so this was a surface/representatio
 
 **Decided representation (operator-ratified):** a two-axis typed surface.
 
-- `context_tokens` (input) = `cached` (`input_token_details.cache_read`) + `uncached` (fresh input, i.e. `input_tokens - cache_read`, plus `input_token_details.cache_creation`).
+- `context_tokens` (input) = `cached` (`input_token_details.cache_read`) + `uncached` (fresh input, i.e. `input_tokens - cache_read`).
 - `generated_tokens` (output) = `reasoning` (`output_token_details.reasoning`) + `visible` (`output_tokens - reasoning`).
-- `total_tokens` = context + generated, kept as the trial's budget scalar.
+- `total_tokens` = context + generated, kept as the RAW scalar (cache included).
+- `capped_tokens` = `generated_tokens` + `context_tokens.uncached` = `total_tokens - cached` (the trial-budget scalar; per-agent AND project).
 
-Each sub-component pair is clamped (cache_read to input, reasoning to output) so a malformed provider payload can never yield a negative component; the pairs still sum to the model's input (plus cache_creation) and output, so `total_tokens` remains the faithful budget scalar.
+Reasoning is clamped to output so a malformed payload can never yield a negative `visible`; `uncached` is floored at zero; `cached` is never clamped below its reported value. The two axes sum to the model's raw input and output, so `total_tokens` stays the faithful raw total and `capped_tokens` (the new tokens a call produced - generated output plus fresh input) is the budget axis a mostly-cache-read context cannot inflate.
+
+**The input axis is INCLUSIVE (F16 follow-up, 2026-10-04).**
+On the pinned path `input_tokens` ALREADY CONTAINS `cache_read`: the gateway is LiteLLM, whose providers normalise to `prompt_tokens = fresh + cache_creation + cache_read` (Anthropic's transformation adds both cache counters; OpenAI's `prompt_tokens` includes `cached_tokens` by definition), and `langchain_openai` sets `input_tokens = prompt_tokens`.
+So `uncached = input_tokens - cache_read`, NOT `input_tokens` plus anything.
+The earlier exclusive reading (`input_tokens + cache_read`, on the false premise that `input_tokens` is fresh-only) double-counted cache reads - 92% of input on the cited run - which also made `compaction.py` fire its occupancy threshold at roughly half the intended occupancy.
+The compaction occupancy is therefore `input_tokens` (inclusive) plus the migrating output; `cache_read` is recorded as observability, never added again.
+`cache_creation` is NOT added either: on the inclusive path it is already inside `input_tokens`, and `langchain_openai` never emits it (the pinned provider has no such field).
 
 **Rejected alternative (do not implement):** a single `produced_tokens` decomposed into cached / not-cached.
 It is internally inconsistent because cache is an input-side property while "produced" means output, conflating context read with generated output.
 
 **Provider-normalization caveats (recorded, not hidden).**
 The axis reads use the SDK's canonical detail keys (`input_token_details.cache_read`, `input_token_details.cache_creation`, `output_token_details.reasoning`).
-On the pinned `langchain_openai` (the gateway path) `cache_creation` is never populated - OpenAI has no such field - so it is always 0 there; the read is kept for integrations that do report it.
+On the pinned `langchain_openai` (the gateway path) `cache_creation` is never populated - OpenAI has no such field - so it is always 0 there; the read is kept for integrations that do report it, but it is additive NOWHERE (inclusive input already carries it).
 `langchain_openai` prefixes those detail keys with the service tier (`priority_cache_read` / `priority_reasoning`) only when a priority/flex tier is negotiated; no request in this tree sets one, so the standard-tier key applies.
 If a tier-prefixed payload ever arrives, the axes still total correctly (an unread `cache_read` folds into `uncached`); only the cached/uncached split is coarsened. A tier-aware read is a follow-up if a live run shows it.
+A provider whose `input_tokens` EXCLUDES cache_read is NOT fully supported: the code detects only the unambiguous signature `cache_read > input_tokens`, where it keeps both (conservative, never drops cache_read); the ambiguous case undercounts the cached portion and is documented, not overclaimed.
 
 ### Eval side
 
 - **Declaration**: `TargetRun.token_budget: int | None = None`; YAML key `token_budget` added to the target-run allow-list and validated as `int | None` (bool rejected).
 - **Config**: `TrialConfig.token_budget: int | None = None`; `TrialConfig.spend_baseline: int | None = None` (carried across a resume).
 - **Record**: `TrialRecord` gains `token_budget`, `spent_tokens`, `spend_overshoot`, `spend_baseline`, `spend_by_agent`.
-- **API builders/parsers** (`eval/orchestrator/api.py`): `usage(project_id)` -> `GET /projects/{id}/usage`; `stop_run(project_id, run_kind, run_id)` generalizing the three stop paths; parsers `usage_total(response)` and `usage_by_agent(response)`.
+- **API builders/parsers** (`eval/orchestrator/api.py`): `usage(project_id)` -> `GET /projects/{id}/usage`; `stop_run(project_id, run_kind, run_id)` generalizing the three stop paths; parsers `usage_total(response)`, `usage_capped(response)`, and `usage_by_agent(response)`.
 - **Enforcement** (`eval/orchestrator/trial.py`): `Trial._check_spend(project_id, run_kind, run_id) -> SpendResult | None`.
-  It reads the usage endpoint, snapshots `spend_baseline` on the first check, and when `total - baseline >= token_budget` calls `stop_run` and returns a `SpendResult` carrying `spent`, `overshoot`, `by_agent`.
+  It reads the usage endpoint's `capped_tokens` (via `usage_capped`), snapshots `spend_baseline` on the first check, and when `capped - baseline >= token_budget` calls `stop_run` and returns a `SpendResult` carrying `spent`, `overshoot`, `by_agent`.
+  Counting `capped_tokens` (generated + uncached input), not the raw total, is what makes the budget a cap on NEW tokens; a mostly-cache-read trial no longer spends its budget on context it re-read.
   `_poll` and `_poll_hunting` call it each iteration; a spend stop ends the phase with status `stopped`.
   `_terminal_of` maps a spend stop to `stopped`.
   `_finish` persists the spend fields.
@@ -109,20 +119,23 @@ If a tier-prefixed payload ever arrives, the axes still total correctly (an unre
 
 ### Glossary (new terms)
 
-- **Token spend**: the tokens a trial's project consumed, measured as the delta between the project's cumulative token total at a poll and the trial's **spend baseline**.
-- **Token budget**: the per-`Target`-declared bound on a trial's token spend; on overflow the trial stops the active run and terminates `stopped`.
-- **Spend baseline**: the project's cumulative token total at the trial's first spend poll; persisted (`spend_baseline`) and carried across a resume.
-- **Usage ledger**: the process-wide, per-project, per-agent token accumulator the app exposes at `GET /projects/{id}/usage` as the two-axis typed surface (`context_tokens` and `generated_tokens`) plus the budget scalar `total_tokens`.
-- **Context tokens**: the input axis - `cached` (`input_token_details.cache_read`) plus `uncached` (fresh input plus `cache_creation`).
+- **Token spend**: the capped tokens a trial's project produced, measured as the delta between the project's cumulative `capped_tokens` at a poll and the trial's **spend baseline**.
+- **Token budget**: the per-`Target`-declared bound on a trial's token spend (in capped tokens); on overflow the trial stops the active run and terminates `stopped`.
+- **Spend baseline**: the project's cumulative `capped_tokens` at the trial's first spend poll; persisted (`spend_baseline`) and carried across a resume.
+- **Usage ledger**: the process-wide, per-project, per-agent token accumulator the app exposes at `GET /projects/{id}/usage` as the two-axis typed surface (`context_tokens` and `generated_tokens`) plus the raw scalar `total_tokens` and the budget scalar `capped_tokens`.
+- **Context tokens**: the input axis - `cached` (`input_token_details.cache_read`) plus `uncached` (`input_tokens - cache_read`; on the inclusive path this is the fresh input, and cache_creation is already inside it).
 - **Generated tokens**: the output axis - `reasoning` (`output_token_details.reasoning`) plus `visible` (output minus reasoning).
+- **Capped tokens**: the trial-budget axis - `generated_tokens` plus `context_tokens.uncached`, equal to `total_tokens - cached`; the new tokens a call produced, excluding cache reads.
 
 ## Testing Decisions
 
 - Test external behaviour only: the middleware's observable effect on the ledger and the API; the eval's observable effect on the record and the stop call.
-- **App unit tests**: a fake model emits fixed `usage_metadata`; assert the ledger's two axes and per-agent breakdown; assert an unscoped record is excluded from a project snapshot; assert the middleware fails open when the config is absent.
-  F16 pins the worked example (`input=12,991,082 / output=215,821 / cache_read=12,002,944 / reasoning=135,011` -> `cached=12,002,944 / uncached=988,138 / reasoning=135,011 / visible=80,810`), `cache_creation` folding into `uncached`, and the clamp guards (`cache_read > input`, `reasoning > output`) against a negative component.
-- **App API tests**: `GET /projects/{id}/usage` via `TestClient` after recording into the ledger; assert the two axes and zeros for an empty project.
+- **App unit tests**: a fake model emits fixed `usage_metadata`; assert the ledger's two axes plus `capped_tokens` and the per-agent breakdown; assert an unscoped record is excluded from a project snapshot; assert the middleware fails open when the config is absent.
+  F16 pins the worked example (`input=12,991,082 / output=215,821 / cache_read=12,002,944 / reasoning=135,011` -> `cached=12,002,944 / uncached=988,138 / reasoning=135,011 / visible=80,810`, `capped_tokens=1,203,959`), that `cache_creation` is already inside inclusive input (not added), that `capped_tokens = total - cached <= total`, and the guards (`reasoning > output` clamps `visible`; `cache_read > input` is kept as the exclusive signature, never dropped).
+  `tests/test_llm_compaction.py` pins the inclusive occupancy (`input_tokens` alone; `cache_read` observability only).
+- **App API tests**: `GET /projects/{id}/usage` via `TestClient` after recording into the ledger; assert the two axes, `capped_tokens`, and zeros for an empty project.
 - **Eval unit tests**: mirror the cap tests in `tests/eval/test_orchestrator_trial.py` with a `FakeApi` that serves a usage payload; assert the stop call, the recorded spend/overshoot/by-agent, the baseline snapshot, and resume carry-over.
+  A dedicated test serves a cache-heavy raw total far over budget while `capped_tokens` stays under, pinning that the stop counts the capped axis and not `total_tokens`.
 - **Eval setup tests**: `token_budget` parses and rejects a non-int, mirroring `hunt_config_budget`.
 - **Eval surfer tests**: a token stop is detected from the record and carries the baseline.
 - Prior art: `tests/eval/test_orchestrator_trial.py` (`SeqListFileStore`, `FakeApi`, `FakeClock`), `tests/eval/test_orchestrator_surfer.py`, `tests/eval/test_orchestrator_setup.py`, `tests/llm/test_llm_session.py`.

@@ -42,11 +42,13 @@ The next turn's input is what must fit the window; estimating additional next-tu
 ## D3 - Occupancy accounting comes from the real per-step usage, never a token table
 
 The authoritative occupancy number is the provider's own `usage_metadata`, read per model step:
-`input_tokens + input_token_details.cache_read` for the step (once caching engages, a growing slice moves to `cache_read`, so `input_tokens` alone under-counts).
-In a tool-calling turn the loop emits one usage record per assistant step; the trail's occupancy is the LAST step's `input_tokens + cache_read` (each step's input already contains the whole prior trail) plus what migrates into the next prompt.
-Tool outputs carry no usage record but occupy the next prompt, so their payload lengths count toward next-turn occupancy; reasoning sits on the output side - the normalized `output_token_details.reasoning` (the raw OpenAI chat-completions wire field is `completion_tokens_details.reasoning_tokens`) - and migrates to the input of the next turn.
+`input_tokens` for the step, which on the pinned path is INCLUSIVE of `input_token_details.cache_read` (LiteLLM's `prompt_tokens` folds in cache_read and cache_creation; `langchain_openai` sets `input_tokens = prompt_tokens`), so `cache_read` is not added again.
+In a tool-calling turn the loop emits one usage record per assistant step; the trail's occupancy is the LAST step's `input_tokens` (each step's input already contains the whole prior trail) plus what migrates into the next prompt.
+Tool outputs carry no usage record but occupy the next prompt, so their payload lengths count toward next-turn occupancy; reasoning sits on the output side (`completion_tokens_details.reasoning_tokens`) and migrates to the input of the next turn.
 Reasoning-token placement is provider-dependent (deepseek/zen report it output-side; others may report it prompt-side) - the accounting splits per the response's own details, never per a hardcoded assumption.
 `cache_read` / `cached_tokens` are recorded as observability, never a gate (D11 item 3 of the gateway ADR).
+
+**F16 follow-up (2026-10-04, the input-axis correction).** D3 originally read `input_tokens + input_token_details.cache_read`, on the false premise that `input_tokens` is fresh-only. On the pinned path it is inclusive, so the original formula double-counted cache reads - 92% of input on the cited run (`fresh 988,138 + cache_read 12,002,944 = input 12,991,082`) - and made the occupancy threshold fire at roughly half the intended occupancy. The formula is corrected to `input_tokens` alone; `cache_read` is observability. The same convention is reconciled across `docs/design/eval-token-tracking-spec.md`, `docs/design/domain-model.md`, and the compaction docstrings.
 
 **Rationale.**
 Real usage is the only provider-faithful measure for the deepseek/zen/SwissAI family; `count_tokens_approximately` (tiktoken-shaped) is a fallback for absent usage only, fail-open and logged - never the primary.

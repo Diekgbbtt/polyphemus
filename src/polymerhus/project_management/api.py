@@ -159,11 +159,12 @@ def get_app_state(project_id: str | None = None) -> dict:
 def get_project_usage(project_id: str) -> dict:
     """The project's cumulative token spend as a two-axis typed surface, read
     straight from the process-wide usage ledger: `context_tokens` (`cached` +
-    `uncached`) and `generated_tokens` (`reasoning` + `visible`), plus the budget
-    scalar `total_tokens` and a per-agent breakdown. Read-only, NO database
-    access: an unknown/empty project returns zeros/empty and is never validated
-    into a 404, so the eval harness queries only its own project and the ledger
-    is the single source."""
+    `uncached`) and `generated_tokens` (`reasoning` + `visible`), plus the raw
+    scalar `total_tokens`, the trial-budget scalar `capped_tokens` (generated +
+    uncached = `total_tokens - cached`), and a per-agent breakdown. Read-only, NO
+    database access: an unknown/empty project returns zeros/empty and is never
+    validated into a 404, so the eval harness queries only its own project and
+    the ledger is the single source."""
     from polymerhus.app.llm.usage import usage_ledger
 
     return usage_ledger().snapshot(project_id)
