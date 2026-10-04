@@ -354,3 +354,32 @@ Consequences:
 
 **Deleted artifacts**: the evaluator service from each target stack; `pentestbench-evaluator:latest` and `ghcr.io/diekgbbtt/webench:<target>-evaluator` images; the evaluator's compose references in the per-target pull/build sets; the evaluator rows in the harness design docs and the per-target research notes.
 The upstream `_common/evaluator/` source stays in the external dataset checkout (it is the benchmark's own file, used in place, never authored here); only the platform's dependency on it is removed.
+
+### D50 - A completed chain clears its active target
+*2026-10-04.* The chain state kept the last advanced target as `active_target` after the whole chain had finished.
+After an 8-target run `chain-state.yaml` still read `active_target: comfyui-1`, so the file described a target that was already done.
+The immediate harm is a re-run: the next `next_target` reads that stale target as `previous` and tears it down again, so the re-run starts on a misleading position.
+
+**Decision.** `Chain.next_target` treats the chain as terminal once `completed` covers every `TargetRun.target_id` the instance declares.
+At that transition it sets `active_target` to None and keeps `completed` unchanged.
+A partial chain keeps `active_target`, so a resume tears the deployed target down and continues.
+The terminal transition is detected from the instance's own declared target set, so the outcome does not depend on the order the agent advances the targets in.
+
+**No new state.** The model stays the two existing fields, `active_target` and `completed`.
+No new CLI verb and no explicit `finish` call is added, because the orchestrator agent drives the chain only through `next_target` (D42).
+Only the terminal value of the existing field is corrected.
+The on-disk schema is unchanged: `active_target` was already `str | None` and serializes as YAML null.
+
+**Amends D42.** D42 persisted the chain position so a later tick resumes at the right target, but it never named the terminal transition.
+D50 names it and corrects the stale value.
+
+**Teardown ownership.** The terminal transition does not tear the last target down.
+The production driver runs each target's trial after its `next_target`, so tearing the last target down at that point would destroy the target before its trial.
+The last target's stack is left for `orchestrator down`, which tears down every declared target and removes the shared front independently of the chain state.
+A re-run that does not call `down` first therefore leaves the prior run's last stack up; call `down` before re-running a completed chain.
+
+**Falsification checks.**
+- A mid-chain resume still tears the active target down and continues, because a partial chain does not clear `active_target`.
+- The chain state file has one reader, `Chain._load`; no other module reads `active_target` or `chain-state.yaml`.
+- The reset does not change the on-disk schema.
+- A completed chain's last target is still torn down by `orchestrator down`, which does not read the chain state.

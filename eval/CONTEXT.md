@@ -116,6 +116,15 @@ How a target is brought up on the eval host: `targetctl` (WebExploitBench), `com
 All three run locally on the eval server (D45); none reaches a remote host.
 _Avoid_: target kind, deployment
 
+**Chain state**:
+The per-instance durable position of the serial target chain: `{instance_id, active_target, completed}`, persisted at `<instances-root>/<instance_id>/chain-state.yaml`.
+`active_target` is the target the chain most recently advanced to; a resume uses it to tear the deployed target down first.
+`completed` lists every target the chain has advanced.
+The chain is terminal when `completed` covers every declared target.
+At that transition `active_target` is cleared to null, so a re-run never tears down a target that is already done.
+A partial chain keeps `active_target`, so a resume continues from the right target.
+_Avoid_: chain position, chain pointer
+
 **Synthetic Host**:
 The unique per-`TargetRun` hostname (`t-<short>.target`) written into the target front's `server_name` and aliased in that instance's kali `/etc/hosts`; the routing discriminator.
 The alias target is the Docker host gateway resolved to a numeric address for every lifecycle (kali is not on the host network, and `/etc/hosts` has no resolver in its address column).
