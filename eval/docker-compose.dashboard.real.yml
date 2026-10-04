@@ -12,9 +12,12 @@
 #   eval-dashboard Vite dev server for the project/eval pages, proxying
 #                  /eval-api -> eval-api (loopback ports only)
 #
-# This overlay deliberately starts no demo generator and mounts neither the
-# instance data root nor the raw `live/` mirror: the only store it reads is the
-# operator's real artifact store, bound read-only.
+# This overlay starts no demo generator and never reads the raw `live/` mirror
+# as history. It mounts two read-only sources beside the authoritative store:
+# the operator's real artifact store, and the eval instance's project data root
+# (the allowlisted Hunting/Skill tree the resolved endpoint falls back to). The
+# agent base URL is used only to read the matching instance's current L0/L1
+# graph; nothing here writes to either mount.
 
 volumes:
   # The frontend's dependencies, kept out of the bind-mounted working tree.
@@ -30,9 +33,18 @@ services:
       EVAL_ARTIFACT_STORE: /srv/eval-artifacts
       EVAL_DATASET_ID: webexploitbench
       EVAL_DATASET_NAME: WebExploitBench
+      # The resolved workspace sources. The project data root is the eval
+      # instance's raw project directory; the agent base URL is read only for
+      # the current L0/L1 graph of the matching instance. EVAL_INSTANCE_ID gates
+      # fallback: only a Trial from this instance may read these sources.
+      EVAL_PROJECT_DATA_ROOT: /srv/eval-project-data
+      EVAL_AGENT_BASE_URL: http://agent:8080
+      EVAL_INSTANCE_ID: ${EVAL_INSTANCE_ID:-eval-server-1}
     volumes:
       - ./eval:/srv/eval:ro
       - ${EVAL_ARTIFACT_STORE_HOST_PATH:-/srv/eval-artifacts}:/srv/eval-artifacts:ro
+      # The raw project data root, always read-only.
+      - ${EVAL_PROJECT_DATA_ROOT_HOST_PATH:-/opt/polymerhus-dev/eval/instances/eval-server-1/data}:/srv/eval-project-data:ro
     command:
       - python
       - -m

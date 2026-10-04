@@ -123,12 +123,18 @@ absolute paths, traversal, credentials, ground truth, or file contents.
 
 ### The `/eval` pages
 
+    /                                              the unified Target catalog
+    /targets/:targetId                             one Target and every Trial, newest first
+    /targets/:targetId/trials/:targetRunId/:trialId  one Trial workspace
+    /targets/.../:trialId/artifacts/:artifactId    one resolved artifact (semantic / raw)
+
     /eval                                          dashboard (coverage donuts)
     /eval/datasets/:datasetId                      dataset and its Target roster
-    /eval/targets/:targetId                        Target detail, grouped by TargetRun
-    /eval/trials/:targetId/:targetRunId/:trialId   trial detail
     /eval/versions/:evalSha/:stackFingerprint      results of one version + environment
     /eval/vulnerabilities                          identified vulnerabilities only
+
+The `/eval/targets/...` and `/eval/trials/...` deep links stay valid for compatibility: they
+redirect to the matching canonical `/targets/...` route, preserving the full Trial identity.
 
 `EvalDataProvider` loads `/snapshot` once and shares loading/error/data across all of them
 (no polling, no mutation). `target_id` is always visible and used as the stable identifier;
@@ -150,6 +156,34 @@ to `/eval-api`, which Vite proxies to the eval service (`EVAL_PROXY_TARGET`, def
 fixed to `webexploitbench` / “WebExploitBench” and can be overridden with `EVAL_DATASET_ID` /
 `EVAL_DATASET_NAME`.
 
+The unified workspace needs three more read-only variables beside `EVAL_ARTIFACT_STORE`:
+
+    EVAL_PROJECT_DATA_ROOT=/srv/eval-project-data      # the instance's raw Hunting/Skill tree
+    EVAL_AGENT_BASE_URL=http://agent:8080              # current L0/L1 graph only
+    EVAL_INSTANCE_ID=eval-server-1                     # gates fallback eligibility
+
+All three are read at request time. `EVAL_PROJECT_DATA_ROOT` is mounted read-only; nothing in
+the read API writes to it. `EVAL_AGENT_BASE_URL` is only ever queried for a Trial whose
+`instance_id` equals `EVAL_INSTANCE_ID`.
+
+The production overlay `eval/docker-compose.dashboard.real.yml` wires them for the eval server:
+
+    EVAL_ARTIFACT_STORE_HOST_PATH=/srv/eval-artifacts \
+    EVAL_PROJECT_DATA_ROOT_HOST_PATH=/opt/polymerhus-dev/eval/instances/eval-server-1/data \
+      docker compose -f docker-compose.yml -f docker-compose.dev.yml \
+        -f eval/docker-compose.dashboard.real.yml up --build
+
+Both mounts are read-only and only `eval-api`/`eval-dashboard` are started; the agent, Neo4j,
+Postgres, and the eval workers are untouched. On a headless server, reach the SPA through an
+SSH tunnel rather than exposing the ports:
+
+    ssh -L 5173:127.0.0.1:5173 -L 8090:127.0.0.1:8090 root@<eval-server>
+    # then open http://localhost:5173/  (the Target catalog)
+
+The expected `comfyui-1` Target lists all five of its Trials, each with its saved results,
+resolved L0/L1 graph, and Hunting/Skill inventory; the three Trials with a live project graph
+show it labelled **Saved for project**, and the two without one show `No graph available`.
+
 ### The project workspace (live + historical)
 
     /p/:projectId                                             live L0/L1 graph
@@ -159,10 +193,25 @@ fixed to `webexploitbench` / “WebExploitBench” and can be overridden with `E
     /p/:projectId/evals/.../:trialId/artifacts                grouped Hunting/Skills inventory
     /p/:projectId/evals/.../:trialId/artifacts/:artifactId    one artifact (semantic / raw)
 
-**Live vs Trial snapshot.** The live graph and the run list read the operational agent API and
-poll while the stack is up. The Trial workspace renders only the immutable graph and artifacts a
-completed Trial captured before teardown: it never falls back to, or merges with, the live graph.
-The `/eval/...` routes stay valid for compatibility and link to the matching Trial workspace.
+**Resolved data, not live data.** The Trial workspace reads one source-independent view:
+`/trials/.../resolved-graph` and `/trials/.../resolved-artifacts`. The server prefers the
+immutable graph and inventory a schema-v2 Trial captured before teardown. When a Trial has no
+capture (the schema-v1 history), it falls back to the matching eval instance's *current* L0/L1
+graph and to the allowlisted Hunting/Skill files under that instance's project data root — but
+only when the Trial's `instance_id` equals `EVAL_INSTANCE_ID`. A Trial from another instance
+never reads this server's project data. Every resolved response names its source:
+
+- **Captured with Trial** — an immutable capture written beside the Trial (`trial_snapshot`);
+- **Saved for project** — the matching instance's current project storage (`project_storage`).
+
+A raw project directory that no projected Trial proves belongs to this instance appears only
+under **Unassigned saved data** on the catalog, never attributed to an arbitrary Target. A
+graph or artifact failure degrades only its own section; the identity, verdicts, and diagnoses
+stay readable.
+
+The live graph and run list (`/p/:projectId`, `/p/:projectId/runs`) keep reading the operational
+agent API and polling while the stack is up; the Trial workspace never merges live data into a
+historical capture.
 
 `GET /health` distinguishes configuration, readability, and materialized Trials:
 
@@ -173,6 +222,9 @@ The `/eval/...` routes stay valid for compatibility and link to the matching Tri
 reports `project_artifacts_unavailable` and `project_graph_unavailable`; a schema-v2 Trial whose
 graph/artifact capture could not publish a complete snapshot reports
 `project_snapshot_unavailable`. In every case the core verdicts stay readable.
+
+When configured, `/health` also reports the optional resolved sources without degrading:
+`project_data_configured`, `project_data_readable`, and `graph_client_configured`.
 
 ### Synthetic demo store
 
@@ -197,7 +249,7 @@ still be projected. The full flow:
     # 4. run the frontend
     cd frontend && npm run dev      # VITE_EVAL_API_BASE_URL=/eval-api
     # 5. open it
-    open http://localhost:5173/eval
+    open http://localhost:5173/       # the Target catalog (`/targets/...` for one Target)
 
 The corpus exercises the whole model **and** looks like a real materialized tree: every complete
 trial's manifest is built by the production `orchestrator.store.build_run_manifest`, its
@@ -246,7 +298,8 @@ the synthetic store into the dedicated `eval-dashboard-store` volume), `eval-api
 on `0.0.0.0:8090`, mounting that store **read-only**, started only after the generator
 completes) and `eval-dashboard` (Vite on `0.0.0.0:5173`, started only after the API is healthy).
 
-Then open **http://localhost:5173/eval**. The API is directly reachable at
+Then open **http://localhost:5173/** — the unified Target catalog; each Target opens its
+workspace, and the coverage dashboard stays at `/eval`. The API is directly reachable at
 `http://localhost:8090/health` (`{"status":"ok",…}`) and `http://localhost:8090/snapshot` (the
 dataset, targets, trials, versions, coverage and identified vulnerabilities; expected summary
 `{"targets":3,"trials":6,"identified":5,"partial":2,"missed":7,"degraded":1}`).

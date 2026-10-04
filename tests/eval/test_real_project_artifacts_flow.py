@@ -298,3 +298,154 @@ def test_fixture_responses_carry_no_absolute_paths(tmp_path: Path) -> None:
         response = client.get(path)
         assert response.status_code == 200, (path, response.text)
         assert str(tmp_path) not in response.text
+
+
+# --- the resolved (unified workspace) flow --------------------------------------
+
+
+class _FakeGraphClient:
+    """The injected current-graph seam; records the project ids it was asked for."""
+
+    def __init__(self, payload: object) -> None:
+        self.payload = payload
+        self.calls: list[str] = []
+
+    def get_graph(self, project_id: str) -> object:
+        self.calls.append(project_id)
+        return self.payload
+
+
+def _resolved_client(
+    store_dir: Path,
+    data_root: Path,
+    *,
+    graph_payload: object | None = None,
+    instance_id: str = "arm-a",
+) -> TestClient:
+    fake = _FakeGraphClient(graph_payload) if graph_payload is not None else None
+    return TestClient(
+        app_module.create_app(
+            lambda: source_module.ArtifactStoreSnapshotSource(
+                store_dir,
+                project_data_root=data_root,
+                instance_id=instance_id,
+                graph_client_factory=None if fake is None else (lambda: fake),
+            )
+        )
+    )
+
+
+def _entries(inventory: dict) -> list[dict]:
+    return [
+        entry
+        for node in _walk(inventory["groups"])
+        if isinstance(node, dict) and "entries" in node
+        for entry in node["entries"]
+    ]
+
+
+def test_resolved_v1_flow_reads_current_graph_and_raw_artifacts(
+    tmp_path: Path,
+) -> None:
+    store_dir, _ = _build(tmp_path, with_graph=False)
+    data_root = tmp_path / "instances" / "arm-a" / "data"
+    client = _resolved_client(store_dir, data_root, graph_payload=_graph_payload())
+
+    snapshot = client.get("/snapshot")
+    assert snapshot.status_code == 200
+    assert str(tmp_path) not in snapshot.text
+    assert _trial(snapshot.json())["availability"] == "complete"
+
+    graph = client.get(f"/trials/{TARGET}/{RUN}/{TRIAL}/resolved-graph")
+    assert graph.status_code == 200
+    graph_body = graph.json()
+    assert graph_body["status"] == "available"
+    assert graph_body["source"] == "project_storage"
+    assert graph_body["captured_at"] is None
+    assert graph_body["graph"]["project_id"] == PROJECT_ID
+    assert str(tmp_path) not in graph.text
+
+    inventory = client.get(f"/trials/{TARGET}/{RUN}/{TRIAL}/resolved-artifacts")
+    assert inventory.status_code == 200
+    assert str(tmp_path) not in inventory.text
+    inventory_body = inventory.json()
+    assert inventory_body["status"] == "available"
+    assert inventory_body["source"] == "project_storage"
+
+    entries = _entries(inventory_body)
+    assert len(entries) == 9
+    for entry in entries:
+        artifact_id = entry["artifact_id"]
+        detail = client.get(
+            f"/trials/{TARGET}/{RUN}/{TRIAL}/resolved-artifacts/{artifact_id}"
+        )
+        assert detail.status_code == 200, (artifact_id, detail.text)
+        detail_body = detail.json()
+        assert detail_body["entry"]["artifact_id"] == artifact_id
+        assert detail_body["entry"]["sha256"] == entry["sha256"]
+        assert str(tmp_path) not in detail.text
+
+        content = client.get(
+            f"/trials/{TARGET}/{RUN}/{TRIAL}/resolved-artifacts/{artifact_id}/content"
+            f"?expected_sha256={entry['sha256']}"
+        )
+        assert content.status_code == 200, (artifact_id, content.text)
+        assert hashlib.sha256(content.content).hexdigest() == entry["sha256"]
+        assert str(tmp_path) not in content.headers.get("content-disposition", "")
+
+
+def test_resolved_capture_wins_over_changed_raw_and_live_data(tmp_path: Path) -> None:
+    store_dir, _ = _build(tmp_path, with_graph=True)
+    data_root = tmp_path / "instances" / "arm-a" / "data"
+    # The raw config changes after capture, and the injected live graph differs.
+    _write(
+        data_root,
+        "pid/hunting/orchestration/hunt_configs/consumed/cfg.yaml",
+        b"hunt_id: CHANGED\n",
+    )
+    live = {
+        "project_id": PROJECT_ID,
+        "nodes": [{"id": "live-only", "name": "live", "type": "L1Service", "properties": {}}],
+        "links": [],
+    }
+    client = _resolved_client(store_dir, data_root, graph_payload=live)
+
+    graph = client.get(f"/trials/{TARGET}/{RUN}/{TRIAL}/resolved-graph").json()
+    assert graph["status"] == "available"
+    assert graph["source"] == "trial_snapshot"
+    assert [node["id"] for node in graph["graph"]["nodes"]] == ["n1", "n2"]
+
+    inventory = client.get(f"/trials/{TARGET}/{RUN}/{TRIAL}/resolved-artifacts").json()
+    assert inventory["source"] == "trial_snapshot"
+    hunting = next(entry for entry in _entries(inventory) if entry["kind"] == "hunt_config")
+
+    detail = client.get(
+        f"/trials/{TARGET}/{RUN}/{TRIAL}/resolved-artifacts/{hunting['artifact_id']}"
+    )
+    assert detail.status_code == 200
+    assert detail.json()["preview"]["parsed"] == {"hunt_id": "H-1", "unit_id": "U-1"}
+
+    content = client.get(
+        f"/trials/{TARGET}/{RUN}/{TRIAL}/resolved-artifacts/{hunting['artifact_id']}"
+        f"/content?expected_sha256={hunting['sha256']}"
+    )
+    assert content.status_code == 200
+    assert content.content == _SOURCES[
+        "pid/hunting/orchestration/hunt_configs/consumed/cfg.yaml"
+    ]
+
+
+def test_raw_only_project_appears_only_in_unassigned_saved_data(tmp_path: Path) -> None:
+    store_dir, _ = _build(tmp_path, with_graph=False)
+    data_root = tmp_path / "instances" / "arm-a" / "data"
+    _write(data_root, "orphan-1/skills/x/SKILL.md", b"# orphan\n")
+    client = _resolved_client(store_dir, data_root, graph_payload=_graph_payload())
+
+    snapshot = client.get("/snapshot")
+    assert snapshot.status_code == 200
+    assert str(tmp_path) not in snapshot.text
+
+    rows = {row["project_id"] for row in snapshot.json()["unassigned_saved_data"]}
+    assert "orphan-1" in rows
+    # The proven Trial's project is never duplicated under unassigned data.
+    assert PROJECT_ID not in rows

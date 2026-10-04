@@ -499,3 +499,32 @@ def test_filesystem_factory_is_unavailable_without_a_store(
 
     with pytest.raises(source.SnapshotSourceUnavailable):
         source.filesystem_source().snapshot()
+
+
+# --- the production overlay -----------------------------------------------------
+
+# The dashboard overlay must wire the resolved sources the SPA reads: the
+# read-only raw project data root and the current-graph agent base URL, plus the
+# instance id that gates fallback eligibility.
+COMPOSE_OVERLAY = (
+    Path(__file__).resolve().parents[2] / "eval" / "docker-compose.dashboard.real.yml"
+)
+
+
+def test_compose_overlay_configures_the_resolved_sources_read_only() -> None:
+    overlay = yaml.safe_load(COMPOSE_OVERLAY.read_text(encoding="utf-8"))
+    api = overlay["services"]["eval-api"]
+    environment = api["environment"]
+
+    assert environment["EVAL_ARTIFACT_STORE"] == "/srv/eval-artifacts"
+    assert environment["EVAL_PROJECT_DATA_ROOT"] == "/srv/eval-project-data"
+    assert environment["EVAL_AGENT_BASE_URL"] == "http://agent:8080"
+    # The instance id may be parametrised, but it must be present.
+    assert "EVAL_INSTANCE_ID" in environment
+
+    mounts = [str(mount) for mount in api.get("volumes", [])]
+    # The raw project data root is mounted, and every mount is read-only.
+    assert any(mount.endswith(":/srv/eval-project-data:ro") for mount in mounts)
+    assert all(not mount.endswith(":rw") for mount in mounts)
+    # No destructive service management was added by the overlay.
+    assert "down" not in str(api.get("command", ""))

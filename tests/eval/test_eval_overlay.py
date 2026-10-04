@@ -319,11 +319,16 @@ def test_real_overlay_binds_the_real_store_read_only(tmp_path: Path) -> None:
     api = config["services"]["eval-api"]
     api_mounts = mounts(api)
 
-    assert set(api_mounts) == {"/srv/eval", "/srv/eval-artifacts"}
+    assert set(api_mounts) == {"/srv/eval", "/srv/eval-artifacts", "/srv/eval-project-data"}
     assert api_mounts["/srv/eval-artifacts"]["source"] == "/srv/eval-artifacts"
     assert api_mounts["/srv/eval-artifacts"]["read_only"] is True
     assert api_mounts["/srv/eval"]["read_only"] is True
+    # The resolved workspace sources are wired read-only too.
+    assert api_mounts["/srv/eval-project-data"]["read_only"] is True
     assert api["environment"]["EVAL_ARTIFACT_STORE"] == "/srv/eval-artifacts"
+    assert api["environment"]["EVAL_PROJECT_DATA_ROOT"] == "/srv/eval-project-data"
+    assert api["environment"]["EVAL_AGENT_BASE_URL"] == "http://agent:8080"
+    assert api["environment"]["EVAL_INSTANCE_ID"] == "eval-server-1"
     assert api["environment"]["PYTHONPATH"] == "/srv/eval"
     assert api["image"] == "polymerhus-agent:latest"
     assert api["healthcheck"]
@@ -331,16 +336,25 @@ def test_real_overlay_binds_the_real_store_read_only(tmp_path: Path) -> None:
     # The host path is configurable; the container path stays fixed.
     overridden = yaml.safe_load(
         real_render(
-            project, extra={"EVAL_ARTIFACT_STORE_HOST_PATH": "/tmp/real-eval-store"}
+            project,
+            extra={
+                "EVAL_ARTIFACT_STORE_HOST_PATH": "/tmp/real-eval-store",
+                "EVAL_PROJECT_DATA_ROOT_HOST_PATH": "/tmp/real-project-data",
+            },
         ).stdout
     )
     assert mounts(overridden["services"]["eval-api"])["/srv/eval-artifacts"]["source"] == (
         "/tmp/real-eval-store"
     )
+    assert mounts(overridden["services"]["eval-api"])["/srv/eval-project-data"][
+        "source"
+    ] == "/tmp/real-project-data"
 
 
 @docker
-def test_real_overlay_never_mounts_live_or_the_instance_data_root(tmp_path: Path) -> None:
+def test_real_overlay_mounts_the_project_data_read_only_and_never_live(
+    tmp_path: Path,
+) -> None:
     project = stage(tmp_path, COMPLETE_ENV, with_real=True)
 
     config = yaml.safe_load(real_render(project).stdout)
@@ -348,9 +362,11 @@ def test_real_overlay_never_mounts_live_or_the_instance_data_root(tmp_path: Path
     for service in REAL_SERVICES:
         for mount in config["services"][service]["volumes"]:
             source = mount["source"]
+            # The raw `live/` mirror is never read as history, and every mount
+            # of the instance data root is read-only.
             assert "live" not in source.split("/")
-            assert not source.endswith("/data")
-            assert "instances" not in source
+            if source.endswith("/data"):
+                assert mount["read_only"] is True
 
 
 @docker
