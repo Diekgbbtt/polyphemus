@@ -8,7 +8,9 @@ keyset drift (added / extra / required-still-missing). These tests cross the
 from __future__ import annotations
 
 import importlib.util
+import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -363,6 +365,83 @@ def test_real_example_carries_the_canonical_capability_override(preflight) -> No
     findings = preflight.capability_override_findings(example, overlay)
 
     assert findings == []
+
+
+def _source_env_override(env_path: Path) -> subprocess.CompletedProcess[str]:
+    """Source `env_path` under bash exactly as the production driver does.
+
+    The driver runs `set -a; . "$EVAL_INSTANCES_ROOT/eval-server-1/.env";
+    set +a` under `set -u`, so the file is a shell script as well as a compose
+    env_file. A JSON value that bash brace-expands is split into words, the
+    assignment degrades to a command prefix, and the variable stays UNSET in
+    the host shell; a later `set -u` reference then aborts. This helper prints
+    the sourced value so the test can assert it survived.
+    """
+    script = (
+        "set -euo pipefail; set -a; . \"$1\"; set +a; "
+        "printf '%s' \"$LLM_CAPABILITY_OVERRIDES\""
+    )
+    return subprocess.run(
+        ["bash", "-c", script, "bash", str(env_path)],
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_real_example_sources_cleanly_under_bash_set_u(
+    tmp_path: Path, preflight
+) -> None:
+    """The whole committed `.env.example` must survive `bash` brace-expansion.
+
+    This is the general falsifier for any unquoted JSON/brace value, not just
+    the A6 override: source the real file exactly as the production driver
+    does and read the override back as JSON.
+    """
+    env = tmp_path / ".env"
+    env.write_bytes((REPO_ROOT / ".env.example").read_bytes())
+
+    proc = _source_env_override(env)
+
+    assert proc.returncode == 0, proc.stderr
+    assert json.loads(proc.stdout) == preflight.REQUIRED_CAPABILITY_OVERRIDES
+
+
+def test_preflight_fill_of_the_capability_override_is_byte_exact_and_shell_safe(
+    tmp_path: Path, preflight
+) -> None:
+    """A missing override is repaired by the preflight, byte-exact and quotable.
+
+    The preflight appends the `.env.example` value verbatim, so if the example
+    carries the single-quoted spelling the appended line does too. Prove the
+    appended line is byte-exact against the canonical JSON AND that sourcing
+    the repaired `.env` under `set -u` yields that JSON.
+    """
+    example = REPO_ROOT / ".env.example"
+    key = preflight.CAPABILITY_OVERRIDES_KEY
+    env = tmp_path / ".env"
+    env.write_text(
+        "\n".join(
+            line
+            for line in example.read_text(encoding="utf-8").splitlines()
+            if not line.startswith(f"{key}=")
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    overlay = REPO_ROOT / "eval" / "docker-compose.eval.yml"
+
+    result = preflight.run(env, example, overlay)
+
+    assert key in result.added  # missing -> repaired, not failed
+    canonical = json.dumps(preflight.REQUIRED_CAPABILITY_OVERRIDES)
+    expected_line = f"{key}='{canonical}'"
+    body = env.read_text(encoding="utf-8")
+    assert f"{expected_line}\n" in body  # byte-exact: canonical JSON, single-quoted
+
+    proc = _source_env_override(env)
+
+    assert proc.returncode == 0, proc.stderr
+    assert json.loads(proc.stdout) == preflight.REQUIRED_CAPABILITY_OVERRIDES
 
 
 def test_real_example_as_key_source(tmp_path: Path, preflight) -> None:
