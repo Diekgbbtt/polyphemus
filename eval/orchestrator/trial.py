@@ -12,7 +12,6 @@ without a live stack. Import performs no I/O.
 """
 from __future__ import annotations
 
-import os
 import time
 from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime
@@ -123,29 +122,23 @@ class InstanceRepair:
         raise InstanceError(f"unsupported repair: {repair!r}")
 
 
-@dataclass(frozen=True)
-class ScaffoldSpec:
-    """How to run the deterministic L1 scaffold for a freshly-created project."""
+def _pack_skill_archive(skill_dir: str | Path, files: FileStore) -> bytes:
+    """Pack a skill bundle directory into an in-memory `.tar.gz` whose members are
+    bundle-relative (`SKILL.md`, `references/<name>`, ...), for the multipart
+    `authn-skill` upload. The store unpacks it under the canonical bundle path."""
+    import io
+    import tarfile
 
-    cwd: str
-    kb: str
-    script: str = "eval/scaffold.py"
-    pythonpath: str = "src"
-    env: Mapping[str, str] | None = None
-
-
-def plan_scaffold(spec: ScaffoldSpec, project_id: str) -> Command:
-    """`python3 eval/scaffold.py <project> --kb <kb>` with `src` and the repo root
-    (`spec.cwd`) on the path: the scaffold imports both `polymerhus` (under
-    `src`) and `db` (at the repo root, for `db.neo4j.init_schema`)."""
-    pythonpath = os.pathsep.join((spec.pythonpath, str(spec.cwd)))
-    env = {"PYTHONPATH": pythonpath, **(dict(spec.env) if spec.env else {})}
-    return Command(
-        argv=("python3", spec.script, project_id, "--kb", spec.kb),
-        cwd=spec.cwd,
-        env=env,
-        description=f"scaffold L1 for {project_id}",
-    )
+    base = Path(skill_dir)
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
+        for path in files.walk_files(base):
+            relative = Path(path).relative_to(base).as_posix()
+            payload = files.read_bytes(path)
+            info = tarfile.TarInfo(relative)
+            info.size = len(payload)
+            archive.addfile(info, io.BytesIO(payload))
+    return buffer.getvalue()
 
 
 def front_url(config: TrialConfig) -> str:
@@ -164,7 +157,10 @@ class TrialConfig:
     project_name: str | None = None
     target_seed: str | None = None
     operator_kb: str | None = None
-    auth: Mapping[str, object] | None = None
+    # The per-target data-dependency source directory (holds `auth/`, `skills/`,
+    # and `operator_kb.md`). Read at bootstrap and placed through the multipart
+    # data-dependency endpoints; None means the target has no source dir.
+    data_dir: Path | None = None
     auth_surface: bool = False
     preloaded_hunting_artifacts: PreloadedArtifacts | None = None
     hunt_config_budget: int | None = None
@@ -185,7 +181,6 @@ class TrialConfig:
     # #273). Defaults to the instance id: one instance evaluates one target run.
     target_run_id: str | None = None
     with_analysis: bool = True
-    scaffold: ScaffoldSpec | None = None
     budget_s: float = 7200.0
     poll_s: float = 15.0
     # Resume: reuse an existing project and/or drain an existing recon run.
@@ -451,24 +446,26 @@ class Trial:
                 steps.append(
                     TrialPlanStep("settings", calls=(api.put_settings(project, settings),))
                 )
-            if cfg.auth_surface:
+            if cfg.auth_surface and cfg.data_dir is not None:
                 steps.append(
                     TrialPlanStep(
-                        "auth (AuthContext)",
-                        calls=(api.seed_auth(project, overview="<overview>", accounts="<accounts>"),),
+                        "data dependencies",
+                        calls=(
+                            api.place_auth_overview(project, b"<overview>", "overview.yaml"),
+                            api.place_auth_credentials(
+                                project, b"<credentials>", "credentials.yaml"
+                            ),
+                            api.place_authn_skill(project, b"<authn-bundle>", "authn.tar.gz"),
+                        ),
+                        note=f"multipart placement from {cfg.data_dir}",
                     )
                 )
-                if (cfg.auth or {}).get("authn_skill"):
-                    steps.append(
-                        TrialPlanStep(
-                            "authn skill",
-                            files=(str(authn_skill_path(cfg.data_root, project)),),
-                        )
-                    )
-            if cfg.scaffold is not None:
+            if cfg.start_phase == "recon" and cfg.operator_kb is not None:
                 steps.append(
                     TrialPlanStep(
-                        "L1 scaffold", commands=(plan_scaffold(cfg.scaffold, project),)
+                        "L1 surface",
+                        calls=(api.place_l1(project, b"<operator_kb>", "operator_kb.md"),),
+                        note="deterministic scaffold persisted into the graph",
                     )
                 )
         if cfg.preloaded_hunting_artifacts is not None:
@@ -657,23 +654,12 @@ class Trial:
                 if settings:
                     self._call(api.put_settings(project_id, settings))
 
-            if cfg.auth_surface and cfg.auth is not None:
-                auth = dict(cfg.auth)
-                skill = auth.pop("authn_skill", None)
-                self._call(
-                    api.seed_auth(
-                        project_id,
-                        overview=auth.get("overview"),
-                        accounts=auth.get("accounts"),
-                    )
-                )
-                if skill:
-                    self._files.write_text(
-                        authn_skill_path(cfg.data_root, project_id), str(skill)
-                    )
-
-            if cfg.scaffold is not None:
-                self._run_command(plan_scaffold(cfg.scaffold, project_id))
+            # The pre-built data dependencies land by direct file write through
+            # the multipart endpoints (a MOUNT the agent finds at startup), then
+            # the L1 surface persists into the graph - no host-side scaffold.
+            self._place_data_dependencies(project_id)
+            if cfg.start_phase == "recon":
+                self._place_l1(project_id)
 
         if cfg.preloaded_hunting_artifacts is not None:
             self._place_premined(project_id)
@@ -687,6 +673,49 @@ class Trial:
             data_root=cfg.data_root,
             seeded=seeded,
         )
+
+    def _place_data_dependencies(self, project_id: str) -> None:
+        """Upload the target's pre-built auth artifacts through the multipart
+        data-dependency endpoints. Each artifact is placed only when its source
+        exists; the canonical destination and the validation are server-side."""
+        cfg = self.config
+        base = cfg.data_dir
+        if base is None:
+            return
+        overview = Path(base) / "auth" / "overview.yaml"
+        if self._files.exists(overview):
+            self._call(
+                api.place_auth_overview(
+                    project_id, self._files.read_bytes(overview), "overview.yaml"
+                )
+            )
+        credentials = Path(base) / "auth" / "credentials.yaml"
+        if self._files.exists(credentials):
+            self._call(
+                api.place_auth_credentials(
+                    project_id, self._files.read_bytes(credentials), "credentials.yaml"
+                )
+            )
+        skill_dir = Path(base) / "skills" / "authn"
+        if self._files.is_dir(skill_dir):
+            archive = _pack_skill_archive(skill_dir, self._files)
+            self._call(api.place_authn_skill(project_id, archive, "authn.tar.gz"))
+            # The recon gate reads the skill from the data root; verify it landed
+            # rather than relying on the placement call's success alone.
+            skill_path = authn_skill_path(cfg.data_root, project_id)
+            if not self._files.exists(skill_path):
+                raise TrialError(
+                    f"the authn skill did not land at {skill_path} after placement"
+                )
+
+    def _place_l1(self, project_id: str) -> None:
+        """Persist the deterministic L1 surface into the graph through the `l1`
+        endpoint, reading the operator KB from `cfg.operator_kb`."""
+        cfg = self.config
+        if not cfg.operator_kb or not self._files.exists(cfg.operator_kb):
+            return
+        filename = Path(cfg.operator_kb).name or "operator_kb.md"
+        self._call(api.place_l1(project_id, self._files.read_bytes(cfg.operator_kb), filename))
 
     def _place_premined(self, project_id: str) -> None:
         """Place pre-mined artifacts into the pipeline's own `produced/` inboxes.
@@ -943,12 +972,6 @@ class Trial:
         if self._api is None:
             raise TrialError("trial execution requires an API runner")
         return self._api(call)
-
-    def _run_command(self, command: Command) -> None:
-        if self._runner is None:
-            raise TrialError("trial execution requires a command runner")
-        require_ok(self._runner(command), command, error=TrialError)
-
 
 def _hunting_plan_step(cfg: TrialConfig, project: str) -> TrialPlanStep:
     bounds = []

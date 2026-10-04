@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import urllib.error
 import urllib.request
+import uuid
 from dataclasses import dataclass
 from typing import Callable, Mapping
 
@@ -59,23 +60,51 @@ class ApiError(RuntimeError):
 
 
 @dataclass(frozen=True)
+class ApiFile:
+    """One multipart part: the form field name, its filename, and raw bytes."""
+
+    field: str
+    filename: str
+    data: bytes
+    content_type: str = "application/octet-stream"
+
+
+@dataclass(frozen=True)
 class ApiCall:
-    """One REST call: the method, path, optional JSON body, and a label."""
+    """One REST call: method, path, and either a JSON body or a file upload."""
 
     method: str
     path: str
     body: Mapping | None = None
     description: str = ""
+    # When set, the request is `multipart/form-data` carrying this one part
+    # (the data-dependency placement endpoints); `body` is then unused.
+    file: ApiFile | None = None
 
     def display(self) -> str:
-        """A plan-mode rendering: `METHOD path json={...}`."""
+        """A plan-mode rendering: `METHOD path json={...}` or `... upload=...`."""
         rendered = f"{self.method} {self.path}"
-        if self.body is not None:
+        if self.file is not None:
+            rendered += f" upload={self.file.filename} ({len(self.file.data)} bytes)"
+        elif self.body is not None:
             rendered += f" json={json.dumps(self.body)}"
         return rendered
 
 
 ApiRunner = Callable[[ApiCall], dict]
+
+
+def _multipart(file: ApiFile) -> tuple[bytes, str]:
+    """Encode one file part as a `multipart/form-data` body + its boundary."""
+    boundary = f"----polymerhus-{uuid.uuid4().hex}"
+    head = (
+        f"--{boundary}\r\n"
+        f'Content-Disposition: form-data; name="{file.field}"; '
+        f'filename="{file.filename}"\r\n'
+        f"Content-Type: {file.content_type}\r\n\r\n"
+    ).encode()
+    tail = f"\r\n--{boundary}--\r\n".encode()
+    return head + file.data + tail, boundary
 
 
 class HttpApiRunner:
@@ -95,7 +124,10 @@ class HttpApiRunner:
         url = f"{self.base_url}{call.path}"
         data = None
         headers = {"Accept": "application/json"}
-        if call.body is not None:
+        if call.file is not None:
+            data, boundary = _multipart(call.file)
+            headers["Content-Type"] = f"multipart/form-data; boundary={boundary}"
+        elif call.body is not None:
             data = json.dumps(call.body).encode()
             headers["Content-Type"] = "application/json"
         request = urllib.request.Request(url, data=data, headers=headers, method=call.method)
@@ -131,14 +163,41 @@ def put_settings(project_id: str, recon: Mapping) -> ApiCall:
     return ApiCall("PUT", f"/projects/{project_id}/settings", {"recon": dict(recon)})
 
 
-def seed_auth(project_id: str, *, overview=None, accounts=None) -> ApiCall:
+def read_auth(project_id: str) -> ApiCall:
+    return ApiCall("GET", f"/projects/{project_id}/auth")
+
+
+# --- eval data-dependency placement (multipart direct file write) -------------
+# The four endpoints replace the retired inline `TargetConfig.auth` + `PUT /auth`
+# seed: raw file bytes (or a `.tar.gz` bundle) land at the canonical project
+# path, and the L1 surface persists into the graph. `fileName` is an optional
+# multipart attribute and never the path authority.
+
+
+def _upload(project_id: str, artifact: str, data: bytes, filename: str) -> ApiCall:
     return ApiCall(
-        "PUT", f"/projects/{project_id}/auth", {"overview": overview, "accounts": accounts}
+        "POST",
+        f"/projects/{project_id}/data-dependencies/{artifact}",
+        file=ApiFile("file", filename, data),
     )
 
 
-def read_auth(project_id: str) -> ApiCall:
-    return ApiCall("GET", f"/projects/{project_id}/auth")
+def place_auth_overview(project_id: str, data: bytes, filename: str = "overview.yaml") -> ApiCall:
+    return _upload(project_id, "auth-overview", data, filename)
+
+
+def place_auth_credentials(
+    project_id: str, data: bytes, filename: str = "credentials.yaml"
+) -> ApiCall:
+    return _upload(project_id, "auth-credentials", data, filename)
+
+
+def place_authn_skill(project_id: str, data: bytes, filename: str = "authn.tar.gz") -> ApiCall:
+    return _upload(project_id, "authn-skill", data, filename)
+
+
+def place_l1(project_id: str, operator_kb: bytes, filename: str = "operator_kb.md") -> ApiCall:
+    return _upload(project_id, "l1", operator_kb, filename)
 
 
 def bootstrap(project_id: str, operator_kb: str | None = None) -> ApiCall:

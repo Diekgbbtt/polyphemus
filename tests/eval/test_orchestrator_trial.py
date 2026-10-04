@@ -14,10 +14,9 @@ import pytest
 import yaml
 
 from orchestrator import api, routing, setup, trial
-from orchestrator.commands import Command, CommandResult
+from orchestrator.commands import Command
 from orchestrator.files import (
     FileStore,
-    authn_skill_path,
     hunt_configs_dir,
     hunter_test_specs_fault_dir,
 )
@@ -915,62 +914,101 @@ def test_budget_timeout_is_recorded_not_raised(tmp_path) -> None:
 # --- bootstrap: auth, scaffold, plan ------------------------------------------
 
 
-def test_recon_entry_seeds_auth_and_places_the_authn_skill(tmp_path) -> None:
-    api_runner = FakeApi(
+def _write_data_dependencies(tmp_path) -> Path:
+    base = tmp_path / "dd"
+    (base / "auth").mkdir(parents=True)
+    (base / "auth" / "overview.yaml").write_text("login_endpoint: https://x/login\n")
+    (base / "auth" / "credentials.yaml").write_text("accounts: {}\n")
+    skill = base / "skills" / "authn"
+    (skill / "references").mkdir(parents=True)
+    (skill / "SKILL.md").write_text(
+        "---\nname: authn\ndescription: d\nmetadata:\n  version: '1.0'\n---\n\n# authn\n"
+    )
+    (skill / "references" / "login.sh").write_text("#!/bin/sh\n")
+    (base / "operator_kb.md").write_text("# KB\n")
+    return base
+
+
+def test_recon_entry_places_the_data_dependencies_and_the_l1_surface(tmp_path) -> None:
+    base = _write_data_dependencies(tmp_path)
+    class ServerFileStore(FileStore):
+        """Models the server's write: after the authn placement, the canonical
+        skill file exists, so the trial's landing check (and the recon gate) pass."""
+
+        def __init__(self) -> None:
+            self.skill_written = False
+
+        def exists(self, path):  # type: ignore[override]
+            if Path(path).name == "SKILL.md" and self.skill_written:
+                return True
+            return super().exists(path)
+
+        def is_file(self, path):  # type: ignore[override]
+            if Path(path).name == "SKILL.md" and self.skill_written:
+                return True
+            return super().is_file(path)
+
+    files = ServerFileStore()
+
+    class ServerApi(FakeApi):
+        def __call__(self, call):
+            if call.file is not None and call.path.endswith("authn-skill"):
+                files.skill_written = True
+            return super().__call__(call)
+
+    api_runner = ServerApi(
         {
-            "PUT /projects/pid/auth": {"ok": True},
-            "GET /projects/pid/auth": {"overview": "sign in", "accounts": [{"name": "a"}]},
-            "GET /projects/pid/recon/r1": {
-                "status": "complete",
-                "per_job": [{"job": "crawl", "status": "complete"}],
-                "stats": {"analysis_drained": True},
-            },
-            "GET /projects/pid/hunting/h1": {"status": "complete"},
-            "POST /projects/pid/hunting": {"hunting_run_id": "h1"},
-            "POST /projects/pid/recon": {"run_id": "r1"},
-            "GET /projects/pid/graph": GRAPH_L1_L0,
-            "PUT /projects/pid/settings": {"ok": True},
-            "POST /projects": {"project_id": "pid"},
-            "GET /projects": PROJECTS,
+            # ordered before `_full_routes`' `GET /projects` needle, which would
+            # otherwise substring-match the auth path first
+            "GET /projects/pid/auth": {"overview": {"mechanism": "none"},
+                                       "accounts": {"a": {"origin": "operator"}}},
+            **_full_routes(),
+            "POST /projects/pid/data-dependencies/auth-overview": {"ok": True},
+            "POST /projects/pid/data-dependencies/auth-credentials": {"ok": True},
+            "POST /projects/pid/data-dependencies/authn-skill": {"ok": True},
+            "POST /projects/pid/data-dependencies/l1": {
+                "ok": True, "services_written": 3, "systems_written": 2},
         }
     )
 
     record = _trial(
         tmp_path,
         api_runner,
+        files=files,
+        data_dir=base,
         auth_surface=True,
-        auth={
-            "overview": "sign in",
-            "accounts": [{"name": "a"}],
-            "authn_skill": "# authn\n",
-        },
+        operator_kb=str(base / "operator_kb.md"),
     ).run()
 
     assert record.terminal == "complete"
-    auth_call = next(c for c in api_runner.calls if c.path.endswith("/auth"))
-    assert auth_call.body == {"overview": "sign in", "accounts": [{"name": "a"}]}
-    skill = authn_skill_path(tmp_path / "data", "pid")
-    assert skill.exists()
+    uploads = {
+        c.path.rsplit("/", 1)[-1]: c
+        for c in api_runner.calls
+        if c.file is not None
+    }
+    assert set(uploads) == {"auth-overview", "auth-credentials", "authn-skill", "l1"}
+    assert uploads["auth-overview"].file.data == b"login_endpoint: https://x/login\n"
+    assert uploads["auth-credentials"].file.data == b"accounts: {}\n"
+    assert uploads["l1"].file.data == b"# KB\n"
+    # the skill is packed as a tar.gz of bundle-relative members
+    import io
+    import tarfile
+
+    with tarfile.open(fileobj=io.BytesIO(uploads["authn-skill"].file.data), mode="r:gz") as archive:
+        assert sorted(archive.getnames()) == ["SKILL.md", "references/login.sh"]
+    # no obsolete seed_auth PUT survives
+    assert not any(c.path.endswith("/auth") and c.method == "PUT" for c in api_runner.calls)
 
 
-def test_scaffold_command_runs_through_the_command_runner(
-    tmp_path, recording_runner
-) -> None:
+def test_the_l1_endpoint_is_not_called_without_a_knowledge_base(tmp_path) -> None:
     api_runner = FakeApi(_full_routes())
-    runner = recording_runner(routes={"scaffold.py": CommandResult(0, "services: 3\n")})
-    spec = trial.ScaffoldSpec(cwd=str(tmp_path), kb="eval/kbs/t/operator_kb.md")
 
-    record = _trial(tmp_path, api_runner, runner=runner, scaffold=spec).run()
+    record = _trial(tmp_path, api_runner).run()
 
     assert record.terminal == "complete"
-    scaffold_calls = [c for c in runner.calls if "scaffold.py" in " ".join(c.argv)]
-    assert len(scaffold_calls) == 1
-    assert "pid" in " ".join(scaffold_calls[0].argv)
-    import os
-
-    assert scaffold_calls[0].env == {
-        "PYTHONPATH": os.pathsep.join(("src", str(tmp_path)))
-    }
+    assert not any(
+        c.path.endswith("/data-dependencies/l1") for c in api_runner.calls
+    )
 
 
 def test_front_url_is_the_synthetic_host(tmp_path) -> None:

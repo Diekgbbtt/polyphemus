@@ -173,6 +173,120 @@ def read_project_auth(project_id: str, *, store=None) -> dict:
     return seam.read(project_id)
 
 
+def _default_skill_store():
+    """The production skill bundle store, resolved lazily per call
+    (CODING_STANDARD §6). The module-level seam for tests."""
+    from polymerhus.app.llm.skills import SkillStore
+
+    return SkillStore()
+
+
+def _require_project(project_id: str) -> None:
+    if not pg.project_exists(project_id):
+        raise ProjectNotFound(project_id)
+
+
+def write_authn_skill(project_id: str, data: bytes, *, store=None) -> dict:
+    """Place the pre-built project `authn` skill bundle (the eval data-dependency
+    face). `data` is the uploaded archive (`.tar.gz`/`.zip`); `SKILL.md` plus its
+    canonical `references/` (or `scripts/`/`assets/`) files are written verbatim
+    through the skill store, overwriting on every call. Raises ProjectNotFound,
+    `DataDependencyError` on a malformed/traversing archive, and `ValueError`
+    (`SkillInvalidError` / `SkillTargetError`) on a malformed bundle."""
+    from polymerhus.project_management import data_dependencies as dd
+
+    _require_project(project_id)
+    files = dd.unpack_authn_archive(data)
+    seam = store if store is not None else _default_skill_store()
+    seam.replace_bundle(project_id, dd.AUTHN_SKILL, files)
+    return {"ok": True, "skill": dd.AUTHN_SKILL, "files": sorted(files)}
+
+
+def write_auth_overview(project_id: str, data: bytes, *, store=None) -> dict:
+    """Place the pre-built `auth/overview.yaml` (the eval data-dependency face).
+    The uploaded bytes decode as UTF-8 YAML to the overview mapping and validate
+    through the T1 seam before the store replaces the file wholesale
+    (non-idempotent overwrite, never a merge)."""
+    import yaml
+
+    from polymerhus.project_management import data_dependencies as dd
+
+    _require_project(project_id)
+    text = dd.decode_text(data)
+    try:
+        overview = yaml.safe_load(text)
+    except yaml.YAMLError as exc:
+        raise dd.DataDependencyError(f"overview.yaml is not valid YAML: {exc}") from exc
+    if not isinstance(overview, dict):
+        raise dd.DataDependencyError("overview.yaml must be a mapping")
+    seam = store if store is not None else _default_auth_store()
+    seam.put_overview(project_id, overview)
+    return {"ok": True, "path": "auth/overview.yaml"}
+
+
+def write_auth_credentials(project_id: str, data: bytes, *, store=None) -> dict:
+    """Place the pre-built `auth/credentials.yaml` (the eval data-dependency
+    face). The uploaded bytes decode as UTF-8 YAML to `{accounts: {...}}`, each
+    account validates through the T1 seam, and the store replaces the file
+    wholesale (non-idempotent overwrite, never a merge). A credential-identity
+    collision refuses `DuplicateIdentityError`."""
+    import yaml
+
+    from polymerhus.project_management import data_dependencies as dd
+
+    _require_project(project_id)
+    text = dd.decode_text(data)
+    try:
+        doc = yaml.safe_load(text)
+    except yaml.YAMLError as exc:
+        raise dd.DataDependencyError(
+            f"credentials.yaml is not valid YAML: {exc}") from exc
+    if not isinstance(doc, dict):
+        raise dd.DataDependencyError("credentials.yaml must be a mapping")
+    accounts = doc.get("accounts")
+    if not isinstance(accounts, dict):
+        raise dd.DataDependencyError(
+            "credentials.yaml must carry an 'accounts' mapping")
+    seam = store if store is not None else _default_auth_store()
+    seam.put_credentials(project_id, accounts)
+    return {"ok": True, "path": "auth/credentials.yaml"}
+
+
+class L1PersistBlocked(Exception):
+    """The L1 surface could not be persisted at all - the sole-writer returned
+    zero units, so the graph write path is degraded. The placement MUST fail
+    loudly; a zero-count success would let the trial run against an empty L1."""
+
+
+def write_project_l1(project_id: str, data: bytes, *, scaffold_fn=None) -> dict:
+    """Persist the pre-built L1 surface into the knowledge graph (the eval
+    data-dependency face) through the deterministic scaffold the eval already
+    uses (`analysis/scaffold.py` -> `shells_to_batch` -> `l1_curate`), never the
+    two-LLM bootstrap. The uploaded bytes are the `operator_kb.md` content.
+    Raises ProjectNotFound, `DataDependencyError` on undecodable bytes,
+    `ScaffoldError` (a ValueError) when the KB parses zero Services, and
+    `L1PersistBlocked` when the sole-writer merges nothing (a degraded graph)."""
+    from polymerhus.project_management import data_dependencies as dd
+
+    _require_project(project_id)
+    operator_kb = dd.decode_text(data)
+    if scaffold_fn is None:
+        from polymerhus.analysis.scaffold import scaffold_project
+
+        scaffold_fn = scaffold_project
+    services_written, systems_written = scaffold_fn(project_id, operator_kb)
+    if services_written == 0 and systems_written == 0:
+        raise L1PersistBlocked(
+            "the L1 sole-writer merged zero units; the graph write path is "
+            "degraded and the L1 surface did not persist"
+        )
+    return {
+        "ok": True,
+        "services_written": services_written,
+        "systems_written": systems_written,
+    }
+
+
 class BootstrapBlocked(Exception):
     """The Bootstrapper could not produce a skeleton and the analysis MUST NOT
     proceed (fail-closed, #26 Q6). Carries the reason for the operator."""

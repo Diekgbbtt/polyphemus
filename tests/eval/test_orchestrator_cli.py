@@ -168,6 +168,10 @@ def _trial_routes() -> dict:
         "PUT /projects/pid/settings": {"ok": True},
         "POST /projects": {"project_id": "pid"},
         "GET /projects": {"projects": [{"project_id": "pid"}]},
+        # The L1 surface is placed through the multipart endpoint, not scaffold.py.
+        "POST /projects/pid/data-dependencies/l1": {
+            "ok": True, "services_written": 3, "systems_written": 2,
+        },
         # The trial-wide token budget reads the usage seam each poll. A constant
         # total snapshots the baseline and never reaches the budget.
         "GET /projects/pid/usage": {"total_tokens": 1000, "by_agent": {}},
@@ -186,7 +190,7 @@ def test_trial_dry_run_prints_and_executes_nothing(sample_setup, tmp_path, capsy
     out = capsys.readouterr().out
     assert code == 0
     assert "POST /projects" in out
-    assert "scaffold.py" in out
+    assert "data-dependencies/l1" in out
     assert "poll" in out.lower()
 
 

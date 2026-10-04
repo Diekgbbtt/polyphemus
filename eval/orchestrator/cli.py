@@ -582,6 +582,16 @@ def _operator_kb(setup: EvalSetup, run: TargetRun, repo: Path) -> str | None:
     return str(default) if default.is_file() else None
 
 
+def _data_dependency_dir(run: TargetRun, kb: str | None, *, repo: Path) -> Path | None:
+    """The per-target data-dependency source dir: the target's declared
+    `data_dir`, else the operator KB's parent directory, else None."""
+    declared = run.target_config.data_dir
+    if declared:
+        candidate = Path(declared)
+        return candidate if candidate.is_absolute() else Path(repo) / candidate
+    return Path(kb).parent if kb else None
+
+
 def _resolve_data_root(args) -> Path:
     if args.data_root:
         return Path(args.data_root)
@@ -603,9 +613,10 @@ def _trial_config(args, setup: EvalSetup, config: OrchestratorConfig) -> tuple[
         compose_files=config.compose_files,
     )
     kb = _operator_kb(setup, run, args.repo)
-    scaffold = None
-    if run.start_phase == "recon" and kb:
-        scaffold = trial.ScaffoldSpec(cwd=str(paths.worktree), kb=kb)
+    # The per-target data-dependency source dir (auth artifacts, authn skill and
+    # the operator KB), declared on the target or derived from the KB's dir.
+    data_dir = _data_dependency_dir(run, kb, repo=args.repo)
+    auth_surface = data_dir is not None and (data_dir / "skills" / "authn").is_dir()
     # #273: the CLI override wins over the setup's target_run_id; the trial
     # record still defaults to the instance id when both leave it unset.
     target_run_id = args.target_run_id or run.target_run_id
@@ -646,8 +657,8 @@ def _trial_config(args, setup: EvalSetup, config: OrchestratorConfig) -> tuple[
         target_seed=run.target_config.target_seed
         or routing.synthetic_host(f"{instance.instance_id}/{run.target_id}"),
         operator_kb=kb,
-        auth=run.target_config.auth,
-        auth_surface=run.target_config.auth is not None,
+        data_dir=data_dir,
+        auth_surface=auth_surface,
         preloaded_hunting_artifacts=run.preloaded_hunting_artifacts,
         hunt_config_budget=run.hunt_config_budget,
         token_budget=run.token_budget,
@@ -655,7 +666,6 @@ def _trial_config(args, setup: EvalSetup, config: OrchestratorConfig) -> tuple[
         data_root=data_root,
         runs_root=Path(args.runs_root),
         with_analysis=True,
-        scaffold=scaffold,
         budget_s=args.budget_s,
         poll_s=args.poll_s,
         project_id=args.project_id,

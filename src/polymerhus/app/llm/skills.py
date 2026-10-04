@@ -46,6 +46,7 @@ import os
 import re
 import threading
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -865,6 +866,58 @@ class SkillStore:
                 target,
                 project_id,
                 list(source_note_ids),
+            )
+
+
+    # A canonical bundle relative path: the SKILL.md itself or one safe file
+    # stem under a canonical subdirectory. No nesting, no traversal (the
+    # `validate_path_component` rule at bundle-file granularity).
+    _BUNDLE_FILE_RE = re.compile(
+        r"(?:SKILL\.md|(?:references|scripts|assets)/[A-Za-z0-9][A-Za-z0-9._-]*)\Z"
+    )
+
+    def replace_bundle(
+        self, project_id: str, skill: str, files: Mapping[str, str]
+    ) -> None:
+        """Wholesale, non-idempotent placement of a skill bundle's files, verbatim.
+
+        The eval data-dependency face places a PRE-BUILT bundle (the authn skill
+        authored by the bootstrapper), so the store writes the caller's bytes as-is
+        - unlike `write`, it does NOT compose or bump frontmatter. `files` maps a
+        canonical bundle-relative path (`SKILL.md`, `references/<name>`,
+        `scripts/<name>`, `assets/<name>`) to its UTF-8 text; `SKILL.md` is
+        required and its frontmatter is re-validated (name == the bundle directory),
+        so a malformed bundle refuses instead of landing. Existing files not named
+        in `files` are left untouched; every named file is overwritten or created.
+        Every write is atomic under the per-project lock."""
+        if not isinstance(files, Mapping) or not files:
+            raise SkillInvalidError("skill_invalid: files must be a non-empty mapping")
+        if "SKILL.md" not in files:
+            raise SkillInvalidError("skill_invalid: the bundle must include SKILL.md")
+        for rel, text in files.items():
+            if not isinstance(rel, str) or not self._BUNDLE_FILE_RE.match(rel):
+                raise SkillTargetError(
+                    f"skill_target: {rel!r} is not a canonical bundle file path"
+                )
+            if not isinstance(text, str):
+                raise SkillInvalidError(f"skill_invalid: {rel!r} content must be text")
+        meta = _parse_frontmatter(files["SKILL.md"])
+        if meta is None:
+            raise SkillInvalidError(
+                f"skill_invalid: {skill!r} SKILL.md carries no parseable frontmatter"
+            )
+        violations = _frontmatter_violations(meta, skill=skill)
+        if violations:
+            raise SkillInvalidError("skill_invalid: " + "; ".join(violations))
+        with _lock_for(f"{self._root}::{project_id}"):
+            bundle = self._ensure_bundle(project_id, skill)
+            for rel, text in files.items():
+                self._dump_text_atomic(bundle / rel, text)
+            logger.info(
+                "skill store: placed bundle %s project=%s files=%s",
+                skill,
+                project_id,
+                sorted(files),
             )
 
 

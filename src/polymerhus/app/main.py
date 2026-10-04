@@ -24,6 +24,29 @@ app.include_router(ingestion_router)
 app.include_router(lightrag_router)
 
 
+def _custom_openapi() -> dict:
+    """The app OpenAPI, with the eval data-dependency operations stamped to the
+    exact multipart requestBody contract (`format: binary`) the generated schema
+    does not emit (it writes `contentMediaType`)."""
+    if app.openapi_schema:
+        return app.openapi_schema
+    from fastapi.openapi.utils import get_openapi
+
+    from polymerhus.project_management.data_dependencies import patch_openapi
+
+    schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        description=app.description,
+        routes=app.routes,
+    )
+    app.openapi_schema = patch_openapi(schema)
+    return app.openapi_schema
+
+
+app.openapi = _custom_openapi
+
+
 def log_tracing_status() -> None:
     """Emit a one-time, loud line about whether LLM reasoning is being traced.
 

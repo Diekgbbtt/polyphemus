@@ -80,6 +80,7 @@ _Avoid_: job, task
 The per-trial data configuration of a Target: seed, operator KB, auth context, and bootstrapped L1 surface.
 The bring-up configuration is not here: it lives in the target's `eval/targets/<dataset>/<target>.yaml` (**TargetConfiguration**).
 The seed is the bare Synthetic Host; when a setup leaves it unset the harness derives it from the target-run identity, so routing and scope cannot disagree.
+The inline `auth` mapping is RETIRED for delivery: the AuthContext, the `authn` skill, and the L1 surface are placed through the **Data-dependency placement endpoint** instead.
 _Avoid_: target definition
 
 **Target image provisioning**:
@@ -91,7 +92,15 @@ _Avoid_: prebuild, pre-pull, on-demand
 
 **AuthContext**:
 The externally bootstrapped authentication state seeded into the store (overview + accounts), plus the project `authn` skill capturing the sign-in/sign-up procedure.
+It is placed by direct file write through the **Data-dependency placement endpoint**, so the agent container finds `auth/` and `skills/authn/` mounted at startup.
 _Avoid_: auth, credentials, session
+
+**Data-dependency placement endpoint**:
+One of the four NON-IDEMPOTENT app-API write endpoints that place a target's pre-built eval artifacts by direct file write, plus the graph persistence of the L1 surface: `POST /projects/{id}/data-dependencies/{authn-skill,auth-overview,auth-credentials,l1}`.
+Each is `multipart/form-data` with one required `file` part (raw bytes; `authn-skill` carries a single `.tar.gz`/`.zip` bundle, unpacked server-side with traversal rejected); `fileName` is optional and never builds a path.
+Every call overwrites and creates the canonical file when absent.
+The auth files land through the auth and skill stores, and the L1 `operator_kb.md` persists through the deterministic `analysis/scaffold.py` path into the graph.
+_Avoid_: upload, seed, provision
 
 **Trial**:
 One attempt: a fresh target instance and a polymerhus project, from phase entry to terminal.

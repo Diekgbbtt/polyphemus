@@ -370,6 +370,45 @@ class AuthStore:
                 raise AuthInvalidError(
                     segments[0], "must address `overview` or `accounts.<name>`")
 
+    def put_overview(self, project_id: str, overview: dict) -> None:
+        """Wholesale, non-idempotent replace of `overview.yaml` (the eval
+        data-dependency placement path): the validated `overview` replaces the
+        file's whole content - never a merge - and the bucket is created on
+        first use. Validates through the T1 seam BEFORE anything lands."""
+        validated = validate_overview(overview if overview is not None else {})
+        with _lock_for(project_id):
+            self._ensure_bucket(project_id)
+            self._dump_yaml_atomic(self._overview_file(project_id), validated)
+
+    def put_credentials(self, project_id: str, accounts: dict) -> None:
+        """Wholesale, non-idempotent replace of `credentials.yaml` (the eval
+        data-dependency placement path): the validated `accounts` replace the
+        file's whole content - never a merge, never an operator/agent split -
+        and the bucket is created on first use.
+
+        Every account defaults its `origin` to `operator` (this is the operator
+        delivery face; the build artifacts already carry the stamp), is stamped
+        with one server recency value (D223-18), and re-validates through the
+        T1 seam. A credential-identity collision inside the payload refuses
+        `DuplicateIdentityError`; a shape violation refuses `AuthInvalidError`.
+        Both validate BEFORE anything lands."""
+        if not isinstance(accounts, dict):
+            raise AuthInvalidError("accounts", "must be an object")
+        validated: dict = {}
+        stamp = _utcnow_iso()
+        for name, record in accounts.items():
+            if not isinstance(record, dict):
+                raise AuthInvalidError(f"accounts.{name}", "must be an object")
+            entry = copy.deepcopy(record)
+            entry.setdefault("origin", "operator")
+            _stamp_recency(entry, stamp)
+            validated[name] = validate_account(entry)
+            _assert_identity_is_new(validated, name, validated[name])
+        with _lock_for(project_id):
+            self._ensure_bucket(project_id)
+            self._dump_yaml_atomic(
+                self._credentials_file(project_id), {"accounts": validated})
+
     def replace_operator_state(
         self,
         project_id: str,

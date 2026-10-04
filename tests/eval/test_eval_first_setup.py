@@ -229,7 +229,7 @@ def test_dry_run_covers_the_cycle_in_order(tmp_path, capsys) -> None:
         ("trial pipeline", run_trial, (
             "POST /projects",
             f'"target_seed": "{synth}"',  # derived, not invented
-            "scaffold.py",
+            "data-dependencies/l1",  # the deterministic L1 surface endpoint
             "recon entry + launch",
             "hunting entry + launch",
         )),

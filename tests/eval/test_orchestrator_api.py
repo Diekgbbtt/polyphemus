@@ -21,10 +21,21 @@ def test_call_builders_encode_the_ph_py_semantics() -> None:
     assert api.put_settings("p", {"target_seed": "t.test"}) == api.ApiCall(
         "PUT", "/projects/p/settings", {"recon": {"target_seed": "t.test"}}
     )
-    assert api.seed_auth("p", overview="sign in", accounts=[{"name": "a"}]) == api.ApiCall(
-        "PUT", "/projects/p/auth", {"overview": "sign in", "accounts": [{"name": "a"}]}
-    )
     assert api.read_auth("p") == api.ApiCall("GET", "/projects/p/auth")
+    # The data-dependency placement builders are multipart file uploads.
+    overview = api.place_auth_overview("p", b"overview: 1")
+    assert overview.method == "POST"
+    assert overview.path == "/projects/p/data-dependencies/auth-overview"
+    assert overview.file == api.ApiFile("file", "overview.yaml", b"overview: 1")
+    creds = api.place_auth_credentials("p", b"accounts: {}")
+    assert creds.path == "/projects/p/data-dependencies/auth-credentials"
+    assert creds.file.filename == "credentials.yaml"
+    skill = api.place_authn_skill("p", b"\x1f\x8b-bundle")
+    assert skill.path == "/projects/p/data-dependencies/authn-skill"
+    assert skill.file.filename == "authn.tar.gz"
+    l1 = api.place_l1("p", b"# kb\n")
+    assert l1.path == "/projects/p/data-dependencies/l1"
+    assert l1.file == api.ApiFile("file", "operator_kb.md", b"# kb\n")
     assert api.launch_recon("p", with_analysis=True, jobs=["crawl"]) == api.ApiCall(
         "POST", "/projects/p/recon", {"with_analysis": True, "jobs": ["crawl"]}
     )
@@ -69,6 +80,9 @@ def test_call_display_renders_method_path_and_body() -> None:
     call = api.create_project("eval-t1")
     assert call.display() == 'POST /projects json={"name": "eval-t1"}'
     assert api.recon_status("p", "r1").display() == "GET /projects/p/recon/r1"
+    assert api.place_l1("p", b"# kb\n").display() == (
+        "POST /projects/p/data-dependencies/l1 upload=operator_kb.md (5 bytes)"
+    )
 
 
 def test_response_parsers_read_the_wire_shapes() -> None:
@@ -182,6 +196,27 @@ def test_http_runner_posts_json_and_decodes_the_body(monkeypatch) -> None:
     assert seen["url"] == "http://api.test:8080/projects"
     assert seen["method"] == "POST"
     assert json.loads(seen["body"]) == {"name": "eval-t1"}
+
+
+def test_http_runner_posts_multipart_for_a_file_call(monkeypatch) -> None:
+    seen = {}
+
+    def fake_urlopen(request, timeout=None):
+        seen["ctype"] = request.get_header("Content-type")
+        seen["body"] = request.data
+        return _FakeResponse(b'{"ok": true}')
+
+    monkeypatch.setattr(api.urllib.request, "urlopen", fake_urlopen)
+    runner = api.HttpApiRunner("http://api.test:8080")
+
+    result = runner(api.place_auth_overview("p", b"login: 1"))
+
+    assert result == {"ok": True}
+    assert seen["ctype"].startswith("multipart/form-data; boundary=")
+    body = seen["body"]
+    assert b'name="file"' in body
+    assert b'filename="overview.yaml"' in body
+    assert b"login: 1" in body
 
 
 def test_http_runner_raises_api_error_on_http_failure(monkeypatch) -> None:

@@ -20,6 +20,10 @@ Single source of truth for the agent's HTTP surface. Everything a client can cal
 | `POST` | `/projects/{project_id}/analysis/{run_id}/stop` | none | - | 200 graceful-stop ack | 503 runtime inactive | `stop_analysis_run` |
 | `GET` | `/projects/{project_id}/analysis/{run_id}` | none | - | 200 analysis-run status | 404 unknown run | `get_analysis_status` |
 | `POST` | `/projects/{project_id}/bootstrap` | none | `{operator_kb?}` | 200 skeleton counts | 503 fail-closed block | `bootstrap_project` |
+| `POST` | `/projects/{project_id}/data-dependencies/authn-skill` | none | `multipart/form-data {fileName?, file}` (file = `.tar.gz`/`.zip` bundle) | 200 `{ok, skill, files}` | 404 unknown project; 400 malformed archive / bad bundle; 422 missing file | `place_authn_skill` |
+| `POST` | `/projects/{project_id}/data-dependencies/auth-overview` | none | `multipart/form-data {fileName?, file}` (overview.yaml) | 200 `{ok, path}` | 404 unknown project; 400 malformed upload / shape violation; 422 missing file | `place_auth_overview` |
+| `POST` | `/projects/{project_id}/data-dependencies/auth-credentials` | none | `multipart/form-data {fileName?, file}` (credentials.yaml) | 200 `{ok, path}` | 404 unknown project; 400 malformed upload / shape violation; 500 `duplicate_identity`; 422 missing file | `place_auth_credentials` |
+| `POST` | `/projects/{project_id}/data-dependencies/l1` | none | `multipart/form-data {fileName?, file}` (operator_kb.md) | 200 `{ok, services_written, systems_written}` | 404 unknown project; 400 malformed upload / broken KB; 503 `l1_persist_blocked`; 422 missing file | `place_l1_surface` |
 | `POST` | `/projects/{project_id}/hunting` | none | `HuntingLaunch {candidates?}` | 201 `{hunting_run_id}` | 404 unknown project; 503 control plane not landed | `launch_hunting` |
 | `POST` | `/projects/{project_id}/hunting/{hunting_run_id}/stop` | none | - | 200 `{hunting_run_id, stopping}` | 404 unknown run | `stop_hunting_run` |
 | `GET` | `/projects/{project_id}/hunting/{hunting_run_id}` | none | - | 200 `{status}` | 404 unknown run | `get_hunting_status` |
@@ -36,6 +40,16 @@ The runtime manager owns the lifecycle verbs (`pause` / `resume` / `drain`) as i
 | `POST` | `/projects/{project_id}/modules/{module}/drain` | - | 200 `{module, state, flush: {committed, archived, dropped, dropped_thread_ids, cause}}` | 404 unknown module; 503 runtime inactive |
 
 `module` is one of `recon` / `analysis` / `hunting`. Pause of a stopped module and resume of a non-paused module are safe no-ops that still report the current state (the runtime verb's own semantics). Drain settles the module to `stopped` (archive via flush hook) and is the only lifecycle verb that changes run state durably. As of #211 (TD-4) the drain response carries the module's `flush` result - `{committed, archived, dropped, dropped_thread_ids, cause}` - the machine-readable teardown-assert surface: a dropped flush is loud (`dropped > 0` names the thread ids), never a silent fail-open.
+
+## Eval data-dependency placement surface
+
+The four `POST /projects/{id}/data-dependencies/...` endpoints place a target's pre-built eval artifacts by direct file write into the app-owned data root, so the agent container finds them by mount at startup.
+They are NON-IDEMPOTENT: each call always overwrites and creates the canonical project-scoped file when absent.
+
+Each is `multipart/form-data` with one required `file` part (`type: string, format: binary`) carrying the raw bytes; `fileName` is an optional attribute and is NEVER used to build a path.
+`authn-skill`'s `file` is a single `.tar.gz`/`.zip` archive unpacked into the canonical bundle (traversal / absolute / symlink members refused); the other three take one file's bytes.
+The auth files validate through `records.validate_overview` / `validate_account` and the `authn` bundle re-validates its `SKILL.md` frontmatter; the L1 `operator_kb.md` persists through the deterministic `analysis/scaffold.py` path into the graph (no LLM call), failing closed with 503 `l1_persist_blocked` when the sole-writer merges nothing.
+These endpoints supersede the inline `TargetConfig.auth` and `PUT /projects/{id}/auth` delivery for the eval (`docs/design/eval-data-dependency-placement-decisions.md`); the `PUT`/`GET /auth` faces remain for the frontend.
 
 ## Seam notes
 

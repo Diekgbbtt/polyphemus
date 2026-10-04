@@ -16,14 +16,26 @@ import logging
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from polymerhus.app.auth.store import AuthInvalidError, DuplicateIdentityError
+from polymerhus.analysis.scaffold import ScaffoldError
+from polymerhus.app.auth.store import (
+    AuthInvalidError,
+    DuplicateIdentityError,
+    StoreUnavailableError as AuthStoreUnavailableError,
+)
+from polymerhus.app.llm.skills import (
+    SkillInvalidError,
+    SkillTargetError,
+    StoreUnavailableError as SkillStoreUnavailableError,
+)
 from polymerhus.project_management import repository
+from polymerhus.project_management.data_dependencies import DataDependencyError
 from polymerhus.project_management.repository import (
     BootstrapBlocked,
+    L1PersistBlocked,
     ProjectNotFound,
     RunNotFound,
 )
@@ -85,6 +97,12 @@ class BootstrapLaunch(BaseModel):
     bootstrap from the KB already stored in the project's settings."""
 
     operator_kb: str | None = None
+
+
+# The eval data-dependency placement endpoints are multipart/form-data: the
+# `file` part (required, binary) carries the raw bytes; `fileName` is an
+# optional multipart attribute carried for a natural content-type and NEVER used
+# to build a path (the canonical destination is hardcoded server-side).
 
 
 @router.post("/projects")
@@ -198,6 +216,127 @@ def read_auth(project_id: str) -> dict:
         return repository.read_project_auth(project_id)
     except ProjectNotFound:
         raise HTTPException(status_code=404, detail="unknown project")
+
+
+def _data_dependency_result(callable_, project_id: str, data: bytes):
+    """Shared error mapping for the four data-dependency placement endpoints:
+    unknown project -> 404; a malformed upload or a shape refusal -> 400 with the
+    reported code; a credential-identity collision -> 500 `duplicate_identity`
+    (the seed-face contract); an unavailable store -> 500. Every refusal lands
+    nothing (the stores validate before writing)."""
+    try:
+        return callable_(project_id, data)
+    except ProjectNotFound:
+        raise HTTPException(status_code=404, detail="unknown project")
+    except DataDependencyError as exc:
+        return JSONResponse(
+            status_code=400,
+            content={"ok": False, "error": exc.code, "detail": exc.detail},
+        )
+    except DuplicateIdentityError as exc:
+        return JSONResponse(
+            status_code=500,
+            content={"ok": False, "error": "duplicate_identity", "detail": str(exc)},
+        )
+    except AuthInvalidError as exc:
+        return JSONResponse(
+            status_code=400,
+            content={"ok": False, "error": "auth_invalid", "detail": str(exc)},
+        )
+    except SkillInvalidError as exc:
+        return JSONResponse(
+            status_code=400,
+            content={"ok": False, "error": "skill_invalid", "detail": str(exc)},
+        )
+    except SkillTargetError as exc:
+        return JSONResponse(
+            status_code=400,
+            content={"ok": False, "error": "skill_target", "detail": str(exc)},
+        )
+    except (AuthStoreUnavailableError, SkillStoreUnavailableError) as exc:
+        return JSONResponse(
+            status_code=500,
+            content={"ok": False, "error": "store_unavailable", "detail": str(exc)},
+        )
+    except ScaffoldError as exc:
+        return JSONResponse(
+            status_code=400,
+            content={"ok": False, "error": "scaffold_invalid", "detail": str(exc)},
+        )
+    except L1PersistBlocked as exc:
+        return JSONResponse(
+            status_code=503,
+            content={"ok": False, "error": "l1_persist_blocked", "detail": str(exc)},
+        )
+
+
+@router.post("/projects/{project_id}/data-dependencies/authn-skill")
+def place_authn_skill(
+    project_id: str,
+    fileName: str = Form(""),
+    file: UploadFile = File(...),
+):
+    """Place the pre-built project `authn` skill bundle by direct file write.
+
+    `file` is a single `.tar.gz`/`.zip` archive of the bundle; it is unpacked
+    into the canonical `<data_root>/<project_id>/skills/authn/` (SKILL.md plus
+    its canonical references) - the exact path `SkillStore` resolves and the eval
+    trial reads (`eval/orchestrator/files.py:authn_skill_path`). Traversal,
+    absolute, and symlink members are refused. Non-idempotent: a re-post
+    overwrites. `fileName` is ignored for path building. Replaces the obsolete
+    inline-`TargetConfig.auth` delivery."""
+    return _data_dependency_result(
+        repository.write_authn_skill, project_id, file.file.read()
+    )
+
+
+@router.post("/projects/{project_id}/data-dependencies/auth-overview")
+def place_auth_overview(
+    project_id: str,
+    fileName: str = Form(""),
+    file: UploadFile = File(...),
+):
+    """Place the pre-built `auth/overview.yaml` (the AuthContext header) by direct
+    file write. Validates through `records.validate_overview` and replaces the
+    file wholesale - never a merge. `fileName` is ignored for path building.
+    Replaces the obsolete `PUT /auth` seed of the operator section."""
+    return _data_dependency_result(
+        repository.write_auth_overview, project_id, file.file.read()
+    )
+
+
+@router.post("/projects/{project_id}/data-dependencies/auth-credentials")
+def place_auth_credentials(
+    project_id: str,
+    fileName: str = Form(""),
+    file: UploadFile = File(...),
+):
+    """Place the pre-built `auth/credentials.yaml` (the AuthContext accounts) by
+    direct file write. Each account validates through `records.validate_account`
+    and the file is replaced wholesale - never a merge. `fileName` is ignored for
+    path building. Replaces the obsolete `PUT /auth` seed of the operator
+    accounts."""
+    return _data_dependency_result(
+        repository.write_auth_credentials, project_id, file.file.read()
+    )
+
+
+@router.post("/projects/{project_id}/data-dependencies/l1")
+def place_l1_surface(
+    project_id: str,
+    fileName: str = Form(""),
+    file: UploadFile = File(...),
+):
+    """Persist the pre-built L1 surface directly into the knowledge graph.
+
+    `file` carries the deterministic `operator_kb.md` content; it is projected
+    through the SAME scaffold the eval already runs (`analysis/scaffold.py` ->
+    `shells_to_batch` -> `l1_curate`), so no LLM call runs and no file is
+    written. `fileName` is ignored for path building. Replaces the obsolete
+    trial-side scaffold step."""
+    return _data_dependency_result(
+        repository.write_project_l1, project_id, file.file.read()
+    )
 
 
 # Strong references to in-flight pipeline tasks: the module runtime manager's

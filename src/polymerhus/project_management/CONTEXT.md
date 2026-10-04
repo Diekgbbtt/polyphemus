@@ -29,6 +29,12 @@ Since #223 (D223-4) it is retired with its full footprint: the value-object modu
 Operator seeding of the shared auth store remains the operator's face over that state: `PUT /projects/{project_id}/auth` (`seed_auth` -> `seed_project_auth` -> `AuthStore.replace_operator_state`, present-section replace, never 409) and `GET /projects/{project_id}/auth` (`read_auth` -> `read_project_auth`).
 A seed whose credential username already belongs to another account is refused with the `duplicate_identity` envelope and HTTP 500 (D220-11): the repair is a role on the existing account, never a second account.
 
+**Data-dependency placement surface** (eval):
+The four NON-IDEMPOTENT direct-write endpoints the eval harness uses to place a target's pre-built artifacts, so the agent container finds them by MOUNT at startup: `POST /projects/{id}/data-dependencies/authn-skill` (the project `authn` bundle), `.../auth-overview` and `.../auth-credentials` (the AuthContext), and `.../l1` (the L1 surface).
+Each is `multipart/form-data` with one required `file` part carrying the raw bytes (`authn-skill` takes a single `.tar.gz`/`.zip` bundle, unpacked server-side with traversal rejected; `fileName` is optional and never builds a path), and each call overwrites, creating the canonical file when absent.
+The auth/skill contents land through `AuthStore.put_overview`/`put_credentials` and `SkillStore.replace_bundle` (validated before writing); the L1 content is the structured `operator_kb.md` persisted through the deterministic `analysis/scaffold.py` path (`l1_curate`), never the two-LLM bootstrap.
+These endpoints SUPERSEDE the inline `TargetConfig.auth` mapping and the `PUT /auth` seed for eval placement (see `docs/design/eval-data-dependency-placement-decisions.md`); the `PUT`/`GET /auth` faces remain for the frontend.
+
 **Run-request**:
 An operator's request to recon a project - `POST /projects/{id}/recon`.
 It is guarded before launch (the project must exist, any job subset must be valid, and a `target_domain` must be configured - a targetless run is refused so the pipeline never silently scans the example.com placeholder) and then scheduled non-blocking, returning a `run_id` immediately.
