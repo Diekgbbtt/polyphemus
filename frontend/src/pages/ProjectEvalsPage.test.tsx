@@ -309,9 +309,10 @@ test("list to detail navigation keeps one /snapshot request", async () => {
     expect(screen.getByRole("heading", { name: /Trial trial-1/ })).toBeDefined(),
   )
   expect(calls.filter((url) => url.endsWith("/snapshot"))).toHaveLength(1)
-  // The workspace loads its historical (eval) graph, never the live one.
+  // The workspace reads the resolved endpoints, never the live agent graph.
   expect(calls.some((url) => url.includes("/projects/"))).toBe(false)
-  expect(calls.some((url) => url.includes("artifacts"))).toBe(false)
+  expect(calls.some((url) => url.includes("/resolved-graph"))).toBe(true)
+  expect(calls.some((url) => url.includes("/resolved-artifacts"))).toBe(true)
 })
 
 test("a direct refresh of the detail URL resolves the trial", async () => {
@@ -352,7 +353,7 @@ test("a trial from another project is not leaked", async () => {
 
 // --- cross links -----------------------------------------------------------------
 
-test("the project trial links to the existing eval Trial route", async () => {
+test("the project Trial URL renders the shared Trial workspace", async () => {
   stubFetch(
     snapshot([
       trial({
@@ -372,15 +373,12 @@ test("the project trial links to the existing eval Trial route", async () => {
   goto("/p/proj-a/evals/t/r/trial-1")
 
   await waitFor(() =>
-    expect(screen.getByRole("link", { name: "Open eval Trial" })).toBeDefined(),
+    expect(screen.getByRole("heading", { name: /^Trial trial-1$/ })).toBeDefined(),
   )
-  expect(
-    screen.getByRole("link", { name: "Open eval Trial" }).getAttribute("href"),
-  ).toBe("/eval/trials/t/r/trial-1")
-  // Placeholder sections exist; no artifact links yet.
-  expect(screen.getByRole("heading", { name: "Graph" })).toBeDefined()
-  expect(screen.getByRole("heading", { name: "Hunting" })).toBeDefined()
-  expect(screen.getByRole("heading", { name: "Skills" })).toBeDefined()
+  const section = screen.getByRole("region", { name: "Trial trial-1" })
+  expect(within(section).getByRole("heading", { name: "Results" })).toBeDefined()
+  expect(within(section).getByRole("heading", { name: "Graph" })).toBeDefined()
+  expect(within(section).getByRole("heading", { name: "Materialized artifacts" })).toBeDefined()
 })
 
 test("the workspace accepts the stopped-at-cap schema-v2 contract", async () => {
@@ -438,9 +436,11 @@ test("the workspace accepts the stopped-at-cap schema-v2 contract", async () => 
   )
   expect(screen.getByText("stopped")).toBeDefined()
   expect(screen.getByText("0 identified / 0 partial / 3 missed")).toBeDefined()
-  expect(screen.getByText("21 artifacts")).toBeDefined()
-  expect(screen.getByText("0 artifacts")).toBeDefined()
-  expect(screen.getByText(/available · 3 nodes \/ 2 links/)).toBeDefined()
+  // Every missed verdict keeps its own result row.
+  expect(document.querySelectorAll(".trial-result-row")).toHaveLength(3)
+  // The resolved sections still mount; the stub answers them as unavailable.
+  expect(screen.getByRole("region", { name: "Trial results" })).toBeDefined()
+  expect(screen.getByRole("heading", { name: "Graph" })).toBeDefined()
 })
 
 test("the workspace hides unavailable graph and artifact sections", async () => {

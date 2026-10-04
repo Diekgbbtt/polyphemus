@@ -689,6 +689,22 @@
   color: #9aa0a6;
 }
 
+/* One Trial inside a Target workspace: a bordered block so several Trials on
+   one page stay visually separate while each section scrolls on its own. */
+.trial-section {
+  margin: 1.25rem 0;
+  padding: 1rem 1.25rem;
+  border: 1px solid #23272d;
+  border-radius: 10px;
+  background: #0f1216;
+}
+
+.trial-phases {
+  margin: 0.35rem 0 0;
+  color: #e8eaed;
+  font-size: 0.9rem;
+}
+
 .project-artifacts-group h3,
 .project-artifacts-group h4,
 .project-artifacts-group h5 {

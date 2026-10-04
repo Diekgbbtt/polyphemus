@@ -1,37 +1,37 @@
-import { Link, useParams } from "react-router-dom"
+import { useParams } from "react-router-dom"
 import { EvalBreadcrumbs, evalPaths } from "./EvalBreadcrumbs"
 import { useEvalData } from "./EvalDataProvider"
+import { TrialSection } from "./TrialSection"
 import type { EvalTrial } from "./types"
-import { targetPaths } from "../projectPaths"
 
-// Stable per-TargetRun anchor; TrialPage links its TargetRun crumb here, so the
-// two must keep the same shape.
-function targetRunAnchor(targetRunId: string): string {
+// Stable per-TargetRun anchor; the Trial breadcrumb links its TargetRun crumb
+// here, so the two must keep the same shape.
+export function targetRunAnchor(targetRunId: string): string {
   return `targetrun-${targetRunId.replace(/[^A-Za-z0-9_-]/g, "-")}`
 }
 
-function verdictCounts(trial: EvalTrial) {
+// Newest first by materialization time, then a stable lexical tie-break on the
+// full identity so two Trials that share a trial id never collapse or reorder
+// unpredictably.
+export function compareTargetTrials(a: EvalTrial, b: EvalTrial): number {
+  const left = a.copied_at ?? ""
+  const right = b.copied_at ?? ""
+  if (left !== right) return left < right ? 1 : -1
+  for (const key of ["target_id", "target_run_id", "trial_id"] as const) {
+    if (a[key] !== b[key]) return a[key] < b[key] ? -1 : 1
+  }
+  return 0
+}
+
+function verdictCounts(trial: EvalTrial): { identified: number; partial: number; missed: number } {
   const counts = { identified: 0, partial: 0, missed: 0 }
   for (const verdict of trial.verdicts) counts[verdict.identified] += 1
   return counts
 }
 
-function phasesLabel(trial: EvalTrial): string {
-  const names = trial.phases.map((phase) => phase.phase).filter(Boolean)
-  return names.length > 0 ? names.join(" → ") : "—"
-}
-
-function groupByTargetRun(trials: EvalTrial[]): [string, EvalTrial[]][] {
-  const groups = new Map<string, EvalTrial[]>()
-  for (const trial of trials) {
-    const run = groups.get(trial.target_run_id) ?? []
-    run.push(trial)
-    groups.set(trial.target_run_id, run)
-  }
-  return [...groups.entries()].sort(([a], [b]) => a.localeCompare(b))
-}
-
-// One Target ("machine"): its verdict summary, its TargetRuns, and every Trial.
+// One Target ("machine"): its verdict summary, then every TargetRun with its
+// Trials. Each Trial is the full continuous workspace, so the Target page is
+// the whole read-only history, not just an index of links.
 export function TargetPage() {
   const { targetId = "" } = useParams()
   const { snapshot } = useEvalData()
@@ -52,8 +52,20 @@ export function TargetPage() {
     )
   }
 
-  const trials = snapshot.trials.filter((trial) => trial.target_id === targetId)
+  const trials = snapshot.trials
+    .filter((trial) => trial.target_id === targetId)
+    .slice()
+    .sort(compareTargetTrials)
   const degraded = trials.filter((trial) => trial.availability === "degraded").length
+
+  // Group by TargetRun for the anchors, but order both the groups and the
+  // Trials inside them newest first.
+  const runs = new Map<string, EvalTrial[]>()
+  for (const trial of trials) {
+    const run = runs.get(trial.target_run_id) ?? []
+    run.push(trial)
+    runs.set(trial.target_run_id, run)
+  }
 
   return (
     <div className="eval-page">
@@ -82,7 +94,7 @@ export function TargetPage() {
         </div>
       </dl>
 
-      {groupByTargetRun(trials).map(([targetRunId, runTrials]) => (
+      {[...runs.entries()].map(([targetRunId, runTrials]) => (
         <section
           key={targetRunId}
           id={targetRunAnchor(targetRunId)}
@@ -92,53 +104,13 @@ export function TargetPage() {
           <h2>
             TargetRun <span className="eval-ref">{targetRunId}</span>
           </h2>
-          <table className="eval-table">
-            <thead>
-              <tr>
-                <th scope="col">Trial</th>
-                <th scope="col">Terminal</th>
-                <th scope="col">Phases</th>
-                <th scope="col">Identified</th>
-                <th scope="col">Partial</th>
-                <th scope="col">Missed</th>
-                <th scope="col">eval_sha</th>
-                <th scope="col">Fingerprint</th>
-                <th scope="col">Availability</th>
-              </tr>
-            </thead>
-            <tbody>
-              {runTrials.map((trial) => {
-                const counts = verdictCounts(trial)
-                return (
-                  <tr key={trial.trial_id}>
-                    <th scope="row">
-                      <Link to={targetPaths.trial(trial.target_id, trial.target_run_id, trial.trial_id)}>
-                        {trial.trial_id}
-                      </Link>
-                    </th>
-                    <td>{trial.terminal ?? "—"}</td>
-                    <td>{phasesLabel(trial)}</td>
-                    <td>{counts.identified}</td>
-                    <td>{counts.partial}</td>
-                    <td>{counts.missed}</td>
-                    <td>
-                      {trial.eval_sha ? (
-                        <Link to={evalPaths.version(trial.eval_sha, trial.stack_fingerprint ?? "")}>
-                          {trial.eval_sha}
-                        </Link>
-                      ) : (
-                        "—"
-                      )}
-                    </td>
-                    <td>{trial.stack_fingerprint ?? "—"}</td>
-                    <td>{trial.availability}</td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
+          {runTrials.map((trial) => (
+            <TrialSection key={trial.trial_id} trial={trial} />
+          ))}
         </section>
       ))}
     </div>
   )
 }
+
+export type { EvalTrial }

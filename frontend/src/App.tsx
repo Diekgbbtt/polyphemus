@@ -63,6 +63,12 @@ export function AppRoutes() {
           path=":targetId/trials/:targetRunId/:trialId"
           element={<TrialPage />}
         />
+        {/* The resolved artifact detail of one Trial, reached from the
+            canonical workspace. It is never scoped by project id. */}
+        <Route
+          path=":targetId/trials/:targetRunId/:trialId/artifacts/:artifactId"
+          element={<ProjectArtifactPage variant="target" />}
+        />
       </Route>
       <Route path="/eval" element={<EvalPage />}>
         <Route index element={<EvalDashboard />} />

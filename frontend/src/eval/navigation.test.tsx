@@ -451,10 +451,10 @@ test("dataset to Target to Trial navigation works", async () => {
     expect(screen.getByRole("heading", { name: "comfyui-1" })).toBeDefined(),
   )
 
-  fireEvent.click(screen.getAllByRole("link", { name: "trial-1" })[0])
-  await waitFor(() =>
-    expect(screen.getByRole("heading", { name: /trial-1/ })).toBeDefined(),
-  )
+  // The Target workspace embeds each Trial in full, so its section is already
+  // on the page rather than behind a second click.
+  const section = screen.getAllByRole("region", { name: "Trial trial-1" })[0]
+  expect(within(section).getByRole("heading", { name: /^Trial trial-1$/ })).toBeDefined()
 })
 
 test("breadcrumbs link back through the hierarchy", async () => {
@@ -919,21 +919,69 @@ test("legacy eval trial links redirect with the full identity", async () => {
   expect(screen.getByRole("heading", { name: /trial-1/ })).toBeDefined()
 })
 
-// --- reciprocal link to the project workspace ----------------------------------
+// --- legacy project Trial URLs and the resolved artifact entry points -----------
 
-test("the eval Trial links to the project workspace with the full identity", async () => {
-  stubFetch(SNAPSHOT)
-  goto("/eval/trials/comfyui-1/run-demo-a/trial-1")
+const RESOLVED_GRAPH_UNAVAILABLE = {
+  status: "unavailable",
+  source: "project_storage",
+  project_id: "proj-comfyui-1",
+  captured_at: null,
+  fallback_reason: null,
+  reason: "project_graph_empty",
+}
+
+const RESOLVED_INVENTORY = {
+  status: "available",
+  source: "project_storage",
+  project_id: "proj-comfyui-1",
+  fallback_reason: null,
+  groups: [
+    {
+      key: "hunt-configs",
+      label: "Hunt configs",
+      category: "hunting",
+      entries: [
+        {
+          artifact_id: "h1",
+          category: "hunting",
+          kind: "hunt_config",
+          relative_path: "hunting/hunt-1.yaml",
+          media_type: "application/yaml",
+          size_bytes: 3,
+          sha256: "sha-h1",
+          representation: "yaml",
+        },
+      ],
+      children: [],
+    },
+    {
+      key: "skills",
+      label: "Procedure",
+      category: "skill",
+      entries: [],
+      children: [],
+    },
+  ],
+}
+
+test("the legacy project Trial URL renders the same Trial section", async () => {
+  routeFetch([
+    ["/snapshot", () => json(SNAPSHOT)],
+    ["/resolved-graph", () => json(RESOLVED_GRAPH_UNAVAILABLE)],
+    ["/resolved-artifacts", () => json(RESOLVED_INVENTORY)],
+  ])
+  goto("/p/proj-comfyui-1/evals/comfyui-1/run-demo-a/trial-1")
 
   await waitFor(() =>
-    expect(screen.getByRole("link", { name: "Open project workspace" })).toBeDefined(),
+    expect(screen.getByRole("heading", { name: /^Trial trial-1$/ })).toBeDefined(),
   )
-  expect(
-    screen.getByRole("link", { name: "Open project workspace" }).getAttribute("href"),
-  ).toBe("/p/proj-comfyui-1/evals/comfyui-1/run-demo-a/trial-1")
+  const section = screen.getByRole("region", { name: "Trial trial-1" })
+  expect(within(section).getByText("proj-comfyui-1")).toBeDefined()
+  expect(within(section).getByRole("heading", { name: "Results" })).toBeDefined()
+  expect(within(section).getByRole("heading", { name: "Graph" })).toBeDefined()
 })
 
-test("the eval Trial shows no project link when project_id is null", async () => {
+test("a Trial with no project id never leaks a host path", async () => {
   stubFetch(SNAPSHOT)
   // The degraded trial in the corpus carries no project_id.
   goto("/eval/trials/white-jotter-1/run-demo-a/trial-1")
@@ -941,35 +989,52 @@ test("the eval Trial shows no project link when project_id is null", async () =>
   await waitFor(() =>
     expect(screen.getByRole("heading", { name: /Trial trial-1/ })).toBeDefined(),
   )
-  expect(screen.queryByRole("link", { name: "Open project workspace" })).toBeNull()
+  const text = document.body.textContent ?? ""
+  expect(text).not.toContain("/opt")
+  expect(text).not.toContain("/srv")
 })
 
-// --- the project-artifact entry points ------------------------------------------
-
-test("the workspace Trial links Hunting and Skills to the artifact index", async () => {
-  stubFetch(SNAPSHOT)
+test("the Trial workspace renders the resolved Hunting and Skills artifacts", async () => {
+  routeFetch([
+    ["/snapshot", () => json(SNAPSHOT)],
+    ["/resolved-graph", () => json(RESOLVED_GRAPH_UNAVAILABLE)],
+    ["/resolved-artifacts", () => json(RESOLVED_INVENTORY)],
+  ])
   goto("/p/proj-comfyui-1/evals/comfyui-1/run-demo-a/trial-1")
 
   await waitFor(() =>
-    expect(screen.getByRole("link", { name: "Hunting" })).toBeDefined(),
+    expect(screen.getByRole("heading", { name: "Hunting" })).toBeDefined(),
   )
-  expect(screen.getByRole("link", { name: "Hunting" }).getAttribute("href")).toBe(
-    "/p/proj-comfyui-1/evals/comfyui-1/run-demo-a/trial-1/artifacts#hunting",
-  )
-  expect(screen.getByRole("link", { name: "Skills" }).getAttribute("href")).toBe(
-    "/p/proj-comfyui-1/evals/comfyui-1/run-demo-a/trial-1/artifacts#skills",
-  )
+  expect(screen.getByRole("heading", { name: "Skills" })).toBeDefined()
+  expect(screen.getByText("Saved for project")).toBeDefined()
+  expect(
+    screen.getByRole("link", { name: "hunting/hunt-1.yaml" }).getAttribute("href"),
+  ).toBe("/targets/comfyui-1/trials/run-demo-a/trial-1/artifacts/h1")
 })
 
-test("the eval Trial links its project artifacts summary", async () => {
-  stubFetch(SNAPSHOT)
-  goto("/eval/trials/comfyui-1/run-demo-a/trial-1")
+test("an artifact entry opens its canonical resolved detail", async () => {
+  routeFetch([
+    ["/snapshot", () => json(SNAPSHOT)],
+    ["/resolved-graph", () => json(RESOLVED_GRAPH_UNAVAILABLE)],
+    ["/resolved-artifacts/h1", () => json({
+      entry: RESOLVED_INVENTORY.groups[0].entries[0],
+      preview: { text: "a: 1", parsed: { a: 1 }, truncated: false, parse_error: null },
+      content_url: "/ignored-by-the-client",
+    })],
+    ["/resolved-artifacts", () => json(RESOLVED_INVENTORY)],
+  ])
+  goto("/targets/comfyui-1/trials/run-demo-a/trial-1")
 
   await waitFor(() =>
-    expect(screen.getByRole("link", { name: /hunting/i })).toBeDefined(),
+    expect(screen.getByRole("link", { name: "hunting/hunt-1.yaml" })).toBeDefined(),
   )
-  expect(screen.getByRole("link", { name: /hunting/i }).getAttribute("href")).toBe(
-    "/eval/trials/comfyui-1/run-demo-a/trial-1/project-artifacts",
+  fireEvent.click(screen.getByRole("link", { name: "hunting/hunt-1.yaml" }))
+
+  await waitFor(() =>
+    expect(screen.getByRole("heading", { name: "Artifact" })).toBeDefined(),
+  )
+  expect(screen.getByRole("link", { name: "Download raw" }).getAttribute("href")).toBe(
+    "/trials/comfyui-1/run-demo-a/trial-1/resolved-artifacts/h1/content?expected_sha256=sha-h1",
   )
 })
 

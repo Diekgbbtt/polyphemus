@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react"
 import { Link, useParams } from "react-router-dom"
-import { projectPaths } from "../projectPaths"
+import { projectPaths, targetPaths } from "../projectPaths"
 import { getResolvedArtifact, resolvedArtifactContentUrl } from "./client"
 import { EvalBreadcrumbs, evalPaths } from "./EvalBreadcrumbs"
 import { useEvalData } from "./EvalDataProvider"
@@ -71,7 +71,7 @@ function Metadata({ detail }: { detail: ResolvedArtifactDetail }) {
 export function ProjectArtifactPage({
   variant = "workspace",
 }: {
-  variant?: "workspace" | "eval"
+  variant?: "workspace" | "eval" | "target"
 }) {
   const {
     projectId = "",
@@ -94,7 +94,7 @@ export function ProjectArtifactPage({
   const notFound =
     snapshot !== null &&
     (!trial ||
-      !trial.project_id ||
+      (variant !== "target" && !trial.project_id) ||
       (variant === "workspace" && trial.project_id !== projectId))
   const resolvable = !!trial && !notFound
 
@@ -160,7 +160,26 @@ export function ProjectArtifactPage({
 
   return (
     <div className="eval-page project-artifact">
-      {variant === "eval" ? (
+      {variant === "target" ? (
+        <nav className="eval-crumbs" aria-label="Breadcrumb">
+          <ol>
+            <li>
+              <Link
+                to={targetPaths.trial(
+                  trial.target_id,
+                  trial.target_run_id,
+                  trial.trial_id,
+                )}
+              >
+                Trial
+              </Link>
+            </li>
+            <li>
+              <span aria-current="page">{label}</span>
+            </li>
+          </ol>
+        </nav>
+      ) : variant === "eval" ? (
         <EvalBreadcrumbs
           items={[
             { label: "Eval", to: evalPaths.dashboard },
