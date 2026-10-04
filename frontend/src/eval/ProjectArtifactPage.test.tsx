@@ -365,7 +365,7 @@ test("binary shows download-only metadata and no inline active element", () => {
 test("the workspace detail route renders metadata and rebuilds the raw URL", async () => {
   const { calls } = routeFetch([
     ["/snapshot", () => json(evalSnapshot([evalTrial()]))],
-    ["/artifacts/a1", () => json(detail())],
+    ["/resolved-artifacts/a1", () => json(detail())],
   ])
   goto("/p/p1/evals/t/r/trial-1/artifacts/a1")
 
@@ -377,7 +377,7 @@ test("the workspace detail route renders metadata and rebuilds the raw URL", asy
   expect(screen.getByText("a1")).toBeDefined()
   expect(screen.getByText("sha-1")).toBeDefined()
   expect(screen.getByRole("link", { name: "Download raw" }).getAttribute("href")).toBe(
-    "/trials/t/r/trial-1/artifacts/a1/content",
+    "/trials/t/r/trial-1/resolved-artifacts/a1/content?expected_sha256=sha-1",
   )
   // Client-built navigation, not the server's content_url.
   expect(
@@ -392,7 +392,7 @@ test("the workspace detail route renders metadata and rebuilds the raw URL", asy
 test("the compatible eval detail route renders eval breadcrumbs", async () => {
   routeFetch([
     ["/snapshot", () => json(evalSnapshot([evalTrial()]))],
-    ["/artifacts/a1", () => json(detail())],
+    ["/resolved-artifacts/a1", () => json(detail())],
   ])
   goto("/eval/trials/t/r/trial-1/project-artifacts/a1")
 
@@ -413,7 +413,7 @@ test("the compatible eval detail route renders eval breadcrumbs", async () => {
 test("an unknown trial shows not-found with no detail request", async () => {
   const { calls } = routeFetch([
     ["/snapshot", () => json(evalSnapshot([evalTrial()]))],
-    ["/artifacts/a1", () => json(detail())],
+    ["/resolved-artifacts/a1", () => json(detail())],
   ])
   goto("/p/p1/evals/t/r/missing/artifacts/a1")
 
@@ -424,7 +424,7 @@ test("an unknown trial shows not-found with no detail request", async () => {
 test("a cross-project mismatch shows not-found with no detail request", async () => {
   const { calls } = routeFetch([
     ["/snapshot", () => json(evalSnapshot([evalTrial({ project_id: "p2" })]))],
-    ["/artifacts/a1", () => json(detail())],
+    ["/resolved-artifacts/a1", () => json(detail())],
   ])
   goto("/p/p1/evals/t/r/trial-1/artifacts/a1")
 
@@ -433,8 +433,8 @@ test("a cross-project mismatch shows not-found with no detail request", async ()
   expect(calls.some((url) => url.includes("/artifacts/a1"))).toBe(false)
 })
 
-test("an unavailable summary shows a notice with no detail request", async () => {
-  const { calls } = routeFetch([
+test("an unavailable resolved detail shows a notice", async () => {
+  routeFetch([
     [
       "/snapshot",
       () =>
@@ -446,18 +446,22 @@ test("an unavailable summary shows a notice with no detail request", async () =>
           ]),
         ),
     ],
-    ["/artifacts/a1", () => json(detail())],
+    [
+      "/resolved-artifacts/a1",
+      () => json({ detail: "artifact_unavailable" }, 409),
+    ],
   ])
   goto("/p/p1/evals/t/r/trial-1/artifacts/a1")
 
-  await waitFor(() => expect(screen.getByText(/not available/i)).toBeDefined())
-  expect(calls.some((url) => url.includes("/artifacts/a1"))).toBe(false)
+  await waitFor(() => expect(screen.getByRole("alert")).toBeDefined())
+  expect(screen.getByRole("alert").textContent).toMatch(/artifact_unavailable/)
+  expect(screen.queryByText("Download raw")).toBeNull()
 })
 
 test("a detail artifact id mismatch is a safe error", async () => {
   routeFetch([
     ["/snapshot", () => json(evalSnapshot([evalTrial()]))],
-    ["/artifacts/a1", () => json(detail({ entry: entry({ artifact_id: "other" }) }))],
+    ["/resolved-artifacts/a1", () => json(detail({ entry: entry({ artifact_id: "other" }) }))],
   ])
   goto("/p/p1/evals/t/r/trial-1/artifacts/a1")
 
@@ -468,7 +472,7 @@ test("a detail artifact id mismatch is a safe error", async () => {
 test("shows loading and API error states", async () => {
   routeFetch([
     ["/snapshot", () => json(evalSnapshot([evalTrial()]))],
-    ["/artifacts/a1", () => json({ detail: "artifact_missing" }, 409)],
+    ["/resolved-artifacts/a1", () => json({ detail: "artifact_missing" }, 409)],
   ])
   goto("/p/p1/evals/t/r/trial-1/artifacts/a1")
 
@@ -483,8 +487,8 @@ test("aborts on artifact route change and ignores a late response", async () => 
   })
   const { signals } = routeFetch([
     ["/snapshot", () => json(evalSnapshot([evalTrial()]))],
-    ["/artifacts/a1", () => first],
-    ["/artifacts/a2", () => json(detail({ entry: entry({ artifact_id: "a2", relative_path: "second.yaml" }) }))],
+    ["/resolved-artifacts/a1", () => first],
+    ["/resolved-artifacts/a2", () => json(detail({ entry: entry({ artifact_id: "a2", relative_path: "second.yaml" }) }))],
   ])
 
   function Harness() {

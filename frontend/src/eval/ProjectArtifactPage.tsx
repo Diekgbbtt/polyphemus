@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react"
 import { Link, useParams } from "react-router-dom"
 import { projectPaths } from "../projectPaths"
-import { getProjectArtifact, projectArtifactContentUrl } from "./client"
+import { getResolvedArtifact, resolvedArtifactContentUrl } from "./client"
 import { EvalBreadcrumbs, evalPaths } from "./EvalBreadcrumbs"
 import { useEvalData } from "./EvalDataProvider"
 import { ProjectArtifactRenderer } from "./ProjectArtifactRenderers"
 import { kindLabel, representationLabel } from "./projectArtifacts"
-import type { EvalTrial, ProjectArtifactDetail } from "./types"
+import type { EvalTrial, ResolvedArtifactDetail } from "./types"
 
 function isAbortError(error: unknown): boolean {
   return (
@@ -27,7 +27,7 @@ function Identity({ trial }: { trial: EvalTrial }) {
   )
 }
 
-function Metadata({ detail }: { detail: ProjectArtifactDetail }) {
+function Metadata({ detail }: { detail: ResolvedArtifactDetail }) {
   const entry = detail.entry
   return (
     <dl className="artifact-metadata">
@@ -63,8 +63,11 @@ function Metadata({ detail }: { detail: ProjectArtifactDetail }) {
   )
 }
 
-// The immutable artifact detail: metadata plus one safe representation, served
-// through either the project workspace or the compatible eval route.
+// One artifact of one Trial: metadata plus a single safe representation. It
+// reads the resolved detail contract, so the same view serves a captured
+// schema-v2 artifact and one read from the allowlisted raw project directory.
+// The download URL is rebuilt from the detail's own SHA-256, which binds the
+// bytes to the metadata the reader just saw.
 export function ProjectArtifactPage({
   variant = "workspace",
 }: {
@@ -78,7 +81,7 @@ export function ProjectArtifactPage({
     artifactId = "",
   } = useParams()
   const { snapshot } = useEvalData()
-  const [detail, setDetail] = useState<ProjectArtifactDetail | null>(null)
+  const [detail, setDetail] = useState<ResolvedArtifactDetail | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -93,10 +96,10 @@ export function ProjectArtifactPage({
     (!trial ||
       !trial.project_id ||
       (variant === "workspace" && trial.project_id !== projectId))
-  const available = !!trial && !notFound && trial.artifact_summary.status === "available"
+  const resolvable = !!trial && !notFound
 
   useEffect(() => {
-    if (!available) {
+    if (!resolvable) {
       setDetail(null)
       setError(null)
       setLoading(false)
@@ -107,7 +110,7 @@ export function ProjectArtifactPage({
     setDetail(null)
     setError(null)
     setLoading(true)
-    getProjectArtifact(targetId, targetRunId, trialId, artifactId, controller.signal)
+    getResolvedArtifact(targetId, targetRunId, trialId, artifactId, controller.signal)
       .then((response) => {
         if (!active) return
         if (response.entry.artifact_id !== artifactId) {
@@ -127,7 +130,7 @@ export function ProjectArtifactPage({
       active = false
       controller.abort()
     }
-  }, [available, targetId, targetRunId, trialId, artifactId, trial?.project_id])
+  }, [resolvable, targetId, targetRunId, trialId, artifactId, trial?.project_id])
 
   if (!snapshot) return null
   if (notFound || !trial) {
@@ -145,8 +148,14 @@ export function ProjectArtifactPage({
       ? evalPaths.projectArtifacts(trial.target_id, trial.target_run_id, trial.trial_id)
       : projectPaths.artifacts(projectId, trial.target_id, trial.target_run_id, trial.trial_id)
   // A raw/download URL is always rebuilt here; the server's own field is not
-  // trusted for the link.
-  const contentUrl = projectArtifactContentUrl(targetId, targetRunId, trialId, artifactId)
+  // trusted for the link. The digest binds the bytes to this detail.
+  const contentUrl = resolvedArtifactContentUrl(
+    targetId,
+    targetRunId,
+    trialId,
+    artifactId,
+    detail?.entry.sha256 ?? "",
+  )
   const label = detail?.entry.relative_path ?? artifactId
 
   return (
@@ -193,29 +202,21 @@ export function ProjectArtifactPage({
         <Identity trial={trial} />
       </header>
 
-      {trial.artifact_summary.status !== "available" ? (
-        <p className="eval-notice">
-          Project artifacts not available for this Trial ({trial.artifact_summary.status}).
+      {loading && <p className="eval-status">Loading artifact…</p>}
+      {error && (
+        <p className="eval-error" role="alert">
+          Artifact load error: {error}
         </p>
-      ) : (
+      )}
+      {detail && (
         <>
-          {loading && <p className="eval-status">Loading artifact…</p>}
-          {error && (
-            <p className="eval-error" role="alert">
-              Artifact load error: {error}
-            </p>
-          )}
-          {detail && (
-            <>
-              <Metadata detail={detail} />
-              <p className="artifact-actions">
-                <a className="artifact-download" href={contentUrl} download>
-                  Download raw
-                </a>
-              </p>
-              <ProjectArtifactRenderer detail={detail} />
-            </>
-          )}
+          <Metadata detail={detail} />
+          <p className="artifact-actions">
+            <a className="artifact-download" href={contentUrl} download>
+              Download raw
+            </a>
+          </p>
+          <ProjectArtifactRenderer detail={detail} />
         </>
       )}
     </div>

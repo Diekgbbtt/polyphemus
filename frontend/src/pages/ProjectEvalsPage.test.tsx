@@ -470,8 +470,16 @@ test("the workspace hides unavailable graph and artifact sections", async () => 
         ),
     ],
     [
-      "/projects/proj-a/graph",
-      () => json({ project_id: "proj-a", nodes: [], links: [] }),
+      "/resolved-graph",
+      () =>
+        json({
+          status: "unavailable",
+          source: "project_storage",
+          project_id: "proj-a",
+          captured_at: null,
+          fallback_reason: null,
+          reason: "project_graph_empty",
+        }),
     ],
   ])
   goto("/p/proj-a/evals/t/r/trial-1")
@@ -486,11 +494,12 @@ test("the workspace hides unavailable graph and artifact sections", async () => 
   expect(screen.queryByText(/nodes \/ /)).toBeNull()
   expect(screen.queryByRole("heading", { name: "Hunting" })).toBeNull()
   expect(screen.queryByRole("heading", { name: "Skills" })).toBeNull()
-  // The historical graph is unavailable, so the current live one is offered.
+  // The resolved graph is unavailable: the section says so and the browser
+  // never falls back to the live agent graph.
   await waitFor(() =>
     expect(screen.getByText("No graph available")).toBeDefined(),
   )
-  expect(calls.some((url) => url.includes("/projects/proj-a/graph"))).toBe(true)
+  expect(calls.some((url) => url.includes("/projects/proj-a/graph"))).toBe(false)
 })
 
 // --- the project shell -----------------------------------------------------------

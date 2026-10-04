@@ -671,6 +671,24 @@
   margin: 0.75rem 0 0 0.75rem;
 }
 
+/* The resolved inventory embedded in a Trial workspace. The source note is
+   informational: it names where the data came from, not a schema version. */
+.resolved-artifacts {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.resolved-artifacts .artifact-source {
+  margin: 0;
+  color: #9aa0a6;
+  font-size: 0.85rem;
+  letter-spacing: 0.02em;
+}
+
+.resolved-artifacts .eval-unavailable {
+  color: #9aa0a6;
+}
+
 .project-artifacts-group h3,
 .project-artifacts-group h4,
 .project-artifacts-group h5 {

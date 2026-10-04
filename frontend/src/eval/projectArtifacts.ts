@@ -6,7 +6,19 @@ import type {
   ProjectArtifactGroup,
   ProjectArtifactKind,
   ProjectArtifactRepresentation,
+  ResolvedSource,
 } from "./types"
+
+// The two sources a resolved inventory or graph reports. The browser labels
+// them; it never chooses between them and never shows a schema-version term.
+const SOURCE_LABELS: Record<ResolvedSource, string> = {
+  trial_snapshot: "Captured with Trial",
+  project_storage: "Saved for project",
+}
+
+export function sourceLabel(source: ResolvedSource): string {
+  return SOURCE_LABELS[source] ?? String(source)
+}
 
 export interface ProjectArtifactSection {
   category: ProjectArtifactCategory

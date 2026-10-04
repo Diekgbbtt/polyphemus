@@ -16,7 +16,7 @@ import type {
   EvalTrial,
   ProjectArtifactEntry,
   ProjectArtifactGroup,
-  ProjectArtifactInventory,
+  ResolvedArtifactInventory,
 } from "./types"
 
 // --- fixtures ------------------------------------------------------------------
@@ -63,8 +63,10 @@ const SKILL_ENTRY = entry({
   representation: "markdown",
 })
 
-const INVENTORY: ProjectArtifactInventory = {
+const INVENTORY: ResolvedArtifactInventory = {
   status: "available",
+  source: "project_storage",
+  fallback_reason: null,
   project_id: "p1",
   groups: [
     group({
@@ -131,8 +133,10 @@ function evalTrial(overrides: Partial<EvalTrial> = {}): EvalTrial {
 
 // The inventory shape the read API serves for one stopped-at-cap schema-v2
 // Trial: hunting groups only, grouped exactly as `_build_groups` would.
-const REAL_SHAPE_INVENTORY: ProjectArtifactInventory = {
+const REAL_SHAPE_INVENTORY: ResolvedArtifactInventory = {
   status: "available",
+  source: "project_storage",
+  fallback_reason: null,
   project_id: "p1",
   groups: [
     group({
@@ -253,7 +257,7 @@ afterEach(() => {
 // --- pure helpers ---------------------------------------------------------------
 
 test("artifactSections split hunting and skill preserving server order", () => {
-  const reordered: ProjectArtifactInventory = {
+  const reordered: ResolvedArtifactInventory = {
     ...INVENTORY,
     groups: [INVENTORY.groups[1], INVENTORY.groups[0]],
   }
@@ -287,7 +291,7 @@ test("kind and representation labels are readable with fallbacks", () => {
 test("renders the grouped inventory with entry metadata and links", async () => {
   const { calls } = routeFetch([
     ["/snapshot", () => json(evalSnapshot([evalTrial()]))],
-    ["/artifacts", () => json(INVENTORY)],
+    ["/resolved-artifacts", () => json(INVENTORY)],
   ])
   goto("/p/p1/evals/t/r/trial-1/artifacts")
 
@@ -314,7 +318,7 @@ test("renders the grouped inventory with entry metadata and links", async () => 
   expect(skillLink.getAttribute("href")).toBe("/p/p1/evals/t/r/trial-1/artifacts/s1")
 
   // Only the list request: no detail and no content fetch here.
-  expect(calls.filter((url) => url.includes("/artifacts"))).toHaveLength(1)
+  expect(calls.filter((url) => url.includes("/resolved-artifacts"))).toHaveLength(1)
   expect(calls.some((url) => url.includes("/content"))).toBe(false)
 })
 
@@ -331,7 +335,7 @@ test("renders a hunting-only real-shape inventory without skill artifacts", asyn
           ]),
         ),
     ],
-    ["/artifacts", () => json(REAL_SHAPE_INVENTORY)],
+    ["/resolved-artifacts", () => json(REAL_SHAPE_INVENTORY)],
   ])
   goto("/p/p1/evals/t/r/trial-1/artifacts")
 
@@ -357,13 +361,13 @@ test("renders a hunting-only real-shape inventory without skill artifacts", asyn
 
   // No skill artifact is catalogued: the section is present but empty.
   expect(screen.getByRole("heading", { name: "Skills", level: 2 })).toBeDefined()
-  expect(screen.getByText("No artifacts in this section.")).toBeDefined()
+  expect(screen.getByText("No Skill artifacts")).toBeDefined()
 })
 
 test("the workspace page keeps the trial identity visible", async () => {
   routeFetch([
     ["/snapshot", () => json(evalSnapshot([evalTrial()]))],
-    ["/artifacts", () => json(INVENTORY)],
+    ["/resolved-artifacts", () => json(INVENTORY)],
   ])
   goto("/p/p1/evals/t/r/trial-1/artifacts")
 
@@ -374,20 +378,21 @@ test("the workspace page keeps the trial identity visible", async () => {
   expect(screen.getAllByText(/trial-1/).length).toBeGreaterThan(0)
 })
 
-test("shows an empty state for an available but empty inventory", async () => {
+test("a readable but empty inventory shows both explicit empty states", async () => {
   routeFetch([
     ["/snapshot", () => json(evalSnapshot([evalTrial()]))],
-    ["/artifacts", () => json({ ...INVENTORY, groups: [] })],
+    ["/resolved-artifacts", () => json({ ...INVENTORY, groups: [] })],
   ])
   goto("/p/p1/evals/t/r/trial-1/artifacts")
 
-  await waitFor(() => expect(screen.getByText(/No artifacts/i)).toBeDefined())
+  await waitFor(() => expect(screen.getByText("No Hunting artifacts")).toBeDefined())
+  expect(screen.getByText("No Skill artifacts")).toBeDefined()
 })
 
 test("shows a loading state", async () => {
   routeFetch([
     ["/snapshot", () => json(evalSnapshot([evalTrial()]))],
-    ["/artifacts", () => new Promise<Response>(() => {})],
+    ["/resolved-artifacts", () => new Promise<Response>(() => {})],
   ])
   goto("/p/p1/evals/t/r/trial-1/artifacts")
 
@@ -399,7 +404,7 @@ test("shows a loading state", async () => {
 test("shows the API failure detail", async () => {
   routeFetch([
     ["/snapshot", () => json(evalSnapshot([evalTrial()]))],
-    ["/artifacts", () => json({ detail: "artifact_unsafe" }, 409)],
+    ["/resolved-artifacts", () => json({ detail: "artifact_unsafe" }, 409)],
   ])
   goto("/p/p1/evals/t/r/trial-1/artifacts")
 
@@ -407,23 +412,36 @@ test("shows the API failure detail", async () => {
   expect(screen.getByRole("alert").textContent).toMatch(/artifact_unsafe/)
 })
 
-test("an unavailable summary shows a historic notice with no request", async () => {
-  const { calls } = routeFetch([
+test("an unavailable resolved inventory shows a notice", async () => {
+  routeFetch([
     ["/snapshot", () => json(evalSnapshot([evalTrial({
       artifact_summary: { status: "project_artifacts_unavailable", hunting: 0, skills: 0 },
     })]))],
-    ["/artifacts", () => json(INVENTORY)],
+    [
+      "/resolved-artifacts",
+      () =>
+        json({
+          status: "unavailable",
+          source: "project_storage",
+          project_id: "p1",
+          fallback_reason: null,
+          reason: "project_artifacts_unavailable",
+          groups: [],
+        }),
+    ],
   ])
   goto("/p/p1/evals/t/r/trial-1/artifacts")
 
-  await waitFor(() => expect(screen.getByText(/not available/i)).toBeDefined())
-  expect(calls.some((url) => url.includes("/artifacts"))).toBe(false)
+  await waitFor(() =>
+    expect(screen.getByText(/project_artifacts_unavailable/)).toBeDefined(),
+  )
+  expect(screen.queryByRole("heading", { name: "Hunting" })).toBeNull()
 })
 
 test("an unknown trial shows a generic not-found with no request", async () => {
   const { calls } = routeFetch([
     ["/snapshot", () => json(evalSnapshot([evalTrial()]))],
-    ["/artifacts", () => json(INVENTORY)],
+    ["/resolved-artifacts", () => json(INVENTORY)],
   ])
   goto("/p/p1/evals/t/r/missing/artifacts")
 
@@ -434,7 +452,7 @@ test("an unknown trial shows a generic not-found with no request", async () => {
 test("a cross-project mismatch is not found and does not leak", async () => {
   const { calls } = routeFetch([
     ["/snapshot", () => json(evalSnapshot([evalTrial({ project_id: "p2" })]))],
-    ["/artifacts", () => json(INVENTORY)],
+    ["/resolved-artifacts", () => json(INVENTORY)],
   ])
   goto("/p/p1/evals/t/r/trial-1/artifacts")
 
@@ -446,7 +464,7 @@ test("a cross-project mismatch is not found and does not leak", async () => {
 test("an inventory project id mismatch is a safe error without groups", async () => {
   routeFetch([
     ["/snapshot", () => json(evalSnapshot([evalTrial()]))],
-    ["/artifacts", () => json({ ...INVENTORY, project_id: "someone-else" })],
+    ["/resolved-artifacts", () => json({ ...INVENTORY, project_id: "someone-else" })],
   ])
   goto("/p/p1/evals/t/r/trial-1/artifacts")
 
@@ -458,7 +476,7 @@ test("an inventory project id mismatch is a safe error without groups", async ()
 test("the compatible eval route links entries through evalPaths", async () => {
   routeFetch([
     ["/snapshot", () => json(evalSnapshot([evalTrial()]))],
-    ["/artifacts", () => json(INVENTORY)],
+    ["/resolved-artifacts", () => json(INVENTORY)],
   ])
   goto("/eval/trials/t/r/trial-1/project-artifacts")
 
@@ -488,8 +506,8 @@ test("aborts on route change and ignores a late response", async () => {
           ]),
         ),
     ],
-    ["/trial-1/artifacts", () => first],
-    ["/trial-2/artifacts", () => json(INVENTORY)],
+    ["/trial-1/resolved-artifacts", () => first],
+    ["/trial-2/resolved-artifacts", () => json(INVENTORY)],
   ])
 
   function Harness() {
