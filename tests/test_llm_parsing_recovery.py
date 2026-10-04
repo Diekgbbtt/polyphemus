@@ -497,3 +497,84 @@ def test_answer_is_written_when_the_request_is_the_last_element():
     answers = build_parsing_error_answers(trail)
     assert len(answers) == 1 and answers[0].tool_call_id == POISON_ID
     assert _no_orphan_answer([*trail, *answers])
+
+
+# --- the mixed-call residual (F13) -------------------------------------------
+
+def test_malformed_call_is_answered_behind_a_structured_output_answer():
+    """F13: the observed `graph_view` symptom. The structured-output path
+    (`create_agent._handle_model_output`) appends its own answer `ToolMessage` INSIDE
+    the model node, so a malformed ordinary call carried by the SAME assistant message
+    sits one message behind the literal tail. The tail window walks back over that
+    trailing tool answer and still pairs the malformed call, so the resumed thread
+    never replays an unanswered `tool_calls` entry."""
+    from langchain.agents.structured_output import ToolStrategy
+    from pydantic import BaseModel
+
+    class Decision(BaseModel):
+        note: str = ""
+
+    mixed = AIMessage(
+        content="",
+        tool_calls=[{"name": "Decision", "args": {"note": "ok"}, "id": "call_dec"}],
+        invalid_tool_calls=[{
+            "name": "graph_view", "args": '{"cypher": "MATCH ',
+            "id": POISON_ID, "error": "bad json"}],
+    )
+    saver = InMemorySaver()
+    turn = run_session_turn(
+        "hunting_orchestrator", "mixed-structured", [HumanMessage(content="go")],
+        checkpointer=saver, tools=[seed_echo], model_factory=_factory(mixed),
+        response_format=ToolStrategy(Decision), observe=False)
+    assert _pairing_ok(turn.messages)
+    assert _no_orphan_answer(turn.messages)
+    assert any(isinstance(m, ToolMessage) and m.tool_call_id == POISON_ID
+               and m.status == "error" for m in turn.messages)
+
+
+def test_valid_and_malformed_calls_in_one_message_are_both_answered():
+    """F13 case: a VALID ordinary call and a malformed ordinary call in the SAME
+    assistant message. Answering the invalid call must NOT jump back to the model -
+    the jump bypasses the tools routing and would leave the valid call unanswered, a
+    second fresh-poison path. The valid call runs through ToolNode exactly once."""
+    calls = {"n": 0}
+
+    @tool
+    def _echo(x: str) -> str:
+        """Echo a string."""
+        calls["n"] += 1
+        return f"echo:{x}"
+
+    mixed = AIMessage(
+        content="",
+        tool_calls=[{"name": "_echo", "args": {"x": "hi"}, "id": "valid-9"}],
+        invalid_tool_calls=[{
+            "name": "graph_view", "args": '{"cypher": "MATCH ',
+            "id": POISON_ID, "error": "bad json"}],
+    )
+    saver = InMemorySaver()
+    turn = run_session_turn(
+        "hunting_orchestrator", "mixed-ordinary", [HumanMessage(content="go")],
+        checkpointer=saver, tools=[_echo],
+        model_factory=_factory(mixed, AIMessage(content="final")), observe=False)
+    assert turn.content == "final"
+    assert calls["n"] == 1
+    assert _pairing_ok(turn.messages)
+    assert _no_orphan_answer(turn.messages)
+
+
+def test_tail_window_stops_at_a_human_boundary_after_a_tool_answer():
+    """The refined window still refuses a stale call before a stop boundary: a later
+    `HumanMessage` blocks the answer even when a `tool` message trails the call. Only
+    trailing `tool` answers are walked; a human (or later assistant) message is a stop
+    boundary and is never crossed (#280 follow-up guard preserved)."""
+    from polymerhus.app.llm.parsing_recovery import build_parsing_error_answers
+
+    trail = [
+        HumanMessage(content="go"),
+        _valid_call("v1"),
+        ToolMessage(content="ok", tool_call_id="v1", name="seed_echo"),
+        _poison(),                       # unanswered, but a stop boundary follows
+        HumanMessage(content="next turn"),
+    ]
+    assert build_parsing_error_answers(trail) == []
