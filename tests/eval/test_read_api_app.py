@@ -168,6 +168,22 @@ def test_only_get_routes_are_exposed() -> None:
             "/trials/{target_id}/{target_run_id}/{trial_id}/artifacts/{artifact_id}/content",
             ("GET",),
         ),
+        (
+            "/trials/{target_id}/{target_run_id}/{trial_id}/resolved-graph",
+            ("GET",),
+        ),
+        (
+            "/trials/{target_id}/{target_run_id}/{trial_id}/resolved-artifacts",
+            ("GET",),
+        ),
+        (
+            "/trials/{target_id}/{target_run_id}/{trial_id}/resolved-artifacts/{artifact_id}",
+            ("GET",),
+        ),
+        (
+            "/trials/{target_id}/{target_run_id}/{trial_id}/resolved-artifacts/{artifact_id}/content",
+            ("GET",),
+        ),
     }
 
 
@@ -252,3 +268,142 @@ def test_app_module_stays_ignorant_of_the_storage_mechanism() -> None:
     # The seam's whole point: no pathlib, YAML, layout, or projection in the app.
     for leaked in ("Path", "build_snapshot", "yaml", "store_path", "dataset"):
         assert not hasattr(app_module, leaked), leaked
+
+
+# --- resolved endpoints (unified workspace) ------------------------------------
+
+
+PROJECT_ID = "c0641257-a1a9-4e13-acee-6effa28311f5"
+INSTANCE = "eval-server-1"
+RELATIVE = "hunting/orchestration/hunt_configs/produced/prod.yaml"
+
+
+class _StubGraphClient:
+    def __init__(self, payload: dict) -> None:
+        self.payload = payload
+
+    def get_graph(self, project_id: str) -> dict:
+        return self.payload
+
+
+@pytest.fixture
+def resolved_client(tmp_path: Path) -> TestClient:
+    store = tmp_path / "store"
+    trial_dir = store / "comfyui-1" / "run-a" / "t1"
+    trial_dir.mkdir(parents=True)
+    (trial_dir / "run-manifest.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "schema_version": 1,
+                "trial_id": "t1",
+                "target_id": "comfyui-1",
+                "target_run_id": "run-a",
+                "instance_id": INSTANCE,
+                "project_id": PROJECT_ID,
+                "eval_sha": "eval-1",
+                "stack_fingerprint": "fp-1",
+            }
+        ),
+        encoding="utf-8",
+    )
+    raw = tmp_path / "raw"
+    artifact = raw / PROJECT_ID / RELATIVE
+    artifact.parent.mkdir(parents=True)
+    artifact.write_bytes(b"kind: hunt-config\n")
+    graph = {
+        "project_id": PROJECT_ID,
+        "nodes": [{"id": "n1", "name": "a", "type": "L1Service", "properties": {}}],
+        "links": [],
+    }
+    source_obj = source_module.ArtifactStoreSnapshotSource(
+        store,
+        project_data_root=raw,
+        instance_id=INSTANCE,
+        graph_client_factory=lambda: _StubGraphClient(graph),
+    )
+    return TestClient(app_module.create_app(lambda: source_obj))
+
+
+def _resolved_base(trial: str = "t1") -> str:
+    return f"/trials/comfyui-1/run-a/{trial}"
+
+
+def _first_entry(inventory: dict) -> dict:
+    stack = list(inventory["groups"])
+    while stack:
+        node = stack.pop(0)
+        if node["entries"]:
+            return node["entries"][0]
+        stack.extend(node["children"])
+    raise AssertionError("no inventory entries")
+
+
+def test_resolved_graph_route_returns_current_graph(resolved_client: TestClient) -> None:
+    res = resolved_client.get(f"{_resolved_base()}/resolved-graph")
+
+    assert res.status_code == 200
+    body = res.json()
+    assert body["status"] == "available"
+    assert body["source"] == "project_storage"
+    assert body["project_id"] == PROJECT_ID
+    assert body["graph"]["nodes"][0]["id"] == "n1"
+    assert "/tmp" not in res.text and "/srv" not in res.text and "/opt" not in res.text
+
+
+def test_resolved_artifacts_route_lists_and_streams(resolved_client: TestClient) -> None:
+    inventory = resolved_client.get(f"{_resolved_base()}/resolved-artifacts").json()
+    assert inventory["status"] == "available"
+    assert inventory["source"] == "project_storage"
+    entry = _first_entry(inventory)
+
+    detail = resolved_client.get(
+        f"{_resolved_base()}/resolved-artifacts/{entry['artifact_id']}"
+    )
+    assert detail.status_code == 200
+    assert detail.json()["entry"]["relative_path"] == RELATIVE
+    url = detail.json()["content_url"]
+    assert url.startswith(f"{_resolved_base()}/resolved-artifacts/")
+    assert "expected_sha256=" in url
+
+    content = resolved_client.get(url)
+    assert content.status_code == 200
+    assert content.content == b"kind: hunt-config\n"
+    assert content.headers["x-content-type-options"] == "nosniff"
+    assert content.headers["content-length"] == str(len(b"kind: hunt-config\n"))
+
+
+def test_resolved_content_requires_the_expected_digest(
+    resolved_client: TestClient,
+) -> None:
+    inventory = resolved_client.get(f"{_resolved_base()}/resolved-artifacts").json()
+    entry = _first_entry(inventory)
+    base = f"{_resolved_base()}/resolved-artifacts/{entry['artifact_id']}/content"
+
+    assert resolved_client.get(base).status_code == 422
+    wrong = resolved_client.get(f"{base}?expected_sha256=deadbeef")
+    assert wrong.status_code == 409
+    assert wrong.json()["detail"] == "artifact_digest_mismatch"
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/resolved-graph",
+        "/resolved-artifacts",
+        "/resolved-artifacts/" + "0" * 64,
+        "/resolved-artifacts/" + "0" * 64 + "/content",
+    ],
+)
+@pytest.mark.parametrize("method", ["post", "put", "patch", "delete"])
+def test_resolved_artifact_routes_reject_mutation(
+    resolved_client: TestClient, path: str, method: str
+) -> None:
+    base = f"{_resolved_base()}"
+    assert getattr(resolved_client, method)(base + path).status_code == 405
+
+
+def test_resolved_unknown_trial_is_a_path_free_404(resolved_client: TestClient) -> None:
+    res = resolved_client.get(f"{_resolved_base('missing')}/resolved-graph")
+
+    assert res.status_code == 404
+    assert res.json()["detail"] == "trial_not_found"

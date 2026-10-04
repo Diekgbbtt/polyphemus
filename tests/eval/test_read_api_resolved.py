@@ -155,3 +155,24 @@ def test_error_message_never_carries_a_path() -> None:
         )
     assert "/" not in str(excinfo.value)
     assert "\\" not in str(excinfo.value)
+
+
+@pytest.mark.parametrize(
+    "value, expected",
+    [
+        ("c0641257-a1a9", True),
+        ("a.b_c-d", True),
+        ("", False),
+        (".", False),
+        ("..", False),
+        ("a/b", False),
+        ("a\\b", False),
+        ("a\x00b", False),
+        (None, False),
+        (7, False),
+    ],
+)
+def test_is_safe_identifier(value: object, expected: bool) -> None:
+    from read_api.resolved import is_safe_identifier
+
+    assert is_safe_identifier(value) is expected

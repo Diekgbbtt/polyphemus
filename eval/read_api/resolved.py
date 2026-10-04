@@ -118,9 +118,15 @@ def _is_safe_segment(segment: object) -> bool:
     return not any(ord(char) < 32 or ord(char) == 127 for char in segment)
 
 
+def is_safe_identifier(value: object) -> bool:
+    """True when `value` is one path-safe segment (a project id or a dir name)."""
+    return _is_safe_segment(value)
+
+
 __all__ = [
     "ResolvedDataError",
     "TRIAL_NOT_FOUND",
     "TrialContext",
+    "is_safe_identifier",
     "resolve_trial_context",
 ]

@@ -23,12 +23,34 @@ from .artifacts import (
     list_artifacts,
     stream_artifact,
 )
+from .resolved import TrialContext, is_safe_identifier, resolve_trial_context
+from .resolved_artifacts import (
+    ResolvedInventory,
+    content_download,
+    detail_response,
+    inventory_response,
+    resolve_inventory,
+)
+from .resolved_graph import (
+    HttpProjectGraphClient,
+    ProjectGraphClient,
+    graph_response,
+    resolve_graph,
+)
+from orchestrator.files import FileStore
+from orchestrator.project_artifacts import (
+    ProjectArtifactError,
+    collect_project_artifacts,
+)
 from .projection import DEFAULT_DATASET_ID, DEFAULT_DATASET_NAME, build_snapshot
 from .project_graph import HistoricalProjectGraphError, read_project_graph
 
 ENV_STORE = "EVAL_ARTIFACT_STORE"
 ENV_DATASET_ID = "EVAL_DATASET_ID"
 ENV_DATASET_NAME = "EVAL_DATASET_NAME"
+ENV_PROJECT_DATA_ROOT = "EVAL_PROJECT_DATA_ROOT"
+ENV_AGENT_BASE_URL = "EVAL_AGENT_BASE_URL"
+ENV_INSTANCE_ID = "EVAL_INSTANCE_ID"
 
 MANIFEST_FILENAME = "run-manifest.yaml"
 # Non-Trial siblings a store also contains: the materializer's scratch root, the
@@ -85,6 +107,31 @@ class SnapshotSource(Protocol):
     def health(self) -> SourceHealth:
         """The source's own health."""
 
+    def resolved_graph(
+        self, target_id: str, target_run_id: str, trial_id: str
+    ) -> dict[str, Any]:
+        """The unified graph for one Trial: captured, else eligible current."""
+
+    def list_resolved_artifacts(
+        self, target_id: str, target_run_id: str, trial_id: str
+    ) -> dict[str, Any]:
+        """The unified artifact inventory for one Trial: captured, else raw."""
+
+    def get_resolved_artifact(
+        self, target_id: str, target_run_id: str, trial_id: str, artifact_id: str
+    ) -> dict[str, Any]:
+        """Metadata plus one safe preview for one resolved inventory artifact."""
+
+    def stream_resolved_artifact(
+        self,
+        target_id: str,
+        target_run_id: str,
+        trial_id: str,
+        artifact_id: str,
+        expected_sha256: str,
+    ) -> ArtifactDownload:
+        """A bounded stream whose bytes must match `expected_sha256`."""
+
 
 # A factory builds a fresh source per call, so configuration is read at request
 # time and the source is trivially replaceable in tests.
@@ -98,8 +145,17 @@ class ArtifactStoreSnapshotSource:
     store: str | Path | None
     dataset_id: str = DEFAULT_DATASET_ID
     dataset_name: str = DEFAULT_DATASET_NAME
+    project_data_root: str | Path | None = None
+    agent_base_url: str | None = None
+    instance_id: str | None = None
+    graph_client_factory: Callable[[], ProjectGraphClient | None] | None = None
 
     def snapshot(self) -> dict[str, Any]:
+        snapshot = self._projected_snapshot()
+        snapshot["unassigned_saved_data"] = self._unassigned_saved_data(snapshot)
+        return snapshot
+
+    def _projected_snapshot(self) -> dict[str, Any]:
         if not self.store:
             raise SnapshotSourceUnavailable(f"{ENV_STORE} is not configured")
         return build_snapshot(
@@ -134,16 +190,145 @@ class ArtifactStoreSnapshotSource:
             raise SnapshotSourceUnavailable(f"{ENV_STORE} is not configured")
         return stream_artifact(self.store, target_id, target_run_id, trial_id, artifact_id)
 
+    def resolved_graph(
+        self, target_id: str, target_run_id: str, trial_id: str
+    ) -> dict[str, Any]:
+        context = self._resolve_context(target_id, target_run_id, trial_id)
+        resolved = resolve_graph(self.store, context, client=self._graph_client())
+        return graph_response(resolved)
+
+    def list_resolved_artifacts(
+        self, target_id: str, target_run_id: str, trial_id: str
+    ) -> dict[str, Any]:
+        inventory = self._resolve_inventory(target_id, target_run_id, trial_id)
+        return inventory_response(inventory, target_id, target_run_id, trial_id)
+
+    def get_resolved_artifact(
+        self, target_id: str, target_run_id: str, trial_id: str, artifact_id: str
+    ) -> dict[str, Any]:
+        inventory = self._resolve_inventory(target_id, target_run_id, trial_id)
+        return detail_response(
+            inventory, target_id, target_run_id, trial_id, artifact_id
+        )
+
+    def stream_resolved_artifact(
+        self,
+        target_id: str,
+        target_run_id: str,
+        trial_id: str,
+        artifact_id: str,
+        expected_sha256: str,
+    ) -> ArtifactDownload:
+        inventory = self._resolve_inventory(target_id, target_run_id, trial_id)
+        return content_download(inventory, artifact_id, expected_sha256)
+
+    # --- resolved configuration helpers -----------------------------------------
+
+    def _resolve_context(
+        self, target_id: str, target_run_id: str, trial_id: str
+    ) -> TrialContext:
+        return resolve_trial_context(
+            self._projected_snapshot(),
+            target_id,
+            target_run_id,
+            trial_id,
+            configured_instance_id=self.instance_id,
+        )
+
+    def _resolve_inventory(
+        self, target_id: str, target_run_id: str, trial_id: str
+    ) -> ResolvedInventory:
+        context = self._resolve_context(target_id, target_run_id, trial_id)
+        return resolve_inventory(
+            self.store, self.project_data_root, context, files=FileStore()
+        )
+
+    def _graph_client(self) -> ProjectGraphClient | None:
+        if self.graph_client_factory is not None:
+            return self.graph_client_factory()
+        if self.agent_base_url:
+            return HttpProjectGraphClient(self.agent_base_url)
+        return None
+
+    def _unassigned_saved_data(self, snapshot: Mapping[str, object]) -> list[dict]:
+        """Raw project directories no projected Trial proves belong to this instance."""
+        root = self.project_data_root
+        if not root:
+            return []
+        root_path = Path(root)
+        try:
+            if not root_path.is_dir():
+                return []
+            children = sorted(root_path.iterdir(), key=lambda path: path.name)
+        except OSError:
+            return []
+
+        assigned = self._assigned_project_ids(snapshot)
+        files = FileStore()
+        rows: list[dict] = []
+        for child in children:
+            name = child.name
+            if not is_safe_identifier(name) or name in assigned:
+                continue
+            if not (child.is_symlink() or child.is_dir()):
+                continue
+            try:
+                collected = collect_project_artifacts(root_path, name, files=files)
+            except ProjectArtifactError as exc:
+                rows.append(
+                    {
+                        "project_id": name,
+                        "status": "unavailable",
+                        "hunting": 0,
+                        "skills": 0,
+                        "reason": exc.failure,
+                    }
+                )
+                continue
+            rows.append(
+                {
+                    "project_id": name,
+                    "status": "available",
+                    "hunting": sum(1 for a in collected if a.category == "hunting"),
+                    "skills": sum(1 for a in collected if a.category == "skill"),
+                }
+            )
+        return rows
+
+    def _assigned_project_ids(self, snapshot: Mapping[str, object]) -> set[str]:
+        """Project ids a projected Trial proves belong to this instance."""
+        if self.instance_id is None:
+            return set()
+        assigned: set[str] = set()
+        trials = snapshot.get("trials")
+        if not isinstance(trials, list):
+            return assigned
+        for trial in trials:
+            if not isinstance(trial, Mapping):
+                continue
+            if trial.get("instance_id") != self.instance_id:
+                continue
+            project_id = trial.get("project_id")
+            if is_safe_identifier(project_id):
+                assigned.add(project_id)  # type: ignore[arg-type]
+        return assigned
+
     def health(self) -> SourceHealth:
         configured = bool(self.store)
         readable = configured and Path(self.store).is_dir()
         trials = _count_materialized_trials(self.store) if readable else 0
+        data_root = Path(self.project_data_root) if self.project_data_root else None
         return SourceHealth(
             ok=configured and readable,
             detail={
                 "store_configured": configured,
                 "store_readable": readable,
                 "materialized_trials": trials,
+                "project_data_configured": bool(self.project_data_root),
+                "project_data_readable": bool(data_root and data_root.is_dir()),
+                "graph_client_configured": bool(
+                    self.agent_base_url or self.graph_client_factory
+                ),
             },
         )
 
@@ -182,4 +367,7 @@ def filesystem_source() -> SnapshotSource:
         store=os.environ.get(ENV_STORE),
         dataset_id=os.environ.get(ENV_DATASET_ID) or DEFAULT_DATASET_ID,
         dataset_name=os.environ.get(ENV_DATASET_NAME) or DEFAULT_DATASET_NAME,
+        project_data_root=os.environ.get(ENV_PROJECT_DATA_ROOT) or None,
+        agent_base_url=os.environ.get(ENV_AGENT_BASE_URL) or None,
+        instance_id=os.environ.get(ENV_INSTANCE_ID) or None,
     )

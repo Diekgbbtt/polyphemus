@@ -16,9 +16,10 @@ factory; a test or a future deployment injects its own. Run it with
 """
 from __future__ import annotations
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
+from .resolved import ResolvedDataError
 from .source import (
     ArtifactLookupError,
     HistoricalProjectGraphError,
@@ -104,6 +105,88 @@ def create_app(source_factory: SourceFactory = filesystem_source) -> FastAPI:
         except SnapshotSourceUnavailable as exc:
             raise HTTPException(
                 status_code=503, detail=str(exc) or "artifact source unavailable"
+            ) from exc
+        disposition = "attachment" if download.attachment else "inline"
+        return StreamingResponse(
+            download.chunks,
+            media_type=download.media_type,
+            headers={
+                "Content-Disposition": f'{disposition}; filename="{download.filename}"',
+                "Content-Length": str(download.size_bytes),
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
+
+    # --- resolved endpoints (unified Target -> Trial workspace) -----------------
+
+    @app.get("/trials/{target_id}/{target_run_id}/{trial_id}/resolved-graph")
+    def resolved_graph(target_id: str, target_run_id: str, trial_id: str) -> dict:
+        try:
+            return source_factory().resolved_graph(target_id, target_run_id, trial_id)
+        except ResolvedDataError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.code) from exc
+        except SnapshotSourceUnavailable as exc:
+            raise HTTPException(
+                status_code=503, detail=str(exc) or "resolved graph source unavailable"
+            ) from exc
+
+    @app.get("/trials/{target_id}/{target_run_id}/{trial_id}/resolved-artifacts")
+    def resolved_artifacts(target_id: str, target_run_id: str, trial_id: str) -> dict:
+        try:
+            return source_factory().list_resolved_artifacts(
+                target_id, target_run_id, trial_id
+            )
+        except ResolvedDataError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.code) from exc
+        except SnapshotSourceUnavailable as exc:
+            raise HTTPException(
+                status_code=503,
+                detail=str(exc) or "resolved artifact source unavailable",
+            ) from exc
+
+    @app.get(
+        "/trials/{target_id}/{target_run_id}/{trial_id}/resolved-artifacts/{artifact_id}"
+    )
+    def resolved_artifact(
+        target_id: str, target_run_id: str, trial_id: str, artifact_id: str
+    ) -> dict:
+        try:
+            return source_factory().get_resolved_artifact(
+                target_id, target_run_id, trial_id, artifact_id
+            )
+        except ResolvedDataError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.code) from exc
+        except ArtifactLookupError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.code) from exc
+        except SnapshotSourceUnavailable as exc:
+            raise HTTPException(
+                status_code=503,
+                detail=str(exc) or "resolved artifact source unavailable",
+            ) from exc
+
+    @app.get(
+        "/trials/{target_id}/{target_run_id}/{trial_id}/resolved-artifacts/"
+        "{artifact_id}/content"
+    )
+    def resolved_artifact_content(
+        target_id: str,
+        target_run_id: str,
+        trial_id: str,
+        artifact_id: str,
+        expected_sha256: str = Query(...),
+    ) -> StreamingResponse:
+        try:
+            download = source_factory().stream_resolved_artifact(
+                target_id, target_run_id, trial_id, artifact_id, expected_sha256
+            )
+        except ResolvedDataError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.code) from exc
+        except ArtifactLookupError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.code) from exc
+        except SnapshotSourceUnavailable as exc:
+            raise HTTPException(
+                status_code=503,
+                detail=str(exc) or "resolved artifact source unavailable",
             ) from exc
         disposition = "attachment" if download.attachment else "inline"
         return StreamingResponse(
