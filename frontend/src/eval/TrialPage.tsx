@@ -86,9 +86,11 @@ export function TrialPage() {
         </section>
       )}
 
-      <section aria-label="Project artifacts" className="eval-artifacts-summary">
-        <h2>Project artifacts</h2>
-        {trial.artifact_summary.status === "available" ? (
+      {/* A Trial without a published project snapshot has no inventory to
+          summarize: the section is omitted, never shown empty. */}
+      {trial.artifact_summary.status === "available" && (
+        <section aria-label="Project artifacts" className="eval-artifacts-summary">
+          <h2>Project artifacts</h2>
           <p>
             <Link
               to={evalPaths.projectArtifacts(
@@ -100,13 +102,8 @@ export function TrialPage() {
               {trial.artifact_summary.hunting} hunting · {trial.artifact_summary.skills} skills
             </Link>
           </p>
-        ) : (
-          <p className="eval-notice">
-            Project artifacts not available for this Trial (
-            <span className="eval-ref">{trial.artifact_summary.status}</span>).
-          </p>
-        )}
-      </section>
+        </section>
+      )}
 
       <section aria-label="Artifacts">
         <h2>Materialized artifacts</h2>

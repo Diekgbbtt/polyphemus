@@ -921,13 +921,17 @@ test("the eval Trial links its project artifacts summary", async () => {
   )
 })
 
-test("an unavailable eval-Trial summary shows a notice without a broken link", async () => {
+test("an unavailable eval-Trial summary omits the project-artifact section", async () => {
   stubFetch(SNAPSHOT)
   // The degraded trial has no published project snapshot.
   goto("/eval/trials/white-jotter-1/run-demo-a/trial-1")
 
   await waitFor(() =>
-    expect(screen.getByText(/project artifacts not available/i)).toBeDefined(),
+    expect(screen.getByRole("heading", { name: /Trial trial-1/ })).toBeDefined(),
   )
+  expect(screen.queryByRole("region", { name: "Project artifacts" })).toBeNull()
+  expect(screen.queryByText(/project artifacts not available/i)).toBeNull()
   expect(screen.queryByRole("link", { name: /hunting/i })).toBeNull()
+  // The four core materialized artifact entries remain.
+  expect(within(artifactsRegion()).getAllByRole("listitem")).toHaveLength(4)
 })

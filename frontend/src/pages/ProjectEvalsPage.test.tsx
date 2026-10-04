@@ -71,6 +71,25 @@ function stubPendingFetch(): string[] {
   return calls
 }
 
+function json(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), { status })
+}
+
+// The blanket stub above answers every URL with the same body; the workspace
+// needs the eval snapshot and the live graph told apart.
+function stubRoutes(routes: Array<[string, () => Response]>): string[] {
+  const calls: string[] = []
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = String(input)
+    calls.push(url)
+    for (const [needle, handler] of routes) {
+      if (url.includes(needle)) return handler()
+    }
+    throw new Error(`unexpected fetch: ${url}`)
+  }) as typeof fetch
+  return calls
+}
+
 function goto(path: string) {
   window.history.pushState({}, "", path)
   return render(<App />)
@@ -149,6 +168,37 @@ test("a degraded materialized trial stays visible", async () => {
   const item = screen.getByRole("link", { name: "trial-2" }).closest("li") as HTMLElement
   expect(item.textContent).toMatch(/degraded/i)
   expect(item.textContent).toMatch(/verdicts_missing/)
+})
+
+test("a schema-v1 trial shows no graph or artifact counters", async () => {
+  stubFetch(
+    snapshot([
+      trial({
+        target_id: "t",
+        target_run_id: "r",
+        trial_id: "trial-1",
+        artifact_summary: { status: "project_artifacts_unavailable", hunting: 0, skills: 0 },
+        project_graph_summary: {
+          status: "project_graph_unavailable",
+          nodes: 0,
+          links: 0,
+          captured_at: null,
+        },
+      }),
+    ]),
+  )
+  goto("/p/proj-a/evals")
+
+  await waitFor(() =>
+    expect(screen.getByRole("link", { name: "trial-1" })).toBeDefined(),
+  )
+  const item = screen.getByRole("link", { name: "trial-1" }).closest("li") as HTMLElement
+  // The core identity and outcome stay; the unavailable counters do not.
+  expect(item.textContent).toMatch(/complete/)
+  expect(item.textContent).toMatch(/0 identified \/ 0 partial \/ 0 missed/)
+  expect(item.textContent).not.toMatch(/nodes \/ /)
+  expect(item.textContent).not.toMatch(/Hunting/)
+  expect(item.textContent).not.toMatch(/Skills/)
 })
 
 test("orders by captured_at, then copied_at, then the full tuple", async () => {
@@ -391,6 +441,56 @@ test("the workspace accepts the stopped-at-cap schema-v2 contract", async () => 
   expect(screen.getByText("21 artifacts")).toBeDefined()
   expect(screen.getByText("0 artifacts")).toBeDefined()
   expect(screen.getByText(/available · 3 nodes \/ 2 links/)).toBeDefined()
+})
+
+test("the workspace hides unavailable graph and artifact sections", async () => {
+  const calls = stubRoutes([
+    [
+      "/snapshot",
+      () =>
+        json(
+          snapshot([
+            trial({
+              target_id: "t",
+              target_run_id: "r",
+              trial_id: "trial-1",
+              artifact_summary: {
+                status: "project_artifacts_unavailable",
+                hunting: 0,
+                skills: 0,
+              },
+              project_graph_summary: {
+                status: "project_graph_unavailable",
+                nodes: 0,
+                links: 0,
+                captured_at: null,
+              },
+            }),
+          ]),
+        ),
+    ],
+    [
+      "/projects/proj-a/graph",
+      () => json({ project_id: "proj-a", nodes: [], links: [] }),
+    ],
+  ])
+  goto("/p/proj-a/evals/t/r/trial-1")
+
+  await waitFor(() =>
+    expect(screen.getByRole("heading", { name: /Trial trial-1/ })).toBeDefined(),
+  )
+  // All valid core content is still shown...
+  expect(screen.getAllByText("complete").length).toBeGreaterThan(0)
+  expect(screen.getByText("0 identified / 0 partial / 0 missed")).toBeDefined()
+  // ... while the unavailable counters and sections are gone.
+  expect(screen.queryByText(/nodes \/ /)).toBeNull()
+  expect(screen.queryByRole("heading", { name: "Hunting" })).toBeNull()
+  expect(screen.queryByRole("heading", { name: "Skills" })).toBeNull()
+  // The historical graph is unavailable, so the current live one is offered.
+  await waitFor(() =>
+    expect(screen.getByText("No graph available")).toBeDefined(),
+  )
+  expect(calls.some((url) => url.includes("/projects/proj-a/graph"))).toBe(true)
 })
 
 // --- the project shell -----------------------------------------------------------

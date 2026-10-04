@@ -415,6 +415,135 @@ def test_a_defective_evidence_chain_degrades_only_that_trial(tmp_path: Path) -> 
     assert snap["degraded_trials"][0]["reason"] == "verdict_invalid"
 
 
+def test_display_text_preserves_http_routes(tmp_path: Path) -> None:
+    """Human-readable fields may name routes; they are not filesystem refs."""
+    store = tmp_path / "store"
+    _write_trial(
+        store,
+        "t",
+        "r",
+        "trial",
+        verdicts=[
+            _verdict(
+                "v1",
+                unit="comfyui /userdata handler",
+                fault_class="/view route",
+                symptom="POST /api/v1/items answers 500",
+            ),
+            _verdict(
+                "v2",
+                "missed",
+                unit=None,
+                fault_class=None,
+                symptom=None,
+                chain=None,
+            ),
+        ],
+        diagnoses=[
+            _diagnosis(
+                "v2",
+                diagnosis_overview="the /view endpoint never reached /userdata",
+                closest_issue={
+                    "repo": "org/repo",
+                    "number": 7,
+                    "title": "harden /view",
+                    "rationale": "the /api/... route stayed reachable",
+                },
+            )
+        ],
+    )
+
+    trial = _snapshot(store)["trials"][0]
+
+    assert trial["availability"] == "complete"
+    assert trial["verdicts"][0]["matched"] == {
+        "unit": "comfyui /userdata handler",
+        "fault_class": "/view route",
+        "symptom": "POST /api/v1/items answers 500",
+    }
+    diagnosis = trial["diagnoses"][0]
+    assert diagnosis["diagnosis_overview"] == "the /view endpoint never reached /userdata"
+    assert diagnosis["closest_issue"]["title"] == "harden /view"
+    assert diagnosis["closest_issue"]["rationale"] == "the /api/... route stayed reachable"
+
+
+def test_one_malformed_row_keeps_the_valid_rows_and_degrades_the_trial(
+    tmp_path: Path,
+) -> None:
+    store = tmp_path / "store"
+    _write_trial(
+        store,
+        "t",
+        "r",
+        "trial",
+        verdicts=[
+            _verdict("v1"),
+            # An impossible confidence: this row alone is unusable.
+            _verdict("v2", "partial", confidence=2.0),
+            _verdict("v3", "missed", unit=None, fault_class=None, symptom=None, chain=None),
+        ],
+        diagnoses=[_diagnosis("v3")],
+    )
+
+    snap = _snapshot(store)
+    trial = snap["trials"][0]
+
+    # The broken row does not erase its valid siblings ...
+    assert [row["vuln_id"] for row in trial["verdicts"]] == ["v1", "v3"]
+    assert [row["vuln"] for row in trial["diagnoses"]] == ["v3"]
+    assert trial["verdicts"][0]["matched"]["unit"] == "u"
+    # ... and the Trial still reports its stable degradation.
+    assert trial["availability"] == "degraded"
+    assert trial["reason"] == "verdict_invalid"
+    assert snap["summary"]["degraded"] == 1
+    assert snap["degraded_trials"][0]["reason"] == "verdict_invalid"
+
+
+def test_host_paths_are_never_display_text(tmp_path: Path) -> None:
+    store = tmp_path / "store"
+    _write_trial(
+        store,
+        "t",
+        "r",
+        "trial",
+        verdicts=[
+            _verdict(
+                "v1",
+                "missed",
+                unit="/etc/passwd",
+                fault_class="/home/analyst/spec.yaml",
+                symptom="/opt/secret/export.yaml",
+                chain=None,
+            )
+        ],
+        diagnoses=[
+            _diagnosis(
+                "v1",
+                diagnosis_overview="copy /home/analyst/secret.yaml into place",
+            )
+        ],
+    )
+
+    snap = _snapshot(store)
+    trial = snap["trials"][0]
+    blob = json.dumps(snap)
+
+    # A host path is not human-readable display text: the field is dropped, the
+    # affected row (here the diagnosis, whose overview is required) is dropped,
+    # and the Trial degrades instead of leaking the location.
+    assert trial["verdicts"][0]["matched"] == {
+        "unit": None,
+        "fault_class": None,
+        "symptom": None,
+    }
+    assert trial["diagnoses"] == []
+    assert trial["availability"] == "degraded"
+    assert trial["reason"] == "diagnoses_invalid"
+    assert "/etc/passwd" not in blob
+    assert "/home/analyst" not in blob
+    assert "/opt/secret" not in blob
+
+
 # --- degradation ---------------------------------------------------------------
 
 

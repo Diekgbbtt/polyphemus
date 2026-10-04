@@ -149,14 +149,60 @@ test("renders the empty state for an empty historical graph", async () => {
   await waitFor(() => expect(screen.getByText(/No assets yet/i)).toBeDefined())
 })
 
-test("an unavailable summary never fetches", async () => {
-  const { calls } = routeFetch([["/project-graph", () => json(graphResponse(["x"]))]])
+test("an unavailable summary falls back to the current live graph only", async () => {
+  const { calls } = routeFetch([
+    [
+      "/projects/p1/graph",
+      () =>
+        json({
+          project_id: "p1",
+          nodes: [{ id: "live-only", name: "live", type: "L1Service", properties: {} }],
+          links: [],
+        }),
+    ],
+  ])
 
   renderGraph({ summary: UNAVAILABLE })
-  await Promise.resolve()
 
-  expect(calls).toHaveLength(0)
-  expect(screen.getByText(/not available/i)).toBeDefined()
+  await waitFor(() =>
+    expect(screen.getByTestId("graph-canvas").textContent).toBe("live-only"),
+  )
+  // The fallback is labelled as current data, never as the Trial snapshot.
+  expect(screen.getByText("Current L0/L1 — not captured with Trial")).toBeDefined()
+  expect(screen.queryByText("Trial snapshot")).toBeNull()
+  expect(calls).toEqual(["/projects/p1/graph"])
+})
+
+test("an empty live graph renders no canvas", async () => {
+  routeFetch([
+    ["/projects/p1/graph", () => json({ project_id: "p1", nodes: [], links: [] })],
+  ])
+
+  renderGraph({ summary: UNAVAILABLE })
+
+  await waitFor(() => expect(screen.getByText("No graph available")).toBeDefined())
+  expect(screen.queryByTestId("graph-canvas")).toBeNull()
+})
+
+test("a 404 live graph renders no canvas and no error", async () => {
+  routeFetch([["/projects/p1/graph", () => json({ detail: "unknown project" }, 404)]])
+
+  renderGraph({ summary: UNAVAILABLE })
+
+  await waitFor(() => expect(screen.getByText("No graph available")).toBeDefined())
+  expect(screen.queryByTestId("graph-canvas")).toBeNull()
+  expect(screen.queryByRole("alert")).toBeNull()
+})
+
+test("a failing live graph that is not a 404 stays an error", async () => {
+  routeFetch([["/projects/p1/graph", () => json({ detail: "boom" }, 500)]])
+
+  renderGraph({ summary: UNAVAILABLE })
+
+  await waitFor(() => expect(screen.getByRole("alert")).toBeDefined())
+  expect(screen.getByRole("alert").textContent).toMatch(/500/)
+  expect(screen.queryByTestId("graph-canvas")).toBeNull()
+  expect(screen.queryByText("No graph available")).toBeNull()
 })
 
 test("an API error never falls back to the live graph", async () => {

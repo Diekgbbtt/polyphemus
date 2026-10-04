@@ -90,20 +90,28 @@ export function ProjectEvalsPage() {
                     {counts.identified} identified / {counts.partial} partial / {counts.missed} missed
                   </span>
                 </li>
-                <li>
-                  <span className="eval-chip-label">Graph</span>
-                  <span className="eval-chip-value">
-                    {graph.status} · {graph.nodes} nodes / {graph.links} links
-                  </span>
-                </li>
-                <li>
-                  <span className="eval-chip-label">Hunting</span>
-                  <span className="eval-chip-value">{artifacts.hunting}</span>
-                </li>
-                <li>
-                  <span className="eval-chip-label">Skills</span>
-                  <span className="eval-chip-value">{artifacts.skills}</span>
-                </li>
+                {/* A schema-v1 Trial has no captured graph or inventory: no
+                    counter is shown rather than a misleading 0 / 0. */}
+                {graph.status === "available" && (
+                  <li>
+                    <span className="eval-chip-label">Graph</span>
+                    <span className="eval-chip-value">
+                      {graph.status} · {graph.nodes} nodes / {graph.links} links
+                    </span>
+                  </li>
+                )}
+                {artifacts.status === "available" && (
+                  <>
+                    <li>
+                      <span className="eval-chip-label">Hunting</span>
+                      <span className="eval-chip-value">{artifacts.hunting}</span>
+                    </li>
+                    <li>
+                      <span className="eval-chip-label">Skills</span>
+                      <span className="eval-chip-value">{artifacts.skills}</span>
+                    </li>
+                  </>
+                )}
               </ul>
               {trial.availability === "degraded" && (
                 <p className="eval-notice">Degraded ({trial.reason ?? "unknown"})</p>

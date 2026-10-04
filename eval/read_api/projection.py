@@ -55,6 +55,78 @@ _PRECEDENCE = {"identified": 3, "partial": 2, "missed": 1}
 
 MAX_TEXT = 2000
 MAX_REF = 512
+# Matched labels ("unit", "fault_class", "symptom") are short display values.
+MAX_LABEL = 512
+
+# Display fields are human-readable prose or labels, never filesystem
+# references. They legitimately name HTTP routes (`/view`, `/userdata`,
+# `/api/v1/items`), so a leading slash is not by itself a leak - it is one only
+# when the token is a filesystem location: a `..` traversal, an UNC path, a
+# known system/home root, or a path with a file extension.
+HOST_PATH_ROOTS = frozenset(
+    {
+        "Applications",
+        "Library",
+        "System",
+        "Users",
+        "Volumes",
+        "bin",
+        "boot",
+        "dev",
+        "etc",
+        "home",
+        "lib",
+        "lib64",
+        "media",
+        "mnt",
+        "opt",
+        "proc",
+        "root",
+        "run",
+        "sbin",
+        "srv",
+        "sys",
+        "tmp",
+        "usr",
+        "var",
+    }
+)
+FILE_SUFFIXES = frozenset(
+    {
+        "bin",
+        "cfg",
+        "conf",
+        "csv",
+        "env",
+        "gz",
+        "ini",
+        "jpeg",
+        "jpg",
+        "json",
+        "log",
+        "md",
+        "md5",
+        "parquet",
+        "pem",
+        "png",
+        "py",
+        "pyc",
+        "sh",
+        "so",
+        "sqlite",
+        "tar",
+        "toml",
+        "ts",
+        "tsx",
+        "txt",
+        "whl",
+        "xml",
+        "xz",
+        "yaml",
+        "yml",
+        "zip",
+    }
+)
 
 _INVALID = object()
 
@@ -194,25 +266,28 @@ def _read_trial(
         )
 
     verdicts: list[dict[str, Any]] = []
+    defect: str | None = None
     for raw in payload:
         status, row = _parse_verdict(raw)
         if status == "invalid":
-            return _record(
-                target_id, target_run_id, trial_id, reason="verdict_invalid", **identity
-            )
+            # One unusable row never erases its valid siblings: they are kept
+            # and the Trial reports this stable reason.
+            defect = "verdict_invalid"
+            continue
         if status == "ok":
             verdicts.append(row)
     verdicts.sort(key=lambda row: row["vuln_id"])
 
-    diagnoses, defect = _read_diagnoses(trial_dir, verdicts)
-    if defect is not None:
-        return _record(target_id, target_run_id, trial_id, reason=defect, **identity)
+    diagnoses, diagnosis_defect = _read_diagnoses(trial_dir, verdicts)
+    if defect is None:
+        defect = diagnosis_defect
 
     return _record(
         target_id,
         target_run_id,
         trial_id,
-        availability="complete",
+        availability="degraded" if defect else "complete",
+        reason=defect,
         verdicts=verdicts,
         diagnoses=diagnoses,
         **identity,
@@ -222,7 +297,7 @@ def _read_trial(
 def _read_diagnoses(
     trial_dir: Path, verdicts: list[dict[str, Any]]
 ) -> tuple[list[dict[str, Any]], str | None]:
-    """The paired diagnoses, or the safe reason code that degrades the trial."""
+    """The valid diagnoses, plus the safe reason when some row was unusable."""
     required = {row["vuln_id"] for row in verdicts if row["identified"] in DIAGNOSABLE}
     path = trial_dir / DIAGNOSES_FILENAME
     if not path.exists():
@@ -230,8 +305,7 @@ def _read_diagnoses(
     payload = _load_payload(path)
     if payload is _INVALID or not isinstance(payload, list):
         return [], "diagnoses_invalid"
-    rows, defect = _parse_diagnoses(payload, required)
-    return (rows, None) if defect is None else ([], defect)
+    return _parse_diagnoses(payload, required)
 
 
 def _parse_verdict(raw: object) -> tuple[str, dict[str, Any] | None]:
@@ -256,9 +330,9 @@ def _parse_verdict(raw: object) -> tuple[str, dict[str, Any] | None]:
     if matched is not None:
         if not isinstance(matched, Mapping):
             return "invalid", None
-        unit = _safe_id(matched.get("unit"))
-        fault_class = _safe_id(matched.get("fault_class"))
-        symptom = _safe_id(matched.get("symptom"))
+        unit = _safe_display_text(matched.get("unit"), limit=MAX_LABEL)
+        fault_class = _safe_display_text(matched.get("fault_class"), limit=MAX_LABEL)
+        symptom = _safe_display_text(matched.get("symptom"), limit=MAX_LABEL)
     # A positive verdict must name all three; a `missed` row describes no match.
     if identified != "missed" and not (unit and fault_class and symptom):
         return "invalid", None
@@ -308,58 +382,74 @@ def _evidence_refs(chain: object) -> tuple[list[str], bool]:
 def _parse_diagnoses(
     rows: list, required: set[str]
 ) -> tuple[list[dict[str, Any]], str | None]:
+    """The valid diagnoses, plus the stable reason when a row was unusable.
+
+    A malformed row is dropped without erasing its valid siblings; the caller
+    degrades the Trial. A partial/missed verdict left without any diagnosis is
+    itself a defect, so the pairing rule still holds.
+    """
     parsed: list[dict[str, Any]] = []
     seen: set[str] = set()
+    defect: str | None = None
     for raw in rows:
-        if not isinstance(raw, Mapping):
-            return [], "diagnoses_invalid"
-        vuln = _safe_id(raw.get("vuln"))
-        if not vuln or vuln not in required or vuln in seen:
-            return [], "diagnoses_invalid"
-        seen.add(vuln)
-
-        failure_mode = _safe_id(raw.get("failure_mode"))
-        root = raw.get("root_cause")
-        if not failure_mode or not isinstance(root, Mapping):
-            return [], "diagnoses_invalid"
-        cause_type = _safe_id(root.get("type"))
-        overview = _safe_text(raw.get("diagnosis_overview"))
-        if not cause_type or not overview:
-            return [], "diagnoses_invalid"
-        combination = root.get("combination_of") or []
-        if not isinstance(combination, list):
-            return [], "diagnoses_invalid"
-        combined = [_safe_id(item) for item in combination]
-        if any(item is None for item in combined):
-            return [], "diagnoses_invalid"
-
-        closest = _closest_issue(raw.get("closest_issue"))
-        proposed = _proposed_issue(raw.get("proposed_issue"))
-        if closest is _INVALID or proposed is _INVALID:
-            return [], "diagnoses_invalid"
-        if (closest is None) == (proposed is None):
-            # Exactly one of the two must be present.
-            return [], "diagnoses_invalid"
-
-        parsed.append(
-            {
-                "vuln": vuln,
-                "failure_mode": failure_mode,
-                "root_cause": {
-                    "type": cause_type,
-                    "combination_of": [item for item in combined if item],
-                    "extended_description": _safe_text(root.get("extended_description")),
-                },
-                "diagnosis_overview": overview,
-                "closest_issue": closest,
-                "proposed_issue": proposed,
-            }
-        )
+        row = _parse_diagnosis(raw, required=required, seen=seen)
+        if row is None:
+            defect = "diagnoses_invalid"
+            continue
+        seen.add(row["vuln"])
+        parsed.append(row)
     if required - seen:
         # A partial/missed verdict with no diagnosis entry is a defect.
-        return [], "diagnoses_invalid"
+        defect = "diagnoses_invalid"
     parsed.sort(key=lambda row: row["vuln"])
-    return parsed, None
+    return parsed, defect
+
+
+def _parse_diagnosis(
+    raw: object, *, required: set[str], seen: set[str]
+) -> dict[str, Any] | None:
+    """One diagnosis row, or `None` when it is not a usable paired entry."""
+    if not isinstance(raw, Mapping):
+        return None
+    vuln = _safe_id(raw.get("vuln"))
+    if not vuln or vuln not in required or vuln in seen:
+        return None
+
+    failure_mode = _safe_id(raw.get("failure_mode"))
+    root = raw.get("root_cause")
+    if not failure_mode or not isinstance(root, Mapping):
+        return None
+    cause_type = _safe_id(root.get("type"))
+    overview = _safe_display_text(raw.get("diagnosis_overview"))
+    if not cause_type or not overview:
+        return None
+    combination = root.get("combination_of") or []
+    if not isinstance(combination, list):
+        return None
+    combined = [_safe_id(item) for item in combination]
+    if any(item is None for item in combined):
+        return None
+
+    closest = _closest_issue(raw.get("closest_issue"))
+    proposed = _proposed_issue(raw.get("proposed_issue"))
+    if closest is _INVALID or proposed is _INVALID:
+        return None
+    if (closest is None) == (proposed is None):
+        # Exactly one of the two must be present.
+        return None
+
+    return {
+        "vuln": vuln,
+        "failure_mode": failure_mode,
+        "root_cause": {
+            "type": cause_type,
+            "combination_of": [item for item in combined if item],
+            "extended_description": _safe_display_text(root.get("extended_description")),
+        },
+        "diagnosis_overview": overview,
+        "closest_issue": closest,
+        "proposed_issue": proposed,
+    }
 
 
 def _closest_issue(raw: object) -> dict[str, Any] | object | None:
@@ -368,8 +458,8 @@ def _closest_issue(raw: object) -> dict[str, Any] | object | None:
     if not isinstance(raw, Mapping):
         return _INVALID
     repo = _safe_text(raw.get("repo"))
-    title = _safe_text(raw.get("title"))
-    rationale = _safe_text(raw.get("rationale"))
+    title = _safe_display_text(raw.get("title"))
+    rationale = _safe_display_text(raw.get("rationale"))
     number = raw.get("number")
     if not repo or not title or not rationale:
         return _INVALID
@@ -383,7 +473,7 @@ def _proposed_issue(raw: object) -> dict[str, Any] | object | None:
         return None
     if not isinstance(raw, Mapping):
         return _INVALID
-    title = _safe_text(raw.get("title"))
+    title = _safe_display_text(raw.get("title"))
     labels = raw.get("labels") or []
     if not title or not isinstance(labels, list):
         return _INVALID
@@ -711,6 +801,44 @@ def _safe_text(value: object, *, limit: int = MAX_TEXT) -> str | None:
     if any(token.startswith("/") for token in text.split()):
         return None
     return text
+
+
+def _safe_display_text(value: object, *, limit: int = MAX_TEXT) -> str | None:
+    """Human-readable display text, unless it carries a *host* path or an escape.
+
+    Display fields (matched labels, diagnosis prose, issue titles) legitimately
+    name HTTP routes such as `/view`, `/userdata` or `/api/v1/items`, so a
+    leading slash is not by itself a leak. A token is rejected only when it is a
+    filesystem location: a `..` traversal, a UNC path, a known system/home root,
+    or a path that ends in a file extension. Identifiers and evidence
+    references do not use this function - they stay strictly relative.
+    """
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text or len(text) > limit or "\\" in text:
+        return None
+    if any(_looks_like_host_path(token) for token in text.split()):
+        return None
+    return text
+
+
+def _looks_like_host_path(token: str) -> bool:
+    """Whether one whitespace-delimited token names a filesystem location."""
+    if token.startswith("//"):
+        return True
+    if not token.startswith("/"):
+        return False
+    segments = [segment for segment in token.split("/") if segment]
+    if not segments:
+        return False
+    if any(segment == ".." for segment in segments):
+        return True
+    if segments[0] in HOST_PATH_ROOTS:
+        return True
+    last = segments[-1]
+    suffix = last.rsplit(".", 1)[1].lower() if "." in last else ""
+    return suffix in FILE_SUFFIXES
 
 
 def _safe_ref(value: object) -> str | None:

@@ -74,20 +74,28 @@ export function ProjectTrialPage() {
             {counts.identified} identified / {counts.partial} partial / {counts.missed} missed
           </span>
         </li>
-        <li>
-          <span className="eval-chip-label">Graph</span>
-          <span className="eval-chip-value">
-            {graph.status} · {graph.nodes} nodes / {graph.links} links
-          </span>
-        </li>
-        <li>
-          <span className="eval-chip-label">Hunting</span>
-          <span className="eval-chip-value">{artifacts.hunting}</span>
-        </li>
-        <li>
-          <span className="eval-chip-label">Skills</span>
-          <span className="eval-chip-value">{artifacts.skills}</span>
-        </li>
+        {/* A schema-v1 Trial captured no graph and no inventory: the counters
+            are omitted rather than reported as a misleading 0 / 0. */}
+        {graph.status === "available" && (
+          <li>
+            <span className="eval-chip-label">Graph</span>
+            <span className="eval-chip-value">
+              {graph.status} · {graph.nodes} nodes / {graph.links} links
+            </span>
+          </li>
+        )}
+        {artifacts.status === "available" && (
+          <>
+            <li>
+              <span className="eval-chip-label">Hunting</span>
+              <span className="eval-chip-value">{artifacts.hunting}</span>
+            </li>
+            <li>
+              <span className="eval-chip-label">Skills</span>
+              <span className="eval-chip-value">{artifacts.skills}</span>
+            </li>
+          </>
+        )}
       </ul>
 
       {trial.availability === "degraded" && (
@@ -107,46 +115,42 @@ export function ProjectTrialPage() {
         trialId={trial.trial_id}
         summary={graph}
       />
-      <section aria-label="Hunting" className="project-trial-section">
-        <h2>Hunting</h2>
-        {artifacts.status === "available" ? (
-          <p className="project-artifacts-link">
-            <Link
-              to={`${projectPaths.artifacts(
-                projectId,
-                trial.target_id,
-                trial.target_run_id,
-                trial.trial_id,
-              )}#hunting`}
-            >
-              Hunting
-            </Link>{" "}
-            <span className="eval-status">{artifacts.hunting} artifacts</span>
-          </p>
-        ) : (
-          <p className="eval-status">Hunting artifacts not available ({artifacts.status}).</p>
-        )}
-      </section>
-      <section aria-label="Skills" className="project-trial-section">
-        <h2>Skills</h2>
-        {artifacts.status === "available" ? (
-          <p className="project-artifacts-link">
-            <Link
-              to={`${projectPaths.artifacts(
-                projectId,
-                trial.target_id,
-                trial.target_run_id,
-                trial.trial_id,
-              )}#skills`}
-            >
-              Skills
-            </Link>{" "}
-            <span className="eval-status">{artifacts.skills} artifacts</span>
-          </p>
-        ) : (
-          <p className="eval-status">Project skills not available ({artifacts.status}).</p>
-        )}
-      </section>
+      {artifacts.status === "available" && (
+        <>
+          <section aria-label="Hunting" className="project-trial-section">
+            <h2>Hunting</h2>
+            <p className="project-artifacts-link">
+              <Link
+                to={`${projectPaths.artifacts(
+                  projectId,
+                  trial.target_id,
+                  trial.target_run_id,
+                  trial.trial_id,
+                )}#hunting`}
+              >
+                Hunting
+              </Link>{" "}
+              <span className="eval-status">{artifacts.hunting} artifacts</span>
+            </p>
+          </section>
+          <section aria-label="Skills" className="project-trial-section">
+            <h2>Skills</h2>
+            <p className="project-artifacts-link">
+              <Link
+                to={`${projectPaths.artifacts(
+                  projectId,
+                  trial.target_id,
+                  trial.target_run_id,
+                  trial.trial_id,
+                )}#skills`}
+              >
+                Skills
+              </Link>{" "}
+              <span className="eval-status">{artifacts.skills} artifacts</span>
+            </p>
+          </section>
+        </>
+      )}
     </div>
   )
 }
