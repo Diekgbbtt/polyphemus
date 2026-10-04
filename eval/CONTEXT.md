@@ -259,7 +259,9 @@ _Avoid_: prod compose, eval env
 **Required capability override**:
 The committed `LLM_CAPABILITY_OVERRIDES` value the eval deployment requires for its relay (`opencode-go/deepseek-v4.1-flash`), because models.dev wrongly claims that relay supports `json_schema` and a forced tool choice (ADR A6).
 Its absence sends the compaction summariser and every schema-bound `invoke_role` to the `json_schema` rung, which 400s (the F12 signature: `summary_status=failed`, `reclaimed=0`).
-The canonical value is in `.env.example`, the **Eval compose overlay** requires it, and `eval/env_preflight.py` asserts it (`REQUIRED_CAPABILITY_OVERRIDES`).
+The canonical value is in `.env.example`, single-quoted so one spelling is valid both when the production driver sources the instance `.env` as a shell script (`set -a; . .env; set +a`) and when compose reads it through `env_file` (quote pair stripped).
+The preflight REPAIRS a missing value by appending the line verbatim (reported under `added`) and fails only when the value is present but wrong or malformed.
+The **Eval compose overlay** requires it on the agent service, and `eval/env_preflight.py` asserts it (`REQUIRED_CAPABILITY_OVERRIDES`).
 The app-layer term is **capability override** in `src/polymerhus/app/CONTEXT.md`.
 _Avoid_: capability flag, model quirk
 

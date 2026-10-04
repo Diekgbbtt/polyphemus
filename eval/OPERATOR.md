@@ -342,12 +342,24 @@ claims structured output. Without the `LLM_CAPABILITY_OVERRIDES` correction,
 every `invoke_role(..., schema=...)` and the compaction summariser resolve to
 the `json_schema` rung and 400, so compaction never converges (the F12
 signature: `summary_status=failed`, `reclaimed=0`). The canonical value is in
-`.env.example` (the preflight fills it into a fresh instance `.env`),
-`eval/docker-compose.eval.yml` requires it on the agent service, and
-`eval/env_preflight.py` asserts it is correct for the relay - a missing or wrong
-value fails `up` before a run. See ADR A6
-(`docs/design/capability-adaptive-client-99-decisions.md`) and issues #285/#299
-(the same relay's transient bare-400) and #246 (the durable negotiation fix).
+`.env.example`; `eval/env_preflight.py` REPAIRS a MISSING value by appending
+that line verbatim and reports it under `added`, and FAILS before a run only
+when the value is present but WRONG or malformed.
+
+The value is single-quoted on purpose:
+the production driver sources the instance `.env` as a shell script
+(`set -a; . .env; set +a` under `set -u`), and bash brace-expands an unquoted
+`{...}` into separate words, so the assignment degrades to a command prefix and
+`LLM_CAPABILITY_OVERRIDES` stays UNSET in the host shell.
+Single quotes make one spelling shell-safe AND acceptable to compose's
+`env_file` reader, which strips the surrounding quotes; the preflight copies the
+value byte-for-byte, so the repaired `.env` keeps the quoting.
+`eval/docker-compose.eval.yml` requires the variable on the `agent` service, so
+a value absent from both the instance `.env` and `.env.example` fails
+`docker compose config`/`up`.
+See ADR A6 (`docs/design/capability-adaptive-client-99-decisions.md`) and
+issues #285/#299 (the same relay's transient bare-400) and #246 (the durable
+negotiation fix).
 
 The first committed setup is `eval/setups/first.yaml` (one instance, the
 `webexploitbench/comfyui` target); the operator bootstrap and the per-step
