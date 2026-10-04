@@ -748,7 +748,7 @@ test("the Trial breadcrumb reaches the TargetRun group by anchor", async () => {
   const crumbs = screen.getByRole("navigation", { name: "Breadcrumb" })
   const runLink = within(crumbs).getByRole("link", { name: "run-demo-a" })
   expect(runLink.getAttribute("href")).toBe(
-    "/eval/targets/comfyui-1#targetrun-run-demo-a",
+    "/targets/comfyui-1#targetrun-run-demo-a",
   )
 
   fireEvent.click(runLink)
@@ -819,7 +819,7 @@ test("the non-eval routes still render", async () => {
   goto("/")
 
   await waitFor(() =>
-    expect(screen.getByRole("heading", { name: "Projects" })).toBeDefined(),
+    expect(screen.getByRole("heading", { name: "Targets" })).toBeDefined(),
   )
   expect(screen.queryByText("Targets (machines)")).toBeNull()
 })
@@ -832,25 +832,20 @@ test("/p redirects to the project catalog at /", async () => {
   goto("/p")
 
   await waitFor(() =>
-    expect(screen.getByRole("heading", { name: "Projects" })).toBeDefined(),
+    expect(screen.getByRole("heading", { name: "Targets" })).toBeDefined(),
   )
   expect(window.location.pathname).toBe("/")
 })
 
-test("a project card links to its eval workspace and latest trial", async () => {
+test("a Target row links to its canonical workspace", async () => {
   routeFetch([
     ["/projects", () => json({ detail: "unavailable" }, 503)],
     ["/snapshot", () => json(SNAPSHOT)],
   ])
   goto("/")
 
-  const workspace = await screen.findByRole("link", { name: "proj-comfyui-1" })
-  expect(workspace.getAttribute("href")).toBe("/p/proj-comfyui-1/evals")
-  // SNAPSHOT's newest comfyui-1 Trial is run-demo-c/trial-1 (captured 01-03).
-  const latest = screen.getByRole("link", { name: /latest trial/i })
-  expect(latest.getAttribute("href")).toBe(
-    "/p/proj-comfyui-1/evals/comfyui-1/run-demo-c/trial-1",
-  )
+  const workspace = await screen.findByRole("link", { name: "comfyui-1" })
+  expect(workspace.getAttribute("href")).toBe("/targets/comfyui-1")
 })
 
 test("the global nav moves between projects and evaluations", async () => {
@@ -879,6 +874,49 @@ test("the eval shell also exposes the global nav", async () => {
   await waitFor(() => expect(screen.getByRole("link", { name: "Home" })).toBeDefined())
   expect(screen.getByRole("link", { name: "Projects" }).getAttribute("href")).toBe("/")
   expect(screen.getByRole("link", { name: "Evaluations" }).getAttribute("href")).toBe("/eval")
+})
+
+// --- canonical Target/Trial routes and legacy redirects ------------------------
+
+test("the canonical Target route mounts under the shared eval provider", async () => {
+  stubFetch(SNAPSHOT)
+  goto("/targets/comfyui-1")
+
+  await waitFor(() =>
+    expect(screen.getByRole("heading", { name: "comfyui-1" })).toBeDefined(),
+  )
+  expect(screen.getByText("Target (machine)")).toBeDefined()
+  // The shared eval shell owns the nav on the canonical route too.
+  expect(screen.getByRole("link", { name: "Evaluations" })).toBeDefined()
+})
+
+test("the canonical deep Trial route renders the Trial", async () => {
+  stubFetch(SNAPSHOT)
+  goto("/targets/comfyui-1/trials/run-demo-a/trial-1")
+
+  await waitFor(() =>
+    expect(screen.getByRole("heading", { name: /trial-1/ })).toBeDefined(),
+  )
+})
+
+test("legacy eval target and trial links redirect to canonical routes", async () => {
+  stubFetch(SNAPSHOT)
+  goto("/eval/targets/comfyui-1")
+
+  await waitFor(() => expect(window.location.pathname).toBe("/targets/comfyui-1"))
+  expect(screen.getByRole("heading", { name: "comfyui-1" })).toBeDefined()
+})
+
+test("legacy eval trial links redirect with the full identity", async () => {
+  stubFetch(SNAPSHOT)
+  goto("/eval/trials/comfyui-1/run-demo-a/trial-1")
+
+  await waitFor(() =>
+    expect(window.location.pathname).toBe(
+      "/targets/comfyui-1/trials/run-demo-a/trial-1",
+    ),
+  )
+  expect(screen.getByRole("heading", { name: /trial-1/ })).toBeDefined()
 })
 
 // --- reciprocal link to the project workspace ----------------------------------

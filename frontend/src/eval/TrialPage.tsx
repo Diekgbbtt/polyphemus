@@ -1,7 +1,7 @@
 import { Link, useParams } from "react-router-dom"
 import { EvalBreadcrumbs, evalPaths } from "./EvalBreadcrumbs"
 import { useEvalData } from "./EvalDataProvider"
-import { projectPaths } from "../projectPaths"
+import { projectPaths, targetPaths } from "../projectPaths"
 import { ARTIFACT_LABELS, ARTIFACT_ORDER, summarizeArtifact } from "./TrialArtifactPage"
 
 // Must match the id TargetPage puts on each TargetRun group.
@@ -25,10 +25,10 @@ export function TrialPage() {
   const crumbs = [
     { label: "Eval", to: evalPaths.dashboard },
     { label: snapshot.dataset.name, to: evalPaths.dataset(snapshot.dataset.id) },
-    { label: targetId, to: evalPaths.target(targetId) },
+    { label: targetId, to: targetPaths.target(targetId) },
     {
       label: targetRunId,
-      to: `${evalPaths.target(targetId)}#${targetRunAnchor(targetRunId)}`,
+      to: `${targetPaths.target(targetId)}#${targetRunAnchor(targetRunId)}`,
     },
     { label: trialId },
   ]

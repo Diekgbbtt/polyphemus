@@ -1,50 +1,79 @@
 import { render, screen, waitFor, within } from "@testing-library/react"
 import { MemoryRouter } from "react-router-dom"
 import { afterEach, expect, test } from "vitest"
-import { ProjectsPage } from "./pages/ProjectsPage"
-import type { EvalSnapshot, EvalTrial } from "./eval/types"
+import type { EvalTrial } from "./eval/types"
+import type { EvalSnapshot } from "./eval/types"
+import { ProjectsPage, targetCatalog, unassignedSavedData } from "./pages/ProjectsPage"
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status })
 }
 
+function trial(
+  target_id: string,
+  target_run_id: string,
+  trial_id: string,
+  project_id: string,
+): EvalTrial {
+  return {
+    target_id,
+    target_run_id,
+    trial_id,
+    instance_id: "eval-server-1",
+    project_id,
+    start_phase: "recon",
+    terminal: "complete",
+    copied_at: "2024-01-02T00:00:00+00:00",
+    phases: [],
+    eval_sha: "demo-sha",
+    stack_fingerprint: "demo-env",
+    verdicts: [],
+    diagnoses: [],
+    availability: "complete",
+    reason: null,
+    artifact_summary: { status: "available", hunting: 1, skills: 0 },
+    project_graph_summary: {
+      status: "available",
+      nodes: 4,
+      links: 3,
+      captured_at: "2024-01-02T00:00:00+00:00",
+    },
+  }
+}
+
 const SNAPSHOT: EvalSnapshot = {
   dataset: { id: "webexploitbench", name: "WebExploitBench" },
-  summary: { targets: 1, trials: 1, identified: 0, partial: 0, missed: 1, degraded: 0 },
-  targets: [],
-  trials: [
+  summary: { targets: 2, trials: 2, identified: 0, partial: 1, missed: 1, degraded: 0 },
+  targets: [
+    {
+      target_id: "white-jotter-1",
+      trial_count: 1,
+      identified_count: 0,
+      partial_count: 0,
+      missed_count: 1,
+    },
     {
       target_id: "comfyui-1",
-      target_run_id: "run-a",
-      trial_id: "trial-1",
-      instance_id: "inst-1",
-      project_id: "proj-eval",
-      start_phase: "recon",
-      terminal: "stopped",
-      copied_at: "2024-01-02T00:00:00+00:00",
-      phases: [],
-      eval_sha: "demo-sha-c",
-      stack_fingerprint: "demo-env-w",
-      verdicts: [],
-      diagnoses: [],
-      availability: "complete",
-      reason: null,
-      artifact_summary: { status: "available", hunting: 21, skills: 0 },
-      project_graph_summary: {
-        status: "available",
-        nodes: 4,
-        links: 3,
-        captured_at: "2024-01-02T00:00:00+00:00",
-      },
+      trial_count: 1,
+      identified_count: 0,
+      partial_count: 1,
+      missed_count: 0,
     },
+  ],
+  trials: [
+    trial("comfyui-1", "run-a", "trial-a", "proj-comfyui"),
+    trial("white-jotter-1", "run-b", "trial-b", "proj-jotter"),
   ],
   versions: [],
   coverage: {
-    targets: { tested: 0, with_identified: 0, without_identified: 0 },
+    targets: { tested: 2, with_identified: 0, without_identified: 2 },
     vulnerabilities: { total: 0, found: 0, not_found: 0, partial: 0 },
   },
   successes: [],
   degraded_trials: [],
+  unassigned_saved_data: [
+    { project_id: "orphan-project", status: "available", hunting: 3, skills: 1 },
+  ],
 }
 
 function stubCatalog(live: Response, snapshot: Response) {
@@ -56,22 +85,43 @@ function stubCatalog(live: Response, snapshot: Response) {
   }) as typeof fetch
 }
 
-// A second synthetic Trial, so one snapshot covers the "Live + Eval" project
-// (`proj-both`) beside the eval-only one (`proj-eval`).
-function evalTrial(project_id: string, trial_id: string): EvalTrial {
-  return { ...SNAPSHOT.trials[0], project_id, trial_id }
-}
-
-const SNAPSHOT_BOTH: EvalSnapshot = {
-  ...SNAPSHOT,
-  trials: [evalTrial("proj-both", "trial-b"), evalTrial("proj-eval", "trial-1")],
-}
-
 afterEach(() => {
   window.history.pushState({}, "", "/")
 })
 
-test("the catalog lists an eval-derived project when the live runtime is unavailable", async () => {
+test("targetCatalog orders targets by target_id", () => {
+  const ordered = targetCatalog(SNAPSHOT).map((entry) => entry.target_id)
+  expect(ordered).toEqual(["comfyui-1", "white-jotter-1"])
+})
+
+test("the home lists one row per Target with counts and canonical links", async () => {
+  stubCatalog(json({ projects: [] }), json(SNAPSHOT))
+  render(
+    <MemoryRouter>
+      <ProjectsPage />
+    </MemoryRouter>,
+  )
+
+  await waitFor(() => expect(screen.getByText("comfyui-1")).toBeDefined())
+
+  const catalog = document.querySelector(".project-catalog") as HTMLElement
+  const catalogRows = [...catalog.children] as HTMLElement[]
+  expect(catalogRows).toHaveLength(2)
+
+  const linkFor = (targetId: string) =>
+    screen.getByRole("link", { name: targetId }).getAttribute("href")
+  expect(linkFor("comfyui-1")).toBe("/targets/comfyui-1")
+  expect(linkFor("white-jotter-1")).toBe("/targets/white-jotter-1")
+
+  // The first row's summary carries the outcome counts, and the page never
+  // renders the internal project_id as a primary row.
+  const firstRow = catalogRows[0]
+  expect(within(firstRow).getByText(/1 trial/)).toBeDefined()
+  expect(within(firstRow).getByText(/1 partial/)).toBeDefined()
+  expect(screen.queryByText("proj-comfyui")).toBeNull()
+})
+
+test("the target catalog renders when the live runtime is unavailable", async () => {
   stubCatalog(json({ detail: "unavailable" }, 503), json(SNAPSHOT))
   render(
     <MemoryRouter>
@@ -82,19 +132,16 @@ test("the catalog lists an eval-derived project when the live runtime is unavail
   await waitFor(() =>
     expect(screen.getByText(/live runtime unavailable/i)).toBeDefined(),
   )
-  // The failure is non-blocking: the eval-only project is still listed, and its
-  // card leads to the eval workspace, never the unavailable live graph.
-  const link = screen.getByRole("link", { name: "proj-eval" })
-  expect(link.getAttribute("href")).toBe("/p/proj-eval/evals")
+  expect(screen.getByRole("link", { name: "comfyui-1" })).toBeDefined()
   expect(screen.queryByRole("alert")).toBeNull()
 })
 
-test("live and eval projects merge into one card", async () => {
+test("unassigned saved data merges raw-only dirs with live-only projects", async () => {
   stubCatalog(
     json({
       projects: [
-        { project_id: "proj-eval", name: "Shared Project", created_at: "2024-01-01T00:00:00+00:00" },
         { project_id: "live-only", name: "Live Only", created_at: "2024-01-01T00:00:00+00:00" },
+        { project_id: "proj-comfyui", name: "Proven", created_at: "2024-01-01T00:00:00+00:00" },
       ],
     }),
     json(SNAPSHOT),
@@ -105,69 +152,22 @@ test("live and eval projects merge into one card", async () => {
     </MemoryRouter>,
   )
 
-  await waitFor(() => expect(screen.getByText("Shared Project")).toBeDefined())
-  // One row per project_id: the shared project is not duplicated. The catalog is
-  // a single vertical list of row entries, not a grid of bordered cards.
-  const rows = screen.getAllByRole("listitem")
-  expect(rows).toHaveLength(2)
-  for (const row of rows) {
-    expect(row.className).toContain("project-entry")
-    expect(row.querySelector(".project-card")).toBeNull()
-  }
-  expect(screen.getAllByText("Shared Project")).toHaveLength(1)
-  expect(screen.getByText("Live Only")).toBeDefined()
+  await waitFor(() =>
+    expect(screen.getByRole("heading", { name: "Unassigned saved data" })).toBeDefined(),
+  )
+
+  const section = screen
+    .getByRole("heading", { name: "Unassigned saved data" })
+    .closest("section")!
+  // The backend raw-only directory and the live-only project both appear; the
+  // project proven by a Trial does not.
+  expect(within(section).getByText("orphan-project")).toBeDefined()
+  expect(within(section).getByText("live-only")).toBeDefined()
+  expect(within(section).queryByText("proj-comfyui")).toBeNull()
+  // No fabricated Trial link inside the diagnostic section.
+  expect(within(section).queryAllByRole("link")).toHaveLength(0)
 })
 
-test("every project entry names its source and keeps source-appropriate actions", async () => {
-  stubCatalog(
-    json({
-      projects: [
-        { project_id: "proj-both", name: "Shared Project", created_at: "2024-01-01T00:00:00+00:00" },
-        { project_id: "live-only", name: "Live Only", created_at: "2024-01-01T00:00:00+00:00" },
-      ],
-    }),
-    json(SNAPSHOT_BOTH),
-  )
-  render(
-    <MemoryRouter>
-      <ProjectsPage />
-    </MemoryRouter>,
-  )
-  await waitFor(() => expect(screen.getByText("Shared Project")).toBeDefined())
-
-  // One row per project_id: live + eval, eval only, live only.
-  const rows = screen.getAllByRole("listitem")
-  expect(rows).toHaveLength(3)
-  const rowFor = (projectId: string) =>
-    rows.find((row) => within(row).queryAllByText(projectId).length > 0)!
-
-  // Exactly one badge per row, with a textual label and a state modifier class.
-  const badgeFor = (projectId: string) => {
-    const badges = rowFor(projectId).querySelectorAll(".project-entry-badge")
-    expect(badges).toHaveLength(1)
-    return badges[0] as HTMLElement
-  }
-  const linkFor = (projectId: string, name: string) => {
-    const link = within(rowFor(projectId)).queryByRole("link", { name })
-    return link === null ? null : link.getAttribute("href")
-  }
-
-  expect(badgeFor("proj-both").textContent).toBe("Live + Eval")
-  expect(badgeFor("proj-both").className).toContain("project-entry-badge--live-eval")
-  expect(linkFor("proj-both", "Evaluations")).toBe("/p/proj-both/evals")
-  expect(linkFor("proj-both", "Latest trial")).toBe("/p/proj-both/evals/comfyui-1/run-a/trial-b")
-  expect(linkFor("proj-both", "Live graph")).toBe("/p/proj-both")
-
-  expect(badgeFor("proj-eval").textContent).toBe("Eval only")
-  expect(badgeFor("proj-eval").className).toContain("project-entry-badge--eval-only")
-  expect(linkFor("proj-eval", "Evaluations")).toBe("/p/proj-eval/evals")
-  expect(linkFor("proj-eval", "Latest trial")).toBe("/p/proj-eval/evals/comfyui-1/run-a/trial-1")
-  // An eval-only project has no live graph to open.
-  expect(linkFor("proj-eval", "Live graph")).toBeNull()
-
-  expect(badgeFor("live-only").textContent).toBe("Live only")
-  expect(badgeFor("live-only").className).toContain("project-entry-badge--live-only")
-  expect(linkFor("live-only", "Live graph")).toBe("/p/live-only")
-  expect(linkFor("live-only", "Evaluations")).toBeNull()
-  expect(linkFor("live-only", "Latest trial")).toBeNull()
+test("unassignedSavedData is empty when every project is proven", () => {
+  expect(unassignedSavedData([], { ...SNAPSHOT, unassigned_saved_data: [] })).toEqual([])
 })

@@ -230,7 +230,7 @@ test("the non-eval routes are unchanged", async () => {
   goto("/")
 
   await waitFor(() =>
-    expect(screen.getByRole("heading", { name: "Projects" })).toBeDefined(),
+    expect(screen.getByRole("heading", { name: "Targets" })).toBeDefined(),
   )
   expect(screen.queryByText("WebExploitBench")).toBeNull()
 })

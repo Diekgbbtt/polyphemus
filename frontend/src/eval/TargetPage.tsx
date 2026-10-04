@@ -2,6 +2,7 @@ import { Link, useParams } from "react-router-dom"
 import { EvalBreadcrumbs, evalPaths } from "./EvalBreadcrumbs"
 import { useEvalData } from "./EvalDataProvider"
 import type { EvalTrial } from "./types"
+import { targetPaths } from "../projectPaths"
 
 // Stable per-TargetRun anchor; TrialPage links its TargetRun crumb here, so the
 // two must keep the same shape.
@@ -111,7 +112,7 @@ export function TargetPage() {
                 return (
                   <tr key={trial.trial_id}>
                     <th scope="row">
-                      <Link to={evalPaths.trial(trial.target_id, trial.target_run_id, trial.trial_id)}>
+                      <Link to={targetPaths.trial(trial.target_id, trial.target_run_id, trial.trial_id)}>
                         {trial.trial_id}
                       </Link>
                     </th>
