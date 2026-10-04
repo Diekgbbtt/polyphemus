@@ -293,6 +293,9 @@ def test_rerun_after_a_completed_chain_does_not_teardown_a_stale_target(tmp_path
     assert step.previous is None
     assert "down" not in strategies["a"].calls
     assert strategies["a"].calls == ["provision", "up", "await_ready"]
+    assert strategies["b"].calls == []
+    assert chain.state.active_target is None
+    assert chain.state.completed == ("a", "b")
 
 
 def test_partial_chain_keeps_the_active_target_for_resume(tmp_path):

@@ -373,7 +373,13 @@ The on-disk schema is unchanged: `active_target` was already `str | None` and se
 **Amends D42.** D42 persisted the chain position so a later tick resumes at the right target, but it never named the terminal transition.
 D50 names it and corrects the stale value.
 
+**Teardown ownership.** The terminal transition does not tear the last target down.
+The production driver runs each target's trial after its `next_target`, so tearing the last target down at that point would destroy the target before its trial.
+The last target's stack is left for `orchestrator down`, which tears down every declared target and removes the shared front independently of the chain state.
+A re-run that does not call `down` first therefore leaves the prior run's last stack up; call `down` before re-running a completed chain.
+
 **Falsification checks.**
 - A mid-chain resume still tears the active target down and continues, because a partial chain does not clear `active_target`.
 - The chain state file has one reader, `Chain._load`; no other module reads `active_target` or `chain-state.yaml`.
 - The reset does not change the on-disk schema.
+- A completed chain's last target is still torn down by `orchestrator down`, which does not read the chain state.
