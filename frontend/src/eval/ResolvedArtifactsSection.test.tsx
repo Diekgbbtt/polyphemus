@@ -333,6 +333,11 @@ function testSpecTree(container: HTMLElement): Array<[string, string[]]> {
   return section ? groupTree(section) : []
 }
 
+function podExportsTree(container: HTMLElement): Array<[string, string[]]> {
+  const section = container.querySelector('section[aria-label="Pod exports"]')
+  return section ? groupTree(section) : []
+}
+
 test("splits each fault's test specs into Produced and Consumed subgroups", async () => {
   routeFetch([["/resolved-artifacts", () => json(inventory({ groups: [testSpecsGroup()] }))]])
 
@@ -409,6 +414,137 @@ test("a later inventory replaces the test-spec subgroups without stale entries",
   expect(screen.getAllByText("hunting/hunter/test-specs/FaultA/produced/a-prod2.yaml")).toHaveLength(1)
 })
 
+// --- PodExport outcome grouping -------------------------------------------------
+
+function podArtifact(
+  kind: ProjectArtifactEntry["kind"],
+  id: string,
+  spec: string,
+  sub: string,
+): ProjectArtifactEntry {
+  return entry({
+    artifact_id: id,
+    kind,
+    relative_path: `hunting/test-executor-pod/${spec}/${sub}`,
+    sha256: `sha-${id}`,
+  })
+}
+function podExport(id: string, spec: string): ProjectArtifactEntry {
+  return podArtifact("pod_export", id, spec, `${id}.yaml`)
+}
+function podLog(id: string, spec: string): ProjectArtifactEntry {
+  return podArtifact("experiment_log", id, spec, `experiment-log/${id}.yaml`)
+}
+function podVariant(id: string, spec: string): ProjectArtifactEntry {
+  return podArtifact("pod_variant", id, spec, `variants/${id}.yaml`)
+}
+function podSpecsGroup(specs: Array<[string, ProjectArtifactEntry[]]>): ProjectArtifactGroup {
+  return group({
+    key: "pod-executions",
+    label: "Pod executions",
+    children: specs.map(([spec, entries]) =>
+      group({ key: `pod-executions/${spec}`, label: spec, entries }),
+    ),
+  })
+}
+
+function podOutcomeDetail(entry: ProjectArtifactEntry, reason: string | null): unknown {
+  return {
+    entry,
+    preview: {
+      text: "raw",
+      parsed: reason === null ? { verdict: "unsuccessful" } : { verdict: "unsuccessful", evidence: { terminal_reason: reason } },
+      truncated: false,
+      parse_error: null,
+    },
+    content_url: "/never-fetched",
+  }
+}
+
+function podFetch(
+  body: unknown,
+  handler: (id: string) => Response,
+): string[] {
+  const calls: string[] = []
+  globalThis.fetch = (async (input: unknown) => {
+    const url = String(input)
+    calls.push(url)
+    if (url.endsWith("/resolved-artifacts")) return json(body)
+    return handler(url.split("/").pop() ?? "")
+  }) as typeof fetch
+  return calls
+}
+
+test("groups pod exports by outcome and keeps log and variant per spec", async () => {
+  const x1 = podExport("x1", "alpha")
+  const l1 = podLog("l1", "alpha")
+  const v1 = podVariant("v1", "alpha")
+  const x2 = podExport("x2", "beta")
+  const l2 = podLog("l2", "beta")
+  const body = inventory({ groups: [podSpecsGroup([["alpha", [x1, l1, v1]], ["beta", [x2, l2]]])] })
+  const reasons: Record<string, string> = { x1: "symptom-confirmed", x2: "space-exhausted" }
+
+  podFetch(body, (id) => {
+    const entry = [x1, x2].find((item) => item.artifact_id === id)!
+    return json(podOutcomeDetail(entry, reasons[id]))
+  })
+  renderSection()
+
+  await waitFor(() =>
+    expect(screen.getByRole("heading", { name: "Symptom confirmed" })).toBeDefined(),
+  )
+  expect(screen.getByRole("heading", { name: "Pod executions" })).toBeDefined()
+  expect(screen.getByRole("heading", { name: "Space exhausted" })).toBeDefined()
+  // Log and variant stay in their per-spec groups, with unchanged links.
+  expect(screen.getByRole("heading", { name: "alpha" })).toBeDefined()
+  expect(screen.getByRole("link", { name: l1.relative_path }).getAttribute("href")).toBe(
+    "/targets/t/trials/r/trial-1/artifacts/l1",
+  )
+  expect(screen.getByRole("link", { name: v1.relative_path })).toBeDefined()
+  expect(screen.getByRole("link", { name: l2.relative_path })).toBeDefined()
+  // Exports moved under their outcome, links preserved.
+  expect(screen.getByRole("link", { name: x1.relative_path }).getAttribute("href")).toBe(
+    "/targets/t/trials/r/trial-1/artifacts/x1",
+  )
+  expect(screen.getByRole("link", { name: x2.relative_path })).toBeDefined()
+})
+
+test("keeps every export visible while its outcome is still loading", async () => {
+  const x1 = podExport("x1", "alpha")
+  const body = inventory({ groups: [podSpecsGroup([["alpha", [x1]]])] })
+  globalThis.fetch = (async (input: unknown, init?: RequestInit) => {
+    const url = String(input)
+    if (url.endsWith("/resolved-artifacts")) return json(body)
+    return await new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), {
+        once: true,
+      })
+    })
+  }) as typeof fetch
+
+  renderSection()
+
+  await waitFor(() =>
+    expect(screen.getByRole("heading", { name: "Classificazione in corso" })).toBeDefined(),
+  )
+  expect(screen.getByRole("link", { name: x1.relative_path })).toBeDefined()
+})
+
+test("an outcome error never hides an export, log, or variant", async () => {
+  const x1 = podExport("x1", "alpha")
+  const l1 = podLog("l1", "alpha")
+  const body = inventory({ groups: [podSpecsGroup([["alpha", [x1, l1]]])] })
+  podFetch(body, () => json({ detail: "artifact_missing" }, 409))
+
+  renderSection()
+
+  await waitFor(() =>
+    expect(screen.getByRole("heading", { name: "Esito non disponibile" })).toBeDefined(),
+  )
+  expect(screen.getByRole("link", { name: x1.relative_path })).toBeDefined()
+  expect(screen.getByRole("link", { name: l1.relative_path })).toBeDefined()
+})
+
 // --- inline trial vs artifact page coherence -----------------------------------
 
 function coherenceTrial(overrides: Partial<EvalTrial> = {}): EvalTrial {
@@ -455,11 +591,22 @@ function coherenceSnapshot(): EvalSnapshot {
   }
 }
 
+function coherenceGroups(): ProjectArtifactGroup[] {
+  return [
+    testSpecsGroup(),
+    podSpecsGroup([["alpha", [podExport("cx1", "alpha"), podLog("cl1", "alpha")]]]),
+  ]
+}
+
 function stubCoherenceFetch(): void {
   globalThis.fetch = (async (input: unknown) => {
     const url = String(input)
     if (url.endsWith("/snapshot")) return json(coherenceSnapshot())
-    if (url.includes("/resolved-artifacts")) return json(inventory({ groups: [testSpecsGroup()] }))
+    if (url.endsWith("/resolved-artifacts")) return json(inventory({ groups: coherenceGroups() }))
+    if (url.includes("/resolved-artifacts/")) {
+      const id = url.split("/").pop() ?? ""
+      return json(podOutcomeDetail(podExport(id, "alpha"), "symptom-confirmed"))
+    }
     // Every other trial section is a separate, safely-unavailable source.
     return json({
       status: "unavailable",
@@ -485,7 +632,11 @@ test("presents the same Test specs grouping inline and on the artifact page", as
   await waitFor(() =>
     expect(inline.container.querySelector('section[aria-label="Test specs"]')).not.toBeNull(),
   )
+  await waitFor(() =>
+    expect(inline.container.querySelector('section[aria-label="Pod exports"]')).not.toBeNull(),
+  )
   const inlineTree = testSpecTree(inline.container)
+  const inlinePod = podExportsTree(inline.container)
   inline.unmount()
 
   stubCoherenceFetch()
@@ -504,8 +655,14 @@ test("presents the same Test specs grouping inline and on the artifact page", as
   await waitFor(() =>
     expect(page.container.querySelector('section[aria-label="Test specs"]')).not.toBeNull(),
   )
+  await waitFor(() =>
+    expect(page.container.querySelector('section[aria-label="Pod exports"]')).not.toBeNull(),
+  )
   const pageTree = testSpecTree(page.container)
+  const pagePod = podExportsTree(page.container)
 
   expect(inlineTree).toEqual(pageTree)
   expect(inlineTree.map(([label]) => label)).toContain("Consumed")
+  expect(inlinePod).toEqual(pagePod)
+  expect(inlinePod.map(([label]) => label)).toContain("Symptom confirmed")
 })

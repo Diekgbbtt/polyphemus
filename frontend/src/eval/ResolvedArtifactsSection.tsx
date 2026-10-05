@@ -1,16 +1,19 @@
-import { useCallback } from "react"
+import { useCallback, useMemo } from "react"
 import { Link } from "react-router-dom"
 import { usePolledResource } from "../usePolledResource"
 import { getResolvedArtifacts } from "./client"
 import { useEvalRefreshToken } from "./EvalDataProvider"
+import { usePodExportOutcomes } from "./usePodExportOutcomes"
 import {
   artifactKey,
   artifactSections,
+  collectPodExports,
   groupKey,
   groupLabel,
   kindLabel,
   representationLabel,
   sourceLabel,
+  withPodExportOutcomes,
   withTestSpecSides,
 } from "./projectArtifacts"
 import type { ProjectArtifactGroup, ResolvedArtifactInventory } from "./types"
@@ -21,6 +24,8 @@ const EMPTY_LABEL: Record<"hunting" | "skill", string> = {
   hunting: "No Hunting artifacts",
   skill: "No Skill artifacts",
 }
+
+const NO_GROUPS: ProjectArtifactGroup[] = []
 
 // One inventory group rendered as a nested section. Shared with the standalone
 // artifacts page so the inline and routed views never drift.
@@ -121,6 +126,28 @@ export function ResolvedArtifactsSection({
       ? { kind: "ready", inventory: resource.data }
       : { kind: "error", message: resource.error ?? "unknown" }
 
+  // The PodExport outcome groups need the detail (the inventory has no
+  // terminal_reason), so classify the export entries here and fold the result
+  // into the same shared presentation the rest of the tree uses.
+  const availableInventory =
+    resource.data && resource.data.status === "available" ? resource.data : null
+  const inventoryGroups = availableInventory ? availableInventory.groups : NO_GROUPS
+  const podExports = useMemo(
+    () => (availableInventory ? collectPodExports(availableInventory.groups) : []),
+    [availableInventory],
+  )
+  const podExportOutcomes = usePodExportOutcomes({
+    targetId,
+    targetRunId,
+    trialId,
+    exports: podExports,
+    inventoryRevision: resource.lastUpdatedAt ?? 0,
+  })
+  const groups = useMemo(
+    () => withPodExportOutcomes(withTestSpecSides(inventoryGroups), podExportOutcomes),
+    [inventoryGroups, podExportOutcomes],
+  )
+
   return (
     <div className="resolved-artifacts">
       {state.kind === "loading" && <p className="eval-status">Loading artifacts…</p>}
@@ -142,7 +169,7 @@ export function ResolvedArtifactsSection({
       {state.kind === "ready" && state.inventory.status === "available" && (
         <>
           <p className="artifact-source">{sourceLabel(state.inventory.source)}</p>
-          {artifactSections(withTestSpecSides(state.inventory.groups)).map((section) => (
+          {artifactSections(groups).map((section) => (
             <section
               key={section.category}
               id={section.category === "hunting" ? "hunting" : "skills"}

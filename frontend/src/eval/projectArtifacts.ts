@@ -117,6 +117,145 @@ export function withTestSpecSides(groups: ProjectArtifactGroup[]): ProjectArtifa
   return changed ? next : groups
 }
 
+// --- PodExport outcome grouping -------------------------------------------------
+
+// The terminal_reason vocabulary the producer writes into the PodExport envelope
+// (`evidence.terminal_reason`). The inventory does not carry it, so the section
+// reads each PodExport's detail - never the filename, the verdict, or the vuln.
+export const POD_EXPORT_REASONS = [
+  "symptom-confirmed",
+  "space-exhausted",
+  "technical-infeasibility",
+  "specific-defence-prevention",
+  "no-symptom-evidence",
+  "budget-timeout",
+] as const
+export type PodExportReason = (typeof POD_EXPORT_REASONS)[number]
+
+// One export's classification: still loading, or settled (a recognized reason,
+// or null when the reason is absent, malformed, unrecognized, or unavailable).
+export type PodExportOutcome =
+  | { state: "pending" }
+  | { state: "ready"; reason: PodExportReason | null }
+
+const POD_EXPORT_REASON_LABELS: Record<PodExportReason, string> = {
+  "symptom-confirmed": "Symptom confirmed",
+  "space-exhausted": "Space exhausted",
+  "technical-infeasibility": "Technical infeasibility",
+  "specific-defence-prevention": "Specific defence prevention",
+  "no-symptom-evidence": "No symptom evidence",
+  "budget-timeout": "Budget timeout",
+}
+const POD_EXPORT_UNAVAILABLE = "unavailable"
+const POD_EXPORT_UNAVAILABLE_LABEL = "Esito non disponibile"
+const POD_EXPORT_PENDING = "pending"
+const POD_EXPORT_PENDING_LABEL = "Classificazione in corso"
+
+// The outcome carried by a parsed PodExport envelope. A missing, malformed, or
+// unrecognized `evidence.terminal_reason` is null - never guessed from `verdict`.
+export function podExportReasonFromDetail(parsed: unknown): PodExportReason | null {
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null
+  const evidence = (parsed as Record<string, unknown>).evidence
+  if (!evidence || typeof evidence !== "object" || Array.isArray(evidence)) return null
+  const reason = (evidence as Record<string, unknown>).terminal_reason
+  return typeof reason === "string" && (POD_EXPORT_REASONS as readonly string[]).includes(reason)
+    ? (reason as PodExportReason)
+    : null
+}
+
+// Every pod_export entry in the tree, in render order.
+export function collectPodExports(groups: ProjectArtifactGroup[]): ProjectArtifactEntry[] {
+  const collected: ProjectArtifactEntry[] = []
+  for (const group of groups) {
+    collected.push(...group.entries.filter((entry) => entry.kind === "pod_export"))
+    collected.push(...collectPodExports(group.children))
+  }
+  return collected
+}
+
+// The presentation transform: lift every pod_export entry into a "Pod exports"
+// root grouped by outcome (recognized reasons in enum order, then the
+// unavailable and pending buckets), leaving log and variant entries in their
+// original per-spec groups. A container left truly empty is dropped; ids, paths
+// and order are preserved; the input is never mutated.
+export function withPodExportOutcomes(
+  groups: ProjectArtifactGroup[],
+  outcomes: ReadonlyMap<string, PodExportOutcome>,
+): ProjectArtifactGroup[] {
+  const exports: ProjectArtifactEntry[] = []
+
+  const strip = (level: ProjectArtifactGroup[]): ProjectArtifactGroup[] => {
+    let changed = false
+    const keptGroups: ProjectArtifactGroup[] = []
+    for (const group of level) {
+      const keptEntries: ProjectArtifactEntry[] = []
+      let moved = false
+      for (const entry of group.entries) {
+        if (entry.kind === "pod_export") {
+          exports.push(entry)
+          moved = true
+        } else {
+          keptEntries.push(entry)
+        }
+      }
+      const children = strip(group.children)
+      const childrenChanged = children !== group.children
+      if (!moved && !childrenChanged) {
+        keptGroups.push(group)
+        continue
+      }
+      changed = true
+      if (keptEntries.length === 0 && children.length === 0) continue // became empty
+      keptGroups.push({ ...group, entries: keptEntries, children })
+    }
+    return changed ? keptGroups : level
+  }
+
+  const stripped = strip(groups)
+  if (exports.length === 0) return stripped
+
+  const buckets = new Map<string, ProjectArtifactEntry[]>()
+  for (const entry of exports) {
+    const outcome = outcomes.get(entry.artifact_id)
+    const key =
+      !outcome || outcome.state === "pending"
+        ? POD_EXPORT_PENDING
+        : (outcome.reason ?? POD_EXPORT_UNAVAILABLE)
+    const bucket = buckets.get(key)
+    if (bucket) bucket.push(entry)
+    else buckets.set(key, [entry])
+  }
+
+  const category = exports[0].category
+  const child = (key: string, label: string): ProjectArtifactGroup | null => {
+    const entries = buckets.get(key)
+    if (!entries || entries.length === 0) return null
+    return { key: `pod-exports/${key}`, label, category, entries, children: [] }
+  }
+
+  const children: ProjectArtifactGroup[] = []
+  for (const reason of POD_EXPORT_REASONS) {
+    const node = child(reason, POD_EXPORT_REASON_LABELS[reason])
+    if (node) children.push(node)
+  }
+  const unavailable = child(POD_EXPORT_UNAVAILABLE, POD_EXPORT_UNAVAILABLE_LABEL)
+  if (unavailable) children.push(unavailable)
+  const pending = child(POD_EXPORT_PENDING, POD_EXPORT_PENDING_LABEL)
+  if (pending) children.push(pending)
+
+  const root: ProjectArtifactGroup = {
+    key: "pod-exports",
+    label: "Pod exports",
+    category,
+    entries: [],
+    children,
+  }
+  // Right after "Pod executions" when present, otherwise appended.
+  const after = stripped.findIndex((group) => group.key === "pod-executions")
+  if (after === -1) return [...stripped, root]
+  return [...stripped.slice(0, after + 1), root, ...stripped.slice(after + 1)]
+}
+
 // The group's display label, with a deterministic fallback to the last key
 // segment (then a final literal) when the server label is blank.
 export function groupLabel(group: ProjectArtifactGroup): string {
