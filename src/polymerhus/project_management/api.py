@@ -381,6 +381,7 @@ def _schedule_pipeline(project_id: str, run_id: str, jobs: list[str] | None,
     # `RuntimeLoopNotRunning` in the shutdown window (the active runtime is
     # still published while its worker loop is already cleared), and that must
     # map to a 503, never escape as a 500.
+
     async def _run() -> None:
         try:
             await run_pipeline(project_id, run_id=run_id, job_subset=jobs,

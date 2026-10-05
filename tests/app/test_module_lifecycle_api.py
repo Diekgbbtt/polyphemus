@@ -45,6 +45,15 @@ def _post(client, module, verb):
     return client.post(f"/projects/p1/modules/{module}/{verb}")
 
 
+def _wait_until(pred, timeout):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if pred():
+            return
+        time.sleep(0.01)
+    raise AssertionError(f"condition not met within {timeout}s")
+
+
 def test_pause_resume_analysis_toggles_state(runtime):
     with TestClient(app) as client:
         r = _post(client, "analysis", "pause")
@@ -120,20 +129,15 @@ def test_recon_launch_after_a_drain_is_admitted_not_503(runtime, monkeypatch):
         assert r.status_code == 200, r.text
         assert r.json() == {"run_id": "run-after-drain"}
 
-        deadline = time.monotonic() + 5
-        while time.monotonic() < deadline:
-            if runtime.has_run("recon", "run-after-drain"):
-                break
-            time.sleep(0.01)
-        assert runtime.has_run("recon", "run-after-drain")
+        _wait_until(lambda: runtime.has_run("recon", "run-after-drain"), 5)
         runtime.cancel_run("recon", "run-after-drain")
 
 
-def test_launch_during_shutdown_window_is_a_503_not_a_500(runtime, monkeypatch):
+def test_recon_launch_during_shutdown_window_is_a_503_not_a_500(runtime, monkeypatch):
     """#328 fix-pass regression: in the shutdown window the active runtime is
     still published while its worker loop is already cleared, so `ensure_running`
     raises `RuntimeLoopNotRunning`. The launch must map that to a clean 503 -
-    exactly the pre-fix path - never an unhandled 500."""
+    never an unhandled 500."""
     from polymerhus.app.runtime import ModuleState
 
     monkeypatch.setattr(repository, "validate_launch", lambda project_id, jobs: None)
@@ -147,6 +151,60 @@ def test_launch_during_shutdown_window_is_a_503_not_a_500(runtime, monkeypatch):
     try:
         with TestClient(app) as client:
             r = client.post("/projects/p1/recon", json={"jobs": None})
+            assert r.status_code == 503, r.text
+            assert "not running" in r.json()["detail"]
+    finally:
+        runtime._loop = saved_loop
+
+
+def test_analysis_launch_after_a_drain_is_admitted_not_503(runtime, monkeypatch):
+    """#332 regression: drain settles analysis to `stopped`; the next analysis
+    launch must repair the module and be admitted - never a 503 admission
+    refusal. Covers the API-only entrypoint; the combined recon launch calls the
+    same `start_analysis` seam one step later."""
+    from polymerhus.analysis.feed import get_feed
+    from polymerhus.app.clients import pg
+
+    monkeypatch.setattr(pg, "get_run", lambda run_id: {"run_id": run_id})
+    monkeypatch.setattr(pg, "create_analysis_run", lambda *a, **k: None)
+    monkeypatch.setattr(pg, "set_analysis_run_status", lambda *a, **k: None)
+
+    with TestClient(app) as client:
+        r = _post(client, "analysis", "drain")
+        assert r.status_code == 200
+        assert r.json()["state"] == "stopped"
+
+        r = client.post("/projects/p1/analysis", json={"run_id": "analysis-after-drain"})
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["run_id"] == "analysis-after-drain"
+        assert body["analysis_run_id"]
+
+        _wait_until(lambda: runtime.has_run("analysis", "analysis-after-drain"), 5)
+        # drain the (empty) consumer with the terminal marker so its supervisor
+        # settles and the module registry empties - no leaked consumer task.
+        feed = get_feed("analysis-after-drain")
+        assert feed is not None
+        runtime.call(feed.signal_end()).result(timeout=5)
+
+
+def test_analysis_launch_during_shutdown_window_is_a_503_not_a_500(runtime, monkeypatch):
+    """#332 fix-pass regression, the analysis arm of #328: in the shutdown
+    window the active runtime is still published while its worker loop is
+    already cleared, so the analysis revive cannot be delivered and
+    `RuntimeLoopNotRunning` is raised. The launch must map that to a clean 503,
+    never an unhandled 500."""
+    from polymerhus.app.clients import pg
+
+    monkeypatch.setattr(pg, "get_run", lambda run_id: {"run_id": run_id})
+
+    saved_loop = runtime._loop
+    runtime._loop = None
+    try:
+        with TestClient(app) as client:
+            r = client.post(
+                "/projects/p1/analysis", json={"run_id": "run-shutdown"}
+            )
             assert r.status_code == 503, r.text
             assert "not running" in r.json()["detail"]
     finally:

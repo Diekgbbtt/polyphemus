@@ -98,6 +98,7 @@ class _CountState(dict):
 
 
 def _compiled_graph(checkpointer):
+    from langgraph.checkpoint.memory import InMemorySaver
     from langgraph.graph import END, START, StateGraph
 
     def node(state):
@@ -625,6 +626,15 @@ def test_ensure_running_revives_stopped_and_leaves_others_untouched(runtime):
     assert runtime.state("recon") == ModuleState.RUNNING
     assert runtime.schedule("recon", _noop(), name="revived").result(timeout=5) is None
 
+    # A `draining` module is mid-settle: `ensure_running` must leave it alone
+    # (the settle owns the transition to `stopped`, not the launch). Set the
+    # state directly - a real drain runs to `stopped` synchronously, so the
+    # transient `draining` window is only observable by inspection.
+    runtime.handle("recon").state = ModuleState.DRAINING
+    runtime.ensure_running("recon")
+    assert runtime.state("recon") == ModuleState.DRAINING
+    runtime.handle("recon").state = ModuleState.RUNNING
+
 
 def test_restart_after_shutdown_raises_the_named_error(runtime):
     """#328 review: the shutdown fan-out clears the worker loop, so a revive
@@ -890,6 +900,27 @@ def test_start_analysis_schedules_through_the_runtime_when_active(runtime, monke
     _wait_until(lambda: runtime.has_run("analysis", "run-seam"), timeout=5)
     assert lifecycle.is_analysing("run-seam") is True
     assert runtime.run_ids("analysis") == ["run-seam"]
+
+
+def test_start_analysis_on_the_worker_loop_repairs_a_drained_module(runtime, monkeypatch):
+    """#332: the combined recon launch calls `start_analysis` directly from
+    `run_pipeline`, i.e. ON the worker loop (the `thread_is_worker` branch).
+    That path must revive a drained analysis module too - not only the
+    API-thread, marshalled path covered in test_module_lifecycle_api.py."""
+    _stub_pg(monkeypatch)
+    runtime.register_module("analysis")
+    runtime.drain("analysis", timeout=5)
+    assert runtime.state("analysis") == ModuleState.STOPPED
+
+    async def _go():
+        return lifecycle.start_analysis("p1", "run-combined")
+
+    arid = runtime.call(_go()).result(timeout=5)
+
+    assert arid is not None
+    assert runtime.state("analysis") == ModuleState.RUNNING
+    _wait_until(lambda: runtime.has_run("analysis", "run-combined"), timeout=5)
+    runtime.cancel_run("analysis", "run-combined")
 
 
 def test_api_schedule_pipeline_routes_through_the_runtime_when_active(runtime, monkeypatch):

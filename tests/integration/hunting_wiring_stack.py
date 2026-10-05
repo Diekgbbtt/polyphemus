@@ -124,12 +124,12 @@ def restart_sibling(timeout: int = 600) -> bool:
     """Restart the live target to a clean module state (`up -d --force-recreate`
     on `WIRING_SERVICE`) and wait for `/health`.
 
-    The runtime's `drain` is TERMINAL for a module (no un-drain verb; #328
-    repairs only a drained recon on its next launch): a gate predicate that
-    drains hunting leaves the shared target's module `stopped`, which would
-    poison every subsequent launch on that process. Restarting the
-    live container is the honest "operator restarts the module" restoration
-    (a real spike of availability, acceptable in the integration tier).
+    A `drain` settles a module to `stopped`; since #328 (recon) and #332
+    (analysis, hunting) a LAUNCH repairs a drained module, but a gate predicate
+    that drains hunting also leaves the shared target itself in a knocked-over
+    state. Restarting the live container is the honest "operator restarts the
+    target and its module" restoration (a real spike of availability,
+    acceptable in the integration tier).
 
     The poll window must accommodate a REAL gateway boot on a loaded host
     (prisma migrate deploy + the litellm proxy bind measured at 3-8 min here),

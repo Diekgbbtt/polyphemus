@@ -112,8 +112,19 @@ def schedule_hunting(coro: Coroutine[Any, Any, Any], *, name: str) -> Any:
     """Schedule a hunting-run coroutine onto the worker loop (seam 2.2):
     `runtime.schedule("hunting", coro, name=name)`. No in-process fallback
     since #122 - the launch endpoint's `hunting_control_plane_available()`
-    gate already failed closed when no manager is active."""
-    return _require_runtime().schedule("hunting", coro, name=name)
+    gate already failed closed when no manager is active.
+
+    #332 (same class as #328): a drain settles the hunting module to `stopped`
+    (terminal), which `schedule` refuses. A launch is the operator's intent to
+    hunt, so the SHARED `ensure_running` precondition revives a stopped module
+    before scheduling instead of failing on an admission refusal; a deliberate
+    pause is left alone (only the terminal `stopped` state is revived). The
+    revive sits inside the launch adapter's guard, so a `RuntimeLoopNotRunning`
+    raised in the shutdown window (the active runtime is still published while
+    its worker loop is already cleared) maps to a 503, never an unhandled 500."""
+    runtime = _require_runtime()
+    runtime.ensure_running("hunting")
+    return runtime.schedule("hunting", coro, name=name)
 
 
 def enqueue_hunt_config(project_id: str, config, *, hunt_store=None) -> str:
