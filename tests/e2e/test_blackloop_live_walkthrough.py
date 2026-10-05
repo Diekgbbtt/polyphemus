@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import subprocess
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -347,22 +348,39 @@ def test_langfuse_session_trace_carries_recovery_live(walkthrough):
         return values
 
     env = env_values()
+    # v4 SDK: the base-URL alias is either LANGFUSE_BASE_URL or LANGFUSE_HOST.
     client = Langfuse(public_key=env["LANGFUSE_PUBLIC_KEY"],
                       secret_key=env["LANGFUSE_SECRET_KEY"],
-                      host=env["LANGFUSE_HOST"])
+                      base_url=env.get("LANGFUSE_BASE_URL")
+                      or env["LANGFUSE_HOST"])
     deadline = time.time() + 120
-    traces = []
+    rows = []
     while time.time() < deadline:
-        traces = client.api.trace.list(session_id=thread_id).data
-        if traces:
+        # v4: the legacy GET /traces endpoint is deprecated; read observations
+        # instead, filtered by session, and group them by trace id client-side.
+        now = datetime.now(timezone.utc)
+        rows = client.api.observations.get_many(
+            filter=json.dumps([{"type": "string", "column": "sessionId",
+                                "operator": "=", "value": thread_id}]),
+            from_start_time=now - timedelta(hours=2),
+            to_start_time=now,
+            limit=100,
+        ).data
+        if rows:
             break
         time.sleep(10)
-    assert traces, f"no Langfuse trace for session {thread_id}"
+    assert rows, f"no Langfuse observation for session {thread_id}"
     # One trace per executed turn on this thread (cut turn, recovery turn,
-    # follow-ups): the turns ran under the traced session seam. Timestamps
-    # must order with the run (all within the walkthrough window).
-    assert len(traces) >= 2, \
-        f"expected cut + recovery traces at least, got {len(traces)}"
-    stamps = sorted(t.timestamp for t in traces)
+    # follow-ups): the turns ran under the traced session seam. Collapse each
+    # trace's rows to its earliest start, then check the traces order with the
+    # run (all within the walkthrough window).
+    trace_starts: dict[str, datetime] = {}
+    for row in rows:
+        began = row.start_time
+        if row.trace_id not in trace_starts or began < trace_starts[row.trace_id]:
+            trace_starts[row.trace_id] = began
+    assert len(trace_starts) >= 2, \
+        f"expected cut + recovery traces at least, got {len(trace_starts)}"
+    stamps = sorted(trace_starts.values())
     span = (stamps[-1] - stamps[0]).total_seconds()
     assert span >= 0, "trace timestamps must order"

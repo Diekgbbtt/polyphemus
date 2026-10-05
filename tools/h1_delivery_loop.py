@@ -13,6 +13,7 @@ import os
 import subprocess
 import sys
 import time
+import urllib.parse
 import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -21,13 +22,23 @@ from _h1_env import load_langfuse_env  # noqa: E402
 
 load_langfuse_env()
 
-host = os.environ["LANGFUSE_HOST"].rstrip("/")
+host = (os.environ.get("LANGFUSE_BASE_URL")
+        or os.environ["LANGFUSE_HOST"]).rstrip("/")
 token = base64.b64encode(("%s:%s" % (
     os.environ["LANGFUSE_PUBLIC_KEY"], os.environ["LANGFUSE_SECRET_KEY"])).encode()).decode()
 
 
-def get_trace(tid):
-    req = urllib.request.Request(host + "/api/public/traces/" + tid,
+def get_observations(tid):
+    # v4: the legacy GET /api/public/traces/{id} read is deprecated. Read the
+    # v2 observations endpoint filtered by traceId instead. Request the io,
+    # model, and usage field groups explicitly - the endpoint returns only
+    # core+basic by default, and the marker search needs input/output.
+    query = urllib.parse.urlencode({
+        "traceId": tid,
+        "fields": "core,basic,io,model,usage",
+        "limit": 100,
+    })
+    req = urllib.request.Request(host + "/api/public/v2/observations?" + query,
                                  headers={"Authorization": "Basic " + token})
     with urllib.request.urlopen(req, timeout=20) as resp:
         return json.load(resp)
@@ -66,15 +77,17 @@ while time.time() < deadline and len(found) < 2:
         if arm in found or not tid:
             continue
         try:
-            trace = get_trace(tid)
+            payload = get_observations(tid)
         except Exception:  # noqa: BLE001 - 404 until ingested; 429: next round
             continue
-        for obs in trace.get("observations", []):
+        for obs in payload.get("data", []):
             blob = json.dumps(obs.get("input")) + json.dumps(obs.get("output"))
             if marker in blob:
-                found[arm] = (obs.get("model"), obs.get("usage"))
-                print("%s HIT model=%r usage=%r" % (
-                    arm, obs.get("model"), obs.get("usage")), flush=True)
+                model = obs.get("providedModelName")
+                usage = obs.get("usageDetails")
+                found[arm] = (model, usage)
+                print("%s HIT model=%r usage=%r" % (arm, model, usage),
+                      flush=True)
 
 for arm in ("CONTROL", "BARRIER"):
     print("%s=%s" % (arm, "LANDED" if arm in found else "LOST"), flush=True)

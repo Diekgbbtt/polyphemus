@@ -17,7 +17,8 @@ def load_langfuse_env() -> None:
             if line.startswith("LANGFUSE_") and "=" in line:
                 k, _, v = line.partition("=")
                 file_vals[k.strip()] = v.strip().strip('"').strip("'")
-    for key in ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY", "LANGFUSE_HOST"):
+    for key in ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY",
+                "LANGFUSE_BASE_URL", "LANGFUSE_HOST"):
         cur = os.environ.get(key, "").strip().strip('"').strip("'")
         if not cur:
             cur = file_vals.get(key, "")

@@ -50,15 +50,16 @@ silent no-op - observability never crashes or perturbs the query pipeline.
 
 ## How to enable
 
-Set all three environment variables (any one missing = tracing is a silent no-op; the agent never hard-fails on Langfuse):
+Set both keys and one base-URL alias (any required value missing = tracing is a silent no-op; the agent never hard-fails on Langfuse):
 
 ```
 LANGFUSE_PUBLIC_KEY=pk-lf-...
 LANGFUSE_SECRET_KEY=sk-lf-...
-LANGFUSE_HOST=https://cloud.langfuse.com
+LANGFUSE_BASE_URL=https://cloud.langfuse.com
 ```
 
-`LANGFUSE_HOST` selects the backend:
+`LANGFUSE_BASE_URL` is the canonical name; `LANGFUSE_HOST` is an accepted alias (the SDK resolves either, and so does the enabled gate).
+The base URL selects the backend:
 
 - **Langfuse Cloud (EU):** `https://cloud.langfuse.com`
 - **Langfuse Cloud (US):** `https://us.cloud.langfuse.com`
@@ -69,20 +70,27 @@ The keys live in `.env` (not committed); `.env.example` documents them as commen
 
 The `langfuse` Python package (pinned `langfuse==4.13.0` in `src/polymerhus/app/observability/requirements.txt`) is baked into the agent image at build time.
 If it is somehow absent at runtime, tracing still degrades to a no-op rather than crashing.
+The pinned SDK is the v4 major, so the concurrent code uses the v4 observation model:
+`propagate_attributes` for correlating attributes, `start_as_current_observation` for
+hand-written spans, and `is_default_export_span`-compatible `langfuse-sdk` spans for the
+CallbackHandler tree.
+The v4 enabled gate requires `LANGFUSE_PUBLIC_KEY` + `LANGFUSE_SECRET_KEY` + at least one of
+`LANGFUSE_BASE_URL` / `LANGFUSE_HOST` (`#327`); a BASE_URL-only setup was silently disabled before the fix.
+The v4 readiness audit and the exact-pin decision are recorded in `docs/design/observability-langfuse-v4-gate-adr.md`.
 
 ## How to view traces
 
-1. Open your Langfuse instance (the `LANGFUSE_HOST` URL) and select your project.
+1. Open your Langfuse instance (the configured base URL) and select your project.
 2. Go to **Tracing -> Traces**.
    Each recon job appears as a trace; open one to see the nested pod spans, the `execute_command` tool spans (with command + output), and the role-LLM generations (with prompt + completion).
 3. Filter by time to find a specific run.
 
 ## Implementation
 
-All the logic is confined to `agent/app/observability/langfuse_tracing.py`, which exposes:
+All the logic is confined to `src/polymerhus/app/observability/langfuse_tracing.py`, which exposes:
 
 ```python
-from agent.app.observability import get_langfuse_callbacks
+from polymerhus.app.observability import get_langfuse_callbacks
 ```
 
 `get_langfuse_callbacks() -> list` returns `[handler]` when configured, `[]` otherwise.

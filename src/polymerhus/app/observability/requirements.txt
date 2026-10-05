@@ -2,8 +2,14 @@
 #
 # Module-owned manifest: it lives with the observability module it describes,
 # and the Dockerfile layers it on top of the app runtime.
-# Langfuse is used only for lightweight, opt-in tracing via the LangChain
-# CallbackHandler (agent/app/observability/langfuse_tracing.py). Pinned to the
-# latest v4 line at time of writing; the CallbackHandler API is stable across
-# v3/v4. If Langfuse is absent at runtime, tracing is a silent no-op.
+# Langfuse is used for lightweight, opt-in tracing via the LangChain
+# CallbackHandler (app/observability/langfuse_tracing.py, which uses the v4
+# observation model: `propagate_attributes` and the CallbackHandler; the app's
+# hand-written spans use `start_as_current_observation` elsewhere). Pinned to
+# the v4 major. The pin is held at
+# 4.13.0 deliberately: the custom retrying span exporter and payload mask were
+# verified against this SDK's private resource-manager seams, so a bump needs
+# its own change with that verification (see
+# docs/design/observability-langfuse-v4-gate-adr.md).
+# If Langfuse is absent at runtime, tracing is a silent no-op.
 langfuse==4.13.0
