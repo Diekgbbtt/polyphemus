@@ -406,6 +406,30 @@ def test_unassigned_saved_data_lists_only_unproven_projects(tmp_path: Path) -> N
     ]
 
 
+def test_unassigned_saved_data_excludes_shared_fault_kb_directory(
+    tmp_path: Path,
+) -> None:
+    """The app provisions DATA_ROOT/hunting/fault-kb.yaml outside projects."""
+    store = tmp_path / "store"
+    store.mkdir()
+    raw = tmp_path / "raw"
+    (raw / "hunting").mkdir(parents=True)
+    (raw / "hunting" / "fault-kb.yaml").write_text("version: 1\n", encoding="utf-8")
+    _raw_project(raw, "orphan-project", {"skills/authn/SKILL.md": b"# skill\n"})
+    adapter = source.ArtifactStoreSnapshotSource(
+        store, project_data_root=raw, instance_id=INSTANCE
+    )
+
+    assert adapter.snapshot()["unassigned_saved_data"] == [
+        {
+            "project_id": "orphan-project",
+            "status": "available",
+            "hunting": 0,
+            "skills": 1,
+        }
+    ]
+
+
 def test_unassigned_saved_data_ignores_a_trial_from_another_instance(
     tmp_path: Path,
 ) -> None:

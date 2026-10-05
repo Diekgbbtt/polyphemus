@@ -56,6 +56,9 @@ MANIFEST_FILENAME = "run-manifest.yaml"
 # Non-Trial siblings a store also contains: the materializer's scratch root, the
 # rendered sync dir, and the raw live mirror. Never counted as materialized.
 _SKIP_DIRNAMES = frozenset({"_staging", "_sync", "live"})
+# The app provisions its shared fault catalogue at DATA_ROOT/hunting/fault-kb.yaml.
+# That top-level directory is not a project, even though its name is a safe ID.
+_NON_PROJECT_DATA_DIRNAMES = frozenset({"hunting"})
 
 
 class SnapshotSourceUnavailable(RuntimeError):
@@ -268,7 +271,11 @@ class ArtifactStoreSnapshotSource:
         rows: list[dict] = []
         for child in children:
             name = child.name
-            if not is_safe_identifier(name) or name in assigned:
+            if (
+                not is_safe_identifier(name)
+                or name in assigned
+                or name in _NON_PROJECT_DATA_DIRNAMES
+            ):
                 continue
             if not (child.is_symlink() or child.is_dir()):
                 continue
