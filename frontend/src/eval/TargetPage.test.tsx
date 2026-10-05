@@ -178,6 +178,7 @@ test("the Target page is an index: no graph or artifact section is expanded", as
   expect(screen.queryByRole("heading", { name: "Results" })).toBeNull()
   expect(calls.some((url) => url.includes("/resolved-graph"))).toBe(false)
   expect(calls.some((url) => url.includes("/resolved-artifacts"))).toBe(false)
+  expect(calls.some((url) => url.includes("/ground-truth/"))).toBe(false)
   // `/snapshot` is the only request the index makes.
   expect(calls.every((url) => url.endsWith("/snapshot"))).toBe(true)
 })
@@ -293,6 +294,87 @@ test("the Trial detail without a timestamp says the date is not available", asyn
   )
   const section = screen.getByRole("region", { name: "Trial trial-1" })
   expect(within(section).getByText("Data non disponibile")).toBeDefined()
+})
+
+const GROUND_TRUTH = {
+  target_id: "comfyui-1",
+  provenance: "current_benchmark_checkout",
+  vulnerabilities: [
+    {
+      vuln_id: "V1",
+      location: "http://comfyui-manager:8288/view",
+      type: "Arbitrary File Read",
+      scoring: ["LLM_judge"],
+    },
+  ],
+}
+
+function verdictTrial() {
+  return trial({
+    target_id: "comfyui-1",
+    target_run_id: "run-1",
+    trial_id: "trial-1",
+    verdicts: [
+      {
+        vuln_id: "V1",
+        identified: "identified",
+        confidence: 0.9,
+        matched: { unit: null, fault_class: null, symptom: null },
+        evidence: [],
+      },
+      {
+        vuln_id: "V2",
+        identified: "missed",
+        confidence: 0,
+        matched: { unit: null, fault_class: null, symptom: null },
+        evidence: [],
+      },
+    ],
+  })
+}
+
+test("the Trial detail pairs each verdict with the current-benchmark reference", async () => {
+  routeFetch([
+    ["/snapshot", () => json(snapshot([verdictTrial()]))],
+    ["/ground-truth/targets/", () => json(GROUND_TRUTH)],
+    ["/resolved-graph", () => json(GRAPH_UNAVAILABLE)],
+    ["/resolved-artifacts", () => json(INVENTORY)],
+  ])
+  goto("/targets/comfyui-1/trials/run-1/trial-1")
+
+  await waitFor(() =>
+    expect(screen.getByText("http://comfyui-manager:8288/view")).toBeDefined(),
+  )
+  // The trial with the missing entry says so instead of borrowing V1's reference.
+  expect(screen.getAllByText("Ground truth non disponibile").length).toBeGreaterThan(0)
+})
+
+test("a rejected ground-truth request leaves the results readable", async () => {
+  routeFetch([
+    ["/snapshot", () => json(snapshot([verdictTrial()]))],
+    ["/resolved-graph", () => json(GRAPH_UNAVAILABLE)],
+    ["/resolved-artifacts", () => json(INVENTORY)],
+  ])
+  goto("/targets/comfyui-1/trials/run-1/trial-1")
+
+  await waitFor(() =>
+    expect(screen.getByRole("region", { name: "Trial trial-1" })).toBeDefined(),
+  )
+  await waitFor(() =>
+    expect(screen.getAllByText("Ground truth non disponibile").length).toBeGreaterThan(0),
+  )
+  // Verdicts stay visible; a missing reference never hides them.
+  expect(screen.getAllByText("V1").length).toBeGreaterThan(0)
+  expect(screen.getAllByText("identified").length).toBeGreaterThan(0)
+})
+
+test("the materialized verdicts artifact view makes no operator request", async () => {
+  const calls = routeFetch([["/snapshot", () => json(snapshot([verdictTrial()]))]])
+  goto("/eval/trials/comfyui-1/run-1/trial-1/verdicts")
+
+  await waitFor(() => expect(screen.getAllByText("V1").length).toBeGreaterThan(0))
+  expect(calls.some((url) => url.includes("/ground-truth/"))).toBe(false)
+  expect(screen.queryByText("Ground truth (current benchmark)")).toBeNull()
 })
 
 test("legacy eval and project Trial URLs preserve the Trial identity", async () => {

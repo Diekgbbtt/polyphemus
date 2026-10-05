@@ -412,6 +412,37 @@
   word-break: break-word;
 }
 
+/* The operator reference for one verdict row: a compact, plainly labelled
+   group beneath the match cards. It is current-benchmark data, so it keeps its
+   own heading and never merges into the materialized match. */
+.trial-ground-truth {
+  margin: 0 0 0.85rem;
+  padding-left: 0.75rem;
+  border-left: 2px solid #23272d;
+}
+
+.trial-ground-truth h4 {
+  margin: 0 0 0.4rem;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #9aa0a6;
+}
+
+.trial-ground-truth .eval-ground-truth {
+  margin-bottom: 0;
+}
+
+.trial-ground-truth .eval-ground-truth > div {
+  border-color: #2c3138;
+  background: #0f1216;
+}
+
+.trial-ground-truth dd {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 .eval-timeline li {
   border-left: 2px solid #23272d;
   padding: 0.15rem 0 0.85rem 0.85rem;

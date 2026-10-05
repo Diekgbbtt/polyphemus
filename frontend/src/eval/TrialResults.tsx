@@ -1,4 +1,8 @@
 import type { ReactNode } from "react"
+import {
+  GROUND_TRUTH_FALLBACK,
+  type GroundTruthState,
+} from "./operatorGroundTruth"
 import type { EvalDiagnosis, EvalTrial, EvalVerdict } from "./types"
 
 // One Trial's results: every materialized verdict as its own row, with the
@@ -94,10 +98,60 @@ export function DiagnosisArticle({ diagnosis }: { diagnosis: EvalDiagnosis }) {
   )
 }
 
+// The operator's reference for one verdict row, matched by exact `vuln_id`.
+//
+// It is labelled as the *current* benchmark checkout: it was not captured with
+// the Trial and may have changed since. A missing entry, an unavailable API, or
+// a still-loading one never removes anything from the row - the materialized
+// verdict, match and evidence stay exactly as they are.
+function GroundTruthSection({
+  vulnId,
+  state,
+}: {
+  vulnId: string
+  state: GroundTruthState
+}) {
+  const entry =
+    state.status === "ready"
+      ? state.data.vulnerabilities.find((item) => item.vuln_id === vulnId)
+      : undefined
+  return (
+    <div className="trial-ground-truth">
+      <h4>Ground truth (current benchmark)</h4>
+      {state.status === "loading" ? (
+        <p className="eval-hint">Loading ground truth…</p>
+      ) : entry ? (
+        <dl className="eval-match eval-ground-truth" aria-label={`Ground truth for ${vulnId}`}>
+          <div>
+            <dt>Location</dt>
+            <dd>{entry.location}</dd>
+          </div>
+          <div>
+            <dt>Vulnerability type</dt>
+            <dd>{entry.type}</dd>
+          </div>
+          <div>
+            <dt>Scoring signals</dt>
+            <dd>{entry.scoring.length > 0 ? entry.scoring.join(", ") : "—"}</dd>
+          </div>
+        </dl>
+      ) : (
+        <p className="eval-hint">{GROUND_TRUTH_FALLBACK}</p>
+      )}
+    </div>
+  )
+}
+
 // Every verdict, in order and with its cardinality: two rows that share a
 // vuln_id stay two distinct entries. Only a partial or missed row may be
 // missing a diagnosis, and that is stated rather than filled in.
-export function VerdictList({ trial }: { trial: EvalTrial }) {
+export function VerdictList({
+  trial,
+  groundTruth,
+}: {
+  trial: EvalTrial
+  groundTruth?: GroundTruthState
+}) {
   if (trial.verdicts.length === 0) return null
   return (
     <ul className="eval-artifacts">
@@ -117,6 +171,9 @@ export function VerdictList({ trial }: { trial: EvalTrial }) {
               </span>
             </h3>
             <MatchList verdict={verdict} />
+            {groundTruth && (
+              <GroundTruthSection vulnId={verdict.vuln_id} state={groundTruth} />
+            )}
             <h4>Evidence</h4>
             <EvidenceList refs={verdict.evidence.filter(isSafeRef)} />
             {(paired.length > 0 || needsDiagnosis) && <h4>Diagnosis</h4>}
@@ -174,7 +231,13 @@ function UnmatchedDiagnoses({ trial }: { trial: EvalTrial }) {
 
 // The reusable results section: the same presentation the canonical Trial
 // workspace and the materialized verdicts/diagnoses views share.
-export function TrialResults({ trial }: { trial: EvalTrial }) {
+export function TrialResults({
+  trial,
+  groundTruth,
+}: {
+  trial: EvalTrial
+  groundTruth?: GroundTruthState
+}) {
   const empty = trial.verdicts.length === 0 && trial.diagnoses.length === 0
   return (
     <section aria-label="Trial results" className="trial-results">
@@ -182,7 +245,7 @@ export function TrialResults({ trial }: { trial: EvalTrial }) {
       {empty ? (
         <p className="eval-empty">No results were materialized for this Trial.</p>
       ) : (
-        <VerdictList trial={trial} />
+        <VerdictList trial={trial} groundTruth={groundTruth} />
       )}
       <UnmatchedDiagnoses trial={trial} />
     </section>

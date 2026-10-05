@@ -2,6 +2,7 @@ import { render, screen, within } from "@testing-library/react"
 import { MemoryRouter } from "react-router-dom"
 import { expect, test } from "vitest"
 import { TrialResults } from "./TrialResults"
+import type { GroundTruthState } from "./operatorGroundTruth"
 import type { EvalTrial } from "./types"
 
 function trial(overrides: Partial<EvalTrial> = {}): EvalTrial {
@@ -162,4 +163,100 @@ test("keeps an unmatched diagnosis visible and explicitly labelled", () => {
   const section = screen.getByRole("region", { name: /unmatched diagnoses/i })
   expect(within(section).getByText("DEMO-9")).toBeDefined()
   expect(within(section).getByText(/no materialized verdict/i)).toBeDefined()
+})
+
+
+// --- operator ground truth -----------------------------------------------------
+
+
+const GROUND_TRUTH_READY: GroundTruthState = {
+  status: "ready",
+  data: {
+    target_id: "comfyui-1",
+    provenance: "current_benchmark_checkout",
+    vulnerabilities: [
+      {
+        vuln_id: "DEMO-1",
+        location: "http://comfyui-manager:8288/view",
+        type: "Arbitrary File Read",
+        scoring: ["LLM_judge"],
+      },
+      { vuln_id: "DEMO-2", location: "/api/v1/items", type: "Path Traversal", scoring: [] },
+      {
+        vuln_id: "OTHER-1",
+        location: "http://other.invalid/",
+        type: "Other",
+        scoring: ["route_probe"],
+      },
+    ],
+  },
+}
+
+function renderWithGroundTruth(t: EvalTrial, state: GroundTruthState) {
+  return render(
+    <MemoryRouter>
+      <TrialResults trial={t} groundTruth={state} />
+    </MemoryRouter>,
+  )
+}
+
+test("shows the matching reference beneath the match cards and above Evidence", () => {
+  renderWithGroundTruth(trial(), GROUND_TRUTH_READY)
+
+  const first = rows()[0]
+  expect(within(first).getByText("Ground truth (current benchmark)")).toBeDefined()
+  expect(within(first).getByText("http://comfyui-manager:8288/view")).toBeDefined()
+  expect(within(first).getByText("Arbitrary File Read")).toBeDefined()
+  expect(within(first).getByText("LLM_judge")).toBeDefined()
+  // Another vulnerability's reference is never borrowed.
+  expect(first.textContent).not.toContain("other.invalid")
+
+  // Position: after the match cards, before the Evidence heading.
+  const labels = [...first.querySelectorAll("h4")].map((h) => h.textContent?.trim())
+  expect(labels.indexOf("Ground truth (current benchmark)")).toBeGreaterThan(-1)
+  expect(labels.indexOf("Ground truth (current benchmark)")).toBeLessThan(
+    labels.indexOf("Evidence"),
+  )
+  expect(first.querySelector("dl.eval-match")).not.toBeNull()
+})
+
+test("two rows for the same vulnerability both receive the same reference", () => {
+  renderWithGroundTruth(trial(), GROUND_TRUTH_READY)
+
+  // DEMO-2 has two materialized rows; neither collapses nor borrows.
+  expect(rows()[1].textContent).toContain("/api/v1/items")
+  expect(rows()[2].textContent).toContain("/api/v1/items")
+})
+
+test("a missing reference shows the exact fallback without touching the verdict", () => {
+  renderWithGroundTruth(trial(), GROUND_TRUTH_READY)
+  const missing = rows()[3] // DEMO-3 has no reference entry
+  expect(within(missing).getByText("Ground truth non disponibile")).toBeDefined()
+  // The verdict itself is untouched.
+  expect(within(missing).getAllByText("missed").length).toBeGreaterThan(0)
+})
+
+
+test("an unavailable API shows the fallback on every row and hides nothing", () => {
+  renderWithGroundTruth(trial(), { status: "unavailable" })
+  for (const row of rows()) {
+    expect(within(row).getByText("Ground truth non disponibile")).toBeDefined()
+  }
+  // Rejection never hides the materialized results.
+  expect(screen.getAllByText("90%").length).toBeGreaterThan(0)
+  expect(screen.getAllByText("demo/a.yaml").length).toBeGreaterThan(0)
+})
+
+test("empty scoring signals render as an em dash", () => {
+  renderWithGroundTruth(trial(), GROUND_TRUTH_READY)
+
+  const second = rows()[1]
+  expect(within(second).getByText("—")).toBeDefined()
+})
+
+test("no reference panel is rendered when a caller supplies no state", () => {
+  renderResults(trial())
+
+  expect(screen.queryByText("Ground truth (current benchmark)")).toBeNull()
+  expect(screen.queryByText("Ground truth non disponibile")).toBeNull()
 })

@@ -2,6 +2,7 @@ import { Link } from "react-router-dom"
 import { targetPaths } from "../projectPaths"
 import { EvalBreadcrumbs, evalPaths } from "./EvalBreadcrumbs"
 import { useEvalData } from "./EvalDataProvider"
+import { useOperatorGroundTruth } from "./operatorGroundTruth"
 import { ResolvedArtifactsSection } from "./ResolvedArtifactsSection"
 import { SavedOn } from "./SavedOn"
 import { TrialProjectGraph } from "./TrialProjectGraph"
@@ -81,6 +82,9 @@ export function TrialSection({
   const counts = outcomeCounts(trial)
   const anchor = trialAnchor(trial.target_run_id, trial.trial_id)
   const { snapshot } = useEvalData()
+  // One operator request per displayed Trial with results; the reference is
+  // never fetched by the pure result views themselves.
+  const groundTruth = useOperatorGroundTruth(trial.target_id, trial.verdicts.length > 0)
   const crumbs = [
     { label: "Eval", to: evalPaths.dashboard },
     ...(snapshot
@@ -144,7 +148,7 @@ export function TrialSection({
         </section>
       )}
 
-      <TrialResults trial={trial} />
+      <TrialResults trial={trial} groundTruth={groundTruth} />
       <TrialProjectGraph
         targetId={trial.target_id}
         targetRunId={trial.target_run_id}
