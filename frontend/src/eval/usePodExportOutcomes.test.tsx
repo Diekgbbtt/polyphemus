@@ -269,3 +269,261 @@ test("starts every export as pending during the classification", async () => {
   await waitFor(() => expect(result.current.get("e1")).toEqual({ state: "pending" }))
   expect(result.current.size).toBe(1)
 })
+
+// --- inventory-poll starvation (regression) ------------------------------------
+
+function manyExports(count: number): ProjectArtifactEntry[] {
+  return Array.from({ length: count }, (_, index) => exportEntry(`e${index}`, `sha-${index}`))
+}
+
+// A detail that never resolves on its own and only rejects when aborted, driven
+// by explicit revisions: this is the shape that starved the tail of the queue.
+function hangingFetch(requested: string[]): typeof fetch {
+  return ((input: unknown, init?: RequestInit) => {
+    requested.push(String(input).split("/").pop() ?? "")
+    return new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(abortError()), { once: true })
+    })
+  }) as typeof fetch
+}
+
+test("inventory polling does not starve the last exports when early requests time out", async () => {
+  vi.useFakeTimers()
+  const exports = manyExports(10)
+  const requested: string[] = []
+  globalThis.fetch = hangingFetch(requested)
+
+  const { rerender, unmount } = renderHook(
+    (props: { revision: number }) =>
+      usePodExportOutcomes({ targetId: "t", targetRunId: "r", trialId: "tr", exports, inventoryRevision: props.revision }),
+    { initialProps: { revision: 1 } },
+  )
+  try {
+    for (let revision = 2; revision <= 5; revision += 1) {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(15_000)
+      })
+      rerender({ revision })
+      await act(async () => {})
+    }
+    expect(new Set(requested).size, `requested only: ${[...new Set(requested)].join(", ")}`).toBe(10)
+  } finally {
+    unmount()
+    vi.useRealTimers()
+  }
+})
+
+test("classifies the last exports even when the earlier ones fail slowly", async () => {
+  vi.useFakeTimers()
+  const exports = manyExports(10)
+  globalThis.fetch = ((input: unknown, init?: RequestInit) => {
+    const id = String(input).split("/").pop() ?? ""
+    // The first six never resolve on their own: they are the starvation bait.
+    if (Number(id.slice(1)) <= 5) {
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(abortError()), { once: true })
+      })
+    }
+    const entry = exports.find((item) => item.artifact_id === id)!
+    return Promise.resolve(json(detail(entry, "symptom-confirmed")))
+  }) as typeof fetch
+
+  const { result, rerender, unmount } = renderHook(
+    (props: { revision: number }) =>
+      usePodExportOutcomes({ targetId: "t", targetRunId: "r", trialId: "tr", exports, inventoryRevision: props.revision }),
+    { initialProps: { revision: 1 } },
+  )
+  try {
+    for (let revision = 2; revision <= 5; revision += 1) {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(15_000)
+      })
+      rerender({ revision })
+      await act(async () => {})
+    }
+    for (const id of ["e6", "e7", "e8", "e9"]) {
+      expect(result.current.get(id)).toEqual({ state: "ready", reason: "symptom-confirmed" })
+    }
+  } finally {
+    unmount()
+    vi.useRealTimers()
+  }
+})
+
+test("never exceeds three concurrent requests across repeated refreshes", async () => {
+  vi.useFakeTimers()
+  const exports = manyExports(6)
+  let active = 0
+  let maxActive = 0
+  globalThis.fetch = ((_input: unknown, init?: RequestInit) => {
+    active += 1
+    maxActive = Math.max(maxActive, active)
+    return new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener(
+        "abort",
+        () => {
+          active -= 1
+          reject(abortError())
+        },
+        { once: true },
+      )
+    })
+  }) as typeof fetch
+
+  const { rerender, unmount } = renderHook(
+    (props: { revision: number }) =>
+      usePodExportOutcomes({ targetId: "t", targetRunId: "r", trialId: "tr", exports, inventoryRevision: props.revision }),
+    { initialProps: { revision: 1 } },
+  )
+  try {
+    for (let revision = 2; revision <= 6; revision += 1) {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(15_000)
+      })
+      rerender({ revision })
+      await act(async () => {})
+    }
+    expect(maxActive).toBeLessThanOrEqual(POD_EXPORT_DETAIL_CONCURRENCY)
+    expect(maxActive).toBeGreaterThan(0)
+  } finally {
+    unmount()
+    vi.useRealTimers()
+  }
+})
+
+test("does not retry a persistent failure in a tight loop", async () => {
+  vi.useFakeTimers()
+  const exports = manyExports(4)
+  let calls = 0
+  globalThis.fetch = (async () => {
+    calls += 1
+    return json({ detail: "artifact_missing" }, 409)
+  }) as typeof fetch
+
+  const { unmount } = renderHook(() =>
+    usePodExportOutcomes({ targetId: "t", targetRunId: "r", trialId: "tr", exports, inventoryRevision: 1 }),
+  )
+  try {
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000)
+    })
+    // One pass over the four entries; no immediate re-loop while nothing changes.
+    expect(calls).toBe(4)
+  } finally {
+    unmount()
+    vi.useRealTimers()
+  }
+})
+
+test("keeps a settled result when the inventory polls unchanged", async () => {
+  const exports = [exportEntry("e1")]
+  let calls = 0
+  globalThis.fetch = (async () => {
+    calls += 1
+    return json(detail(exports[0], "budget-timeout"))
+  }) as typeof fetch
+
+  const { result, rerender } = renderHook(
+    (props: { revision: number }) =>
+      usePodExportOutcomes({ targetId: "t", targetRunId: "r", trialId: "tr", exports, inventoryRevision: props.revision }),
+    { initialProps: { revision: 1 } },
+  )
+  await waitFor(() => expect(result.current.get("e1")).toEqual({ state: "ready", reason: "budget-timeout" }))
+
+  for (const revision of [2, 3, 4]) {
+    rerender({ revision })
+    await act(async () => {})
+    expect(result.current.get("e1")).toEqual({ state: "ready", reason: "budget-timeout" })
+  }
+  expect(calls).toBe(1)
+})
+
+test("adds, re-reads, and removes entries during an active pass", async () => {
+  const e1 = exportEntry("e1", "sha-1")
+  const e1b = exportEntry("e1", "sha-1b")
+  const e2 = exportEntry("e2", "sha-e2")
+  const requested: string[] = []
+  let resolveE1: ((value: Response) => void) | undefined
+
+  globalThis.fetch = (async (input: unknown) => {
+    const id = String(input).split("/").pop() ?? ""
+    requested.push(id)
+    if (id === "e1" && requested.filter((item) => item === "e1").length === 1) {
+      return await new Promise<Response>((resolve) => {
+        resolveE1 = resolve
+      })
+    }
+    if (id === "e1") return json(detail(e1b, "no-symptom-evidence"))
+    return json(detail(e2, "space-exhausted"))
+  }) as typeof fetch
+
+  const { result, rerender } = renderHook(
+    (props: { entries: ProjectArtifactEntry[]; revision: number }) =>
+      usePodExportOutcomes({
+        targetId: "t",
+        targetRunId: "r",
+        trialId: "tr",
+        exports: props.entries,
+        inventoryRevision: props.revision,
+      }),
+    { initialProps: { entries: [e1], revision: 1 } },
+  )
+
+  await waitFor(() => expect(requested).toContain("e1"))
+  // A new export arrives mid-pass.
+  rerender({ entries: [e1, e2], revision: 2 })
+  // Let the hung first request settle so the pass can finish and pick up e2.
+  await act(async () => {
+    resolveE1?.(json(detail(e1, "budget-timeout")))
+  })
+  await waitFor(() => expect(result.current.get("e2")).toEqual({ state: "ready", reason: "space-exhausted" }))
+
+  // The digest changes: the old result is invalidated and re-read.
+  rerender({ entries: [e1b, e2], revision: 3 })
+  await waitFor(() => expect(result.current.get("e1")).toEqual({ state: "ready", reason: "no-symptom-evidence" }))
+
+  // The export is removed: its state is dropped and its work is cancelled.
+  rerender({ entries: [e1b], revision: 4 })
+  await waitFor(() => expect(result.current.has("e2")).toBe(false))
+})
+
+test("ignores a late response for a superseded digest", async () => {
+  const e1 = exportEntry("e1", "sha-1")
+  const e1b = exportEntry("e1", "sha-1b")
+  const requested: string[] = []
+  globalThis.fetch = ((input: unknown, init?: RequestInit) => {
+    requested.push(String(input).split("/").pop() ?? "")
+    if (requested.filter((item) => item === "e1").length === 1) {
+      // The superseded request lands its stale body late, after the abort.
+      return new Promise<Response>((resolve) => {
+        init?.signal?.addEventListener(
+          "abort",
+          () => setTimeout(() => resolve(json(detail(e1, "symptom-confirmed"))), 20),
+          { once: true },
+        )
+      })
+    }
+    return Promise.resolve(json(detail(e1b, "budget-timeout")))
+  }) as typeof fetch
+
+  const { result, rerender } = renderHook(
+    (props: { entry: ProjectArtifactEntry; revision: number }) =>
+      usePodExportOutcomes({
+        targetId: "t",
+        targetRunId: "r",
+        trialId: "tr",
+        exports: [props.entry],
+        inventoryRevision: props.revision,
+      }),
+    { initialProps: { entry: e1, revision: 1 } },
+  )
+
+  rerender({ entry: e1b, revision: 2 })
+  await waitFor(() => expect(result.current.get("e1")).toEqual({ state: "ready", reason: "budget-timeout" }))
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 40))
+  })
+  // The stale reason never overwrites the superseded digest's result.
+  expect(result.current.get("e1")).toEqual({ state: "ready", reason: "budget-timeout" })
+  expect(requested).toEqual(["e1", "e1"])
+})
