@@ -1,8 +1,10 @@
 import { expect, test } from "vitest"
 import {
   POD_EXPORT_REASONS,
+  buildArtifactPathIndex,
   collectPodExports,
   podExportReasonFromDetail,
+  resolveEvidenceReference,
   withPodExportOutcomes,
   withTestSpecSides,
 } from "./projectArtifacts"
@@ -454,4 +456,89 @@ test("uses stable, collision-free outcome group keys", () => {
   const keys = podExportsRoot(out)?.children.map((c) => c.key) ?? []
   expect(keys).toEqual(["pod-exports/symptom-confirmed", "pod-exports/unavailable"])
   expect(new Set(keys).size).toBe(keys.length)
+})
+
+// --- verdict evidence -> artifact links ----------------------------------------
+
+function artifact(id: string, relativePath: string): ProjectArtifactEntry {
+  return {
+    artifact_id: id,
+    category: "hunting",
+    kind: "test_spec",
+    relative_path: relativePath,
+    media_type: "application/yaml",
+    size_bytes: 10,
+    sha256: `sha-${id}`,
+    representation: "yaml",
+  }
+}
+
+function pathIndex(entries: ProjectArtifactEntry[], projectId: string | null = "proj-1") {
+  return buildArtifactPathIndex([group({ key: "g", entries })], projectId)
+}
+
+test("links an evidence reference that matches a relative_path exactly", () => {
+  const index = pathIndex([artifact("a1", "hunting/hunter/test-specs/F/produced/x.yaml")])
+
+  expect(resolveEvidenceReference("hunting/hunter/test-specs/F/produced/x.yaml", index)).toEqual({
+    kind: "linked",
+    artifact_id: "a1",
+  })
+})
+
+test("removes only the exact project_id prefix", () => {
+  const index = pathIndex([artifact("a1", "hunting/x.yaml")], "proj-1")
+
+  expect(resolveEvidenceReference("proj-1/hunting/x.yaml", index)).toEqual({
+    kind: "linked",
+    artifact_id: "a1",
+  })
+  // A different project's prefix is NOT stripped: it matches nothing.
+  expect(resolveEvidenceReference("proj-2/hunting/x.yaml", index)).toEqual({ kind: "missing" })
+})
+
+test("never matches by basename or by a suffix of the path", () => {
+  const index = pathIndex([artifact("a1", "hunting/deep/x.yaml")])
+
+  expect(resolveEvidenceReference("x.yaml", index)).toEqual({ kind: "missing" })
+  expect(resolveEvidenceReference("deep/x.yaml", index)).toEqual({ kind: "missing" })
+  expect(resolveEvidenceReference("other/deep/x.yaml", index)).toEqual({ kind: "missing" })
+})
+
+test("a directory reference (spec_dir) is never linked to its children", () => {
+  const index = pathIndex([
+    artifact("a1", "hunting/hunter/test-specs/F/produced/x.yaml"),
+    artifact("a2", "hunting/hunter/test-specs/F/consumed/y.yaml"),
+  ])
+
+  expect(resolveEvidenceReference("hunting/hunter/test-specs/F", index)).toEqual({ kind: "missing" })
+})
+
+test("an ambiguous relative_path is never resolved arbitrarily", () => {
+  const index = pathIndex([artifact("a1", "hunting/x.yaml"), artifact("a2", "hunting/x.yaml")])
+
+  expect(resolveEvidenceReference("hunting/x.yaml", index)).toEqual({ kind: "plain" })
+})
+
+test("rejects traversal, absolute paths, and URLs", () => {
+  const index = pathIndex([artifact("a1", "hunting/x.yaml")])
+
+  for (const reference of [
+    "../hunting/x.yaml",
+    "a/../hunting/x.yaml",
+    "./hunting/x.yaml",
+    "/hunting/x.yaml",
+    "//evil.invalid/hunting/x.yaml",
+    "https://evil.invalid/hunting/x.yaml",
+    "javascript:alert(1)",
+    "hunting\\x.yaml",
+  ]) {
+    expect(resolveEvidenceReference(reference, index), reference).toEqual({ kind: "plain" })
+  }
+})
+
+test("a safe reference with no match is missing, not plain", () => {
+  const index = pathIndex([artifact("a1", "hunting/x.yaml")])
+
+  expect(resolveEvidenceReference("hunting/nope.yaml", index)).toEqual({ kind: "missing" })
 })

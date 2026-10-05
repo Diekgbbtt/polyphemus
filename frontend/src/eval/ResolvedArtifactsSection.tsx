@@ -1,8 +1,7 @@
-import { useCallback, useMemo } from "react"
+import { useMemo } from "react"
 import { Link } from "react-router-dom"
-import { usePolledResource } from "../usePolledResource"
-import { getResolvedArtifacts } from "./client"
-import { useEvalRefreshToken } from "./EvalDataProvider"
+import { useResolvedArtifactsResource, useResolvedInventory } from "./ResolvedArtifactsProvider"
+import type { ResolvedArtifactsResource } from "./ResolvedArtifactsProvider"
 import { usePodExportOutcomes } from "./usePodExportOutcomes"
 import {
   artifactKey,
@@ -16,7 +15,7 @@ import {
   withPodExportOutcomes,
   withTestSpecSides,
 } from "./projectArtifacts"
-import type { ProjectArtifactGroup, ResolvedArtifactInventory } from "./types"
+import type { ProjectArtifactGroup } from "./types"
 
 export type DetailPath = (artifactId: string) => string
 
@@ -70,67 +69,30 @@ export function ArtifactGroupNode({
   )
 }
 
-type InventoryState =
-  | { kind: "loading" }
-  | { kind: "error"; message: string }
-  | { kind: "ready"; inventory: ResolvedArtifactInventory }
-
-// The Hunting and Skill artifact inventory of one Trial.
-//
-// Like the graph section it consumes only the resolved endpoint, which prefers
-// the immutable capture and otherwise reads the allowlisted raw project
-// directory. It loads the inventory only: no artifact detail or content is
-// fetched until the reader opens one. A zero-entry readable inventory shows
-// both sections with an explicit empty state rather than a misleading
-// unavailable message, and a failure stays inside this section.
-export function ResolvedArtifactsSection({
+// The Hunting and Skill inventory of one Trial, rendered from the shared
+// resource (the workspace provider) or from this section's own poll (the
+// standalone artifacts page). It loads the inventory only: no artifact detail or
+// content is fetched until the reader opens one. A zero-entry readable inventory
+// shows both sections with an explicit empty state, and a failure stays here.
+function ResolvedArtifactsView({
+  resource,
   targetId,
   targetRunId,
   trialId,
   detailPath,
-  expectedProjectId,
 }: {
+  resource: ResolvedArtifactsResource
   targetId: string
   targetRunId: string
   trialId: string
   detailPath: DetailPath
-  // The project id the Trial record claims. When known, a resolved inventory
-  // that names a different project is a safe error, never a silent render.
-  expectedProjectId?: string | null
 }) {
-  const refreshToken = useEvalRefreshToken()
-  const identity = `${targetId}\u0000${targetRunId}\u0000${trialId}\u0000${expectedProjectId ?? ""}`
-
-  const load = useCallback(
-    async (signal: AbortSignal): Promise<ResolvedArtifactInventory> => {
-      const inventory = await getResolvedArtifacts(targetId, targetRunId, trialId, signal)
-      // A resolved inventory that names a different project is a safe error,
-      // never a silent render, and never a fallback to another source.
-      if (expectedProjectId && inventory.project_id !== expectedProjectId) {
-        throw new Error("Artifact inventory does not match this Trial (mismatch).")
-      }
-      return inventory
-    },
-    [targetId, targetRunId, trialId, expectedProjectId],
-  )
-
-  const resource = usePolledResource<ResolvedArtifactInventory>({
-    key: identity,
-    load,
-    refreshToken,
-  })
-
-  const state: InventoryState = resource.loading
-    ? { kind: "loading" }
-    : resource.data
-      ? { kind: "ready", inventory: resource.data }
-      : { kind: "error", message: resource.error ?? "unknown" }
+  const kind = resource.loading ? "loading" : resource.data ? "ready" : "error"
 
   // The PodExport outcome groups need the detail (the inventory has no
   // terminal_reason), so classify the export entries here and fold the result
   // into the same shared presentation the rest of the tree uses.
-  const availableInventory =
-    resource.data && resource.data.status === "available" ? resource.data : null
+  const availableInventory = resource.data && resource.data.status === "available" ? resource.data : null
   const inventoryGroups = availableInventory ? availableInventory.groups : NO_GROUPS
   const podExports = useMemo(
     () => (availableInventory ? collectPodExports(availableInventory.groups) : []),
@@ -150,10 +112,10 @@ export function ResolvedArtifactsSection({
 
   return (
     <div className="resolved-artifacts">
-      {state.kind === "loading" && <p className="eval-status">Loading artifacts…</p>}
-      {state.kind === "error" && (
+      {kind === "loading" && <p className="eval-status">Loading artifacts…</p>}
+      {kind === "error" && (
         <p className="eval-error" role="alert">
-          Artifact load error: {state.message}
+          Artifact load error: {resource.error ?? "unknown"}
         </p>
       )}
       {resource.data !== null && resource.error !== null && (
@@ -161,14 +123,14 @@ export function ResolvedArtifactsSection({
           Artifact refresh failed: {resource.error}. Showing the previous inventory.
         </p>
       )}
-      {state.kind === "ready" && state.inventory.status !== "available" && (
+      {kind === "ready" && resource.data !== null && resource.data.status !== "available" && (
         <p className="eval-status eval-unavailable">
-          Project artifacts unavailable ({state.inventory.reason}).
+          Project artifacts unavailable ({resource.data.reason}).
         </p>
       )}
-      {state.kind === "ready" && state.inventory.status === "available" && (
+      {kind === "ready" && resource.data !== null && resource.data.status === "available" && (
         <>
-          <p className="artifact-source">{sourceLabel(state.inventory.source)}</p>
+          <p className="artifact-source">{sourceLabel(resource.data.source)}</p>
           {artifactSections(groups).map((section) => (
             <section
               key={section.category}
@@ -193,5 +155,70 @@ export function ResolvedArtifactsSection({
         </>
       )}
     </div>
+  )
+}
+
+// The standalone path: the artifacts page owns its own poll. Inside the Trial
+// workspace the shared provider answers instead, so the inventory is polled once.
+function StandaloneResolvedArtifactsSection({
+  targetId,
+  targetRunId,
+  trialId,
+  expectedProjectId,
+  detailPath,
+}: {
+  targetId: string
+  targetRunId: string
+  trialId: string
+  expectedProjectId?: string | null
+  detailPath: DetailPath
+}) {
+  const resource = useResolvedInventory({ targetId, targetRunId, trialId, expectedProjectId })
+  return (
+    <ResolvedArtifactsView
+      resource={resource}
+      targetId={targetId}
+      targetRunId={targetRunId}
+      trialId={trialId}
+      detailPath={detailPath}
+    />
+  )
+}
+
+export function ResolvedArtifactsSection({
+  targetId,
+  targetRunId,
+  trialId,
+  detailPath,
+  expectedProjectId,
+}: {
+  targetId: string
+  targetRunId: string
+  trialId: string
+  detailPath: DetailPath
+  // The project id the Trial record claims. When known, a resolved inventory
+  // that names a different project is a safe error, never a silent render.
+  expectedProjectId?: string | null
+}) {
+  const provided = useResolvedArtifactsResource()
+  if (provided) {
+    return (
+      <ResolvedArtifactsView
+        resource={provided}
+        targetId={targetId}
+        targetRunId={targetRunId}
+        trialId={trialId}
+        detailPath={detailPath}
+      />
+    )
+  }
+  return (
+    <StandaloneResolvedArtifactsSection
+      targetId={targetId}
+      targetRunId={targetRunId}
+      trialId={trialId}
+      expectedProjectId={expectedProjectId}
+      detailPath={detailPath}
+    />
   )
 }

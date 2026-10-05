@@ -1,8 +1,13 @@
 import type { ReactNode } from "react"
+import { Link } from "react-router-dom"
+import { targetPaths } from "../projectPaths"
 import {
   GROUND_TRUTH_FALLBACK,
   type GroundTruthState,
 } from "./operatorGroundTruth"
+import { useEvidenceResolver } from "./ResolvedArtifactsProvider"
+import { isSafeEvidenceReference } from "./projectArtifacts"
+import type { EvidenceResolution } from "./projectArtifacts"
 import type { EvalDiagnosis, EvalTrial, EvalVerdict } from "./types"
 
 // One Trial's results: every materialized verdict as its own row, with the
@@ -13,8 +18,7 @@ import type { EvalDiagnosis, EvalTrial, EvalVerdict } from "./types"
 // A reference the projection would never emit: absolute, escaping, or a URL.
 // Belt and braces - the server already allows only relative, path-safe refs.
 export function isSafeRef(ref: string): boolean {
-  if (!ref || ref.startsWith("/") || ref.includes("\\") || ref.includes("://")) return false
-  return !ref.split("/").some((part) => part === "..")
+  return isSafeEvidenceReference(ref)
 }
 
 function percent(confidence: number): string {
@@ -49,7 +53,22 @@ export function MatchList({ verdict }: { verdict: EvalVerdict }) {
   )
 }
 
-export function EvidenceList({ refs }: { refs: string[] }) {
+// One verdict's evidence references. When the shared instrument is available a
+// reference that resolves to exactly one artifact becomes a link to that
+// artifact's detail route; the original reference stays the link text. A safe
+// reference with no match is stated as unavailable, one still loading is stated
+// as pending, and every other shape stays plain text. Callers without an
+// inventory (the materialized artifact views) pass no resolver and get exactly
+// the previous plain-text rendering.
+export function EvidenceList({
+  refs,
+  resolve,
+  detailPath,
+}: {
+  refs: string[]
+  resolve?: (reference: string) => EvidenceResolution
+  detailPath?: (artifactId: string) => string
+}) {
   if (refs.length === 0) {
     return (
       <p className="eval-hint">
@@ -59,11 +78,29 @@ export function EvidenceList({ refs }: { refs: string[] }) {
   }
   return (
     <ul className="eval-evidence">
-      {refs.map((ref) => (
-        <li key={ref}>
-          <span className="eval-ref">{ref}</span>
-        </li>
-      ))}
+      {refs.map((ref) => {
+        const resolution: EvidenceResolution = resolve ? resolve(ref) : { kind: "plain" }
+        if (resolution.kind === "linked" && detailPath) {
+          return (
+            <li key={ref}>
+              <Link to={detailPath(resolution.artifact_id)} className="eval-ref">
+                {ref}
+              </Link>
+            </li>
+          )
+        }
+        return (
+          <li key={ref}>
+            <span className="eval-ref">{ref}</span>
+            {resolution.kind === "loading" && (
+              <span className="eval-hint"> Verifica artifact in corso</span>
+            )}
+            {resolution.kind === "missing" && (
+              <span className="eval-hint"> Artifact non disponibile</span>
+            )}
+          </li>
+        )
+      })}
     </ul>
   )
 }
@@ -152,6 +189,12 @@ export function VerdictList({
   trial: EvalTrial
   groundTruth?: GroundTruthState
 }) {
+  // One shared artifact index for the whole list: the link target is the
+  // canonical Trial artifact route, never another Trial or project.
+  const resolveEvidence = useEvidenceResolver(trial.project_id)
+  const artifactDetailPath = (artifactId: string) =>
+    targetPaths.trialArtifact(trial.target_id, trial.target_run_id, trial.trial_id, artifactId)
+
   if (trial.verdicts.length === 0) return null
   return (
     <ul className="eval-artifacts">
@@ -175,7 +218,11 @@ export function VerdictList({
               <GroundTruthSection vulnId={verdict.vuln_id} state={groundTruth} />
             )}
             <h4>Evidence</h4>
-            <EvidenceList refs={verdict.evidence.filter(isSafeRef)} />
+            <EvidenceList
+              refs={verdict.evidence.filter(isSafeRef)}
+              resolve={resolveEvidence}
+              detailPath={artifactDetailPath}
+            />
             {(paired.length > 0 || needsDiagnosis) && <h4>Diagnosis</h4>}
             {paired.map((diagnosis) => (
               <DiagnosisArticle key={`${diagnosis.vuln}-${diagnosis.failure_mode}`} diagnosis={diagnosis} />

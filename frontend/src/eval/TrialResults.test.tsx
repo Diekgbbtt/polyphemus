@@ -1,9 +1,15 @@
-import { render, screen, within } from "@testing-library/react"
+import { act, render, screen, waitFor, within } from "@testing-library/react"
 import { MemoryRouter } from "react-router-dom"
-import { expect, test } from "vitest"
+import { afterEach, expect, test, vi } from "vitest"
+import { ResolvedArtifactsProvider } from "./ResolvedArtifactsProvider"
 import { TrialResults } from "./TrialResults"
 import type { GroundTruthState } from "./operatorGroundTruth"
-import type { EvalTrial } from "./types"
+import type {
+  EvalTrial,
+  ProjectArtifactEntry,
+  ProjectArtifactGroup,
+  ResolvedArtifactInventory,
+} from "./types"
 
 function trial(overrides: Partial<EvalTrial> = {}): EvalTrial {
   return {
@@ -259,4 +265,243 @@ test("no reference panel is rendered when a caller supplies no state", () => {
 
   expect(screen.queryByText("Ground truth (current benchmark)")).toBeNull()
   expect(screen.queryByText("Ground truth non disponibile")).toBeNull()
+})
+
+// --- evidence -> artifact links -------------------------------------------------
+
+const POLL = 15_000
+
+function artifactEntry(id: string, relativePath: string): ProjectArtifactEntry {
+  return {
+    artifact_id: id,
+    category: "hunting",
+    kind: "test_spec",
+    relative_path: relativePath,
+    media_type: "application/yaml",
+    size_bytes: 10,
+    sha256: `sha-${id}`,
+    representation: "yaml",
+  }
+}
+
+function groupsOf(entries: ProjectArtifactEntry[], projectId = "proj-1"): ProjectArtifactGroup[] {
+  return [
+    {
+      key: "g",
+      label: "G",
+      category: "hunting",
+      entries,
+      children: [],
+    },
+  ]
+}
+
+function availableInventory(
+  entries: ProjectArtifactEntry[],
+  projectId = "proj-1",
+): ResolvedArtifactInventory {
+  return {
+    status: "available",
+    source: "project_storage",
+    project_id: projectId,
+    fallback_reason: null,
+    groups: groupsOf(entries, projectId),
+  }
+}
+
+function json(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), { status })
+}
+
+function trialWithEvidence(evidence: string[]): EvalTrial {
+  return trial({
+    verdicts: [
+      {
+        vuln_id: "V-1",
+        identified: "partial",
+        confidence: 0.5,
+        matched: { unit: null, fault_class: null, symptom: null },
+        evidence,
+      },
+    ],
+    diagnoses: [],
+  })
+}
+
+function stubInventory(body: unknown): string[] {
+  const calls: string[] = []
+  globalThis.fetch = (async (input: unknown) => {
+    const url = String(input)
+    calls.push(url)
+    if (url.endsWith("/resolved-artifacts")) return json(body)
+    return json({ detail: "not_found" }, 404)
+  }) as typeof fetch
+  return calls
+}
+
+function renderInWorkspace(t: EvalTrial) {
+  return render(
+    <MemoryRouter>
+      <ResolvedArtifactsProvider
+        targetId={t.target_id}
+        targetRunId={t.target_run_id}
+        trialId={t.trial_id}
+        expectedProjectId={t.project_id}
+      >
+        <TrialResults trial={t} />
+      </ResolvedArtifactsProvider>
+    </MemoryRouter>,
+  )
+}
+
+afterEach(() => {
+  vi.useRealTimers()
+})
+
+test("links a matching evidence reference to the canonical artifact route", async () => {
+  const t = trialWithEvidence(["proj-1/hunting/x.yaml"])
+  stubInventory(availableInventory([artifactEntry("a1", "hunting/x.yaml")]))
+
+  renderInWorkspace(t)
+
+  const link = await screen.findByRole("link", { name: "proj-1/hunting/x.yaml" })
+  expect(link.getAttribute("href")).toBe("/targets/comfyui-1/trials/run-a/t1/artifacts/a1")
+})
+
+test("keeps a safe unmatched reference as text with Artifact non disponibile", async () => {
+  const t = trialWithEvidence(["proj-1/hunting/nope.yaml"])
+  stubInventory(availableInventory([artifactEntry("a1", "hunting/x.yaml")]))
+
+  renderInWorkspace(t)
+
+  await waitFor(() => expect(screen.getByText(/Artifact non disponibile/)).toBeDefined())
+  expect(screen.getByText("proj-1/hunting/nope.yaml")).toBeDefined()
+  expect(screen.queryByRole("link", { name: "proj-1/hunting/nope.yaml" })).toBeNull()
+})
+
+test("a directory reference (spec_dir) stays unlinked", async () => {
+  const t = trialWithEvidence(["proj-1/hunting/hunter/test-specs/F"])
+  stubInventory(
+    availableInventory([
+      artifactEntry("a1", "hunting/hunter/test-specs/F/produced/x.yaml"),
+      artifactEntry("a2", "hunting/hunter/test-specs/F/consumed/y.yaml"),
+    ]),
+  )
+
+  renderInWorkspace(t)
+
+  await waitFor(() => expect(screen.getByText(/Artifact non disponibile/)).toBeDefined())
+  expect(screen.queryByRole("link", { name: "proj-1/hunting/hunter/test-specs/F" })).toBeNull()
+})
+
+test("a different project's prefix is never linked", async () => {
+  const t = trialWithEvidence(["proj-2/hunting/x.yaml"])
+  stubInventory(availableInventory([artifactEntry("a1", "hunting/x.yaml")]))
+
+  renderInWorkspace(t)
+
+  await waitFor(() => expect(screen.getByText(/Artifact non disponibile/)).toBeDefined())
+  expect(screen.queryByRole("link", { name: "proj-2/hunting/x.yaml" })).toBeNull()
+})
+
+test("shows Verifica artifact in corso while the first inventory load is pending", async () => {
+  const t = trialWithEvidence(["proj-1/hunting/x.yaml"])
+  globalThis.fetch = (async (_input: unknown, init?: RequestInit) =>
+    await new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener(
+        "abort",
+        () => reject(new DOMException("aborted", "AbortError")),
+        { once: true },
+      )
+    })) as typeof fetch
+
+  renderInWorkspace(t)
+
+  await waitFor(() => expect(screen.getByText(/Verifica artifact in corso/)).toBeDefined())
+  expect(screen.getByText("proj-1/hunting/x.yaml")).toBeDefined()
+  expect(screen.queryByRole("link", { name: "proj-1/hunting/x.yaml" })).toBeNull()
+  expect(screen.queryByText(/Artifact non disponibile/)).toBeNull()
+})
+
+test("an inventory error keeps the results and never claims absence", async () => {
+  const t = trialWithEvidence(["proj-1/hunting/x.yaml"])
+  globalThis.fetch = (async () => json({ detail: "artifact_unsafe" }, 409)) as typeof fetch
+
+  renderInWorkspace(t)
+
+  await waitFor(() => expect(screen.getByText("proj-1/hunting/x.yaml")).toBeDefined())
+  expect(screen.getAllByText("50%").length).toBeGreaterThan(0)
+  expect(screen.queryByRole("link", { name: "proj-1/hunting/x.yaml" })).toBeNull()
+  expect(screen.queryByText(/Artifact non disponibile/)).toBeNull()
+  expect(screen.queryByText(/Verifica artifact in corso/)).toBeNull()
+})
+
+test("a reference that was missing becomes clickable after the inventory refreshes", async () => {
+  vi.useFakeTimers()
+  const t = trialWithEvidence(["proj-1/hunting/x.yaml"])
+  let body: unknown = availableInventory([])
+  globalThis.fetch = (async (input: unknown) => {
+    const url = String(input)
+    if (url.endsWith("/resolved-artifacts")) return json(body)
+    return json({ detail: "not_found" }, 404)
+  }) as typeof fetch
+
+  renderInWorkspace(t)
+  await act(async () => {})
+  expect(screen.getByText(/Artifact non disponibile/)).toBeDefined()
+
+  body = availableInventory([artifactEntry("a1", "hunting/x.yaml")])
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(POLL)
+  })
+
+  expect(screen.getByRole("link", { name: "proj-1/hunting/x.yaml" })).toBeDefined()
+})
+
+test("results used without a workspace provider stay plain and fetch nothing", () => {
+  const calls: string[] = []
+  globalThis.fetch = (async (input: unknown) => {
+    calls.push(String(input))
+    return json({})
+  }) as typeof fetch
+
+  renderResults(trialWithEvidence(["proj-1/hunting/x.yaml"]))
+
+  expect(screen.getByText("proj-1/hunting/x.yaml")).toBeDefined()
+  expect(screen.queryByRole("link", { name: "proj-1/hunting/x.yaml" })).toBeNull()
+  expect(calls).toHaveLength(0)
+})
+
+test("changing the Trial drops the previous links immediately", async () => {
+  const first = trialWithEvidence(["proj-1/hunting/x.yaml"])
+  stubInventory(availableInventory([artifactEntry("a1", "hunting/x.yaml")]))
+  const { rerender } = renderInWorkspace(first)
+  await screen.findByRole("link", { name: "proj-1/hunting/x.yaml" })
+
+  // The next Trial's inventory never settles: no stale link may survive.
+  globalThis.fetch = (async (_input: unknown, init?: RequestInit) =>
+    await new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener(
+        "abort",
+        () => reject(new DOMException("aborted", "AbortError")),
+        { once: true },
+      )
+    })) as typeof fetch
+  const second = { ...trialWithEvidence(["proj-1/hunting/x.yaml"]), trial_id: "t2" }
+  rerender(
+    <MemoryRouter>
+      <ResolvedArtifactsProvider
+        targetId={second.target_id}
+        targetRunId={second.target_run_id}
+        trialId={second.trial_id}
+        expectedProjectId={second.project_id}
+      >
+        <TrialResults trial={second} />
+      </ResolvedArtifactsProvider>
+    </MemoryRouter>,
+  )
+
+  await waitFor(() =>
+    expect(screen.queryByRole("link", { name: "proj-1/hunting/x.yaml" })).toBeNull(),
+  )
 })

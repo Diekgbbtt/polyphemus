@@ -300,3 +300,74 @@ const REPRESENTATION_LABELS: Record<ProjectArtifactRepresentation, string> = {
 export function representationLabel(representation: ProjectArtifactRepresentation): string {
   return REPRESENTATION_LABELS[representation] ?? String(representation)
 }
+
+// --- verdict evidence -> artifact links ----------------------------------------
+
+export type EvidenceResolution =
+  | { kind: "linked"; artifact_id: string }
+  | { kind: "loading" }
+  | { kind: "missing" }
+  | { kind: "plain" }
+
+const OPAQUE_SCHEME = /^(javascript|data|vbscript|blob|file|mailto|tel):/i
+
+// A reference the projection may safely be compared against an inventory path.
+// The server already emits only relative, path-safe refs; this is the belt-and-
+// braces gate: no URL, no absolute path, no traversal, no control character.
+// There is deliberately NO decoding and no permissive normalisation.
+export function isSafeEvidenceReference(reference: string): boolean {
+  if (!reference) return false
+  if (reference.startsWith("/")) return false
+  if (reference.includes("\\") || reference.includes("\u0000")) return false
+  if (/[\n\r\t]/.test(reference)) return false
+  if (/^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(reference)) return false
+  if (OPAQUE_SCHEME.test(reference)) return false
+  if (reference.split("/").some((segment) => segment === "." || segment === "..")) return false
+  return true
+}
+
+export interface ArtifactPathIndex {
+  projectId: string | null
+  // relative_path -> its entries. More than one entry is ambiguous, never a guess.
+  byPath: Map<string, ProjectArtifactEntry[]>
+}
+
+export function buildArtifactPathIndex(
+  groups: ProjectArtifactGroup[],
+  projectId: string | null,
+): ArtifactPathIndex {
+  const byPath = new Map<string, ProjectArtifactEntry[]>()
+  const visit = (level: ProjectArtifactGroup[]) => {
+    for (const group of level) {
+      for (const entry of group.entries) {
+        const bucket = byPath.get(entry.relative_path)
+        if (bucket) bucket.push(entry)
+        else byPath.set(entry.relative_path, [entry])
+      }
+      visit(group.children)
+    }
+  }
+  visit(groups)
+  return { projectId, byPath }
+}
+
+// Resolve one evidence reference against the inventory. Only two shapes are
+// accepted: an exact `relative_path`, or `<project_id>/<relative_path>` with the
+// exact project prefix removed. No basename, no suffix, no substring, no
+// decoding. An unsafe reference, or one whose relative_path is present more than
+// once, is left plain; a safe reference with no entry is `missing`.
+export function resolveEvidenceReference(
+  reference: string,
+  index: ArtifactPathIndex,
+): EvidenceResolution {
+  if (!isSafeEvidenceReference(reference)) return { kind: "plain" }
+  const candidate =
+    index.projectId && reference.startsWith(`${index.projectId}/`)
+      ? reference.slice(index.projectId.length + 1)
+      : reference
+  if (!isSafeEvidenceReference(candidate)) return { kind: "plain" }
+  const matches = index.byPath.get(candidate)
+  if (!matches || matches.length === 0) return { kind: "missing" }
+  if (matches.length > 1) return { kind: "plain" }
+  return { kind: "linked", artifact_id: matches[0].artifact_id }
+}

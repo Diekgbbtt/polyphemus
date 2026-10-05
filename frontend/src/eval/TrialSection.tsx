@@ -3,6 +3,7 @@ import { targetPaths } from "../projectPaths"
 import { EvalBreadcrumbs, evalPaths } from "./EvalBreadcrumbs"
 import { useEvalData } from "./EvalDataProvider"
 import { useOperatorGroundTruth } from "./operatorGroundTruth"
+import { ResolvedArtifactsProvider } from "./ResolvedArtifactsProvider"
 import { ResolvedArtifactsSection } from "./ResolvedArtifactsSection"
 import { SavedOn } from "./SavedOn"
 import { TrialProjectGraph } from "./TrialProjectGraph"
@@ -210,26 +211,35 @@ export function TrialSection({
       )}
 
       <RecordedSpend trial={trial} />
-      <TrialResults trial={trial} groundTruth={groundTruth} />
-      <TrialProjectGraph
-        targetId={trial.target_id}
-        targetRunId={trial.target_run_id}
-        trialId={trial.trial_id}
-      />
-      <ResolvedArtifactsSection
+      {/* One resolved-inventory poll feeds both the verdict evidence links and
+          the artifact list, so the two never fetch the same endpoint twice. */}
+      <ResolvedArtifactsProvider
         targetId={trial.target_id}
         targetRunId={trial.target_run_id}
         trialId={trial.trial_id}
         expectedProjectId={trial.project_id}
-        detailPath={(artifactId) =>
-          targetPaths.trialArtifact(
-            trial.target_id,
-            trial.target_run_id,
-            trial.trial_id,
-            artifactId,
-          )
-        }
-      />
+      >
+        <TrialResults trial={trial} groundTruth={groundTruth} />
+        <TrialProjectGraph
+          targetId={trial.target_id}
+          targetRunId={trial.target_run_id}
+          trialId={trial.trial_id}
+        />
+        <ResolvedArtifactsSection
+          targetId={trial.target_id}
+          targetRunId={trial.target_run_id}
+          trialId={trial.trial_id}
+          expectedProjectId={trial.project_id}
+          detailPath={(artifactId) =>
+            targetPaths.trialArtifact(
+              trial.target_id,
+              trial.target_run_id,
+              trial.trial_id,
+              artifactId,
+            )
+          }
+        />
+      </ResolvedArtifactsProvider>
       <MaterializedArtifacts trial={trial} />
     </section>
   )

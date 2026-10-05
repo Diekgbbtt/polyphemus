@@ -149,3 +149,50 @@ test("a trial with no spend block at all is non disponibile", async () => {
 
   await waitFor(() => expect(spendCell("spent").textContent).toBe("non disponibile"))
 })
+
+test("the workspace polls the resolved inventory exactly once", async () => {
+  const record = trial()
+  const calls: string[] = []
+  globalThis.fetch = (async (input: unknown) => {
+    const url = String(input)
+    calls.push(url)
+    if (url.endsWith("/snapshot")) {
+      return new Response(JSON.stringify(snapshot([record])), { status: 200 })
+    }
+    if (url.endsWith("/resolved-artifacts")) {
+      return new Response(
+        JSON.stringify({
+          status: "available",
+          source: "project_storage",
+          project_id: "proj-a",
+          fallback_reason: null,
+          groups: [],
+        }),
+        { status: 200 },
+      )
+    }
+    return new Response(
+      JSON.stringify({
+        status: "unavailable",
+        source: null,
+        project_id: null,
+        captured_at: null,
+        fallback_reason: null,
+        reason: "not_captured",
+        groups: [],
+      }),
+      { status: 200 },
+    )
+  }) as typeof fetch
+
+  render(
+    <MemoryRouter>
+      <EvalDataProvider>
+        <TrialSection trial={record} />
+      </EvalDataProvider>
+    </MemoryRouter>,
+  )
+
+  await waitFor(() => expect(screen.getByText("Saved for project")).toBeDefined())
+  expect(calls.filter((url) => url.endsWith("/resolved-artifacts"))).toHaveLength(1)
+})
