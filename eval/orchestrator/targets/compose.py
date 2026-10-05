@@ -117,7 +117,7 @@ class ComposeStrategy:
     def plan_up(self) -> list[Command]:
         return [
             self._compose("up", "-d"),
-            self._readiness_plan().probe,
+            *self._readiness_plan().commands,
             front.plan_conf_apply(self.host, self.port),
             routing.plan_gateway_resolve(self.paths),
             routing.kali_alias_command(self.paths, self.host, routing.PLAN_GATEWAY_IP),

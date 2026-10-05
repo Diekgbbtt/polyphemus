@@ -73,8 +73,10 @@ class TargetConfiguration:
     images: tuple[str, ...] = ()
     # canonical tag -> registry reference, for the pre-pull fallback.
     pull: Mapping[str, str] = field(default_factory=dict)
-    # A named readiness checker in the dataset helper; None defaults to the
-    # compose's own healthchecks, read non-blockingly.
+    # An explicit named readiness checker in the dataset helper. None selects
+    # the target's default plan: the compose poll when the application-serving
+    # service declares a healthcheck, the composite front + compose plan when it
+    # does not (the #325 boot window). A name with no checker fails loud.
     checker: str | None = None
     # Per-target readiness window overrides; None keeps the orchestrator default
     # (60 retries x 5s). A slow target (a JVM under emulation, a large stack)

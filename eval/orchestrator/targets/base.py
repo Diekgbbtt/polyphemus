@@ -19,7 +19,12 @@ from orchestrator.dataset import BenchmarkDataset
 from orchestrator.datasets.base import DatasetHelper
 from orchestrator.docker import ProvisionOutcome
 from orchestrator.instances import InstancePaths
-from orchestrator.readiness import READY_UNREACHABLE, ReadinessPlan, wait_readiness
+from orchestrator.readiness import (
+    READY_UNREACHABLE,
+    ReadinessPlan,
+    http_probe,
+    wait_readiness,
+)
 from orchestrator.setup import TargetRun
 from orchestrator.target_config import TargetConfiguration
 
@@ -105,5 +110,7 @@ def wait_ready(
     sleep: Sleep = time.sleep,
 ) -> bool:
     """Poll an HTTP probe under a bounded window (delegates to `readiness`)."""
-    plan = ReadinessPlan(probe=probe, retries=retries, interval_s=interval_s, kind="http")
+    plan = ReadinessPlan(
+        probes=(http_probe(probe),), retries=retries, interval_s=interval_s
+    )
     return wait_readiness(run, plan, sleep=sleep)

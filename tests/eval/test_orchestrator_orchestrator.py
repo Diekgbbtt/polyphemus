@@ -142,6 +142,7 @@ def test_up_drives_the_instance_and_target(tmp_path, recording_runner, fake_resu
         routes={
             "scripts/targetctl up": fake_result(0, "UI: http://127.0.0.1:32768/\n"),
             "getent hosts": fake_result(0, "172.17.0.1 host.docker.internal\n"),
+            "curl": fake_result(0, "200"),
             "ps -a --format json": fake_result(0, '[{"Health": "healthy"}]\n'),
         }
     )
@@ -241,6 +242,7 @@ def test_up_creates_the_front_for_a_targetctl_target(
         routes={
             "scripts/targetctl up": fake_result(0, "UI: http://127.0.0.1:32768/\n"),
             "getent hosts": fake_result(0, GATEWAY_LINE),
+            "curl": fake_result(0, "200"),
             "ps -a --format json": fake_result(0, '[{"Health": "healthy"}]\n'),
         }
     )

@@ -4,10 +4,11 @@ Readiness is the platform's own concern, not `docker compose up`'s. The target's
 `up` never blocks on health; this module then verifies readiness under a bounded
 window, so a slow or broken healthcheck can never hang the chain.
 
-Two kinds of checker:
+A plan holds one or more probes, and every probe must answer ready. There are two
+probe kinds:
 
-* **compose** (the default): read the compose project's OWN health, exhaustively,
-  with `docker compose ps -a --format json`. `-a` lists every service, including
+* **compose**: read the compose project's OWN health, exhaustively, with
+  `docker compose ps -a --format json`. `-a` lists every service, including
   one-shot init services that have exited and services not yet started, so the
   check mirrors the benchmark's own `depends_on` conditions exactly:
   a service is ready when it is `healthy`, or `running` with no healthcheck, or
@@ -15,11 +16,19 @@ Two kinds of checker:
   `restarting`, a non-zero exit - is not ready. The stack's functional
   dependencies are therefore asserted as the platform declares them, and a
   not-yet-started dependent can never be mistaken for a ready one.
-* **http**: probe the target's published port directly, for a target whose
-  readiness is an HTTP answer rather than a container healthcheck. A 5xx answer
-  (including 500) or no answer is NOT ready.
+* **http**: probe an HTTP endpoint and read its status. A 5xx answer (including
+  500) or no answer is NOT ready. Two builders produce it: `plan_http_port`
+  probes a published port on the host loopback, and `plan_front_http` probes the
+  target front carrying the synthetic Host. The front is the exact bare-domain
+  path recon uses, and it answers `502` while the published port is still binding
+  (the #325 boot window). Because the compose poll reads a `running` container
+  with no healthcheck as ready, an HTTP probe alone would drop the support-
+  service assertion and a compose poll alone would read a booting app as ready;
+  a **composite** plan pairs both, so neither footgun survives.
 
-A dataset helper may name a specific checker for a target; the default is compose.
+A dataset helper resolves the plan for a target; the default is the compose poll
+when the application declares a healthcheck, and the composite front + compose
+plan otherwise.
 """
 from __future__ import annotations
 
@@ -64,13 +73,54 @@ class ServiceHealth:
 
 
 @dataclass(frozen=True)
-class ReadinessPlan:
-    """How a target's readiness is verified: a probe and a bounded window."""
+class ReadinessProbe:
+    """One readiness assertion: a command and how to read its answer."""
 
-    probe: Command
+    command: Command
+    kind: str  # compose | http
+
+    def ready(self, output: str) -> bool:
+        """True when the probe's output is a valid readiness signal."""
+        if self.kind == "compose":
+            return compose_healthy(parse_compose_health(output))
+        return http_ready(output)
+
+
+@dataclass(frozen=True)
+class ReadinessPlan:
+    """How a target's readiness is verified: every probe and a bounded window."""
+
+    probes: tuple[ReadinessProbe, ...]
     retries: int = 60
     interval_s: float = 5.0
-    kind: str = "compose"  # compose | http
+
+    def __post_init__(self) -> None:
+        if not self.probes:
+            raise ValueError("a readiness plan needs at least one probe")
+
+    @property
+    def kind(self) -> str:
+        """The plan's single probe kind, or `composite` when it pairs probes."""
+        if len(self.probes) == 1:
+            return self.probes[0].kind
+        return "composite"
+
+    @property
+    def commands(self) -> tuple[Command, ...]:
+        """Every probe command, in plan order; for a dry-run command list."""
+        return tuple(probe.command for probe in self.probes)
+
+
+def http_probe(command: Command) -> ReadinessProbe:
+    """Wrap an HTTP command as `http`-kind readiness."""
+    return ReadinessProbe(command=command, kind="http")
+
+
+def compose_probe(compose_file: str, project: str, *, cwd: str | None = None) -> ReadinessProbe:
+    """Wrap the compose-health poll as `compose`-kind readiness."""
+    return ReadinessProbe(
+        command=plan_compose_health(compose_file, project, cwd=cwd), kind="compose"
+    )
 
 
 def http_ready(code: str) -> bool:
@@ -100,6 +150,40 @@ def wait_probe(
             return True
         sleep(interval_s)
     return False
+
+
+def plan_http_port(port: int | str, ready_path: str = "/") -> Command:
+    """Probe a published port on the host loopback for an HTTP status."""
+    return Command(
+        argv=(
+            "curl", "-sS", "-o", "/dev/null", "-w", "%{http_code}",
+            "--max-time", "10", f"http://127.0.0.1:{port}{_norm_path(ready_path)}",
+        ),
+        description=f"probe port {port}",
+    )
+
+
+def plan_front_http(host: str, ready_path: str = "/") -> Command:
+    """Probe the target front on the host loopback, carrying the synthetic Host.
+
+    The front (`ph-eval-front`, host `:80`) is the exact path recon uses: it
+    proxies the bare domain to the target's published port and answers `502`
+    while that port is not yet serving. The synthetic Host resolves only inside
+    the instance kali, so the eval host reaches the front on the loopback and
+    names the Host explicitly. A 5xx (the boot window) is not ready.
+    """
+    return Command(
+        argv=(
+            "curl", "-sS", "-o", "/dev/null", "-w", "%{http_code}",
+            "--max-time", "10", "-H", f"Host: {host}",
+            f"http://127.0.0.1{_norm_path(ready_path)}",
+        ),
+        description=f"probe front {host}",
+    )
+
+
+def _norm_path(ready_path: str) -> str:
+    return "/" + (ready_path or "").lstrip("/")
 
 
 def plan_compose_health(
@@ -186,18 +270,19 @@ def compose_healthy(services: tuple[ServiceHealth, ...]) -> bool:
 def wait_readiness(
     run: CommandRunner, plan: ReadinessPlan, *, sleep: Sleep = time.sleep
 ) -> bool:
-    """Verify `plan` under a bounded window; the caller treats False as fatal."""
-    if plan.kind == "compose":
-        for _attempt in range(plan.retries):
-            result = run(plan.probe)
-            if compose_healthy(parse_compose_health(result.stdout or "")):
-                return True
-            sleep(plan.interval_s)
-        return False
-    return wait_probe(
-        run,
-        plan.probe,
-        retries=plan.retries,
-        interval_s=plan.interval_s,
-        sleep=sleep,
-    )
+    """Verify every probe in `plan` under one bounded window.
+
+    Each attempt runs the probes in order and stops at the first that is not
+    ready, so a composite plan's support-service poll is only reached once the
+    primary (front) answer is live. The caller treats False as fatal.
+    """
+    for _attempt in range(plan.retries):
+        if all(_probe_ready(run, probe) for probe in plan.probes):
+            return True
+        sleep(plan.interval_s)
+    return False
+
+
+def _probe_ready(run: CommandRunner, probe: ReadinessProbe) -> bool:
+    result = run(probe.command)
+    return probe.ready(result.stdout or "")

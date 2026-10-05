@@ -227,14 +227,19 @@ def test_targetctl_readiness_is_bounded_and_fatal_on_failure(
     strategy, _ = _targetctl(tmp_path)
     strategy.ready_retries = 2
     runner = recording_runner(
-        routes={"ps -a --format json": fake_result(0, '[{"Service": "app", "State": "created"}]\n')}
+        routes={
+            "curl": fake_result(0, "200"),
+            "ps -a --format json": fake_result(0, '[{"Service": "app", "State": "created"}]\n'),
+        }
     )
 
     with pytest.raises(TargetNotReadyError, match=strategy.host):
         strategy.await_ready(runner)
 
-    # The bounded window: exactly `ready_retries` probes, never an unbounded wait.
-    assert len(runner.calls) == 2
+    # The bounded window: one front probe per attempt, `ready_retries` attempts,
+    # never an unbounded wait.
+    front_calls = [c for c in runner.calls if "curl" in " ".join(c.argv)]
+    assert len(front_calls) == 2
 
 
 def test_targetctl_readiness_succeeds_on_a_healthy_service(
@@ -242,10 +247,36 @@ def test_targetctl_readiness_succeeds_on_a_healthy_service(
 ) -> None:
     strategy, _ = _targetctl(tmp_path)
     runner = recording_runner(
-        routes={"ps -a --format json": fake_result(0, '[{"Health": "healthy"}]\n')}
+        routes={
+            "curl": fake_result(0, "200"),
+            "ps -a --format json": fake_result(0, '[{"Health": "healthy"}]\n'),
+        }
     )
 
-    assert "ready" in strategy.await_ready(runner)
+    # The no-healthcheck mock app selects the composite plan.
+    assert "composite" in strategy.await_ready(runner)
+
+
+def test_targetctl_never_ready_while_the_app_boots_behind_a_front_502(
+    tmp_path, fake_result
+) -> None:
+    """#325 regression: a no-healthcheck application service is not declared ready
+    before it answers, even when every container is `running`/healthy."""
+    strategy, _ = _targetctl(tmp_path)
+    strategy.ready_retries = 3
+
+    class FrontBootingRunner:
+        def __init__(self) -> None:
+            self.calls = []
+
+        def __call__(self, command):
+            self.calls.append(command)
+            if "curl" in " ".join(command.argv):
+                return fake_result(0, "502")
+            return fake_result(0, '[{"Service": "app", "Health": "healthy"}]\n')
+
+    with pytest.raises(TargetNotReadyError, match=strategy.host):
+        strategy.await_ready(FrontBootingRunner())
 
 
 def test_targetctl_up_without_a_url_is_fatal(tmp_path, recording_runner, fake_result) -> None:
@@ -554,13 +585,34 @@ def test_targetctl_readiness_reads_the_generated_compose(tmp_path) -> None:
     """D49: with exclusions, the readiness poll reads the generated compose the
     `up` used, not the original that still names the excluded service."""
     strategy, _ = _targetctl(tmp_path, exclude_services=("evaluator",))
-    plan = strategy._readiness_plan()
+    compose_args = [
+        " ".join(c.argv)
+        for c in strategy._readiness_plan().commands
+        if "compose" in " ".join(c.argv)
+    ]
 
-    assert ".targetctl/compose/" in " ".join(plan.probe.argv)
-    assert "evaluator" not in " ".join(plan.probe.argv)
+    assert compose_args and all(".targetctl/compose/" in a for a in compose_args)
+    assert all("evaluator" not in a for a in compose_args)
 
     plain, _ = _targetctl(tmp_path)
-    assert ".targetctl/compose/" not in " ".join(plain._readiness_plan().probe.argv)
+    plain_compose = [
+        " ".join(c.argv)
+        for c in plain._readiness_plan().commands
+        if "compose" in " ".join(c.argv)
+    ]
+    assert plain_compose and all(".targetctl/compose/" not in a for a in plain_compose)
+
+
+def test_targetctl_http_checker_is_composite_with_the_stack(tmp_path) -> None:
+    """#325 finding 5: an explicit `checker: http` still asserts the stack's own
+    health, so the support services are not dropped."""
+    strategy, _ = _targetctl(tmp_path, checker="http")
+    plan = strategy._readiness_plan()
+    front, compose = plan.commands
+
+    assert plan.kind == "composite"
+    assert f"Host: {strategy.host}" in front.argv
+    assert "compose" in " ".join(compose.argv)
 
 
 def test_targetctl_project_matches_the_server_scaffold(tmp_path) -> None:
@@ -573,12 +625,16 @@ def test_targetctl_project_matches_the_server_scaffold(tmp_path) -> None:
     assert targetctl_project("White-Jotter") == "web_white_jotter"
 
     strategy, _ = _targetctl(tmp_path, exclude_services=("evaluator",))
-    plan = strategy._readiness_plan()
-    argv = " ".join(plan.probe.argv)
+    compose_args = [
+        " ".join(c.argv)
+        for c in strategy._readiness_plan().commands
+        if "compose" in " ".join(c.argv)
+    ]
 
     assert strategy.project == "web_jetlinks"
-    assert "-p web_jetlinks" in argv
-    assert "compose/web_jetlinks.yml" in argv
+    assert compose_args
+    assert all("-p web_jetlinks" in a for a in compose_args)
+    assert all("compose/web_jetlinks.yml" in a for a in compose_args)
 
 
 def test_targetctl_reclaim_is_gated_on_reclaimable(tmp_path, recording_runner) -> None:

@@ -253,7 +253,7 @@ class TargetctlStrategy:
             self._targetctl("build", self.target),
             self._targetctl("up", self.target),
             front.plan_conf_apply(self.host, PLAN_PORT),
-            self._readiness_plan().probe,
+            *self._readiness_plan().commands,
             routing.plan_gateway_resolve(self.paths),
             routing.kali_alias_command(self.paths, self.host, PLAN_IP),
         ]
