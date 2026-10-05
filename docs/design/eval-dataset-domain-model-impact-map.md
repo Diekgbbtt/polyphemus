@@ -21,8 +21,8 @@ Replace the embedded `TargetDataset` value object and the per-target lifecycle `
 | `eval/orchestrator/dataset.py` | `BenchmarkDataset` dataclass, `parse_benchmark_dataset` / `load_benchmark_dataset`, loud validation, and `resolve` of the `<dataset>/<target>` key onto the bank and data-dependency paths |
 | `eval/orchestrator/target_config.py` | `TargetConfiguration` dataclass, loader, and validation (compose, images, pull, checker, reclaimable, runner) |
 | `eval/orchestrator/datasets/__init__.py` | `helper_for` returns a dataset's own helper module when one exists (`orchestrator/datasets/<id>.py` exposing `helper(dataset)`), else the generic helper |
-| `eval/orchestrator/datasets/base.py` | The generic compose-derived helper: derive the target's image set from the services declaring both `build:` and `image:`, bind each to its canonical tag, and resolve the bounded readiness plan; a dataset may add its own module for named checkers |
-| `eval/orchestrator/readiness.py` | The bounded, non-blocking readiness checker: default compose-health poll plus the TCP/HTTP port-probe fallback |
+| `eval/orchestrator/datasets/base.py` | The generic compose-derived helper: derive the target's image set from the services declaring both `build:` and `image:`, bind each to its canonical tag, and resolve the bounded readiness plan (the compose poll for a healthchecked application, the composite front + compose plan otherwise, the port probe for a compose-less target); a dataset may add its own module for named checkers |
+| `eval/orchestrator/readiness.py` | The bounded, non-blocking readiness plan: one or more `compose`/`http` probes, every one of which must answer ready, with the front HTTP builder and the published-port fallback |
 | `eval/datasets/webexploitbench.yaml`, `eval/datasets/mock.yaml` | The per-dataset YAMLs |
 | `eval/targets/webexploitbench/<target>.yaml` (15), `eval/targets/mock/webmock.yaml` | The per-target YAMLs |
 | `eval/platform/mock/webmock/` | The mock platform bank entry (moved from `eval/mock/webmock/`) |

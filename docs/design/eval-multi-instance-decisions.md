@@ -297,6 +297,13 @@ Without `-a`, compose reports only running containers, so a single running servi
 An HTTP 5xx (500 included) is removed as a valid readiness signal: a server-side error is a live but broken app, never a ready target.
 The runtime kali reachability gate is dropped from the recon-entry predicate (`predicates.recon_entry`): the target shares a Docker network that egresses to the host and reaches loopback, and its readiness was already asserted by the stack's own health check, so a second kali probe only duplicated the gate.
 
+**Amendment (#325, 2026-10-05).** The compose poll's `running`-with-no-healthcheck rule has no guard for an application that binds AFTER the container starts.
+A no-healthcheck slow-boot target (comfyui, jetlinks, and at least eight more) was declared ready while its published port was not serving, so recon probed the front's `502` boot-window page.
+The fix defaults the contract per target: a `targetctl`/`compose` target whose application-serving service declares no healthcheck gets the composite plan - the target front answering (the same bare-domain path recon uses) AND the compose poll, so the boot window cannot read ready and the support services stay asserted; a healthchecked application keeps the compose poll alone.
+The application-serving services come from the challenge's `application_service_keys`, or the compose's built services when that metadata is absent.
+An unknown named `checker` now fails loud instead of silently falling back to compose health.
+See `docs/design/eval-target-readiness-http-checker-adr.md`.
+
 ### The synthetic-Host pointing mechanism (assessment)
 
 The synthetic Host `t-<short>.target` reaches a target through three hops, all verified live on the eval host:

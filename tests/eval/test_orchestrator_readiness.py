@@ -8,8 +8,11 @@ from orchestrator.readiness import (
     READY_UNREACHABLE,
     ReadinessPlan,
     compose_healthy,
+    compose_probe,
+    http_probe,
     parse_compose_health,
     plan_compose_health,
+    plan_front_http,
     wait_probe,
     wait_readiness,
 )
@@ -128,17 +131,91 @@ def test_wait_readiness_compose_polls_until_healthy(fake_result):
     healthy = fake_result(stdout=json.dumps([{"Health": "healthy"}]))
     runner = _runner([starting, starting, healthy])
     plan = ReadinessPlan(
-        probe=plan_compose_health("c.yml", "proj"), retries=5, interval_s=0, kind="compose"
+        probes=(compose_probe("c.yml", "proj"),), retries=5, interval_s=0
     )
+    assert plan.kind == "compose"
     assert wait_readiness(runner, plan, sleep=lambda _s: None)
     assert len(runner.calls) == 3
+
+
+def test_wait_readiness_http_keeps_polling_through_a_front_502(fake_result):
+    """#325: the target front answers 502 while the app binds its port. An HTTP
+    readiness plan must never accept that 5xx, and must accept the first
+    non-5xx answer once the app serves."""
+    runner = _runner([fake_result(stdout="502"), fake_result(stdout="200")])
+    plan = ReadinessPlan(
+        probes=(http_probe(plan_front_http("t-abc.target")),), retries=5, interval_s=0
+    )
+    assert plan.kind == "http"
+    assert wait_readiness(runner, plan, sleep=lambda _s: None)
+    assert len(runner.calls) == 2
+
+
+def test_wait_readiness_composite_requires_the_front_answer_and_the_stack(
+    fake_result,
+):
+    """#325 finding 5: the composite plan asserts BOTH the front answer and the
+    compose health, so a no-healthcheck app's boot window is closed without
+    dropping the support-service assertion."""
+    healthy = fake_result(stdout=json.dumps([{"Service": "app", "State": "running"}]))
+    # Attempt 1: front 502, so the poll short-circuits before compose (1 call).
+    # Attempt 2: front 200 and compose healthy (2 calls).
+    runner = _runner([fake_result(stdout="502"), fake_result(stdout="200"), healthy])
+    plan = ReadinessPlan(
+        probes=(
+            http_probe(plan_front_http("t-abc.target")),
+            compose_probe("c.yml", "proj"),
+        ),
+        retries=5,
+        interval_s=0,
+    )
+    assert plan.kind == "composite"
+    assert [c.description for c in plan.commands] == [
+        "probe front t-abc.target",
+        "compose health proj",
+    ]
+
+    assert wait_readiness(runner, plan, sleep=lambda _s: None)
+    assert len(runner.calls) == 3
+
+
+def test_wait_readiness_composite_rejects_a_ready_front_over_an_unhealthy_stack(
+    fake_result,
+):
+    """A composite plan is not satisfied by the front answer alone: the stack's
+    declared health must hold too."""
+    runner = _runner(
+        [
+            fake_result(stdout="200"),
+            fake_result(stdout=json.dumps([{"Service": "db", "Health": "starting"}])),
+        ]
+        * 2
+    )
+    plan = ReadinessPlan(
+        probes=(
+            http_probe(plan_front_http("t-abc.target")),
+            compose_probe("c.yml", "proj"),
+        ),
+        retries=2,
+        interval_s=0,
+    )
+    assert not wait_readiness(runner, plan, sleep=lambda _s: None)
+
+
+def test_plan_front_http_probes_the_loopback_with_the_host_header():
+    """The synthetic Host is not resolvable from the eval host, so the front is
+    reached on the loopback with an explicit Host header - the same bare-domain
+    path recon uses."""
+    argv = plan_front_http("t-abc.target").argv
+    assert "Host: t-abc.target" in argv
+    assert "http://127.0.0.1/" in argv
 
 
 def test_wait_readiness_compose_times_out(fake_result):
     starting = fake_result(stdout=json.dumps([{"Health": "starting"}]))
     runner = _runner([starting] * 2)
     plan = ReadinessPlan(
-        probe=plan_compose_health("c.yml", "proj"), retries=2, interval_s=0, kind="compose"
+        probes=(compose_probe("c.yml", "proj"),), retries=2, interval_s=0
     )
     assert not wait_readiness(runner, plan, sleep=lambda _s: None)
 

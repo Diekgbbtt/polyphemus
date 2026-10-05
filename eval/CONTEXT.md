@@ -57,8 +57,12 @@ Provisioning binds every produced image to its canonical tag, and that tag is th
 _Avoid_: local tag, built image
 
 **Readiness checker**:
-The bounded, non-blocking verification that a target is ready after `up`: a `docker compose ps -a --format json` poll of the stack's own health by default, an HTTP port probe for a compose-less target, or a named checker defined per dataset and selected on the target config.
+The bounded, non-blocking verification that a target is ready after `up`, as a **Readiness plan** of one or more probes that every one of must answer ready: a `docker compose ps -a --format json` poll of the stack's own health, an HTTP probe, or both.
 The compose poll is exhaustive: `-a` lists every service (including one-shot inits and not-yet-started services), and a service is ready only when it is `healthy`, or `running` with no healthcheck, or `exited` with code 0.
+The plan is selected by default from the target's own composition, with no per-target opt-in: a `targetctl`/`compose` target whose application-serving service declares a healthcheck uses the compose poll alone; one whose application declares no healthcheck uses the **composite** plan; a compose-less target probes its published port.
+The application-serving services are the challenge's own `application_service_keys` (`challenge.json`), or the compose's built services when that metadata is absent.
+The composite pairs the compose poll with the **Target front** HTTP probe on the host loopback carrying the synthetic Host, so the front's `502` (while the published port is still binding) is never a ready signal and the support services stay asserted.
+An unknown named `checker` fails loud rather than falling back to compose health; a target may still declare one, and the named `http` checker is composite when a compose is resolvable.
 An HTTP 5xx (500 included) is never a readiness signal.
 It never blocks `up`; the chain then verifies readiness under a bounded window, so a slow or broken healthcheck cannot hang the chain.
 `orchestrator/readiness.py` owns the plans, and `orchestrator/datasets/base.py` resolves the target's plan.

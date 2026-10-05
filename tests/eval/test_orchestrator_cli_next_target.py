@@ -94,7 +94,9 @@ def test_next_target_reports_the_step(tmp_path, recording_runner, fake_result):
     assert isinstance(report["pulled"], list)
     assert report["host"]
     assert report["front_url"]
-    assert report["health"] == "compose ready"
+    # The mock `web` service declares no healthcheck, so the default plan is the
+    # composite front answer + stack health.
+    assert report["health"] == "composite ready"
 
 
 def test_next_target_unknown_target_reports_the_trace(tmp_path, recording_runner):
