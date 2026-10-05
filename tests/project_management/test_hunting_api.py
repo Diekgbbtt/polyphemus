@@ -34,6 +34,10 @@ class _FakeRuntime:
         self.cancelled: list[str] = []
         self.held: list[str] = []
         self.resumed: list[str] = []
+        self.ensured: list[str] = []
+
+    def ensure_running(self, module: str) -> None:
+        self.ensured.append(module)
 
     def schedule(self, module: str, coro, *, name: str) -> object:
         self.scheduled.append(name)
@@ -278,6 +282,75 @@ def test_launch_closes_the_orphan_row_on_admission_503(monkeypatch):
     assert rows.status_writes == [(RUN_ID, "failed")]  # the orphan row is closed
     row = rows.get_hunting_run(RUN_ID)
     assert row is not None and row["status"] == "failed"
+
+
+def test_launch_after_a_hunting_drain_is_admitted_not_503(monkeypatch):
+    """#332 regression: drain settles hunting to `stopped`; the next launch must
+    repair the module through the shared `ensure_running` precondition and be
+    admitted - never a 503 admission refusal (and no orphan row)."""
+    from polymerhus.app.runtime import RuntimeManager
+    from polymerhus.attack.hunting import runtime as hunting_runtime
+
+    monkeypatch.setattr(pg, "project_exists", lambda pid: True)
+    monkeypatch.setattr(pg, "create_hunting_run", lambda pid: RUN_ID)
+    monkeypatch.setattr(pg, "list_hunting_runs", lambda pid: [])
+    monkeypatch.setattr(pg, "set_hunting_run_status", lambda rid, status: None)
+
+    async def _noop_bootstrap(*_a, **_kw):
+        return None
+
+    monkeypatch.setattr(hunting_runtime, "start_hunting", _noop_bootstrap)
+
+    rm = RuntimeManager()
+    rm.start()
+    rm.register_module("hunting")
+    try:
+        rm.drain("hunting", timeout=5)
+        assert rm.state("hunting").value == "stopped"
+
+        resp = client.post("/projects/p1/hunting", json={})
+
+        assert resp.status_code == 201, resp.text
+        assert resp.json() == {"hunting_run_id": RUN_ID}
+        assert rm.state("hunting").value == "running"
+    finally:
+        rm.shutdown()
+
+
+def test_hunting_launch_during_shutdown_window_is_a_503_not_a_500(monkeypatch):
+    """#332 fix-pass regression, the hunting arm of #328: in the shutdown window
+    the active runtime is still published while its worker loop is already
+    cleared, so reviving a drained hunting module raises
+    `RuntimeLoopNotRunning`. The launch must map that to a clean 503, never an
+    unhandled 500."""
+    from polymerhus.app.runtime import RuntimeManager
+    from polymerhus.attack.hunting import runtime as hunting_runtime
+
+    monkeypatch.setattr(pg, "project_exists", lambda pid: True)
+    monkeypatch.setattr(pg, "create_hunting_run", lambda pid: RUN_ID)
+    monkeypatch.setattr(pg, "list_hunting_runs", lambda pid: [])
+    monkeypatch.setattr(pg, "set_hunting_run_status", lambda rid, status: None)
+    # A plain sentinel, not a coroutine: `schedule_hunting` raises at the revive
+    # before it could consume one, so no un-awaited coroutine warning.
+    monkeypatch.setattr(hunting_runtime, "start_hunting", lambda *a, **k: object())
+
+    rm = RuntimeManager()
+    rm.start()
+    rm.register_module("hunting")
+    try:
+        rm.drain("hunting", timeout=5)
+        assert rm.state("hunting").value == "stopped"
+
+        saved_loop = rm._loop
+        rm._loop = None
+        try:
+            resp = client.post("/projects/p1/hunting", json={})
+            assert resp.status_code == 503, resp.text
+            assert "not running" in resp.json()["detail"]
+        finally:
+            rm._loop = saved_loop
+    finally:
+        rm.shutdown()
 
 
 # --- T5: singular component launches (enqueue, never a dependency error) ------

@@ -26,7 +26,7 @@ import time
 import uuid
 
 from polymerhus.analysis.feed import drop_feed, get_feed, get_or_create_feed
-from polymerhus.app.runtime import ModuleAdmissionRefused
+from polymerhus.app.runtime import ModuleAdmissionRefused, RuntimeLoopNotRunning
 
 logger = logging.getLogger(__name__)
 
@@ -149,12 +149,28 @@ def _start_analysis_sync(project_id: str, run_id: str, pass_fn=None) -> str | No
             drop_feed(run_id)
 
     runtime = _require_runtime()
+    # #332 (same class as #328): a drain settles the analysis module to
+    # `stopped` (terminal), which `schedule` refuses. This launch is the
+    # operator's intent to analyse, so ask the runtime to revive a stopped module
+    # before scheduling instead of failing on an admission refusal. The repair
+    # rides the SHARED `ensure_running` precondition; a deliberate pause is left
+    # alone (only the terminal `stopped` state is revived). It also covers the
+    # combined recon launch, which calls `start_analysis` directly from
+    # `run_pipeline` one step after recon is admitted.
+    #
+    # The revive sits INSIDE the guard: `ensure_running` can itself raise
+    # `RuntimeLoopNotRunning` in the shutdown window (the active runtime is
+    # still published while its worker loop is already cleared), and that must
+    # propagate for the operator-intent surface to map to a 503, never be
+    # degraded to an "already running" 409 by the fail-open branch below.
     try:
+        runtime.ensure_running("analysis")
         runtime.schedule("analysis", _supervise(), name=run_id)
-    except ModuleAdmissionRefused:
+    except (ModuleAdmissionRefused, RuntimeLoopNotRunning):
         # #118 contract: a paused/draining/stopped analysis module refuses new
-        # runs. Propagate so the operator-intent surface maps it to a clean 503
-        # instead of degrading it to a "already running" 409 (that masks the
+        # runs, and a revive in the shutdown window cannot reach the worker loop.
+        # Propagate so the operator-intent surface maps both to a clean 503
+        # instead of degrading them to a "already running" 409 (that masks the
         # real cause - the module is not accepting work, not that a consumer
         # is live).
         raise

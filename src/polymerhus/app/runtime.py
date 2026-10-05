@@ -125,6 +125,15 @@ class ModuleState(enum.Enum):
     STOPPED = "stopped"
 
 
+# The revive verb that owns each non-running state, for the shared `_energize`
+# no-op warning: a paused module revives through `resume`, a stopped one through
+# `restart` - one name per thing (the state, the verb).
+_REVIVE_VERB = {
+    ModuleState.PAUSED: "resume",
+    ModuleState.STOPPED: "restart",
+}
+
+
 class ModuleAdmissionRefused(Exception):
     """`RuntimeManager.schedule` refuses admission while the module is paused,
     draining, or stopped (#121 D1): a paused module never admits new work."""
@@ -132,6 +141,12 @@ class ModuleAdmissionRefused(Exception):
 
 class RunNotRegistered(Exception):
     """The run_id is not a registered run of the module (nothing to cancel)."""
+
+
+class RuntimeLoopNotRunning(RuntimeError):
+    """The worker loop is not running (never started, or stopped by the
+    shutdown fan-out), so a lifecycle transition cannot be delivered to a
+    module. Raised instead of the `AttributeError` a `None` loop would give."""
 
 
 class ModuleGate:
@@ -387,12 +402,21 @@ class RuntimeManager:
 
     # --- driving the worker loop ---------------------------------------------
 
+    def _require_loop(self) -> asyncio.AbstractEventLoop:
+        """The guard for `call` (the `run_coroutine_threadsafe` seam) and the
+        gate re-arm in `_energize`: a stopped loop (the shutdown fan-out sets
+        `_loop = None`) is a named refusal, never an `AttributeError`. The
+        lifecycle verbs that reach `self._loop.call_soon_threadsafe` directly
+        (`cancel_run`, `hold_session`/`resume_session`, `pause`, the settle
+        cancels, and the shutdown stop signal) do NOT funnel through here."""
+        if self._loop is None or self._loop.is_closed():
+            raise RuntimeLoopNotRunning("runtime worker loop is not running")
+        return self._loop
+
     def call(self, coro: Any) -> concurrent.futures.Future:
         """Marshal a coroutine onto the worker loop and return its future. The
         only way the API thread's coroutines run is through here."""
-        if self._loop is None or self._loop.is_closed():
-            raise RuntimeError("runtime worker loop is not running")
-        return asyncio.run_coroutine_threadsafe(coro, self._loop)
+        return asyncio.run_coroutine_threadsafe(coro, self._require_loop())
 
     def thread_is_worker(self) -> bool:
         return (
@@ -471,12 +495,47 @@ class RuntimeManager:
         self._loop.call_soon_threadsafe(handle.gate.clear_running)
 
     def resume(self, name: str) -> None:
+        self._energize(name, revive_from=ModuleState.PAUSED)
+
+    def restart(self, name: str) -> None:
+        """Restart a drained module (#328): the `stopped -> running` transition,
+        re-arming its gate so a module settled by a drain admits work again.
+        Manager-internal, with no HTTP route: `ensure_running` is the production
+        revive path. A no-op on a running or paused module - only the terminal
+        `stopped` state is revived, and a deliberate pause is preserved
+        (`resume` remains the paused-only verb). The shutdown fan-out clears the
+        worker loop, so a restart after it raises `RuntimeLoopNotRunning`; it
+        does NOT revive a shutdown module."""
+        self._energize(name, revive_from=ModuleState.STOPPED)
+
+    def ensure_running(self, name: str) -> None:
+        """Idempotent admission precondition for a launch entry predicate (#328):
+        revive a `stopped` module so `schedule` can admit, leaving a running,
+        paused, or draining module untouched (a deliberate pause is preserved).
+        Unlike `restart`, the no-op case is silent - this is a precondition, not
+        an operator transition. Manager-side by design: the launch adapter holds
+        the manager, so no module-level sanction verb is exposed."""
+        if self.handle(name).state is ModuleState.STOPPED:
+            self._energize(name, revive_from=ModuleState.STOPPED)
+
+    def _energize(self, name: str, *, revive_from: ModuleState) -> None:
+        """The shared revive transition behind `resume` and `restart` (§8): when
+        the module is in `revive_from`, move it to `running` and re-arm its gate;
+        any other state is a logged no-op. The loop is required and checked
+        BEFORE the state flips, so a stopped loop refuses cleanly instead of
+        leaving the module half-revived."""
         handle = self.handle(name)
-        if handle.state is not ModuleState.PAUSED:
-            logger.warning("resume of non-paused module %s is a no-op", name)
+        if handle.state is not revive_from:
+            logger.warning(
+                "%s of non-%s module %s is a no-op",
+                _REVIVE_VERB[revive_from],
+                revive_from.value,
+                name,
+            )
             return
+        loop = self._require_loop()
         handle.state = ModuleState.RUNNING
-        self._loop.call_soon_threadsafe(handle.gate.set_running)
+        loop.call_soon_threadsafe(handle.gate.set_running)
 
     def drain(self, name: str, *, timeout: float = _FANOUT_TIMEOUT) -> None:
         handle = self.handle(name)

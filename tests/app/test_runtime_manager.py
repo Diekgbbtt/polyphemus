@@ -576,6 +576,81 @@ def test_drain_times_out_and_hard_cancels_a_paused_run(runtime):
         fut.result(timeout=5)
 
 
+# --- restart: revive a drained (stopped) module (#328) ----------------------
+
+def test_restart_revives_a_stopped_module_for_admission(runtime):
+    """#328: a drain settles a module to `stopped`, which is terminal for
+    `schedule`. `restart` is the one transition back to `running` so a module
+    that was drained admits work again instead of refusing every launch."""
+    runtime.register_module("recon")
+    runtime.drain("recon", timeout=5)
+    assert runtime.state("recon") == ModuleState.STOPPED
+
+    coro = _noop()
+    with pytest.raises(ModuleAdmissionRefused):
+        runtime.schedule("recon", coro, name="while-stopped")
+    coro.close()
+
+    runtime.restart("recon")
+    assert runtime.state("recon") == ModuleState.RUNNING
+    assert runtime.schedule("recon", _noop(), name="revived").result(timeout=5) is None
+
+
+def test_restart_of_non_stopped_module_is_a_safe_noop(runtime):
+    runtime.register_module("recon")
+    runtime.restart("recon")
+    assert runtime.state("recon") == ModuleState.RUNNING
+
+    runtime.pause("recon")
+    runtime.restart("recon")
+    assert runtime.state("recon") == ModuleState.PAUSED
+
+
+def test_ensure_running_revives_stopped_and_leaves_others_untouched(runtime):
+    """#328: `ensure_running` is the silent launch precondition - revive only a
+    `stopped` module, preserving a deliberate pause. The HTTP-level launch-after-
+    drain path is covered end to end in test_module_lifecycle_api.py."""
+    runtime.register_module("recon")
+    runtime.ensure_running("recon")
+    assert runtime.state("recon") == ModuleState.RUNNING
+
+    runtime.pause("recon")
+    runtime.ensure_running("recon")
+    assert runtime.state("recon") == ModuleState.PAUSED
+
+    runtime.resume("recon")
+    runtime.drain("recon", timeout=5)
+    assert runtime.state("recon") == ModuleState.STOPPED
+
+    runtime.ensure_running("recon")
+    assert runtime.state("recon") == ModuleState.RUNNING
+    assert runtime.schedule("recon", _noop(), name="revived").result(timeout=5) is None
+
+    # A `draining` module is mid-settle: `ensure_running` must leave it alone
+    # (the settle owns the transition to `stopped`, not the launch). Set the
+    # state directly - a real drain runs to `stopped` synchronously, so the
+    # transient `draining` window is only observable by inspection.
+    runtime.handle("recon").state = ModuleState.DRAINING
+    runtime.ensure_running("recon")
+    assert runtime.state("recon") == ModuleState.DRAINING
+    runtime.handle("recon").state = ModuleState.RUNNING
+
+
+def test_restart_after_shutdown_raises_the_named_error(runtime):
+    """#328 review: the shutdown fan-out clears the worker loop, so a revive
+    after it must fail loud with `RuntimeLoopNotRunning`, not `AttributeError`."""
+    from polymerhus.app.runtime import RuntimeLoopNotRunning
+
+    runtime.register_module("recon")
+    runtime.shutdown()
+    assert runtime.state("recon") == ModuleState.STOPPED
+
+    with pytest.raises(RuntimeLoopNotRunning):
+        runtime.restart("recon")
+    with pytest.raises(RuntimeLoopNotRunning):
+        runtime.ensure_running("recon")
+
+
 # --- feed gate seam ---------------------------------------------------------
 
 def test_feed_resolves_the_per_module_gate_when_runtime_is_active(runtime):
@@ -825,6 +900,27 @@ def test_start_analysis_schedules_through_the_runtime_when_active(runtime, monke
     _wait_until(lambda: runtime.has_run("analysis", "run-seam"), timeout=5)
     assert lifecycle.is_analysing("run-seam") is True
     assert runtime.run_ids("analysis") == ["run-seam"]
+
+
+def test_start_analysis_on_the_worker_loop_repairs_a_drained_module(runtime, monkeypatch):
+    """#332: the combined recon launch calls `start_analysis` directly from
+    `run_pipeline`, i.e. ON the worker loop (the `thread_is_worker` branch).
+    That path must revive a drained analysis module too - not only the
+    API-thread, marshalled path covered in test_module_lifecycle_api.py."""
+    _stub_pg(monkeypatch)
+    runtime.register_module("analysis")
+    runtime.drain("analysis", timeout=5)
+    assert runtime.state("analysis") == ModuleState.STOPPED
+
+    async def _go():
+        return lifecycle.start_analysis("p1", "run-combined")
+
+    arid = runtime.call(_go()).result(timeout=5)
+
+    assert arid is not None
+    assert runtime.state("analysis") == ModuleState.RUNNING
+    _wait_until(lambda: runtime.has_run("analysis", "run-combined"), timeout=5)
+    runtime.cancel_run("analysis", "run-combined")
 
 
 def test_api_schedule_pipeline_routes_through_the_runtime_when_active(runtime, monkeypatch):
