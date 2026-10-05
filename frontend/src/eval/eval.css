@@ -899,6 +899,7 @@
   border-radius: 10px;
   padding: 0.75rem 1rem;
   margin: 0 0 1rem;
+  min-width: 0;
 }
 
 .artifact-card h3,
@@ -909,13 +910,24 @@
 .yaml-object,
 .yaml-array {
   margin: 0;
+  min-width: 0;
 }
 
+/* A short scalar stays a compact label/value row. */
 .yaml-object > div {
   display: grid;
   grid-template-columns: minmax(6rem, 18rem) 1fr;
   gap: 0.5rem;
   padding: 0.15rem 0;
+  min-width: 0;
+}
+
+/* A nested object or array stacks its label ABOVE the value and gives the value
+   the full width. Keeping a label column at every level re-subtracted width
+   until the value column collapsed to 0 and the text broke per character. */
+.yaml-object > .yaml-entry-block {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.1rem;
 }
 
 .yaml-object dt {
@@ -930,8 +942,10 @@
 
 .yaml-array {
   padding-left: 1.1rem;
+  min-width: 0;
 }
 
+/* Long identifiers and URLs wrap instead of widening the page. */
 .yaml-scalar {
   overflow-wrap: anywhere;
 }

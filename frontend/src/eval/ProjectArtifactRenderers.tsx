@@ -21,6 +21,33 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
+type CardField = { label: string; value: unknown }
+
+// A persisted PodExport is the IA-4 envelope: `verdict` at the root and the D5
+// outcomes (`terminal_reason`, `iterations`, `clean`) nested under `evidence`.
+// Legacy writers wrote the flat record instead, so each outcome falls back to
+// the root only when it is really there. Missing or malformed `evidence` is a
+// plain partial card: nothing is synthesized and nothing crashes.
+function podExportCardFields(parsed: Record<string, unknown>): CardField[] {
+  const evidence = isRecord(parsed.evidence) ? parsed.evidence : null
+  const fields: CardField[] = []
+  if ("verdict" in parsed) fields.push({ label: "verdict", value: parsed.verdict })
+  for (const key of ["terminal_reason", "iterations", "clean"] as const) {
+    if (evidence && key in evidence) fields.push({ label: key, value: evidence[key] })
+    else if (key in parsed) fields.push({ label: key, value: parsed[key] })
+  }
+  return fields
+}
+
+// The card's display fields: the envelope-aware resolver for a PodExport, the
+// flat allowlist for every other typed kind. Keys are matched by presence, so
+// `false` and `0` are shown rather than dropped as falsy.
+function cardFieldsAt(kind: ProjectArtifactKind, parsed: Record<string, unknown>): CardField[] {
+  if (kind === "pod_export") return podExportCardFields(parsed)
+  const names = CARD_FIELDS[kind] ?? []
+  return names.filter((name) => name in parsed).map((name) => ({ label: name, value: parsed[name] }))
+}
+
 function scalarText(value: unknown): string {
   if (value === null) return "null"
   if (typeof value === "string") return value
@@ -45,14 +72,20 @@ function YamlValue({ value }: { value: unknown }) {
   if (isRecord(value)) {
     return (
       <dl className="yaml-object">
-        {Object.entries(value).map(([key, item]) => (
-          <div key={key}>
-            <dt>{key}</dt>
-            <dd>
-              <YamlValue value={item} />
-            </dd>
-          </div>
-        ))}
+        {Object.entries(value).map(([key, item]) => {
+          // A complex value gets its label stacked above it: a label column at
+          // every nesting level would re-subtract width until the value had no
+          // room left (the real collapse seen in the browser).
+          const nested = isRecord(item) || Array.isArray(item)
+          return (
+            <div key={key} className={nested ? "yaml-entry-block" : undefined}>
+              <dt>{key}</dt>
+              <dd>
+                <YamlValue value={item} />
+              </dd>
+            </div>
+          )
+        })}
       </dl>
     )
   }
@@ -66,22 +99,22 @@ function TypedYamlCard({
   kind: ProjectArtifactKind
   parsed: Record<string, unknown>
 }) {
-  const fields = CARD_FIELDS[kind] ?? []
-  const present = fields.filter((field) => field in parsed)
-  const extras = Object.keys(parsed).filter((key) => !fields.includes(key))
+  const fields = cardFieldsAt(kind, parsed)
+  const surfaced = new Set(fields.map((field) => field.label))
+  const extras = Object.keys(parsed).filter((key) => !surfaced.has(key))
   return (
     <>
       <section className="artifact-card" aria-label={kindLabel(kind)}>
         <h3>{kindLabel(kind)}</h3>
-        {present.length === 0 ? (
+        {fields.length === 0 ? (
           <p className="eval-status">No known fields in this artifact.</p>
         ) : (
           <dl className="artifact-fields">
-            {present.map((field) => (
-              <div key={field}>
-                <dt>{field}</dt>
+            {fields.map((field) => (
+              <div key={field.label}>
+                <dt>{field.label}</dt>
                 <dd>
-                  <YamlValue value={parsed[field]} />
+                  <YamlValue value={field.value} />
                 </dd>
               </div>
             ))}

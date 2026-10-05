@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import { Link, MemoryRouter, Route, Routes } from "react-router-dom"
 import { afterEach, expect, test } from "vitest"
 import { App } from "../App"
@@ -193,6 +193,129 @@ test("renders the PodExport card", () => {
   }
 })
 
+// The persisted PodExport is the IA-4 envelope: `verdict` at the root and the
+// D5 outcomes nested under `evidence`. The card must read that real shape.
+test("renders the PodExport card from the persisted envelope", () => {
+  const { container } = render(
+    <ProjectArtifactRenderer
+      detail={detail({
+        entry: entry({
+          kind: "pod_export",
+          relative_path: "hunting/test-executor-pod/s/e6809221-0610.yaml",
+        }),
+        preview: preview({
+          parsed: {
+            verdict: "unsuccessful",
+            evidence: {
+              terminal_reason: "no-symptom-evidence",
+              iterations: 2,
+              clean: false,
+              interpretations: [{ variant: "v0", classification: "degenerate-guard" }],
+            },
+          },
+        }),
+      })}
+    />,
+  )
+
+  const card = container.querySelector(".artifact-card") as HTMLElement
+  expect(card).not.toBeNull()
+  for (const label of ["verdict", "terminal_reason", "iterations", "clean"]) {
+    expect(within(card).getByText(label)).toBeDefined()
+  }
+  for (const value of ["unsuccessful", "no-symptom-evidence", "2", "false"]) {
+    expect(within(card).getByText(value)).toBeDefined()
+  }
+  // Everything else stays reachable in the generic tree - nothing is dropped.
+  expect(screen.getByRole("heading", { name: "Additional fields" })).toBeDefined()
+  expect(screen.getByText("degenerate-guard")).toBeDefined()
+})
+
+test("preserves zero iterations and false clean from the envelope", () => {
+  const { container } = render(
+    <ProjectArtifactRenderer
+      detail={detail({
+        entry: entry({ kind: "pod_export", relative_path: "hunting/test-executor-pod/s/x.yaml" }),
+        preview: preview({
+          parsed: {
+            verdict: "successful",
+            evidence: { terminal_reason: "budget-timeout", iterations: 0, clean: false },
+          },
+        }),
+      })}
+    />,
+  )
+
+  const card = container.querySelector(".artifact-card") as HTMLElement
+  expect(within(card).getByText("0")).toBeDefined()
+  expect(within(card).getByText("false")).toBeDefined()
+})
+
+test("surfaces a legacy flat PodExport's outcome fields in the card", () => {
+  const { container } = render(
+    <ProjectArtifactRenderer
+      detail={detail({
+        entry: entry({ kind: "pod_export", relative_path: "hunting/test-executor-pod/s/export.yaml" }),
+        preview: preview({
+          parsed: { verdict: "identified", terminal_reason: "complete", iterations: 3, clean: true },
+        }),
+      })}
+    />,
+  )
+
+  const card = container.querySelector(".artifact-card") as HTMLElement
+  for (const value of ["identified", "complete", "3", "true"]) {
+    expect(within(card).getByText(value)).toBeDefined()
+  }
+})
+
+test("missing or malformed evidence neither crashes nor synthesizes outcomes", () => {
+  const shapes: Record<string, unknown>[] = [
+    { verdict: "successful" },
+    { verdict: "successful", evidence: "not-an-object" },
+    { verdict: "successful", evidence: null },
+    { verdict: "successful", evidence: [] },
+  ]
+  for (const parsed of shapes) {
+    const { container, unmount } = render(
+      <ProjectArtifactRenderer
+        detail={detail({
+          entry: entry({ kind: "pod_export", relative_path: "hunting/test-executor-pod/s/x.yaml" }),
+          preview: preview({ parsed }),
+        })}
+      />,
+    )
+    const card = container.querySelector(".artifact-card") as HTMLElement
+    expect(within(card).getByText("successful")).toBeDefined()
+    expect(within(card).queryByText("terminal_reason")).toBeNull()
+    unmount()
+  }
+})
+
+test("hostile PodExport strings stay escaped text", () => {
+  const { container } = render(
+    <ProjectArtifactRenderer
+      detail={detail({
+        entry: entry({ kind: "pod_export", relative_path: "hunting/test-executor-pod/s/x.yaml" }),
+        preview: preview({
+          parsed: {
+            verdict: "<img src=x onerror=alert(1)>",
+            evidence: {
+              terminal_reason: "<script>alert(1)</script>",
+              iterations: 1,
+              clean: true,
+            },
+          },
+        }),
+      })}
+    />,
+  )
+
+  expect(container.querySelector("img")).toBeNull()
+  expect(container.querySelector("script")).toBeNull()
+  expect(container.textContent).toContain("<img src=x onerror=alert(1)>")
+})
+
 test("renders a generic YAML tree for objects, arrays, scalars, and null", () => {
   render(
     <ProjectArtifactRenderer
@@ -207,6 +330,29 @@ test("renders a generic YAML tree for objects, arrays, scalars, and null", () =>
   for (const value of ["a", "b", "1", "two", "null", "false"]) {
     expect(screen.getByText(value)).toBeDefined()
   }
+})
+
+// A nested object/array row must stack its label above its value; a scalar row
+// stays a compact label/value row. A label column at every nesting level would
+// re-subtract width until the value collapsed (real geometry is verified in a
+// browser, but the row shape is asserted here).
+test("marks nested object and array rows for the stacked layout", () => {
+  const { container } = render(
+    <ProjectArtifactRenderer
+      detail={detail({
+        entry: entry({ kind: "pod_variant", relative_path: "hunting/test-executor-pod/s/variants/v.yaml" }),
+        preview: preview({ parsed: { outer: { inner: [1, 2] }, scalar: "x" } }),
+      })}
+    />,
+  )
+
+  const rows = [...container.querySelectorAll(".yaml-object > div")]
+  const rowFor = (label: string) =>
+    rows.find((row) => row.querySelector(":scope > dt")?.textContent === label)
+
+  expect(rowFor("outer")?.className).toContain("yaml-entry-block")
+  expect(rowFor("inner")?.className).toContain("yaml-entry-block")
+  expect(rowFor("scalar")?.className ?? "").not.toContain("yaml-entry-block")
 })
 
 test("renders the ExperimentLog detail with the generic YAML tree", () => {
