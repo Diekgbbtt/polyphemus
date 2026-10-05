@@ -295,6 +295,8 @@
   margin: 0.4rem 0 0;
   color: #9aa0a6;
   font-size: 13px;
+  /* Carries full eval SHA / stack fingerprint tokens: wrap them. */
+  overflow-wrap: anywhere;
 }
 
 .eval-artifact-entry {
@@ -495,6 +497,7 @@
 
 .eval-evidence li {
   padding: 0.2rem 0;
+  min-width: 0;
 }
 
 .eval-inline-list {
@@ -604,6 +607,9 @@
 .eval-ref {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 13px;
+  /* Paths, hashes and ids are long and unbreakable: wrap them instead of
+     letting them widen the page. */
+  overflow-wrap: anywhere;
 }
 
 .eval-notice {
@@ -700,6 +706,7 @@
 
 .project-artifacts-group {
   margin: 0.75rem 0 0 0.75rem;
+  min-width: 0;
 }
 
 /* The resolved inventory embedded in a Trial workspace. The source note is
@@ -707,6 +714,10 @@
 .resolved-artifacts {
   display: grid;
   gap: 0.75rem;
+  /* The inventory column must be able to shrink below its content's
+     max-content width, or one long path widens the whole page. */
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
 }
 
 .resolved-artifacts .artifact-source {
@@ -798,6 +809,8 @@
 .project-artifacts-group h4,
 .project-artifacts-group h5 {
   margin: 0.75rem 0 0.25rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 /* One collapsible group: the heading stays a heading, the toggle sits next to
@@ -806,12 +819,15 @@
   display: flex;
   align-items: center;
   gap: 0.5rem;
+  flex-wrap: wrap;
+  min-width: 0;
 }
 
 .project-artifacts-toggle {
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
+  flex: none;
   border: 1px solid #3c4043;
   background: #14161a;
   color: #e8eaed;
@@ -841,6 +857,10 @@
   font-variant-numeric: tabular-nums;
 }
 
+.project-artifacts-group-body {
+  min-width: 0;
+}
+
 /* The explicit hidden attribute wins over any display rule on the body. */
 .project-artifacts-group-body[hidden] {
   display: none;
@@ -852,11 +872,14 @@
   padding: 0;
   display: grid;
   gap: 0.4rem;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
 }
 
 .project-artifact-entries > li {
   display: grid;
   gap: 0.15rem;
+  min-width: 0;
   border-left: 2px solid #23272d;
   padding-left: 0.75rem;
 }
