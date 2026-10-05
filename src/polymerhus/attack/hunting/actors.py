@@ -715,9 +715,18 @@ class HuntOrchestratorActor(_TurnActor):
             payload = message.payload if isinstance(message.payload, dict) else {}
             from polymerhus.attack.hunting.llm import _compose_gate_prompt  # noqa: PLC0415
             from langchain_core.messages import HumanMessage  # noqa: PLC0415
-            return [
-                HumanMessage(content=_compose_gate_prompt(payload.get("input"))),
-            ]
+            text = _compose_gate_prompt(payload.get("input"))
+            if payload.get("correction"):
+                # The voluntary-function-calling rung lets the model pick any
+                # union member; a wrong member (NoteDecision / RatifyDecision) on
+                # the hypothesise turn is a no-decision. This is the bounded
+                # retry's corrective turn.
+                text += (
+                    "\n\nCORRECTION: your previous answer was NOT a GateDecision. "
+                    "This is the HYPOTHESISE turn - answer with the GateDecision "
+                    "structured-output tool ONLY (its `directions` list)."
+                )
+            return [HumanMessage(content=text)]
         if message.kind == _RATIFY_KIND:
             payload = message.payload if isinstance(message.payload, dict) else {}
             from polymerhus.attack.hunting.llm import _compose_ratify_prompt  # noqa: PLC0415
@@ -750,11 +759,27 @@ class HuntOrchestratorActor(_TurnActor):
             )
             from polymerhus.attack.hunting.hunt_orchestrator import GateDecision  # noqa: PLC0415
             if not isinstance(content, GateDecision):
+                # The relaxed (voluntary) rung sometimes returns the wrong union
+                # member (NoteDecision / RatifyDecision) on the hypothesise turn.
+                # Retry ONCE with an explicit correction so the pair is not
+                # silently lost (the degraded-turn breaker would otherwise back
+                # off and eventually abort the pass).
                 logger.warning(
                     "hunt-orchestrator hypothesise turn returned a non-GateDecision "
-                    "member (%s); treating it as no-decision",
+                    "member (%s); retrying once with a correction",
                     type(content).__name__ if content is not None else "None")
-                return None
+                content = await self._post_and_await(
+                    AgentMessage(
+                        kind=_GATE_KIND,
+                        payload={"input": gate_input, "correction": True},
+                    )
+                )
+                if not isinstance(content, GateDecision):
+                    logger.warning(
+                        "hunt-orchestrator hypothesise retry still non-GateDecision "
+                        "(%s); treating it as no-decision",
+                        type(content).__name__ if content is not None else "None")
+                    return None
             return content
         except Exception:  # noqa: BLE001
             logger.warning("hunt-orchestrator actor hypothesise turn failed; carrying the pair bare",

@@ -191,6 +191,46 @@ def test_hunt_orchestrator_actor_reason_on_one_thread():
     assert decision.directions[0].carried is True
 
 
+def test_hypothesise_retries_once_on_a_wrong_union_member():
+    """The relaxed (voluntary) rung can return the wrong union member on the
+    hypothesise turn (NoteDecision / RatifyDecision). A wrong member is retried
+    ONCE with an explicit correction, so a good retry recovers the pair instead
+    of silently losing it (and feeding the degraded-turn breaker)."""
+    gate_args = {"directions": [
+        {"unit_id": "Service:slug:a", "fault_class": "fault-x", "carried": True,
+         "rationale": "plausible"}]}
+    note_args = {"notes": []}
+    factory = _factory([("NoteDecision", note_args), ("GateDecision", gate_args)])
+
+    async def _drive():
+        actor = HuntOrchestratorActor(
+            "run1", checkpointer=InMemorySaver(), model_factory=factory, observe=False,
+        )
+        decision = await actor.hypothesise(_gate_input())
+        await actor.stop()
+        return decision
+
+    decision = asyncio.run(_drive())
+    assert isinstance(decision, GateDecision)
+    assert decision.directions[0].carried is True
+
+
+def test_hypothesise_gives_up_after_a_failed_retry():
+    """A retry that is STILL the wrong member degrades to no-decision (None)."""
+    note_args = {"notes": []}
+    factory = _factory([("NoteDecision", note_args), ("NoteDecision", note_args)])
+
+    async def _drive():
+        actor = HuntOrchestratorActor(
+            "run1", checkpointer=InMemorySaver(), model_factory=factory, observe=False,
+        )
+        decision = await actor.hypothesise(_gate_input())
+        await actor.stop()
+        return decision
+
+    assert asyncio.run(_drive()) is None
+
+
 def test_hunt_orchestrator_actor_fail_open_on_raising_model():
     """A dead/raising actor never aborts the pass: reason degrades to None,
     which the pass's fail-open canon handles (carry)."""

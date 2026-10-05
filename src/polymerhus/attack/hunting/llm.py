@@ -535,6 +535,11 @@ def _compose_gate_prompt(inp: GateInput) -> str:
         "vulnerability_classes ONLY. The preconditions / observed_defences "
         "are the RATIFICATION phase's work (a later phase) - never a seed you "
         "fill at this hypothesise turn.",
+        "",
+        "ANSWER FORMAT: answer with the GateDecision structured-output tool ONLY "
+        "(its `directions` list). This is the HYPOTHESISE turn - never answer "
+        "with NoteDecision or RatifyDecision; those belong to the later RATIFY / "
+        "NOTE phase turns.",
     ]
     return "\n".join(lines)
 
