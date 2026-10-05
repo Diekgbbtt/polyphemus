@@ -39,8 +39,9 @@ platform plays the FaultSource role when a launch supplies no candidate batch.
   * `materialize_candidates` - the IMPURE wiring seam `start_hunting` /
     `launch_orchestrator` call on an empty candidate batch: enumerate the
     project's kind-qualified units (reusing the L1 inventory read, Systems
-    kind-qualified `<kind>:<discriminator>` with the `L1_SINGLETON` elision
-    handled), load the fault-KB matching facet, run `select` with the
+    kind-qualified `<kind>` for a singleton / `<kind>:<discriminator>` for a
+    discriminated System - the internal `L1_SINGLETON` sentinel is elided,
+    #279 follow-up), load the fault-KB matching facet, run `select` with the
     pass-through match, and translate the survivors via the pure mapper. A
     non-empty caller batch is returned unchanged (the caller override). Fails
     open to an empty candidate set - a degraded KB / L1 read never raises into
@@ -346,22 +347,20 @@ class SelectionSummary:
 def _project_unit_ids(project_id: str, *, read_fn=None) -> tuple[str, ...]:
     """The deterministic project-scoped unit enumeration (#200, spec 4.1):
     the L1 inventory's Services kind-qualified `Service:<slug>` and its
-    Systems kind-qualified `<kind>:<discriminator>`. The inventory render
-    ELIDES the `__singleton__` discriminator (`_render_system`), so the
-    singleton's discriminator is re-attached from `L1_SINGLETON` here - the
-    identity the projection reader resolves. Fail-open: a read error degrades
-    to the empty enumeration (the inventory's own contract)."""
+    Systems kind-qualified `<kind>` (a singleton) or `<kind>:<discriminator>`
+    (a discriminated System). The inventory render ELIDES the internal
+    `__singleton__` sentinel (`_render_system`), and this seam KEEPS it
+    elided (#279 follow-up): the singleton's internal discriminator never
+    leaks into the orchestrator-facing unit id, so the semantic key stays a
+    clean 3-part `<unit>::<CWE>::<class>`. The projection reader resolves a
+    bare kind back to the singleton (`unit_projection._split_unit_id`).
+    Fail-open: a read error degrades to the empty enumeration (the
+    inventory's own contract)."""
     from polymerhus.analysis.l1_inventory import read_l1_inventory  # noqa: PLC0415
-    from polymerhus.analysis.l1_types import L1_SINGLETON  # noqa: PLC0415
 
     inventory = read_l1_inventory(project_id, read_fn=read_fn)
     ids: list[str] = [f"Service:{slug}" for slug in inventory["services"]]
-    for system in inventory["systems"]:
-        if ":" in system:
-            kind, discriminator = system.split(":", 1)
-        else:
-            kind, discriminator = system, L1_SINGLETON
-        ids.append(f"{kind}:{discriminator}")
+    ids.extend(inventory["systems"])
     return tuple(ids)
 
 

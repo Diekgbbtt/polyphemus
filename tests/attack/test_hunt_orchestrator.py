@@ -683,6 +683,25 @@ def test_service_card_projection_surfaces_aggregated_endpoints_under_parent_unit
     assert cards[0]["edge_degree"] == {"AGGREGATES": 2}
 
 
+def test_unit_matches_card_accepts_the_bare_kind_singleton():
+    """#279 follow-up: after the `__singleton__` sentinel is elided from the
+    orchestrator-facing unit id AND from the card key at source, a singleton
+    System's bare-kind unit id still matches its card - otherwise
+    `service_card_projection` silently skips expanding the target's connected
+    data items / aggregated endpoints (a regression vs the pre-follow-up
+    behaviour). A discriminated System still matches only its `kind:disc` form."""
+    from polymerhus.attack.hunting.hunt_orchestrator import _unit_matches_card
+
+    singleton = {"kind": "System", "key": {"kind": "AuthorizationSystem"}}
+    assert _unit_matches_card(singleton, "AuthorizationSystem") is True
+    assert _unit_matches_card(singleton, "Service:AuthorizationSystem") is False
+
+    multi = {"kind": "System",
+             "key": {"kind": "WebPresentation", "discriminator": "shop::home"}}
+    assert _unit_matches_card(multi, "WebPresentation:shop::home") is True
+    assert _unit_matches_card(multi, "WebPresentation") is False
+
+
 def test_fanned_out_direction_ratifies_each_config_and_notes_the_pair():
     # the hypothesise fan-out lands one draft per distinct class; the ratify
     # phase amends them to ratified; the note phase writes one note for the pair

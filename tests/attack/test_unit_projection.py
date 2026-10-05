@@ -19,6 +19,8 @@ a family simply has no entry for that family in the projection - the
 evaluation stage maps that to UNKNOWN (default-open), never FALSE (C12).
 """
 
+import pytest
+
 from polymerhus.attack.hunting.unit_projection import (
     AggregatedEndpoint,
     DataItem,
@@ -156,6 +158,42 @@ def test_build_projection_system_unit_and_its_own_kind():
     assert projection.kind == "WAF"
     assert projection.edges == {}
     assert projection.spine == {}
+
+
+def test_build_projection_bare_kind_resolves_the_singleton():
+    """#279 follow-up: the orchestrator-facing unit id elides the internal
+    `__singleton__` sentinel, so a BARE kind must resolve to the singleton
+    System's `(kind, discriminator)` identity - the same node the
+    `kind:__singleton__` form hits."""
+    fake = FakeL1({
+        "WAF:__singleton__": {
+            "labels": ["L1System"],
+            "props": {"kind": "WAF", "discriminator": "__singleton__"},
+            "edges": [],
+        },
+    })
+    bare = _projection("WAF", fake)
+    full = _projection("WAF:__singleton__", fake)
+    assert bare is not None
+    assert full is not None
+    assert bare.unit_id == "WAF"
+    assert bare.kind == "WAF"
+    # the bare form and the full sentinel form resolve the SAME node/facets
+    assert bare.kind == full.kind
+    assert bare.spine == full.spine
+    assert bare.edges == full.edges
+    assert bare.data_edges == full.data_edges
+
+
+def test_build_projection_rejects_a_malformed_bare_unit_id():
+    """#279 follow-up: a bare id is a singleton ONLY when it names a known System
+    kind; any other bare string is malformed and raises (the `build_projection`
+    contract, restored after the bare-kind singleton form was introduced)."""
+    fake = FakeL1({})
+    with pytest.raises(ValueError):
+        build_projection("p", "not-a-known-kind", read_fn=fake)
+    with pytest.raises(ValueError):
+        build_projection("p", "", read_fn=fake)
 
 
 def test_build_projection_data_rel_kinds_among_the_units_items():

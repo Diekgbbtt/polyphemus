@@ -6,6 +6,8 @@ link {source,target,type}, with an added Observation case. The Cypher
 returned."""
 from __future__ import annotations
 
+from polymerhus.analysis.l1_types import elide_singleton
+
 
 def _jsonable(value):
     """Coerce neo4j-native property values into JSON-safe primitives.
@@ -46,11 +48,6 @@ _LABEL_PRIORITY = (
     "L1Service", "L1System", "L1DataItem",
 )
 
-# The non-null discriminator sentinel (mirrors l1_types.L1_SINGLETON); inlined so
-# this pure L0-side formatter stays import-light (no analysis-layer dependency).
-_L1_SINGLETON = "__singleton__"
-
-
 def primary_label(labels: list[str] | None) -> str:
     """The most specific label to represent a node by (type + colour). Prefers a
     known L1 subtype / catalogue label over the generic `:L1TestableUnit`
@@ -72,8 +69,8 @@ def node_name(labels: list[str], props: dict) -> str:
         return str(p.get("business_function_slug") or "L1Service")
     if label == "L1System":
         kind = p.get("kind") or "L1System"
-        disc = p.get("discriminator")
-        return f"{kind}:{disc}" if disc and disc != _L1_SINGLETON else str(kind)
+        disc = elide_singleton(p.get("discriminator"))
+        return f"{kind}:{disc}" if disc else str(kind)
     if label == "L1DataItem":
         return str(p.get("item_key") or "L1DataItem")
     for key in ("name", "url", "path", "address", "value", "number"):

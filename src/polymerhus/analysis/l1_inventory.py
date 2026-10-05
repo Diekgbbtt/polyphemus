@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import logging
 
-from polymerhus.analysis.l1_types import L1_SINGLETON
+from polymerhus.analysis.l1_types import elide_singleton
 
 logger = logging.getLogger(__name__)
 
@@ -41,8 +41,8 @@ def _render_system(row: dict) -> str:
     A `__singleton__` discriminator (the non-null default, L1D-9) is elided so the
     reuse block shows the same shape the analyser must emit for a singleton."""
     kind = row.get("kind")
-    disc = row.get("disc")
-    if disc and disc != L1_SINGLETON:
+    disc = elide_singleton(row.get("disc"))
+    if disc:
         return f"{kind}:{disc}"
     return kind
 

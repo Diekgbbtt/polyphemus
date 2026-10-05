@@ -76,6 +76,7 @@ from polymerhus.attack.hunting.hunt_store import (
     semantic_key,
 )
 from polymerhus.attack.hunting.orchestrator_graph import PhaseAbort
+from polymerhus.analysis.l1_types import elide_singleton
 from polymerhus.recon.control.targeted import (
     AnalyserReconRequest,
     ReconScope,
@@ -712,8 +713,11 @@ def _unit_matches_card(card: dict, unit_id) -> bool:
     """Pure: True when `card` is the projection's own unit's card (the config's
     target). A Service card keyed on `business_function_slug` matches
     `"Service:<slug>"`; a System card keyed on `(kind, discriminator)` matches
-    `"<kind>:<discriminator>"` - the kind-qualified unit identities both carry.
-    A malformed key or an absent unit_id never matches (fail-open)."""
+    `"<kind>:<discriminator>"`, while a SINGLETON System card matches the bare
+    kind `"<kind>"` (#279 follow-up: the sentinel is elided from the
+    orchestrator-facing unit id AND from the card key at source, so the matcher
+    accepts both the bare-kind singleton form and the `kind:disc` multi-instance
+    form). A malformed key or an absent unit_id never matches (fail-open)."""
     if not unit_id:
         return False
     key = card.get("key")
@@ -724,9 +728,12 @@ def _unit_matches_card(card: dict, unit_id) -> bool:
         return bool(isinstance(slug, str) and slug
                     and unit_id == f"Service:{slug}")
     kind = key.get("kind")
-    discriminator = key.get("discriminator")
-    return bool(isinstance(kind, str) and isinstance(discriminator, str)
-                and kind and discriminator and unit_id == f"{kind}:{discriminator}")
+    if not (isinstance(kind, str) and kind):
+        return False
+    discriminator = elide_singleton(key.get("discriminator"))
+    if discriminator:
+        return unit_id == f"{kind}:{discriminator}"
+    return unit_id == kind
 
 
 def service_card_projection(

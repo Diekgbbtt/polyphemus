@@ -553,8 +553,8 @@ def test_materialize_candidates_empty_batch_selects_over_the_live_l1():
         "p", (), fault_entries=(_graphql_fault(),), read_fn=_inventory_model())
     assert [c.unit_id for c in candidates] == [
         "Service:s1",                      # GraphQLApi-fronted -> passed+matched
-        "GraphQLApi:__singleton__",        # IS the presupposed System (UNKNOWN -> pass)
-        "RESTApi:__singleton__",           # no outgoing edge (UNKNOWN -> pass)
+        "GraphQLApi",                      # IS the presupposed System (UNKNOWN -> pass)
+        "RESTApi",                         # no outgoing edge (UNKNOWN -> pass)
     ]
     assert all(c.match_verdict == "applies" for c in candidates)
     assert all(c.fault_class == "graphql-introspection" for c in candidates)

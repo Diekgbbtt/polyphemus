@@ -62,6 +62,7 @@ from polymerhus.attack.hunting.hunt_orchestrator import (
     GateInput,
     PhaseTurnInput,
 )
+from polymerhus.analysis.l1_types import elide_singleton
 
 logger = logging.getLogger(__name__)
 
@@ -209,7 +210,9 @@ def _gate_skill() -> str:
 def _system_render(info) -> str:
     """Deterministic one-line render of a SystemInfo (an unpacked edge target
     or a D3 cooperating neighbour): the typed attributes (kind, discriminator,
-    exposure, description) plus the sorted raw non-identity props. An absent or
+    exposure, description) plus the sorted raw non-identity props. A singleton
+    System's internal `__singleton__` discriminator is ELIDED (#279 follow-up):
+    the orchestrator reads the bare kind, never the sentinel. An absent or
     empty info renders a marker, never a raise."""
     if info is None:
         return "(absent)"
@@ -217,6 +220,8 @@ def _system_render(info) -> str:
     parts = [f"kind={kind}"]
     for attr in ("discriminator", "exposure", "description"):
         val = getattr(info, attr, None)
+        if attr == "discriminator":
+            val = elide_singleton(val)
         if val is not None:
             parts.append(f"{attr}={val}")
     props = getattr(info, "props", None) or {}

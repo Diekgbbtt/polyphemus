@@ -104,6 +104,22 @@ data/<project_id>/orchestration/
   it is the enforced novelty gate at the storage layer, complementing the LLM-owned Q11 reflection.
 - `CWE_ID` is the schedule fault (`fault_class`); `fault_class(vulnerability)` is the elicited vulnerability class
   (the config's identity axis, one config per class).
+- **The semantic key is parsed by a CWE anchor (#279).** A testable unit is kind-qualified; a singleton System's
+  orchestrator-facing unit id is the BARE kind (`AuthorizationSystem`), and a DISCRIMINATED System's unit id contains
+  `::` itself (`WebPresentation:<service>::<cluster>`). The key
+  `<unit_id>::<CWE_ID>::<vulnerability_class>` therefore carries MORE than three `::` segments for a discriminated
+  System. The ONE shared parse, `hunt_store.split_semantic_key`, anchors on the `::<CWE_ID>::` token; it falls back
+  to the plain 3-part split only for a non-CWE fault token, and it refuses a 3-part key whose last segment is a CWE
+  token (an ambiguous `::`-bearing revival key). `consume_config`, `_fault_key_to_config_key`,
+  `config_key_from_fault_key`, and `_validate_fault_key` all route through it; a naive `split("::")` at any site
+  deadlocks the mover (a valid `::`-bearing config never moves produced -> consumed and the run hangs in `running`).
+- **The `__singleton__` sentinel is elided from the orchestrator-facing identity (#279 follow-up).** The graph keeps
+  the non-null `(project_id, kind, discriminator="__singleton__")` identity (`L1D-9`/`L1R-2`), but the platform's
+  unit-id selection emits the bare kind for a singleton, the projection reader resolves a bare kind back to the
+  singleton, the index-card key elides the sentinel at source, the prompt render elides it, and the surface-context
+  matcher accepts the bare kind. So a singleton config's semantic key is a clean 3-part key and the ambiguous literal
+  never reaches the mover, the persisted `surface_context`, or the orchestrator prompt. See
+  `hunting-279-semantic-key-cwe-anchor-adr.md`.
 
 ## 5. The status lifecycle
 
