@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useMemo } from "react"
+import { createContext, useCallback, useContext, useMemo, useRef } from "react"
 import type { ReactNode } from "react"
 import { usePolledResource } from "../usePolledResource"
 import { getResolvedArtifacts } from "./client"
@@ -39,15 +39,33 @@ export function useResolvedInventory({
   const refreshToken = useEvalRefreshToken()
   const identity = `${targetId}\u0000${targetRunId}\u0000${trialId}\u0000${expectedProjectId ?? ""}`
 
+  // The identity THIS render asks for. A ref (not state) so it is readable
+  // synchronously while rendering, before any effect has run.
+  const renderIdentity = useRef(identity)
+  renderIdentity.current = identity
+  // The identity the polled inventory belongs to. `usePolledResource` keeps its
+  // previous value during the first render with a new key and only resets it in
+  // an effect, so without this guard the new Trial would briefly read the old
+  // Trial's data - and resolve its links to the wrong artifacts.
+  const loadedIdentity = useRef<string | null>(null)
+
   const load = useCallback(
     async (signal: AbortSignal): Promise<ResolvedArtifactInventory> => {
-      const inventory = await getResolvedArtifacts(targetId, targetRunId, trialId, signal)
-      // A resolved inventory that names a different project is a safe error,
-      // never a silent render, and never a fallback to another source.
-      if (expectedProjectId && inventory.project_id !== expectedProjectId) {
-        throw new Error("Artifact inventory does not match this Trial (mismatch).")
+      try {
+        const inventory = await getResolvedArtifacts(targetId, targetRunId, trialId, signal)
+        // A resolved inventory that names a different project is a safe error,
+        // never a silent render, and never a fallback to another source.
+        if (expectedProjectId && inventory.project_id !== expectedProjectId) {
+          throw new Error("Artifact inventory does not match this Trial (mismatch).")
+        }
+        return inventory
+      } finally {
+        // This request belongs to `identity`: let that identity own whatever it
+        // produced (a value or an error). A request whose identity is no longer
+        // the one being rendered claims nothing, so a late response can never
+        // revive the previous Trial's data.
+        if (renderIdentity.current === identity) loadedIdentity.current = identity
       }
-      return inventory
     },
     [targetId, targetRunId, trialId, expectedProjectId],
   )
@@ -58,14 +76,20 @@ export function useResolvedInventory({
     refreshToken,
   })
 
+  const owned = loadedIdentity.current === identity
   return useMemo(
-    () => ({
-      data: resource.data,
-      error: resource.error,
-      loading: resource.loading,
-      lastUpdatedAt: resource.lastUpdatedAt,
-    }),
-    [resource.data, resource.error, resource.loading, resource.lastUpdatedAt],
+    () =>
+      owned
+        ? {
+            data: resource.data,
+            error: resource.error,
+            loading: resource.loading,
+            lastUpdatedAt: resource.lastUpdatedAt,
+          }
+        : // A different identity's inventory: expose nothing, synchronously, and
+          // wait for the request that belongs to THIS identity.
+          { data: null, error: null, loading: true, lastUpdatedAt: null },
+    [owned, resource.data, resource.error, resource.loading, resource.lastUpdatedAt],
   )
 }
 
