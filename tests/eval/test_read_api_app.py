@@ -187,6 +187,14 @@ def test_only_get_routes_are_exposed() -> None:
     }
 
 
+def test_shared_read_api_never_exposes_ground_truth() -> None:
+    # The operator reference has its own service on its own network; the shared
+    # read API the agent can reach must never grow a route to it.
+    paths = {route.path for route in app_module.app.routes}
+
+    assert not [path for path in paths if "ground-truth" in path]
+
+
 # --- the source seam -----------------------------------------------------------
 
 
