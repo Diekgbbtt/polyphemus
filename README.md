@@ -351,15 +351,17 @@ The reference shown beside each materialized verdict is **the current WebExploit
 ground truth**, not a capture saved with the Trial — the UI labels it `Ground truth (current
 benchmark)`. It comes from its own opt-in service so the discovery agent has no route to it:
 
-    # 1. check the host path first (never creates it)
-    cd eval && EVAL_WEB_DIR_HOST_PATH=/home/<operator>/WebExploitBench \
-      PYTHONPATH=. python -m operator_api.preflight
+    # 1. check the host path first, from the repository root (never creates it,
+    #    never changes directory)
+    EVAL_WEB_DIR_HOST_PATH=/home/<operator>/WebExploitBench \
+      PYTHONPATH=eval python -m operator_api.preflight
 
-    # 2. start the operator service beside the real dashboard
+    # 2. start only the operator service and the dashboard beside them
     EVAL_WEB_DIR_HOST_PATH=/home/<operator>/WebExploitBench \
       docker compose -f docker-compose.yml -f docker-compose.dev.yml \
         -f eval/docker-compose.dashboard.real.yml \
-        -f eval/docker-compose.dashboard.operator.yml up -d
+        -f eval/docker-compose.dashboard.operator.yml \
+        up -d --no-deps eval-operator-api eval-dashboard
 
 `eval-operator-api` joins only its own bridge network (`eval-operator-net`), publishes
 `127.0.0.1:8091` (`EVAL_OPERATOR_PORT`), and mounts the benchmark checkout and `./eval`

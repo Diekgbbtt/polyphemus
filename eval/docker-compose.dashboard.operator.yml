@@ -5,7 +5,8 @@
 #   EVAL_WEB_DIR_HOST_PATH=/home/<operator>/WebExploitBench \
 #   docker compose -f docker-compose.yml -f docker-compose.dev.yml \
 #     -f eval/docker-compose.dashboard.real.yml \
-#     -f eval/docker-compose.dashboard.operator.yml up -d
+#     -f eval/docker-compose.dashboard.operator.yml \
+#     up -d --no-deps eval-operator-api eval-dashboard
 #
 # `eval-operator-api` serves the current WebExploitBench reference for the
 # targets named by the operator-approved setup files. It is deliberately NOT on
@@ -15,8 +16,9 @@
 #
 # `EVAL_WEB_DIR_HOST_PATH` is required and must be absolute: Compose refuses to
 # render without it, and `bind.create_host_path: false` means a typo can never
-# be silently replaced by an empty directory. Run `python -m
-# operator_api.preflight` first to check the path on the host.
+# be silently replaced by an empty directory. Run `PYTHONPATH=eval python -m
+# operator_api.preflight` from the repository root first to check the path on
+# the host.
 
 networks:
   # The service's own bridge. It exists only to publish the loopback port; no
@@ -58,11 +60,16 @@ services:
       # Server loopback only: the agent's network never routes here.
       - "127.0.0.1:${EVAL_OPERATOR_PORT:-8091}:8091"
     healthcheck:
+      # A 2xx alone is not health: the endpoint answers 200 with
+      # `{"status": "degraded"}` whenever its sources are unavailable, so the
+      # check must parse the body and require `status == "ok"`. An invalid JSON
+      # body, a non-2xx and a connection error all exit non-zero.
       test:
         - CMD-SHELL
         - >-
-          python -c "import urllib.request;
-          urllib.request.urlopen('http://127.0.0.1:8091/health', timeout=3)"
+          python -c "import json, sys, urllib.request;
+          r = urllib.request.urlopen('http://127.0.0.1:8091/health', timeout=3);
+          sys.exit(0 if json.load(r).get('status') == 'ok' else 1)"
       interval: 5s
       timeout: 5s
       retries: 12
