@@ -254,6 +254,15 @@ function goto(path: string) {
   return render(<App />)
 }
 
+// Open every collapsed artifact group so its entries become reachable.
+function expandAll(container: HTMLElement): void {
+  for (let pass = 0; pass < 20; pass += 1) {
+    const closed = [...container.querySelectorAll<HTMLButtonElement>('button[aria-expanded="false"]')]
+    if (closed.length === 0) return
+    for (const button of closed) fireEvent.click(button)
+  }
+}
+
 afterEach(() => {
   window.history.pushState({}, "", "/")
 })
@@ -297,11 +306,12 @@ test("renders the grouped inventory with entry metadata and links", async () => 
     ["/snapshot", () => json(evalSnapshot([evalTrial()]))],
     ["/resolved-artifacts", () => json(INVENTORY)],
   ])
-  goto("/p/p1/evals/t/r/trial-1/artifacts")
+  const { container } = goto("/p/p1/evals/t/r/trial-1/artifacts")
 
   await waitFor(() =>
     expect(screen.getByRole("heading", { name: "Hunting" })).toBeDefined(),
   )
+  expandAll(container)
   expect(screen.getByRole("heading", { name: "Skills", level: 2 })).toBeDefined()
   expect(screen.getByRole("heading", { name: "Hunt configs" })).toBeDefined()
   expect(screen.getByRole("heading", { name: "Produced" })).toBeDefined()
@@ -341,11 +351,12 @@ test("renders a hunting-only real-shape inventory without skill artifacts", asyn
     ],
     ["/resolved-artifacts", () => json(REAL_SHAPE_INVENTORY)],
   ])
-  goto("/p/p1/evals/t/r/trial-1/artifacts")
+  const { container } = goto("/p/p1/evals/t/r/trial-1/artifacts")
 
   await waitFor(() =>
     expect(screen.getByRole("heading", { name: "Hunting" })).toBeDefined(),
   )
+  expandAll(container)
   expect(screen.getByRole("heading", { name: "Hunt configs" })).toBeDefined()
   expect(screen.getByRole("heading", { name: "Test specs" })).toBeDefined()
   expect(screen.getByRole("heading", { name: "Pod executions" })).toBeDefined()
@@ -482,11 +493,12 @@ test("the compatible eval route links entries through evalPaths", async () => {
     ["/snapshot", () => json(evalSnapshot([evalTrial()]))],
     ["/resolved-artifacts", () => json(INVENTORY)],
   ])
-  goto("/eval/trials/t/r/trial-1/project-artifacts")
+  const { container } = goto("/eval/trials/t/r/trial-1/project-artifacts")
 
   await waitFor(() =>
     expect(screen.getByRole("heading", { name: "Hunting" })).toBeDefined(),
   )
+  expandAll(container)
   expect(
     screen
       .getByRole("link", { name: "hunting/orchestration/hunt_configs/produced/prod.yaml" })

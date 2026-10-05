@@ -800,6 +800,52 @@
   margin: 0.75rem 0 0.25rem;
 }
 
+/* One collapsible group: the heading stays a heading, the toggle sits next to
+   it and always shows the group's artifact count. */
+.project-artifacts-group-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.project-artifacts-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border: 1px solid #3c4043;
+  background: #14161a;
+  color: #e8eaed;
+  border-radius: 6px;
+  padding: 1px 8px;
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.project-artifacts-toggle:hover {
+  border-color: #8ab4f8;
+}
+
+.project-artifacts-toggle:focus-visible {
+  border-color: #8ab4f8;
+  outline: 2px solid #8ab4f8;
+  outline-offset: 2px;
+}
+
+.project-artifacts-caret {
+  color: #9aa0a6;
+}
+
+.project-artifacts-group-count {
+  color: #9aa0a6;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The explicit hidden attribute wins over any display rule on the body. */
+.project-artifacts-group-body[hidden] {
+  display: none;
+}
+
 .project-artifact-entries {
   list-style: none;
   margin: 0;

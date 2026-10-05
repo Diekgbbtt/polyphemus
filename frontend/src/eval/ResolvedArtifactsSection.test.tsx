@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from "@testing-library/react"
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { MemoryRouter, Route, Routes } from "react-router-dom"
 import { afterEach, expect, test, vi } from "vitest"
 import { EvalDataProvider } from "./EvalDataProvider"
@@ -143,7 +143,6 @@ test("loads one resolved inventory and renders both groups with a source note", 
   expect(screen.getByRole("heading", { name: "Skills", level: 2 })).toBeDefined()
   expect(screen.getByText("Saved for project")).toBeDefined()
   expect(screen.getByRole("heading", { name: "Produced" })).toBeDefined()
-  expect(screen.getByRole("heading", { name: "Procedure" })).toBeDefined()
   // Exactly one inventory request; no detail or content fetch.
   expect(calls).toHaveLength(1)
   expect(calls[0]).toBe("/trials/t/r/trial-1/resolved-artifacts")
@@ -152,11 +151,12 @@ test("loads one resolved inventory and renders both groups with a source note", 
 test("links each entry through the canonical detail path", async () => {
   routeFetch([["/resolved-artifacts", () => json(inventory())]])
 
-  renderSection()
+  const { container } = renderSection()
 
   await waitFor(() =>
     expect(screen.getByRole("heading", { name: "Hunting" })).toBeDefined(),
   )
+  expandAll(container)
   expect(
     screen
       .getByRole("link", { name: "hunting/orchestration/hunt_configs/produced/prod.yaml" })
@@ -320,11 +320,14 @@ function testSpecsGroup(extra: ProjectArtifactEntry[] = []): ProjectArtifactGrou
 // The ordered (label, entry relative_paths) rows of the "Test specs" subtree.
 function groupTree(section: Element): Array<[string, string[]]> {
   const label = section.getAttribute("aria-label") ?? ""
-  const entries = [...section.querySelectorAll(":scope > ul > li > a")].map(
-    (anchor) => anchor.textContent ?? "",
-  )
+  const body = section.querySelector(":scope > .project-artifacts-group-body")
+  const entries = body
+    ? [...body.querySelectorAll(":scope > ul > li > a")].map((anchor) => anchor.textContent ?? "")
+    : []
   const rows: Array<[string, string[]]> = [[label, entries]]
-  for (const child of section.querySelectorAll(":scope > section")) rows.push(...groupTree(child))
+  if (body) {
+    for (const child of body.querySelectorAll(":scope > section")) rows.push(...groupTree(child))
+  }
   return rows
 }
 
@@ -336,6 +339,16 @@ function testSpecTree(container: HTMLElement): Array<[string, string[]]> {
 function podExportsTree(container: HTMLElement): Array<[string, string[]]> {
   const section = container.querySelector('section[aria-label="Pod exports"]')
   return section ? groupTree(section) : []
+}
+
+function toggleStates(container: HTMLElement): Record<string, string> {
+  const states: Record<string, string> = {}
+  for (const section of container.querySelectorAll("section.project-artifacts-group")) {
+    const label = section.getAttribute("aria-label") ?? ""
+    const button = section.querySelector(".project-artifacts-group-head > button")
+    states[label] = button?.getAttribute("aria-expanded") ?? "missing"
+  }
+  return states
 }
 
 test("splits each fault's test specs into Produced and Consumed subgroups", async () => {
@@ -366,14 +379,20 @@ test("keeps an unrecognized test-spec path visible and clickable in its fault", 
     ["/resolved-artifacts", () => json(inventory({ groups: [testSpecsGroup([odd])] }))],
   ])
 
-  renderSection()
+  const { container } = renderSection()
 
-  const link = await screen.findByRole("link", {
-    name: "hunting/hunter/test-specs/FaultA/notes/odd.yaml",
-  })
-  expect(link.getAttribute("href")).toBe("/targets/t/trials/r/trial-1/artifacts/odd")
-  // It was not classified into a side, so FaultB's Produced is the only subgroup.
-  expect(screen.getAllByRole("heading", { name: "Consumed", level: 5 })).toHaveLength(1)
+  await waitFor(() =>
+    expect(container.querySelector('section[aria-label="Test specs"]')).not.toBeNull(),
+  )
+  // It stays in its fault group (not a side) and keeps a working detail link.
+  expect(testSpecTree(container)).toContainEqual([
+    "FaultA",
+    ["hunting/hunter/test-specs/FaultA/notes/odd.yaml"],
+  ])
+  const anchor = [...container.querySelectorAll(".project-artifact-entries a")].find(
+    (item) => item.textContent === "hunting/hunter/test-specs/FaultA/notes/odd.yaml",
+  )
+  expect(anchor?.getAttribute("href")).toBe("/targets/t/trials/r/trial-1/artifacts/odd")
 })
 
 test("a later inventory replaces the test-spec subgroups without stale entries", async () => {
@@ -488,11 +507,12 @@ test("groups pod exports by outcome and keeps log and variant per spec", async (
     const entry = [x1, x2].find((item) => item.artifact_id === id)!
     return json(podOutcomeDetail(entry, reasons[id]))
   })
-  renderSection()
+  const { container } = renderSection()
 
   await waitFor(() =>
     expect(screen.getByRole("heading", { name: "Symptom confirmed" })).toBeDefined(),
   )
+  expandAll(container)
   expect(screen.getByRole("heading", { name: "Pod executions" })).toBeDefined()
   expect(screen.getByRole("heading", { name: "Space exhausted" })).toBeDefined()
   // Log and variant stay in their per-spec groups, with unchanged links.
@@ -522,11 +542,12 @@ test("keeps every export visible while its outcome is still loading", async () =
     })
   }) as typeof fetch
 
-  renderSection()
+  const { container } = renderSection()
 
   await waitFor(() =>
     expect(screen.getByRole("heading", { name: "Classificazione in corso" })).toBeDefined(),
   )
+  expandAll(container)
   expect(screen.getByRole("link", { name: x1.relative_path })).toBeDefined()
 })
 
@@ -536,13 +557,261 @@ test("an outcome error never hides an export, log, or variant", async () => {
   const body = inventory({ groups: [podSpecsGroup([["alpha", [x1, l1]]])] })
   podFetch(body, () => json({ detail: "artifact_missing" }, 409))
 
-  renderSection()
+  const { container } = renderSection()
 
   await waitFor(() =>
     expect(screen.getByRole("heading", { name: "Esito non disponibile" })).toBeDefined(),
   )
+  expandAll(container)
   expect(screen.getByRole("link", { name: x1.relative_path })).toBeDefined()
   expect(screen.getByRole("link", { name: l1.relative_path })).toBeDefined()
+})
+
+// --- collapsible artifact groups -------------------------------------------------
+
+function groupSection(label: string): HTMLElement {
+  // The section headings ("Hunting"/"Skills") share names with some groups, so
+  // pick the heading that belongs to an artifact-group section.
+  for (const heading of screen.getAllByRole("heading", { name: label })) {
+    const section = heading.closest("section.project-artifacts-group")
+    if (section) return section as HTMLElement
+  }
+  throw new Error(`no group section for ${label}`)
+}
+
+function toggleOf(label: string): HTMLButtonElement {
+  const button = groupSection(label).querySelector<HTMLButtonElement>(
+    ".project-artifacts-group-head > button",
+  )
+  if (!button) throw new Error(`no toggle for ${label}`)
+  return button
+}
+
+function bodyOf(label: string): HTMLElement {
+  const body = groupSection(label).querySelector<HTMLElement>(".project-artifacts-group-body")
+  if (!body) throw new Error(`no body for ${label}`)
+  return body
+}
+
+function expandAll(container: HTMLElement): void {
+  for (let pass = 0; pass < 20; pass += 1) {
+    const closed = [...container.querySelectorAll<HTMLButtonElement>('button[aria-expanded="false"]')]
+    if (closed.length === 0) return
+    for (const button of closed) fireEvent.click(button)
+  }
+}
+
+test("top-level groups start open and their subgroups start closed", async () => {
+  routeFetch([["/resolved-artifacts", () => json(inventory())]])
+  renderSection()
+  await waitFor(() => expect(screen.getByRole("heading", { name: "Hunt configs" })).toBeDefined())
+
+  expect(toggleOf("Hunt configs").getAttribute("aria-expanded")).toBe("true")
+  expect(toggleOf("Produced").getAttribute("aria-expanded")).toBe("false")
+  // The collapsed subgroup's entry is not in the accessibility tree.
+  expect(
+    screen.queryByRole("link", { name: "hunting/orchestration/hunt_configs/produced/prod.yaml" }),
+  ).toBeNull()
+})
+
+test("the toggle exposes aria-controls to a unique, stable body id", async () => {
+  routeFetch([["/resolved-artifacts", () => json(inventory())]])
+  const { container } = renderSection()
+  await waitFor(() => expect(screen.getByRole("heading", { name: "Hunt configs" })).toBeDefined())
+
+  const ids = [...container.querySelectorAll<HTMLElement>(".project-artifacts-group-body")].map(
+    (body) => body.id,
+  )
+  expect(ids.every((id) => id.length > 0)).toBe(true)
+  expect(new Set(ids).size).toBe(ids.length)
+
+  // Every group's toggle points at its own body, whether or not it is open.
+  const sections = [...container.querySelectorAll("section.project-artifacts-group")]
+  expect(sections.length).toBeGreaterThan(3)
+  for (const section of sections) {
+    const button = section.querySelector(".project-artifacts-group-head > button")
+    const body = section.querySelector<HTMLElement>(".project-artifacts-group-body")
+    expect(button?.getAttribute("aria-controls")).toBe(body?.id)
+  }
+})
+
+test("click, Enter, and Space all toggle the group", async () => {
+  routeFetch([["/resolved-artifacts", () => json(inventory())]])
+  renderSection()
+  await waitFor(() => expect(screen.getByRole("heading", { name: "Hunt configs" })).toBeDefined())
+
+  const button = toggleOf("Hunt configs")
+  expect(button.getAttribute("aria-expanded")).toBe("true")
+
+  fireEvent.click(button)
+  expect(button.getAttribute("aria-expanded")).toBe("false")
+
+  fireEvent.keyDown(button, { key: "Enter" })
+  expect(button.getAttribute("aria-expanded")).toBe("true")
+
+  fireEvent.keyDown(button, { key: " " })
+  expect(button.getAttribute("aria-expanded")).toBe("false")
+})
+
+test("a collapsed group hides its entries and its subgroups from the keyboard", async () => {
+  routeFetch([["/resolved-artifacts", () => json(inventory())]])
+  renderSection()
+  await waitFor(() => expect(screen.getByRole("heading", { name: "Hunt configs" })).toBeDefined())
+
+  // Open the subgroup so its entry is reachable, then close the parent.
+  fireEvent.click(toggleOf("Produced"))
+  expect(
+    screen.getByRole("link", { name: "hunting/orchestration/hunt_configs/produced/prod.yaml" }),
+  ).toBeDefined()
+
+  fireEvent.click(toggleOf("Hunt configs"))
+  expect(bodyOf("Hunt configs").hasAttribute("hidden")).toBe(true)
+  expect(
+    screen.queryByRole("link", { name: "hunting/orchestration/hunt_configs/produced/prod.yaml" }),
+  ).toBeNull()
+  expect(screen.queryByRole("heading", { name: "Produced" })).toBeNull()
+})
+
+test("closing and reopening a parent keeps its children's choices", async () => {
+  routeFetch([["/resolved-artifacts", () => json(inventory())]])
+  renderSection()
+  await waitFor(() => expect(screen.getByRole("heading", { name: "authn" })).toBeDefined())
+
+  fireEvent.click(toggleOf("authn"))
+  fireEvent.click(toggleOf("Procedure"))
+  expect(toggleOf("Procedure").getAttribute("aria-expanded")).toBe("true")
+
+  fireEvent.click(toggleOf("authn"))
+  fireEvent.click(toggleOf("authn"))
+  expect(toggleOf("Procedure").getAttribute("aria-expanded")).toBe("true")
+})
+
+test("a refresh with new instances of the same tree keeps the choices", async () => {
+  vi.useFakeTimers()
+  let body: unknown = inventory()
+  routeFetch([["/resolved-artifacts", () => json(body)]])
+  const { container } = renderSection()
+  await act(async () => {})
+  fireEvent.click(toggleOf("Hunt configs"))
+  expect(toggleOf("Hunt configs").getAttribute("aria-expanded")).toBe("false")
+
+  body = inventory()
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(POLL)
+  })
+  expect(toggleOf("Hunt configs").getAttribute("aria-expanded")).toBe("false")
+  expect(container.querySelectorAll('button[aria-expanded="false"]').length).toBeGreaterThan(0)
+})
+
+test("a new group follows the default for its depth and the counts update", async () => {
+  vi.useFakeTimers()
+  let body: unknown = inventory()
+  routeFetch([["/resolved-artifacts", () => json(body)]])
+  renderSection()
+  await act(async () => {})
+
+  body = inventory({
+    groups: [
+      group({
+        key: "hunt-configs",
+        label: "Hunt configs",
+        children: [
+          group({
+            key: "hunt-configs/produced",
+            label: "Produced",
+            entries: [HUNTING_ENTRY],
+            children: [
+              group({
+                key: "hunt-configs/produced/extra",
+                label: "Extra",
+                entries: [
+                  entry({
+                    artifact_id: "h3",
+                    relative_path: "hunting/orchestration/hunt_configs/produced/extra.yaml",
+                  }),
+                ],
+              }),
+            ],
+          }),
+        ],
+      }),
+    ],
+  })
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(POLL)
+  })
+
+  // Open the parent so the new subgroup is reachable, then read its default.
+  fireEvent.click(toggleOf("Produced"))
+  expect(toggleOf("Extra").getAttribute("aria-expanded")).toBe("false")
+  const count = groupSection("Hunt configs").querySelector(
+    ".project-artifacts-group-head .project-artifacts-group-count",
+  )
+  expect(count?.textContent).toBe("2")
+})
+
+test("the PodExport classification never resets an open/closed choice", async () => {
+  const x1 = podExport("x1", "alpha")
+  const body = inventory({ groups: [podSpecsGroup([["alpha", [x1, podLog("l1", "alpha")]]])] })
+  podFetch(body, () => json(podOutcomeDetail(x1, "symptom-confirmed")))
+  renderSection()
+
+  await waitFor(() => expect(screen.getByRole("heading", { name: "Symptom confirmed" })).toBeDefined())
+  fireEvent.click(toggleOf("Pod executions"))
+  expect(toggleOf("Pod executions").getAttribute("aria-expanded")).toBe("false")
+
+  // Classification keeps running and later re-renders must not reset the choice.
+  await waitFor(() => expect(screen.getByRole("heading", { name: "Symptom confirmed" })).toBeDefined())
+  expect(toggleOf("Pod executions").getAttribute("aria-expanded")).toBe("false")
+})
+
+test("every artifact is reachable once the groups are open", async () => {
+  const x1 = podExport("x1", "alpha")
+  const body = inventory({
+    groups: [
+      testSpecsGroup(),
+      podSpecsGroup([["alpha", [x1, podLog("l1", "alpha")]]]),
+      group({
+        key: "skills",
+        label: "Skills",
+        category: "skill",
+        children: [
+          group({
+            key: "skills/authn",
+            label: "authn",
+            category: "skill",
+            children: [
+              group({
+                key: "skills/authn/procedure",
+                label: "Procedure",
+                category: "skill",
+                entries: [SKILL_ENTRY],
+              }),
+            ],
+          }),
+        ],
+      }),
+    ],
+  })
+  podFetch(body, (id) => json(podOutcomeDetail(x1, "symptom-confirmed")))
+  const { container } = renderSection()
+  await waitFor(() => expect(screen.getByRole("heading", { name: "Test specs" })).toBeDefined())
+
+  expandAll(container)
+
+  const paths = [...container.querySelectorAll(".project-artifact-entries a")].map(
+    (anchor) => anchor.textContent ?? "",
+  )
+  const expected = new Set([
+    "hunting/hunter/test-specs/FaultA/produced/a-prod.yaml",
+    "hunting/hunter/test-specs/FaultA/consumed/a-cons.yaml",
+    "hunting/hunter/test-specs/FaultB/produced/b-prod.yaml",
+    x1.relative_path,
+    "hunting/test-executor-pod/alpha/experiment-log/l1.yaml",
+    "skills/authn/SKILL.md",
+  ])
+  expect(new Set(paths)).toEqual(expected)
+  expect(screen.getByRole("link", { name: "skills/authn/SKILL.md" })).toBeDefined()
 })
 
 // --- inline trial vs artifact page coherence -----------------------------------
@@ -637,6 +906,7 @@ test("presents the same Test specs grouping inline and on the artifact page", as
   )
   const inlineTree = testSpecTree(inline.container)
   const inlinePod = podExportsTree(inline.container)
+  const inlineToggles = toggleStates(inline.container)
   inline.unmount()
 
   stubCoherenceFetch()
@@ -660,9 +930,14 @@ test("presents the same Test specs grouping inline and on the artifact page", as
   )
   const pageTree = testSpecTree(page.container)
   const pagePod = podExportsTree(page.container)
+  const pageToggles = toggleStates(page.container)
 
   expect(inlineTree).toEqual(pageTree)
   expect(inlineTree.map(([label]) => label)).toContain("Consumed")
   expect(inlinePod).toEqual(pagePod)
   expect(inlinePod.map(([label]) => label)).toContain("Symptom confirmed")
+  // The inline workspace and the standalone page share the same disclosure state.
+  expect(inlineToggles).toEqual(pageToggles)
+  expect(inlineToggles["Test specs"]).toBe("true")
+  expect(inlineToggles["FaultA"]).toBe("false")
 })

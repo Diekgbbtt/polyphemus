@@ -1,4 +1,4 @@
-import { useMemo } from "react"
+import { useMemo, useState } from "react"
 import { Link } from "react-router-dom"
 import { useResolvedArtifactsResource, useResolvedInventory } from "./ResolvedArtifactsProvider"
 import type { ResolvedArtifactsResource } from "./ResolvedArtifactsProvider"
@@ -26,8 +26,38 @@ const EMPTY_LABEL: Record<"hunting" | "skill", string> = {
 
 const NO_GROUPS: ProjectArtifactGroup[] = []
 
-// One inventory group rendered as a nested section. Shared with the standalone
-// artifacts page so the inline and routed views never drift.
+// The number of artifacts under a group: every descendant entry counted once,
+// containers never counted.
+export function artifactCount(group: ProjectArtifactGroup): number {
+  let total = group.entries.length
+  for (const child of group.children) total += artifactCount(child)
+  return total
+}
+
+// A stable, unique DOM id for a group's body, derived only from the group's
+// stable key - never from a label, an index, or a digest, and safe for ids that
+// carry spaces or punctuation.
+export function artifactGroupDomId(key: string): string {
+  const slug = key
+    .replace(/[^A-Za-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48)
+  let hash = 5381
+  for (let index = 0; index < key.length; index += 1) {
+    hash = ((hash << 5) + hash + key.charCodeAt(index)) >>> 0
+  }
+  return `artifact-group-${slug || "group"}-${hash.toString(36)}`
+}
+
+// One inventory group rendered as a nested, collapsible section. Shared with
+// the standalone artifacts page so the inline and routed views never drift.
+//
+// Main groups (depth 0) start open and subgroups start closed. The open state
+// lives on this component instance, addressed by the group's stable key: a
+// refresh that re-uses the tree keeps the reader's choices, a brand-new group
+// gets the default for its depth, and a Trial change (which unmounts the tree)
+// resets them. Descendants stay mounted but hidden, so a closed parent never
+// loses its children's own state.
 export function ArtifactGroupNode({
   group,
   detailPath,
@@ -38,33 +68,62 @@ export function ArtifactGroupNode({
   depth: number
 }) {
   const label = groupLabel(group)
+  const [open, setOpen] = useState(depth === 0)
+  const count = artifactCount(group)
+  const bodyId = artifactGroupDomId(group.key)
+  const toggle = () => setOpen((value) => !value)
   return (
     <section className="project-artifacts-group" aria-label={label}>
-      {depth === 0 ? <h3>{label}</h3> : depth === 1 ? <h4>{label}</h4> : <h5>{label}</h5>}
-      {group.entries.length > 0 && (
-        <ul className="project-artifact-entries">
-          {group.entries.map((entry) => (
-            <li key={artifactKey(entry)}>
-              <Link to={detailPath(entry.artifact_id)} className="eval-ref">
-                {entry.relative_path}
-              </Link>
-              <span className="project-artifact-meta">
-                {kindLabel(entry.kind)} · {representationLabel(entry.representation)} ·{" "}
-                {entry.size_bytes} bytes ·{" "}
-                <span className="eval-ref">{entry.artifact_id}</span>
-              </span>
-            </li>
-          ))}
-        </ul>
-      )}
-      {group.children.map((child) => (
-        <ArtifactGroupNode
-          key={groupKey(child)}
-          group={child}
-          detailPath={detailPath}
-          depth={depth + 1}
-        />
-      ))}
+      <div className="project-artifacts-group-head">
+        {depth === 0 ? <h3>{label}</h3> : depth === 1 ? <h4>{label}</h4> : <h5>{label}</h5>}
+        <button
+          type="button"
+          className="project-artifacts-toggle"
+          aria-expanded={open}
+          aria-controls={bodyId}
+          aria-label={`${label}, ${count} artifacts`}
+          onClick={toggle}
+          onKeyDown={(event) => {
+            // A native button activates on Enter/Space; own it here so the
+            // control also works under jsdom and never toggles twice.
+            if (event.key === "Enter" || event.key === " " || event.key === "Spacebar") {
+              event.preventDefault()
+              toggle()
+            }
+          }}
+        >
+          <span className="project-artifacts-caret" aria-hidden="true">
+            {open ? "▾" : "▸"}
+          </span>
+          <span className="project-artifacts-group-count">{count}</span>
+        </button>
+      </div>
+      <div id={bodyId} className="project-artifacts-group-body" hidden={!open}>
+        {group.entries.length > 0 && (
+          <ul className="project-artifact-entries">
+            {group.entries.map((entry) => (
+              <li key={artifactKey(entry)}>
+                <Link to={detailPath(entry.artifact_id)} className="eval-ref">
+                  {entry.relative_path}
+                </Link>
+                <span className="project-artifact-meta">
+                  {kindLabel(entry.kind)} · {representationLabel(entry.representation)} ·{" "}
+                  {entry.size_bytes} bytes ·{" "}
+                  <span className="eval-ref">{entry.artifact_id}</span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+        {group.children.map((child) => (
+          <ArtifactGroupNode
+            key={groupKey(child)}
+            group={child}
+            detailPath={detailPath}
+            depth={depth + 1}
+          />
+        ))}
+      </div>
     </section>
   )
 }

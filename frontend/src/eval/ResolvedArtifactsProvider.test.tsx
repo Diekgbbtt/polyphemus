@@ -1,5 +1,5 @@
 import { useLayoutEffect } from "react"
-import { act, render, screen, waitFor } from "@testing-library/react"
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { MemoryRouter } from "react-router-dom"
 import { afterEach, expect, test, vi } from "vitest"
 import { DEFAULT_REQUEST_TIMEOUT_MS } from "../usePolledResource"
@@ -425,4 +425,57 @@ test("a late response after a timeout never overwrites the current state", async
   })
   expect(screen.getByRole("alert").textContent).toContain("request timed out")
   expect(screen.queryByText("hunting/x.yaml")).toBeNull()
+})
+
+// --- collapsible groups across a Trial change -----------------------------------
+
+function nestedInventory(childLabel: string, projectId = "shared"): ResolvedArtifactInventory {
+  return {
+    status: "available",
+    source: "project_storage",
+    project_id: projectId,
+    fallback_reason: null,
+    groups: [
+      {
+        key: "root",
+        label: "Root",
+        category: "hunting",
+        entries: [],
+        children: [
+          {
+            key: `root/${childLabel}`,
+            label: childLabel,
+            category: "hunting",
+            entries: [artifact("a1", `hunting/${childLabel}.yaml`)],
+            children: [],
+          },
+        ],
+      },
+    ],
+  }
+}
+
+function toggleFor(label: string): HTMLButtonElement {
+  const heading = screen
+    .getAllByRole("heading", { name: label })
+    .find((item) => item.closest("section.project-artifacts-group"))
+  const button = heading
+    ?.closest("section.project-artifacts-group")
+    ?.querySelector<HTMLButtonElement>(".project-artifacts-group-head > button")
+  if (!button) throw new Error(`no toggle for ${label}`)
+  return button
+}
+
+test("a trial change resets the group choices even with identical keys", async () => {
+  const first = { ...FIRST, expectedProjectId: "shared" }
+  globalThis.fetch = (async () => json(nestedInventory("Child"))) as typeof fetch
+  const view = render(<Workspace ids={first} seen={[]} frames={[]} />)
+  await waitFor(() => expect(screen.getByRole("heading", { name: "Child" })).toBeDefined())
+
+  fireEvent.click(toggleFor("Child"))
+  expect(toggleFor("Child").getAttribute("aria-expanded")).toBe("true")
+
+  // Same project_id and the same group keys, but a different trial identity.
+  view.rerender(<Workspace ids={{ ...first, trialId: "second" }} seen={[]} frames={[]} />)
+  await waitFor(() => expect(toggleFor("Child").getAttribute("aria-expanded")).toBe("false"))
 })
