@@ -301,6 +301,19 @@ button:focus-visible,
   font-variant-numeric: tabular-nums;
 }
 
+.runs-usage-note {
+  color: var(--muted);
+  font-size: 13px;
+  margin: 0 0 0.75rem;
+  max-width: 60ch;
+}
+
+/* The per-agent table carries the same seven counters as the project block, so
+   it can be wider than a phone viewport: scroll it, never clip it. */
+.runs-usage-table {
+  overflow-x: auto;
+}
+
 .runs-usage-agents {
   border-collapse: collapse;
 }

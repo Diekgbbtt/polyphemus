@@ -1,88 +1,158 @@
 import { useEffect, useState } from "react"
 import { Link, useParams } from "react-router-dom"
 import { getProjectUsage, getRunningRuns } from "../api/client"
-import type { ProjectUsage, RunningRun } from "../api/types"
+import type { ProjectUsage, RunningRun, UsageTokens } from "../api/types"
 import { projectPaths } from "../projectPaths"
 import { ProjectNav } from "./ProjectNav"
 
 // The live poll cadence for both the run list and the project's usage snapshot.
 const POLL_MS = 2500
 
-// A defensive shape check: a body that is not the verified usage contract is
-// treated as unavailable, so a malformed response never blanks the run list.
-function isValidUsage(value: ProjectUsage | null): value is ProjectUsage {
+// The endpoint's cumulative counters are integers; a non-integer, a negative, a
+// string or a null is a contract violation, never a value to coerce.
+function isCounter(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+// One token distribution: the context split, the generated split, the total,
+// the total minus cache reads, and the call count.
+function isUsageTokens(value: unknown): value is UsageTokens {
+  if (!isPlainObject(value)) return false
+  const context = value.context_tokens
+  const generated = value.generated_tokens
+  if (!isPlainObject(context) || !isPlainObject(generated)) return false
   return (
-    value !== null &&
-    typeof value === "object" &&
-    typeof value.total_tokens === "number" &&
-    typeof value.calls === "number" &&
-    value.by_agent !== null &&
-    typeof value.by_agent === "object"
+    isCounter(context.cached) &&
+    isCounter(context.uncached) &&
+    isCounter(generated.reasoning) &&
+    isCounter(generated.visible) &&
+    isCounter(value.total_tokens) &&
+    isCounter(value.capped_tokens) &&
+    isCounter(value.calls)
   )
 }
 
+// The verified wire contract, in full: a body that does not carry it (missing or
+// malformed nested blocks, invalid counters, a non-object breakdown) is treated
+// as unavailable, so it never renders as a partial, invented reading.
+function isValidUsage(value: unknown): value is ProjectUsage {
+  if (!isPlainObject(value)) return false
+  if (typeof value.project_id !== "string" || value.project_id.length === 0) return false
+  if (!isUsageTokens(value)) return false
+  const byAgent = value.by_agent
+  if (!isPlainObject(byAgent)) return false
+  return Object.values(byAgent).every(isUsageTokens)
+}
+
+// What the panel renders for the *current* project. The state is keyed by the
+// project id, so switching projects immediately drops the previous project's
+// counters (no stale reading ever shows under a different project).
+type UsageView =
+  | { status: "pending" }
+  | { status: "unavailable" }
+  | { status: "ready"; usage: ProjectUsage }
+
+const COUNTERS: { field: string; label: string }[] = [
+  { field: "cached", label: "Contesto cached" },
+  { field: "uncached", label: "Contesto uncached" },
+  { field: "reasoning", label: "Output reasoning" },
+  { field: "visible", label: "Output visibile" },
+  { field: "total", label: "Token totali, cache inclusa" },
+  { field: "capped", label: "Token esclusi i cache read" },
+  { field: "calls", label: "Chiamate" },
+]
+
+function counters(tokens: UsageTokens): Record<string, number> {
+  return {
+    cached: tokens.context_tokens.cached,
+    uncached: tokens.context_tokens.uncached,
+    reasoning: tokens.generated_tokens.reasoning,
+    visible: tokens.generated_tokens.visible,
+    total: tokens.total_tokens,
+    capped: tokens.capped_tokens,
+    calls: tokens.calls,
+  }
+}
+
 // The current project's cumulative token usage, read from the app's in-memory
-// ledger. The counter is attributed to the PROJECT, not a run (the endpoint
-// carries no per-run attribution), and it resets with the app process, so it is
-// labelled "Usage corrente progetto" - never "current context". Each poll
-// REPLACES the previous snapshot; the per-call inputs are never summed.
-function UsagePanel({ usage, unavailable }: { usage: ProjectUsage | null; unavailable: boolean }) {
+// ledger. Every counter is attributed to the PROJECT (the endpoint carries no
+// per-run attribution) and is cumulative since the agent started, so it is
+// labelled "Usage corrente progetto" - never the current context size. Each poll
+// REPLACES the previous snapshot; nothing is summed across polls or calls, and
+// every value shown is returned by the endpoint (zero included).
+function UsagePanel({ view }: { view: UsageView }) {
   return (
     <section className="runs-usage" aria-label="Usage corrente progetto">
       <h2>Usage corrente progetto</h2>
-      {(unavailable || usage === null) && (
+      <p className="runs-usage-note">
+        Contatori cumulativi del progetto dall&rsquo;avvio dell&rsquo;agent; non rappresentano la
+        dimensione del contesto corrente.
+      </p>
+      {view.status === "unavailable" && (
         <p className="runs-usage-unavailable" role="status">
           Usage non disponibile.
         </p>
       )}
-      {!unavailable && usage !== null && (
-        <dl className="runs-usage-totals">
-          <div>
-            <dt>Token totali</dt>
-            <dd data-usage="total">{usage.total_tokens}</dd>
-          </div>
-          <div>
-            <dt>Chiamate</dt>
-            <dd data-usage="calls">{usage.calls}</dd>
-          </div>
-        </dl>
-      )}
-      {!unavailable && usage !== null && Object.keys(usage.by_agent).length > 0 && (
-        <table className="runs-usage-agents">
-          <caption>Breakdown per agente</caption>
-          <thead>
-            <tr>
-              <th scope="col">Agente</th>
-              <th scope="col">Input</th>
-              <th scope="col">Output</th>
-              <th scope="col">Totali</th>
-              <th scope="col">Chiamate</th>
-            </tr>
-          </thead>
-          <tbody>
-            {Object.entries(usage.by_agent)
-              .sort(([a], [b]) => a.localeCompare(b))
-              .map(([agent, entry]) => (
-                <tr key={agent}>
-                  <th scope="row">{agent}</th>
-                  <td>{entry.input_tokens}</td>
-                  <td>{entry.output_tokens}</td>
-                  <td>{entry.total_tokens}</td>
-                  <td>{entry.calls}</td>
-                </tr>
-              ))}
-          </tbody>
-        </table>
-      )}
+      {view.status === "ready" && <UsageCounters usage={view.usage} />}
     </section>
+  )
+}
+
+function UsageCounters({ usage }: { usage: ProjectUsage }) {
+  const project = counters(usage)
+  const agents = Object.entries(usage.by_agent).sort(([a], [b]) => a.localeCompare(b))
+  return (
+    <>
+      <dl className="runs-usage-totals">
+        {COUNTERS.map(({ field, label }) => (
+          <div key={field}>
+            <dt>{label}</dt>
+            <dd data-usage={field}>{project[field]}</dd>
+          </div>
+        ))}
+      </dl>
+      {agents.length > 0 && (
+        <div className="runs-usage-table">
+          <table className="runs-usage-agents">
+            <caption>Breakdown per agente</caption>
+            <thead>
+              <tr>
+                <th scope="col">Agente</th>
+                {COUNTERS.map(({ field, label }) => (
+                  <th scope="col" key={field}>
+                    {label}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {agents.map(([agent, tokens]) => {
+                const values = counters(tokens)
+                return (
+                  <tr key={agent}>
+                    <th scope="row">{agent}</th>
+                    {COUNTERS.map(({ field }) => (
+                      <td key={field}>{values[field]}</td>
+                    ))}
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </>
   )
 }
 
 export function RunsPage() {
   const { projectId = "" } = useParams()
   const [runs, setRuns] = useState<RunningRun[]>([])
-  const [usage, setUsage] = useState<ProjectUsage | null>(null)
-  const [usageUnavailable, setUsageUnavailable] = useState(false)
+  const [entry, setEntry] = useState<{ projectId: string; view: UsageView } | null>(null)
 
   useEffect(() => {
     let alive = true
@@ -105,12 +175,11 @@ export function RunsPage() {
         try {
           const snapshot = await getProjectUsage(projectId, controller.signal)
           if (!isValidUsage(snapshot)) throw new Error("invalid usage body")
-          if (alive) {
-            setUsage(snapshot)
-            setUsageUnavailable(false)
-          }
+          if (alive) setEntry({ projectId, view: { status: "ready", usage: snapshot } })
         } catch {
-          if (alive && !controller.signal.aborted) setUsageUnavailable(true)
+          if (alive && !controller.signal.aborted) {
+            setEntry({ projectId, view: { status: "unavailable" } })
+          }
         }
       } finally {
         inFlight = false
@@ -126,6 +195,10 @@ export function RunsPage() {
   }, [projectId])
 
   const mine = runs.filter((r) => r.project_id === projectId)
+  // The panel only ever renders a reading that belongs to the project on
+  // screen; a project switch falls back to the pending state immediately.
+  const view: UsageView =
+    entry && entry.projectId === projectId ? entry.view : { status: "pending" }
   return (
     <main className="projects-page">
       <header className="projects-header">
@@ -149,7 +222,7 @@ export function RunsPage() {
           </li>
         ))}
       </ul>
-      <UsagePanel usage={usage} unavailable={usageUnavailable} />
+      <UsagePanel view={view} />
     </main>
   )
 }

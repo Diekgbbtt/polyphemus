@@ -13,12 +13,21 @@ export interface RunningRun {
 export interface RunsResponse { runs: RunningRun[]; liveness_ttl_seconds: number }
 
 // The verified wire shape of `GET /projects/{id}/usage`: the process-wide,
-// in-memory ledger's CUMULATIVE per-project totals plus the per-agent
-// breakdown. There is no cached/uncached field and no per-run attribution,
-// and the counters reset when the app process restarts.
-export interface UsageEntry {
-  input_tokens: number; output_tokens: number; total_tokens: number; calls: number
+// in-memory ledger's CUMULATIVE per-project counters plus the per-agent
+// breakdown. The counters are integers and reset when the app process
+// restarts; there is no per-run attribution.
+//
+// `context_tokens` is the prompt side (cache reads vs fresh input),
+// `generated_tokens` is the output side (reasoning vs visible), `total_tokens`
+// is the whole spend, and `capped_tokens` is the total minus the cache reads.
+export interface UsageTokens {
+  context_tokens: { cached: number; uncached: number }
+  generated_tokens: { reasoning: number; visible: number }
+  total_tokens: number
+  capped_tokens: number
+  calls: number
 }
-export interface ProjectUsage {
-  project_id: string; total_tokens: number; calls: number; by_agent: Record<string, UsageEntry>
+export interface ProjectUsage extends UsageTokens {
+  project_id: string
+  by_agent: Record<string, UsageTokens>
 }
