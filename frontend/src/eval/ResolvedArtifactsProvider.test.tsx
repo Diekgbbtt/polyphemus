@@ -2,6 +2,7 @@ import { useLayoutEffect } from "react"
 import { act, render, screen, waitFor } from "@testing-library/react"
 import { MemoryRouter } from "react-router-dom"
 import { afterEach, expect, test, vi } from "vitest"
+import { DEFAULT_REQUEST_TIMEOUT_MS } from "../usePolledResource"
 import {
   ResolvedArtifactsProvider,
   useEvidenceResolver,
@@ -299,4 +300,129 @@ test("the PodExport classification never consumes the previous trial's exports",
 
   const after = requests.filter((url) => /\/resolved-artifacts\/old-export$/.test(url)).length
   expect(after).toBe(before)
+})
+
+// --- the outer request timeout --------------------------------------------------
+
+function neverSettles(): typeof fetch {
+  return (() => new Promise<Response>(() => {})) as typeof fetch
+}
+
+test("the outer request timeout stays visible when the loader never settles", async () => {
+  vi.useFakeTimers()
+  const seen: Resolutions = []
+  const frames: Frames = []
+  globalThis.fetch = neverSettles()
+
+  render(<Workspace ids={FIRST} seen={seen} frames={frames} />)
+  await act(async () => {})
+  expect(screen.getByText(/Loading artifacts/)).toBeDefined()
+
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(DEFAULT_REQUEST_TIMEOUT_MS + 1)
+  })
+  expect(screen.queryByText(/Loading artifacts/)).toBeNull()
+  expect(screen.getByRole("alert").textContent).toContain("request timed out")
+})
+
+test("a timeout on the new trial belongs to the new trial, never to the old data", async () => {
+  vi.useFakeTimers()
+  const seen: Resolutions = []
+  const frames: Frames = []
+  const first = { ...FIRST, expectedProjectId: "shared" }
+  globalThis.fetch = (async () =>
+    json(inventory([artifact("old-artifact", "hunting/x.yaml")], "shared"))) as typeof fetch
+  const view = render(<Workspace ids={first} seen={seen} frames={frames} />)
+  await act(async () => {})
+  expect(screen.getByText("hunting/x.yaml")).toBeDefined()
+
+  const second = { ...first, trialId: "second" }
+  globalThis.fetch = neverSettles()
+  view.rerender(<Workspace ids={second} seen={seen} frames={frames} />)
+  await act(async () => {})
+  expect(linked(seen, second)).toEqual([])
+  expect(
+    frames.filter(
+      (frame) => frame.identity === identityOf(second) && frame.text.includes("hunting/x.yaml"),
+    ),
+  ).toEqual([])
+
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(DEFAULT_REQUEST_TIMEOUT_MS + 1)
+  })
+  expect(linked(seen, second)).toEqual([])
+  expect(screen.getByRole("alert").textContent).toContain("request timed out")
+  expect(screen.queryByText("hunting/x.yaml")).toBeNull()
+})
+
+test("a later successful poll recovers after a timeout", async () => {
+  vi.useFakeTimers()
+  const seen: Resolutions = []
+  const frames: Frames = []
+  globalThis.fetch = neverSettles()
+  render(<Workspace ids={FIRST} seen={seen} frames={frames} />)
+
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(DEFAULT_REQUEST_TIMEOUT_MS + 1)
+  })
+  expect(screen.getByRole("alert").textContent).toContain("request timed out")
+
+  globalThis.fetch = (async () =>
+    json(inventory([artifact("old-artifact", "hunting/x.yaml")]))) as typeof fetch
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(POLL)
+  })
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(POLL)
+  })
+
+  expect(screen.getByText("hunting/x.yaml")).toBeDefined()
+  expect(screen.queryByRole("alert")).toBeNull()
+})
+
+test("a timed-out refresh of the same identity keeps the last valid inventory", async () => {
+  vi.useFakeTimers()
+  const seen: Resolutions = []
+  const frames: Frames = []
+  globalThis.fetch = (async () =>
+    json(inventory([artifact("old-artifact", "hunting/x.yaml")]))) as typeof fetch
+  render(<Workspace ids={FIRST} seen={seen} frames={frames} />)
+  await act(async () => {})
+  expect(screen.getByText("hunting/x.yaml")).toBeDefined()
+
+  globalThis.fetch = neverSettles()
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(POLL)
+  })
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(DEFAULT_REQUEST_TIMEOUT_MS + 1)
+  })
+
+  // The same identity keeps its last valid inventory and shows the soft notice.
+  expect(screen.getByText("hunting/x.yaml")).toBeDefined()
+  expect(screen.getByText(/Artifact refresh failed/)).toBeDefined()
+})
+
+test("a late response after a timeout never overwrites the current state", async () => {
+  vi.useFakeTimers()
+  const seen: Resolutions = []
+  const frames: Frames = []
+  const resolvers: Array<(value: Response) => void> = []
+  globalThis.fetch = (() =>
+    new Promise<Response>((resolve) => {
+      resolvers.push(resolve)
+    })) as typeof fetch
+  render(<Workspace ids={FIRST} seen={seen} frames={frames} />)
+
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(DEFAULT_REQUEST_TIMEOUT_MS + 1)
+  })
+  expect(screen.getByRole("alert").textContent).toContain("request timed out")
+
+  // Only the superseded request settles late; the current one stays pending.
+  await act(async () => {
+    resolvers[0]?.(json(inventory([artifact("old-artifact", "hunting/x.yaml")])))
+  })
+  expect(screen.getByRole("alert").textContent).toContain("request timed out")
+  expect(screen.queryByText("hunting/x.yaml")).toBeNull()
 })

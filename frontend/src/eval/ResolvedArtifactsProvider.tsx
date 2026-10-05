@@ -51,21 +51,20 @@ export function useResolvedInventory({
 
   const load = useCallback(
     async (signal: AbortSignal): Promise<ResolvedArtifactInventory> => {
-      try {
-        const inventory = await getResolvedArtifacts(targetId, targetRunId, trialId, signal)
-        // A resolved inventory that names a different project is a safe error,
-        // never a silent render, and never a fallback to another source.
-        if (expectedProjectId && inventory.project_id !== expectedProjectId) {
-          throw new Error("Artifact inventory does not match this Trial (mismatch).")
-        }
-        return inventory
-      } finally {
-        // This request belongs to `identity`: let that identity own whatever it
-        // produced (a value or an error). A request whose identity is no longer
-        // the one being rendered claims nothing, so a late response can never
-        // revive the previous Trial's data.
-        if (renderIdentity.current === identity) loadedIdentity.current = identity
+      // Claim this request for `identity` the moment it STARTS, not when it
+      // settles. The poller closes a hung request with its own timeout, so a
+      // loader that never settles must still have that timeout attributed to
+      // the request's identity - otherwise the error would be masked forever.
+      // Only a request whose identity is still the one being rendered claims;
+      // a superseded request therefore never revives the previous Trial.
+      if (renderIdentity.current === identity) loadedIdentity.current = identity
+      const inventory = await getResolvedArtifacts(targetId, targetRunId, trialId, signal)
+      // A resolved inventory that names a different project is a safe error,
+      // never a silent render, and never a fallback to another source.
+      if (expectedProjectId && inventory.project_id !== expectedProjectId) {
+        throw new Error("Artifact inventory does not match this Trial (mismatch).")
       }
+      return inventory
     },
     [targetId, targetRunId, trialId, expectedProjectId],
   )
