@@ -1,0 +1,70 @@
+# Operator-only ground-truth overlay (operator dashboard).
+#
+# Opt-in on top of the real dashboard overlay, one service, its own bridge:
+#
+#   EVAL_WEB_DIR_HOST_PATH=/home/<operator>/WebExploitBench \
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml \
+#     -f eval/docker-compose.dashboard.real.yml \
+#     -f eval/docker-compose.dashboard.operator.yml up -d
+#
+# `eval-operator-api` serves the current WebExploitBench reference for the
+# targets named by the operator-approved setup files. It is deliberately NOT on
+# `polymerhus-net` (or any network the discovery agent shares) and publishes its
+# port on the server loopback only, so the browser reaches it through the second
+# SSH forward while the agent has no route to it.
+#
+# `EVAL_WEB_DIR_HOST_PATH` is required and must be absolute: Compose refuses to
+# render without it, and `bind.create_host_path: false` means a typo can never
+# be silently replaced by an empty directory. Run `python -m
+# operator_api.preflight` first to check the path on the host.
+
+networks:
+  # The service's own bridge. It exists only to publish the loopback port; no
+  # other service joins it, and this service joins no other network.
+  eval-operator-net:
+
+services:
+  eval-operator-api:
+    image: polymerhus-agent:latest
+    restart: unless-stopped
+    working_dir: /srv/eval
+    environment:
+      PYTHONPATH: /srv/eval
+      # Inside the container, the benchmark checkout is at this fixed path.
+      EVAL_OPERATOR_BENCHMARK_ROOT: /srv/webexploitbench
+      EVAL_OPERATOR_SETUP_ROOT: /srv/eval/setups
+      EVAL_OPERATOR_SETUP_FILES: "${EVAL_OPERATOR_SETUP_FILES:-first.yaml,webexploitbench-chain.yaml}"
+      EVAL_OPERATOR_FRONTEND_ORIGIN: "${EVAL_OPERATOR_FRONTEND_ORIGIN:-http://localhost:15173}"
+    volumes:
+      # The eval code and the approved setup files, read-only.
+      - ./eval:/srv/eval:ro
+      # The WebExploitBench checkout, read-only, from the explicit host path.
+      - type: bind
+        source: ${EVAL_WEB_DIR_HOST_PATH:?set EVAL_WEB_DIR_HOST_PATH to the WebExploitBench checkout}
+        target: /srv/webexploitbench
+        read_only: true
+        bind:
+          create_host_path: false
+    command:
+      - python
+      - -m
+      - uvicorn
+      - operator_api.app:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8091"
+    ports:
+      # Server loopback only: the agent's network never routes here.
+      - "127.0.0.1:${EVAL_OPERATOR_PORT:-8091}:8091"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          python -c "import urllib.request;
+          urllib.request.urlopen('http://127.0.0.1:8091/health', timeout=3)"
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    networks: [eval-operator-net]

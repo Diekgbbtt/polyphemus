@@ -45,10 +45,14 @@ BASE_SERVICES = {"agent", "kali", "postgres", "neo4j", "lightrag"}
 EVAL_OVERLAY = "eval/docker-compose.eval.yml"
 DASHBOARD_OVERLAY = "eval/docker-compose.dashboard.yml"
 REAL_OVERLAY = "eval/docker-compose.dashboard.real.yml"
+OPERATOR_OVERLAY = "eval/docker-compose.dashboard.operator.yml"
 # The demo trio the dashboard overlay adds; nothing else may appear with it.
 DASHBOARD_SERVICES = {"eval-store", "eval-api", "eval-dashboard"}
 # The real overlay adds only the read API and the dashboard.
 REAL_SERVICES = {"eval-api", "eval-dashboard"}
+# The operator overlay adds one isolated service on its own network.
+OPERATOR_SERVICES = {"eval-operator-api"}
+OPERATOR_NETWORK = "eval-operator-net"
 
 docker = pytest.mark.skipif(
     shutil.which("docker") is None, reason="docker CLI unavailable"
@@ -61,6 +65,7 @@ def stage(
     with_overlay: bool = True,
     with_dashboard: bool = False,
     with_real: bool = False,
+    with_operator: bool = False,
 ) -> Path:
     """A tmp compose project mirroring the instance layout (root files plus
     the eval overlay under `eval/`); the repo-root `.env` is never read."""
@@ -73,6 +78,8 @@ def stage(
         shutil.copy(REPO_ROOT / DASHBOARD_OVERLAY, tmp_path / DASHBOARD_OVERLAY)
     if with_real:
         shutil.copy(REPO_ROOT / REAL_OVERLAY, tmp_path / REAL_OVERLAY)
+    if with_operator:
+        shutil.copy(REPO_ROOT / OPERATOR_OVERLAY, tmp_path / OPERATOR_OVERLAY)
     if env is not None:
         (tmp_path / ".env").write_text(
             "".join(f"{k}={v}\n" for k, v in env.items()), encoding="utf-8"
@@ -422,3 +429,150 @@ def test_demo_overlay_still_uses_its_dedicated_named_volume(tmp_path: Path) -> N
     assert mounts(config["services"]["eval-store"])["/srv/eval-store"]["source"] == (
         "eval-dashboard-store"
     )
+
+
+# --- the operator ground-truth overlay -----------------------------------------
+
+
+def operator_render(project: Path, extra: dict[str, str] | None = None):
+    return render(
+        project,
+        [
+            "docker-compose.yml",
+            "docker-compose.dev.yml",
+            REAL_OVERLAY,
+            OPERATOR_OVERLAY,
+        ],
+        extra=extra,
+    )
+
+
+def service_networks(config: dict, service: str) -> set[str]:
+    return set(config["services"][service].get("networks") or {})
+
+
+@docker
+def test_operator_overlay_adds_only_one_isolated_service(tmp_path: Path) -> None:
+    project = stage(tmp_path, COMPLETE_ENV, with_real=True, with_operator=True)
+
+    rendered = operator_render(
+        project, extra={"EVAL_WEB_DIR_HOST_PATH": "/tmp/webench-fixture"}
+    )
+
+    assert rendered.returncode == 0, rendered.stderr
+    config = yaml.safe_load(rendered.stdout)
+    assert set(config["services"]) == BASE_SERVICES | REAL_SERVICES | OPERATOR_SERVICES
+
+    # The operator service is alone on its own bridge; no service the discovery
+    # agent shares a network with may reach it.
+    assert service_networks(config, "eval-operator-api") == {OPERATOR_NETWORK}
+    for service in config["services"]:
+        if service != "eval-operator-api":
+            assert OPERATOR_NETWORK not in service_networks(config, service)
+    # And the operator service never joins the shared bridge.
+    assert "polymerhus-net" not in service_networks(config, "eval-operator-api")
+
+
+@docker
+def test_operator_overlay_is_absent_without_its_overlay(tmp_path: Path) -> None:
+    project = stage(tmp_path, COMPLETE_ENV, with_real=True, with_operator=True)
+
+    rendered = render(
+        project, ["docker-compose.yml", "docker-compose.dev.yml", REAL_OVERLAY]
+    )
+
+    assert rendered.returncode == 0, rendered.stderr
+    config = yaml.safe_load(rendered.stdout)
+    assert not (OPERATOR_SERVICES & set(config["services"]))
+    assert OPERATOR_NETWORK not in config.get("networks", {})
+
+
+@docker
+def test_operator_overlay_publishes_loopback_only_and_restarts_unless_stopped(
+    tmp_path: Path,
+) -> None:
+    project = stage(tmp_path, COMPLETE_ENV, with_real=True, with_operator=True)
+
+    default = yaml.safe_load(
+        operator_render(project, extra={"EVAL_WEB_DIR_HOST_PATH": "/tmp/webench"}).stdout
+    )
+    operator = default["services"]["eval-operator-api"]
+    assert published_port(default, "eval-operator-api", 8091) == "127.0.0.1:8091"
+    assert operator["restart"] == "unless-stopped"
+    assert operator["image"] == "polymerhus-agent:latest"
+    assert operator["working_dir"] == "/srv/eval"
+    assert operator["environment"]["PYTHONPATH"] == "/srv/eval"
+    assert operator["environment"]["EVAL_OPERATOR_BENCHMARK_ROOT"] == "/srv/webexploitbench"
+    assert operator["environment"]["EVAL_OPERATOR_SETUP_ROOT"] == "/srv/eval/setups"
+    assert operator["environment"]["EVAL_OPERATOR_SETUP_FILES"] == (
+        "first.yaml,webexploitbench-chain.yaml"
+    )
+    assert operator["environment"]["EVAL_OPERATOR_FRONTEND_ORIGIN"] == (
+        "http://localhost:15173"
+    )
+    assert "operator_api.app:app" in " ".join(operator["command"])
+    assert "8091" in operator["command"]
+    assert operator["healthcheck"]
+
+    overridden = yaml.safe_load(
+        operator_render(
+            project,
+            extra={
+                "EVAL_WEB_DIR_HOST_PATH": "/tmp/webench",
+                "EVAL_OPERATOR_PORT": "18091",
+                "EVAL_OPERATOR_FRONTEND_ORIGIN": "http://localhost:15173",
+            },
+        ).stdout
+    )
+    assert published_port(overridden, "eval-operator-api", 8091) == "127.0.0.1:18091"
+
+
+@docker
+def test_operator_overlay_binds_its_sources_read_only(tmp_path: Path) -> None:
+    project = stage(tmp_path, COMPLETE_ENV, with_real=True, with_operator=True)
+
+    config = yaml.safe_load(
+        operator_render(
+            project, extra={"EVAL_WEB_DIR_HOST_PATH": "/tmp/webench-host"}
+        ).stdout
+    )
+    operator_mounts = mounts(config["services"]["eval-operator-api"])
+
+    assert set(operator_mounts) == {"/srv/eval", "/srv/webexploitbench"}
+    assert operator_mounts["/srv/eval"]["read_only"] is True
+    assert operator_mounts["/srv/webexploitbench"]["read_only"] is True
+    assert operator_mounts["/srv/webexploitbench"]["source"] == "/tmp/webench-host"
+    # A default bind renders `create_host_path: true`; this one must not, so a
+    # typo can never be replaced by an empty, silently-created directory.
+    assert operator_mounts["/srv/webexploitbench"]["bind"].get("create_host_path") is not True
+
+
+@docker
+def test_operator_overlay_requires_the_benchmark_host_path(tmp_path: Path) -> None:
+    project = stage(tmp_path, COMPLETE_ENV, with_real=True, with_operator=True)
+
+    rendered = operator_render(project, extra={})
+
+    assert rendered.returncode != 0
+    assert "EVAL_WEB_DIR_HOST_PATH" in rendered.stderr
+
+
+@docker
+def test_operator_overlay_adds_no_socket_or_shared_configuration(tmp_path: Path) -> None:
+    project = stage(tmp_path, COMPLETE_ENV, with_real=True, with_operator=True)
+
+    rendered = operator_render(
+        project, extra={"EVAL_WEB_DIR_HOST_PATH": "/tmp/webench-host"}
+    )
+
+    assert rendered.returncode == 0, rendered.stderr
+    assert "/var/run/docker.sock" not in rendered.stdout
+    config = yaml.safe_load(rendered.stdout)
+    for service, definition in config["services"].items():
+        if service == "eval-operator-api":
+            continue
+        for key in (definition.get("environment") or {}):
+            assert not key.startswith("EVAL_OPERATOR_")
+        # The benchmark reference is mounted only into the operator service.
+        for mount in definition.get("volumes") or []:
+            assert mount["target"] != "/srv/webexploitbench"

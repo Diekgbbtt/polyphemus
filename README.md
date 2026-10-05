@@ -345,6 +345,44 @@ monitoring. Stop it with:
     docker compose -f docker-compose.yml -f docker-compose.dev.yml \
       -f eval/docker-compose.dashboard.real.yml down
 
+#### Operator-only ground truth (separate API, second tunnel)
+
+The reference shown beside each materialized verdict is **the current WebExploitBench checkout
+ground truth**, not a capture saved with the Trial — the UI labels it `Ground truth (current
+benchmark)`. It comes from its own opt-in service so the discovery agent has no route to it:
+
+    # 1. check the host path first (never creates it)
+    EVAL_WEB_DIR_HOST_PATH=/home/<operator>/WebExploitBench \
+      python -m operator_api.preflight
+
+    # 2. start the operator service beside the real dashboard
+    EVAL_WEB_DIR_HOST_PATH=/home/<operator>/WebExploitBench \
+      docker compose -f docker-compose.yml -f docker-compose.dev.yml \
+        -f eval/docker-compose.dashboard.real.yml \
+        -f eval/docker-compose.dashboard.operator.yml up -d
+
+`eval-operator-api` joins only its own bridge network (`eval-operator-net`), publishes
+`127.0.0.1:8091` (`EVAL_OPERATOR_PORT`), and mounts the benchmark checkout and `./eval`
+read-only. It is never on `polymerhus-net` and never bound to a public interface.
+`EVAL_WEB_DIR_HOST_PATH` is **required and absolute**; a missing value fails the Compose render
+and a wrong one fails the preflight, rather than mounting an empty directory. The approved
+setup basenames come from `EVAL_OPERATOR_SETUP_FILES` (default
+`first.yaml,webexploitbench-chain.yaml`), the only source of the
+`target_id -> <dataset>/<target>` mapping — a target is never resolved by stripping an ID
+suffix.
+
+Open both forwards in one SSH command:
+
+    ssh -N -L 15173:127.0.0.1:5173 -L 18091:127.0.0.1:8091 root@<eval-server>
+
+The SPA is then at `http://localhost:15173/` and calls the operator API at
+`http://localhost:18091/`. CORS allows exactly one origin, defaulting to
+`http://localhost:15173` (`EVAL_OPERATOR_FRONTEND_ORIGIN`); the browser base defaults to
+`http://localhost:18091` (`VITE_OPERATOR_GT_API_BASE_URL`). Changing the local forwarded ports
+means changing both to match — the browser base accepts only a loopback `http(s)` URL.
+Without the second forward the Trial page still shows its results, diagnoses, graph and
+artifacts; only the ground-truth rows fall back to `Ground truth non disponibile`.
+
 ### Walkthrough
 
     # 1. create a project
