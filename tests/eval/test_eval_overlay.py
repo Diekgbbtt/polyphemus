@@ -312,6 +312,18 @@ def test_real_overlay_adds_only_the_api_and_dashboard(tmp_path: Path) -> None:
 
 
 @docker
+def test_real_dashboard_services_restart_after_daemon_restart(tmp_path: Path) -> None:
+    project = stage(tmp_path, COMPLETE_ENV, with_real=True)
+
+    rendered = real_render(project)
+
+    assert rendered.returncode == 0, rendered.stderr
+    services = yaml.safe_load(rendered.stdout)["services"]
+    assert services["eval-api"]["restart"] == "unless-stopped"
+    assert services["eval-dashboard"]["restart"] == "unless-stopped"
+
+
+@docker
 def test_real_overlay_binds_the_real_store_read_only(tmp_path: Path) -> None:
     project = stage(tmp_path, COMPLETE_ENV, with_real=True)
 

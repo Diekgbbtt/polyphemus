@@ -26,6 +26,7 @@ volumes:
 services:
   eval-api:
     image: polymerhus-agent:latest
+    restart: unless-stopped
     working_dir: /srv/eval
     environment:
       PYTHONPATH: /srv/eval
@@ -70,6 +71,7 @@ services:
 
   eval-dashboard:
     image: node:22-alpine
+    restart: unless-stopped
     working_dir: /srv/frontend
     environment:
       VITE_EVAL_API_BASE_URL: /eval-api
