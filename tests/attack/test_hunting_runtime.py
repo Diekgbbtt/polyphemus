@@ -235,8 +235,8 @@ def test_empty_candidate_launch_reasons_over_platform_selection(monkeypatch):
     assert received[0], "an empty launch must reason over the platform's own selected candidates, not a vacuous set"
     assert {c.unit_id for c in received[0]} == {
         "Service:s1",              # GraphQLApi-fronted -> deterministic pass
-        "GraphQLApi:__singleton__",  # IS the presupposed System -> pass
-        "RESTApi:__singleton__",   # no outgoing edge -> UNKNOWN -> pass
+        "GraphQLApi",              # IS the presupposed System -> pass
+        "RESTApi",                 # no outgoing edge -> UNKNOWN -> pass
     }
     assert all(c.match_verdict == "applies" for c in received[0])
 
@@ -306,7 +306,7 @@ def test_empty_candidate_launch_reasons_through_the_real_pass(tmp_path,
     ratified = [c for c in store.read_configs("rt-project")
                 if c.get("status") == "ratified"]
     assert {c.get("unit_id") for c in ratified} == {
-        "Service:s1", "GraphQLApi:__singleton__", "RESTApi:__singleton__"}
+        "Service:s1", "GraphQLApi", "RESTApi"}
     assert all(c.get("fault_class") == "graphql-introspection" for c in ratified)
 
 

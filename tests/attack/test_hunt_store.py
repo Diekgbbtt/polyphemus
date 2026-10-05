@@ -199,6 +199,22 @@ def test_semantic_key_round_trips_a_system_unit_containing_double_colon(tmp_path
     assert store.consume_config(PROJECT, key) is True
 
 
+def test_singleton_unit_id_has_no_sentinel_and_a_clean_three_part_key(tmp_path):
+    # #279 follow-up: the platform selection elides the internal `__singleton__`
+    # sentinel, so a singleton System's orchestrator-facing unit id is the BARE
+    # kind and its semantic key is a clean 3-part key - the ambiguous literal
+    # never reaches the mover / orchestrator. The graph identity is unchanged.
+    unit = "AuthorizationSystem"
+    key = semantic_key(unit, CWE, CLASS)
+    assert key == f"AuthorizationSystem::{CWE}::{CLASS}"
+    assert key.count("::") == 2
+    store = HuntStore(tmp_path)
+    store.write_config(PROJECT, _config(unit_id=unit))
+    assert [k for k, _ in store.read_produced_configs(PROJECT)] == [key]
+    assert store.consume_config(PROJECT, key) is True
+    assert store.read_produced_configs(PROJECT) == []
+
+
 def test_consume_config_still_refuses_a_two_part_revival_key(tmp_path):
     # the revival key (`<unit>::<fault_class>`) is a PREFIX of a semantic key,
     # never a config identity: the anchored split must not accept it.

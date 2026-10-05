@@ -168,6 +168,46 @@ def test_hunter_turn_threads_the_hunt_project_as_usage_scope(monkeypatch):
 
 # --- the rich projection render (candidates-rewrite T5, spec 3.7) -------------
 
+def test_system_render_elides_the_singleton_sentinel():
+    """#279 follow-up: the internal `__singleton__` discriminator is never
+    rendered into the orchestrator prompt; a singleton System reads as its bare
+    kind, while a discriminated System still shows its discriminator."""
+    from polymerhus.attack.hunting.unit_projection import SystemInfo  # noqa: PLC0415
+
+    singleton = HL._system_render(SystemInfo(kind="AuthorizationSystem",
+                                             discriminator="__singleton__"))
+    assert singleton == "kind=AuthorizationSystem"
+    discriminated = HL._system_render(SystemInfo(
+        kind="WebPresentation", discriminator="storefront::homepage"))
+    assert discriminated == "kind=WebPresentation; discriminator=storefront::homepage"
+
+
+def test_compose_gate_prompt_over_a_singleton_card_has_no_sentinel():
+    """#279 follow-up: the orchestrator prompt never carries the internal
+    `__singleton__` literal. The index-card key is elided at source, so a
+    singleton System card rendered into the hypothesise prompt shows the bare
+    kind only."""
+    from polymerhus.analysis import index_card  # noqa: PLC0415
+
+    card = index_card._card_from_row({
+        "labels": ["L1TestableUnit", "L1System"],
+        "props": {"kind": "AuthorizationSystem",
+                  "discriminator": "__singleton__", "project_id": "p"},
+        "rels": [],
+    })
+    assert "discriminator" not in card["key"]
+    inp = GateInput(
+        candidates=[DeliveredCandidate(
+            unit_id="AuthorizationSystem", fault_class="bfla",
+            applies_witnesses=Witness(deterministic="d"),
+            match_verdict="applies",
+        )],
+        kb_degraded=False, kb_evidences={}, surface=[card],
+    )
+    prompt = HL._compose_gate_prompt(inp)
+    assert "__singleton__" not in prompt
+
+
 def test_render_projection_renders_rich_slots_sorted():
     """T5: `_render_projection` renders the rich typed slots the T2 projection
     carries - the exploded DataItems (name/type/sensitivity), the fully-unpacked

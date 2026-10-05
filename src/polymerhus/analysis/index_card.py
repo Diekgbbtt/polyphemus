@@ -19,6 +19,8 @@ from __future__ import annotations
 import re
 from collections import Counter
 
+from polymerhus.analysis.l1_types import elide_singleton
+
 # `\Z` (absolute end) not `$`, so a trailing newline cannot slip past the guard.
 _SAFE_IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*\Z")
 
@@ -57,7 +59,14 @@ def _card_from_row(row: dict) -> dict:
         key: dict = {"business_function_slug": props.get("business_function_slug")}
         label = props.get("business_function_slug")
     elif kind == "System":
-        key = {"kind": props.get("kind"), "discriminator": props.get("discriminator")}
+        # The singleton sentinel is elided AT SOURCE (#279 follow-up): the card
+        # key carries the bare kind for a singleton, so the internal literal can
+        # never reach an orchestrator prompt, the persisted `surface_context`, or
+        # any other card consumer. A discriminated System keeps its discriminator.
+        key = {"kind": props.get("kind")}
+        discriminator = elide_singleton(props.get("discriminator"))
+        if discriminator is not None:
+            key["discriminator"] = discriminator
         label = props.get("kind")
     else:
         key, label = {}, None

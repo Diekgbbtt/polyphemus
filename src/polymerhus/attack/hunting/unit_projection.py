@@ -43,7 +43,9 @@ from polymerhus.analysis.l1_curator import (
     DATA_RELATIONSHIP_KINDS,
     SYSTEM_EDGE_RELS,
     _DATA_FLOW_RELS,
+    _KNOWN_KINDS,
 )
+from polymerhus.analysis.l1_types import L1_SINGLETON
 
 # The validated DataRelationship edge types (kind uppercased - the edge type IS
 # the kind, single-sourced per L1D-13/L1OP-2).
@@ -181,14 +183,27 @@ def _identity_where(kind: str, key: str) -> str:
 
 def _split_unit_id(unit_id: str) -> tuple[str, str]:
     """Split the kind-qualified identity "<kind>:<key>" (a Service's
-    business_function_slug, a System's kind+discriminator)."""
-    if not isinstance(unit_id, str) or ":" not in unit_id:
+    business_function_slug, a System's kind+discriminator).
+
+    A BARE id (no `:`) is a singleton System: the internal non-null
+    `__singleton__` sentinel is elided from the orchestrator-facing unit id
+    (#279 follow-up), so the bare kind resolves to `(kind, L1_SINGLETON)` and
+    the read still hits the graph's `(kind, discriminator)` identity."""
+    if not isinstance(unit_id, str) or not unit_id:
         raise ValueError(f"unit_projection: malformed unit id {unit_id!r} "
-                         f"(expected '<kind>:<key>')")
+                         f"(expected '<kind>:<key>' or a bare singleton kind)")
+    if ":" not in unit_id:
+        # A bare id is a singleton System ONLY when it names a known System
+        # kind; any other bare string is malformed (the pre-follow-up contract
+        # that `build_projection` raises on a malformed unit id).
+        if unit_id not in _KNOWN_KINDS:
+            raise ValueError(f"unit_projection: malformed unit id {unit_id!r} "
+                             f"(expected '<kind>:<key>' or a known singleton kind)")
+        return unit_id, L1_SINGLETON
     kind, key = unit_id.split(":", 1)
     if not kind or not key:
         raise ValueError(f"unit_projection: malformed unit id {unit_id!r} "
-                         f"(expected '<kind>:<key>')")
+                         f"(expected '<kind>:<key>' or a known singleton kind)")
     return kind, key
 
 

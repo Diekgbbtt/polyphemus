@@ -36,6 +36,18 @@ from pydantic import BaseModel, Field
 L1_SINGLETON = "__singleton__"
 
 
+def elide_singleton(discriminator: str | None) -> str | None:
+    """The ONE display-elision rule for the singleton sentinel (#279 follow-up):
+    return `None` when `discriminator` is `L1_SINGLETON`, else the discriminator
+    unchanged. A singleton System's identity surface is its bare kind, never the
+    internal `__singleton__` literal. Reused by the L1 inventory render
+    (`l1_inventory._render_system`), the frontend node formatter
+    (`recon.domain.graph_read.node_name`), and the orchestrator prompt render
+    (`attack.hunting.llm._system_render`), so the rule has one implementation
+    (CODING_STANDARD section 8)."""
+    return None if discriminator == L1_SINGLETON else discriminator
+
+
 class Provenance(BaseModel):
     """Who/what produced this write. Stamped on every L1 node and cross-layer
     reference (provenance-on-write, mirroring the L0 curator obs provenance)."""
