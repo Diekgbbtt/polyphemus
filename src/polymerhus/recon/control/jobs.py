@@ -414,13 +414,16 @@ JOBS: dict[str, JobSpec] = {
         # the curator gate's malformed-path exclusion (P3) + restapi-first
         # ordering (ordering only, never exclusion - `webapp` is still probed).
         # `pack="batches"` (the jsluice seam, #37): the reduced endpoint set is
-        # distributed into `<= MAX_PODS` batch pods, each running ONE arjun
-        # process over its URL list via `-i` (`build_arjun_command`), so the job
-        # can never fan out one pod per endpoint. This bounds arjun's pod count
-        # and wall-clock (measured ~21s/URL x ~8 URLs/batch stays under
-        # EXEC_TIMEOUT_S=300) - the bottleneck fix. 404/403/401 are KEPT (Q6):
-        # an error status means the request shape may be wrong, exactly where
-        # probing must go.
+        # packed into batch pods, each running ONE arjun process over its URL
+        # list via `-i` (`build_arjun_command`), so the job can never fan out one
+        # pod per endpoint. `max_batch_size=4` is load-bearing, not cosmetic:
+        # jsluice's unbounded round-robin packed ~250 URLs into one pod (1236
+        # endpoints / MAX_PODS=5), and every arjun pod timed out (3x300s) - the
+        # per-URL cost is ~21-52s, so a batch MUST be small. 4 URLs/batch keeps
+        # a pod under EXEC_TIMEOUT_S=300 even at the 52s/URL worst case, and the
+        # derived set is capped to `4 * MAX_PODS` (one wave). 404/403/401 are
+        # KEPT (Q6): an error status means the request shape may be wrong, which
+        # is exactly where probing must go.
         consumption=ConsumptionOptions(
             route_dedup=True,
             materialise_root=False,
@@ -428,6 +431,7 @@ JOBS: dict[str, JobSpec] = {
             drop_malformed=True,
             order_restapi_first=True,
             pack="batches",
+            max_batch_size=4,
         ),
         use_auth=True,
     ),

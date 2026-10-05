@@ -30,10 +30,13 @@ Accepted (2026-10-05).
    auth feed's flat projection to arjun's `--headers` flag.
 
 ## Consequences
-- arjun's pod count is bounded by `MAX_PODS` (20), not by the endpoint count.
-- Batch size is `ceil(endpoints / MAX_PODS)`. Measured ~21s/URL on jetlinks, so
-  ~8 URLs per batch is ~168s, under `EXEC_TIMEOUT_S=300`. A slow or throttled
-  target can still exceed it - the same per-endpoint risk the 1:1 path had.
+- arjun's per-pod batch is bounded to `max_batch_size` (4) URLs, and the derived
+  set to `max_batch_size * MAX_PODS` (one wave), so every pod finishes under
+  `EXEC_TIMEOUT_S=300`.
+- The bound is load-bearing, not cosmetic: the first cut used jsluice's
+  unbounded round-robin and packed ~250 URLs into one pod on jetlinks (1236
+  endpoints / `MAX_PODS=5`), so every pod timed out (3x300s) and the job came
+  out `degraded`.
 - The reduction now applies the first-party filter and the exact-URL /
   fingerprinted-basename dedup to arjun, previously jsluice-only.
 

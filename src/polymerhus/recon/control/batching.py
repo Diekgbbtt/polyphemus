@@ -130,13 +130,24 @@ def reduce_endpoints(assets: list[dict], *, apex_registrable: str | None = None)
     return reduced
 
 
-def build_batches(items: list[str], max_pods: int) -> list[list[str]]:
-    """Distribute `items` round-robin into `min(max_pods, len(items))` batches so
-    sizes differ by at most one. Returns `[]` for no items; every returned batch
-    is non-empty."""
+def build_batches(
+    items: list[str], max_pods: int, max_batch_size: int | None = None
+) -> list[list[str]]:
+    """Distribute `items` into batches. Returns `[]` for no items; every
+    returned batch is non-empty.
+
+    Default (jsluice): round-robin into `min(max_pods, len(items))` batches so
+    sizes differ by at most one - the batch COUNT is bounded, each batch is not.
+
+    Bounded (`max_batch_size` set, arjun #37): chunk into batches of at most
+    `max_batch_size` URLs, so every pod's single command finishes under its exec
+    timeout. The caller caps the total to `max_batch_size * max_pods` first, so
+    the chunk count never exceeds the concurrency ceiling (one wave)."""
     n = len(items)
     if n == 0 or max_pods <= 0:
         return []
+    if max_batch_size and max_batch_size > 0:
+        return [items[i:i + max_batch_size] for i in range(0, n, max_batch_size)]
     k = min(max_pods, n)
     batches: list[list[str]] = [[] for _ in range(k)]
     for i, item in enumerate(items):
@@ -145,15 +156,22 @@ def build_batches(items: list[str], max_pods: int) -> list[list[str]]:
 
 
 def build_batch_assets(
-    assets: list[dict], *, apex_registrable: str | None, max_pods: int
+    assets: list[dict], *, apex_registrable: str | None, max_pods: int,
+    max_batch_size: int | None = None,
 ) -> list[dict]:
     """Reduce then batch a job's read-back input assets into synthetic per-pod
-    input assets, each carrying a `batch` list of bundle URLs. This is the seam
-    that bends the one-input-asset-per-pod model: the pipeline swaps the raw
-    per-bundle assets for these before pod fan-out, so the existing 1:1
-    `preprocess_fn` cap maps one batch -> one pod."""
+    input assets, each carrying a `batch` list of URLs. This is the seam that
+    bends the one-input-asset-per-pod model: the pipeline swaps the raw
+    per-asset assets for these before pod fan-out, so the existing 1:1
+    `preprocess_fn` cap maps one batch -> one pod.
+
+    `max_batch_size` bounds each pod's batch (arjun #37); `None` keeps the
+    jsluice round-robin (bounded batch count, unbounded batch size)."""
     reduced = reduce_endpoints(assets, apex_registrable=apex_registrable)
-    return [{"batch": batch} for batch in build_batches(reduced, max_pods)]
+    return [
+        {"batch": batch}
+        for batch in build_batches(reduced, max_pods, max_batch_size)
+    ]
 
 
 def build_jsluice_command(urls: list[str]) -> str:
@@ -375,7 +393,10 @@ def derive_consumption_set(
          assets first. ORDERING only, never exclusion: every survivor is still
          probed (corrected record 2).
       4. `pack` - `batches` (endpoint reduce + pack into `<= max_pods` pods;
-         jsluice bundles AND arjun routes, #37),
+         jsluice bundles AND arjun routes, #37). When `max_batch_size` is set
+         (arjun), the set is first capped to `max_batch_size * max_pods` and
+         chunked into batches of at most `max_batch_size` URLs, so every pod
+         finishes under its exec timeout,
          `one_pod` (the whole set, bounded by `set_cap`, into ONE pod_input -
          #208 C7: the cap bounds the probe SET, not the pod count),
          `scan_targets` (kiterunner API-root prefixes, top-`api_cap`), or
@@ -402,8 +423,14 @@ def derive_consumption_set(
         items = sorted(items, key=lambda a: 0 if a.get("profile") == "restapi" else 1)
 
     if consumption.pack == "batches":
+        if consumption.max_batch_size:
+            # Bound the total to one wave (`max_batch_size * max_pods`) so the
+            # per-pod chunk fits the exec timeout AND the pod count stays within
+            # the concurrency ceiling (arjun #37; jsluice leaves this unset).
+            items = items[: consumption.max_batch_size * max_pods]
         return build_batch_assets(
-            items, apex_registrable=apex_registrable, max_pods=max_pods
+            items, apex_registrable=apex_registrable, max_pods=max_pods,
+            max_batch_size=consumption.max_batch_size,
         )
     if consumption.pack == "one_pod":
         prepared = items[:set_cap]

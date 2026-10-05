@@ -192,8 +192,9 @@ def test_derive_arjun_keeps_real_root_when_crawled():
         assets, consumption=JOBS["arjun"].consumption,
         max_pods=20, set_cap=500,
     )
-    # no restapi profiles here: stable input order survives, nothing synthesised
-    assert out == [{"batch": ["https://h/"]}, {"batch": ["https://h/api/users"]}]
+    # no restapi profiles here: stable input order survives, nothing synthesised.
+    # Two URLs are under max_batch_size (4), so they share one batch.
+    assert out == [{"batch": ["https://h/", "https://h/api/users"]}]
 
 
 def test_derive_arjun_keeps_profiled_endpoints():
@@ -224,16 +225,18 @@ def test_derive_arjun_keeps_error_statuses_per_q6():
         "https://h/a", "https://h/b", "https://h/c", "https://h/d", "https://h/e"]
 
 
-def test_derive_arjun_batches_bound_pods_to_max_pods():
-    # The bottleneck fix: N surviving endpoints pack into <= max_pods pods,
-    # never one pod per endpoint.
-    assets = [_ep(f"/p{i}") for i in range(50)]
+def test_derive_arjun_batches_bound_each_pod_and_the_total():
+    # The bottleneck fix: each pod's batch is capped to max_batch_size (so a pod
+    # finishes under EXEC_TIMEOUT_S), and the total is capped to
+    # max_batch_size * max_pods (one wave), never one pod per endpoint.
+    assets = [_ep(f"/p{i}") for i in range(100)]
     out = batching.derive_consumption_set(
         assets, consumption=JOBS["arjun"].consumption,
-        max_pods=8, set_cap=500,
+        max_pods=5, set_cap=500,
     )
-    assert len(out) == 8
-    assert len(_batched_urls(out)) == 50  # every endpoint still covered
+    assert len(out) == 5                   # 20 URLs / 4 per batch
+    assert len(_batched_urls(out)) == 20   # max_batch_size(4) * max_pods(5)
+    assert all(len(b["batch"]) <= 4 for b in out)
 
 
 def test_derive_is_deterministic_and_pure():
@@ -464,27 +467,30 @@ def _representative_surface():
 
 def test_measured_reduction_on_representative_surface():
     assets = _representative_surface()
+    # arjun's derivation options with the pack turned OFF, to isolate the
+    # REDUCTION stage (route dedup + malformed drop + restapi-first) from the
+    # batch cap that follows it.
     out = batching.derive_consumption_set(
-        assets, consumption=JOBS["arjun"].consumption,
+        assets,
+        consumption=JOBS["arjun"].consumption.model_copy(update={"pack": "none"}),
         max_pods=20, set_cap=500,
     )
-    urls = _batched_urls(out)
-    # 500 -> 320 URLs: 140 clusters + 100 statics + 10 artifacts + 50 apis + 20
-    # posts, packed into <= 20 batch pods (never 320 pods).
-    assert len(urls) == 320, len(urls)
-    assert len(out) <= 20
+    paths = [a["path"] for a in out]
+    # 500 -> 320: 140 clusters + 100 statics + 10 artifacts + 50 apis + 20 posts
+    assert len(out) == 320, len(out)
     # junk gone, artifacts kept
-    assert not any("+_(" in u for u in urls)
-    assert "https://h/EXPRindex.php" in urls and "https://h/.json" in urls
+    assert not any("+_(" in p for p in paths)
+    assert "/EXPRindex.php" in paths and "/.json" in paths
     # every genuinely parameter-bearing endpoint survives by identity
+    by_path = {a["path"]: a for a in out}
     for i in range(50):
-        assert f"https://h/api/v1/res-{i}" in urls
+        assert by_path[f"/api/v1/res-{i}"]["profile"] == "restapi"
     for i in range(20):
-        assert f"https://h/form/submit-{i}" in urls
+        assert by_path[f"/form/submit-{i}"]["method"] == "POST"
     # dynamic pairs collapsed to their first-seen representative
     for i in range(140):
-        assert f"https://h/shop/cat-{i}/product/{i}" in urls
-        assert f"https://h/shop/cat-{i}/product/{i + 1000}" not in urls
+        assert f"/shop/cat-{i}/product/{i}" in by_path
+        assert f"/shop/cat-{i}/product/{i + 1000}" not in by_path
 
 
 # --- baseurl-less assets: the recorded third exclusion --------------------------

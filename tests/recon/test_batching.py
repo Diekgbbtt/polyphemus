@@ -132,6 +132,20 @@ def test_build_batches_fewer_items_than_pods_gives_one_each():
     assert batches == [["a"], ["b"]]
 
 
+def test_build_batches_bounded_chunks_by_max_batch_size():
+    # arjun #37: each pod's batch must be small enough to finish under the exec
+    # timeout, so the chunk size (not the pod count) is the bound.
+    items = [f"u{i}" for i in range(10)]
+    batches = build_batches(items, max_pods=5, max_batch_size=4)
+    assert [len(b) for b in batches] == [4, 4, 2]
+    assert [x for b in batches for x in b] == items
+
+
+def test_build_batches_bounded_is_one_chunk_when_under_the_size():
+    batches = build_batches(["a", "b", "c"], max_pods=5, max_batch_size=4)
+    assert batches == [["a", "b", "c"]]
+
+
 def test_build_batches_empty():
     assert build_batches([], max_pods=20) == []
 

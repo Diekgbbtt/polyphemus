@@ -114,6 +114,14 @@ class ConsumptionOptions(BaseModel):
     drop_malformed: bool = False
     order_restapi_first: bool = False
     pack: Literal["none", "batches", "one_pod", "scan_targets"] = "none"
+    # Per-batch URL cap for the `batches` pack. `None` (jsluice) distributes the
+    # whole set round-robin into `<= MAX_PODS` batches, so the batch COUNT is
+    # bounded but each batch is not. A tool whose per-URL cost is high (arjun:
+    # ~21-52s/URL) needs the per-pod work bounded too, or a batch of ~250 URLs
+    # exceeds EXEC_TIMEOUT_S and every pod times out. Set, the set is first
+    # capped to `max_batch_size * MAX_PODS` (one wave) and then chunked into
+    # batches of at most `max_batch_size` (#37 arjun bottleneck fix).
+    max_batch_size: int | None = None
 
 
 class JobSpec(BaseModel):
