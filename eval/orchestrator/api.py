@@ -307,15 +307,25 @@ def usage_total(response: Mapping) -> int:
 
 
 def usage_generated(response: Mapping) -> int:
-    """The project's cumulative GENERATED-token total (`generated_tokens`:
-    reasoning + visible output). This is the trial budget axis: it counts only
-    what the model WROTE, so re-read context (cached or uncached input) never
-    consumes the budget. A malformed or absent value reads as zero (advisory),
-    mirroring `usage_total`."""
+    """The project's cumulative GENERATED-token total, the trial budget axis.
+
+    The usage surface reports `generated_tokens` as a two-axis mapping
+    (`{"reasoning": N, "visible": M}`, the `reasoning` + `visible` output split),
+    so the scalar is their sum; a plain int is also accepted for robustness.
+    It counts only what the model WROTE, so re-read context (cached or uncached
+    input) never consumes the budget. A malformed or absent value reads as zero
+    (advisory), mirroring `usage_total`."""
     value = (response or {}).get("generated_tokens")
-    if isinstance(value, bool) or not isinstance(value, int):
-        return 0
-    return value
+    if isinstance(value, Mapping):
+        total = 0
+        for part in ("reasoning", "visible"):
+            v = value.get(part)
+            if isinstance(v, int) and not isinstance(v, bool):
+                total += v
+        return total
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    return 0
 
 
 def usage_capped(response: Mapping) -> int:
