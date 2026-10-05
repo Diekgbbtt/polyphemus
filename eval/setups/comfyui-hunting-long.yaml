@@ -41,7 +41,6 @@ instances:
         start_phase: hunting
         existing_project_id: 12da8565-a266-4610-9968-9ebfb86dd563
         # A small cap for a short seeded hunting run (3 consumed hunt configs).
-        hunt_config_budget: 10
         target_config:
           operator_kb: eval/data/webexploitbench/comfyui/operator_kb.md
 

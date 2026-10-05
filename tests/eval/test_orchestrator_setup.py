@@ -36,7 +36,6 @@ def test_parses_a_valid_setup(sample_setup) -> None:
     assert run.target == "jetlinks"
     assert run.target_id == "jetlinks-1"
     assert run.start_phase == "recon"
-    assert run.hunt_config_budget == 10
     assert run.token_budget == 10
     assert run.target_config.operator_kb == (
         "eval/data/webexploitbench/jetlinks/operator_kb.md"

@@ -219,19 +219,14 @@ def test_seeded_trial_blocks_on_a_missing_l1(tmp_path) -> None:
     assert set(api_runner.methods_paths).isdisjoint(_forbidden_project_calls(SEED))
 
 
-def test_seeded_trial_runs_the_cap_and_places_premined_artifacts(tmp_path) -> None:
+def test_seeded_trial_places_premined_artifacts(tmp_path) -> None:
     source = tmp_path / "premined"
     source.mkdir()
     (source / "unit_CWE-1_sqli.yaml").write_text("id: a\n")
 
-    routes = _seeded_routes(hunting_status="running")
-    routes[f"POST /projects/{SEED}/hunting/h1/stop"] = {"stopping": True}
-    api_runner = RecordingApi(routes)
-    # The poll's consumed listing: the empty baseline snapshot, then the
-    # pre-mined config appears in consumed (the pipeline's lazy read), then the
-    # re-read after the stop. The pre-mined presence check reads the real tree.
+    api_runner = RecordingApi(_seeded_routes(hunting_status="complete"))
     files = SeqListFileStore(
-        [[], ["unit_CWE-1_sqli.yaml"], ["unit_CWE-1_sqli.yaml"]],
+        [["unit_CWE-1_sqli.yaml"]],
         hunt_configs_dir(tmp_path / "data", SEED, "consumed"),
     )
 
@@ -240,14 +235,9 @@ def test_seeded_trial_runs_the_cap_and_places_premined_artifacts(tmp_path) -> No
         api_runner,
         files=files,
         preloaded_hunting_artifacts=PreloadedArtifacts(configs=str(source)),
-        hunt_config_budget=1,
     ).run()
 
-    assert record.terminal == "stopped"
-    assert record.cap == 1
-    assert record.stop_count == 1
-    assert record.final_count == 1
-    assert record.overshoot == 0
+    assert record.terminal == "complete"
     produced = hunt_configs_dir(tmp_path / "data", SEED, "produced")
     assert [p.name for p in files.list_files(produced)] == ["unit_CWE-1_sqli.yaml"]
     assert set(api_runner.methods_paths).isdisjoint(_forbidden_project_calls(SEED))
@@ -520,7 +510,6 @@ def test_example_hunting_setup_parses_with_a_seeded_project() -> None:
     (run,) = instance.targets
     assert run.existing_project_id == SEED
     assert run.start_phase == "hunting"
-    assert run.hunt_config_budget == 3
     # A seeded project needs no L1 projection; no pre-mined artifacts are set.
     assert run.preloaded_hunting_artifacts is None
 

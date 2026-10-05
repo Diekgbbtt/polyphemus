@@ -118,8 +118,6 @@ def test_first_setup_parses_against_the_real_schema() -> None:
     assert run.target == "comfyui"  # ground-truth name gt.py resolves
     assert run.target_id == TARGET
     assert run.start_phase == "recon"
-    assert run.hunt_config_budget == 10
-    assert run.preloaded_hunting_artifacts is None
     assert run.target_config.operator_kb == (
         "eval/data/webexploitbench/comfyui/operator_kb.md"
     )

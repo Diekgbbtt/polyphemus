@@ -163,13 +163,7 @@ class TrialConfig:
     data_dir: Path | None = None
     auth_surface: bool = False
     preloaded_hunting_artifacts: PreloadedArtifacts | None = None
-    hunt_config_budget: int | None = None
-    # The trial-scoped cap baseline: the consumed-config names already present
-    # when this trial started. None means "snapshot it at the first hunting
-    # poll" (a fresh trial); a resumed trial carries its record's baseline so
-    # its count continues rather than resetting on the prior run's configs.
-    cap_baseline: Sequence[str] | None = None
-    # The trial-wide token budget and its carried baseline, sibling to the cap:
+    # The trial-wide token budget and its carried baseline:
     # None budget means no usage call at all; None baseline means "snapshot the
     # project total at the first check", a resumed trial carries its own.
     token_budget: int | None = None
@@ -230,12 +224,9 @@ class PhaseRecord:
 
 @dataclass
 class PollResult:
-    """A hunting poll's terminal outcome, including any cap stop."""
+    """A hunting poll's terminal outcome."""
 
     status: str
-    stop_count: int | None = None
-    final_count: int | None = None
-    overshoot: int | None = None
 
 
 @dataclass(frozen=True)
@@ -310,7 +301,7 @@ class DiagnosisRecord:
 
 @dataclass
 class TrialRecord:
-    """The persisted trial record (ids, phases, timings, cap, assessment, diagnosis).
+    """The persisted trial record (ids, phases, timings, budget, assessment, diagnosis).
 
     `eval_sha`/`stack_fingerprint`/`assessment` (#271) and `diagnosis` (#272)
     are additive and default to None, so a #270 record still loads and an old
@@ -326,16 +317,6 @@ class TrialRecord:
     phases: list[PhaseRecord]
     started_at: str
     finished_at: str
-    cap: int | None = None
-    stop_count: int | None = None
-    final_count: int | None = None
-    overshoot: int | None = None
-    # The trial-scoped cap baseline this trial counted against (the consumed
-    # config names already present at its first poll, or the resumed trial's
-    # carried-over baseline). Persisted so a resume keeps counting from it; a
-    # new trial id snapshots a fresh one. Additive, defaults None, old records
-    # still load.
-    cap_baseline: list[str] | None = None
     # The trial-wide token budget and its outcome: the sum spent against the
     # carried baseline, the tokens spent past the bound (the post-stop re-read),
     # and the per-agent breakdown. Additive, default None, old records load.
@@ -405,11 +386,6 @@ class Trial:
         self._clock = clock or time.monotonic
         self._sleep = sleep or time.sleep
         self._now = now or subagents.utcnow
-        # The trial-scoped cap baseline. A resumed trial arrives with one on the
-        # config; a fresh trial has none and snapshots it at its first poll.
-        self._cap_baseline: tuple[str, ...] | None = (
-            tuple(config.cap_baseline) if config.cap_baseline is not None else None
-        )
         # The trial-wide token baseline: a resumed trial carries one on the
         # config; a fresh trial snapshots the project total at its first check.
         self._spend_baseline: int | None = config.spend_baseline
@@ -855,20 +831,20 @@ class Trial:
     def _check_spend(self, project_id: str, run_kind: str, run_id: str) -> SpendResult | None:
         """Enforce the trial-wide token budget; a `SpendResult` when it stops.
 
-        The budget counts CAPPED tokens - generated output plus uncached (fresh)
-        input, i.e. `total_tokens - cached` - never raw totals: cache reads are
-        context the model re-read, not new tokens, so they must not consume the
-        budget. No configured budget means no API call at all, so an unbudgeted
-        trial pays nothing. The first check snapshots the project's cumulative
-        capped total as the baseline; a resumed trial arrives with one and never
-        re-snapshots. On overflow the active run is stopped and the spend, the
-        post-stop overshoot, and the per-agent breakdown are recorded.
+        The budget counts GENERATED tokens (`generated_tokens`: reasoning +
+        visible output) - only what the model WROTE - never context it re-read
+        (cached or uncached input), so input volume can never consume the budget.
+        No configured budget means no API call at all, so an unbudgeted trial
+        pays nothing. The first check snapshots the project's cumulative
+        generated total as the baseline; a resumed trial arrives with one and
+        never re-snapshots. On overflow the active run is stopped and the spend,
+        the post-stop overshoot, and the per-agent breakdown are recorded.
         """
         budget = self.config.token_budget
         if budget is None:
             return None
         resp = self._call(api.usage(project_id))
-        total = api.usage_capped(resp)
+        total = api.usage_generated(resp)
         if self._spend_baseline is None:
             self._spend_baseline = total
         spent = max(0, total - self._spend_baseline)
@@ -877,7 +853,7 @@ class Trial:
         self._call(api.stop_run(project_id, run_kind, run_id))
         # Re-read after the stop: the in-flight work may add tokens past the
         # budget, which is the recorded overshoot.
-        final_total = api.usage_capped(self._call(api.usage(project_id)))
+        final_total = api.usage_generated(self._call(api.usage(project_id)))
         self._spend = SpendResult(
             spent=spent,
             overshoot=max(0, final_total - self._spend_baseline - budget),
@@ -888,40 +864,17 @@ class Trial:
     def _poll_hunting(self, project_id: str, run_id: str) -> PollResult:
         cfg = self.config
         deadline = self._clock() + cfg.budget_s
-        consumed = hunt_configs_dir(cfg.data_root, project_id, "consumed")
         while True:
-            # Trial-scoped cap: count only the configs consumed during this
-            # trial. On the first poll, snapshot the names already there as the
-            # baseline, so a prior run's configs never satisfy a new trial's
-            # cap. The baseline is a name set, not a count, so a baseline file
-            # removed mid-run cannot skew the count.
-            names = [path.name for path in self._files.list_files(consumed)]
-            if self._cap_baseline is None:
-                self._cap_baseline = tuple(sorted(set(names)))
-            baseline = set(self._cap_baseline)
             status = api.status_of(self._call(api.hunting_status(project_id, run_id)))
             if status in api.HUNTING_TERMINAL:
                 return PollResult(status)
-            # Spend first, then the cap: a token-budget stop is trial-wide, so
-            # when both bounds trip on one poll the stop is attributed to spend.
+            # Only the trial-wide token budget stops hunting now: the hunt-config
+            # cap is REMOVED (2026-10-05). It hard-stopped runs mid-coverage (the
+            # jetlinks-1 tier-0 cap-exhaustion) and a consumed-config COUNT is not
+            # a failure signal - the run settles on its own quiesce, the budget,
+            # or the trial deadline.
             if self._check_spend(project_id, "hunting", run_id):
                 return PollResult("stopped")
-            count = sum(1 for name in names if name not in baseline)
-            if cfg.hunt_config_budget is not None and count >= cfg.hunt_config_budget:
-                self._call(api.stop_hunting(project_id, run_id))
-                # Re-read after the stop: the in-flight mover may have added
-                # more configs, which is the recorded overshoot (R7).
-                final = sum(
-                    1
-                    for path in self._files.list_files(consumed)
-                    if path.name not in baseline
-                )
-                return PollResult(
-                    "stopped",
-                    stop_count=count,
-                    final_count=final,
-                    overshoot=max(0, final - cfg.hunt_config_budget),
-                )
             if self._clock() >= deadline:
                 return PollResult("timeout")
             self._sleep(cfg.poll_s)
@@ -954,13 +907,6 @@ class Trial:
             phases=phases,
             started_at=started,
             finished_at=self._now(),
-            cap=cfg.hunt_config_budget,
-            stop_count=cap.stop_count if cap else None,
-            final_count=cap.final_count if cap else None,
-            overshoot=cap.overshoot if cap else None,
-            cap_baseline=(
-                list(self._cap_baseline) if self._cap_baseline is not None else None
-            ),
             token_budget=cfg.token_budget,
             spent_tokens=self._spend.spent if self._spend else None,
             spend_overshoot=self._spend.overshoot if self._spend else None,
@@ -990,8 +936,6 @@ class Trial:
 
 def _hunting_plan_step(cfg: TrialConfig, project: str) -> TrialPlanStep:
     bounds = []
-    if cfg.hunt_config_budget:
-        bounds.append(f"stop at the consumed cap {cfg.hunt_config_budget}")
     if cfg.token_budget:
         bounds.append(f"stop at the token budget {cfg.token_budget}")
     suffix = "; " + "; ".join(bounds) if bounds else ""

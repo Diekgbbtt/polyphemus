@@ -95,7 +95,6 @@ def sample_setup_dict() -> dict:
                         "target_key": "webexploitbench/jetlinks",
                         "target_id": "jetlinks-1",
                         "start_phase": "recon",
-                        "hunt_config_budget": 10,
                         "token_budget": 10,
                         "preloaded_hunting_artifacts": None,
                         "target_config": {

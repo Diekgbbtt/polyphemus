@@ -383,7 +383,6 @@ instances:
       - target_key: webexploitbench/jetlinks  # <dataset>/<target>; indexes the target config + platform bank
         target_id: jetlinks-1   # the trial identity; defaults to the target segment
         start_phase: recon     # recon | analysis | hunting
-        hunt_config_budget: 10
         target_run_id: jetlinks-1-run1  # optional; the artifact store middle level (#273)
         # existing_project_id: 12da8565-...  # optional; hunt a pre-recon'd project (#277)
         preloaded_hunting_artifacts:    # optional; see below

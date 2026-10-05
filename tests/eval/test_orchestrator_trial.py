@@ -99,7 +99,7 @@ class SeqUsageApi(FakeApi):
             return {
                 "project_id": "pid",
                 "total_tokens": total,
-                "capped_tokens": total,
+                "generated_tokens": total,
                 "calls": 1,
                 "by_agent": {"recon": {"total_tokens": total}},
             }
@@ -310,249 +310,6 @@ def test_run_proceeds_without_a_reachability_probe(tmp_path) -> None:
     assert any(c.path.endswith("/recon") for c in api_runner.calls)
 
 
-# --- the hunting cap ----------------------------------------------------------
-
-
-def test_cap_stops_hunting_and_records_the_overshoot(tmp_path) -> None:
-    api_runner = FakeApi(
-        {
-            "GET /projects/pid/hunting/h1": {"status": "running"},
-            "POST /projects/pid/hunting/h1/stop": {"stopping": True},
-            "POST /projects/pid/hunting": {"hunting_run_id": "h1"},
-            "GET /projects/pid/graph": GRAPH_L1_L0,
-        }
-    )
-    # The poll's consumed listing: the empty baseline snapshot, the two new
-    # configs observed at the stop, then the in-flight overshoot on re-read (R7).
-    files = _cap_store(
-        tmp_path, [[], ["a.yaml", "b.yaml"], ["a.yaml", "b.yaml", "c.yaml"]]
-    )
-
-    record = _trial(
-        tmp_path,
-        api_runner,
-        files=files,
-        start_phase="hunting",
-        project_id="pid",
-        hunt_config_budget=2,
-    ).run()
-
-    assert record.terminal == "stopped"
-    assert record.cap == 2
-    # Trial-scoped: only the configs consumed during this trial count, not the
-    # empty baseline this fresh trial snapped.
-    assert record.cap_baseline == []
-    assert record.stop_count == 2
-    assert record.final_count == 3
-    assert record.overshoot == 1
-    assert any(c.path.endswith("/stop") for c in api_runner.calls)
-
-
-def test_cap_counts_only_the_consumed_directory(tmp_path) -> None:
-    files = _cap_store(
-        tmp_path, [["c0.yaml"], ["c0.yaml", "c1.yaml"], ["c0.yaml", "c1.yaml"]]
-    )
-    produced = hunt_configs_dir(tmp_path / "data", "pid", "produced")
-    for i in range(5):
-        files.write_text(produced / f"p{i}.yaml", "id: p\n")
-
-    api_runner = FakeApi(
-        {
-            "GET /projects/pid/hunting/h1": {"status": "running"},
-            "POST /projects/pid/hunting/h1/stop": {"stopping": True},
-            "POST /projects/pid/hunting": {"hunting_run_id": "h1"},
-            "GET /projects/pid/graph": GRAPH_L1_L0,
-        }
-    )
-
-    record = _trial(
-        tmp_path,
-        api_runner,
-        files=files,
-        start_phase="hunting",
-        project_id="pid",
-        hunt_config_budget=1,
-    ).run()
-
-    # The five produced files never count, nor does the pre-existing consumed
-    # `c0.yaml` (the baseline); only the one config consumed during this trial.
-    assert record.cap_baseline == ["c0.yaml"]
-    assert record.stop_count == 1
-    assert record.final_count == 1
-    assert record.overshoot == 0
-
-
-def test_a_pre_existing_consumed_file_does_not_satisfy_the_cap(tmp_path) -> None:
-    """A new trial's cap is trial-scoped: a prior run's configs are baseline."""
-    api_runner = FakeApi(
-        {
-            "GET /projects/pid/hunting/h1": {"status": "running"},
-            "POST /projects/pid/hunting/h1/stop": {"stopping": True},
-            "POST /projects/pid/hunting": {"hunting_run_id": "h1"},
-            "GET /projects/pid/graph": GRAPH_L1_L0,
-        }
-    )
-    # Four pre-existing files, then one NEW file appears: cap=1 must stop only
-    # after the new one, never at the baseline.
-    pre = ["c0.yaml", "c1.yaml", "c2.yaml", "c3.yaml"]
-    files = _cap_store(tmp_path, [pre, pre + ["new.yaml"], pre + ["new.yaml"]])
-
-    record = _trial(
-        tmp_path,
-        api_runner,
-        files=files,
-        start_phase="hunting",
-        project_id="pid",
-        hunt_config_budget=1,
-    ).run()
-
-    assert record.terminal == "stopped"
-    assert record.cap_baseline == pre
-    assert record.stop_count == 1
-    assert record.final_count == 1
-    assert record.overshoot == 0
-
-
-def test_the_trial_scoped_overshoot_counts_only_new_files(tmp_path) -> None:
-    """stop_count and final_count are trial-scoped, not the project total."""
-    api_runner = FakeApi(
-        {
-            "GET /projects/pid/hunting/h1": {"status": "running"},
-            "POST /projects/pid/hunting/h1/stop": {"stopping": True},
-            "POST /projects/pid/hunting": {"hunting_run_id": "h1"},
-            "GET /projects/pid/graph": GRAPH_L1_L0,
-        }
-    )
-    pre = ["c0.yaml", "c1.yaml"]
-    # A second new file lands in flight, so the re-read overshoots by one.
-    files = _cap_store(
-        tmp_path, [pre, pre + ["new.yaml"], pre + ["new.yaml", "extra.yaml"]]
-    )
-
-    record = _trial(
-        tmp_path,
-        api_runner,
-        files=files,
-        start_phase="hunting",
-        project_id="pid",
-        hunt_config_budget=1,
-    ).run()
-
-    assert record.stop_count == 1
-    assert record.final_count == 2
-    assert record.overshoot == 1
-    assert record.cap_baseline == pre
-
-
-def test_empty_baseline_and_empty_consumed_never_stop(tmp_path) -> None:
-    api_runner = FakeApi(
-        {
-            "GET /projects/pid/hunting/h1": {"status": "running"},
-            "POST /projects/pid/hunting/h1/stop": {"stopping": True},
-            "POST /projects/pid/hunting": {"hunting_run_id": "h1"},
-            "GET /projects/pid/graph": GRAPH_L1_L0,
-        }
-    )
-    clock = FakeClock()
-    files = _cap_store(tmp_path, [[], []])  # always empty consumed
-
-    record = _trial(
-        tmp_path,
-        api_runner,
-        files=files,
-        clock=clock,
-        start_phase="hunting",
-        project_id="pid",
-        hunt_config_budget=1,
-        budget_s=15.0,
-        poll_s=10.0,
-    ).run()
-
-    assert record.terminal == "timeout"
-    assert record.stop_count is None
-    assert record.cap_baseline == []
-    # It never issued a stop: the empty trial-scoped count is below the cap.
-    assert not any(c.path.endswith("/stop") for c in api_runner.calls)
-
-
-def test_the_record_round_trips_the_cap_baseline(tmp_path) -> None:
-    api_runner = FakeApi(
-        {
-            "GET /projects/pid/hunting/h1": {"status": "running"},
-            "POST /projects/pid/hunting/h1/stop": {"stopping": True},
-            "POST /projects/pid/hunting": {"hunting_run_id": "h1"},
-            "GET /projects/pid/graph": GRAPH_L1_L0,
-        }
-    )
-    pre = ["old.yaml"]
-    files = _cap_store(tmp_path, [pre, pre + ["new.yaml"], pre + ["new.yaml"]])
-
-    record = _trial(
-        tmp_path,
-        api_runner,
-        files=files,
-        start_phase="hunting",
-        project_id="pid",
-        hunt_config_budget=1,
-    ).run()
-
-    assert record.cap_baseline == ["old.yaml"]
-    written = yaml.safe_load(Path(record.trial_dir, "trial.yaml").read_text())
-    assert written["cap_baseline"] == ["old.yaml"]
-
-
-def test_a_resumed_trial_keeps_its_baseline_and_does_not_reset_the_count(
-    tmp_path,
-) -> None:
-    """A resumed trial carries the record's baseline; its count continues."""
-    stop_routes = {
-        "GET /projects/pid/hunting/h1": {"status": "running"},
-        "POST /projects/pid/hunting/h1/stop": {"stopping": True},
-        "POST /projects/pid/hunting": {"hunting_run_id": "h1"},
-        "GET /projects/pid/graph": GRAPH_L1_L0,
-    }
-    pre = ["old.yaml"]
-    first = _trial(
-        tmp_path,
-        FakeApi(stop_routes),
-        files=_cap_store(tmp_path, [pre, pre + ["a.yaml"], pre + ["a.yaml"]]),
-        start_phase="hunting",
-        project_id="pid",
-        hunt_config_budget=1,
-    ).run()
-    assert first.cap_baseline == ["old.yaml"]
-    assert first.stop_count == 1
-
-    # Re-enter hunting from the record: its baseline rides along, so the
-    # config consumed by the first trial still counts toward the resumed cap.
-    resumed_cfg = replace(
-        _config(
-            tmp_path,
-            start_phase="hunting",
-            project_id="pid",
-            hunt_config_budget=2,
-        ),
-        cap_baseline=first.cap_baseline,
-    )
-    resumed_clock = FakeClock()
-    resumed = trial.Trial(
-        resumed_cfg,
-        api_runner=FakeApi(stop_routes),
-        files=_cap_store(
-            tmp_path,
-            [pre + ["a.yaml"], pre + ["a.yaml", "b.yaml"], pre + ["a.yaml", "b.yaml"]],
-        ),
-        clock=resumed_clock,
-        sleep=resumed_clock.sleep,
-    ).run()
-
-    # Had the baseline reset, iteration one would clear the cap (empty count)
-    # and never reach the cumulative two; this asserts the count continued.
-    assert resumed.terminal == "stopped"
-    assert resumed.cap_baseline == ["old.yaml"]
-    assert resumed.stop_count == 2
-    assert resumed.final_count == 2
-    assert resumed.overshoot == 0
 
 
 # --- the trial-wide token budget ----------------------------------------------
@@ -592,32 +349,31 @@ def test_the_spend_check_returns_a_spend_result_on_a_stop(tmp_path) -> None:
     assert result.overshoot == 200
 
 
-def test_the_budget_counts_capped_tokens_not_the_cache_heavy_raw_total(tmp_path) -> None:
+def test_the_budget_counts_generated_tokens_not_the_cache_heavy_raw_total(tmp_path) -> None:
     # The raw total is over budget from the first read, but it is almost all
-    # cache reads, so the capped axis (generated + uncached) decides the stop.
-    # Counting the raw total would stop the trial at ~zero new tokens - the
-    # half-occupancy bug the cap fix removes.
+    # re-read input, so the GENERATED axis decides the stop. Counting the raw
+    # total would stop the trial at ~zero new tokens - the half-occupancy bug.
     class RawHeavyApi(FakeApi):
-        def __init__(self, routes, capped_seq):
+        def __init__(self, routes, generated_seq):
             super().__init__(routes)
-            self._capped = list(capped_seq)
+            self._generated = list(generated_seq)
             self.usage_calls = 0
 
         def __call__(self, call):
             if call.path.endswith("/usage"):
                 self.usage_calls += 1
-                capped = self._capped.pop(0)
+                generated = self._generated.pop(0)
                 self.calls.append(call)
                 return {
                     "project_id": "pid",
                     "total_tokens": 50_000_000,
-                    "capped_tokens": capped,
+                    "generated_tokens": generated,
                     "calls": 1,
                     "by_agent": {},
                 }
             return super().__call__(call)
 
-    api_runner = RawHeavyApi(_usage_routes(), capped_seq=[10, 100])
+    api_runner = RawHeavyApi(_usage_routes(), generated_seq=[10, 100])
     t = _trial(tmp_path, api_runner, project_id="pid", token_budget=500)
 
     # Baseline capped 10 (raw 50M ignored), then capped 100 -> spent 90 < 500.
@@ -773,24 +529,17 @@ def test_the_spend_overshoot_counts_tokens_spent_past_the_budget(tmp_path) -> No
     assert record.spend_overshoot == 200
 
 
-def test_the_spend_check_runs_before_the_cap_in_hunting(tmp_path) -> None:
+def test_the_spend_check_stops_hunting(tmp_path) -> None:
     api_runner = SeqUsageApi(_usage_routes(), totals=[1000, 1500, 1500])
-    files = _cap_store(
-        tmp_path, [["c0.yaml"], ["c0.yaml", "new.yaml"], ["c0.yaml", "new.yaml"]]
-    )
 
     record = _trial(
         tmp_path,
         api_runner,
-        files=files,
         start_phase="hunting",
         project_id="pid",
-        hunt_config_budget=1,
         token_budget=500,
     ).run()
 
-    # Both bounds trip on the second poll. The spend check runs first, so the
-    # stop is attributed to spend (the cap would leave spent_tokens None).
     assert record.terminal == "stopped"
     assert record.spent_tokens == 500
     assert sum(1 for c in api_runner.calls if c.path.endswith("/stop")) == 1
@@ -801,7 +550,7 @@ def test_a_malformed_usage_payload_never_falsely_stops(tmp_path) -> None:
     # the trial times out rather than falsely tripping the budget.
     api_runner = FakeApi(
         {
-            "GET /projects/pid/usage": {"capped_tokens": "not-an-int", "by_agent": "oops"},
+            "GET /projects/pid/usage": {"generated_tokens": "not-an-int", "by_agent": "oops"},
             "GET /projects/pid/hunting/h1": {"status": "running"},
             "POST /projects/pid/hunting": {"hunting_run_id": "h1"},
             "GET /projects/pid/graph": GRAPH_L1_L0,
@@ -849,7 +598,6 @@ def test_premined_artifacts_are_placed_in_produced_and_consumed_lazily(
         start_phase="hunting",
         project_id="pid",
         preloaded_hunting_artifacts=setup.PreloadedArtifacts(configs=str(source)),
-        hunt_config_budget=5,
     ).run()
 
     produced = hunt_configs_dir(tmp_path / "data", "pid", "produced")

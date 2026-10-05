@@ -70,7 +70,7 @@ A store hit is never reclaimed by provisioning; only the target's own canonical 
 _Avoid_: cleanup, garbage collection
 
 **TargetRun**:
-The evaluation of one `<dataset>/<target>` on one instance: its composite target key, its trial identity `target_id` (defaulting to the target segment), its per-trial `TargetConfig`, the phase it starts at, its hunting cap, its token budget, any pre-mined artifacts, its optional `target_run_id` identity, and its optional `existing_project_id`.
+The evaluation of one `<dataset>/<target>` on one instance: its composite target key, its trial identity `target_id` (defaulting to the target segment), its per-trial `TargetConfig`, the phase it starts at, its token budget, any pre-mined artifacts, its optional `target_run_id` identity, and its optional `existing_project_id`.
 The bring-up configuration and the dataset are resolved from the key at run time, not carried here.
 That identity names the artifact store's middle level and is resolved CLI override > setup `target_run_id` > instance id; when set it must be path-safe and unique within the setup.
 `existing_project_id` names a pre-recon'd project whose L0/L1 were transferred onto the instance (#277): the trial then enters at hunting, skips creation/settings/scaffold, and asserts the project and its L1; it must be path-safe and unique within the setup, and it forces `start_phase: hunting`.
@@ -146,21 +146,20 @@ An eval-wide pre-eval data dependency (auth bootstrap, L1 surface, hunting artif
 _Avoid_: prerequisite, checklist
 
 **Hunting cap**:
-The per-`Target`-declared bound on hunting, enforced per `Trial`: it counts the hunt configs consumed during the trial, i.e. the files present in the consumed hunt-configs directory whose name is not in the trial's baseline.
-The baseline is the set of consumed names already present at the trial's first hunting poll; it is persisted in the trial record (`cap_baseline`) and carried across a resume, so a config consumed by a prior run (or a mounted/pre-mined file already in `consumed/`) never satisfies a new trial's cap, while a stopped trial resumed keeps counting without resetting.
+REMOVED (2026-10-05): a consumed-config count is not a failure signal, and hard-stopping a run mid-coverage caused the jetlinks-1 tier-0 cap-exhaustion (all 10 configs on tier-0 access-control hypotheses; the validation tier was never scheduled). A trial now settles on the run's own quiesce, the token budget, or the trial deadline.
 _Avoid_: budget, limit
 
 **Token budget**:
-The per-`Target`-declared bound on a `Trial`'s token spend, the sibling of the Hunting cap and enforced trial-wide: every phase poll reads the project's cumulative **capped-token** spend from the app usage surface (`capped_tokens` - generated output plus uncached input, i.e. `total_tokens - cached`), and when the spend over the trial's baseline reaches the budget the trial stops the active run and terminates `stopped`.
-Counting capped tokens (not the raw total) stops context the model re-read from consuming the budget for new work.
+The per-`Target`-declared bound on a `Trial`'s token spend, enforced trial-wide: every phase poll reads the project's cumulative **generated-token** spend from the app usage surface (`generated_tokens` - reasoning + visible output), and when the spend over the trial's baseline reaches the budget the trial stops the active run and terminates `stopped`.
+Counting generated tokens only (never input, cached or not) means context the model re-read never consumes the budget for new work.
 _Avoid_: cap, limit
 
 **Token spend**:
-The capped tokens a `Trial`'s project produced, measured as the delta between the project's cumulative `capped_tokens` on the app usage surface (`GET /projects/{id}/usage`) and the trial's spend baseline.
+The generated tokens a `Trial`'s project produced, measured as the delta between the project's cumulative `generated_tokens` on the app usage surface (`GET /projects/{id}/usage`) and the trial's spend baseline.
 _Avoid_: cost, usage
 
 **Spend baseline**:
-The project's cumulative `capped_tokens` at the trial's first spend poll; persisted in the trial record (`spend_baseline`) and carried across a resume, so a resumed or seeded trial never re-counts a prior run's spend.
+The project's cumulative `generated_tokens` at the trial's first spend poll; persisted in the trial record (`spend_baseline`) and carried across a resume, so a resumed or seeded trial never re-counts a prior run's spend.
 _Avoid_: cap baseline, offset
 
 **Pre-mined hunting artifacts**:

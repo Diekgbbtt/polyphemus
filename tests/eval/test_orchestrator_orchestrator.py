@@ -81,7 +81,6 @@ def _setup_dict(*, targets=None, instance_id="arm-a"):
                     {
                         **target,
                         "start_phase": "recon",
-                        "hunt_config_budget": 10,
                     }
                     for target in targets
                 ],

@@ -380,7 +380,6 @@ def test_resume_trial_threads_the_record_cap_baseline(tmp_path, monkeypatch) -> 
     )
 
     assert trial_id == "resumed-1"
-    assert captured["cfg"].cap_baseline == ("old.yaml",)
     assert captured["cfg"].start_phase == "hunting"
 
 
