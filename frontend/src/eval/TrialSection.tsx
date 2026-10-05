@@ -28,6 +28,18 @@ function phasesLabel(trial: EvalTrial): string {
   return phases.length > 0 ? phases.join(" → ") : "—"
 }
 
+// The materialization time, shown identically in the Target index and the Trial
+// detail so the two views never disagree. A Trial without one says so rather
+// than rendering a blank or guessing a date.
+export function SavedOn({ copiedAt }: { copiedAt: string | null }) {
+  if (!copiedAt) return <span className="eval-status">Data non disponibile</span>
+  return (
+    <>
+      Salvato il <span className="eval-ref">{copiedAt}</span>
+    </>
+  )
+}
+
 // The materialized-artifact index. It lists the four files the store wrote and
 // links each to its own readable view; it never loads their contents.
 function MaterializedArtifacts({ trial }: { trial: EvalTrial }) {
@@ -104,6 +116,9 @@ export function TrialSection({
           <span className="eval-ref">{trial.target_run_id}</span> /{" "}
           <span className="eval-ref">{trial.trial_id}</span> · project{" "}
           <span className="eval-ref">{trial.project_id ?? "unassigned"}</span>
+        </p>
+        <p className="trial-saved">
+          <SavedOn copiedAt={trial.copied_at} />
         </p>
         <ul className="eval-chips">
           <li>

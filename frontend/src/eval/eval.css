@@ -705,6 +705,64 @@
   font-size: 0.9rem;
 }
 
+/* The compact Trial index on a Target page: one row per Trial, no expanded
+   graph or inventory. Each row links the Trial and shows its outcome and the
+   materialization time. */
+.trial-index {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+}
+
+.trial-index-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.75rem;
+  padding: 0.55rem 0.25rem;
+  border-bottom: 1px solid #23272d;
+}
+
+.trial-index-row:last-child {
+  border-bottom: none;
+}
+
+.trial-index-row:hover {
+  background: #12151a;
+}
+
+.trial-index-trial {
+  color: #8ab4f8;
+  text-decoration: none;
+}
+
+.trial-index-trial:hover {
+  text-decoration: underline;
+}
+
+.trial-index-outcome {
+  color: #e8eaed;
+  font-size: 0.9rem;
+}
+
+.trial-index-saved {
+  margin-left: auto;
+  color: #9aa0a6;
+  font-size: 0.85rem;
+}
+
+.trial-saved {
+  margin: 0.35rem 0 0;
+  color: #9aa0a6;
+  font-size: 0.85rem;
+}
+
+@media (max-width: 640px) {
+  .trial-index-saved {
+    margin-left: 0;
+  }
+}
+
 .project-artifacts-group h3,
 .project-artifacts-group h4,
 .project-artifacts-group h5 {

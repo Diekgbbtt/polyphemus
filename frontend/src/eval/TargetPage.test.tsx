@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react"
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import { afterEach, expect, test } from "vitest"
 import { App } from "../App"
 import type { EvalSnapshot, EvalTrial } from "./types"
@@ -112,10 +112,20 @@ afterEach(() => {
   window.history.pushState({}, "", "/")
 })
 
-function sectionOrder(): string[] {
-  return [...document.querySelectorAll<HTMLElement>(".trial-section")].map(
-    (section) => section.getAttribute("aria-label") ?? "",
+// The index rows in DOM order; each row links its Trial, so the link text is
+// the Trial identity.
+function rowOrder(): string[] {
+  return [...document.querySelectorAll<HTMLElement>(".trial-index-row")].map(
+    (row) => row.querySelector("a")?.textContent?.trim() ?? "",
   )
+}
+
+function rowFor(trialId: string): HTMLElement {
+  const row = [...document.querySelectorAll<HTMLElement>(".trial-index-row")].find((item) =>
+    item.querySelector("a")?.textContent?.includes(trialId),
+  )
+  if (!row) throw new Error(`no index row for ${trialId}`)
+  return row
 }
 
 test("the Target page orders Trials newest first with an identity tie-break", async () => {
@@ -131,186 +141,21 @@ test("the Target page orders Trials newest first with an identity tie-break", as
           ]),
         ),
     ],
-    ["/resolved-graph", () => json(GRAPH_UNAVAILABLE)],
-    ["/resolved-artifacts", () => json(INVENTORY)],
   ])
   goto("/targets/comfyui-1")
 
   await waitFor(() =>
     expect(screen.getByRole("heading", { name: "comfyui-1" })).toBeDefined(),
   )
-  await waitFor(() => expect(sectionOrder()).toHaveLength(3))
-  expect(sectionOrder()).toEqual([
-    "Trial trial-c",
-    "Trial trial-a",
-    "Trial trial-b",
-  ])
+  await waitFor(() => expect(rowOrder()).toHaveLength(3))
+  expect(rowOrder()).toEqual(["trial-c", "trial-a", "trial-b"])
+  // The TargetRun grouping (and its anchor) is preserved.
+  expect(screen.getByRole("heading", { name: /run-1/ })).toBeDefined()
+  expect(document.getElementById("targetrun-run-1")).not.toBeNull()
 })
 
-test("every Trial section shows identity, terminal, phases, project, and sections", async () => {
-  routeFetch([
-    [
-      "/snapshot",
-      () =>
-        json(
-          snapshot([
-            trial({
-              target_id: "comfyui-1",
-              target_run_id: "run-1",
-              trial_id: "trial-1",
-              terminal: "stopped",
-              availability: "degraded",
-              reason: "verdicts_missing",
-              verdicts: [
-                {
-                  vuln_id: "DEMO-1",
-                  identified: "missed",
-                  confidence: 0,
-                  matched: { unit: null, fault_class: null, symptom: null },
-                  evidence: [],
-                },
-              ],
-            }),
-          ]),
-        ),
-    ],
-    ["/resolved-graph", () => json(GRAPH_UNAVAILABLE)],
-    ["/resolved-artifacts", () => json(INVENTORY)],
-  ])
-  goto("/targets/comfyui-1")
-
-  await waitFor(() =>
-    expect(screen.getByRole("region", { name: "Trial trial-1" })).toBeDefined(),
-  )
-  const section = screen.getByRole("region", { name: "Trial trial-1" })
-  expect(within(section).getByRole("heading", { name: /^Trial trial-1$/ })).toBeDefined()
-  expect(within(section).getByText("proj-1")).toBeDefined()
-  expect(within(section).getByText("stopped", { selector: ".eval-chip-value" })).toBeDefined()
-  expect(within(section).getByText(/recon complete → hunting stopped/)).toBeDefined()
-  expect(within(section).getByRole("heading", { name: "Degraded trial" })).toBeDefined()
-  expect(within(section).getByRole("heading", { name: "Results" })).toBeDefined()
-  expect(within(section).getByRole("heading", { name: "Graph" })).toBeDefined()
-  await waitFor(() =>
-    expect(within(section).getByRole("heading", { name: "Hunting" })).toBeDefined(),
-  )
-  expect(within(section).getByRole("heading", { name: "Skills" })).toBeDefined()
-})
-
-test("a graph error never removes the results or artifacts", async () => {
-  routeFetch([
-    [
-      "/snapshot",
-      () =>
-        json(
-          snapshot([
-            trial({
-              target_id: "comfyui-1",
-              target_run_id: "run-1",
-              trial_id: "trial-1",
-              verdicts: [
-                {
-                  vuln_id: "DEMO-1",
-                  identified: "identified",
-                  confidence: 0.9,
-                  matched: { unit: "u", fault_class: "c", symptom: "s" },
-                  evidence: [],
-                },
-              ],
-            }),
-          ]),
-        ),
-    ],
-    ["/resolved-graph", () => json({ detail: "project_graph_unavailable" }, 409)],
-    ["/resolved-artifacts", () => json(INVENTORY)],
-  ])
-  goto("/targets/comfyui-1")
-
-  await waitFor(() =>
-    expect(screen.getByRole("region", { name: "Trial trial-1" })).toBeDefined(),
-  )
-  const section = screen.getByRole("region", { name: "Trial trial-1" })
-  await waitFor(() => expect(within(section).getByRole("alert")).toBeDefined())
-  expect(within(section).getByText("DEMO-1")).toBeDefined()
-  expect(within(section).getByRole("heading", { name: "Hunting" })).toBeDefined()
-})
-
-test("an artifact error never removes the results or graph", async () => {
-  routeFetch([
-    [
-      "/snapshot",
-      () =>
-        json(
-          snapshot([
-            trial({
-              target_id: "comfyui-1",
-              target_run_id: "run-1",
-              trial_id: "trial-1",
-              verdicts: [
-                {
-                  vuln_id: "DEMO-1",
-                  identified: "identified",
-                  confidence: 0.9,
-                  matched: { unit: "u", fault_class: "c", symptom: "s" },
-                  evidence: [],
-                },
-              ],
-            }),
-          ]),
-        ),
-    ],
-    ["/resolved-graph", () => json(GRAPH_UNAVAILABLE)],
-    ["/resolved-artifacts", () => json({ detail: "artifact_unsafe" }, 409)],
-  ])
-  goto("/targets/comfyui-1")
-
-  await waitFor(() =>
-    expect(screen.getByRole("region", { name: "Trial trial-1" })).toBeDefined(),
-  )
-  const section = screen.getByRole("region", { name: "Trial trial-1" })
-  await waitFor(() => expect(within(section).getByRole("alert")).toBeDefined())
-  expect(within(section).getByText("DEMO-1")).toBeDefined()
-  expect(within(section).getByText("No graph available")).toBeDefined()
-})
-
-test("the canonical deep Trial URL renders the same section", async () => {
-  routeFetch([
-    [
-      "/snapshot",
-      () =>
-        json(
-          snapshot([
-            trial({
-              target_id: "comfyui-1",
-              target_run_id: "run-1",
-              trial_id: "trial-1",
-              verdicts: [
-                {
-                  vuln_id: "DEMO-1",
-                  identified: "identified",
-                  confidence: 0.9,
-                  matched: { unit: "u", fault_class: "c", symptom: "s" },
-                  evidence: [],
-                },
-              ],
-            }),
-          ]),
-        ),
-    ],
-    ["/resolved-graph", () => json(GRAPH_UNAVAILABLE)],
-    ["/resolved-artifacts", () => json(INVENTORY)],
-  ])
-  goto("/targets/comfyui-1/trials/run-1/trial-1")
-
-  await waitFor(() =>
-    expect(screen.getByRole("region", { name: "Trial trial-1" })).toBeDefined(),
-  )
-  const section = screen.getByRole("region", { name: "Trial trial-1" })
-  expect(within(section).getByRole("heading", { name: "Results" })).toBeDefined()
-  expect(within(section).getByText("DEMO-1")).toBeDefined()
-})
-
-test("legacy eval and project Trial URLs preserve the Trial identity", async () => {
-  routeFetch([
+test("the Target page is an index: no graph or artifact section is expanded", async () => {
+  const calls = routeFetch([
     [
       "/snapshot",
       () =>
@@ -320,6 +165,138 @@ test("legacy eval and project Trial URLs preserve the Trial identity", async () 
           ]),
         ),
     ],
+  ])
+  goto("/targets/comfyui-1")
+
+  await waitFor(() => expect(rowOrder()).toEqual(["trial-1"]))
+  // Nothing on the index expands a Trial: no embedded workspace, and therefore
+  // no resolved graph or artifact request leaves the page.
+  expect(screen.queryByRole("region", { name: "Trial trial-1" })).toBeNull()
+  expect(screen.queryByRole("heading", { name: "Graph" })).toBeNull()
+  expect(screen.queryByRole("heading", { name: "Hunting" })).toBeNull()
+  expect(screen.queryByRole("heading", { name: "Skills" })).toBeNull()
+  expect(screen.queryByRole("heading", { name: "Results" })).toBeNull()
+  expect(calls.some((url) => url.includes("/resolved-graph"))).toBe(false)
+  expect(calls.some((url) => url.includes("/resolved-artifacts"))).toBe(false)
+  // `/snapshot` is the only request the index makes.
+  expect(calls.every((url) => url.endsWith("/snapshot"))).toBe(true)
+})
+
+test("each index row links to the canonical Trial detail", async () => {
+  routeFetch([
+    ["/snapshot", () => json(snapshot([
+      trial({ target_id: "comfyui-1", target_run_id: "run-1", trial_id: "trial-1" }),
+    ]))],
+    ["/resolved-graph", () => json(GRAPH_UNAVAILABLE)],
+    ["/resolved-artifacts", () => json(INVENTORY)],
+  ])
+  goto("/targets/comfyui-1")
+
+  await waitFor(() => expect(rowFor("trial-1")).toBeDefined())
+  const link = within(rowFor("trial-1")).getByRole("link", { name: "trial-1" })
+  expect(link.getAttribute("href")).toBe("/targets/comfyui-1/trials/run-1/trial-1")
+
+  fireEvent.click(link)
+  await waitFor(() =>
+    expect(window.location.pathname).toBe("/targets/comfyui-1/trials/run-1/trial-1"),
+  )
+  await waitFor(() =>
+    expect(screen.getByRole("region", { name: "Trial trial-1" })).toBeDefined(),
+  )
+})
+
+test("a row shows the outcome summary and the saved timestamp", async () => {
+  routeFetch([
+    [
+      "/snapshot",
+      () =>
+        json(
+          snapshot([
+            trial({
+              target_id: "comfyui-1",
+              target_run_id: "run-1",
+              trial_id: "trial-1",
+              copied_at: "2024-01-02T00:00:00+00:00",
+              verdicts: [
+                { vuln_id: "V1", identified: "identified", confidence: 0.9, matched: { unit: null, fault_class: null, symptom: null }, evidence: [] },
+                { vuln_id: "V2", identified: "missed", confidence: 0, matched: { unit: null, fault_class: null, symptom: null }, evidence: [] },
+                { vuln_id: "V3", identified: "missed", confidence: 0, matched: { unit: null, fault_class: null, symptom: null }, evidence: [] },
+              ],
+            }),
+          ]),
+        ),
+    ],
+  ])
+  goto("/targets/comfyui-1")
+
+  await waitFor(() => expect(rowFor("trial-1")).toBeDefined())
+  const row = rowFor("trial-1")
+  expect(row.textContent).toContain("1 identified / 0 partial / 2 missed")
+  expect(row.textContent).toContain("Salvato il 2024-01-02T00:00:00+00:00")
+})
+
+test("a row without a timestamp says the date is not available", async () => {
+  routeFetch([
+    ["/snapshot", () => json(snapshot([
+      trial({ target_id: "comfyui-1", target_run_id: "run-1", trial_id: "trial-1", copied_at: null }),
+    ]))],
+  ])
+  goto("/targets/comfyui-1")
+
+  await waitFor(() => expect(rowFor("trial-1")).toBeDefined())
+  expect(rowFor("trial-1").textContent).toContain("Data non disponibile")
+})
+
+test("the Trial detail shows the same saved timestamp", async () => {
+  routeFetch([
+    ["/snapshot", () => json(snapshot([
+      trial({
+        target_id: "comfyui-1",
+        target_run_id: "run-1",
+        trial_id: "trial-1",
+        copied_at: "2024-01-02T00:00:00+00:00",
+      }),
+    ]))],
+    ["/resolved-graph", () => json(GRAPH_UNAVAILABLE)],
+    ["/resolved-artifacts", () => json(INVENTORY)],
+  ])
+  goto("/targets/comfyui-1/trials/run-1/trial-1")
+
+  await waitFor(() =>
+    expect(screen.getByRole("region", { name: "Trial trial-1" })).toBeDefined(),
+  )
+  const section = screen.getByRole("region", { name: "Trial trial-1" })
+  expect(within(section).getByText(/Salvato il/)).toBeDefined()
+  expect(within(section).getByText("2024-01-02T00:00:00+00:00")).toBeDefined()
+})
+
+test("the Trial detail without a timestamp says the date is not available", async () => {
+  routeFetch([
+    ["/snapshot", () => json(snapshot([
+      trial({ target_id: "comfyui-1", target_run_id: "run-1", trial_id: "trial-1", copied_at: null }),
+    ]))],
+    ["/resolved-graph", () => json(GRAPH_UNAVAILABLE)],
+    ["/resolved-artifacts", () => json(INVENTORY)],
+  ])
+  goto("/targets/comfyui-1/trials/run-1/trial-1")
+
+  await waitFor(() =>
+    expect(screen.getByRole("region", { name: "Trial trial-1" })).toBeDefined(),
+  )
+  const section = screen.getByRole("region", { name: "Trial trial-1" })
+  expect(within(section).getByText("Data non disponibile")).toBeDefined()
+})
+
+test("legacy eval and project Trial URLs preserve the Trial identity", async () => {
+  routeFetch([
+    ["/snapshot", () => json(snapshot([
+      trial({
+        target_id: "comfyui-1",
+        target_run_id: "run-1",
+        trial_id: "trial-1",
+        copied_at: "2024-01-02T00:00:00+00:00",
+      }),
+    ]))],
     ["/resolved-graph", () => json(GRAPH_UNAVAILABLE)],
     ["/resolved-artifacts", () => json(INVENTORY)],
   ])

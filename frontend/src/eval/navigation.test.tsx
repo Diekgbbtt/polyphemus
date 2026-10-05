@@ -451,10 +451,20 @@ test("dataset to Target to Trial navigation works", async () => {
     expect(screen.getByRole("heading", { name: "comfyui-1" })).toBeDefined(),
   )
 
-  // The Target workspace embeds each Trial in full, so its section is already
-  // on the page rather than behind a second click.
-  const section = screen.getAllByRole("region", { name: "Trial trial-1" })[0]
-  expect(within(section).getByRole("heading", { name: /^Trial trial-1$/ })).toBeDefined()
+  // The Target page is an index: each Trial row links to its own detail, and
+  // the detail is where the full workspace renders.
+  const link = screen
+    .getAllByRole("link", { name: "trial-1" })
+    .find(
+      (item) => item.getAttribute("href") === "/targets/comfyui-1/trials/run-demo-a/trial-1",
+    )
+  expect(link).toBeDefined()
+
+  fireEvent.click(link as HTMLElement)
+  await waitFor(() =>
+    expect(window.location.pathname).toBe("/targets/comfyui-1/trials/run-demo-a/trial-1"),
+  )
+  expect(screen.getByRole("region", { name: "Trial trial-1" })).toBeDefined()
 })
 
 test("breadcrumbs link back through the hierarchy", async () => {

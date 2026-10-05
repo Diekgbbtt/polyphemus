@@ -1,7 +1,8 @@
-import { useParams } from "react-router-dom"
+import { Link, useParams } from "react-router-dom"
+import { targetPaths } from "../projectPaths"
 import { EvalBreadcrumbs, evalPaths } from "./EvalBreadcrumbs"
 import { useEvalData } from "./EvalDataProvider"
-import { TrialSection } from "./TrialSection"
+import { SavedOn } from "./TrialSection"
 import type { EvalTrial } from "./types"
 
 // Stable per-TargetRun anchor; the Trial breadcrumb links its TargetRun crumb
@@ -29,9 +30,10 @@ function verdictCounts(trial: EvalTrial): { identified: number; partial: number;
   return counts
 }
 
-// One Target ("machine"): its verdict summary, then every TargetRun with its
-// Trials. Each Trial is the full continuous workspace, so the Target page is
-// the whole read-only history, not just an index of links.
+// One Target ("machine"): its verdict summary, then every TargetRun with a
+// compact index of its Trials. The index links each Trial to its own workspace
+// and never expands a graph or an inventory, so opening a Target stays cheap
+// and the full detail lives on the Trial page.
 export function TargetPage() {
   const { targetId = "" } = useParams()
   const { snapshot } = useEvalData()
@@ -104,9 +106,32 @@ export function TargetPage() {
           <h2>
             TargetRun <span className="eval-ref">{targetRunId}</span>
           </h2>
-          {runTrials.map((trial) => (
-            <TrialSection key={trial.trial_id} trial={trial} />
-          ))}
+          <ul className="trial-index">
+            {runTrials.map((trial) => {
+              const counts = verdictCounts(trial)
+              return (
+                <li key={trial.trial_id} className="trial-index-row">
+                  <Link
+                    className="trial-index-trial eval-ref"
+                    to={targetPaths.trial(
+                      trial.target_id,
+                      trial.target_run_id,
+                      trial.trial_id,
+                    )}
+                  >
+                    {trial.trial_id}
+                  </Link>
+                  <span className="trial-index-outcome">
+                    {counts.identified} identified / {counts.partial} partial /{" "}
+                    {counts.missed} missed
+                  </span>
+                  <span className="trial-index-saved">
+                    <SavedOn copiedAt={trial.copied_at} />
+                  </span>
+                </li>
+              )
+            })}
+          </ul>
         </section>
       ))}
     </div>
