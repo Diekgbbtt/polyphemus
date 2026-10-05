@@ -352,8 +352,8 @@ ground truth**, not a capture saved with the Trial — the UI labels it `Ground 
 benchmark)`. It comes from its own opt-in service so the discovery agent has no route to it:
 
     # 1. check the host path first (never creates it)
-    EVAL_WEB_DIR_HOST_PATH=/home/<operator>/WebExploitBench \
-      python -m operator_api.preflight
+    cd eval && EVAL_WEB_DIR_HOST_PATH=/home/<operator>/WebExploitBench \
+      PYTHONPATH=. python -m operator_api.preflight
 
     # 2. start the operator service beside the real dashboard
     EVAL_WEB_DIR_HOST_PATH=/home/<operator>/WebExploitBench \
