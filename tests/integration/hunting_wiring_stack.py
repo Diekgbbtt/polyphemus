@@ -124,9 +124,10 @@ def restart_sibling(timeout: int = 600) -> bool:
     """Restart the live target to a clean module state (`up -d --force-recreate`
     on `WIRING_SERVICE`) and wait for `/health`.
 
-    The runtime's `drain` is TERMINAL for a module (no un-drain verb): a gate
-    predicate that drains hunting leaves the shared target's module `stopped`,
-    which would poison every subsequent launch on that process. Restarting the
+    The runtime's `drain` is TERMINAL for a module (no un-drain verb; #328
+    repairs only a drained recon on its next launch): a gate predicate that
+    drains hunting leaves the shared target's module `stopped`, which would
+    poison every subsequent launch on that process. Restarting the
     live container is the honest "operator restarts the module" restoration
     (a real spike of availability, acceptable in the integration tier).
 

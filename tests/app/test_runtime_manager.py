@@ -98,7 +98,6 @@ class _CountState(dict):
 
 
 def _compiled_graph(checkpointer):
-    from langgraph.checkpoint.memory import InMemorySaver
     from langgraph.graph import END, START, StateGraph
 
     def node(state):
@@ -574,6 +573,72 @@ def test_drain_times_out_and_hard_cancels_a_paused_run(runtime):
     assert runtime.run_ids("analysis") == []
     with pytest.raises(concurrent.futures.CancelledError):
         fut.result(timeout=5)
+
+
+# --- restart: revive a drained (stopped) module (#328) ----------------------
+
+def test_restart_revives_a_stopped_module_for_admission(runtime):
+    """#328: a drain settles a module to `stopped`, which is terminal for
+    `schedule`. `restart` is the one transition back to `running` so a module
+    that was drained admits work again instead of refusing every launch."""
+    runtime.register_module("recon")
+    runtime.drain("recon", timeout=5)
+    assert runtime.state("recon") == ModuleState.STOPPED
+
+    coro = _noop()
+    with pytest.raises(ModuleAdmissionRefused):
+        runtime.schedule("recon", coro, name="while-stopped")
+    coro.close()
+
+    runtime.restart("recon")
+    assert runtime.state("recon") == ModuleState.RUNNING
+    assert runtime.schedule("recon", _noop(), name="revived").result(timeout=5) is None
+
+
+def test_restart_of_non_stopped_module_is_a_safe_noop(runtime):
+    runtime.register_module("recon")
+    runtime.restart("recon")
+    assert runtime.state("recon") == ModuleState.RUNNING
+
+    runtime.pause("recon")
+    runtime.restart("recon")
+    assert runtime.state("recon") == ModuleState.PAUSED
+
+
+def test_ensure_running_revives_stopped_and_leaves_others_untouched(runtime):
+    """#328: `ensure_running` is the silent launch precondition - revive only a
+    `stopped` module, preserving a deliberate pause. The HTTP-level launch-after-
+    drain path is covered end to end in test_module_lifecycle_api.py."""
+    runtime.register_module("recon")
+    runtime.ensure_running("recon")
+    assert runtime.state("recon") == ModuleState.RUNNING
+
+    runtime.pause("recon")
+    runtime.ensure_running("recon")
+    assert runtime.state("recon") == ModuleState.PAUSED
+
+    runtime.resume("recon")
+    runtime.drain("recon", timeout=5)
+    assert runtime.state("recon") == ModuleState.STOPPED
+
+    runtime.ensure_running("recon")
+    assert runtime.state("recon") == ModuleState.RUNNING
+    assert runtime.schedule("recon", _noop(), name="revived").result(timeout=5) is None
+
+
+def test_restart_after_shutdown_raises_the_named_error(runtime):
+    """#328 review: the shutdown fan-out clears the worker loop, so a revive
+    after it must fail loud with `RuntimeLoopNotRunning`, not `AttributeError`."""
+    from polymerhus.app.runtime import RuntimeLoopNotRunning
+
+    runtime.register_module("recon")
+    runtime.shutdown()
+    assert runtime.state("recon") == ModuleState.STOPPED
+
+    with pytest.raises(RuntimeLoopNotRunning):
+        runtime.restart("recon")
+    with pytest.raises(RuntimeLoopNotRunning):
+        runtime.ensure_running("recon")
 
 
 # --- feed gate seam ---------------------------------------------------------

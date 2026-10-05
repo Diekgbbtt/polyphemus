@@ -124,6 +124,11 @@
   observable: the API path and the second run complete while the first is still offloaded (the worker loop is never the thread that runs blocking pg/io - Defect C thread-starvation case is closed); no stall
   yields: integration-tier responsiveness test (the historical Defect C regression guard)
 
+- **C22** | seam: `RuntimeManager.restart` / `ensure_running` + the recon entry predicate (#328) | delivery: degradation + ordering
+  input: (a) a `recon` module drained to `stopped`, then `runtime.restart("recon")`; (b) `restart` on a `running` and on a `paused` module; (c) `ensure_running` on a `running`, a `paused`, and a `stopped` module; (d) `stopped` recon followed by `POST /projects/{id}/recon`; (e) a launch in the shutdown window (active runtime published, worker loop cleared)
+  observable: (a) the module reaches `running` and `schedule` is admitted (`run_ids` gains the run); (b) a safe no-op - state unchanged, the pause preserved; (c) revive only from `stopped`, silent otherwise, a deliberate pause preserved; (d) the launch is ADMITTED (200, not the #118 503) and the recon module is revived before `run_pipeline` schedules - a drained module never fails a trial on an admission refusal; (e) the revive raises `RuntimeLoopNotRunning`, which maps to a clean 503, never a 500
+  yields: `tests/app/test_runtime_manager.py` restart + `ensure_running` cases + `tests/app/test_module_lifecycle_api.py::test_recon_launch_after_a_drain_is_admitted_not_503` + `::test_launch_during_shutdown_window_is_a_503_not_a_500`
+
 ## Walkthrough predicates (end-to-end tier)
 
 - **E1** | grounds: user stories 1-4, 10-12 - pause one module while the others keep progressing, both kept at the same wall-clock time | entry seam: `POST /projects/{id}/recon` then `POST /projects/{id}/analysis`

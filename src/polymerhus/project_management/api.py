@@ -366,6 +366,21 @@ def _schedule_pipeline(project_id: str, run_id: str, jobs: list[str] | None,
             "recon launch requires the module runtime; no manager is active"
         )
 
+    # #328: a drain settles the recon module to `stopped` (terminal), which
+    # `schedule` refuses. A launch is the operator's intent to run recon, so ask
+    # the runtime to revive a stopped module before scheduling instead of
+    # failing the trial on an admission refusal. A deliberate pause is left
+    # alone (only the terminal `stopped` state is revived).
+    #
+    # #121: recon is a registered run of the recon module on the runtime's
+    # worker loop; pause/drain/cancel of the recon module reach it here.
+    # A paused/draining recon module refuses admission (#118) - map that to a
+    # clean 503 so the caller reads *why* the launch was refused.
+    #
+    # The revive sits INSIDE the guard: `ensure_running` can itself raise
+    # `RuntimeLoopNotRunning` in the shutdown window (the active runtime is
+    # still published while its worker loop is already cleared), and that must
+    # map to a 503, never escape as a 500.
     async def _run() -> None:
         try:
             await run_pipeline(project_id, run_id=run_id, job_subset=jobs,
@@ -373,11 +388,8 @@ def _schedule_pipeline(project_id: str, run_id: str, jobs: list[str] | None,
         except Exception:  # noqa: BLE001 - best-effort launch, must not crash the loop
             logger.exception("recon pipeline run %s (project %s) failed", run_id, project_id)
 
-    # #121: recon is a registered run of the recon module on the runtime's
-    # worker loop; pause/drain/cancel of the recon module reach it here.
-    # A paused/draining/stopped recon module refuses admission (#118) - map
-    # that to a clean 503 so the caller reads *why* the launch was refused.
     try:
+        runtime.ensure_running("recon")
         runtime.schedule("recon", _run(), name=run_id)
     except Exception as exc:  # noqa: BLE001 - re-raise non-admission via the helper
         _admission_refused_503(exc)
@@ -960,15 +972,24 @@ def _runtime_or_503():
 
 def _admission_refused_503(exc: Exception):
     """Map the runtime's admission refusal (#118 contract: `schedule` is refused
-    while a module is paused/draining/stopped) onto a clean HTTP status instead
+    while a module is paused or draining) onto a clean HTTP status instead
     of an unhandled 500 - the operator-intent surface must say *why* the launch
-    was not admitted."""
-    from polymerhus.app.runtime import ModuleAdmissionRefused
+    was not admitted. `RuntimeLoopNotRunning` (a revive during the shutdown
+    window, when the worker loop is already cleared) is likewise a clean 503."""
+    from polymerhus.app.runtime import (
+        ModuleAdmissionRefused,
+        RuntimeLoopNotRunning,
+    )
 
     if isinstance(exc, ModuleAdmissionRefused):
         raise HTTPException(
             status_code=503,
             detail=f"module not accepting new work: {exc}",
+        ) from exc
+    if isinstance(exc, RuntimeLoopNotRunning):
+        raise HTTPException(
+            status_code=503,
+            detail="module runtime is not running",
         ) from exc
     raise exc
 

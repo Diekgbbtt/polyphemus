@@ -16,13 +16,17 @@ Reachable states over HTTP (from `RuntimeManager`):
 
 Contract inputs per state (the operator-intent surface):
   pause  / resume / drain   - lifecycle verbs (state transitions + safe no-ops)
-  launch (schedule)          - admitted in `running`; refused 503 otherwise (#118)
+  launch (schedule)          - admitted in `running`; refused 503 while `paused`
+                               (#118), but a `stopped` RECON module is REPAIRED on
+                               launch (#328: the entry predicate restarts a drained
+                               module so a trial never fails on an admission refusal)
   stop   (cancel_run)        - hard-cancels a registered run (module-agnostic)
 
 Each module (recon / analysis / hunting) walks the FULL matrix independently
 (draining one module does not affect the others - the independence the goal
 names). The walk ends each module at `stopped` (a terminal state; there is no
-restart verb over HTTP).
+restart verb over HTTP). #328's repair revives a drained recon implicitly on its
+next launch, and the recon walk drains it back to `stopped` to keep the invariant.
 
 Target: `juice-shop-remote` (soupmarket.shop) from
 tests/e2e/fixtures/eval-targets.yaml, bounded to a single [httpx] job - enough
@@ -238,17 +242,36 @@ def _walk_module_fsm(module: str, project_id: str, run_id: str):
     assert _state(module) == "stopped"
 
     # ---- stopped (terminal) -----------------------------------------------
-    # every lifecycle verb is a safe no-op; launch is refused 503
+    # every lifecycle verb is a safe no-op
     for verb in ("pause", "resume", "drain"):
         body, code = _lifecycle(module, verb)
         assert code == 200 and body["state"] == "stopped", (
             f"{module} {verb} in stopped: {code} {body}"
         )
     body, code = _launch(module, project_id, run_id)
-    assert code == 503, (
-        f"{module} launch in stopped must be a clean 503 (admission refused): "
-        f"{code} {body}"
-    )
+    if module == "recon":
+        # #328: the recon entry predicate repairs a drained module, so a launch
+        # after a drain is ADMITTED (not 503) and revives the module. Restore
+        # the walk's terminal end-state by draining it back to `stopped`.
+        assert code == 200, (
+            f"recon launch in stopped must be repaired and admitted (#328): "
+            f"{code} {body}"
+        )
+        assert _state(module) == "running", f"recon not revived: {body}"
+        revived_id = body.get("run_id")
+        assert revived_id, f"recon repair launch returned no run id: {body}"
+        _stop(module, project_id, revived_id)
+        body, code = _lifecycle(module, "drain")
+        assert code == 200 and body["state"] == "stopped", (
+            f"recon did not return to stopped: {code} {body}"
+        )
+    else:
+        # analysis / hunting have no entry repair (out of #328 scope): a drained
+        # module stays terminal and the launch is refused.
+        assert code == 503, (
+            f"{module} launch in stopped must be a clean 503 (admission refused): "
+            f"{code} {body}"
+        )
 
 
 def _create_configured_project() -> tuple[str, str]:

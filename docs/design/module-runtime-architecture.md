@@ -144,9 +144,12 @@ Identical launcher mechanics; the analysis-only handler validates the run exists
 3. Run tasks, heartbeats, and persistence stay alive, so the reaper does not touch the paused module's runs; the FIFOs keep accumulating what producers push (D8 unbounded stands - pause duration is operator time, and memory is bounded by run lifetime).
 4. `[API]` `runtime.resume("analysis")` returns the module to `running`; dispatch continues from the next unit.
 
-### 5.11 Module drain (graceful module stop)
+### 5.11 Module drain and restart (module stop and revive)
 
 `runtime.drain("analysis")` = pause plus settle: finish the in-flight unit, dispatch no further, let queued consumers attach nothing new; when the registry empties the module reaches `stopped`; its flush hook archives the index; the pool closes. The module is now stopped while recon keeps running - the independence the goal names, exercised.
+
+`stopped` is terminal for `schedule`: a drained module admits no new runs. `RuntimeManager.restart(module)` is the manager-internal transition back (`stopped -> running`): it re-arms the module's gate, so the module admits work again. It has no HTTP route and is not an operator verb - the production revive is the silent `ensure_running` precondition below. It is a no-op on a `running` or `paused` module - only the terminal `stopped` state is revived, so a deliberate `pause` is preserved (`resume` stays the paused-only verb). The shutdown fan-out clears the worker loop, so a revive after it raises `RuntimeLoopNotRunning`; restart is not a way back from shutdown.
+`runtime.ensure_running(module)` is the silent, idempotent admission precondition: it revives a `stopped` module and leaves any other state untouched. The RECON entry predicate (`_schedule_pipeline`) calls it before scheduling, so a launch after a drain repairs the module instead of returning the #118 admission 503 - the #328 fix that stops a trial failing at the recon phase. The scope is deliberately the recon entry predicate: the analysis and hunting launch paths still refuse a drained module (a follow-up of the same class, not part of #328).
 
 ### 5.12 Process shutdown (`main.py` `_shutdown`)
 
