@@ -170,6 +170,18 @@ export interface ProjectArtifactDetail {
   content_url: string
 }
 
+// The recorded spend of a finished Trial, read from the harness's authoritative
+// record - NOT the live in-memory project ledger (which has no per-run
+// attribution and resets with the process). `null` is a missing field; `0` is a
+// real value; the overshoot is reported separately and never added to spent.
+export interface TrialSpend {
+  status: "available" | "unavailable"
+  spent_tokens: number | null
+  spend_overshoot: number | null
+  spend_by_agent: Record<string, Record<string, number>> | null
+  reason: string | null
+}
+
 export interface EvalTrial {
   target_id: string
   target_run_id: string
@@ -188,6 +200,8 @@ export interface EvalTrial {
   reason: string | null
   artifact_summary: ProjectArtifactSummary
   project_graph_summary: ProjectGraphSummary
+  // Optional: an older snapshot predates the recorded-spend block.
+  spend?: TrialSpend | null
 }
 
 export interface EvalVersionTrial {

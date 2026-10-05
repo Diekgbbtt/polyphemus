@@ -1,4 +1,4 @@
-import type { Project, GraphData, RunsResponse } from "./types"
+import type { Project, GraphData, ProjectUsage, RunsResponse } from "./types"
 
 const BASE = import.meta.env.VITE_AGENT_BASE_URL ?? ""
 
@@ -26,6 +26,15 @@ export async function getProjects(): Promise<Project[]> {
 export async function getGraph(projectId: string, signal?: AbortSignal): Promise<GraphData> {
   return getJSON<GraphData>(`/projects/${projectId}/graph`, signal)
 }
-export async function getRunningRuns(): Promise<RunsResponse> {
-  return getJSON<RunsResponse>("/runs?status=running")
+export async function getRunningRuns(signal?: AbortSignal): Promise<RunsResponse> {
+  return getJSON<RunsResponse>("/runs?status=running", signal)
+}
+// The project's CUMULATIVE token usage, read straight from the app's in-memory
+// ledger. It is not per-run and it resets with the process, so callers label it
+// "Usage corrente progetto" and never present it as a current context window.
+export async function getProjectUsage(
+  projectId: string,
+  signal?: AbortSignal,
+): Promise<ProjectUsage> {
+  return getJSON<ProjectUsage>(`/projects/${projectId}/usage`, signal)
 }

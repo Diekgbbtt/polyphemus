@@ -552,3 +552,85 @@ def test_compose_overlay_configures_the_resolved_sources_read_only() -> None:
     assert all(not mount.endswith(":rw") for mount in mounts)
     # No destructive service management was added by the overlay.
     assert "down" not in str(api.get("command", ""))
+
+
+# --- recorded spend (current-usage feature) ------------------------------------
+
+RUNS_ROOT_ENV = "EVAL_RUNS_ROOT"
+
+
+def _seed_spend_record(
+    runs_root: Path,
+    *,
+    name: str = "spend-a1b2.yaml",
+    target: str = "comfyui-1",
+    run: str = "run-a",
+    trial: str = "t1",
+    project_id: str = PROJECT_ID,
+    instance_id: str = INSTANCE,
+    **fields: object,
+) -> None:
+    record = {
+        "target_id": target,
+        "target_run_id": run,
+        "trial_id": trial,
+        "project_id": project_id,
+        "instance_id": instance_id,
+        "spent_tokens": 500,
+        "spend_overshoot": 0,
+        "spend_by_agent": {"recon": {"total_tokens": 1500}},
+    }
+    record.update(fields)
+    path = runs_root / target / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(yaml.safe_dump(record, sort_keys=False), encoding="utf-8")
+
+
+def test_snapshot_attaches_recorded_spend_resolved_by_identity(tmp_path: Path) -> None:
+    store = tmp_path / "store"
+    _seed_identified_trial(store)
+    runs_root = tmp_path / "runs"
+    _seed_spend_record(runs_root)
+
+    adapter = source.ArtifactStoreSnapshotSource(store, runs_root=runs_root)
+    trial = adapter.snapshot()["trials"][0]
+
+    assert trial["spend"] == {
+        "status": "available",
+        "spent_tokens": 500,
+        "spend_overshoot": 0,
+        "spend_by_agent": {"recon": {"total_tokens": 1500}},
+        "reason": None,
+    }
+
+
+def test_snapshot_spend_is_unavailable_when_no_runs_root_is_configured(
+    tmp_path: Path,
+) -> None:
+    store = tmp_path / "store"
+    _seed_identified_trial(store)
+
+    trial = source.ArtifactStoreSnapshotSource(store).snapshot()["trials"][0]
+
+    assert trial["spend"]["status"] == "unavailable"
+    assert trial["spend"]["spent_tokens"] is None
+    assert trial["spend"]["reason"] == "spend_root_unconfigured"
+
+
+def test_compose_overlay_mounts_the_runs_root_read_only() -> None:
+    overlay = yaml.safe_load(COMPOSE_OVERLAY.read_text(encoding="utf-8"))
+    api = overlay["services"]["eval-api"]
+
+    assert api["environment"]["EVAL_RUNS_ROOT"] == "/srv/eval-runs"
+    mounts = [str(mount) for mount in api.get("volumes", [])]
+    assert any(mount.endswith(":/srv/eval-runs:ro") for mount in mounts)
+
+
+def test_filesystem_factory_reads_the_runs_root_from_the_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(RUNS_ROOT_ENV, str(tmp_path / "runs"))
+
+    built = source.filesystem_source()
+
+    assert built.runs_root == str(tmp_path / "runs")

@@ -338,16 +338,24 @@ def test_real_overlay_binds_the_real_store_read_only(tmp_path: Path) -> None:
     api = config["services"]["eval-api"]
     api_mounts = mounts(api)
 
-    assert set(api_mounts) == {"/srv/eval", "/srv/eval-artifacts", "/srv/eval-project-data"}
+    assert set(api_mounts) == {
+        "/srv/eval",
+        "/srv/eval-artifacts",
+        "/srv/eval-project-data",
+        "/srv/eval-runs",
+    }
     assert api_mounts["/srv/eval-artifacts"]["source"] == "/srv/eval-artifacts"
     assert api_mounts["/srv/eval-artifacts"]["read_only"] is True
     assert api_mounts["/srv/eval"]["read_only"] is True
     # The resolved workspace sources are wired read-only too.
     assert api_mounts["/srv/eval-project-data"]["read_only"] is True
+    # The harness runs root (the recorded-spend source) is read-only as well.
+    assert api_mounts["/srv/eval-runs"]["read_only"] is True
     assert api["environment"]["EVAL_ARTIFACT_STORE"] == "/srv/eval-artifacts"
     assert api["environment"]["EVAL_PROJECT_DATA_ROOT"] == "/srv/eval-project-data"
     assert api["environment"]["EVAL_AGENT_BASE_URL"] == "http://agent:8080"
     assert api["environment"]["EVAL_INSTANCE_ID"] == "eval-server-1"
+    assert api["environment"]["EVAL_RUNS_ROOT"] == "/srv/eval-runs"
     assert api["environment"]["PYTHONPATH"] == "/srv/eval"
     assert api["image"] == "polymerhus-agent:latest"
     assert api["healthcheck"]
@@ -359,6 +367,7 @@ def test_real_overlay_binds_the_real_store_read_only(tmp_path: Path) -> None:
             extra={
                 "EVAL_ARTIFACT_STORE_HOST_PATH": "/tmp/real-eval-store",
                 "EVAL_PROJECT_DATA_ROOT_HOST_PATH": "/tmp/real-project-data",
+                "EVAL_RUNS_ROOT_HOST_PATH": "/tmp/real-runs",
             },
         ).stdout
     )
@@ -368,6 +377,9 @@ def test_real_overlay_binds_the_real_store_read_only(tmp_path: Path) -> None:
     assert mounts(overridden["services"]["eval-api"])["/srv/eval-project-data"][
         "source"
     ] == "/tmp/real-project-data"
+    assert mounts(overridden["services"]["eval-api"])["/srv/eval-runs"]["source"] == (
+        "/tmp/real-runs"
+    )
 
 
 @docker

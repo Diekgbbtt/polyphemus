@@ -13,11 +13,12 @@
 #                  /eval-api -> eval-api (loopback ports only)
 #
 # This overlay starts no demo generator and never reads the raw `live/` mirror
-# as history. It mounts two read-only sources beside the authoritative store:
-# the operator's real artifact store, and the eval instance's project data root
-# (the allowlisted Hunting/Skill tree the resolved endpoint falls back to). The
-# agent base URL is used only to read the matching instance's current L0/L1
-# graph; nothing here writes to either mount.
+# as history. It mounts three read-only sources beside the artifact store: the
+# operator's real artifact store, the eval instance's project data root (the
+# allowlisted Hunting/Skill tree the resolved endpoint falls back to), and the
+# harness runs root (each finished Trial's authoritative record, the source of
+# the recorded-spend block). The agent base URL is used only to read the
+# matching instance's current L0/L1 graph; nothing here writes to any mount.
 
 volumes:
   # The frontend's dependencies, kept out of the bind-mounted working tree.
@@ -41,11 +42,20 @@ services:
       EVAL_PROJECT_DATA_ROOT: /srv/eval-project-data
       EVAL_AGENT_BASE_URL: http://agent:8080
       EVAL_INSTANCE_ID: ${EVAL_INSTANCE_ID:-eval-server-1}
+      # The harness runs root holds each finished Trial's authoritative record
+      # (arbitrary filename); the recorded-spend block resolves it by full
+      # Trial identity. Mounted read-only, and never required for the rest of
+      # the report: an unset host path leaves spend "non disponibile".
+      EVAL_RUNS_ROOT: /srv/eval-runs
     volumes:
       - ./eval:/srv/eval:ro
       - ${EVAL_ARTIFACT_STORE_HOST_PATH:-/srv/eval-artifacts}:/srv/eval-artifacts:ro
       # The raw project data root, always read-only.
       - ${EVAL_PROJECT_DATA_ROOT_HOST_PATH:-/opt/polymerhus-dev/eval/instances/eval-server-1/data}:/srv/eval-project-data:ro
+      # The harness runs root, always read-only. It is a separate source from
+      # the artifact store: the store holds the materialized Trial, the runs
+      # root holds the harness's own record with its spend fields.
+      - ${EVAL_RUNS_ROOT_HOST_PATH:-/opt/polymerhus-dev/eval/runs}:/srv/eval-runs:ro
     command:
       - python
       - -m

@@ -11,3 +11,14 @@ export interface RunningRun {
   started_at: string | null; last_heartbeat_at: string | null; jobs: JobCounts
 }
 export interface RunsResponse { runs: RunningRun[]; liveness_ttl_seconds: number }
+
+// The verified wire shape of `GET /projects/{id}/usage`: the process-wide,
+// in-memory ledger's CUMULATIVE per-project totals plus the per-agent
+// breakdown. There is no cached/uncached field and no per-run attribution,
+// and the counters reset when the app process restarts.
+export interface UsageEntry {
+  input_tokens: number; output_tokens: number; total_tokens: number; calls: number
+}
+export interface ProjectUsage {
+  project_id: string; total_tokens: number; calls: number; by_agent: Record<string, UsageEntry>
+}

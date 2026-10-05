@@ -44,6 +44,12 @@ from orchestrator.project_artifacts import (
 )
 from .projection import DEFAULT_DATASET_ID, DEFAULT_DATASET_NAME, build_snapshot
 from .project_graph import HistoricalProjectGraphError, read_project_graph
+from .trial_spend import (
+    SPEND_ROOT_UNCONFIGURED,
+    TrialSpend,
+    load_spend_records,
+    match_spend,
+)
 
 ENV_STORE = "EVAL_ARTIFACT_STORE"
 ENV_DATASET_ID = "EVAL_DATASET_ID"
@@ -51,6 +57,9 @@ ENV_DATASET_NAME = "EVAL_DATASET_NAME"
 ENV_PROJECT_DATA_ROOT = "EVAL_PROJECT_DATA_ROOT"
 ENV_AGENT_BASE_URL = "EVAL_AGENT_BASE_URL"
 ENV_INSTANCE_ID = "EVAL_INSTANCE_ID"
+# The harness's runs root, holding each finished Trial's authoritative record
+# (arbitrary filename). Read-only, and only for the recorded-spend block.
+ENV_RUNS_ROOT = "EVAL_RUNS_ROOT"
 
 MANIFEST_FILENAME = "run-manifest.yaml"
 # Non-Trial siblings a store also contains: the materializer's scratch root, the
@@ -151,11 +160,15 @@ class ArtifactStoreSnapshotSource:
     project_data_root: str | Path | None = None
     agent_base_url: str | None = None
     instance_id: str | None = None
+    # The read-only harness runs root the recorded-spend block resolves against;
+    # None leaves every Trial's spend `unavailable` (never guessed).
+    runs_root: str | Path | None = None
     graph_client_factory: Callable[[], ProjectGraphClient | None] | None = None
 
     def snapshot(self) -> dict[str, Any]:
         snapshot = self._projected_snapshot()
         snapshot["unassigned_saved_data"] = self._unassigned_saved_data(snapshot)
+        self._attach_spend(snapshot)
         return snapshot
 
     def _projected_snapshot(self) -> dict[str, Any]:
@@ -252,6 +265,38 @@ class ArtifactStoreSnapshotSource:
         if self.agent_base_url:
             return HttpProjectGraphClient(self.agent_base_url)
         return None
+
+    def _attach_spend(self, snapshot: Mapping[str, object]) -> None:
+        """Attach each projected Trial's recorded spend, resolved by identity.
+
+        The runs root is walked once and every Trial is matched against the
+        same preloaded records; an unconfigured root leaves every block
+        `unavailable`, so a missing source never hides the rest of the report.
+        """
+        trials = snapshot.get("trials")
+        if not isinstance(trials, list):
+            return
+        if not self.runs_root:
+            block = TrialSpend(
+                status="unavailable", reason=SPEND_ROOT_UNCONFIGURED
+            ).to_dict()
+            for trial in trials:
+                if isinstance(trial, dict):
+                    trial["spend"] = dict(block)
+            return
+        records = load_spend_records(self.runs_root, files=FileStore())
+        for trial in trials:
+            if not isinstance(trial, dict):
+                continue
+            spend = match_spend(
+                records,
+                target_id=trial.get("target_id"),
+                target_run_id=trial.get("target_run_id"),
+                trial_id=trial.get("trial_id"),
+                project_id=trial.get("project_id"),
+                instance_id=trial.get("instance_id"),
+            )
+            trial["spend"] = spend.to_dict()
 
     def _unassigned_saved_data(self, snapshot: Mapping[str, object]) -> list[dict]:
         """Raw project directories no projected Trial proves belong to this instance."""
@@ -377,4 +422,5 @@ def filesystem_source() -> SnapshotSource:
         project_data_root=os.environ.get(ENV_PROJECT_DATA_ROOT) or None,
         agent_base_url=os.environ.get(ENV_AGENT_BASE_URL) or None,
         instance_id=os.environ.get(ENV_INSTANCE_ID) or None,
+        runs_root=os.environ.get(ENV_RUNS_ROOT) or None,
     )

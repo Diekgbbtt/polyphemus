@@ -970,3 +970,46 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* --- recorded spend (Trial report) --------------------------------------------- */
+
+.eval-spend-totals {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 2rem;
+  margin: 0 0 0.75rem;
+}
+
+.eval-spend-totals dt {
+  color: #9aa0a6;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 11px;
+}
+
+.eval-spend-totals dd {
+  margin: 0.15rem 0 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.eval-spend-agents {
+  border-collapse: collapse;
+}
+
+.eval-spend-agents caption {
+  color: #9aa0a6;
+  text-align: left;
+  padding-bottom: 0.35rem;
+}
+
+.eval-spend-agents th,
+.eval-spend-agents td {
+  border: 1px solid #23272d;
+  padding: 0.25rem 0.75rem;
+  text-align: left;
+  font-variant-numeric: tabular-nums;
+}
+
+.eval-spend-unavailable {
+  color: #9aa0a6;
+}

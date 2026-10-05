@@ -266,3 +266,59 @@ button:focus-visible,
     width: 100%;
   }
 }
+
+/* --- current project usage (live runs page) ------------------------------------ */
+
+.runs-usage {
+  margin-top: 1.75rem;
+  padding: 1rem 1.1rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.runs-usage h2 {
+  margin: 0 0 0.75rem;
+  font-size: 1rem;
+}
+
+.runs-usage-totals {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 2rem;
+  margin: 0 0 0.75rem;
+}
+
+.runs-usage-totals dt {
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 11px;
+}
+
+.runs-usage-totals dd {
+  margin: 0.15rem 0 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.runs-usage-agents {
+  border-collapse: collapse;
+}
+
+.runs-usage-agents caption {
+  color: var(--muted);
+  text-align: left;
+  padding-bottom: 0.35rem;
+}
+
+.runs-usage-agents th,
+.runs-usage-agents td {
+  border: 1px solid var(--border);
+  padding: 0.25rem 0.75rem;
+  text-align: left;
+  font-variant-numeric: tabular-nums;
+}
+
+.runs-usage-unavailable {
+  color: var(--muted);
+}

@@ -415,3 +415,66 @@ def test_resolved_unknown_trial_is_a_path_free_404(resolved_client: TestClient) 
 
     assert res.status_code == 404
     assert res.json()["detail"] == "trial_not_found"
+
+
+def test_snapshot_carries_the_recorded_spend_resolved_by_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The recorded-spend block is a read-only, identity-matched lookup.
+
+    The live `/projects/{id}/usage` endpoint has no per-run attribution and
+    resets with the process; the Trial report instead shows what the harness
+    recorded, resolved from the configured runs root by full identity.
+    """
+    store = tmp_path / "store"
+    trial = store / "comfyui-1" / "run-a" / "t1"
+    trial.mkdir(parents=True)
+    (trial / "run-manifest.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "schema_version": 1,
+                "trial_id": "t1",
+                "target_id": "comfyui-1",
+                "target_run_id": "run-a",
+                "instance_id": "eval-server-1",
+                "project_id": "proj-1",
+                "eval_sha": "eval-1",
+                "stack_fingerprint": "fp-1",
+            }
+        ),
+        encoding="utf-8",
+    )
+    runs_root = tmp_path / "runs"
+    record = runs_root / "comfyui-1" / "finished-record-42.yaml"
+    record.parent.mkdir(parents=True)
+    record.write_text(
+        yaml.safe_dump(
+            {
+                "target_id": "comfyui-1",
+                "target_run_id": "run-a",
+                "trial_id": "t1",
+                "instance_id": "eval-server-1",
+                "project_id": "proj-1",
+                "spent_tokens": 500,
+                "spend_overshoot": 200,
+                "spend_by_agent": {"recon": {"total_tokens": 1500}},
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("EVAL_ARTIFACT_STORE", str(store))
+    monkeypatch.setenv("EVAL_RUNS_ROOT", str(runs_root))
+
+    body = TestClient(app_module.app).get("/snapshot").json()
+
+    trial = next(t for t in body["trials"] if t["trial_id"] == "t1")
+    assert trial["spend"] == {
+        "status": "available",
+        "spent_tokens": 500,
+        "spend_overshoot": 200,
+        "spend_by_agent": {"recon": {"total_tokens": 1500}},
+        "reason": None,
+    }
+    assert str(tmp_path) not in TestClient(app_module.app).get("/snapshot").text

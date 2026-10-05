@@ -34,6 +34,67 @@ function phasesLabel(trial: EvalTrial): string {
 // the component itself now lives in its own module.
 export { SavedOn }
 
+// The one "not available" string the recorded-spend block uses; a missing field
+// and an unavailable association read the same to an operator.
+const SPEND_MISSING = "non disponibile"
+
+// One Trial's RECORDED spend, read from the harness's authoritative record.
+//
+// This is distinct from the live runs page: the live page shows the app's
+// cumulative, per-project, in-memory usage; this block shows what the finished
+// Trial actually recorded against its budget. `spent_tokens` is the recorded
+// consumption, `spend_overshoot` is the tokens spent past the bound (reported
+// separately and never added to the total), and `spend_by_agent` is the
+// recorded breakdown. Zero is shown as zero; a missing field is "non
+// disponibile", so the two are never confused.
+function RecordedSpend({ trial }: { trial: EvalTrial }) {
+  const spend = trial.spend
+  const available = spend?.status === "available"
+  const value = (raw: number | null | undefined): string =>
+    available && typeof raw === "number" ? String(raw) : SPEND_MISSING
+  const agents = available && spend?.spend_by_agent ? Object.entries(spend.spend_by_agent) : []
+
+  return (
+    <section className="eval-spend" aria-label="Recorded spend">
+      <h2>Recorded spend</h2>
+      <dl className="eval-spend-totals">
+        <div>
+          <dt>Consumo registrato</dt>
+          <dd data-spend="spent">{value(spend?.spent_tokens)}</dd>
+        </div>
+        <div>
+          <dt>Sforamento</dt>
+          <dd data-spend="overshoot">{value(spend?.spend_overshoot)}</dd>
+        </div>
+      </dl>
+      {agents.length > 0 ? (
+        <table className="eval-spend-agents">
+          <caption>Breakdown registrato</caption>
+          <thead>
+            <tr>
+              <th scope="col">Agente</th>
+              <th scope="col">Token</th>
+            </tr>
+          </thead>
+          <tbody>
+            {agents
+              .slice()
+              .sort(([a], [b]) => a.localeCompare(b))
+              .map(([agent, entry]) => (
+                <tr key={agent}>
+                  <th scope="row">{agent}</th>
+                  <td>{entry.total_tokens ?? SPEND_MISSING}</td>
+                </tr>
+              ))}
+          </tbody>
+        </table>
+      ) : (
+        <p className="eval-spend-unavailable">Breakdown registrato: {SPEND_MISSING}</p>
+      )}
+    </section>
+  )
+}
+
 // The materialized-artifact index. It lists the four files the store wrote and
 // links each to its own readable view; it never loads their contents.
 function MaterializedArtifacts({ trial }: { trial: EvalTrial }) {
@@ -148,6 +209,7 @@ export function TrialSection({
         </section>
       )}
 
+      <RecordedSpend trial={trial} />
       <TrialResults trial={trial} groundTruth={groundTruth} />
       <TrialProjectGraph
         targetId={trial.target_id}
