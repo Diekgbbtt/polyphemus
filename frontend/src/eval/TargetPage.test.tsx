@@ -232,7 +232,13 @@ test("a row shows the outcome summary and the saved timestamp", async () => {
   await waitFor(() => expect(rowFor("trial-1")).toBeDefined())
   const row = rowFor("trial-1")
   expect(row.textContent).toContain("1 identified / 0 partial / 2 missed")
-  expect(row.textContent).toContain("Salvato il 2024-01-02T00:00:00+00:00")
+  expect(row.textContent).toContain("Salvato il")
+  // The timestamp is a semantic <time> whose machine-readable value is the
+  // stored instant; the visible text is its browser-local rendering.
+  const saved = row.querySelector("time")
+  expect(saved?.getAttribute("dateTime")).toBe("2024-01-02T00:00:00+00:00")
+  expect(saved?.textContent).not.toBe("")
+  expect(saved?.textContent).not.toBe("2024-01-02T00:00:00+00:00")
 })
 
 test("a row without a timestamp says the date is not available", async () => {
@@ -267,7 +273,9 @@ test("the Trial detail shows the same saved timestamp", async () => {
   )
   const section = screen.getByRole("region", { name: "Trial trial-1" })
   expect(within(section).getByText(/Salvato il/)).toBeDefined()
-  expect(within(section).getByText("2024-01-02T00:00:00+00:00")).toBeDefined()
+  const saved = section.querySelector("time")
+  expect(saved?.getAttribute("dateTime")).toBe("2024-01-02T00:00:00+00:00")
+  expect(saved?.textContent).not.toBe("2024-01-02T00:00:00+00:00")
 })
 
 test("the Trial detail without a timestamp says the date is not available", async () => {

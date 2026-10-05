@@ -3,6 +3,7 @@ import { targetPaths } from "../projectPaths"
 import { EvalBreadcrumbs, evalPaths } from "./EvalBreadcrumbs"
 import { useEvalData } from "./EvalDataProvider"
 import { ResolvedArtifactsSection } from "./ResolvedArtifactsSection"
+import { SavedOn } from "./SavedOn"
 import { TrialProjectGraph } from "./TrialProjectGraph"
 import { TrialResults } from "./TrialResults"
 import { ARTIFACT_LABELS, ARTIFACT_ORDER, summarizeArtifact } from "./TrialArtifactPage"
@@ -28,17 +29,9 @@ function phasesLabel(trial: EvalTrial): string {
   return phases.length > 0 ? phases.join(" → ") : "—"
 }
 
-// The materialization time, shown identically in the Target index and the Trial
-// detail so the two views never disagree. A Trial without one says so rather
-// than rendering a blank or guessing a date.
-export function SavedOn({ copiedAt }: { copiedAt: string | null }) {
-  if (!copiedAt) return <span className="eval-status">Data non disponibile</span>
-  return (
-    <>
-      Salvato il <span className="eval-ref">{copiedAt}</span>
-    </>
-  )
-}
+// Kept as a re-export for callers that still import the timestamp from here;
+// the component itself now lives in its own module.
+export { SavedOn }
 
 // The materialized-artifact index. It lists the four files the store wrote and
 // links each to its own readable view; it never loads their contents.

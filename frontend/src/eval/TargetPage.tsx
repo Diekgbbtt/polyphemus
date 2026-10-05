@@ -2,7 +2,7 @@ import { Link, useParams } from "react-router-dom"
 import { targetPaths } from "../projectPaths"
 import { EvalBreadcrumbs, evalPaths } from "./EvalBreadcrumbs"
 import { useEvalData } from "./EvalDataProvider"
-import { SavedOn } from "./TrialSection"
+import { SavedOn } from "./SavedOn"
 import type { EvalTrial } from "./types"
 
 // Stable per-TargetRun anchor; the Trial breadcrumb links its TargetRun crumb
