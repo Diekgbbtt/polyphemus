@@ -15,8 +15,8 @@ export function evalApiBaseUrl(): string {
   return import.meta.env.VITE_EVAL_API_BASE_URL ?? ""
 }
 
-export async function getSnapshot(): Promise<EvalSnapshot> {
-  const res = await fetch(`${evalApiBaseUrl()}/snapshot`)
+export async function getSnapshot(signal?: AbortSignal): Promise<EvalSnapshot> {
+  const res = await fetch(`${evalApiBaseUrl()}/snapshot`, signal ? { signal } : undefined)
   if (!res.ok) throw new Error(`/snapshot -> ${res.status}`)
   return (await res.json()) as EvalSnapshot
 }

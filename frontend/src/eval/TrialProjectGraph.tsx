@@ -1,7 +1,9 @@
-import { useEffect, useState } from "react"
+import { useCallback, useRef } from "react"
 import type { GraphData } from "../api/types"
 import { GraphView } from "../graph/GraphView"
+import { usePolledResource } from "../usePolledResource"
 import { getResolvedTrialGraph } from "./client"
+import { useEvalRefreshToken } from "./EvalDataProvider"
 import type { ResolvedProjectGraph } from "./types"
 
 // The two sources the resolved endpoint reports. The browser never chooses
@@ -13,14 +15,6 @@ const SOURCE_LABEL: Record<ResolvedProjectGraph["source"], string> = {
 }
 
 const NO_GRAPH = "No graph available"
-
-function isAbortError(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    (error as { name?: unknown }).name === "AbortError"
-  )
-}
 
 type GraphState =
   | { kind: "loading" }
@@ -43,14 +37,26 @@ function readyState(resolved: ResolvedProjectGraph): GraphState {
   return { kind: "unavailable" }
 }
 
+// Wire-level equality, so a poll that returns the same graph keeps the previous
+// object. A new object would hand the canvas a new `nodes` array and silently
+// reset the reader's zoom and layer selection.
+function sameResolved(a: ResolvedProjectGraph, b: ResolvedProjectGraph): boolean {
+  return JSON.stringify(a) === JSON.stringify(b)
+}
+
 // The graph section of one Trial.
 //
 // It consumes only the resolved Trial endpoint: the server decides between the
 // immutable capture written beside the Trial and the matching instance's
 // current project graph, and reports which one it used. The component never
 // calls the live agent graph client, so a Trial from another instance can never
-// reach this server's project data. A failure here stays an error inside this
-// section and never silently becomes a different source.
+// reach this server's project data.
+//
+// The section re-reads itself on the shared cadence (and on a manual refresh),
+// retrying while the graph is unavailable. A capture written with the Trial is
+// history: it is read once and then held, never swapped for the mutable project
+// graph. A failure never blanks the section - the previous graph stays with a
+// soft notice.
 export function TrialProjectGraph({
   targetId,
   targetRunId,
@@ -60,32 +66,44 @@ export function TrialProjectGraph({
   targetRunId: string
   trialId: string
 }) {
-  const [state, setState] = useState<GraphState>({ kind: "loading" })
+  const refreshToken = useEvalRefreshToken()
+  // The full identity of this section instance, so a ref from a previous Trial
+  // is never mistaken for this one's.
+  const identity = `${targetId}\u0000${targetRunId}\u0000${trialId}`
+  const frozen = useRef<{ identity: string; resolved: ResolvedProjectGraph } | null>(null)
+  const last = useRef<{ identity: string; resolved: ResolvedProjectGraph } | null>(null)
 
-  useEffect(() => {
-    const controller = new AbortController()
-    let active = true
-    // A tuple change always starts from a clean slate.
-    setState({ kind: "loading" })
+  const load = useCallback(
+    async (signal: AbortSignal): Promise<ResolvedProjectGraph> => {
+      if (frozen.current && frozen.current.identity === identity) {
+        return frozen.current.resolved
+      }
+      const resolved = await getResolvedTrialGraph(targetId, targetRunId, trialId, signal)
+      if (resolved.status === "available" && resolved.source === "trial_snapshot") {
+        frozen.current = { identity, resolved }
+        last.current = { identity, resolved }
+        return resolved
+      }
+      const previous =
+        last.current && last.current.identity === identity ? last.current.resolved : null
+      if (previous && sameResolved(previous, resolved)) return previous
+      last.current = { identity, resolved }
+      return resolved
+    },
+    [identity, targetId, targetRunId, trialId],
+  )
 
-    getResolvedTrialGraph(targetId, targetRunId, trialId, controller.signal)
-      .then((resolved) => {
-        if (!active) return
-        setState(readyState(resolved))
-      })
-      .catch((cause: unknown) => {
-        if (!active || isAbortError(cause)) return
-        setState({
-          kind: "error",
-          message: cause instanceof Error ? cause.message : String(cause),
-        })
-      })
+  const resource = usePolledResource<ResolvedProjectGraph>({
+    key: identity,
+    load,
+    refreshToken,
+  })
 
-    return () => {
-      active = false
-      controller.abort()
-    }
-  }, [targetId, targetRunId, trialId])
+  const state: GraphState = resource.loading
+    ? { kind: "loading" }
+    : resource.data
+      ? readyState(resource.data)
+      : { kind: "error", message: resource.error ?? "unknown" }
 
   return (
     <section aria-label="Graph" className="project-trial-section">
@@ -101,6 +119,11 @@ export function TrialProjectGraph({
           label={state.label}
           capturedAt={state.capturedAt}
         />
+      )}
+      {resource.data !== null && resource.error !== null && (
+        <p className="eval-status" role="status">
+          Graph refresh failed: {resource.error}. Showing the previous graph.
+        </p>
       )}
     </section>
   )

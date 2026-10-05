@@ -92,19 +92,23 @@ function json(body: unknown, status = 200): Response {
 
 function routeFetch(
   routes: Array<[string, () => Response | Promise<Response>]>,
-): { calls: string[]; signals: AbortSignal[] } {
+): { calls: string[]; signals: AbortSignal[]; signalUrls: string[] } {
   const calls: string[] = []
   const signals: AbortSignal[] = []
+  const signalUrls: string[] = []
   globalThis.fetch = (async (input: unknown, init?: RequestInit) => {
     const url = String(input)
     calls.push(url)
-    if (init?.signal) signals.push(init.signal as AbortSignal)
+    if (init?.signal) {
+      signals.push(init.signal as AbortSignal)
+      signalUrls.push(url)
+    }
     for (const [needle, handler] of routes) {
       if (url.includes(needle)) return handler()
     }
     throw new Error(`unexpected fetch: ${url}`)
   }) as typeof fetch
-  return { calls, signals }
+  return { calls, signals, signalUrls }
 }
 
 function goto(path: string) {
@@ -485,7 +489,7 @@ test("aborts on artifact route change and ignores a late response", async () => 
   const first = new Promise<Response>((resolve) => {
     resolveFirst = resolve
   })
-  const { signals } = routeFetch([
+  const { signals, signalUrls } = routeFetch([
     ["/snapshot", () => json(evalSnapshot([evalTrial()]))],
     ["/resolved-artifacts/a1", () => first],
     ["/resolved-artifacts/a2", () => json(detail({ entry: entry({ artifact_id: "a2", relative_path: "second.yaml" }) }))],
@@ -520,7 +524,11 @@ test("aborts on artifact route change and ignores a late response", async () => 
   await waitFor(() =>
     expect(screen.getAllByText("second.yaml").length).toBeGreaterThan(0),
   )
-  expect(signals[0].aborted).toBe(true)
+  // The provider's `/snapshot` request now also carries a signal, so target the
+  // inventory request by its URL rather than by position.
+  const inventory = signalUrls.findIndex((url) => url.includes("/trial-1/resolved-artifacts"))
+  expect(inventory).toBeGreaterThanOrEqual(0)
+  expect(signals[inventory].aborted).toBe(true)
 
   resolveFirst?.(json(detail({ entry: entry({ artifact_id: "a1", relative_path: "late.yaml" }) })))
   await Promise.resolve()

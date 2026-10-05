@@ -1,5 +1,5 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react"
-import { afterEach, expect, test } from "vitest"
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react"
+import { afterEach, expect, test, vi } from "vitest"
 import { App } from "../App"
 import { projectPaths } from "../projectPaths"
 import type { EvalSnapshot, EvalTrial } from "../eval/types"
@@ -103,6 +103,7 @@ function trialHrefs(): string[] {
 }
 
 afterEach(() => {
+  vi.useRealTimers()
   window.history.pushState({}, "", "/")
 })
 
@@ -532,4 +533,36 @@ test("RunsPage exposes encoded project navigation", async () => {
   expect(screen.getByRole("link", { name: "Eval Trials" }).getAttribute("href")).toBe(
     "/p/p%20x/evals",
   )
+})
+
+test("the project eval shell refreshes its Trial list in place", async () => {
+  vi.useFakeTimers()
+  const one = trial({
+    target_id: "comfyui-1",
+    target_run_id: "run-a",
+    trial_id: "trial-1",
+    project_id: "proj-a",
+  })
+  let body: unknown = snapshot([one])
+  stubRoutes([["/snapshot", () => json(body)]])
+  goto("/p/proj-a/evals")
+
+  await act(async () => {})
+  expect(screen.getByRole("link", { name: "trial-1" })).toBeDefined()
+  expect(screen.queryByRole("link", { name: "trial-2" })).toBeNull()
+
+  body = snapshot([
+    one,
+    trial({
+      target_id: "comfyui-1",
+      target_run_id: "run-b",
+      trial_id: "trial-2",
+      project_id: "proj-a",
+    }),
+  ])
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: "Aggiorna" }))
+  })
+
+  expect(screen.getByRole("link", { name: "trial-2" })).toBeDefined()
 })

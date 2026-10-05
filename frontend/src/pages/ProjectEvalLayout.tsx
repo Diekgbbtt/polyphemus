@@ -1,11 +1,12 @@
 import { Outlet, useParams } from "react-router-dom"
 import { EvalDataProvider, useEvalData } from "../eval/EvalDataProvider"
+import { EvalRefreshControls } from "../eval/EvalRefreshControls"
 import { ProjectNav } from "./ProjectNav"
 import "../eval/eval.css"
 
-// The project-eval subtree's layout: one EvalDataProvider owns the single
-// `/snapshot` request for the list and every Trial route below it, and the
-// shell owns the shared loading/error gate.
+// The project-eval subtree's layout: one EvalDataProvider owns the `/snapshot`
+// request for the list and every Trial route below it, keeps it fresh, and owns
+// the shared loading/error gate.
 export function ProjectEvalLayout() {
   return (
     <EvalDataProvider>
@@ -16,12 +17,13 @@ export function ProjectEvalLayout() {
 
 function ProjectEvalShell() {
   const { projectId = "" } = useParams()
-  const { status, error } = useEvalData()
+  const { status, error, refreshError } = useEvalData()
   return (
     <main className="eval project-eval">
       <header className="eval-topbar">
         <p className="eval-eyebrow">Project</p>
         <ProjectNav projectId={projectId} active="evals" />
+        <EvalRefreshControls />
       </header>
 
       {status === "loading" && (
@@ -32,6 +34,11 @@ function ProjectEvalShell() {
       {status === "error" && (
         <p className="eval-error" role="alert">
           Failed to load eval results: {error}
+        </p>
+      )}
+      {status === "ready" && refreshError && (
+        <p className="eval-notice" role="status">
+          Aggiornamento non riuscito: {refreshError}. Sono mostrati i dati precedenti.
         </p>
       )}
       {status === "ready" && <Outlet />}

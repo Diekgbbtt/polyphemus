@@ -1,6 +1,6 @@
-import { render, screen, waitFor } from "@testing-library/react"
+import { act, render, screen, waitFor } from "@testing-library/react"
 import { MemoryRouter } from "react-router-dom"
-import { expect, test } from "vitest"
+import { afterEach, expect, test, vi } from "vitest"
 import { ResolvedArtifactsSection } from "./ResolvedArtifactsSection"
 import type {
   ProjectArtifactEntry,
@@ -106,6 +106,12 @@ function routeFetch(routes: Array<[string, () => Response | Promise<Response>]>)
   return calls
 }
 
+afterEach(() => {
+  vi.useRealTimers()
+})
+
+const POLL = 15_000
+
 function renderSection() {
   return render(
     <MemoryRouter>
@@ -208,4 +214,71 @@ test("an inventory error stays confined to the artifacts section", async () => {
   await waitFor(() => expect(screen.getByRole("alert")).toBeDefined())
   expect(screen.getByRole("alert").textContent).toMatch(/artifact_unsafe/)
   expect(screen.queryByRole("heading", { name: "Hunting" })).toBeNull()
+})
+
+function extraEntry(): ProjectArtifactEntry {
+  return entry({
+    artifact_id: "h2",
+    relative_path: "hunting/orchestration/hunt_configs/produced/fresh.yaml",
+    size_bytes: 30,
+  })
+}
+
+test("re-reads the inventory and shows an artifact added to the open Trial", async () => {
+  vi.useFakeTimers()
+  let body: unknown = inventory()
+  routeFetch([["/resolved-artifacts", () => json(body)]])
+  renderSection()
+
+  await act(async () => {})
+  expect(screen.getByText("Saved for project")).toBeDefined()
+  expect(
+    screen.queryByText("hunting/orchestration/hunt_configs/produced/fresh.yaml"),
+  ).toBeNull()
+
+  body = inventory({
+    groups: [
+      group({
+        key: "hunt-configs",
+        label: "Hunt configs",
+        children: [
+          group({
+            key: "hunt-configs/produced",
+            label: "Produced",
+            entries: [HUNTING_ENTRY, extraEntry()],
+          }),
+        ],
+      }),
+    ],
+  })
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(POLL)
+  })
+
+  expect(
+    screen.getByText("hunting/orchestration/hunt_configs/produced/fresh.yaml"),
+  ).toBeDefined()
+})
+
+test("a failed inventory refresh keeps the previous inventory with a soft notice", async () => {
+  vi.useFakeTimers()
+  let failing = false
+  globalThis.fetch = (async () =>
+    failing
+      ? json({ detail: "artifact_unsafe" }, 409)
+      : json(inventory())) as typeof fetch
+  renderSection()
+
+  await act(async () => {})
+  expect(screen.getByRole("heading", { name: "Hunting" })).toBeDefined()
+
+  failing = true
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(POLL)
+  })
+
+  // The previous inventory stays visible; the failure is a soft notice.
+  expect(screen.getByRole("heading", { name: "Hunting" })).toBeDefined()
+  expect(screen.queryByRole("alert")).toBeNull()
+  expect(screen.getByText(/artifact_unsafe/)).toBeDefined()
 })

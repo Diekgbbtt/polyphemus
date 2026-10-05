@@ -1,15 +1,25 @@
-import { render, screen, waitFor } from "@testing-library/react"
+import { act, render, screen, waitFor } from "@testing-library/react"
 import { MemoryRouter } from "react-router-dom"
-import { expect, test, vi } from "vitest"
+import { afterEach, expect, test, vi } from "vitest"
 import { TrialProjectGraph } from "./TrialProjectGraph"
 
 // The canvas is a bitmap; a text stub lets these tests assert which nodes the
-// shared graph view actually received.
+// shared graph view actually received, and records the exact `nodes` array so a
+// poll can be shown to reuse it (the real canvas would reset on a new array).
+const canvas = vi.hoisted(() => ({ nodesSeen: [] as Array<Array<{ id: string }>> }))
 vi.mock("../graph/GraphCanvas", () => ({
-  GraphCanvas: ({ nodes }: { nodes: Array<{ id: string }> }) => (
-    <div data-testid="graph-canvas">{nodes.map((node) => node.id).join(",")}</div>
-  ),
+  GraphCanvas: ({ nodes }: { nodes: Array<{ id: string }> }) => {
+    canvas.nodesSeen.push(nodes)
+    return <div data-testid="graph-canvas">{nodes.map((node) => node.id).join(",")}</div>
+  },
 }))
+
+afterEach(() => {
+  vi.useRealTimers()
+  canvas.nodesSeen.length = 0
+})
+
+const POLL = 15_000
 
 function capturedGraph(ids: string[], capturedAt = "2024-05-05T00:00:00+00:00") {
   return {
@@ -204,4 +214,81 @@ test("aborts the old request and ignores a late response on a tuple change", asy
   await Promise.resolve()
   expect(screen.getByTestId("graph-canvas").textContent).toBe("trial-two")
   expect(screen.queryByText(/trial-one/)).toBeNull()
+})
+
+test("re-reads a current graph and shows it once it becomes available", async () => {
+  vi.useFakeTimers()
+  let body: unknown = unavailable("project_graph_unavailable")
+  routeFetch([["/resolved-graph", () => json(body)]])
+  renderGraph()
+
+  await act(async () => {})
+  expect(screen.getByText("No graph available")).toBeDefined()
+  expect(screen.queryByTestId("graph-canvas")).toBeNull()
+
+  body = currentGraph(["saved-only"])
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(POLL)
+  })
+
+  expect(screen.getByTestId("graph-canvas").textContent).toBe("saved-only")
+  expect(screen.getByText("Saved for project")).toBeDefined()
+})
+
+test("keeps a captured graph historical and never replaces it with the current graph", async () => {
+  vi.useFakeTimers()
+  let body: unknown = capturedGraph(["trial-only"])
+  const { calls } = routeFetch([["/resolved-graph", () => json(body)]])
+  renderGraph()
+
+  await act(async () => {})
+  expect(screen.getByText("Captured with Trial")).toBeDefined()
+  expect(calls).toHaveLength(1)
+
+  // The server now reports the mutable project graph: it must not overwrite the
+  // immutable capture that was written beside the Trial.
+  body = currentGraph(["current-only"])
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(POLL)
+  })
+
+  expect(screen.getByText("Captured with Trial")).toBeDefined()
+  expect(screen.queryByText("Saved for project")).toBeNull()
+  expect(screen.getByTestId("graph-canvas").textContent).toBe("trial-only")
+  // An immutable capture is not re-read at all.
+  expect(calls).toHaveLength(1)
+})
+
+test("a poll that returns an unchanged graph reuses the same nodes array", async () => {
+  vi.useFakeTimers()
+  canvas.nodesSeen.length = 0
+  routeFetch([["/resolved-graph", () => json(currentGraph(["saved-only"]))]])
+  renderGraph()
+
+  await act(async () => {})
+  expect(canvas.nodesSeen).toHaveLength(1)
+  const first = canvas.nodesSeen[0]
+
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(POLL)
+  })
+
+  expect(canvas.nodesSeen.length).toBeGreaterThan(1)
+  expect(canvas.nodesSeen[canvas.nodesSeen.length - 1]).toBe(first)
+})
+
+test("a changed current graph does replace the previous one", async () => {
+  vi.useFakeTimers()
+  let body: unknown = currentGraph(["before"])
+  routeFetch([["/resolved-graph", () => json(body)]])
+  renderGraph()
+
+  await act(async () => {})
+  expect(screen.getByTestId("graph-canvas").textContent).toBe("before")
+
+  body = currentGraph(["after"])
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(POLL)
+  })
+  expect(screen.getByTestId("graph-canvas").textContent).toBe("after")
 })

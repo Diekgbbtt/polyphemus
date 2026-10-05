@@ -20,8 +20,8 @@ async function getJSON<T>(path: string, signal?: AbortSignal): Promise<T> {
   return res.json() as Promise<T>
 }
 
-export async function getProjects(): Promise<Project[]> {
-  return (await getJSON<{ projects: Project[] }>("/projects")).projects
+export async function getProjects(signal?: AbortSignal): Promise<Project[]> {
+  return (await getJSON<{ projects: Project[] }>("/projects", signal)).projects
 }
 export async function getGraph(projectId: string, signal?: AbortSignal): Promise<GraphData> {
   return getJSON<GraphData>(`/projects/${projectId}/graph`, signal)

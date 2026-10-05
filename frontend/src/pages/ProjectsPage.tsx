@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react"
+import { useCallback } from "react"
 import { Link } from "react-router-dom"
 import { getProjects } from "../api/client"
 import type { Project } from "../api/types"
 import { getSnapshot } from "../eval/client"
 import type { EvalSnapshot, UnassignedSavedData } from "../eval/types"
+import { formatClockTime, usePolledResource } from "../usePolledResource"
 import { targetPaths } from "../projectPaths"
 import { GlobalNav } from "./ProjectNav"
 
@@ -66,46 +67,62 @@ export function unassignedSavedData(
   return [...rows.values()].sort((a, b) => a.project_id.localeCompare(b.project_id))
 }
 
+function latestOf(timestamps: Array<number | null>): number | null {
+  const known = timestamps.filter((value): value is number => value !== null)
+  return known.length > 0 ? Math.max(...known) : null
+}
+
 // The Target-first home. The eval snapshot is the authoritative Target index;
 // the live runtime is loaded independently and contributes only to the
 // `Unassigned saved data` diagnostic. Either failure is non-blocking.
+//
+// Both sources are re-read on the shared cadence, when the tab returns, and on
+// the manual button, so a Target or Trial that appears while the page is open
+// shows up without a browser refresh. A failing re-read keeps the last catalog
+// on screen and only adds a notice.
 export function ProjectsPage() {
-  const [live, setLive] = useState<Project[] | null>(null)
-  const [snapshot, setSnapshot] = useState<EvalSnapshot | null>(null)
-  const [liveUnavailable, setLiveUnavailable] = useState(false)
-  const [evalsUnavailable, setEvalsUnavailable] = useState(false)
+  const liveResource = usePolledResource<Project[]>({
+    key: "live-projects",
+    load: (signal) => getProjects(signal),
+  })
+  const evalResource = usePolledResource<EvalSnapshot>({
+    key: "snapshot",
+    load: (signal) => getSnapshot(signal),
+  })
 
-  useEffect(() => {
-    let alive = true
-    getProjects()
-      .then((projects) => {
-        if (alive) setLive(projects)
-      })
-      .catch(() => {
-        if (alive) setLiveUnavailable(true)
-      })
-    getSnapshot()
-      .then((snap) => {
-        if (alive) setSnapshot(snap)
-      })
-      .catch(() => {
-        if (alive) setEvalsUnavailable(true)
-      })
-    return () => {
-      alive = false
-    }
-  }, [])
+  const refresh = useCallback(() => {
+    liveResource.refresh()
+    evalResource.refresh()
+  }, [liveResource.refresh, evalResource.refresh])
+
+  const live = liveResource.data
+  const snapshot = evalResource.data
+  const liveUnavailable = live === null && liveResource.error !== null
+  const evalsUnavailable = snapshot === null && evalResource.error !== null
+  const liveRefreshFailed = live !== null && liveResource.error !== null
+  const evalsRefreshFailed = snapshot !== null && evalResource.error !== null
 
   const targets = targetCatalog(snapshot)
   const unassigned = unassignedSavedData(live, snapshot)
   const loading =
     live === null && snapshot === null && !liveUnavailable && !evalsUnavailable
+  const updatedAt = latestOf([liveResource.lastUpdatedAt, evalResource.lastUpdatedAt])
 
   return (
     <main className="projects-page">
       <header className="projects-header">
         <GlobalNav active="projects" />
         <h1>Targets</h1>
+        <div className="eval-refresh-controls">
+          <button type="button" className="eval-refresh" onClick={refresh}>
+            Aggiorna
+          </button>
+          {updatedAt !== null && (
+            <span className="eval-updated">
+              Ultimo aggiornamento {formatClockTime(updatedAt)}
+            </span>
+          )}
+        </div>
       </header>
 
       {loading && (
@@ -121,6 +138,16 @@ export function ProjectsPage() {
       {evalsUnavailable && (
         <p className="projects-notice" role="status">
           Eval results unavailable — saved data is shown where it can be attributed.
+        </p>
+      )}
+      {liveRefreshFailed && (
+        <p className="projects-notice" role="status">
+          Live runtime refresh failed — showing the last data.
+        </p>
+      )}
+      {evalsRefreshFailed && (
+        <p className="projects-notice" role="status">
+          Eval refresh failed — showing the last data.
         </p>
       )}
       {!loading && targets.length === 0 && (

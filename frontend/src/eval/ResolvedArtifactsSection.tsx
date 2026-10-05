@@ -1,6 +1,8 @@
-import { useEffect, useState } from "react"
+import { useCallback } from "react"
 import { Link } from "react-router-dom"
+import { usePolledResource } from "../usePolledResource"
 import { getResolvedArtifacts } from "./client"
+import { useEvalRefreshToken } from "./EvalDataProvider"
 import {
   artifactKey,
   artifactSections,
@@ -17,14 +19,6 @@ export type DetailPath = (artifactId: string) => string
 const EMPTY_LABEL: Record<"hunting" | "skill", string> = {
   hunting: "No Hunting artifacts",
   skill: "No Skill artifacts",
-}
-
-function isAbortError(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    (error as { name?: unknown }).name === "AbortError"
-  )
 }
 
 // One inventory group rendered as a nested section. Shared with the standalone
@@ -98,36 +92,33 @@ export function ResolvedArtifactsSection({
   // that names a different project is a safe error, never a silent render.
   expectedProjectId?: string | null
 }) {
-  const [state, setState] = useState<InventoryState>({ kind: "loading" })
+  const refreshToken = useEvalRefreshToken()
+  const identity = `${targetId}\u0000${targetRunId}\u0000${trialId}\u0000${expectedProjectId ?? ""}`
 
-  useEffect(() => {
-    const controller = new AbortController()
-    let active = true
-    setState({ kind: "loading" })
-    getResolvedArtifacts(targetId, targetRunId, trialId, controller.signal)
-      .then((inventory) => {
-        if (!active) return
-        if (expectedProjectId && inventory.project_id !== expectedProjectId) {
-          setState({
-            kind: "error",
-            message: "Artifact inventory does not match this Trial (mismatch).",
-          })
-          return
-        }
-        setState({ kind: "ready", inventory })
-      })
-      .catch((cause: unknown) => {
-        if (!active || isAbortError(cause)) return
-        setState({
-          kind: "error",
-          message: cause instanceof Error ? cause.message : String(cause),
-        })
-      })
-    return () => {
-      active = false
-      controller.abort()
-    }
-  }, [targetId, targetRunId, trialId, expectedProjectId])
+  const load = useCallback(
+    async (signal: AbortSignal): Promise<ResolvedArtifactInventory> => {
+      const inventory = await getResolvedArtifacts(targetId, targetRunId, trialId, signal)
+      // A resolved inventory that names a different project is a safe error,
+      // never a silent render, and never a fallback to another source.
+      if (expectedProjectId && inventory.project_id !== expectedProjectId) {
+        throw new Error("Artifact inventory does not match this Trial (mismatch).")
+      }
+      return inventory
+    },
+    [targetId, targetRunId, trialId, expectedProjectId],
+  )
+
+  const resource = usePolledResource<ResolvedArtifactInventory>({
+    key: identity,
+    load,
+    refreshToken,
+  })
+
+  const state: InventoryState = resource.loading
+    ? { kind: "loading" }
+    : resource.data
+      ? { kind: "ready", inventory: resource.data }
+      : { kind: "error", message: resource.error ?? "unknown" }
 
   return (
     <div className="resolved-artifacts">
@@ -135,6 +126,11 @@ export function ResolvedArtifactsSection({
       {state.kind === "error" && (
         <p className="eval-error" role="alert">
           Artifact load error: {state.message}
+        </p>
+      )}
+      {resource.data !== null && resource.error !== null && (
+        <p className="eval-status" role="status">
+          Artifact refresh failed: {resource.error}. Showing the previous inventory.
         </p>
       )}
       {state.kind === "ready" && state.inventory.status !== "available" && (
