@@ -11,6 +11,7 @@ import {
   kindLabel,
   representationLabel,
   sourceLabel,
+  withTestSpecSides,
 } from "./projectArtifacts"
 import type { ProjectArtifactGroup, ResolvedArtifactInventory } from "./types"
 
@@ -141,7 +142,7 @@ export function ResolvedArtifactsSection({
       {state.kind === "ready" && state.inventory.status === "available" && (
         <>
           <p className="artifact-source">{sourceLabel(state.inventory.source)}</p>
-          {artifactSections(state.inventory.groups).map((section) => (
+          {artifactSections(withTestSpecSides(state.inventory.groups)).map((section) => (
             <section
               key={section.category}
               id={section.category === "hunting" ? "hunting" : "skills"}

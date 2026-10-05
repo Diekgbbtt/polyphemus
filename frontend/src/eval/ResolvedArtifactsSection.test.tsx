@@ -1,8 +1,13 @@
 import { act, render, screen, waitFor } from "@testing-library/react"
-import { MemoryRouter } from "react-router-dom"
+import { MemoryRouter, Route, Routes } from "react-router-dom"
 import { afterEach, expect, test, vi } from "vitest"
+import { EvalDataProvider } from "./EvalDataProvider"
+import { ProjectArtifactsPage } from "./ProjectArtifactsPage"
 import { ResolvedArtifactsSection } from "./ResolvedArtifactsSection"
+import { TrialSection } from "./TrialSection"
 import type {
+  EvalSnapshot,
+  EvalTrial,
   ProjectArtifactEntry,
   ProjectArtifactGroup,
   ResolvedArtifactInventory,
@@ -281,4 +286,226 @@ test("a failed inventory refresh keeps the previous inventory with a soft notice
   expect(screen.getByRole("heading", { name: "Hunting" })).toBeDefined()
   expect(screen.queryByRole("alert")).toBeNull()
   expect(screen.getByText(/artifact_unsafe/)).toBeDefined()
+})
+
+// --- TestImplementationSpec produced/consumed ----------------------------------
+
+function testSpec(id: string, side: "produced" | "consumed", fault: string): ProjectArtifactEntry {
+  return entry({
+    artifact_id: id,
+    kind: "test_spec",
+    relative_path: `hunting/hunter/test-specs/${fault}/${side}/${id}.yaml`,
+  })
+}
+
+function testSpecsGroup(extra: ProjectArtifactEntry[] = []): ProjectArtifactGroup {
+  return group({
+    key: "test-specs",
+    label: "Test specs",
+    children: [
+      group({
+        key: "test-specs/FaultA",
+        label: "FaultA",
+        entries: [testSpec("a-prod", "produced", "FaultA"), testSpec("a-cons", "consumed", "FaultA"), ...extra],
+      }),
+      group({
+        key: "test-specs/FaultB",
+        label: "FaultB",
+        entries: [testSpec("b-prod", "produced", "FaultB")],
+      }),
+    ],
+  })
+}
+
+// The ordered (label, entry relative_paths) rows of the "Test specs" subtree.
+function groupTree(section: Element): Array<[string, string[]]> {
+  const label = section.getAttribute("aria-label") ?? ""
+  const entries = [...section.querySelectorAll(":scope > ul > li > a")].map(
+    (anchor) => anchor.textContent ?? "",
+  )
+  const rows: Array<[string, string[]]> = [[label, entries]]
+  for (const child of section.querySelectorAll(":scope > section")) rows.push(...groupTree(child))
+  return rows
+}
+
+function testSpecTree(container: HTMLElement): Array<[string, string[]]> {
+  const section = container.querySelector('section[aria-label="Test specs"]')
+  return section ? groupTree(section) : []
+}
+
+test("splits each fault's test specs into Produced and Consumed subgroups", async () => {
+  routeFetch([["/resolved-artifacts", () => json(inventory({ groups: [testSpecsGroup()] }))]])
+
+  const { container } = renderSection()
+
+  await waitFor(() =>
+    expect(container.querySelector('section[aria-label="Test specs"]')).not.toBeNull(),
+  )
+  expect(testSpecTree(container)).toEqual([
+    ["Test specs", []],
+    ["FaultA", []],
+    ["Produced", ["hunting/hunter/test-specs/FaultA/produced/a-prod.yaml"]],
+    ["Consumed", ["hunting/hunter/test-specs/FaultA/consumed/a-cons.yaml"]],
+    ["FaultB", []],
+    ["Produced", ["hunting/hunter/test-specs/FaultB/produced/b-prod.yaml"]],
+  ])
+})
+
+test("keeps an unrecognized test-spec path visible and clickable in its fault", async () => {
+  const odd = entry({
+    artifact_id: "odd",
+    kind: "test_spec",
+    relative_path: "hunting/hunter/test-specs/FaultA/notes/odd.yaml",
+  })
+  routeFetch([
+    ["/resolved-artifacts", () => json(inventory({ groups: [testSpecsGroup([odd])] }))],
+  ])
+
+  renderSection()
+
+  const link = await screen.findByRole("link", {
+    name: "hunting/hunter/test-specs/FaultA/notes/odd.yaml",
+  })
+  expect(link.getAttribute("href")).toBe("/targets/t/trials/r/trial-1/artifacts/odd")
+  // It was not classified into a side, so FaultB's Produced is the only subgroup.
+  expect(screen.getAllByRole("heading", { name: "Consumed", level: 5 })).toHaveLength(1)
+})
+
+test("a later inventory replaces the test-spec subgroups without stale entries", async () => {
+  vi.useFakeTimers()
+  let body: unknown = inventory({ groups: [testSpecsGroup()] })
+  routeFetch([["/resolved-artifacts", () => json(body)]])
+  renderSection()
+
+  await act(async () => {})
+  expect(
+    screen.getByText("hunting/hunter/test-specs/FaultA/produced/a-prod.yaml"),
+  ).toBeDefined()
+
+  body = inventory({
+    groups: [
+      group({
+        key: "test-specs",
+        label: "Test specs",
+        children: [
+          group({
+            key: "test-specs/FaultA",
+            label: "FaultA",
+            entries: [testSpec("a-prod2", "produced", "FaultA")],
+          }),
+        ],
+      }),
+    ],
+  })
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(POLL)
+  })
+
+  expect(screen.getByText("hunting/hunter/test-specs/FaultA/produced/a-prod2.yaml")).toBeDefined()
+  expect(
+    screen.queryByText("hunting/hunter/test-specs/FaultA/produced/a-prod.yaml"),
+  ).toBeNull()
+  expect(screen.queryByText("hunting/hunter/test-specs/FaultB/produced/b-prod.yaml")).toBeNull()
+  expect(screen.getAllByText("hunting/hunter/test-specs/FaultA/produced/a-prod2.yaml")).toHaveLength(1)
+})
+
+// --- inline trial vs artifact page coherence -----------------------------------
+
+function coherenceTrial(overrides: Partial<EvalTrial> = {}): EvalTrial {
+  return {
+    target_id: "t",
+    target_run_id: "r",
+    trial_id: "trial-1",
+    instance_id: "inst-1",
+    project_id: "p1",
+    start_phase: "recon",
+    terminal: "stopped",
+    copied_at: "2024-01-01T00:00:00+00:00",
+    phases: [],
+    eval_sha: "sha-x",
+    stack_fingerprint: "fp-x",
+    verdicts: [],
+    diagnoses: [],
+    availability: "complete",
+    reason: null,
+    artifact_summary: { status: "project_artifacts_unavailable", hunting: 0, skills: 0 },
+    project_graph_summary: {
+      status: "project_graph_unavailable",
+      nodes: 0,
+      links: 0,
+      captured_at: null,
+    },
+    ...overrides,
+  }
+}
+
+function coherenceSnapshot(): EvalSnapshot {
+  return {
+    dataset: { id: "webexploitbench", name: "WebExploitBench" },
+    summary: { targets: 1, trials: 1, identified: 0, partial: 0, missed: 0, degraded: 0 },
+    targets: [],
+    trials: [coherenceTrial()],
+    versions: [],
+    coverage: {
+      targets: { tested: 0, with_identified: 0, without_identified: 0 },
+      vulnerabilities: { total: 0, found: 0, not_found: 0, partial: 0 },
+    },
+    successes: [],
+    degraded_trials: [],
+  }
+}
+
+function stubCoherenceFetch(): void {
+  globalThis.fetch = (async (input: unknown) => {
+    const url = String(input)
+    if (url.endsWith("/snapshot")) return json(coherenceSnapshot())
+    if (url.includes("/resolved-artifacts")) return json(inventory({ groups: [testSpecsGroup()] }))
+    // Every other trial section is a separate, safely-unavailable source.
+    return json({
+      status: "unavailable",
+      source: null,
+      project_id: null,
+      captured_at: null,
+      fallback_reason: null,
+      reason: "not_captured",
+      groups: [],
+    })
+  }) as typeof fetch
+}
+
+test("presents the same Test specs grouping inline and on the artifact page", async () => {
+  stubCoherenceFetch()
+  const inline = render(
+    <MemoryRouter>
+      <EvalDataProvider>
+        <TrialSection trial={coherenceTrial()} />
+      </EvalDataProvider>
+    </MemoryRouter>,
+  )
+  await waitFor(() =>
+    expect(inline.container.querySelector('section[aria-label="Test specs"]')).not.toBeNull(),
+  )
+  const inlineTree = testSpecTree(inline.container)
+  inline.unmount()
+
+  stubCoherenceFetch()
+  const page = render(
+    <MemoryRouter initialEntries={["/p/p1/evals/t/r/trial-1/artifacts"]}>
+      <EvalDataProvider>
+        <Routes>
+          <Route
+            path="/p/:projectId/evals/:targetId/:targetRunId/:trialId/artifacts"
+            element={<ProjectArtifactsPage variant="workspace" />}
+          />
+        </Routes>
+      </EvalDataProvider>
+    </MemoryRouter>,
+  )
+  await waitFor(() =>
+    expect(page.container.querySelector('section[aria-label="Test specs"]')).not.toBeNull(),
+  )
+  const pageTree = testSpecTree(page.container)
+
+  expect(inlineTree).toEqual(pageTree)
+  expect(inlineTree.map(([label]) => label)).toContain("Consumed")
 })
