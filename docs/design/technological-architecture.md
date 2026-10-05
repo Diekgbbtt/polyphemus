@@ -312,8 +312,9 @@ job_orchestrator / crawler) and the **tool** calls (the Kali MCP
 `execute_command` in normal pods, the seven `steel_*` tools in the crawl ReAct
 loop) become child spans.
 
-**Env-gating + fail-open.** Tracing is enabled only when all three of
-`LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_HOST` are present.
+**Env-gating + fail-open.** Tracing is enabled only when
+`LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` are present, plus at least one
+of `LANGFUSE_BASE_URL` / `LANGFUSE_HOST` (interchangeable aliases, `#327`).
 Otherwise — or if the `langfuse` package is absent, or handler construction
 raises — `get_langfuse_callbacks()` returns `[]`, which is inert as
 `config={"callbacks": []}`, so callers wire it unconditionally and nothing ever

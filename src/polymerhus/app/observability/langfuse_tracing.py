@@ -12,9 +12,10 @@ Design goals (deliberately minimal - see the Stream A observability brief):
   reasoning dumps), and (c) the phase DAG / job fan-out as the nested-span
   overview of the plan.
 
-- **Env-driven + fail-open.** Tracing is enabled only when all three of
-  `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, and `LANGFUSE_HOST` are present
-  in the environment. When any is missing - or the `langfuse` package is not
+- **Env-driven + fail-open.** Tracing is enabled only when both of
+  `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` are present, plus at least one
+  of `LANGFUSE_BASE_URL` / `LANGFUSE_HOST` (interchangeable aliases). When any
+  required value is missing - or the `langfuse` package is not
   installed, or handler construction raises for any reason - this module is a
   silent no-op: `get_langfuse_callbacks()` returns `[]` and NOTHING hard-fails.
   Passing `[]` as `config={"callbacks": []}` is inert in LangChain, so callers
@@ -42,8 +43,13 @@ from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
 
-# The three env vars that gate tracing. All must be present and non-empty.
-_REQUIRED_ENV = ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY", "LANGFUSE_HOST")
+# The env vars that gate tracing. Both keys are always required; the base URL
+# is satisfied by EITHER `LANGFUSE_BASE_URL` (the SDK's canonical name, and the
+# alias `_resolve_base_url` prefers) OR `LANGFUSE_HOST` (the legacy alias).
+_REQUIRED_KEY_ENV = ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY")
+_BASE_URL_ENV = ("LANGFUSE_BASE_URL", "LANGFUSE_HOST")
+# The accurate name for the disabled reason when neither base-URL var is set.
+_BASE_URL_MISSING_LABEL = " or ".join(_BASE_URL_ENV)
 
 # --- Export throttling / at-least-once delivery knobs ---------------------
 #
@@ -405,13 +411,26 @@ def _clean_env(name: str, default: str = "") -> str:
         return default
 
 
+def _base_url_configured() -> bool:
+    """True when at least one base-URL alias holds a cleaned, non-empty value.
+
+    One predicate for both the enabled gate (`_is_configured`) and the disabled
+    reason (`_missing_env`), so the two can never disagree about it.
+    """
+    return any(_clean_env(name) for name in _BASE_URL_ENV)
+
+
 def _resolve_base_url() -> str:
-    """Mirror `Langfuse.__init__`'s base_url resolution (client.py), cleaned."""
-    return (
-        _clean_env("LANGFUSE_BASE_URL")
-        or _clean_env("LANGFUSE_HOST")
-        or "https://cloud.langfuse.com"
-    )
+    """Mirror `Langfuse.__init__`'s base_url resolution (client.py), cleaned.
+
+    Iterates `_BASE_URL_ENV` so the resolver and the enabled gate share one
+    alias list (`LANGFUSE_BASE_URL` first, then the legacy `LANGFUSE_HOST`).
+    """
+    for name in _BASE_URL_ENV:
+        value = _clean_env(name)
+        if value:
+            return value
+    return "https://cloud.langfuse.com"
 
 
 def explicit_correlation(run_id: str | None, *, tags: list | None = None,
@@ -451,17 +470,29 @@ def build_attributing_handler(public_key: str) -> Any:
 
 
 def _build_wrapped_span_exporter(*, timeout_s: float):
-    """Build the same `OTLPSpanExporter` the SDK builds internally, wrapped
-    in `RetryingSpanExporter` for throttled, at-least-once delivery.
+    """Build the `OTLPSpanExporter` the SDK would build, wrapped in
+    `RetryingSpanExporter` for throttled, at-least-once delivery.
 
     Passing a custom `span_exporter` to `Langfuse(...)` opts out of the SDK
     wiring `base_url`/headers/auth/timeout into it (documented on the
-    `span_exporter` kwarg in langfuse/_client/client.py), so this mirrors
-    `langfuse._client.span_processor.LangfuseSpanProcessor`'s default
-    exporter construction (endpoint + Basic-auth headers) exactly.
+    `span_exporter` kwarg in langfuse/_client/client.py), so this re-creates
+    that wiring: the same endpoint, Basic-auth, and SDK-identifying headers
+    `langfuse._client.span_processor.LangfuseSpanProcessor` sets by default.
+    It must track the SDK's default header set - Langfuse detects the SDK
+    version and the v4 ingestion path from ingestion, and a missing version
+    header is exactly what makes it report the project's SDK configuration as
+    needing an update (#327):
+
+    - `x-langfuse-sdk-version` mirrors the installed SDK version (the header
+      the default exporter sets; see span_processor.py).
+    - `x-langfuse-ingestion-version: 4` selects the v4 (real-time) ingestion
+      path for a direct OTLP exporter. The SDK's own span processor does not
+      have to send it because its version qualifies it, but a hand-built
+      exporter that opts out is a direct OTLP client and must set it.
     """
     import base64
 
+    from langfuse._version import __version__ as langfuse_sdk_version
     from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 
     public_key = _clean_env("LANGFUSE_PUBLIC_KEY")
@@ -479,6 +510,8 @@ def _build_wrapped_span_exporter(*, timeout_s: float):
     headers = {
         "Authorization": basic_auth_header,
         "x-langfuse-sdk-name": "python",
+        "x-langfuse-sdk-version": langfuse_sdk_version,
+        "x-langfuse-ingestion-version": "4",
         "x-langfuse-public-key": public_key,
     }
 
@@ -505,8 +538,30 @@ _DISABLED_REASON: str | None = None
 
 
 def _is_configured() -> bool:
-    """True only when every gating env var is present and non-empty."""
-    return all(os.environ.get(name) for name in _REQUIRED_ENV)
+    """True when both keys and at least one base-URL var are present, cleaned.
+
+    `LANGFUSE_BASE_URL` and `LANGFUSE_HOST` are interchangeable aliases (the
+    SDK's own `Langfuse.__init__` resolves either), so requiring `LANGFUSE_HOST`
+    specifically would silently disable tracing for a BASE_URL-only setup (#327).
+    Keys are tested through `_clean_env` too, so a whitespace-only or quoted-empty
+    value cannot pass the gate and then clean to empty at construction.
+    """
+    if not all(_clean_env(name) for name in _REQUIRED_KEY_ENV):
+        return False
+    return _base_url_configured()
+
+
+def _missing_env() -> list[str]:
+    """The gating vars actually absent, with the base-URL alias named accurately.
+
+    Always names the specific missing key(s); names the base-URL pair as
+    `LANGFUSE_BASE_URL or LANGFUSE_HOST` only when NEITHER alias is set, so the
+    operator is told the real requirement instead of a single misleading name.
+    """
+    missing = [name for name in _REQUIRED_KEY_ENV if not _clean_env(name)]
+    if not _base_url_configured():
+        missing.append(_BASE_URL_MISSING_LABEL)
+    return missing
 
 
 def _build_callbacks() -> list:
@@ -518,8 +573,7 @@ def _build_callbacks() -> list:
     """
     global _DISABLED_REASON
     if not _is_configured():
-        missing = [n for n in _REQUIRED_ENV if not os.environ.get(n)]
-        _DISABLED_REASON = f"missing/empty env: {', '.join(missing)}"
+        _DISABLED_REASON = f"missing/empty env: {', '.join(_missing_env())}"
         logger.debug("langfuse tracing disabled: %s", _DISABLED_REASON)
         return []
 
@@ -577,8 +631,8 @@ def _build_callbacks() -> list:
             )
             client = None
 
-        # `get_client()` reads LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY /
-        # LANGFUSE_HOST from the environment. auth_check() is best-effort - a
+        # `get_client()` reads LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY / the
+        # base-URL alias from the environment. auth_check() is best-effort - a
         # failed check only logs; it must not disable tracing (the host may be
         # briefly unreachable at boot while still coming up).
         if client is None:
@@ -616,8 +670,9 @@ def _build_callbacks() -> list:
 def get_langfuse_callbacks() -> list:
     """Return the LangChain callbacks that enable Langfuse tracing.
 
-    - Returns `[handler]` when Langfuse is configured (all three
-      `LANGFUSE_*` env vars set) and the handler builds successfully.
+    - Returns `[handler]` when Langfuse is configured (both
+      `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` set, plus at least one of
+      `LANGFUSE_BASE_URL` / `LANGFUSE_HOST`) and the handler builds successfully.
     - Returns `[]` otherwise. `[]` is inert as `config={"callbacks": []}`, so
       callers wire it unconditionally into `run_pipeline` / `graph.invoke` /
       `llm.invoke`.

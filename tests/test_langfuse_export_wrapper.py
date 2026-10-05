@@ -183,6 +183,28 @@ def test_build_wrapped_span_exporter_wires_endpoint_and_retry_config_from_env(mo
     assert inner._headers["Authorization"].startswith("Basic ")
 
 
+def test_custom_exporter_carries_the_installed_sdk_identifying_headers(monkeypatch):
+    # #327: a custom export path must announce the SDK version the same way
+    # the SDK's default OTLPSpanExporter does, or Langfuse reads the ingestion
+    # as an outdated SDK configuration. Verified against the installed SDK: the
+    # default header set is `Authorization`, `x-langfuse-sdk-name`,
+    # `x-langfuse-sdk-version`, `x-langfuse-public-key`
+    # (langfuse/_client/span_processor.py). The `x-langfuse-ingestion-version:
+    # 4` header is what a direct OTLP exporter sends to opt into v4 ingestion.
+    from langfuse._version import __version__ as installed_sdk_version
+
+    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-test-only")
+    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-test-only")
+    monkeypatch.setenv("LANGFUSE_BASE_URL", "https://example.invalid")
+
+    headers = _build_wrapped_span_exporter(timeout_s=42.0)._exporter._headers
+
+    assert headers["x-langfuse-sdk-name"] == "python"
+    assert headers["x-langfuse-sdk-version"] == installed_sdk_version
+    assert headers["x-langfuse-ingestion-version"] == "4"
+    assert headers["x-langfuse-public-key"] == "pk-test-only"
+
+
 def test_build_wrapped_span_exporter_uses_defaults_when_env_unset(monkeypatch):
     monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-test-only")
     monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-test-only")

@@ -11,7 +11,7 @@ It is explicitly not a bounded-context glossary: the meaning of what these modul
 - `auth/` - the per-project shared auth store and its agent tool (`store.py`, `tool.py`, `records.py`); the operator seed face is a thin adapter over the same seam (`project_management/api.py`).
 - `data_root.py` - the one layout owner for the app-owned data root (`<repo>/data/`): every store resolves its bucket through `project_dir`, so no module hand-builds a path.
 - `runtime.py` - the module runtime/registry: run holds and the session lifecycle.
-- `observability/` - Langfuse callbacks and tracing.
+- `observability/` - Langfuse callbacks and tracing: the enabled gate + resolved base URL (`langfuse_tracing.py`), the handler seam, and the analyser step records.
 - `gateway_entrypoint.py` - the container entrypoint: proxy first, health poll, sync, then the agent ASGI.
 - `clients/`, `config.py`, `logging_config.py`, `main.py` - the HTTP/ASGI shell and process configuration.
 
@@ -21,6 +21,7 @@ It is explicitly not a bounded-context glossary: the meaning of what these modul
 - **Mode selection is one env var, never a branch per caller.** `LLM_GATEWAY_URL` unset means direct per-provider mode; set means the co-located gateway, which owns id translation and upstream routing (`docs/design/llm-gateway-100-decisions.md`, ADR D3/D5).
 - **Provider policy lives in tables with safe defaults.** `PROVIDERS`, `_ID_KIND_BY_PROVIDER` / `id_kind()`, and `_REQUEST_HEADERS_BY_PROVIDER` / `request_headers()` are the one place a provider's policy sits; an unlisted provider gets the transparent default (verbatim ids, no bound headers), so a new provider is a one-line table entry.
 - **Fail-open at read boundaries, fail-loud at write boundaries.** A missing or unreadable store file reads as a valid empty, loudly; a write that cannot read its target refuses (`store_unavailable`) rather than overwriting blind; a shape violation refuses with a coded error naming the field.
+- **The tracing gate matches the tracing resolver.** Tracing is enabled only when `LANGFUSE_PUBLIC_KEY` + `LANGFUSE_SECRET_KEY` + at least one of `LANGFUSE_BASE_URL` / `LANGFUSE_HOST` are set (`#327`), the same alias resolution the SDK performs; the disabled reason names the actual missing value. The pinned SDK is the v4 major, so the code uses the v4 observation model (`propagate_attributes`, `start_as_current_observation`) and emits only `langfuse-sdk` spans the default v4 export filter keeps, preserving the trace hierarchy.
 - **Server-stamped facts are never trusted from the client.** `origin` and `updated_at` are stamped server-side on every write and seed; a client-supplied value is dropped, never merged.
 - **Ambient context is scoped, not global.** Cross-cutting identity travels in ContextVars (`conversation_scope`, the checkpoints module context, the runtime run hold); each is set for a bounded scope and restored on exit, so nothing leaks between turns or sessions.
 - **Bind at the native layer before wrapping.** Where the stack already has the mechanism, use it: client request headers ride `ChatOpenAI.default_headers` (the SDK threads them into the httpx client), never hand-rolled request mutation. The reasoning-passthrough subclass is the one justified wrapper, and its SDK-internal seams are pinned by contract tests that turn red on a version bump.
