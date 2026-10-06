@@ -54,6 +54,10 @@ REAL_SERVICES = {"eval-api", "eval-dashboard"}
 # The operator overlay adds one isolated service on its own network.
 OPERATOR_SERVICES = {"eval-operator-api"}
 OPERATOR_NETWORK = "eval-operator-net"
+# The standalone storage-compatibility demo: its own project, network and
+# volumes, never merged with the base stack.
+STORAGE_DEMO = "docker-compose.storage-compat-demo.yml"
+STORAGE_DEMO_SERVICES = {"eval-corpus", "eval-api", "eval-dashboard"}
 
 docker = pytest.mark.skipif(
     shutil.which("docker") is None, reason="docker CLI unavailable"
@@ -68,6 +72,7 @@ def stage(
     with_real: bool = False,
     with_operator: bool = False,
     with_legacy: bool = False,
+    with_storage_demo: bool = False,
 ) -> Path:
     """A tmp compose project mirroring the instance layout (root files plus
     the eval overlay under `eval/`); the repo-root `.env` is never read."""
@@ -84,6 +89,8 @@ def stage(
         shutil.copy(REPO_ROOT / LEGACY_OVERLAY, tmp_path / LEGACY_OVERLAY)
     if with_operator:
         shutil.copy(REPO_ROOT / OPERATOR_OVERLAY, tmp_path / OPERATOR_OVERLAY)
+    if with_storage_demo:
+        shutil.copy(REPO_ROOT / STORAGE_DEMO, tmp_path / STORAGE_DEMO)
     if env is not None:
         (tmp_path / ".env").write_text(
             "".join(f"{k}={v}\n" for k, v in env.items()), encoding="utf-8"
@@ -687,3 +694,148 @@ def test_operator_overlay_adds_no_socket_or_shared_configuration(tmp_path: Path)
         # The benchmark reference is mounted only into the operator service.
         for mount in definition.get("volumes") or []:
             assert mount["target"] != "/srv/webexploitbench"
+
+
+# --- the standalone storage-compatibility demo ---------------------------------
+
+
+def storage_demo_render(project: Path, extra: dict[str, str] | None = None):
+    """Render the standalone demo file on its own - never merged with base."""
+    return render(project, [STORAGE_DEMO], drop=tuple(COMPLETE_ENV), extra=extra)
+
+
+@docker
+def test_storage_demo_is_a_standalone_project_with_only_three_services(
+    tmp_path: Path,
+) -> None:
+    project = stage(tmp_path, COMPLETE_ENV, with_storage_demo=True)
+
+    rendered = storage_demo_render(project)
+
+    assert rendered.returncode == 0, rendered.stderr
+    config = yaml.safe_load(rendered.stdout)
+    # The demo is exactly the generator, the read API and the frontend: the base
+    # stack (agent, Neo4j, Postgres, Kali) is never part of it.
+    assert set(config["services"]) == STORAGE_DEMO_SERVICES
+    assert not (BASE_SERVICES & set(config["services"]))
+    assert config["name"] == "polyphemus-storage-compat-demo"
+    # Its own dedicated network, never the real `polymerhus-net`.
+    assert set(config["networks"]) == {"storage-compat-net"}
+
+
+@docker
+def test_storage_demo_publishes_loopback_only_ports_that_are_configurable(
+    tmp_path: Path,
+) -> None:
+    project = stage(tmp_path, COMPLETE_ENV, with_storage_demo=True)
+
+    default = yaml.safe_load(storage_demo_render(project).stdout)
+    assert published_port(default, "eval-api", 8090) == "127.0.0.1:28090"
+    assert published_port(default, "eval-dashboard", 5173) == "127.0.0.1:25173"
+
+    overridden = yaml.safe_load(
+        storage_demo_render(
+            project,
+            extra={
+                "STORAGE_COMPAT_API_PORT": "38090",
+                "STORAGE_COMPAT_DASHBOARD_PORT": "35173",
+            },
+        ).stdout
+    )
+    assert published_port(overridden, "eval-api", 8090) == "127.0.0.1:38090"
+    assert published_port(overridden, "eval-dashboard", 5173) == "127.0.0.1:35173"
+
+
+@docker
+def test_storage_demo_api_reads_the_four_roots_from_a_dedicated_volume(
+    tmp_path: Path,
+) -> None:
+    project = stage(tmp_path, COMPLETE_ENV, with_storage_demo=True)
+
+    config = yaml.safe_load(storage_demo_render(project).stdout)
+    api = config["services"]["eval-api"]
+    api_mounts = mounts(api)
+
+    # The corpus is the demo's OWN named volume, read-only - never the operator's
+    # real store, raw data, runs roots or benchmark ground truth.
+    assert api_mounts["/srv/corpus"]["type"] == "volume"
+    assert api_mounts["/srv/corpus"]["source"] == "storage-compat-corpus"
+    assert api_mounts["/srv/corpus"]["read_only"] is True
+    assert api_mounts["/srv/eval"]["read_only"] is True
+    # The read API's four sources all point inside that one synthetic volume.
+    assert api["environment"]["EVAL_ARTIFACT_STORE"] == "/srv/corpus/store"
+    assert api["environment"]["EVAL_PROJECT_DATA_ROOT"] == "/srv/corpus/raw"
+    assert api["environment"]["EVAL_RUNS_ROOT"] == "/srv/corpus/runs"
+    assert api["environment"]["EVAL_RUNS_LEGACY_ROOT"] == "/srv/corpus/runs-legacy"
+    assert api["environment"]["EVAL_DATASET_ID"] == "storage-compatibility"
+    assert api["environment"]["EVAL_INSTANCE_ID"] == "demo-instance-1"
+    assert api["image"] == "polymerhus-agent:latest"
+    assert api["healthcheck"]
+    # Nothing in the demo binds a real host path.
+    for mount in api_mounts.values():
+        assert mount["type"] != "bind" or mount["source"] == str(project / "eval")
+
+
+@docker
+def test_storage_demo_generator_writes_the_corpus_volume_and_gates_the_api(
+    tmp_path: Path,
+) -> None:
+    project = stage(tmp_path, COMPLETE_ENV, with_storage_demo=True)
+
+    config = yaml.safe_load(storage_demo_render(project).stdout)
+    generator = config["services"]["eval-corpus"]
+    api = config["services"]["eval-api"]
+
+    # The generator writes the same volume the API reads read-only, with a
+    # command that targets the new storage-compatibility corpus.
+    assert mounts(generator)["/srv/corpus"]["source"] == "storage-compat-corpus"
+    assert mounts(generator)["/srv/corpus"].get("read_only") is not True
+    assert "read_api.storage_compat_corpus" in generator["command"]
+    assert generator["command"][-2:] == ["--root", "/srv/corpus"]
+    assert generator["restart"] == "no"
+    # The API waits for the one-shot generation, never racing an empty store.
+    assert api["depends_on"]["eval-corpus"]["condition"] == (
+        "service_completed_successfully"
+    )
+
+
+@docker
+def test_storage_demo_frontend_proxies_to_the_api_and_waits_for_it(
+    tmp_path: Path,
+) -> None:
+    project = stage(tmp_path, COMPLETE_ENV, with_storage_demo=True)
+
+    config = yaml.safe_load(storage_demo_render(project).stdout)
+    dashboard = config["services"]["eval-dashboard"]
+
+    assert dashboard["environment"] == {
+        "VITE_EVAL_API_BASE_URL": "/eval-api",
+        "EVAL_PROXY_TARGET": "http://eval-api:8090",
+    }
+    assert dashboard["depends_on"]["eval-api"]["condition"] == "service_healthy"
+    assert mounts(dashboard)["/srv/frontend"]["source"] == str(project / "frontend")
+    assert mounts(dashboard)["/srv/frontend/node_modules"]["source"] == (
+        "storage-compat-node-modules"
+    )
+    assert "0.0.0.0" in " ".join(dashboard["command"])
+
+
+@docker
+def test_storage_demo_references_no_real_paths_or_agent(tmp_path: Path) -> None:
+    project = stage(tmp_path, COMPLETE_ENV, with_storage_demo=True)
+
+    rendered = storage_demo_render(project)
+
+    assert rendered.returncode == 0, rendered.stderr
+    # No real store/raw/runs/Neo4j/ground-truth host path leaks into the demo.
+    for host_path in (
+        "/srv/eval-artifacts",
+        "/opt/polymerhus-dev",
+        "/opt/eval-platform-model",
+        "/root/WebExploitBench",
+        "/var/run/docker.sock",
+    ):
+        assert host_path not in rendered.stdout
+    # No agent/Neo4j/Postgres service or URL is reachable from the demo.
+    assert "EVAL_AGENT_BASE_URL" not in rendered.stdout
+    assert "agent:8080" not in rendered.stdout

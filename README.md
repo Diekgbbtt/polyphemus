@@ -352,6 +352,62 @@ The synthetic store lives in its own named volume and is never the operator's
 is baked into the overlay. Without the third `-f`, `docker compose up` is exactly what it was
 before.
 
+#### Storage-compatibility demo (the four persistent sources)
+
+`docker-compose.storage-compat-demo.yml` is a **standalone** Compose project (its own project
+name, network and volumes) that proves the dashboard end-to-end against the four sources the
+read API now reads, without waiting for a real evaluation and without touching any real data:
+
+    <root>/store        the materialized store       -> EVAL_ARTIFACT_STORE
+    <root>/raw          the persistent project root  -> EVAL_PROJECT_DATA_ROOT
+    <root>/runs         the primary runs root        -> EVAL_RUNS_ROOT
+    <root>/runs-legacy  the historical runs root     -> EVAL_RUNS_LEGACY_ROOT
+
+It starts exactly three services — `eval-corpus` (one-shot generator), `eval-api` (the read API)
+and `eval-dashboard` (the unchanged production frontend) — and **never** the agent, Neo4j,
+Postgres, Kali or an eval worker, and never mounts the real artifact store, raw data, benchmark
+ground truth or Neo4j. The corpus is written by `eval/read_api/storage_compat_corpus.py`, which
+reuses the production helpers (allowlist collection, graph capture, manifest building), so ids,
+digests, counts and graph hashes are derived, never hand-authored.
+
+Three cases ship in the corpus: a **complete** Trial (identified + partial + missed verdicts, a
+captured L0/L1 graph, Hunting + Skill artifacts, linkable Evidence references and a recorded
+spend from the primary root), an **interrupted** Trial (partial artifacts in the external raw
+tree, no invented PodExport, `spent_tokens` absent rather than zero) and a **historical** Trial
+(schema-v1 manifest in the legacy runs root, artifacts served from the raw fallback, no captured
+graph). PodExport artifacts cover all six producer `terminal_reason` values, including the
+`iterations: 0` / `clean: false` boundary. The dataset is clearly labelled synthetic
+(`Synthetic — storage compatibility`).
+
+Start it (both ports are loopback-only; reach the dashboard through an SSH tunnel):
+
+    docker compose -f docker-compose.storage-compat-demo.yml up -d
+    ssh -N -L 25173:127.0.0.1:25173 root@<host>
+    # then open http://localhost:25173/
+
+The API is at `127.0.0.1:28090` (`/health`, `/snapshot`); both published ports are configurable:
+
+    STORAGE_COMPAT_API_PORT=38090 STORAGE_COMPAT_DASHBOARD_PORT=35173 \
+      docker compose -f docker-compose.storage-compat-demo.yml up -d
+
+To add new data **without restarting the API** (the frontend's own polling then sees it), run the
+generator again as an explicit one-off — never a background timer. It adds one new materialized
+Trial, one new allowlisted artifact in a partial Trial's raw tree, and one new/updated spend
+record:
+
+    docker compose -f docker-compose.storage-compat-demo.yml \
+      run --rm eval-corpus python -m read_api.storage_compat_corpus \
+      --root /srv/corpus --refresh
+
+Stop it, removing only its own volumes:
+
+    docker compose -f docker-compose.storage-compat-demo.yml down -v
+
+The generator is deterministic and idempotent and only ever writes the four roots under the
+volume it is given; it deletes nothing it did not write. Limits: operator ground truth and live
+token usage are out of scope, this verifies integration/rendering rather than the real producer's
+durability, and it cannot recover artifacts already deleted from a historical capture.
+
 #### One-command real dashboard stack (Docker Compose)
 
 `eval/docker-compose.dashboard.real.yml` serves the same dashboard from the **real** artifact
