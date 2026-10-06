@@ -73,6 +73,7 @@ from polymerhus.attack.hunting.mover import (
     run_delivery_tick,
 )
 from polymerhus.app.llm.actor import AgentInbox, AgentMessage, STOP
+from polymerhus.app.llm.provider_failure import ProviderUnavailableError
 
 logger = logging.getLogger(__name__)
 
@@ -595,6 +596,11 @@ async def run_pod_session(
                 spec, run_id=run_id, project_id=project_id,
                 memory_store=pod_store, spec_id=spec_id,
             )
+        except ProviderUnavailableError:
+            # #329: a provider failure is infrastructure, not a pod verdict. Do
+            # not fabricate a domain export and do not persist one - propagate
+            # the typed error so the run records no fabricated verdict.
+            raise
         except Exception as exc:  # noqa: BLE001 - fail-open: the pod never raises into the run
             logger.warning("surfer: pod %s degraded (%s)", spec_id, exc)
             return {

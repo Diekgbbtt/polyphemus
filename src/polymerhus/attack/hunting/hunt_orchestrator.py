@@ -194,15 +194,23 @@ class HuntOrchestrationDegradedError(PhaseAbort):
     """The pass ABORTED after a run of consecutive no-decision phase turns
     (#280 Part 2). Typed and operator-visible: it is raised out of
     `arun_orchestration`, so the runtime logs it and lands the run failed
-    instead of grinding through the remaining pairs against a dead thread."""
+    instead of grinding through the remaining pairs against a dead thread.
 
-    def __init__(self, *, phase: str, streak: int, threshold: int) -> None:
+    `provider_cause` (#329): True when the degrading turns were provider
+    failures (429/5xx/timeout/quota). A provider-caused abort is an
+    INFRASTRUCTURE pause, not a domain failure, so the runtime persists the
+    resumable terminal `interrupted` instead of `failed`."""
+
+    def __init__(self, *, phase: str, streak: int, threshold: int,
+                 provider_cause: bool = False) -> None:
         self.phase = phase
         self.streak = streak
         self.threshold = threshold
+        self.provider_cause = provider_cause
         super().__init__(
             f"hunting pass aborted: {streak} consecutive no-decision phase "
-            f"turn(s) (last phase {phase!r}, abort threshold {threshold})")
+            f"turn(s) (last phase {phase!r}, abort threshold {threshold}"
+            f"{', provider-caused' if provider_cause else ''})")
 
 
 class DegradedTurnBreaker:
@@ -256,14 +264,23 @@ class DegradedTurnBreaker:
                 "backing off %.2fs before the %s turn", self.streak, delay, phase)
             await self._sleep(delay)
 
-    def record_outcome(self, phase: str, outcome: Any) -> None:
+    def record_outcome(self, phase: str, outcome: Any, *,
+                       cause: BaseException | None = None) -> None:
         if outcome is not None:
             self.streak = 0
             return
         self.streak += 1
         if self._abort > 0 and self.streak >= self._abort:
+            provider_cause = False
+            if cause is not None:
+                from polymerhus.app.llm.provider_failure import (  # noqa: PLC0415
+                    is_provider_unavailable,
+                )
+
+                provider_cause = is_provider_unavailable(cause)
             raise HuntOrchestrationDegradedError(
-                phase=phase, streak=self.streak, threshold=self._abort)
+                phase=phase, streak=self.streak, threshold=self._abort,
+                provider_cause=provider_cause)
 
 # The config status lifecycle (ADR G5/G6): hypothesised -> ratified | dropped.
 # `noted` is a LOOP state, never a config status; `consumed` is tautological in
@@ -1170,22 +1187,43 @@ async def arun_orchestration(
 
     breaker = DegradedTurnBreaker.from_env()
 
+    def _actor_degrade_cause() -> BaseException | None:
+        """The orchestrator actor's most recent degraded-turn cause (#329), if a
+        production actor produced this pass. A test fake or a raising seam has
+        no actor cause; the direct-raise path supplies its exception instead."""
+        actor = orchestrator
+        getter = getattr(actor, "last_degrade_cause", None) if actor is not None else None
+        if getter is None:
+            return None
+        try:
+            return getter()
+        except Exception:  # noqa: BLE001 - a cause is provenance, never a gate
+            return None
+
     async def _phase_turn(fn, *args, phase: str):
         """Run ONE phase turn through the breaker (#280 Part 2): backoff before
         the call once the streak is past the warn threshold, per-turn fail-open
         for a raising/sync seam, then count a `None` (no-decision) outcome -
-        which may abort the pass with a typed failure."""
+        which may abort the pass with a typed failure. The abort carries the
+        provider cause when the degrading turns were provider failures (#329),
+        so the runtime can pause the run instead of failing it."""
         if fn is None:
             return None
         await breaker.before_turn(phase)
+        cause: BaseException | None = None
         try:
             out = await _await_seam(fn, *args)
         except PhaseAbort:
             raise
         except Exception as exc:  # noqa: BLE001 - fail-open: the turn is a no-decision
             logger.warning("%s turn failed (%s)", phase, exc)
+            cause = exc
             out = None
-        breaker.record_outcome(phase, out)
+        if out is None and cause is None:
+            # The production actor swallows a provider raise into a no-decision
+            # reply; read the cause it recorded rather than losing the class.
+            cause = _actor_degrade_cause()
+        breaker.record_outcome(phase, out, cause=cause)
         return out
 
     if hypothesise_fn is None:

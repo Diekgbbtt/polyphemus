@@ -97,8 +97,9 @@ async def default_runner_step_fn(spec: dict, messages: list, tool_calls: int) ->
     empty-probe rule), the final model content as the observation note.
 
     Hard-fails on an unbound session/harness (D84-14: no silent symbolic
-    fallback) - `arun_pod`'s fail-open wrapper degrades the run, never raises
-    into the parent."""
+    fallback) - `arun_pod`'s fail-open wrapper degrades the run, never raises a
+    DOMAIN failure into the parent; a provider failure propagates as the typed
+    `ProviderUnavailableError` (#329)."""
     from polymerhus.app.llm.session import arun_session_turn  # noqa: PLC0415
     from polymerhus.attack.hunting.pod.harness import (  # noqa: PLC0415
         build_harness_middleware,
@@ -149,7 +150,8 @@ async def default_triager_fn(spec: dict, observation: RawObservation,
     the verbatim P3 note + filtered triager context + memory guidance, D84-23).
     Bound tools: note read + (config-gated) query_lightrag (D84-27) - NEVER exec.
     Hard-fails on an unbound session/harness (D84-14); a FAILED turn degrades to
-    a safe honest terminal, never raises into the loop."""
+    a safe honest terminal, never raises a DOMAIN failure into the loop - a
+    provider failure propagates as the typed `ProviderUnavailableError` (#329)."""
     from polymerhus.app.llm.session import stateful_turn  # noqa: PLC0415
     from polymerhus.attack.hunting.pod.context import _dicts_to_lc  # noqa: PLC0415
     from polymerhus.attack.hunting.pod.llm import (  # noqa: PLC0415
@@ -183,6 +185,15 @@ async def default_triager_fn(spec: dict, observation: RawObservation,
             raise ValueError("unmet triager generation")
         return result.model_dump()
     except Exception as exc:  # noqa: BLE001 - fail-open safe terminal
+        from polymerhus.app.llm.provider_failure import as_provider_error
+
+        failure = as_provider_error(exc)
+        if failure is not None:
+            # #329: a provider failure is infrastructure, not a triager
+            # assessment. Propagate the typed error (the pod classifies it) so a
+            # throttle is never laundered into a benign `no-symptom-evidence`
+            # domain verdict.
+            raise failure from exc
         return TriagerDecision(
             classification="noise", action="terminate", verdict="unsuccessful",
             terminal_reason="no-symptom-evidence", clean=False,

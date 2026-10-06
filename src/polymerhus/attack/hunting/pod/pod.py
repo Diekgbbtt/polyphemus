@@ -5,12 +5,15 @@ D84-15): it takes the D4 `TestImplementationSpec` and returns the D5 + D6
 `{verdict, evidence}` envelope. The pod is async-ONLY - the sync `run_pod`
 wrapper is DELETED (Q7 VERDICTED): the parent HuntingAgent awaits `arun_pod`
 natively through its `_await_seam` (async seams are awaited, sync seams are
-to_thread-ed), so no sync wrapper remains a public entry. It NEVER raises into
-the parent HuntingAgent (IA-4): any collaborator failure degrades to
-`unsuccessful` with the error in the evidence trail, mirroring the recon
-degrade-to-failed-export pattern (`recon/control/job_agent.py`). The pod
-touches no store and no graph (spec 1.5); the parent persists the returned
-envelope (operator, 2026-08-06).
+to_thread-ed), so no sync wrapper remains a public entry. It NEVER raises a
+DOMAIN failure into the parent HuntingAgent (IA-4): any collaborator failure
+degrades to `unsuccessful` with the error in the evidence trail, mirroring the
+recon degrade-to-failed-export pattern (`recon/control/job_agent.py`). The ONE
+exception is a provider failure (#329): a 429/5xx/timeout/quota is an
+infrastructure condition, so it propagates as the typed
+`ProviderUnavailableError` - never a fabricated `technical-infeasibility`
+domain verdict. The pod touches no store and no graph (spec 1.5); the parent
+persists the returned envelope (operator, 2026-08-06).
 
 Observability is the shared fail-open recipe (D67-05): one trace per pod run,
 Langfuse optional and never a gate (C12).
@@ -20,6 +23,7 @@ from __future__ import annotations
 import logging
 from typing import Callable, Sequence
 
+from polymerhus.app.llm.provider_failure import as_provider_error
 from polymerhus.attack.hunting.pod.graph import RECURSION_LIMIT, build_pod_graph
 from polymerhus.attack.hunting.pod.llm import POD_DEFAULT_RUN_ID
 from polymerhus.attack.hunting.pod.tools import default_exec_fn
@@ -69,7 +73,9 @@ async def arun_pod(spec: dict, *, run_id: str = POD_DEFAULT_RUN_ID,
     via `asyncio.to_thread`), so both the production async terminals and the
     contract-tier sync fakes are injectable. The whole run is wrapped fail-open:
     a raise anywhere degrades to `unsuccessful` / `technical-infeasibility` with
-    the error in the trail - the pod never raises into the parent.
+    the error in the trail - the pod never raises a DOMAIN failure into the
+    parent. The one exception is a provider failure (#329): it propagates the
+    typed `ProviderUnavailableError` instead of fabricating a domain verdict.
 
     `runner_middleware` / `triager_middleware` are the per-role #95 compaction
     middleware sets (T5, D9 wiring): threaded into the graph's pod-session
@@ -111,7 +117,18 @@ async def arun_pod(spec: dict, *, run_id: str = POD_DEFAULT_RUN_ID,
         if not export:
             raise RuntimeError("pod produced no export")
         return export
-    except Exception as exc:  # noqa: BLE001 - IA-4: degrade, never raise into the parent
+    except Exception as exc:  # noqa: BLE001 - IA-4: degrade, never raise a DOMAIN failure
+        # #329: a provider failure (429/5xx/timeout/quota) is an INFRASTRUCTURE
+        # condition, never a domain verdict. Propagate it as the typed
+        # `ProviderUnavailableError` so the app layer can back off and pause the
+        # run - the pod must NEVER fabricate `technical-infeasibility` for a
+        # throttle. Only a genuine internal error keeps the fail-open degrade.
+        failure = as_provider_error(exc)
+        if failure is not None:
+            logger.warning(
+                "pod run hit a provider failure (%s); propagating it instead of "
+                "fabricating a domain verdict", exc)
+            raise failure from exc
         logger.warning("pod run degraded to unsuccessful (%s)", exc)
         export = PodExport(
             verdict="unsuccessful", terminal_reason=TECHNICAL_INFEASIBILITY,

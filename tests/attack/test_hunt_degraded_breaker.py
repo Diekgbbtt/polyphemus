@@ -150,6 +150,47 @@ def test_breaker_aborts_at_the_threshold():
     assert exc.value.phase == "hypothesise"
 
 
+# --- #329: the abort carries the provider cause -------------------------------
+
+def _rate_limit():
+    import httpx
+    import openai
+
+    request = httpx.Request("POST", "https://api.example.test/v1")
+    response = httpx.Response(429, request=request)
+    return openai.RateLimitError("Rate limit exceeded", response=response, body=None)
+
+
+def test_breaker_marks_a_provider_caused_abort():
+    breaker = DegradedTurnBreaker(backoff_base_s=0.0, backoff_max_s=1.0,
+                                  warn_streak=1, abort_streak=1)
+    with pytest.raises(HuntOrchestrationDegradedError) as exc:
+        breaker.record_outcome("hypothesise", None, cause=_rate_limit())
+    assert exc.value.provider_cause is True
+
+
+def test_breaker_marks_a_generic_abort_as_not_provider_caused():
+    breaker = DegradedTurnBreaker(backoff_base_s=0.0, backoff_max_s=1.0,
+                                  warn_streak=1, abort_streak=1)
+    with pytest.raises(HuntOrchestrationDegradedError) as exc:
+        breaker.record_outcome("hypothesise", None, cause=ValueError("parse failure"))
+    assert exc.value.provider_cause is False
+
+
+def test_pass_abort_from_a_raising_provider_seam_is_provider_caused(monkeypatch):
+    """A phase seam that raises a 429 degrades that turn and marks the abort
+    provider-caused, so the runtime can pause the run instead of failing it."""
+    _set_breaker_env(monkeypatch, abort=2, warn=1, base=0.0)
+    candidates = [_candidate(f"Service:slug:{c}") for c in "ab"]
+
+    def hypothesise(inp):
+        raise _rate_limit()
+
+    with pytest.raises(HuntOrchestrationDegradedError) as exc:
+        _run(candidates, hypothesise=hypothesise)
+    assert exc.value.provider_cause is True
+
+
 # --- the pass ----------------------------------------------------------------
 
 def test_pass_aborts_after_k_consecutive_no_decision_turns(monkeypatch):

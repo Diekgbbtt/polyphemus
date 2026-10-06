@@ -321,6 +321,31 @@ def test_triager_seam_degrades_to_a_safe_terminal_on_failure(tmp_path):
     assert "degraded" in decision["note"]
 
 
+def test_triager_seam_propagates_a_provider_failure(tmp_path, monkeypatch):
+    """#329: a provider failure is infrastructure, not a triager assessment -
+    the production triager re-raises the typed `ProviderUnavailableError`
+    instead of laundering a throttle into `no-symptom-evidence`."""
+    import httpx
+    import openai
+
+    import polymerhus.app.llm.session as S
+    from polymerhus.app.llm.provider_failure import ProviderUnavailableError
+
+    def provider_raising(role, thread, messages, *, checkpointer, schema=None, **kw):
+        request = httpx.Request("POST", "https://api.example.test/v1")
+        raise openai.RateLimitError(
+            "Rate limit exceeded", response=httpx.Response(429, request=request),
+            body=None)
+
+    monkeypatch.setattr(S, "stateful_turn", provider_raising)
+    hc = PodHarnessContext(exec_fn=_exec(_OK), memory_store=PodMemoryStore(tmp_path),
+                           spec_id=SPEC_ID, log=ExperimentLog(), variant_ref="v0",
+                           model_factory=_factory([]))
+
+    with pytest.raises(ProviderUnavailableError):
+        _run(_drive_triager(SPEC, hc, hc.log))
+
+
 def _tool_recording_factory(replies, seen):
     """A model factory whose model records the tool names bound onto it (the
     `create_agent` -> `bind_tools` seam), so a turn's real tool surface is

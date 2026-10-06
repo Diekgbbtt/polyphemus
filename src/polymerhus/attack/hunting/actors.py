@@ -80,6 +80,11 @@ class _TurnActor:
         self._inbox = None
         self._replies = None
         self._task = None
+        # #329: the exception a degraded turn died on, recorded by the wrapped
+        # `on_turn_degraded` hook and cleared per request - so the pass can
+        # classify a no-decision turn as provider-caused and pause the run
+        # instead of failing it.
+        self._degrade_cause: Exception | None = None
 
     @property
     def role_id(self) -> str:
@@ -134,6 +139,14 @@ class _TurnActor:
         middleware, degraded_hook = build_inbox_delivery(
             replies, kind=_REPLY_KIND, source=_REPLY_SOURCE
         )
+
+        def _record_degrade(thread_id, exc, _hook=degraded_hook):
+            # #329: record the cause so the pass can classify a provider-caused
+            # abort, then delegate to the delivery hook.
+            self._degrade_cause = exc
+            if _hook is not None:
+                _hook(thread_id, exc)
+
         middleware = [middleware] if middleware else []
         if middleware_extra:
             middleware = middleware + list(middleware_extra)
@@ -147,7 +160,7 @@ class _TurnActor:
             "on_message": self._on_message,
             "middleware": middleware,
             "context": binding.context,
-            "on_turn_degraded": degraded_hook,
+            "on_turn_degraded": _record_degrade,
             "model_factory": self._model_factory,
             "observe": self._observe,
             "extra_tags": self._extra_tags,
@@ -179,9 +192,16 @@ class _TurnActor:
         Races the reply against the actor task: a dead actor returns None
         (fail-open) instead of hanging."""
         await self._ensure_started()
+        self._degrade_cause = None  # #329: the cause is per request, never stale
         from polymerhus.app.llm.actor import AgentMessage  # noqa: PLC0415
         await self._inbox.post(message)
         return await self._await_reply()
+
+    def last_degrade_cause(self) -> Exception | None:
+        """The exception the MOST RECENT request's degraded turn died on, or
+        None when the request did not degrade (#329). Read by the pass to
+        classify a no-decision turn as provider-caused."""
+        return self._degrade_cause
 
     async def _await_reply(self) -> "object | None":
         from polymerhus.app.llm.actor import AgentMessage  # noqa: PLC0415

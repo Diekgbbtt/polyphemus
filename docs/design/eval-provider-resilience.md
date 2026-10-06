@@ -2,6 +2,8 @@
 
 *Status: draft for operator review (2026-10-05). Covers the two failures surfaced by the eval bug map (`docs/design/eval-bugs-map.md` §8-9): (A) the opencode-go provider quota and the LiteLLM gateway cost guard; (B) the ubiquitous provider-failure handling pattern for agents, and the abolition of the harness-fabricated `technical-infeasibility`. This document authorises no code change.*
 
+*Implementation note (#329, 2026-10-06): the Part 2 slice that classifies a provider failure distinctly, backs off, avoids failing the run outright, and stops the pod fabricating `technical-infeasibility` has LANDED (`docs/design/hunting-329-provider-failure-classification-adr.md`): `app/llm/provider_failure.py` (typed `ProviderUnavailableError`), the pod/triager/surfer propagation, and `runtime.start_hunting` persisting `interrupted` on a provider-caused pass abort. The full stop/flush/resume re-scheduling, the eval-monitor `interrupted` handling, and Part 1 remain #331/#330.*
+
 ## Part 1 - Gateway cost guard (failure A)
 
 ### 1.1 The provider cap, verified
