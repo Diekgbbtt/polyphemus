@@ -120,6 +120,10 @@ def _parser() -> argparse.ArgumentParser:
         ("plan", "print every command without executing anything"),
         ("up", "bring up every instance and target"),
         ("down", "tear down every target and instance"),
+        (
+            "worktree-remove",
+            "remove every instance worktree (operator-only; down keeps them)",
+        ),
         ("status", "show instance and target status"),
     ):
         child = sub.add_parser(verb, help=help_text)
@@ -2012,6 +2016,13 @@ def main(
             if errors:
                 return 1
             print("down: complete", file=out)
+        elif args.verb == "worktree-remove":
+            errors = orchestrator.remove_worktrees()
+            for error in errors:
+                print(f"worktree-remove: error: {error}", file=err)
+            if errors:
+                return 1
+            print("worktree-remove: complete", file=out)
         else:
             for instance_id, report in orchestrator.status().items():
                 print(f"instance {instance_id}:\n{report['stack']}", file=out)

@@ -932,7 +932,8 @@ def test_destroy_tears_the_instance_down_through_instances_down(
 
     assert outcome.action == surfer.DESTROY
     assert any("down -v --remove-orphans" in t for t in runner.argv_texts)
-    assert any("worktree" in t and "remove" in t for t in runner.argv_texts)
+    # Destroy stops the stack but never removes the worktree/data root.
+    assert not any("worktree" in t and "remove" in t for t in runner.argv_texts)
 
 
 def test_fix_env_recreates_restarts_and_resumes_at_the_recorded_phase(tmp_path) -> None:

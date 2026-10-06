@@ -61,7 +61,8 @@ All commands run from the polymerhus repo root.
 |---|---|
 | `PYTHONPATH=eval python3 -m orchestrator plan <setup.yaml>` | Print every instance, target, and routing command for an `EvalSetup` without executing anything (`up --dry-run` is the same). |
 | `PYTHONPATH=eval python3 -m orchestrator up <setup.yaml>` | Gate the eval-wide work items, then bring up each instance stack (worktree off `eval`, `.env` preflight, compose overlay) and its targets. Every lifecycle runs locally on the eval host (D45): `targetctl` builds/starts WebExploitBench there, and `image`/`compose` start local containers. |
-| `PYTHONPATH=eval python3 -m orchestrator down <setup.yaml>` | Tear every target down (front, kali alias, target containers) and then every instance project (`docker compose down -v`, worktree removed). |
+| `PYTHONPATH=eval python3 -m orchestrator down <setup.yaml>` | Tear every target down (front, kali alias, target containers) and then every instance project (`docker compose down -v`). The instance worktree and its data root (hunt store, project/pod memory, L0+L1 graph, auth, skills) are PRESERVED - a stop/drain or an eval termination never destroys evidence. |
+| `PYTHONPATH=eval python3 -m orchestrator worktree-remove <setup.yaml>` | OPERATOR-ONLY: drop every instance worktree (and its data root). Never run by `down`; use it only to re-provision an instance from scratch. |
 | `PYTHONPATH=eval python3 -m orchestrator status <setup.yaml>` | Per-instance stack status, live kali aliases, and each target's synthetic host, front URL, and status. |
 
 The former `eval/target.sh` and `eval/hosts.sh` primitives are replaced by the

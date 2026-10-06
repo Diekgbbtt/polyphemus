@@ -149,9 +149,11 @@ The trial record (`trial.yaml`) names the reused `project_id` and carries
 ## Caveats
 
 - `orchestrator down` runs `docker compose down -v`, which deletes the instance's
-  volumes. Never `down` between the transfer and the trial; use `stop`/`start`
-  or a plain `docker compose down` **without** `-v` if you need to recycle the
-  stack.
+  docker volumes (neo4j/pg). It does NOT remove the instance worktree or its
+  data root - those survive every stop/drain and eval termination; only the
+  operator-only `orchestrator worktree-remove` drops a worktree. Never `down -v`
+  between the transfer and the trial; use `stop`/`start` or a plain
+  `docker compose down` **without** `-v` if you need to recycle the stack.
 - The seeded project must be unique within the setup: two targets naming the same
   `existing_project_id` fail validation.
 - A seeded project is read-only to the trial. If the L1 is wrong, fix the source

@@ -260,6 +260,24 @@ class Orchestrator:
                 errors.append(TeardownError(front.FRONT_CONTAINER, str(exc)))
         return errors
 
+    def remove_worktrees(self) -> list[TeardownError]:
+        """Operator-only: drop every instance worktree (and its data root).
+
+        NEVER part of the stack lifecycle - `down` keeps the worktrees so the
+        instance data root survives stop/drain and eval termination. This is the
+        explicit, out-of-loop action the operator invokes when an instance is
+        meant to be re-provisioned from scratch.
+        """
+        runner = self._require_runner()
+        errors: list[TeardownError] = []
+        for instance in self.setup.instances:
+            paths = self._paths(instance)
+            try:
+                instances.remove_worktree(paths, runner)
+            except InstanceError as exc:
+                errors.append(TeardownError(instance.instance_id, str(exc)))
+        return errors
+
     def status(self) -> dict:
         """Per-instance stack status, live kali aliases, and per-target status.
 

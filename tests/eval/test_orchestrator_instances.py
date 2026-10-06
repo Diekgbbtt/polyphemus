@@ -116,16 +116,14 @@ def test_plan_down_sequence_only_touches_its_own_project(tmp_path, eval_repo) ->
 
     plan = instances.plan_down(paths)
 
+    # The worktree (and the instance data root inside it) MUST outlive the
+    # stack lifecycle: down is compose-only, never a worktree removal.
+    assert len(plan) == 1
     down = plan[0].argv
     assert down[-3:] == ("down", "-v", "--remove-orphans")
     assert down[down.index("-p") + 1] == paths.compose_project
     assert other.compose_project not in down
-
-    worktree_remove = plan[1].argv
-    assert worktree_remove[:3] == ("git", "-C", str(eval_repo))
-    assert worktree_remove[3:5] == ("worktree", "remove")
-    assert "--force" in worktree_remove
-    assert str(paths.worktree) in worktree_remove
+    assert not any("worktree" in arg for arg in down)
 
 
 def test_plan_status_is_a_compose_ps(tmp_path, eval_repo) -> None:
@@ -163,7 +161,9 @@ def test_down_runs_the_plan_through_the_runner(
 
     texts = runner.argv_texts
     assert any("down -v --remove-orphans" in t for t in texts)
-    assert any("worktree remove" in t for t in texts)
+    # The worktree survives the teardown (its data root is preserved).
+    assert not any("worktree remove" in t for t in texts)
+    assert paths.worktree.exists()
 
 
 def test_up_raises_on_preflight_failure(
@@ -202,6 +202,22 @@ def test_real_git_worktree_create_and_remove(tmp_path, eval_repo) -> None:
     instances.remove_worktree(paths, git)
 
     assert not paths.worktree.exists()
+
+
+def test_down_preserves_the_worktree_and_its_data_root(
+    tmp_path, eval_repo, recording_runner
+) -> None:
+    """down stops the stack but NEVER removes the worktree (its data root)."""
+    paths = _paths(tmp_path, eval_repo, _instance("arm-a"))
+    (paths.worktree / "data" / "hunting").mkdir(parents=True)
+    (paths.worktree / "data" / "hunting" / "hunt.yaml").write_text("keep\n")
+    runner = recording_runner()
+
+    instances.down(paths, runner)
+
+    assert paths.worktree.is_dir()
+    assert (paths.worktree / "data" / "hunting" / "hunt.yaml").read_text() == "keep\n"
+    assert not any("worktree" in t for t in runner.argv_texts)
 
 
 def test_two_instances_share_the_eval_branch_detached(tmp_path, eval_repo) -> None:

@@ -4,8 +4,11 @@ One `PolyphemusInstance` is one compose project (`ph-<short>`) running from its
 own git worktree detached at the `eval` branch commit, with its own `.env`
 validated by `eval/env_preflight.py` before the stack is rendered
 (`docker compose config`) or started. Detached lets any number of instances
-share the one read-only `eval` branch. Teardown removes exactly that project's
-containers and volumes and its own worktree, never another instance's.
+share the one read-only `eval` branch. Teardown stops exactly that project's
+containers and volumes, never another instance's, and NEVER removes the
+worktree: the worktree holds the instance data root, so a stop/drain of a
+project or the eval's termination must not destroy it. Dropping a worktree is
+the separate, operator-only `remove_worktree` (`orchestrator worktree-remove`).
 
 The commands are planned purely; execution is one injected runner.
 """
@@ -157,14 +160,20 @@ def plan_up(paths: InstancePaths) -> list[Command]:
 
 
 def plan_down(paths: InstancePaths) -> list[Command]:
-    """Stop the instance's own project (volumes included), then drop its worktree."""
+    """Stop the instance's own project (volumes included); keep its worktree.
+
+    The worktree (and the instance data root inside it) MUST outlive the stack
+    lifecycle: stopping a project - a recon/analysis/hunting stop or drain, or
+    the whole eval terminating - never destroys the instance's worktree or its
+    `data/`. Worktree removal is a separate, operator-only action
+    (`plan_worktree_remove`, reachable through `orchestrator worktree-remove`).
+    """
     return [
         Command(
             argv=tuple(compose_argv(paths, "down", "-v", "--remove-orphans")),
             cwd=str(paths.worktree),
             description=f"down {paths.compose_project}",
         ),
-        plan_worktree_remove(paths),
     ]
 
 
@@ -186,7 +195,11 @@ def ensure_worktree(paths: InstancePaths, run: CommandRunner) -> None:
 
 
 def remove_worktree(paths: InstancePaths, run: CommandRunner) -> None:
-    """Remove the instance worktree; absent is success (idempotent teardown)."""
+    """Operator-only: remove the instance worktree (and its data root).
+
+    Absent is success. This is NEVER part of the stack lifecycle - `down` keeps
+    worktrees - and is reachable only through `orchestrator worktree-remove`.
+    """
     if not paths.worktree.exists():
         return
     command = plan_worktree_remove(paths)
@@ -201,16 +214,17 @@ def up(paths: InstancePaths, run: CommandRunner) -> None:
 
 
 def down(paths: InstancePaths, run: CommandRunner) -> None:
-    """Tear down one instance stack and remove its worktree.
+    """Stop one instance stack; NEVER remove its worktree.
 
     Idempotent: an absent worktree means no stack was ever reserved from it, so
-    the compose-down is skipped and only the (absent-is-success) worktree
-    removal runs.
+    there is nothing to stop. The worktree and the instance data root inside it
+    are deliberately preserved across stop/drain and eval termination; dropping
+    a worktree is the separate operator-only `remove_worktree`.
     """
-    if paths.worktree.exists():
-        command = plan_down(paths)[0]
-        require_ok(run(command), command, error=InstanceError)
-    remove_worktree(paths, run)
+    if not paths.worktree.exists():
+        return
+    command = plan_down(paths)[0]
+    require_ok(run(command), command, error=InstanceError)
 
 
 def status(paths: InstancePaths, run: CommandRunner) -> str:

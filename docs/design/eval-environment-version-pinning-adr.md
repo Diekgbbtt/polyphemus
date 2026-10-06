@@ -19,7 +19,7 @@ Delivery already happens out-of-band (fast-forward `dev`, push). What was missin
 
 ### 2. Branches and layout
 
-`dev` is the trunk where delivery lands; `eval` is a read-only mirror, never committed to. Each instance runs from its own `git worktree` off `eval` (shared objects, per-instance working directory + `.env` + `data/`).
+`dev` is the trunk where delivery lands; `eval` is a read-only mirror, never committed to. Each instance runs from its own `git worktree` off `eval` (shared objects, per-instance working directory + `.env` + `data/`). The worktree and its `data/` evidence root are created if absent and are NEVER removed by the eval lifecycle (section 7b).
 
 ### 3. Idle window
 
@@ -53,6 +53,16 @@ Only an operator may rewind. The daemon records the last-known-good SHA and neve
 ### 7. Self-repair bound
 
 Repairs are configuration-layer only (`.env`, eval artifacts). Code repairs are not in scope; when no local misconfiguration interpretation exists and a new configuration decision is required, the orchestrator fails closed.
+
+### 7b. Worktree lifecycle - never removed by the eval loop
+
+An instance worktree (`<instances_root>/<instance_id>`) holds the instance's `.env` and its **data root** (`data/`: hunt store, project/pod memory, L0+L1 graph, auth, skills) - the live per-trial evidence. Its lifetime must therefore outlive the stack lifecycle:
+
+- `up` CREATES the worktree idempotently when absent and brings up the stack from it; a re-run with the worktree present reuses it (the `.env` preflight and `docker compose up -d` are idempotent).
+- `down`, a recon/analysis/hunting stop or drain, and an eval termination NEVER remove the worktree or its data root. `down` stops the project's containers and volumes and stops there.
+- Removing a worktree is an operator-only action (`orchestrator worktree-remove`), deliberately outside the loop, used to re-provision an instance from scratch.
+
+Rationale: the data root inside the worktree is the live evidence; a teardown that removed the worktree destroyed it (hunting artifacts, memories, graph, auth, skills), and the durable artifact store only preserves what was explicitly materialized. The never-remove rule makes evidence loss structurally impossible.
 
 ### 8. Eval compose overlay
 

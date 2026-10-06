@@ -169,7 +169,8 @@ def test_down_removes_targets_then_the_instance(tmp_path, recording_runner) -> N
     texts = runner.argv_texts
     assert any("scripts/targetctl down jetlinks" in t for t in texts)
     assert any("down -v --remove-orphans" in t for t in texts)
-    assert any("worktree remove" in t for t in texts)
+    # The instance worktree survives the stack teardown (its data root is kept).
+    assert not any("worktree remove" in t for t in texts)
 
 
 def test_status_reports_target_host_front_url_and_kali_aliases(

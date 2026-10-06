@@ -98,6 +98,30 @@ def test_down_executes_teardown(sample_setup, tmp_path, recording_runner) -> Non
 
     assert code == 0
     assert any("down -v --remove-orphans" in t for t in runner.argv_texts)
+    # The worktree survives the stack teardown (its data root is preserved).
+    assert not any("worktree remove" in t for t in runner.argv_texts)
+    assert (tmp_path / "instances" / "arm-a").is_dir()
+
+
+def test_worktree_remove_is_the_operator_only_removal(
+    sample_setup, tmp_path, recording_runner
+) -> None:
+    setup_path = _write_setup(tmp_path, sample_setup)
+    runner = recording_runner()
+    (tmp_path / "instances" / "arm-a").mkdir(parents=True)
+
+    code = cli.main(
+        [
+            "worktree-remove",
+            setup_path,
+            "--instances-root",
+            str(tmp_path / "instances"),
+        ],
+        runner_factory=_SpyFactory(runner),
+    )
+
+    assert code == 0
+    assert any("worktree remove" in t for t in runner.argv_texts)
 
 
 def test_gate_refusal_exits_nonzero_and_names_the_item(
