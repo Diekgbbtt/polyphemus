@@ -196,6 +196,7 @@ _Avoid_: final check, audit
 **Tick control plane**:
 The eval orchestrator's post-execution workflow driver (#289): one tick verifies every trial's execution state and advances a single node, from a successful execution to the background assessment and then to the diagnosis.
 It is one CLI tick (`orchestrator monitor`) wrapped as the `eval_monitor` custom tool, and it is the only automated path that dispatches the assessment and diagnoser subagents (the manual `assess`/`diagnose` verbs remain); a failed, blocked, or timed-out execution is deferred to the surfer loop.
+An `interrupted` execution (a provider-paused hunt, #331) is likewise deferred, never escalated - it is resumable, and its hunting-phase failure carries the recorded provider cause so the surfer can tell a transient throttle from consumed credits.
 _Avoid_: monitor loop, watcher, scheduler
 
 **Workflow node**:

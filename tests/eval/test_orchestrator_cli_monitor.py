@@ -173,6 +173,28 @@ def test_monitor_defers_a_failed_execution(tmp_path, capsys) -> None:
     assert fake.requests == []
 
 
+def test_monitor_defers_an_interrupted_execution(tmp_path, capsys) -> None:
+    """#331: a provider-paused hunt lands the trial terminal `interrupted`
+    (resumable). The monitor must defer it to the surfer, never escalate it as a
+    terminal failure - the run is not assessed and no subagent is dispatched."""
+    setup = _write_setup(tmp_path, _setup_payload())
+    _write_trial(tmp_path, terminal="interrupted")
+    fake = FakeDispatcher()
+
+    code = cli.main(
+        _base_args(tmp_path, setup),
+        runner_factory=_explode,
+        dispatch_factory=lambda _argv: fake,
+        diagnose_dispatch_factory=_explode,
+    )
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "deferred" in out
+    assert "escalated" not in out
+    assert fake.requests == []
+
+
 def test_monitor_awaits_a_recent_dispatch_instead_of_resent(tmp_path) -> None:
     setup = _write_setup(tmp_path, _setup_payload())
     _write_trial(tmp_path)

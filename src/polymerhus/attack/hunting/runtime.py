@@ -157,6 +157,31 @@ def enqueue_hunt_config(project_id: str, config, *, hunt_store=None) -> str:
     return store.write_config(project_id, payload, directory="produced")
 
 
+def _provider_interrupt_stats(err) -> dict:
+    """The run-row `stats` recorded when a provider-caused pass abort pauses the
+    run (#331). It carries the classifier's own cause (`interrupt_reason`) plus
+    the machine-readable fields the resume policy consumes - the HTTP status and
+    the `quota_exhausted` flag - so a transient throttle (429, resumable) is
+    distinguishable from consumed credits (terminal) after the process that saw
+    the failure is gone. A provider-caused abort from a fake/test seam without a
+    typed error still records an honest generic reason."""
+    if err is not None:
+        return {
+            "interrupted": True,
+            "interrupt_reason": err.interrupt_reason(),
+            "provider_status": err.status_code,
+            "quota_exhausted": err.quota_exhausted,
+            "retry_after_s": err.retry_after_s,
+        }
+    return {
+        "interrupted": True,
+        "interrupt_reason": "hunting pass aborted on a provider failure",
+        "provider_status": None,
+        "quota_exhausted": None,
+        "retry_after_s": None,
+    }
+
+
 def resume_pod_session(runtime, session_id: str) -> None:
     """The pod-ONLY launch seam (T5, ADR #169 Q4/Q6, identity-based refactor
     2026-08-25 operator ruling): RESUME ONE held/paused pod session by posting
@@ -724,6 +749,7 @@ async def start_hunting(
             )
 
         status = None
+        terminal_stats: dict | None = None
         try:
             orchestrator_id = orchestrator_session_id(hunting_run_id)
             surfer_id = surfer_session_id(hunting_run_id)
@@ -773,6 +799,10 @@ async def start_hunting(
                     "persisting 'interrupted'", hunting_run_id,
                 )
                 status = "interrupted"
+                # #331: record WHY on the run row - the cause survives past this
+                # process, so the eval can distinguish a transient throttle
+                # (resumable) from consumed credits (terminal).
+                terminal_stats = _provider_interrupt_stats(exc.provider_error)
             else:
                 logger.exception(
                     "start_hunting: run %s degraded; persisting 'failed'",
@@ -805,7 +835,8 @@ async def start_hunting(
             if status is not None:
                 try:
                     await asyncio.to_thread(
-                        pg.set_hunting_run_status, hunting_run_id, status
+                        pg.set_hunting_run_status, hunting_run_id, status,
+                        stats=terminal_stats,
                     )
                 except Exception:  # noqa: BLE001 - fail-open
                     logger.warning(

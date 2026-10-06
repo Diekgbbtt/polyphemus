@@ -4,6 +4,8 @@
 
 *Implementation note (#329, 2026-10-06): the Part 2 slice that classifies a provider failure distinctly, backs off, avoids failing the run outright, and stops the pod fabricating `technical-infeasibility` has LANDED (`docs/design/hunting-329-provider-failure-classification-adr.md`): `app/llm/provider_failure.py` (typed `ProviderUnavailableError`), the pod/triager/surfer propagation, and `runtime.start_hunting` persisting `interrupted` on a provider-caused pass abort. The full stop/flush/resume re-scheduling, the eval-monitor `interrupted` handling, and Part 1 remain #331/#330.*
 
+*Implementation note (#331, 2026-10-06): the slice that records an `interrupted` run's CAUSE and surfaces it to the eval has LANDED (`docs/design/hunting-331-provider-resume-adr.md`): the abort carries the typed `ProviderUnavailableError`, `runtime.start_hunting` stamps `hunting_runs.stats` (`interrupt_reason`/`provider_status`/`quota_exhausted`/`retry_after_s`), the eval trial reads it into the hunting-phase `failure` (fixing the `_phase_hunting` `failure=None` gap), and the monitor is pinned to defer `interrupted` rather than escalate it. The app-layer resume re-scheduling and the 429-vs-consumed-credits policy are ESCALATED operator decisions.*
+
 ## Part 1 - Gateway cost guard (failure A)
 
 ### 1.1 The provider cap, verified

@@ -167,6 +167,10 @@ def test_breaker_marks_a_provider_caused_abort():
     with pytest.raises(HuntOrchestrationDegradedError) as exc:
         breaker.record_outcome("hypothesise", None, cause=_rate_limit())
     assert exc.value.provider_cause is True
+    # #331: the typed error rides the abort, so the runtime can record the
+    # status/quota class on the interrupted run (not just a boolean).
+    assert exc.value.provider_error is not None
+    assert exc.value.provider_error.status_code == 429
 
 
 def test_breaker_marks_a_generic_abort_as_not_provider_caused():
@@ -175,6 +179,7 @@ def test_breaker_marks_a_generic_abort_as_not_provider_caused():
     with pytest.raises(HuntOrchestrationDegradedError) as exc:
         breaker.record_outcome("hypothesise", None, cause=ValueError("parse failure"))
     assert exc.value.provider_cause is False
+    assert exc.value.provider_error is None
 
 
 def test_pass_abort_from_a_raising_provider_seam_is_provider_caused(monkeypatch):

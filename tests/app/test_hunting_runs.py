@@ -73,3 +73,35 @@ def test_startup_reconcile_flips_orphaned_running_to_interrupted():
     fin = pg.get_hunting_run(orphan)["finished_at"]
     assert pg.reconcile_orphaned_hunting_runs() == 0
     assert pg.get_hunting_run(orphan)["finished_at"] == fin
+
+
+def test_interrupted_run_records_and_reads_back_its_cause():
+    """#331: an `interrupted` run carries WHY in `stats` (the provider status and
+    quota class), so the eval can distinguish a transient throttle from consumed
+    credits after the observing process is gone."""
+    pid = _seed_project()
+    hid = pg.create_hunting_run(pid)
+    pg.set_hunting_run_status(hid, "interrupted", stats={
+        "interrupted": True,
+        "interrupt_reason": "provider unavailable (status=429, quota_exhausted=true)",
+        "provider_status": 429,
+        "quota_exhausted": True,
+    })
+    row = pg.get_hunting_run(hid)
+    assert row["status"] == "interrupted"
+    assert row["stats"]["provider_status"] == 429
+    assert row["stats"]["quota_exhausted"] is True
+    assert "429" in row["stats"]["interrupt_reason"]
+    # The listing exposes the same cause (the eval reads either surface).
+    assert pg.list_hunting_runs(pid)[0]["stats"]["quota_exhausted"] is True
+
+
+def test_startup_reconcile_records_an_interrupt_reason():
+    """#331: a crash-orphaned run is never a causeless `interrupted` - the sweep
+    stamps a process-restart reason distinct from a provider pause."""
+    pid = _seed_project()
+    orphan = pg.create_hunting_run(pid)
+    pg.reconcile_orphaned_hunting_runs()
+    row = pg.get_hunting_run(orphan)
+    assert row["status"] == "interrupted"
+    assert "process ended mid-run" in row["stats"]["interrupt_reason"]

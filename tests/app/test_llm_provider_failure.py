@@ -108,3 +108,26 @@ def test_retry_after_accepts_http_date():
 
 def test_retry_after_absent_is_none():
     assert retry_after_seconds(_rate_limit()) is None
+
+
+# --- the interrupt cause (#331) ------------------------------------------------
+
+def test_interrupt_reason_names_the_status_and_quota_class():
+    """The `interrupted` run row records this one-liner, so the transient-throttle
+    vs consumed-credits policy can be decided off the durable cause."""
+    throttle = ProviderUnavailableError(
+        "throttled", status_code=429, quota_exhausted=False, retry_after_s=45)
+    reason = throttle.interrupt_reason()
+    assert "429" in reason
+    assert "quota" not in reason
+    assert "retry_after_s=45" in reason
+
+    quota = ProviderUnavailableError(
+        "Go usage limit exceeded", status_code=429, quota_exhausted=True)
+    quota_reason = quota.interrupt_reason()
+    assert "quota_exhausted=true" in quota_reason
+
+
+def test_interrupt_reason_handles_a_statusless_provider_error():
+    assert ProviderUnavailableError(
+        "boom").interrupt_reason() == "provider unavailable (no status)"

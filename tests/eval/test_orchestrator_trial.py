@@ -310,6 +310,35 @@ def test_run_proceeds_without_a_reachability_probe(tmp_path) -> None:
     assert any(c.path.endswith("/recon") for c in api_runner.calls)
 
 
+def test_an_interrupted_hunting_run_records_its_provider_cause(tmp_path) -> None:
+    # #331: a provider-caused hunt abort lands `interrupted` (resumable), and the
+    # run row carries the cause. The trial must record it on the hunting phase -
+    # an interrupted run with `failure=None` hides the provider class from the
+    # surfer's classifier (the transient-429 vs consumed-credits decision).
+    api_runner = FakeApi(
+        {
+            "GET /projects/pid/hunting/h1": {
+                "status": "interrupted",
+                "stats": {
+                    "interrupted": True,
+                    "interrupt_reason": "provider failure: 429 quota exhausted",
+                    "provider_status": 429,
+                    "quota_exhausted": True,
+                },
+            },
+            "POST /projects/pid/hunting": {"hunting_run_id": "h1"},
+            "GET /projects/pid/graph": GRAPH_L1_L0,
+        }
+    )
+
+    record = _trial(tmp_path, api_runner, start_phase="hunting", project_id="pid").run()
+
+    phase = record.phases[0]
+    assert phase.status == "interrupted"
+    assert record.terminal == "failed"
+    assert phase.failure is not None
+    assert "429" in phase.failure
+    assert "quota" in phase.failure.lower()
 
 
 # --- the trial-wide token budget ----------------------------------------------

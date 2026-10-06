@@ -98,6 +98,7 @@ class _FakePg:
         self.fail_create = fail_create
         self.fail_status = fail_status
         self.statuses: list[tuple[str, str]] = []
+        self.stats_writes: list[tuple[str, str, dict | None]] = []
         self.next_id = "rt-hunt-0001"
 
     def create_hunting_run(self, project_id: str) -> str:
@@ -106,10 +107,12 @@ class _FakePg:
         self.statuses.append(("running", self.next_id))
         return self.next_id
 
-    def set_hunting_run_status(self, hunting_run_id: str, status: str) -> None:
+    def set_hunting_run_status(self, hunting_run_id: str, status: str, *,
+                               stats: dict | None = None) -> None:
         if self.fail_status:
             raise OSError("pg down (fixture)")
         self.statuses.append((hunting_run_id, status))
+        self.stats_writes.append((hunting_run_id, status, stats))
 
     def list_hunting_runs(self, project_id: str) -> list[dict]:
         """The ONE-live-run-per-project guard read: every run the fake opened
@@ -429,6 +432,44 @@ def test_non_provider_pass_abort_still_fails(monkeypatch):
         control=_FakeControl(), tick_interval=0.001,
     ))
     assert fake.statuses == [("running", "rt-hunt-0001"), ("rt-hunt-0001", "failed")]
+
+
+def test_provider_caused_pass_abort_records_the_cause_on_the_run(monkeypatch):
+    """#331: the `interrupted` run row carries WHY - the provider class, its HTTP
+    status, and the `quota_exhausted` flag - so the eval can distinguish a
+    transient throttle (resumable) from consumed credits (terminal) after the
+    process that observed the failure is gone."""
+    from polymerhus.app.llm.provider_failure import ProviderUnavailableError
+    from polymerhus.attack.hunting.hunt_orchestrator import HuntOrchestrationDegradedError
+
+    fake = _FakePg()
+    _patch_pg(monkeypatch, fake)
+
+    async def provider_abort(*args, **kwargs):
+        raise HuntOrchestrationDegradedError(
+            phase="hypothesise", streak=5, threshold=5, provider_cause=True,
+            provider_error=ProviderUnavailableError(
+                "Go usage limit exceeded", status_code=429,
+                quota_exhausted=True))
+
+    monkeypatch.setattr(
+        "polymerhus.attack.hunting.hunt_orchestrator.arun_orchestration",
+        provider_abort)
+
+    asyncio.run(hunting_runtime.start_hunting(
+        "rt-project", candidates=[_candidate()],
+        control=_FakeControl(), tick_interval=0.001,
+    ))
+
+    hid = "rt-hunt-0001"
+    assert fake.statuses == [("running", hid), (hid, "interrupted")]
+    _, status, stats = fake.stats_writes[-1]
+    assert status == "interrupted"
+    assert stats["interrupted"] is True
+    assert stats["provider_status"] == 429
+    assert stats["quota_exhausted"] is True
+    assert "429" in stats["interrupt_reason"]
+    assert "quota" in stats["interrupt_reason"].lower()
 
 
 def test_build_production_hunting_agent_wires_real_seams(tmp_path):
