@@ -638,20 +638,20 @@ test("the verdicts view shows every materialized row, in order, unmerged", async
   ])
 
   // Row 1: identified, its own match and its own (safe) refs only.
-  expect(within(entries[0]).getByText("90%")).toBeDefined()
+  expect(within(entries[0]).getAllByText("90%").length).toBeGreaterThan(0)
   expect(within(entries[0]).getByText("comfyui.manager")).toBeDefined()
   expect(within(entries[0]).getByText("demo/comfyui-1/trial-1/hunt-config.yaml")).toBeDefined()
   expect(within(entries[0]).getByText("demo/comfyui-1/trial-1/export.yaml")).toBeDefined()
   expect(within(entries[0]).queryByText("demo/comfyui-1/trial-1/spec")).toBeNull()
 
   // Rows 2 and 3 share the vuln_id but keep their own details.
-  expect(within(entries[1]).getByText("40%")).toBeDefined()
+  expect(within(entries[1]).getAllByText("40%").length).toBeGreaterThan(0)
   expect(within(entries[1]).getByText("comfyui.nodes")).toBeDefined()
   expect(within(entries[1]).getByText("likely_rce")).toBeDefined()
   expect(within(entries[1]).getByText("demo/comfyui-1/trial-1/spec")).toBeDefined()
   expect(within(entries[1]).queryByText("demo/comfyui-1/trial-1/spec-extra")).toBeNull()
 
-  expect(within(entries[2]).getByText("35%")).toBeDefined()
+  expect(within(entries[2]).getAllByText("35%").length).toBeGreaterThan(0)
   expect(within(entries[2]).getByText("comfyui.nodes.extra")).toBeDefined()
   expect(within(entries[2]).getByText("alt_rce")).toBeDefined()
   expect(within(entries[2]).getByText("demo/comfyui-1/trial-1/spec-extra")).toBeDefined()
@@ -865,9 +865,10 @@ test("the global nav moves between projects and evaluations", async () => {
   ])
   goto("/p/proj-comfyui-1/evals")
 
-  const home = await screen.findByRole("link", { name: "Home" })
-  expect(home.getAttribute("href")).toBe("/")
-  expect(screen.getByRole("link", { name: "Projects" }).getAttribute("href")).toBe("/")
+  // The duplicate Home entry point is gone: Projects owns the catalog.
+  const projects = await screen.findByRole("link", { name: "Projects" })
+  expect(screen.queryByRole("link", { name: "Home" })).toBeNull()
+  expect(projects.getAttribute("href")).toBe("/")
   const evaluations = screen.getByRole("link", { name: "Evaluations" })
   expect(evaluations.getAttribute("href")).toBe("/eval")
 
@@ -881,9 +882,26 @@ test("the eval shell also exposes the global nav", async () => {
   routeFetch([["/snapshot", () => json(SNAPSHOT)]])
   goto("/eval")
 
-  await waitFor(() => expect(screen.getByRole("link", { name: "Home" })).toBeDefined())
+  await waitFor(() =>
+    expect(screen.getByRole("heading", { name: "WebExploitBench" })).toBeDefined(),
+  )
+  expect(screen.queryByRole("link", { name: "Home" })).toBeNull()
   expect(screen.getByRole("link", { name: "Projects" }).getAttribute("href")).toBe("/")
   expect(screen.getByRole("link", { name: "Evaluations" }).getAttribute("href")).toBe("/eval")
+})
+
+test("the catalog stays reachable from the eval shell through Projects", async () => {
+  routeFetch([
+    ["/projects", () => json({ detail: "unavailable" }, 503)],
+    ["/snapshot", () => json(SNAPSHOT)],
+  ])
+  goto("/eval")
+
+  const projects = await screen.findByRole("link", { name: "Projects" })
+  fireEvent.click(projects)
+
+  await waitFor(() => expect(screen.getByRole("heading", { name: "Targets" })).toBeDefined())
+  expect(window.location.pathname).toBe("/")
 })
 
 // --- canonical Target/Trial routes and legacy redirects ------------------------

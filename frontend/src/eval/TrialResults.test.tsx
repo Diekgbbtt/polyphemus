@@ -1,4 +1,5 @@
-import { act, render, screen, waitFor, within } from "@testing-library/react"
+import { useLayoutEffect } from "react"
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import { MemoryRouter } from "react-router-dom"
 import { afterEach, expect, test, vi } from "vitest"
 import { ResolvedArtifactsProvider } from "./ResolvedArtifactsProvider"
@@ -104,8 +105,16 @@ function renderResults(t: EvalTrial) {
 
 function rows(): HTMLElement[] {
   return screen
-    .getAllByRole("listitem")
+    .queryAllByRole("listitem")
     .filter((item) => item.className.includes("trial-result-row"))
+}
+
+function rowToggle(row: HTMLElement): HTMLButtonElement {
+  return within(row).getByRole("button") as HTMLButtonElement
+}
+
+function rowBody(row: HTMLElement): HTMLElement {
+  return row.querySelector(".eval-result-body") as HTMLElement
 }
 
 test("renders one distinct row per verdict, including repeats for one vulnerability", () => {
@@ -130,7 +139,7 @@ test("each row shows confidence, safe match fields and only safe evidence", () =
   renderResults(trial())
 
   const first = rows()[0]
-  expect(within(first).getByText("90%")).toBeDefined()
+  expect(within(first).getAllByText("90%").length).toBeGreaterThan(0)
   expect(within(first).getByText("comfyui.manager")).toBeDefined()
   expect(within(first).getByText("CWE-78")).toBeDefined()
   expect(within(first).getByText("rce")).toBeDefined()
@@ -364,6 +373,7 @@ test("links a matching evidence reference to the canonical artifact route", asyn
 
   renderInWorkspace(t)
 
+  fireEvent.click(rowToggle(rows()[0]))
   const link = await screen.findByRole("link", { name: "proj-1/hunting/x.yaml" })
   expect(link.getAttribute("href")).toBe("/targets/comfyui-1/trials/run-a/t1/artifacts/a1")
 })
@@ -448,6 +458,7 @@ test("a reference that was missing becomes clickable after the inventory refresh
 
   renderInWorkspace(t)
   await act(async () => {})
+  fireEvent.click(rowToggle(rows()[0]))
   expect(screen.getByText(/Artifact non disponibile/)).toBeDefined()
 
   body = availableInventory([artifactEntry("a1", "hunting/x.yaml")])
@@ -476,6 +487,7 @@ test("changing the Trial drops the previous links immediately", async () => {
   const first = trialWithEvidence(["proj-1/hunting/x.yaml"])
   stubInventory(availableInventory([artifactEntry("a1", "hunting/x.yaml")]))
   const { rerender } = renderInWorkspace(first)
+  fireEvent.click(rowToggle(rows()[0]))
   await screen.findByRole("link", { name: "proj-1/hunting/x.yaml" })
 
   // The next Trial's inventory never settles: no stale link may survive.
@@ -504,4 +516,223 @@ test("changing the Trial drops the previous links immediately", async () => {
   await waitFor(() =>
     expect(screen.queryByRole("link", { name: "proj-1/hunting/x.yaml" })).toBeNull(),
   )
+})
+
+
+// --- collapsible result rows ---------------------------------------------------
+
+
+function RowStateProbe({
+  trial,
+  log,
+}: {
+  trial: EvalTrial
+  log: Array<{ id: string; expanded: string | null }>
+}) {
+  const id = `${trial.target_id}|${trial.target_run_id}|${trial.trial_id}`
+  useLayoutEffect(() => {
+    const toggle = document.querySelector<HTMLElement>(".eval-result-toggle")
+    log.push({ id, expanded: toggle?.getAttribute("aria-expanded") ?? null })
+  })
+  return null
+}
+
+function renderProbe(t: EvalTrial) {
+  const log: Array<{ id: string; expanded: string | null }> = []
+  const tree = (next: EvalTrial) => (
+    <MemoryRouter>
+      <TrialResults trial={next} />
+      <RowStateProbe trial={next} log={log} />
+    </MemoryRouter>
+  )
+  const { rerender } = render(tree(t))
+  return { log, rerender: (next: EvalTrial) => rerender(tree(next)) }
+}
+
+test("every result row starts closed with its key facts still visible", () => {
+  renderResults(trial())
+
+  const all = rows()
+  expect(all).toHaveLength(4)
+  for (const row of all) {
+    expect(rowToggle(row).getAttribute("aria-expanded")).toBe("false")
+    expect(rowBody(row).hasAttribute("hidden")).toBe(true)
+  }
+  const first = rowToggle(all[0])
+  expect(within(first).getByText("row 1")).toBeDefined()
+  expect(within(first).getByText("DEMO-1")).toBeDefined()
+  expect(within(first).getByText("identified")).toBeDefined()
+  expect(within(first).getByText("90%")).toBeDefined()
+})
+
+test("a closed row hides its body, including Evidence, from the accessibility tree", () => {
+  renderResults(trial())
+
+  const first = rows()[0]
+  expect(rowBody(first).hasAttribute("hidden")).toBe(true)
+  // `hidden` removes the subtree from role queries, i.e. from the tab order.
+  expect(within(first).queryByRole("heading", { name: "Evidence" })).toBeNull()
+  expect(within(first).queryByRole("link", { name: "demo/a.yaml" })).toBeNull()
+})
+
+test("click, Enter and Space each toggle exactly one row", () => {
+  renderResults(trial())
+  const toggle = rowToggle(rows()[0])
+
+  fireEvent.click(toggle)
+  expect(toggle.getAttribute("aria-expanded")).toBe("true")
+  fireEvent.click(toggle)
+  expect(toggle.getAttribute("aria-expanded")).toBe("false")
+
+  fireEvent.keyDown(toggle, { key: "Enter" })
+  expect(toggle.getAttribute("aria-expanded")).toBe("true")
+  fireEvent.keyDown(toggle, { key: "Enter" })
+  expect(toggle.getAttribute("aria-expanded")).toBe("false")
+
+  fireEvent.keyDown(toggle, { key: " " })
+  expect(toggle.getAttribute("aria-expanded")).toBe("true")
+  fireEvent.keyDown(toggle, { key: " " })
+  expect(toggle.getAttribute("aria-expanded")).toBe("false")
+})
+
+test("opening a row keeps match, ground truth, evidence and diagnosis reachable", () => {
+  renderWithGroundTruth(trial(), GROUND_TRUTH_READY)
+
+  const first = rows()[0]
+  fireEvent.click(rowToggle(first))
+
+  expect(rowBody(first).hasAttribute("hidden")).toBe(false)
+  expect(within(first).getByText("comfyui.manager")).toBeDefined()
+  expect(within(first).getByText("Ground truth (current benchmark)")).toBeDefined()
+  expect(within(first).getByRole("heading", { name: "Evidence" })).toBeDefined()
+
+  const second = rows()[1]
+  fireEvent.click(rowToggle(second))
+  expect(within(second).getByText(/spec_underspecified/)).toBeDefined()
+})
+
+test("an opened row keeps its canonical Evidence links", async () => {
+  const t = trialWithEvidence(["proj-1/hunting/x.yaml"])
+  stubInventory(availableInventory([artifactEntry("a1", "hunting/x.yaml")]))
+
+  renderInWorkspace(t)
+  fireEvent.click(rowToggle(rows()[0]))
+
+  const link = await screen.findByRole("link", { name: "proj-1/hunting/x.yaml" })
+  expect(link.getAttribute("href")).toBe("/targets/comfyui-1/trials/run-a/t1/artifacts/a1")
+})
+
+test("two rows with the same vuln_id toggle independently with distinct DOM ids", () => {
+  renderResults(trial())
+
+  const all = rows()
+  const first = rowToggle(all[1])
+  const second = rowToggle(all[2])
+  const firstId = first.getAttribute("aria-controls")
+  const secondId = second.getAttribute("aria-controls")
+  expect(firstId).not.toBe(secondId)
+  expect(document.getElementById(firstId!)).not.toBeNull()
+  expect(document.getElementById(secondId!)).not.toBeNull()
+
+  fireEvent.click(first)
+  expect(first.getAttribute("aria-expanded")).toBe("true")
+  expect(second.getAttribute("aria-expanded")).toBe("false")
+  expect(rowBody(all[1]).hasAttribute("hidden")).toBe(false)
+  expect(rowBody(all[2]).hasAttribute("hidden")).toBe(true)
+})
+
+test("a poll that recreates the Trial keeps choices and closes the new row", () => {
+  const first = trial()
+  const { rerender } = renderResults(first)
+  fireEvent.click(rowToggle(rows()[1]))
+  expect(rowToggle(rows()[1]).getAttribute("aria-expanded")).toBe("true")
+
+  const refreshed = trial({
+    verdicts: [
+      ...first.verdicts,
+      {
+        vuln_id: "DEMO-5",
+        identified: "missed",
+        confidence: 0,
+        matched: { unit: null, fault_class: null, symptom: null },
+        evidence: [],
+      },
+    ],
+  })
+  rerender(
+    <MemoryRouter>
+      <TrialResults trial={refreshed} />
+    </MemoryRouter>,
+  )
+
+  const after = rows()
+  expect(after).toHaveLength(5)
+  expect(rowToggle(after[1]).getAttribute("aria-expanded")).toBe("true")
+  expect(rowToggle(after[4]).getAttribute("aria-expanded")).toBe("false")
+})
+
+function assertIdentityClosesEveryRow(makeSecond: () => EvalTrial) {
+  const { log, rerender } = renderProbe(trial())
+  fireEvent.click(rowToggle(rows()[0]))
+  expect(rowToggle(rows()[0]).getAttribute("aria-expanded")).toBe("true")
+
+  const second = makeSecond()
+  log.length = 0
+  rerender(second)
+
+  // Every committed render of the new identity must already be closed: the
+  // reset may not wait for an effect.
+  const identity = `${second.target_id}|${second.target_run_id}|${second.trial_id}`
+  const committed = log.filter((entry) => entry.id === identity)
+  expect(committed.length).toBeGreaterThan(0)
+  expect(committed.every((entry) => entry.expanded === "false")).toBe(true)
+  expect(rowToggle(rows()[0]).getAttribute("aria-expanded")).toBe("false")
+}
+
+test("changing trial_id closes every row before the first commit", () => {
+  assertIdentityClosesEveryRow(() => trial({ trial_id: "t2" }))
+})
+
+test("changing target_run_id closes every row before the first commit", () => {
+  assertIdentityClosesEveryRow(() => trial({ target_run_id: "run-b" }))
+})
+
+test("changing target_id closes every row before the first commit", () => {
+  assertIdentityClosesEveryRow(() => trial({ target_id: "comfyui-2" }))
+})
+
+test("empty results keep the existing empty notice", () => {
+  renderResults(trial({ verdicts: [], diagnoses: [] }))
+
+  expect(screen.getByText("No results were materialized for this Trial.")).toBeDefined()
+  expect(rows()).toHaveLength(0)
+})
+
+test("a missing diagnosis keeps its notice once the row is open", () => {
+  renderResults(
+    trial({
+      verdicts: [
+        {
+          vuln_id: "DEMO-4",
+          identified: "missed",
+          confidence: 0,
+          matched: { unit: null, fault_class: null, symptom: null },
+          evidence: [],
+        },
+      ],
+      diagnoses: [],
+    }),
+  )
+
+  fireEvent.click(rowToggle(rows()[0]))
+  expect(screen.getByText(/no diagnosis was materialized/i)).toBeDefined()
+})
+
+test("unavailable ground truth keeps the fallback on every row", () => {
+  renderWithGroundTruth(trial(), { status: "unavailable" })
+
+  for (const row of rows()) {
+    fireEvent.click(rowToggle(row))
+    expect(within(row).getByText("Ground truth non disponibile")).toBeDefined()
+  }
 })

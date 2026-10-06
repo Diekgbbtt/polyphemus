@@ -1,17 +1,15 @@
 import { Link } from "react-router-dom"
 import { projectPaths } from "../projectPaths"
 
-export type GlobalSection = "home" | "projects" | "evaluations"
+export type GlobalSection = "projects" | "evaluations"
 
 // The site-wide entry points. Both the project shells and the eval shell render
 // it, so a user can always move between the catalog and the evaluations - even
-// when the live agent is unavailable.
+// when the live agent is unavailable. The catalog is reached through Projects
+// (to "/"); there is no separate Home entry point.
 export function GlobalNav({ active }: { active?: GlobalSection }) {
   return (
     <nav className="global-nav" aria-label="Global">
-      <Link to="/" aria-current={active === "home" ? "page" : undefined}>
-        Home
-      </Link>
       <Link to="/" aria-current={active === "projects" ? "page" : undefined}>
         Projects
       </Link>

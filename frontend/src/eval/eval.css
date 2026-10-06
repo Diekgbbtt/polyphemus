@@ -306,10 +306,68 @@
 }
 
 .eval-artifact-entry h3 {
+  margin: 0 0 0.6rem;
+  min-width: 0;
+  font-size: 15px;
+}
+
+/* One collapsible result row: the header button stays visible (caret, row N,
+   vuln_id, verdict, confidence) while the body holds the former details. The
+   same dark treatment as the Hunting/Skills artifact groups. */
+.eval-result-toggle {
   display: flex;
   align-items: baseline;
-  gap: 0.6rem;
-  margin: 0 0 0.6rem;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  width: 100%;
+  min-width: 0;
+  text-align: left;
+  border: 1px solid #3c4043;
+  background: #14161a;
+  color: #e8eaed;
+  border-radius: 6px;
+  padding: 0.35rem 0.65rem;
+  font: inherit;
+  font-size: 15px;
+  cursor: pointer;
+}
+
+.eval-result-toggle:hover {
+  border-color: #8ab4f8;
+}
+
+.eval-result-toggle:focus-visible {
+  border-color: #8ab4f8;
+  outline: 2px solid #8ab4f8;
+  outline-offset: 2px;
+}
+
+.eval-result-caret {
+  color: #9aa0a6;
+}
+
+.eval-result-toggle .eval-ref {
+  color: #8ab4f8;
+  min-width: 0;
+}
+
+.eval-row-index {
+  color: #9aa0a6;
+}
+
+.eval-result-confidence {
+  margin-left: auto;
+  color: #9aa0a6;
+  font-variant-numeric: tabular-nums;
+}
+
+.eval-result-body {
+  min-width: 0;
+}
+
+/* The explicit hidden attribute wins over any display rule on the body. */
+.eval-result-body[hidden] {
+  display: none;
 }
 
 .eval-artifact-entry h4 {
