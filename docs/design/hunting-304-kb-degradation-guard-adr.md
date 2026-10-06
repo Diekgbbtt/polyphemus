@@ -66,4 +66,4 @@ The KB tool deliberately fails open (the hunting author lane depends on it - `te
 - `src/polymerhus/attack/hunting/pod/tools.py` - `KbQueryTool._record` stamps `degraded`; the fail-open bundle sets it.
 - `src/polymerhus/attack/hunting/pod/graph.py` - `_degraded_kb_evidence`, `_guard_degraded_kb`, `_clean_from_trail`.
 - `src/polymerhus/attack/hunting/prompts/pod-triager.md` - the EXHAUSTION rule distinguishes unavailable from absent.
-- Tests - `tests/attack/pod/test_kb_degradation_guard.py` (new), `tests/lightrag/test_tool.py`.
+- Tests - `tests/attack/pod/test_kb_degradation_guard.py` (new), `tests/lightrag/test_tool.py`, `tests/e2e/test_test_executor_pod_walkthrough.py` (the E1/2 walkthrough now mechanises the degraded-KB refusal and keeps an available-KB clean-exhaustion control).
