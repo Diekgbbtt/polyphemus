@@ -1,6 +1,7 @@
 # ADR: the Kali MCP exec surface must not block the server - async tool bodies and a client read timeout above the command bound
 
-*Status: RATIFIED (2026-10-04). New record. It supersedes no earlier decision; it corrects the implicit assumption that the FastMCP tool bodies may be plain sync functions.*
+*Status: RATIFIED (2026-10-04). New record. It supersedes no earlier decision; it corrects the implicit assumption that the FastMCP tool bodies may be plain sync functions.
+Amended 2026-10-06 (#334): the host-side `steel_exec` tests await the async body via `asyncio.run` (see §5).*
 
 ## Context
 
@@ -41,6 +42,14 @@ The retry is logged.
 ### 4. Regression guard
 
 `tests/kali/test_http_history_mcp_tools.py::test_tools_are_async_so_a_long_command_never_blocks_the_server` asserts every tool body is a coroutine function, so a future revert to a sync body fails the suite.
+
+### 5. Host-side tool tests await the async body through `asyncio.run`
+
+The host-side `steel_exec` unit tests (`tests/test_steel_exec.py`) drive the real tool body through one sync helper, `_steel_exec`, which runs `asyncio.run(mcp_server.steel_exec.fn(**kwargs))`.
+This matches the existing pattern in `tests/kali/test_http_history_mcp_tools.py` and `tests/test_steel_exec_live.py`: the tests stay synchronous, the async body is awaited exactly as FastMCP awaits it, and the `_offload` worker-thread seam stays in the path.
+No assertion is weakened and no mock replaces the tool.
+
+This corrects the drift from `9119348` (#334): the tests kept binding `m.steel_exec.fn` and calling it synchronously, so every call returned a coroutine that was then subscripted (`TypeError: 'coroutine' object is not subscriptable`).
 
 ## Alignment
 

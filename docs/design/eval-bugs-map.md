@@ -119,7 +119,7 @@ Confidence: HIGH = code/evidence confirmed; POTENTIAL = needs `diagnosing-bugs`.
 
 | id | failure | diagnosis | conf | ticket |
 |---|---|---|---|---|
-| EV-23 | `tests/test_steel_exec.py` fails on `dev` (`TypeError: 'coroutine' object is not subscriptable`) | `9119348` made the kali `steel_exec` tool non-blocking (`async def steel_exec` + `_offload`), so `m.steel_exec.fn` is a coroutine function, but the tests still call it synchronously; pre-existing on `ce0321a`, unrelated to the #329/#287 merges | HIGH | #334 |
+| EV-23 | `tests/test_steel_exec.py` fails on `dev` (`TypeError: 'coroutine' object is not subscriptable`) | `9119348` made the kali `steel_exec` tool non-blocking (`async def steel_exec` + `_offload`), so `m.steel_exec.fn` is a coroutine function, but the tests still call it synchronously; pre-existing on `ce0321a`, unrelated to the #329/#287 merges. **FIXED by #334**: the tests now await the real tool body via `asyncio.run` (`_steel_exec`), matching `mcp-exec-nonblocking-decisions.md` §5 | HIGH | #334 |
 
 ## 6. Noise removal applied
 
