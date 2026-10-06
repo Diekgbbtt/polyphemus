@@ -6,8 +6,8 @@ import logging
 import shutil
 from typing import Any, Callable
 
+from polymerhus.app import config as config_module
 from polymerhus.app.clients import pg
-from polymerhus.app.config import config
 from polymerhus.ingestion.audit import (
     LightRAGStorageReader,
     StorageParseError,
@@ -110,11 +110,11 @@ class IngestionService:
         self.normalized_root = normalized_root
         self.lightrag_adapter = lightrag_adapter or LightRAGIngestionAdapter(
             client=LightRAGHttpClient(),
-            poll_interval_seconds=config.LIGHTRAG_POLL_INTERVAL_SECONDS,
-            timeout_seconds=config.LIGHTRAG_INGESTION_TIMEOUT_SECONDS,
+            poll_interval_seconds=config_module.config.LIGHTRAG_POLL_INTERVAL_SECONDS,
+            timeout_seconds=config_module.config.LIGHTRAG_INGESTION_TIMEOUT_SECONDS,
         )
         self.audit_runner = audit_runner or run_post_ingestion_audit
-        self.storage_reader = storage_reader or LightRAGStorageReader(Path(config.LIGHTRAG_STORAGE_DIR))
+        self.storage_reader = storage_reader or LightRAGStorageReader(Path(config_module.config.LIGHTRAG_STORAGE_DIR))
         self._now = now or (lambda: datetime.now(timezone.utc))
         if downloader is None:
             downloader = UrlDownloader(now=self._now)
@@ -123,8 +123,8 @@ class IngestionService:
 
     @classmethod
     def from_config(cls) -> "IngestionService":
-        ingestion_root = Path(config.INGESTION_ROOT)
-        normalized_root = Path(config.INGESTION_NORMALIZED_DIR)
+        ingestion_root = Path(config_module.config.INGESTION_ROOT)
+        normalized_root = Path(config_module.config.INGESTION_NORMALIZED_DIR)
         return cls(ingestion_root=ingestion_root, normalized_root=normalized_root)
 
     def submit(self, *, source_kind: str, source_uri: str) -> dict:

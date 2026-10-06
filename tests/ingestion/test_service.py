@@ -1121,8 +1121,10 @@ def test_new_document_audit_warnings_do_not_block_processed(tmp_path, monkeypatc
 
 
 def test_default_storage_reader_uses_configured_storage_dir(tmp_path, monkeypatch):
+    import polymerhus.app.config as config_module
+
     storage_dir = tmp_path / "lightrag_storage"
-    monkeypatch.setattr(service_module.config, "LIGHTRAG_STORAGE_DIR", str(storage_dir))
+    monkeypatch.setattr(config_module.config, "LIGHTRAG_STORAGE_DIR", str(storage_dir))
 
     service = IngestionService(
         ingestion_root=tmp_path / "ingestion",

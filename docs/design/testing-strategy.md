@@ -95,6 +95,14 @@ While centralising config, `neo4j_target()` and the config-backed client were le
 Worth recording because it happened *during* the repair of exactly that class of bug.
 **Rule: when you centralise a config, check every consumer of it, including the ones that read it indirectly.**
 
+**A config module reloaded without its consumers.**
+`tests/lightrag/test_client.py` reloaded `polymerhus.app.config` to pick up `monkeypatch` env vars.
+The reload rebinds `polymerhus.app.config.config` to a fresh object, but `src/polymerhus/ingestion/service.py` had bound the old object at import via `from polymerhus.app.config import config`.
+`tests/ingestion/test_lightrag_wait_budget.py::test_from_config_wires_configured_deadline` then patched the reloaded object while the service read the pre-reload one, so `assert 1800.0 == 3600.5` failed only after the reloading suite.
+`tests/test_app_config.py` and several e2e tests reload the same module, so the hazard is systemic: any import-time config binding desyncs.
+**Rule: production code reads configuration through the module (`config_module.config`), never binds it by value at import; a test that reloads the module then cannot desync a consumer.**
+A test that only needs different config values patches `config_module.config` through `monkeypatch`, and never reloads to pick up env (#333).
+
 ## 7. Adding a test - the decision
 
 1. Does it need a real database? Almost always **no** - inject a fake `read_fn`/`merge_fn`. Put it in the unit tier.
