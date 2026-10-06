@@ -172,17 +172,22 @@ The production overlay `eval/docker-compose.dashboard.real.yml` wires them for t
     EVAL_PROJECT_DATA_ROOT_HOST_PATH=/opt/polymerhus-dev/eval/instances/data/eval-server-1 \
     EVAL_RUNS_ROOT_HOST_PATH=/opt/polymerhus-dev/eval/runs \
       docker compose -f docker-compose.yml -f docker-compose.dev.yml \
-        -f eval/docker-compose.dashboard.real.yml up --build
+        -f eval/docker-compose.dashboard.real.yml \
+        up -d --no-deps eval-api eval-dashboard
 
-Every source is a read-only bind that must already exist (`bind.create_host_path: false`), so a
-missing or mistyped root fails loudly instead of silently becoming an empty directory. The
-defaults are the instance's persistent project data root (the driver's `EVAL_DATA_ROOT`), the
-materialized store, and the **primary** harness runs root (`/opt/polymerhus-dev/eval/runs`) that
-holds the new Trials' records. All of them are read at request time, so a new evaluation shows up
-on the next poll with no API restart.
+The command names the two dashboard services explicitly with `--no-deps`, so it never starts,
+recreates or builds the agent, Neo4j, Postgres or the eval workers; both images are prebuilt, so
+it needs no `--build`. Every source is a read-only bind that must already exist
+(`bind.create_host_path: false`), so a missing or mistyped root fails loudly instead of silently
+becoming an empty directory. The defaults are the instance's persistent project data root (the
+driver's `EVAL_DATA_ROOT`), the materialized store, and the **primary** harness runs root
+(`/opt/polymerhus-dev/eval/runs`) that holds the new Trials' records. All of them are read at
+request time, so a new evaluation shows up on the next poll with no API restart.
 
-Because nothing is auto-created, create a root that does not exist yet before the first `up` — the
-driver creates its own runs root on the first run, or `mkdir -p /opt/polymerhus-dev/eval/runs`.
+Because nothing is auto-created, **verify that every host root exists before starting** (for
+example `test -d /opt/polymerhus-dev/eval/runs`). A root that is still missing is a stop-and-
+confirm: the driver creates its own runs root on its first run, and a mount must never be pointed
+at a directory this dashboard would have to invent.
 
 Historical Trials live in a second, **optional** runs root. A fresh install never needs it; a host
 that still holds earlier records adds the companion overlay:
@@ -190,7 +195,8 @@ that still holds earlier records adds the companion overlay:
     EVAL_RUNS_LEGACY_ROOT_HOST_PATH=/opt/eval-platform-model/eval/runs \
       docker compose -f docker-compose.yml -f docker-compose.dev.yml \
         -f eval/docker-compose.dashboard.real.yml \
-        -f eval/docker-compose.dashboard.legacy.yml up --build
+        -f eval/docker-compose.dashboard.legacy.yml \
+        up -d --no-deps eval-api eval-dashboard
 
 `EVAL_RUNS_LEGACY_ROOT_HOST_PATH` defaults to `/opt/eval-platform-model/eval/runs` and is mounted
 read-only at `/srv/eval-runs-legacy`; the API reads it as `EVAL_RUNS_LEGACY_ROOT` beside
@@ -354,7 +360,8 @@ generator — and binds the operator's store read-only:
 
     EVAL_ARTIFACT_STORE_HOST_PATH=/srv/eval-artifacts \
       docker compose -f docker-compose.yml -f docker-compose.dev.yml \
-        -f eval/docker-compose.dashboard.real.yml up --build
+        -f eval/docker-compose.dashboard.real.yml \
+        up -d --no-deps eval-api eval-dashboard
 
 `EVAL_ARTIFACT_STORE_HOST_PATH` defaults to `/srv/eval-artifacts` and is mounted read-only at the
 container's `/srv/eval-artifacts` (its `EVAL_ARTIFACT_STORE`). The overlay also binds the eval
@@ -366,13 +373,20 @@ mounts the raw `live/` mirror. Historical records come from the optional compani
 `bind.create_host_path: false`, so a missing root is an error rather than an empty directory. Both
 published ports are loopback-only and configurable (`EVAL_API_PORT`, `EVAL_DASHBOARD_PORT`).
 
+`eval/docker-compose.dashboard.real.yml` interpolates `EVAL_RUNS_ROOT_HOST_PATH`. On the existing
+eval server the dashboard env file (`.eval-dashboard.env`) still pins the **previous** value: a
+shell export takes precedence over an env file, so pass the current paths explicitly on the
+command line (as above) and leave that remote file untouched. Without the override the primary
+runs mount would keep pointing at the old tree.
+
 Open **http://localhost:5173/p** for the project hub and **http://localhost:5173/eval** for the
 read-only eval pages; the API is reachable at `http://localhost:8090/health` and
 `http://localhost:8090/snapshot`. This overlay reads completed Trials only — it is not live
-monitoring. Stop it with:
+monitoring. Stop just these two services with:
 
     docker compose -f docker-compose.yml -f docker-compose.dev.yml \
-      -f eval/docker-compose.dashboard.real.yml down
+      -f eval/docker-compose.dashboard.real.yml \
+      stop eval-api eval-dashboard
 
 #### Operator-only ground truth (separate API, second tunnel)
 

@@ -32,6 +32,8 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parents[2]
 README = REPO_ROOT / "README.md"
 OPERATOR_OVERLAY = REPO_ROOT / "eval" / "docker-compose.dashboard.operator.yml"
+REAL_OVERLAY = REPO_ROOT / "eval" / "docker-compose.dashboard.real.yml"
+LEGACY_OVERLAY = REPO_ROOT / "eval" / "docker-compose.dashboard.legacy.yml"
 
 # The four files the documented startup command must select, in order.
 FOUR_COMPOSE_FILES = (
@@ -41,6 +43,15 @@ FOUR_COMPOSE_FILES = (
     "-f eval/docker-compose.dashboard.operator.yml",
 )
 STARTUP = "up -d --no-deps eval-operator-api eval-dashboard"
+
+# The real dashboard runbook starts only its two services, never their deps.
+REAL_STARTUP = "up -d --no-deps eval-api eval-dashboard"
+REAL_COMPOSE_FILES = (
+    "-f docker-compose.yml",
+    "-f docker-compose.dev.yml",
+    "-f eval/docker-compose.dashboard.real.yml",
+)
+LEGACY_COMPOSE_FILES = REAL_COMPOSE_FILES + ("-f eval/docker-compose.dashboard.legacy.yml",)
 
 
 # --- markdown / overlay runbook helpers ----------------------------------------
@@ -87,6 +98,63 @@ def test_operator_overlay_header_documents_the_same_startup_command() -> None:
     for fragment in FOUR_COMPOSE_FILES:
         assert fragment in command, command
     assert STARTUP in command
+
+
+def _assert_dashboard_startup(command: str, files: tuple[str, ...]) -> None:
+    """The real/legacy dashboard startup names only its own two services."""
+    for fragment in files:
+        assert fragment in command, command
+    assert "docker compose" in command
+    assert REAL_STARTUP in command
+    assert command.count("-f ") == len(files), command
+    # Never a whole-stack or dependency operation, never a build, never a
+    # directory or volume mutation.
+    for forbidden in ("--build", "mkdir", " down", " -v", "--remove-orphans", " --force"):
+        assert forbidden not in command, (forbidden, command)
+    for service in ("agent", "neo4j", "postgres", "kali", "lightrag", "eval-store"):
+        assert service not in command, (service, command)
+
+
+def test_readme_real_startup_selects_only_the_two_dashboard_services() -> None:
+    command = _joined_shell_command(
+        README.read_text(encoding="utf-8").splitlines(), REAL_COMPOSE_FILES[2]
+    )
+
+    _assert_dashboard_startup(command, REAL_COMPOSE_FILES)
+
+
+def test_readme_legacy_startup_selects_only_the_two_dashboard_services() -> None:
+    command = _joined_shell_command(
+        README.read_text(encoding="utf-8").splitlines(), LEGACY_COMPOSE_FILES[3]
+    )
+
+    _assert_dashboard_startup(command, LEGACY_COMPOSE_FILES)
+
+
+def test_real_overlay_header_documents_the_same_startup_command() -> None:
+    command = _joined_shell_command(
+        REAL_OVERLAY.read_text(encoding="utf-8").splitlines(), REAL_COMPOSE_FILES[2]
+    )
+
+    _assert_dashboard_startup(command, REAL_COMPOSE_FILES)
+
+
+def test_legacy_overlay_header_documents_the_same_startup_command() -> None:
+    command = _joined_shell_command(
+        LEGACY_OVERLAY.read_text(encoding="utf-8").splitlines(), LEGACY_COMPOSE_FILES[3]
+    )
+
+    _assert_dashboard_startup(command, LEGACY_COMPOSE_FILES)
+
+
+def test_the_runbook_documents_the_stale_dashboard_env_override() -> None:
+    text = " ".join(README.read_text(encoding="utf-8").split())
+
+    assert ".eval-dashboard.env" in text
+    assert "EVAL_RUNS_ROOT_HOST_PATH" in text
+    # The override is a shell export, not an edit of the remote file.
+    assert "takes precedence" in text
+    assert "leave that remote file untouched" in text
 
 
 # --- the README preflight keeps the starting directory --------------------------

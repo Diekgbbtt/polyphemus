@@ -100,18 +100,37 @@ def load_spend_records(
     return records
 
 
+def _root_identity(root: str | Path) -> tuple:
+    """A root's filesystem identity, for collapsing the same directory twice.
+
+    Two read-only bind mounts of one host directory inside the container have
+    different paths - so `realpath` cannot tell them apart - but the same
+    `(st_dev, st_ino)`. Keying on that identity keeps one record from becoming a
+    false ambiguity. A missing or unreadable root has no usable identity, so it
+    falls back to its resolved path: it yields no records anyway, and the same
+    missing path listed twice must still collapse to a single entry.
+    """
+    try:
+        info = os.stat(str(root))
+    except OSError:
+        return ("path", os.path.realpath(str(root)))
+    return ("fs", info.st_dev, info.st_ino)
+
+
 def _distinct_roots(roots: Iterable[str | Path | None]) -> list[str | Path]:
     """The configured roots, each physical directory counted once.
 
     A root listed twice - the primary and the legacy root pointing at the same
-    tree, or a symlink to it - must not turn one record into a false ambiguity.
+    tree, a symlink to it, or two bind mounts of one directory - must not turn
+    one record into a false ambiguity. Distinct directories stay distinct, so a
+    Trial found in two of them is still ambiguous.
     """
-    seen: set[str] = set()
+    seen: set[tuple] = set()
     distinct: list[str | Path] = []
     for root in roots:
         if not root:
             continue
-        key = os.path.realpath(str(root))
+        key = _root_identity(root)
         if key in seen:
             continue
         seen.add(key)

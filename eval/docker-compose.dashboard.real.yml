@@ -3,8 +3,15 @@
 # Brings up the read-only project/eval dashboard beside the normal stack:
 #
 #   EVAL_ARTIFACT_STORE_HOST_PATH=/srv/eval-artifacts \
+#   EVAL_PROJECT_DATA_ROOT_HOST_PATH=/opt/polymerhus-dev/eval/instances/data/eval-server-1 \
+#   EVAL_RUNS_ROOT_HOST_PATH=/opt/polymerhus-dev/eval/runs \
 #   docker compose -f docker-compose.yml -f docker-compose.dev.yml \
-#     -f eval/docker-compose.dashboard.real.yml up --build
+#     -f eval/docker-compose.dashboard.real.yml \
+#     up -d --no-deps eval-api eval-dashboard
+#
+# Only these two services are named, with `--no-deps`: the agent, Neo4j,
+# Postgres and the eval workers are never started, recreated or built, and the
+# prebuilt images need no `--build`.
 #
 # Two services, both on the base `polymerhus-net`:
 #   eval-api       the read API over the REAL artifact store (read-only host
@@ -36,11 +43,16 @@
 #   EVAL_RUNS_LEGACY_ROOT_HOST_PATH=/opt/eval-platform-model/eval/runs \
 #   docker compose -f docker-compose.yml -f docker-compose.dev.yml \
 #     -f eval/docker-compose.dashboard.real.yml \
-#     -f eval/docker-compose.dashboard.legacy.yml up --build
+#     -f eval/docker-compose.dashboard.legacy.yml \
+#     up -d --no-deps eval-api eval-dashboard
 #
 # The read API searches both runs roots; a record present in two different roots
-# is ambiguous (never arbitrarily chosen), and the same root configured twice is
-# read once.
+# is ambiguous (never arbitrarily chosen), and the same root mounted twice - or
+# listed twice - is read once. Verify every host root exists before starting: a
+# missing one is a stop-and-confirm, never a directory to invent. On the existing
+# eval server `.eval-dashboard.env` still pins the previous
+# EVAL_RUNS_ROOT_HOST_PATH; a shell export takes precedence, so pass the current
+# value on the command line and leave that file untouched.
 
 volumes:
   # The frontend's dependencies, kept out of the bind-mounted working tree.

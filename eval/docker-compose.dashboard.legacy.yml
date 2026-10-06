@@ -7,16 +7,18 @@
 #   EVAL_RUNS_LEGACY_ROOT_HOST_PATH=/opt/eval-platform-model/eval/runs \
 #   docker compose -f docker-compose.yml -f docker-compose.dev.yml \
 #     -f eval/docker-compose.dashboard.real.yml \
-#     -f eval/docker-compose.dashboard.legacy.yml up --build
+#     -f eval/docker-compose.dashboard.legacy.yml \
+#     up -d --no-deps eval-api eval-dashboard
 #
 # It adds one read-only bind to the existing eval-api service: the historical
 # harness runs root, published at a fixed container path and read as
 # EVAL_RUNS_LEGACY_ROOT beside the primary EVAL_RUNS_ROOT. The recorded-spend
 # resolver searches both roots by the Trial's full identity; a record that
-# appears in two different roots is ambiguous (never arbitrarily chosen), and a
-# root listed twice is read once. The bind must already exist
-# (`bind.create_host_path: false`): a missing or mistyped path fails loudly
-# instead of becoming an empty directory.
+# appears in two different roots is ambiguous (never arbitrarily chosen), while
+# the same directory mounted twice - or a root listed twice - is read once: the
+# roots are collapsed by filesystem identity (st_dev, st_ino), not by path. The
+# bind must already exist (`bind.create_host_path: false`): a missing or mistyped
+# path fails loudly instead of becoming an empty directory.
 
 services:
   eval-api:

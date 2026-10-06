@@ -18,6 +18,8 @@ maps one fully-identified Trial from the projected ``/snapshot`` to that record:
 from __future__ import annotations
 
 import json
+import os
+import stat
 from pathlib import Path
 
 import pytest
@@ -343,3 +345,92 @@ def test_loading_records_skips_a_missing_and_a_repeated_root(tmp_path: Path) -> 
     )
 
     assert len(records) == 1
+
+
+# --- bind aliases: one directory mounted at two container paths ------------------
+
+
+class _AliasOs:
+    """`os` shim: every path reports ONE filesystem identity (a bind alias).
+
+    Two read-only bind mounts of the same host directory have different paths
+    (so `realpath` cannot tell them apart) but the same `(st_dev, st_ino)`.
+    """
+
+    def __init__(self, real, *, device: int, inode: int) -> None:
+        self._real = real
+        self._device = device
+        self._inode = inode
+        # The module may fall back to the real path when `stat` fails.
+        self.path = real.path
+
+    def stat(self, path: object, **kwargs: object) -> os.stat_result:
+        return os.stat_result(
+            (stat.S_IFDIR | 0o755, self._inode, self._device, 1, 0, 0, 0, 0, 0, 0)
+        )
+
+    def realpath(self, path: object) -> str:
+        return self._real.realpath(path)
+
+
+def test_two_bind_aliases_of_one_directory_are_read_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    first = tmp_path / "srv-a"
+    second = tmp_path / "srv-b"
+    first.mkdir()
+    second.mkdir()
+
+    calls: list[str] = []
+
+    def loader(root, *, files=None):
+        # Both aliases expose the same record, exactly as two mounts would.
+        calls.append(str(root))
+        return [_identity(spent_tokens=12)]
+
+    monkeypatch.setattr(trial_spend, "os", _AliasOs(os, device=2049, inode=4242))
+    monkeypatch.setattr(trial_spend, "load_spend_records", loader)
+
+    spend = _resolve_in(first, second)
+
+    assert spend.status == "available"
+    assert spend.spent_tokens == 12
+    # The second alias was never read: one record, no false ambiguity.
+    assert calls == [str(first)]
+
+
+def test_distinct_directories_with_the_same_trial_stay_ambiguous(
+    tmp_path: Path,
+) -> None:
+    first = tmp_path / "srv-a"
+    second = tmp_path / "srv-b"
+    _write_record(first, "current.yaml", _identity(spent_tokens=12))
+    _write_record(second, "historical.yaml", _identity(spent_tokens=12))
+
+    spend = _resolve_in(first, second)
+
+    # Identical records in two physically different directories are still two
+    # candidates: the resolver never picks one arbitrarily.
+    assert spend.status == "unavailable"
+    assert spend.reason == trial_spend.SPEND_RECORD_AMBIGUOUS
+
+
+def test_a_missing_or_unreadable_root_beside_a_valid_one_still_resolves(
+    tmp_path: Path,
+) -> None:
+    valid = tmp_path / "runs"
+    _write_record(valid, "only.yaml", _identity(spent_tokens=12))
+    missing = tmp_path / "not-mounted"
+
+    spend = _resolve_in(valid, missing)
+
+    assert spend.status == "available"
+    assert spend.spent_tokens == 12
+
+
+def test_the_same_missing_root_twice_collapses_without_reading_it(
+    tmp_path: Path,
+) -> None:
+    missing = tmp_path / "not-mounted"
+
+    assert trial_spend._distinct_roots([missing, missing]) == [missing]
