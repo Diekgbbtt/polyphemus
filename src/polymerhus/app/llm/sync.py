@@ -133,6 +133,13 @@ class SyncPushError(RuntimeError):
     the safe failure mode)."""
 
 
+class SyncConfigError(RuntimeError):
+    """An unusable cost-guard configuration (a malformed/nonsensical budget
+    env override): hard - a config lie must fail fast rather than silently
+    provision a guard that does not guard (#330, the providers.py
+    env-override discipline)."""
+
+
 # --- Env readers (lazy, at call time - never at import) ----------------------
 
 def provider_api_key(provider: str) -> str | None:
@@ -160,6 +167,134 @@ def master_key() -> str | None:
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+# --- The cost guard: the virtual-key USD budget plan (#330, ADR D13) ---------
+#
+# LiteLLM's native virtual-key `budget_limits` (USD) mirror opencode-go's
+# dollar-denominated cap. A conservatism factor `k` (default 0.5) scales each
+# cap: LiteLLM counts spend at the OFF-PEAK models.dev price while opencode-go
+# charges 2x at peak (01-04, 06-10 UTC Mon-Fri), so the counted budget must be
+# half the dollar cap for the guard to trip before the provider 429s. The
+# provider caps and `k` are env-tunable; an unusable override is a config lie
+# and raises `SyncConfigError` (hard, cold stop). `rpm_limit` is optional.
+
+DEFAULT_BUDGET_5H_USD = 12.0
+DEFAULT_BUDGET_7D_USD = 30.0
+DEFAULT_BUDGET_30D_USD = 60.0
+DEFAULT_BUDGET_CONSERVATISM_FACTOR = 0.5
+
+# (LiteLLM budget window, env name of the provider cap, default cap USD). The
+# window strings are litellm `budget_duration` values; all three are windows of
+# the SAME virtual key (litellm checks each independently).
+_BUDGET_WINDOWS: tuple[tuple[str, str, float], ...] = (
+    ("5h", "LLM_GATEWAY_BUDGET_5H_USD", DEFAULT_BUDGET_5H_USD),
+    ("7d", "LLM_GATEWAY_BUDGET_7D_USD", DEFAULT_BUDGET_7D_USD),
+    ("30d", "LLM_GATEWAY_BUDGET_30D_USD", DEFAULT_BUDGET_30D_USD),
+)
+_CONSERVATISM_FACTOR_ENV = "LLM_GATEWAY_BUDGET_CONSERVATISM_FACTOR"
+_RPM_LIMIT_ENV = "LLM_GATEWAY_KEY_RPM_LIMIT"
+
+
+@dataclass(frozen=True)
+class BudgetPlan:
+    """The per-provider virtual-key cost guard: USD `budget_limits` windows and
+    an optional per-minute request limit. Empty `budget_limits` means no USD
+    guard (never the default - the default plan always guards)."""
+
+    budget_limits: tuple[dict, ...]
+    rpm_limit: int | None
+
+
+def _env_positive_float(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        raise SyncConfigError(f"{name} must be a number (got {raw!r})") from None
+    if value <= 0:
+        raise SyncConfigError(f"{name} must be positive (got {raw!r})")
+    return value
+
+
+def _env_conservatism_factor() -> float:
+    raw = os.environ.get(_CONSERVATISM_FACTOR_ENV)
+    if raw is None or raw.strip() == "":
+        return DEFAULT_BUDGET_CONSERVATISM_FACTOR
+    try:
+        value = float(raw)
+    except ValueError:
+        raise SyncConfigError(
+            f"{_CONSERVATISM_FACTOR_ENV} must be a number (got {raw!r})") from None
+    # A factor > 1 would budget ABOVE the provider cap and defeat the guard.
+    if not 0 < value <= 1:
+        raise SyncConfigError(
+            f"{_CONSERVATISM_FACTOR_ENV} must be in (0, 1] (got {raw!r})")
+    return value
+
+
+def _env_optional_positive_int(name: str) -> int | None:
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return None
+    try:
+        value = int(raw)
+    except ValueError:
+        raise SyncConfigError(f"{name} must be an integer (got {raw!r})") from None
+    if value <= 0:
+        raise SyncConfigError(f"{name} must be positive (got {raw!r})")
+    return value
+
+
+def gateway_budget_plan() -> BudgetPlan:
+    """The cost-guard plan from env, with conservative defaults.
+
+    Every provider cap is scaled by the conservatism factor; the resulting
+    windows ride the virtual key (D3). A malformed override raises
+    `SyncConfigError` (hard), never a silently-degraded guard."""
+    factor = _env_conservatism_factor()
+    limits = tuple(
+        {"budget_duration": duration,
+         "max_budget": round(_env_positive_float(env, default) * factor, 6)}
+        for duration, env, default in _BUDGET_WINDOWS
+    )
+    return BudgetPlan(budget_limits=limits,
+                      rpm_limit=_env_optional_positive_int(_RPM_LIMIT_ENV))
+
+
+def _canonical_budget_limits(limits: Any) -> tuple[tuple[str, float], ...]:
+    """Normalize a `budget_limits` surface for convergence comparison: a sorted
+    tuple of `(budget_duration, max_budget)`, ignoring litellm's server-set
+    `reset_at` (re-derived on every write, so comparing it would churn forever)
+    and any other merged keys. `None`/empty -> `()`."""
+    if not limits:
+        return ()
+    canonical: list[tuple[str, float]] = []
+    for window in limits:
+        if not isinstance(window, dict):
+            continue
+        duration = window.get("budget_duration")
+        max_budget = window.get("max_budget")
+        if not isinstance(duration, str) or isinstance(max_budget, bool) \
+                or not isinstance(max_budget, (int, float)):
+            continue
+        canonical.append((duration, round(float(max_budget), 6)))
+    return tuple(sorted(canonical))
+
+
+def _unpriced_model_names(desired: list["DesiredModel"]) -> list[str]:
+    """The registered models whose authored `model_info` carries no USD price.
+
+    LiteLLM cannot estimate a request's max cost for them, so budget
+    reservation refuses the estimate and the USD guard FAILS OPEN for those
+    models (LiteLLM #35524; `block_requests_for_models_without_pricing` does
+    NOT exist in the pinned 1.96.0). The sync names them loudly at bootstrap so
+    an unpriced eval model cannot silently escape the guard (ADR D13)."""
+    return [model.model_name for model in desired
+            if not model.model_info.get("input_cost_per_token")
+            and not model.model_info.get("output_cost_per_token")]
 
 
 # --- Fetch (the two sources; both raise SyncSourceError) ---------------------
@@ -576,7 +711,9 @@ class GatewayClient:
             raise SyncPushError("GET /key/info returned an unparseable body")
         return info
 
-    def ensure_virtual_key(self, key: str, models: list[str]) -> None:
+    def ensure_virtual_key(self, key: str, models: list[str], *,
+                           budget_limits: list[dict] | None = None,
+                           rpm_limit: int | None = None) -> None:
         """Make `key` a virtual key scoped to `models`, idempotently.
 
         `key` is an APP-MINTED litellm-native virtual key
@@ -587,25 +724,42 @@ class GatewayClient:
         #193); the virtual key is only the client's inbound identity (D3,
         amended).
 
-        Absent -> `POST /key/generate {key, models}`; present -> `POST
-        /key/update {key, models}` ONLY when the stored scope differs (a
-        converged run is a no-op, C9)."""
+        `budget_limits` (USD windows, #330) and `rpm_limit` are the cost
+        guard; when `budget_limits is not None` the sync OWNS that surface:
+        absent -> `POST /key/generate {key, models, budget_limits, rpm_limit}`;
+        present -> `POST /key/update` ONLY when the stored model scope, the
+        canonical budget windows (litellm's server-set `reset_at` ignored), or
+        the rpm differs (a converged run is a no-op, C9). `budget_limits=None`
+        leaves any budget/rpm untouched - model-scope-only management."""
         if not key.startswith("sk-"):
             raise SyncPushError(
                 "refusing to mint a non-litellm virtual key (not 'sk-'-"
                 "prefixed); the client's gateway credential must be an "
                 "app-minted virtual key, never a provider credential (#335)")
         desired = sorted(set(models))
+        manage_budget = budget_limits is not None
+        desired_budget = _canonical_budget_limits(budget_limits)
         info = self.key_info(key)
-        stored = set(info.get("models") or []) if info else None
-        if stored is not None:
-            if set(stored) == set(desired):
+        if info is not None:
+            changed = set(info.get("models") or []) != set(desired)
+            if manage_budget:
+                changed = changed or (
+                    _canonical_budget_limits(info.get("budget_limits"))
+                    != desired_budget)
+                changed = changed or info.get("rpm_limit") != rpm_limit
+            if not changed:
                 return
-            self._request("POST", "/key/update",
-                          json={"key": key, "models": desired})
+            body: dict = {"key": key, "models": desired}
+            if manage_budget:
+                body["budget_limits"] = list(budget_limits)
+                body["rpm_limit"] = rpm_limit
+            self._request("POST", "/key/update", json=body)
             return
-        self._request("POST", "/key/generate",
-                      json={"key": key, "models": desired})
+        body = {"key": key, "models": desired}
+        if manage_budget:
+            body["budget_limits"] = list(budget_limits)
+            body["rpm_limit"] = rpm_limit
+        self._request("POST", "/key/generate", json=body)
 
 
 # --- The pipeline (impure orchestrator) -----------------------------------------
@@ -663,6 +817,19 @@ def run_sync(*,
         snapshot = read_snapshot(registered)
         validate_desired(desired, snapshot)  # raises SyncCollapseError (hard)
 
+        # #330: resolve the cost-guard plan BEFORE any gateway write, so an
+        # unusable budget override (a config lie) cold-stops on a clean
+        # gateway rather than after a partial push; and surface any registered
+        # model the USD guard cannot price (it would fail OPEN for it).
+        budget_plan = gateway_budget_plan()  # raises SyncConfigError (hard)
+        unpriced = _unpriced_model_names(desired)
+        if unpriced:
+            logger.warning(
+                "pricing-gap (cost-guard fails OPEN, LiteLLM #35524): %d "
+                "registered model(s) carry no USD price and cannot reserve "
+                "budget: %s - price them via models.dev or pin the eval to "
+                "priced models (ADR D13)", len(unpriced), unpriced)
+
         # #193: the routing trio's api_key is masked in /model/info, so a
         # provider key rotation is invisible to the authored-surface diff. It
         # is tracked via the snapshot's per-provider key fingerprint: when a
@@ -696,12 +863,18 @@ def run_sync(*,
         # credential, which litellm's `/key/generate` rejects unless it is
         # `sk-`-prefixed (opencode-go's is `oc_sk_`). Derive the same key the
         # client derives (`gateway_virtual_key`), scoped to that provider's
-        # registered records - idempotent, converges to a no-op (C9).
+        # registered records - idempotent, converges to a no-op (C9). Each key
+        # also carries the USD cost guard (#330): the windows from the existing
+        # models.dev pricing, so the gateway trips a budget before the provider
+        # 429s. A budget/window/scope change converges on the next run; a
+        # no-change re-run is idle.
         for provider, api_key in api_keys.items():
             scoped = [m.model_name for m in desired
                       if m.model_name.startswith(f"{provider}/")]
-            gateway.ensure_virtual_key(gateway_virtual_key(provider, api_key),
-                                       scoped)
+            gateway.ensure_virtual_key(
+                gateway_virtual_key(provider, api_key), scoped,
+                budget_limits=list(budget_plan.budget_limits),
+                rpm_limit=budget_plan.rpm_limit)
 
         new_snapshot = Snapshot(
             desired_count=len(desired),
@@ -737,6 +910,12 @@ def run_sync(*,
     except SyncPushError as exc:
         logger.error("sync HARD (gateway management-API failure, exit %d): %s",
                      SYNC_HARD, exc)
+        return SYNC_HARD
+    except SyncConfigError as exc:
+        logger.error(
+            "sync HARD (unusable cost-guard configuration, exit %d): %s - "
+            "refusing to provision a guard that does not guard (ADR D13)",
+            SYNC_HARD, exc)
         return SYNC_HARD
     except Exception as exc:  # noqa: BLE001 - an unexpected error is hard too
         logger.exception("sync HARD (unexpected error, exit %d): %s",

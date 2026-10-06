@@ -94,12 +94,21 @@ def _default_run_args(**kw):
 
 
 class FakeGateway:
-    """A recording stand-in for the gateway management API client."""
+    """A recording stand-in for the gateway management API client.
+
+    `_keys` maps each virtual key to its managed surface (`models`,
+    `budget_limits`, `rpm_limit`) so the sync's idempotent convergence can be
+    exercised: a no-change re-run records nothing, a budget/scope change
+    records exactly one `key` call (#330, C9)."""
 
     def __init__(self, registered=None, keys=None):
         self.registered = [dict(r) for r in (registered or [])]
         self.calls: list[tuple] = []
-        self._keys: dict[str, list[str]] = {k: list(v) for k, v in (keys or {}).items()}
+        self._keys: dict[str, dict] = {
+            k: {"models": list(v.get("models") or []),
+                "budget_limits": list(v.get("budget_limits") or []) if v.get("budget_limits") is not None else None,
+                "rpm_limit": v.get("rpm_limit")}
+            for k, v in (keys or {}).items()}
 
     def list_models(self):
         return [dict(r) for r in self.registered]
@@ -133,12 +142,31 @@ class FakeGateway:
                                 "id": 999})
         return True
 
-    def ensure_virtual_key(self, key, models):
-        models = sorted(models)
-        if self._keys.get(key) == models:
+    def ensure_virtual_key(self, key, models, *, budget_limits=None, rpm_limit=None):
+        desired = sorted(models)
+        manage_budget = budget_limits is not None
+        canonical = S._canonical_budget_limits(budget_limits)
+        current = self._keys.get(key)
+        if current is not None:
+            changed = current["models"] != desired
+            if manage_budget:
+                changed = changed or (
+                    S._canonical_budget_limits(current.get("budget_limits")) != canonical)
+                changed = changed or current.get("rpm_limit") != rpm_limit
+            if not changed:
+                return
+            current["models"] = desired
+            if manage_budget:
+                current["budget_limits"] = list(budget_limits)
+                current["rpm_limit"] = rpm_limit
+            self.calls.append(("key", key, desired, list(budget_limits or []), rpm_limit))
             return
-        self._keys[key] = models
-        self.calls.append(("key", key, models))
+        self._keys[key] = {
+            "models": desired,
+            "budget_limits": list(budget_limits) if manage_budget else None,
+            "rpm_limit": rpm_limit if manage_budget else None,
+        }
+        self.calls.append(("key", key, desired, list(budget_limits or []), rpm_limit))
 
 
 # ---------------------------------------------------------------------------
@@ -759,7 +787,7 @@ def test_sync_provisions_virtual_keys_per_provider():
         ("opencode/deepseek-v4-flash-free", "opencode/deepseek-v4-pro"),
         ("openai/gpt-4o", "openai/gpt-4o-2024-08-06"),
     }
-    for _kind, key, _scope in key_calls:
+    for _kind, key, _scope, _budget, _rpm in key_calls:
         assert key.startswith("sk-"), "every minted key must be litellm-native"
         assert key not in ("dummy-key", "sk-openai-proxy-key"), \
             "the provider credential must never be the inbound virtual key"
@@ -789,13 +817,14 @@ class LiteLLMNativeKeyEnforcingGateway(FakeGateway):
     #335): a non-`sk-` provider key surfaces here exactly as it does against
     the live gateway - as a `SyncPushError` -> `SYNC_HARD`."""
 
-    def ensure_virtual_key(self, key, models):
+    def ensure_virtual_key(self, key, models, *, budget_limits=None, rpm_limit=None):
         if not key.startswith("sk-"):
             raise S.SyncPushError(
                 "POST /key/generate failed: 400 Invalid key format. LiteLLM "
                 "Virtual Key must start with 'sk-'. Received: "
                 f"{key[:4]}****")
-        super().ensure_virtual_key(key, models)
+        super().ensure_virtual_key(key, models, budget_limits=budget_limits,
+                                   rpm_limit=rpm_limit)
 
 
 def test_non_sk_provider_key_is_minted_as_a_litellm_native_virtual_key():
@@ -857,3 +886,219 @@ def test_gateway_client_unparseable_info_raises_sync_push_error():
     gw = S.GatewayClient("http://127.0.0.1:4000", "sk-master", client=client)
     with pytest.raises(S.SyncPushError):
         gw.list_models()
+
+
+# ---------------------------------------------------------------------------
+# #330: the gateway cost guard - the virtual-key USD budget plan ------------
+#
+# LiteLLM's native virtual-key `budget_limits` (USD, from the sync's existing
+# models.dev per-token costs) mirror opencode-go's dollar-denominated cap
+# ($12/5h, $30/7d, $60/30d). A conservatism factor k (default 0.5) scales each
+# cap: LiteLLM counts spend at the OFF-PEAK models.dev price while opencode-go
+# charges 2x at peak (01-04, 06-10 UTC Mon-Fri), so the guard must trip at half
+# the dollar cap to trip before the provider does. See ADR D13.
+# ---------------------------------------------------------------------------
+
+_BUDGET_ENV = (
+    "LLM_GATEWAY_BUDGET_5H_USD",
+    "LLM_GATEWAY_BUDGET_7D_USD",
+    "LLM_GATEWAY_BUDGET_30D_USD",
+    "LLM_GATEWAY_BUDGET_CONSERVATISM_FACTOR",
+    "LLM_GATEWAY_KEY_RPM_LIMIT",
+)
+
+
+def _clear_budget_env(monkeypatch):
+    for name in _BUDGET_ENV:
+        monkeypatch.delenv(name, raising=False)
+
+
+def test_budget_plan_default_is_conservative(monkeypatch):
+    _clear_budget_env(monkeypatch)
+    plan = S.gateway_budget_plan()
+    assert plan.budget_limits == (
+        {"budget_duration": "5h", "max_budget": 6.0},
+        {"budget_duration": "7d", "max_budget": 15.0},
+        {"budget_duration": "30d", "max_budget": 30.0},
+    )
+    assert plan.rpm_limit is None
+
+
+def test_budget_plan_reads_env_overrides(monkeypatch):
+    monkeypatch.setenv("LLM_GATEWAY_BUDGET_5H_USD", "20")
+    monkeypatch.setenv("LLM_GATEWAY_BUDGET_7D_USD", "40")
+    monkeypatch.setenv("LLM_GATEWAY_BUDGET_30D_USD", "80")
+    monkeypatch.setenv("LLM_GATEWAY_BUDGET_CONSERVATISM_FACTOR", "0.25")
+    monkeypatch.setenv("LLM_GATEWAY_KEY_RPM_LIMIT", "30")
+    plan = S.gateway_budget_plan()
+    assert plan.budget_limits == (
+        {"budget_duration": "5h", "max_budget": 5.0},
+        {"budget_duration": "7d", "max_budget": 10.0},
+        {"budget_duration": "30d", "max_budget": 20.0},
+    )
+    assert plan.rpm_limit == 30
+
+
+def test_budget_plan_rejects_a_factor_above_one(monkeypatch):
+    _clear_budget_env(monkeypatch)
+    monkeypatch.setenv("LLM_GATEWAY_BUDGET_CONSERVATISM_FACTOR", "1.5")
+    with pytest.raises(S.SyncConfigError):
+        S.gateway_budget_plan()
+
+
+def test_budget_plan_rejects_a_nonpositive_rpm(monkeypatch):
+    _clear_budget_env(monkeypatch)
+    monkeypatch.setenv("LLM_GATEWAY_KEY_RPM_LIMIT", "0")
+    with pytest.raises(S.SyncConfigError):
+        S.gateway_budget_plan()
+
+
+def test_budget_plan_rejects_a_non_numeric_cap(monkeypatch):
+    _clear_budget_env(monkeypatch)
+    monkeypatch.setenv("LLM_GATEWAY_BUDGET_5H_USD", "lots")
+    with pytest.raises(S.SyncConfigError):
+        S.gateway_budget_plan()
+
+
+def test_gateway_client_ensure_virtual_key_provisions_budget_windows():
+    http = StubHTTP(get_result=_response({}, status=404),
+                    post_results=[_response({})])
+    gw = S.GatewayClient("http://127.0.0.1:4000", "sk-master", client=http)
+    gw.ensure_virtual_key(
+        "sk-ph-key", ["opencode/a"],
+        budget_limits=[{"budget_duration": "5h", "max_budget": 6.0}],
+        rpm_limit=30)
+    method, url, headers, body = http.requests[1]
+    assert method == "POST" and url == "http://127.0.0.1:4000/key/generate"
+    assert body == {"key": "sk-ph-key", "models": ["opencode/a"],
+                    "budget_limits": [{"budget_duration": "5h", "max_budget": 6.0}],
+                    "rpm_limit": 30}
+
+
+def test_gateway_client_ensure_virtual_key_converges_when_budget_matches():
+    # /key/info echoes the server-initialised `reset_at` per window; the diff
+    # ignores it (it is re-derived server-side on every write), so a re-run is
+    # a no-op (C9) rather than perpetual churn.
+    info = {"models": ["opencode/a"],
+            "budget_limits": [{"budget_duration": "5h", "max_budget": 6.0,
+                               "reset_at": "2026-10-06T20:00:00+00:00"}],
+            "rpm_limit": 30}
+    http = StubHTTP(get_result=_response({"info": info}),
+                    post_results=[_response({})])
+    gw = S.GatewayClient("http://127.0.0.1:4000", "sk-master", client=http)
+    gw.ensure_virtual_key(
+        "sk-ph-key", ["opencode/a"],
+        budget_limits=[{"budget_duration": "5h", "max_budget": 6.0}],
+        rpm_limit=30)
+    assert len(http.requests) == 1  # info only - converged
+
+
+def test_gateway_client_ensure_virtual_key_updates_only_on_budget_change():
+    info = {"models": ["opencode/a"],
+            "budget_limits": [{"budget_duration": "5h", "max_budget": 6.0}],
+            "rpm_limit": 30}
+    http = StubHTTP(get_result=_response({"info": info}),
+                    post_results=[_response({})])
+    gw = S.GatewayClient("http://127.0.0.1:4000", "sk-master", client=http)
+    gw.ensure_virtual_key(
+        "sk-ph-key", ["opencode/a"],
+        budget_limits=[{"budget_duration": "5h", "max_budget": 3.0}],
+        rpm_limit=30)
+    method, url, headers, body = http.requests[1]
+    assert method == "POST" and url == "http://127.0.0.1:4000/key/update"
+    assert body == {"key": "sk-ph-key", "models": ["opencode/a"],
+                    "budget_limits": [{"budget_duration": "5h", "max_budget": 3.0}],
+                    "rpm_limit": 30}
+
+
+def test_gateway_client_ensure_virtual_key_adds_budget_to_an_unbudgeted_key():
+    # A key minted before #330 carries no budget; the first post-deploy run
+    # adds the windows once, then converges.
+    http = StubHTTP(get_result=_response({"info": {"models": ["opencode/a"]}}),
+                    post_results=[_response({})])
+    gw = S.GatewayClient("http://127.0.0.1:4000", "sk-master", client=http)
+    gw.ensure_virtual_key(
+        "sk-ph-key", ["opencode/a"],
+        budget_limits=[{"budget_duration": "5h", "max_budget": 6.0}],
+        rpm_limit=None)
+    method, url, headers, body = http.requests[1]
+    assert method == "POST" and url == "http://127.0.0.1:4000/key/update"
+    assert body["budget_limits"] == [{"budget_duration": "5h", "max_budget": 6.0}]
+    assert body["rpm_limit"] is None
+
+
+def test_sync_provisions_virtual_keys_with_the_budget_plan(monkeypatch):
+    monkeypatch.setenv("LLM_GATEWAY_BUDGET_CONSERVATISM_FACTOR", "0.5")
+    monkeypatch.delenv("LLM_GATEWAY_KEY_RPM_LIMIT", raising=False)
+    gw = FakeGateway()
+    rc = S.run_sync(**_default_run_args(gateway=gw))
+    assert rc == S.SYNC_OK
+    key_calls = [c for c in gw.calls if c[0] == "key"]
+    assert key_calls, "the sync must provision a virtual key per provider"
+    for _kind, _key, _scope, budget, rpm in key_calls:
+        assert budget == [{"budget_duration": "5h", "max_budget": 6.0},
+                          {"budget_duration": "7d", "max_budget": 15.0},
+                          {"budget_duration": "30d", "max_budget": 30.0}]
+        assert rpm is None
+
+
+def test_budget_change_converges_then_is_a_noop(monkeypatch):
+    monkeypatch.setenv("LLM_GATEWAY_BUDGET_CONSERVATISM_FACTOR", "0.5")
+    monkeypatch.delenv("LLM_GATEWAY_KEY_RPM_LIMIT", raising=False)
+    gw = FakeGateway()
+    assert S.run_sync(**_default_run_args(gateway=gw)) == S.SYNC_OK
+
+    # Changing the conservatism factor re-budgets BOTH provider keys exactly
+    # once (a key update), not on every subsequent run.
+    gw2 = FakeGateway(registered=gw.registered, keys=dict(gw._keys))
+    monkeypatch.setenv("LLM_GATEWAY_BUDGET_CONSERVATISM_FACTOR", "0.25")
+    assert S.run_sync(**_default_run_args(gateway=gw2)) == S.SYNC_OK
+    key_calls = [c for c in gw2.calls if c[0] == "key"]
+    assert len(key_calls) == 2, f"both provider keys must re-budget once, got {gw2.calls}"
+    assert key_calls[0][3][0] == {"budget_duration": "5h", "max_budget": 3.0}
+
+    gw3 = FakeGateway(registered=gw2.registered, keys=dict(gw2._keys))
+    assert S.run_sync(**_default_run_args(gateway=gw3)) == S.SYNC_OK
+    assert [c for c in gw3.calls if c[0] == "key"] == [], \
+        "a converged budget re-run must be fully idle (C9)"
+
+
+def test_malformed_budget_config_cold_stops_before_any_push(monkeypatch):
+    # An unusable budget override is a config lie: the run cold-stops (exit 1)
+    # on a CLEAN gateway, before any model/key write (#330, ADR D13).
+    monkeypatch.setenv("LLM_GATEWAY_BUDGET_CONSERVATISM_FACTOR", "2")
+    gw = FakeGateway()
+    rc = S.run_sync(**_default_run_args(gateway=gw))
+    assert rc == S.SYNC_HARD
+    assert gw.calls == [], "a config lie must abort before any gateway write"
+
+
+def test_unpriced_registered_models_are_logged_as_a_budget_gap(caplog):
+    # A registered model with no authored cost cannot reserve budget
+    # (LiteLLM #35524: reserve_budget_for_request returns None), so the USD
+    # guard fails OPEN for it. The sync makes the gap LOUD at bootstrap so an
+    # unpriced eval model cannot silently escape the guard (#330, ADR D13).
+    catalog = {
+        "providers": {
+            "opencode": {
+                "id": "opencode",
+                "api": "https://opencode.ai/zen/v1",
+                "models": {
+                    "no-price": {"id": "no-price", "tool_call": True,
+                                 "limit": {"context": 1000, "output": 100}},
+                },
+            },
+        },
+        "models": {},
+    }
+    gw = FakeGateway()
+    with caplog.at_level("WARNING"):
+        rc = S.run_sync(**_default_run_args(
+            gateway=gw, fetch_catalog=lambda: catalog,
+            providers={"opencode": "https://opencode.ai/zen/v1"},
+            fetch_provider_models=lambda p, k: {"no-price"}))
+    assert rc == S.SYNC_OK
+    messages = " ".join(r.message for r in caplog.records)
+    assert "opencode/no-price" in messages, (
+        "an unpriced registered model must be named in the budget-gap log")
+    assert "pricing" in messages.lower()

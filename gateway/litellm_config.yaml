@@ -49,6 +49,16 @@ model_list: []  # empty - T2 (#105) fills via management API
 general_settings:
   store_model_in_db: true  # liteLLM persists model records in the shared postgres (ADR D1)
   disable_prisma_schema_update: true  # the entrypoint owns migrations (see above)
+  # COST GUARD (#330, ADR D13). The per-provider virtual key carries USD
+  # `budget_limits` windows (5h/7d/30d), provisioned by the sync from the
+  # models.dev per-token costs. A budget-exceeded request is rejected with
+  # HTTP 429 (litellm `BudgetExceededError`) at auth, BEFORE the provider is
+  # called. `fail_closed_budget_enforcement` additionally REJECTS (503) when
+  # the spend backing a budget decision cannot be verified against the DB, so
+  # the guard can never fail OPEN on an unverifiable counter. Verified against
+  # the pinned litellm 1.96.0 (`general_settings.get(...) is True`;
+  # `budget_reservation._raise_reservation_unavailable` -> 503).
+  fail_closed_budget_enforcement: true
   # master_key + database_url come from env: LITELLM_MASTER_KEY, DATABASE_URL
   # (litellm reads these env vars natively; no YAML key needed, no secret in repo).
 

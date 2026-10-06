@@ -58,6 +58,15 @@ def test_store_model_in_db_is_true(config):
     assert config.get("general_settings", {}).get("store_model_in_db") is True
 
 
+def test_fail_closed_budget_enforcement_is_enabled(config):
+    """#330 (ADR D13): `fail_closed_budget_enforcement: true` makes the gateway
+    REJECT (503) when the spend backing a budget decision cannot be verified
+    against the DB, so the per-key USD cost guard can never fail OPEN on an
+    unverifiable counter. A budget-exceeded request itself returns 429."""
+    assert config.get("general_settings", {}).get(
+        "fail_closed_budget_enforcement") is True
+
+
 # ---------------------------------------------------------------------------
 # D8: prompt caching - auto-inject, NO response cache -----------------------
 # ---------------------------------------------------------------------------

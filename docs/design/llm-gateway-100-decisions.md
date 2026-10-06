@@ -183,6 +183,36 @@ opencode-go began enforcing a client-supplied `x-opencode-session` header on 202
 
 **Rationale.** The requirement is a request primitive, not a role concern: binding it at the single construction point keeps it automatic for every agent in both modes without touching an agent module (D4). `default_headers` was chosen over per-request `extra_headers` (not exposed by LangChain's invoke surface) and over a custom httpx client (heavier; owns pooling/timeouts). A gateway-only static `extra_headers` value was rejected: it would collapse every conversation into one id and does nothing in direct mode.
 
+## D13 - Gateway cost guard: a USD virtual-key budget from the models.dev costs (#330)
+
+A persistent provider `429 GoUsageLimitError` (opencode-go's workspace quota) cascaded through the eval (`docs/design/eval-bugs-map.md` §0/§8) because nothing enforced the provider's dollar ceiling before the provider did. The guard is LiteLLM's native **virtual-key USD budget**, provisioned at bootstrap from the sync's existing models.dev per-token costs (`sync_mapping.py` - no new pricing dependency).
+
+**What is provisioned.** `sync.run_sync` builds one `BudgetPlan` (`gateway_budget_plan`) and `GatewayClient.ensure_virtual_key` attaches it to each provider's app-minted virtual key (D3, amended #335):
+
+```
+budget_limits = [
+  {"budget_duration": "5h",  "max_budget": cap_5h  * k},
+  {"budget_duration": "7d",  "max_budget": cap_7d  * k},
+  {"budget_duration": "30d", "max_budget": cap_30d * k},
+]
+rpm_limit = <optional; unset means none>
+```
+
+The caps default to opencode-go's dollar-denominated quota (`$12`/5h, `$30`/7d, `$60`/30d; `LLM_GATEWAY_BUDGET_*_USD` overrides) and `k` is the **conservatism factor** (`LLM_GATEWAY_BUDGET_CONSERVATISM_FACTOR`, default `0.5`, validated `0 < k <= 1`; `k > 1` would budget above the provider cap and defeat the guard, so it is a hard config error). A malformed override is a `SyncConfigError` -> exit 1 (cold stop), the same fail-fast discipline as the providers.py env overrides. The plan is applied to every minted provider key (the ticket's literal scope; the current eval configures only opencode-go). **Forward step (recorded):** if a heterogeneous provider set ever appears, key the caps by provider in a table (the `_ID_KIND_BY_PROVIDER` pattern) so opencode-go's cap is never silently applied to a provider without that cap.
+
+**Convergence (C9).** LiteLLM initialises a server-side `reset_at` on every `budget_limits` window at write time (verified live on 1.96.0), so the diff compares a canonical `(budget_duration, max_budget)` set and IGNORES `reset_at`/any merged key. An absent or stale key -> `POST /key/generate`; a changed scope/window/rpm -> `POST /key/update`; an equal surface -> no request. A key minted before this change (no budget) is upgraded once, then the re-run is fully idle.
+
+**Enforcement.** `gateway/litellm_config.yaml` sets `general_settings.fail_closed_budget_enforcement: true` (verified present in 1.96.0: `general_settings.get(...) is True`): when the spend backing a budget decision cannot be verified against the DB (reservation/counter unreadable), litellm returns **503** rather than admitting on an unverifiable budget. A budget-EXCEEDED request returns **429** (`litellm.BudgetExceededError.status_code = 429`, `type=budget_exceeded`) at auth, BEFORE the provider is called (verified live: a zero-USD window on a virtual key 429s a chat request with no provider round-trip). Both 429 and 503 are classified as `ProviderUnavailableError` by the #329 classifier, so the existing provider-failure handling (backoff, interrupt-not-fail) covers the gateway throttle; that wiring is #331, not here.
+
+**Grilled grey points (resolved, with evidence).**
+
+1. **Peak/off-peak factor (HIGH).** models.dev carries the OFF-PEAK price; opencode-go charges 2x during peak (01:00-04:00 and 06:00-10:00 UTC Mon-Fri). LiteLLM therefore undercounts actual spend by up to 2x during peak, so a budget equal to the dollar cap would trip only after the provider had already charged ~2x and 429'd. `k = 0.5` scales every cap so the guard trips at half the dollar ceiling - exactly compensating worst-case all-peak pricing. This is why the default plan is `$6/$15/$30`, not `$12/$30/$60`.
+2. **Unpriced models fail open (HIGH).** `block_requests_for_models_without_pricing` does **NOT** exist in the pinned litellm 1.96.0 (no symbol in the installed tree). `reserve_budget_for_request` returns `None` when `estimate_request_max_cost` is `None`, and litellm records no spend for such a request, so the USD guard is BLIND to an unpriced model (LiteLLM #35524). Payloads mitigation chosen over a sync-side reject: unknown models must stay registered for routing (D5/D9), so the sync cannot drop them. The **pricing-gap policy** is: (a) the sync logs a loud `pricing-gap` warning at bootstrap naming every registered model with no authored price, so an unpriced eval/hunting role model cannot silently escape the guard; (b) the operator keeps the eval role models models.dev-priced (or pins them). This is documented, observable, and does not corrupt the D9 unknown-model path.
+3. **Rolling provider windows vs scheduled resets (MEDIUM).** Verified in 1.96.0 (`duration_parser.get_next_standardized_reset_time`): `budget_limits` windows reset on a CALENDAR/hour boundary (a `5h` window aligns to 00/05/10/15/20 UTC), NOT a rolling window from first use; the provider's windows are rolling. A boundary burst is therefore possible (the provider's rolling window may hold near-cap spend while a freshly reset litellm window sees 0), bounded to at most one window's overshoot. Accepted and documented rather than fixed: a rolling `CustomLogger` is materially more complex, and the conservatism factor plus per-window enforcement keeps the blast radius bounded (the design assessment reached the same verdict). Revisit only if a boundary burst is observed.
+4. **Budget-exceeded is 429/503 (MEDIUM).** Confirmed above; handled by the companion provider-failure ticket (#329 classifier; #331 stop/flush/resume). The guard prevents most provider 429s; a gateway 429 remains possible at the boundary and is exactly what the provider-failure handling exists to absorb.
+
+**Enforcement substrate.** Budget reads use litellm's cross-pod spend counter (Redis first, then in-memory, then a DB reseed; per-window counters always re-check the authoritative spend-log floor). The single co-located proxy + shared postgres needs no Redis: the in-memory counter serves a single pod and `fail_closed_budget_enforcement` rejects (503) only when both the counter and the DB are unreadable - it never admits on an unverifiable value.
+
 ---
 
 ## Appendix: Spec corrections (land in the same change as the code)

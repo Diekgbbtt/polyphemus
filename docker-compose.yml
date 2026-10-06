@@ -221,6 +221,21 @@ services:
       # use litellm's cost map - models.dev is the capability source (ADR D11)
       # - so we pin litellm to its bundled local copy.
       LITELLM_LOCAL_MODEL_COST_MAP: "True"
+      # --- Gateway cost guard (#330, ADR D13) -------------------------------
+      # The sync provisions each provider's virtual key with USD budget windows
+      # built from these provider caps scaled by the conservatism factor. The
+      # cap is opencode-go's dollar-denominated quota ($12/5h, $30/7d,
+      # $60/30d); the factor defaults to 0.5 because LiteLLM counts spend at
+      # the OFF-PEAK models.dev price while the provider charges 2x at peak
+      # (01-04, 06-10 UTC Mon-Fri), so the guard must trip at half the cap to
+      # trip before the provider 429s. A budget-exceeded request is 429; an
+      # unverifiable counter is 503 (fail_closed_budget_enforcement).
+      LLM_GATEWAY_BUDGET_5H_USD: "12.0"
+      LLM_GATEWAY_BUDGET_7D_USD: "30.0"
+      LLM_GATEWAY_BUDGET_30D_USD: "60.0"
+      LLM_GATEWAY_BUDGET_CONSERVATISM_FACTOR: "0.5"
+      # Optional per-minute request smoothing on the key (blank/unset = none).
+      # LLM_GATEWAY_KEY_RPM_LIMIT: ""
     env_file:
       - path: .env
         required: false

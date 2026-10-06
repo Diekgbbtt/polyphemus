@@ -4,6 +4,8 @@
 
 *Implementation note (#329, 2026-10-06): the Part 2 slice that classifies a provider failure distinctly, backs off, avoids failing the run outright, and stops the pod fabricating `technical-infeasibility` has LANDED (`docs/design/hunting-329-provider-failure-classification-adr.md`): `app/llm/provider_failure.py` (typed `ProviderUnavailableError`), the pod/triager/surfer propagation, and `runtime.start_hunting` persisting `interrupted` on a provider-caused pass abort. The full stop/flush/resume re-scheduling, the eval-monitor `interrupted` handling, and Part 1 remain #331/#330.*
 
+*Implementation note (#330, 2026-10-06): **Part 1 (the gateway cost guard) has LANDED** (`docs/design/llm-gateway-100-decisions.md`, ADR D13). `sync.run_sync` provisions each provider virtual key with USD `budget_limits` (`5h/7d/30d`) scaled by a conservatism factor (default `0.5`) plus an optional `rpm_limit`, idempotently (the diff ignores litellm's server-set `reset_at`); `gateway/litellm_config.yaml` enables `fail_closed_budget_enforcement: true`. Verified live: a zero-USD window on a virtual key returns 429 at auth before the provider is called. Unpriced models fail open (no `block_requests_for_models_without_pricing` in the pinned 1.96.0); the sync logs every unpriced registered model at bootstrap. Part 2's stop/flush/resume remains #331.*
+
 ## Part 1 - Gateway cost guard (failure A)
 
 ### 1.1 The provider cap, verified
