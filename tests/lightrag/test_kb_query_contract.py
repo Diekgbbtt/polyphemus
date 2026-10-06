@@ -60,6 +60,40 @@ def test_hunter_kb_query_accepts_expected_no_hypothesis(monkeypatch):
     assert out["summary"] == "CSRF methodology"
 
 
+def test_hunter_kb_query_preserves_the_degraded_marker(monkeypatch):
+    """#304: the real tool's `degraded` flag must survive the hunter's tolerant
+    `KbAnswerBundle` round-trip (`extra="ignore"` would otherwise drop it), so
+    the author lane never reads an unavailable KB as a real answer."""
+    from polymerhus.attack.hunting.hunter_tools import KbQueryTool
+
+    class _DegradedReal:
+        def invoke(self, spec):
+            return json.dumps({
+                "schema_version": "lightrag-answer/v2", "scenario_id": "HUNT-1",
+                "summary": "Deterministic checklist fallback; model answer unavailable.",
+                "ontology_explanations": [], "provenance_references": [],
+                "knowledge_gaps": ["tool_failed: RuntimeError"],
+                "notes": "Fallback: no fabricated provenance is allowed.",
+                "degraded": True,
+            })
+
+    monkeypatch.setattr(KbQueryTool, "_lightrag_tool", lambda self: _DegradedReal())
+    out = json.loads(KbQueryTool().invoke({
+        "scenario_id": "HUNT-1", "attack_goal": "x", "concern": "y"}))
+    assert out["degraded"] is True
+
+
+def test_hunter_kb_query_marks_its_own_degraded_bundle(monkeypatch):
+    """#304: when the real tool and the injected seam are both absent, the
+    hunter's own fallback bundle is marked degraded too."""
+    from polymerhus.attack.hunting.hunter_tools import KbQueryTool
+
+    monkeypatch.setattr(KbQueryTool, "_lightrag_tool", lambda self: None)
+    out = json.loads(KbQueryTool().invoke({
+        "scenario_id": "HUNT-1", "attack_goal": "x", "concern": "y"}))
+    assert out["degraded"] is True
+
+
 def test_description_cites_the_query_spec_contract():
     """The canonical description names the args contract and every field the
     model must supply - single-sourced from `QuerySpecV1`, so it cannot drift."""

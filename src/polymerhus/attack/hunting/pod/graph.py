@@ -175,15 +175,14 @@ def _guard_degraded_kb(decision: dict, log: ExperimentLog) -> dict:
     if decision.get("action") != "terminate" or not _degraded_kb_evidence(log):
         return decision
     reason = decision.get("terminal_reason")
+    note = str(decision.get("note") or "")
     if reason == SPACE_EXHAUSTED:
         return {**decision, "terminal_reason": NO_SYMPTOM_EVIDENCE, "clean": False,
-                "note": (decision.get("note", "") +
-                         " [unavailable-domain: KB evidence degraded, so the "
+                "note": (note + " [unavailable-domain: KB evidence degraded, so the "
                          "space is not credibly exhausted]").strip()}
     if reason in (NO_SYMPTOM_EVIDENCE, BUDGET_TIMEOUT) and decision.get("clean"):
         return {**decision, "clean": False,
-                "note": (decision.get("note", "") +
-                         " [unavailable-domain: KB evidence degraded, so the "
+                "note": (note + " [unavailable-domain: KB evidence degraded, so the "
                          "absence is not credibly established]").strip()}
     return decision
 

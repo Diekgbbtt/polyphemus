@@ -53,8 +53,10 @@ QUERY_LIGHTRAG_DESCRIPTION = (
     "control. Returns a structured answer: a summary plus per-concept "
     "explanations (type, canonical name, prose) with provenance references and "
     "knowledge gaps. Answers may enrich beyond the retrieved context - confirm "
-    "concrete target parameters on the target. An empty or degraded result "
-    "means the KB has nothing further - continue on your own grounding. "
+    "concrete target parameters on the target. An empty result means the KB has "
+    "nothing further; a degraded or unavailable result means the KB could not "
+    "answer - it is NOT evidence of absence, so never conclude a gap is "
+    "exhausted from it. In either case continue on your own grounding. "
     f"Pass the query as a QuerySpecV1 object; its fields are: "
     f"{_QUERY_SPEC_FIELD_LIST}."
 )

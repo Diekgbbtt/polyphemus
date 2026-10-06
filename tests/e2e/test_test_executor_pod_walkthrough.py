@@ -177,6 +177,19 @@ _REACT_EXEC_NOTE_CONCLUDE = [
     AIMessage(content="probe space exhausted; the consolidated summary was written"),
 ]
 
+# A KB read then a conclusion with NO exec (#304): the production runner
+# synthesizes `exhausted=True` (no raw observation recorded), routing to
+# `exhausted_terminal`, whose `_clean_from_trail` must refuse a clean exhaustion
+# over the degraded hermetic KB.
+_REACT_KB_ONLY_CONCLUDE = [
+    AIMessage(content="", tool_calls=[
+        {"name": "query_lightrag", "args": {"scenario_id": "SIM-01",
+                                            "attack_goal": "identify a bounded comparison hypothesis",
+                                            "concern": "csrf patterns on form posts"},
+         "id": "c0"}]),
+    AIMessage(content="the degraded KB yields no new probe; concluding the stretch"),
+]
+
 # The Triager's production turn (D84-23): a `ToolStrategy(TriagerDecision)`
 # structured call terminating the run with `{unsuccessful, space-exhausted}`.
 _TRIAGER_ABSENT = [
@@ -298,6 +311,29 @@ def test_degraded_kb_run_does_not_claim_clean_exhaustion(tmp_path, monkeypatch):
     assert "no kb primitive differs from the initial set" in slice["experiment_summary"]
     assert read_variant_summary(store, SPEC_ID, 0) == slice["experiment_summary"]
     assert store.read_notes(SPEC_ID) == []
+
+
+def test_degraded_kb_runner_exhaustion_is_not_a_clean_absence(tmp_path):
+    """#304: the runner-exhausted terminal path. The runner reads the degraded
+    KB and concludes with NO probe (no raw observation), so the production runner
+    synthesizes `exhausted=True` and the graph routes to `exhausted_terminal` -
+    NOT the triager. `_clean_from_trail` must refuse the clean exhaustion over
+    the degraded KB and land `{unsuccessful, no-symptom-evidence, clean=false}`."""
+    exec_calls = []
+    store = PodMemoryStore(tmp_path)
+    env = _run(arun_pod(
+        VALID_SPEC, exec_fn=_exec(_ABSENT, calls=exec_calls),
+        trace_fn=_no_trace, memory_store=store, spec_id=SPEC_ID,
+        model_factory=_factory({POD_RUNNER_ROLE: _REACT_KB_ONLY_CONCLUDE})))
+
+    assert env["verdict"] == "unsuccessful"
+    assert env["evidence"]["terminal_reason"] == "no-symptom-evidence"
+    assert env["evidence"]["clean"] is False
+    assert exec_calls == []                             # no probe was issued
+    assert env["evidence"]["raw_observations"] == []
+    slice = store.read_experiment_log(SPEC_ID, 0)
+    assert len(slice["kb_observations"]) == 1
+    assert slice["kb_observations"][0]["degraded"] is True
 
 
 def test_clean_space_exhausted_run_writes_the_p3_note(tmp_path, monkeypatch):

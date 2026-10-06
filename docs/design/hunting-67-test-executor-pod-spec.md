@@ -86,10 +86,10 @@ Langfuse is fail-open and never a gate (C12).
 
 - The six-way termination (Q3-amended, ratified 2026-08-04; supersedes the four-way D67-06), each landing a binary end with the distinguishing evidence in the trail:
   1. Symptom confirmed via the verification symptom(s) -> `successful`, terminal_reason `symptom-confirmed`.
-  2. Pattern/probe space exhausted without symptom -> `unsuccessful`, terminal_reason `space-exhausted`.
+  2. Pattern/probe space exhausted without symptom AND every knowledge-base query relied on returned a real answer -> `unsuccessful`, terminal_reason `space-exhausted`. A degraded/unavailable KB result is UNAVAILABLE evidence, never absence: a `space-exhausted` claim over degraded KB coverage is downgraded to `no-symptom-evidence` with `clean=false` (#304).
   3. A strong technical infeasibility assertion (unreachable target, missing tool, everything WAF-blocked) -> `unsuccessful`, terminal_reason `technical-infeasibility`, infeasibility in the trail.
   4. A specific active defence prevented the probes (a WAF/filter soft-block) -> `unsuccessful`, terminal_reason `specific-defence-prevention`.
-  5. Symptom absent but coverage partial or observations impaired -> `unsuccessful`, terminal_reason `no-symptom-evidence`.
+  5. Symptom absent but coverage partial or observations impaired (including a degraded/unavailable knowledge-base result) -> `unsuccessful`, terminal_reason `no-symptom-evidence`.
   6. Budget/timeout reached -> `unsuccessful`, terminal_reason `budget-timeout`, partial evidence.
   `clean` True = clean completed observations; False = blocked/unreachable or a mid-flight cut. `init_validation` present only on an INIT rejection.
   **As of #209 - presentation rule**: the triager prompt presents `verdict` and `terminal_reason` as SEPARATE
@@ -139,7 +139,7 @@ Reuses:
 ### 4.1 Happy paths
 
 H1 - Confirmed: the spec's verification symptom is observed -> `{successful, symptom-confirmed}`, iterations = N, the log holds the variant spec, the raw observation, and the interpretation.
-H2 - Absent: the pattern/probe space exhausts without the symptom -> `{unsuccessful, space-exhausted}`, with the P3 note written.
+H2 - Absent: the pattern/probe space exhausts without the symptom on an AVAILABLE knowledge base -> `{unsuccessful, space-exhausted}`, with the P3 note written. Over a degraded KB the same shape lands `{unsuccessful, no-symptom-evidence, clean=false}` (#304).
 H3 - Infeasible: unreachable target or all tools blocked -> `{unsuccessful, technical-infeasibility}` with the infeasibility in the trail.
 H4 - Capped: budget/timeout reached -> `{unsuccessful, budget-timeout}` with partial evidence.
 H5 - Variant: a declined attribute yields a derived variant spec with provenance; the loop continues; the log records both variants.
@@ -159,7 +159,7 @@ O9 - Langfuse stub failure: the run completes unaffected (fail-open).
 O10 - Memory stub failure: the run completes unaffected.
 O11 - Variant count blow-up: bounded by the pod's internal caps (D67-09); the loop always lands a binary end.
 O12 - Empty payload vector: the Runner's first ReAct turn still probes once; if no probe is derivable, `space-exhausted` with the log.
-O13 - KB query failure (`query_lightrag` raising or empty): fail-open - the Runner degrades to the spec's own primitives and the P3 re-query returning the SAME set as init confirms exhaustion (D84-16). The empty/degraded bundle is also RECORDED as a `KbObservation` (T3/#179) when a log is bound.
+O13 - KB query failure (`query_lightrag` raising or empty): fail-open - the Runner degrades to the spec's own primitives. The empty/degraded bundle is RECORDED as a `KbObservation` (T3/#179) when a log is bound, marked `degraded=true` (#304). A degraded KB is UNAVAILABLE evidence: it can never license a clean `space-exhausted` (the graph downgrades to `no-symptom-evidence`/`clean=false`, #304) - only a real answer returning the same set as init confirms exhaustion (D84-16).
 O14 - A tool-call with wrong parameters: the tool REJECTS it with an error message + code (tool contract semantics, D84-22); the ReAct loop sees the rejection as a tool result and adjusts.
 
 ## 5. Delivery semantics and failure handling
@@ -182,7 +182,7 @@ Delivery canon (merged spec section 3): all delivery is synchronous-threaded and
 C1 - INIT rejection: given a spec violating the typed base schema, exercising malformed, the pod lands `unsuccessful` with the validation evidence in the trail and executes no tool call.
 C2 - Binary terminal invariant: given any spec and any tool behaviour, exercising ordering, every run terminates in exactly one of `{successful, unsuccessful}` and carries a `terminal_reason` from the Q3-amended vocabulary.
 C3 - Symptom confirmed: given a spec whose symptom a scripted tool output satisfies, exercising success, the pod lands `{successful, symptom-confirmed}` with iterations = N and the log populated.
-C4 - Space exhausted: given a spec whose symptom never appears across the whole probe space, exercising empty-valid, the pod lands `{unsuccessful, space-exhausted}`.
+C4 - Space exhausted: given a spec whose symptom never appears across the whole probe space over an AVAILABLE KB (no degraded observation), exercising empty-valid, the pod lands `{unsuccessful, space-exhausted}`. Over a DEGRADED KB the same run lands `{unsuccessful, no-symptom-evidence, clean=false}` (#304).
 C5 - Infeasibility: given an unreachable target (connection refused), exercising degradation, the pod lands `{unsuccessful, technical-infeasibility}` with the infeasibility in the trail.
 C6 - Budget/timeout: given tool calls exceeding the fixed caps, exercising degradation, the pod lands `{unsuccessful, budget-timeout}` with partial evidence.
 C7 - Retry: given a tool call failing with non-zero exit twice then succeeding, exercising degradation, the retries converge at `MAX_POD_ITERS = 3` and the run lands a binary end.

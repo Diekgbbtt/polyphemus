@@ -115,6 +115,10 @@ class KbAnswerBundle(BaseModel):
     provenance_references: list[str] = Field(default_factory=list)
     knowledge_gaps: list[str] = Field(default_factory=list)
     notes: str = ""
+    # #304: an unaccepted/unavailable KB answer is marked degraded. Kept on the
+    # tolerant local envelope so the real tool's `degraded` flag is not dropped
+    # (extra="ignore" would otherwise strip it) and the model sees it.
+    degraded: bool = False
 
     model_config = ConfigDict(extra="ignore")
 
@@ -656,6 +660,7 @@ class KbQueryTool(BaseTool):
             "provenance_references": [],
             "knowledge_gaps": [f"knowledge base unavailable ({reason})"],
             "notes": "degraded",
+            "degraded": True,
         }
 
     @staticmethod

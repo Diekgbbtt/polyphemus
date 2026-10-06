@@ -21,7 +21,7 @@ The failure was not a provider failure in the #329 sense: the observed cause was
 
 `lightrag/tool.py::LightRagQueryTool._run` sets `degraded = not accepted` on the answer it returns. An unaccepted answer is the deterministic fallback - an empty retrieval, a validation failure, or `tool_failed` - and carries no validated model answer. The flag is model-visible and machine-readable; the pod's own fail-open bundle also sets `degraded: true`.
 
-`pod/types.py::KbObservation` gains `degraded: bool = False`; `pod/tools.py::KbQueryTool._record` stamps it from the answer (and treats an unparseable answer as degraded). The flag is EVIDENCE METADATA on the D6 trail, never a domain result.
+`pod/types.py::KbObservation` gains `degraded: bool = False`; `pod/tools.py::KbQueryTool._record` stamps it from the answer (and treats an unparseable answer as degraded). The flag is EVIDENCE METADATA on the D6 trail, never a domain result. The hunter lane's tolerant `KbAnswerBundle` (`hunter_tools.py`) keeps the field (it would otherwise be stripped by `extra="ignore"`), and the hunter's own fallback bundle sets it.
 
 ### 2. A degraded KB observation can never license a clean absence
 
@@ -45,6 +45,10 @@ The guard is deterministic and log-aware, so it applies to the production triage
 
 The KB tool deliberately fails open (the hunting author lane depends on it - `test_stream_fails_open_on_llm_error`, C2/C3), so a provider failure swallowed inside lightrag is not reliably classifiable at the pod seam. The honest handling is the degraded marker plus the guard; #329's propagation covers provider failures raised by an agent turn, and #331 owns pausing. Surfacing the swallowed cause from lightrag is deferred.
 
+### 6. The canonical description no longer teaches the conflation
+
+`lightrag/tool.py::QUERY_LIGHTRAG_DESCRIPTION` (the single-sourced description every KB consumer reads, #207) said "An empty or degraded result means the KB has nothing further" - the exact conflation this ticket fixes. It now distinguishes an EMPTY answer (the KB has nothing further) from a DEGRADED one (the KB could not answer, and it is not evidence of absence). The pod triager's prompt overrides the description for the triager, but the hunter lane reads only the description, so correcting it closes the residual conflation there.
+
 ## Consequences
 
 ### The good
@@ -61,9 +65,11 @@ The KB tool deliberately fails open (the hunting author lane depends on it - `te
 
 ## Impact map (as built)
 
-- `lightrag/tool.py` - `_run` marks `degraded` from `accepted`.
+- `lightrag/tool.py` - `_run` marks `degraded` from `accepted`; `QUERY_LIGHTRAG_DESCRIPTION` distinguishes empty from degraded.
 - `src/polymerhus/attack/hunting/pod/types.py` - `KbObservation.degraded`.
 - `src/polymerhus/attack/hunting/pod/tools.py` - `KbQueryTool._record` stamps `degraded`; the fail-open bundle sets it.
 - `src/polymerhus/attack/hunting/pod/graph.py` - `_degraded_kb_evidence`, `_guard_degraded_kb`, `_clean_from_trail`.
+- `src/polymerhus/attack/hunting/hunter_tools.py` - `KbAnswerBundle.degraded` kept through the tolerant round-trip; the fallback bundle sets it.
 - `src/polymerhus/attack/hunting/prompts/pod-triager.md` - the EXHAUSTION rule distinguishes unavailable from absent.
-- Tests - `tests/attack/pod/test_kb_degradation_guard.py` (new), `tests/lightrag/test_tool.py`, `tests/e2e/test_test_executor_pod_walkthrough.py` (the E1/2 walkthrough now mechanises the degraded-KB refusal and keeps an available-KB clean-exhaustion control).
+- `docs/design/hunting-67-test-executor-pod-spec.md` - the six-way termination, H2, O13, and C4 condition `space-exhausted` on KB availability.
+- Tests - `tests/attack/pod/test_kb_degradation_guard.py` (new), `tests/lightrag/test_tool.py`, `tests/lightrag/test_kb_query_contract.py`, `tests/e2e/test_test_executor_pod_walkthrough.py` (the E1/2 walkthrough mechanises the degraded-KB refusal on both the triager and the runner-exhausted paths, and keeps an available-KB clean-exhaustion control).
