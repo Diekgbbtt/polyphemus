@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sys
 import time
 from datetime import datetime, timezone
 
@@ -803,15 +804,15 @@ async def run_pipeline(
             # `hb.cancel()`; a stopped run must never keep a live heartbeat task.
             hb.cancel()
             # #287: a deliberate stop (module cancel / forced teardown) is a
-            # first-class run terminal, never a crash. A pending cancellation -
-            # whether it interrupted the phase loop or landed during the teardown
-            # above - means the run was stopped, so settle it `stopped` after the
-            # flush rather than leaving the row `running` until the reaper calls
-            # it `failed` after REAP_TTL_SECONDS. On the clean and fail-close
-            # paths no cancellation is pending, so this never touches
-            # `complete`/`failed` (both are written on their own path below).
-            task = asyncio.current_task()
-            if task is not None and task.cancelling():
+            # first-class run terminal, never a crash. A `CancelledError` actually
+            # unwinding through this teardown - whether it interrupted the phase
+            # loop or landed during the teardown above - means the run was
+            # stopped, so settle it `stopped` after the flush rather than leaving
+            # the row `running` until the reaper calls it `failed` after
+            # REAP_TTL_SECONDS. `sys.exc_info()` is the in-flight exception, so
+            # the clean and fail-close-`return` paths (no exception) never fire
+            # this and cannot touch their own `complete`/`failed`.
+            if isinstance(sys.exc_info()[1], asyncio.CancelledError):
                 await asyncio.to_thread(registry.set_run_status, run_id, "stopped")
     # Recon reaches complete the instant its jobs finish - it does NOT wait on
     # analysis (#75 D3). Analysis settles independently on its own run row.
