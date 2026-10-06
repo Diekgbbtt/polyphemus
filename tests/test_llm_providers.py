@@ -507,8 +507,8 @@ def test_wire_adaptation_failure_falls_back_to_declared_baseline(monkeypatch):
 # `num_retries=0`, never nested), and attaches Langfuse callbacks at
 # construction (D8 passthrough).
 # `validate_llm_config` keeps requiring `API_KEY_<PROVIDER>` in both modes
-# (operator decision: the per-provider key stays the auth surface; the gateway
-# trusts the authenticated caller and routes upstream with its own key custody).
+# (the per-provider key stays REQUIRED - in gateway mode it is the seed for the
+# app-minted virtual key, #335; the gateway holds its own upstream key custody).
 
 def test_id_kind_classifies_aggregators_and_native_providers():
     """The id-kind policy table (D5): the bare-catalog zen aggregators are
@@ -599,14 +599,42 @@ def test_gateway_set_sends_registered_name_across_providers(monkeypatch):
             == "swissai/Qwen/Qwen3.5-397B-A17B-ETar")
 
 
-def test_gateway_set_sends_per_provider_api_key_to_the_gateway(monkeypatch):
-    """Operator decision: API_KEY_<PROVIDER> stays required in BOTH modes; in
-    gateway mode the per-provider key is the auth surface the client presents to
-    the gateway (the gateway holds the upstream keys itself, ADR D3)."""
+def test_gateway_set_sends_the_app_minted_virtual_key_not_the_provider_key(monkeypatch):
+    """#335 (D3 amended): in gateway mode the client's bearer is the APP-MINTED
+    litellm-native virtual key (`gateway_virtual_key`), NOT the provider
+    credential - litellm's inbound auth and `/key/generate` accept only
+    `sk-`-prefixed virtual keys, and opencode-go's provider key is `oc_sk_...`.
+    The provider credential stays required as the derivation seed (and the sync
+    pushes it into the model's litellm_params.api_key)."""
     monkeypatch.setenv("LLM_GATEWAY_URL", "http://gateway:4000")
-    monkeypatch.setenv("API_KEY_OPENAI", "sk-client-to-gateway")
+    monkeypatch.setenv("API_KEY_OPENCODE_GO", "oc_sk_provider_credential")
+    m = P.build_chat_model("opencode-go", "muse-spark-1.3-contributor")
+    bearer = m.openai_api_key.get_secret_value()
+    assert bearer == P.gateway_virtual_key("opencode-go", "oc_sk_provider_credential")
+    assert bearer.startswith("sk-")
+    assert bearer != "oc_sk_provider_credential"
+
+
+def test_direct_mode_sends_the_provider_key_unchanged(monkeypatch):
+    """Direct mode is untouched by #335: the client presents the provider
+    credential to the provider itself (no virtual-key derivation)."""
+    monkeypatch.delenv("LLM_GATEWAY_URL", raising=False)
+    monkeypatch.setenv("API_KEY_OPENAI", "sk-direct-provider")
     m = P.build_chat_model("openai", "gpt-4o")
-    assert m.openai_api_key.get_secret_value() == "sk-client-to-gateway"
+    assert m.openai_api_key.get_secret_value() == "sk-direct-provider"
+
+
+def test_gateway_virtual_key_is_deterministic_sk_prefixed_and_provider_scoped():
+    """#335: the derivation is deterministic (so the sync and the client agree
+    with no persisted mapping), always `sk-`-prefixed (litellm's format rule),
+    never equal to the provider credential, and distinct per provider and per
+    credential (a rotation rotates the virtual key)."""
+    a = P.gateway_virtual_key("opencode-go", "oc_sk_provider")
+    assert a == P.gateway_virtual_key("opencode-go", "oc_sk_provider")
+    assert a.startswith("sk-")
+    assert a != "oc_sk_provider"
+    assert a != P.gateway_virtual_key("opencode-go", "oc_sk_rotated")
+    assert a != P.gateway_virtual_key("openai", "oc_sk_provider")
 
 
 def test_gateway_unset_and_set_keep_max_retries_zero_for_escalating_wrapper(monkeypatch):
@@ -667,10 +695,10 @@ def test_gateway_set_unknown_provider_still_raises(monkeypatch):
 
 
 def test_validate_llm_config_still_requires_per_provider_key_in_gateway_mode(monkeypatch):
-    """Operator decision (this ticket's open question, resolved): API_KEY_<PROVIDER>
-    stays REQUIRED in BOTH modes - the per-provider key is the auth surface the
-    client presents to the gateway. So `validate_llm_config` is UNCHANGED; setting
-    LLM_GATEWAY_URL does not relax the boot-time key check."""
+    """API_KEY_<PROVIDER> stays REQUIRED in BOTH modes: in direct mode it is the
+    provider credential; in gateway mode it is the seed the client derives its
+    virtual key from (#335, D3 amended). So `validate_llm_config` is UNCHANGED;
+    setting LLM_GATEWAY_URL does not relax the boot-time key check."""
     for r in P.ROLES:
         monkeypatch.setenv(r.model_key, "openrouter:some/model")
     monkeypatch.setenv("LLM_GATEWAY_URL", "http://gateway:4000")

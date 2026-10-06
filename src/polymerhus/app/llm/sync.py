@@ -82,7 +82,7 @@ from typing import Any, Callable
 
 import httpx
 
-from polymerhus.app.llm.providers import PROVIDERS
+from polymerhus.app.llm.providers import PROVIDERS, _key_env, gateway_virtual_key
 from polymerhus.app.llm.sync_mapping import (
     PROVENANCE_SOURCE_KEY,
     PROVENANCE_STALENESS_KEY,
@@ -579,12 +579,22 @@ class GatewayClient:
     def ensure_virtual_key(self, key: str, models: list[str]) -> None:
         """Make `key` a virtual key scoped to `models`, idempotently.
 
+        `key` is an APP-MINTED litellm-native virtual key
+        (`sk-ph-<digest>`, `providers.gateway_virtual_key`) - NOT the
+        provider's API key, which litellm rejects at `/key/generate` unless
+        it is `sk-`-prefixed (#335). The provider credential stays in each
+        model's `litellm_params.api_key` (the gateway's upstream custody,
+        #193); the virtual key is only the client's inbound identity (D3,
+        amended).
+
         Absent -> `POST /key/generate {key, models}`; present -> `POST
         /key/update {key, models}` ONLY when the stored scope differs (a
-        converged run is a no-op, C9). The key VALUE is the provider's own
-        API key, so the client's existing bearer just works (D3: the gateway
-        holds upstream keys itself; the client key is an identity, not a
-        credential here)."""
+        converged run is a no-op, C9)."""
+        if not key.startswith("sk-"):
+            raise SyncPushError(
+                "refusing to mint a non-litellm virtual key (not 'sk-'-"
+                "prefixed); the client's gateway credential must be an "
+                "app-minted virtual key, never a provider credential (#335)")
         desired = sorted(set(models))
         info = self.key_info(key)
         stored = set(info.get("models") or []) if info else None
@@ -642,8 +652,8 @@ def run_sync(*,
             if not api_key:
                 logger.warning(
                     "skipping provider %s: no API key configured "
-                    "(API_KEY_%s); its models are not synced", provider,
-                    provider.upper())
+                    "(%s); its models are not synced", provider,
+                    _key_env(provider))
                 continue
             provider_ids[provider] = fetch_provider_models(provider, api_key)
             api_keys[provider] = api_key
@@ -680,16 +690,18 @@ def run_sync(*,
         for row_id in diff.deletes:
             gateway.delete_model(row_id)
 
-        # Provision the inbound client identity (D3): the proxy's auth accepts
-        # only master_key + virtual keys, and the operator decision is that in
-        # gateway mode the client presents the per-provider API key (pinned in
-        # test_llm_providers.py). Make each provider key a virtual key scoped
-        # to that provider's registered records - idempotent, converges to a
-        # no-op (C9), and the client's existing bearer just works.
+        # Provision the inbound client identity (D3, amended #335): the proxy's
+        # auth accepts only master_key + virtual keys, and the client presents
+        # an APP-MINTED litellm-native virtual key - never the provider
+        # credential, which litellm's `/key/generate` rejects unless it is
+        # `sk-`-prefixed (opencode-go's is `oc_sk_`). Derive the same key the
+        # client derives (`gateway_virtual_key`), scoped to that provider's
+        # registered records - idempotent, converges to a no-op (C9).
         for provider, api_key in api_keys.items():
             scoped = [m.model_name for m in desired
                       if m.model_name.startswith(f"{provider}/")]
-            gateway.ensure_virtual_key(api_key, scoped)
+            gateway.ensure_virtual_key(gateway_virtual_key(provider, api_key),
+                                       scoped)
 
         new_snapshot = Snapshot(
             desired_count=len(desired),

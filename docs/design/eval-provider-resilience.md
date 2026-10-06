@@ -26,7 +26,7 @@ The design is a small extension of seams that already exist, not a new subsystem
 | Budget/rate on the client key | `sync.py::GatewayClient.ensure_virtual_key` already creates/updates a virtual key per provider, scoped to models, idempotently (C9 convergence) | **Natural extension:** add `max_budget`/`budget_limits`/`rpm_limit` to the same provisioning. |
 | Budget reservation | enabled by default (`disable_budget_reservation: false`); estimates max request cost, reserves pre-call, rejects on overflow, reconciles post-call | **Built into LiteLLM.** |
 | Fail-closed enforcement | `general_settings.fail_closed_budget_enforcement: true` validates spend against the DB and 503s when unverifiable | **One config line.** |
-| Client | In gateway mode the client sends the provider API key as the bearer (ADR D3); the gateway resolves it as a virtual key | **No client change.** |
+| Client | In gateway mode the client sends the APP-MINTED virtual key as the bearer (ADR D3, amended #335: the provider credential is only the derivation seed, never the inbound key); the gateway resolves it as a virtual key | **No client change.** |
 
 ### 1.3 Impact map
 
