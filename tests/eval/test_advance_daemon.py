@@ -561,6 +561,65 @@ def test_partial_advance_reports_each_worktree_actual_head(
     }
 
 
+def test_absent_eval_worktree_reports_no_worktree_without_bricking(
+    tmp_path: Path,
+) -> None:
+    """A missing eval worktree is per-worktree absence, not a global error.
+
+    After a teardown the instance worktree is gone; the plane must report a
+    distinct observable state and never fail closed (the regression that froze
+    the daemon in `error` forever).
+    """
+    env = make_detached_env(tmp_path, n=1)
+    git(env.root, "worktree", "remove", "--force", str(env.evals[0]))
+    env.advance_dev("v1\n")
+    records: list[dict] = []
+    d = daemon.Daemon(
+        make_config(env, tmp_path),
+        idle_proxy=FakeIdle(True),
+        clock=FakeClock(),
+        log=records.append,
+        image_digests=lambda: dict(DIGESTS),
+    )
+
+    heartbeat = d.poll_once()
+
+    assert heartbeat["state"] == daemon.STATE_NO_WORKTREE
+    assert heartbeat["last_error"] is None
+    assert heartbeat["eval_sha"] == ""
+    # The absent worktree is still reported, never silently omitted.
+    assert heartbeat["worktrees"][0]["head"] is None
+    assert heartbeat["worktrees"][0]["error"]
+    assert not any(record.get("alert") for record in records)
+
+
+def test_absent_eval_worktree_is_skipped_and_the_present_one_advances(
+    tmp_path: Path,
+) -> None:
+    """An absent worktree must not block advancing the worktrees that exist."""
+    env = make_detached_env(tmp_path, n=2)
+    missing = env.evals[1]
+    git(env.root, "worktree", "remove", "--force", str(missing))
+    dev_sha = env.advance_dev("v1\n")
+    records: list[dict] = []
+    d = daemon.Daemon(
+        make_config(env, tmp_path),
+        idle_proxy=FakeIdle(True),
+        clock=FakeClock(),
+        log=records.append,
+        image_digests=lambda: dict(DIGESTS),
+    )
+
+    heartbeat = d.poll_once()
+
+    assert heartbeat["state"] == daemon.STATE_ADVANCED
+    assert env.head(env.evals[0]) == dev_sha
+    assert heartbeat["eval_sha"] == dev_sha
+    by_path = {entry["path"]: entry for entry in heartbeat["worktrees"]}
+    assert by_path[str(env.evals[0])]["at_dev"] is True
+    assert by_path[str(missing)]["head"] is None
+
+
 def test_heartbeat_reflects_each_poll_and_carries_the_decision(
     eval_env: EvalEnv, tmp_path: Path
 ) -> None:

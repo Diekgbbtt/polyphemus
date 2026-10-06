@@ -58,6 +58,7 @@ STATE_IMAGE_DIGESTS_UNKNOWN = "image_digests_unknown"
 STATE_DECISION_UNKNOWN = "decision_unknown"
 STATE_PARTIAL = "partial_advance"
 STATE_WORKTREE_NOT_DETACHED = "worktree_not_detached"
+STATE_NO_WORKTREE = "no_worktree"
 STATE_ERROR = "error"
 
 
@@ -458,20 +459,44 @@ class Daemon:
 
         try:
             dev_sha = git_read_head(self.config.dev_worktree, self._git)
-            heads = [git_read_head(w, self._git) for w in self.config.eval_worktrees]
-            eval_sha = heads[0]
         except GitError as exc:
             return self._finish(
                 now, "", "", None, STATE_ERROR, str(exc), last_advance_at, None
             )
 
-        if len(set(heads)) > 1:
+        # A configured eval worktree may be absent (e.g. after a teardown, or
+        # before the first `up` provisions it). Absence is a PER-WORKTREE fact,
+        # not an environment-wide error: record it and advance the worktrees
+        # that DO exist. A hard error here bricked the whole advancement plane
+        # (no worktree ever advanced while any tree was absent), so absence is
+        # skipped, never fatal.
+        heads: list[str | None] = []
+        for worktree in self.config.eval_worktrees:
+            try:
+                heads.append(git_read_head(worktree, self._git))
+            except GitError:
+                heads.append(None)
+
+        present = [head for head in heads if head is not None]
+        if not present:
+            # No eval worktree is provisioned: nothing to advance. Report the
+            # distinct state (observable, never a brick); a later `up` that
+            # creates the worktree is picked up on the next poll.
+            self._log({"event": STATE_NO_WORKTREE, "dev_sha": dev_sha})
+            return self._finish(
+                now, dev_sha, "", None, STATE_NO_WORKTREE, None,
+                last_advance_at, None,
+            )
+
+        eval_sha = present[0]
+
+        if len(set(present)) > 1:
             # D36: environment-wide, no per-instance skew. Never guess which
             # worktree is authoritative.
             self._alerts.emit(
                 "worktree_skew",
                 "eval worktrees are not at the same commit",
-                eval_heads=heads,
+                eval_heads=present,
             )
             return self._finish(
                 now, dev_sha, eval_sha, None, STATE_WORKTREE_SKEW, None,
@@ -614,6 +639,19 @@ class Daemon:
                 return None
         return idle
 
+    def _primary_repo(self) -> Path:
+        """A repo able to resolve BOTH the eval and dev SHAs.
+
+        The first eval worktree that exists, else the dev worktree. Used for the
+        ancestry check and the manifest diff so both survive an absent eval
+        worktree: the dev checkout shares the same object database and always
+        carries the eval SHA on a fast-forwardable history.
+        """
+        for worktree in self.config.eval_worktrees:
+            if worktree.exists():
+                return worktree
+        return self.config.dev_worktree
+
     def _is_ancestor(self, ancestor: str, descendant: str) -> bool | None:
         """`True`/`False` for a real answer, `None` for a git error (M6).
 
@@ -622,7 +660,7 @@ class Daemon:
         """
         try:
             return git_is_ancestor(
-                self.config.eval_worktrees[0], ancestor, descendant, self._git
+                self._primary_repo(), ancestor, descendant, self._git
             )
         except GitError as exc:
             self._alerts.emit("ancestry_check_failed", str(exc), ancestor=ancestor)
@@ -700,8 +738,11 @@ class Daemon:
 
         stashed: list[Path] = []
         skipped: list[Path] = []
+        # A missing worktree has nothing to move; skip it (it is reported by
+        # `_worktree_states` in the heartbeat, never a hard error).
+        existing = [w for w in self.config.eval_worktrees if w.exists()]
         try:
-            for worktree in self.config.eval_worktrees:
+            for worktree in existing:
                 # M4: only a detached worktree may be fast-forwarded. A branch
                 # checkout is alerted and skipped, never moved.
                 if not git_is_detached(worktree, self._git):
@@ -716,7 +757,7 @@ class Daemon:
                 if git_has_tracked_edits(worktree, self._git):
                     git_stash_push(worktree, f"eval-advance {now}", self._git)
                     stashed.append(worktree)
-            for worktree in self.config.eval_worktrees:
+            for worktree in existing:
                 if worktree in skipped:
                     continue
                 result = git_ff_only(worktree, dev_sha, self._git)
@@ -774,7 +815,7 @@ class Daemon:
         self, eval_sha: str, dev_sha: str, digests: Mapping[str, str]
     ) -> dict | None:
         try:
-            repo = self.config.eval_worktrees[0]
+            repo = self._primary_repo()
             before = manifest.build_manifest(repo, eval_sha, digests, git_runner=self._git)
             after = manifest.build_manifest(repo, dev_sha, digests, git_runner=self._git)
             built = decision_input.build_decision_input(
