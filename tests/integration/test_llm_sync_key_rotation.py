@@ -72,7 +72,7 @@ class RecordingGatewayAPI:
 
     def __init__(self):
         self.records: dict[str, dict] = {}
-        self.virtual_keys: dict[str, list[str]] = {}
+        self.virtual_keys: dict[str, dict] = {}
         self.calls: list[tuple[str, str, dict | None]] = []
         self._seq = 0
 
@@ -124,10 +124,18 @@ class RecordingGatewayAPI:
             self.records.pop(json["id"], None)
             return self._response({})
         if method == "POST" and path == "/key/generate":
-            self.virtual_keys[json["key"]] = list(json["models"])
+            self.virtual_keys[json["key"]] = {
+                "models": list(json["models"]),
+                "budget_limits": list(json.get("budget_limits") or []),
+                "rpm_limit": json.get("rpm_limit"),
+            }
             return self._response({})
         if method == "POST" and path == "/key/update":
-            self.virtual_keys[json["key"]] = list(json["models"])
+            self.virtual_keys[json["key"]] = {
+                "models": list(json["models"]),
+                "budget_limits": list(json.get("budget_limits") or []),
+                "rpm_limit": json.get("rpm_limit"),
+            }
             return self._response({})
         raise AssertionError(f"unexpected management call: {method} {path} {json}")
 
@@ -137,7 +145,7 @@ class RecordingGatewayAPI:
         if path == "/key/info":
             key = urlparse(url).query.removeprefix("key=")
             if key in self.virtual_keys:
-                return self._response({"info": {"models": self.virtual_keys[key]}})
+                return self._response({"info": dict(self.virtual_keys[key])})
             return self._response({}, status=404)
         raise AssertionError(f"unexpected management GET: {path}")
 
@@ -201,4 +209,30 @@ def test_provider_key_rotation_updates_that_providers_models_with_new_key():
     writes = len(recorder.calls)
     assert _run(recorder, rotated_keys) == S.SYNC_OK
     assert len(recorder.calls) == writes + 3
+    assert all(call[0] == "GET" for call in recorder.calls[writes:])
+
+
+def test_budget_windows_are_provisioned_and_converge(monkeypatch):
+    # #330: every minted virtual key carries the USD cost-guard windows from
+    # the plan, and a no-change re-run converges (no key write) because the
+    # diff ignores litellm's server-set `reset_at`.
+    for name in ("LLM_GATEWAY_BUDGET_5H_USD", "LLM_GATEWAY_BUDGET_7D_USD",
+                 "LLM_GATEWAY_BUDGET_30D_USD",
+                 "LLM_GATEWAY_BUDGET_CONSERVATISM_FACTOR",
+                 "LLM_GATEWAY_KEY_RPM_LIMIT"):
+        monkeypatch.delenv(name, raising=False)
+
+    recorder = RecordingGatewayAPI()
+    keys = lambda provider: {"opencode": "oc_sk", "openai": "sk-oai"}[provider]  # noqa: E731
+    assert _run(recorder, keys) == S.SYNC_OK
+
+    assert recorder.virtual_keys, "the sync must mint a virtual key per provider"
+    for virtual_key in recorder.virtual_keys.values():
+        windows = {w["budget_duration"]: w["max_budget"]
+                   for w in virtual_key["budget_limits"]}
+        assert windows == {"5h": 6.0, "7d": 15.0, "30d": 30.0}, windows
+
+    writes = len(recorder.calls)
+    assert _run(recorder, keys) == S.SYNC_OK
+    assert len(recorder.calls) == writes + 3, "a converged re-run must not write"
     assert all(call[0] == "GET" for call in recorder.calls[writes:])
