@@ -16,8 +16,10 @@ here writes a record, and every failure is a stable, path-free code.
 """
 from __future__ import annotations
 
+import os
 from collections.abc import Mapping
 from dataclasses import dataclass
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -98,6 +100,36 @@ def load_spend_records(
     return records
 
 
+def _distinct_roots(roots: Iterable[str | Path | None]) -> list[str | Path]:
+    """The configured roots, each physical directory counted once.
+
+    A root listed twice - the primary and the legacy root pointing at the same
+    tree, or a symlink to it - must not turn one record into a false ambiguity.
+    """
+    seen: set[str] = set()
+    distinct: list[str | Path] = []
+    for root in roots:
+        if not root:
+            continue
+        key = os.path.realpath(str(root))
+        if key in seen:
+            continue
+        seen.add(key)
+        distinct.append(root)
+    return distinct
+
+
+def load_spend_records_from_roots(
+    roots: Iterable[str | Path | None], *, files: FileStore | None = None
+) -> list[Mapping]:
+    """Every parseable record across `roots`, each distinct root read once."""
+    store = files or FileStore()
+    records: list[Mapping] = []
+    for root in _distinct_roots(roots):
+        records.extend(load_spend_records(root, files=store))
+    return records
+
+
 def match_spend(
     records: list[Mapping],
     *,
@@ -144,12 +176,19 @@ def resolve_trial_spend(
     trial_id: str,
     project_id: str | None,
     instance_id: str | None,
+    legacy_runs_root: str | Path | None = None,
     files: FileStore | None = None,
 ) -> TrialSpend:
-    """One Trial's recorded spend, resolved by full identity under `runs_root`."""
-    if not runs_root:
+    """One Trial's recorded spend, resolved by full identity across the roots.
+
+    The primary root holds the current harness records; the optional legacy root
+    holds the historical ones. Both are searched, and a record that appears in
+    two different roots is ambiguous rather than arbitrarily chosen.
+    """
+    roots = _distinct_roots((runs_root, legacy_runs_root))
+    if not roots:
         return _unavailable(SPEND_ROOT_UNCONFIGURED)
-    records = load_spend_records(runs_root, files=files)
+    records = load_spend_records_from_roots(roots, files=files)
     return match_spend(
         records,
         target_id=target_id,
@@ -246,6 +285,7 @@ __all__ = [
     "STATUS_UNAVAILABLE",
     "TrialSpend",
     "load_spend_records",
+    "load_spend_records_from_roots",
     "match_spend",
     "resolve_trial_spend",
 ]

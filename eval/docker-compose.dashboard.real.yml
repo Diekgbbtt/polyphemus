@@ -13,12 +13,34 @@
 #                  /eval-api -> eval-api (loopback ports only)
 #
 # This overlay starts no demo generator and never reads the raw `live/` mirror
-# as history. It mounts three read-only sources beside the artifact store: the
-# operator's real artifact store, the eval instance's project data root (the
-# allowlisted Hunting/Skill tree the resolved endpoint falls back to), and the
-# harness runs root (each finished Trial's authoritative record, the source of
-# the recorded-spend block). The agent base URL is used only to read the
-# matching instance's current L0/L1 graph; nothing here writes to any mount.
+# as history. It mounts read-only sources beside the artifact store: the
+# operator's real artifact store, the eval instance's persistent project data
+# root (the allowlisted Hunting/Skill tree the resolved endpoint falls back to),
+# and the primary harness runs root (each finished Trial's authoritative record,
+# the source of the recorded-spend block). The agent base URL is used only to
+# read the matching instance's current L0/L1 graph; nothing here writes to any
+# mount.
+#
+# Host paths are overridable, and every bind must already exist: each source is
+# declared with `bind.create_host_path: false`, so a missing or mistyped root
+# fails loudly instead of becoming an empty directory that silently hides data.
+#
+#   EVAL_ARTIFACT_STORE_HOST_PATH   -> /srv/eval-artifacts      (materialized store)
+#   EVAL_PROJECT_DATA_ROOT_HOST_PATH-> /srv/eval-project-data   (raw project data)
+#   EVAL_RUNS_ROOT_HOST_PATH        -> /srv/eval-runs           (current records)
+#
+# Historical records live in a second, OPTIONAL root. New installations do not
+# need it; a host that still holds earlier eval records adds the companion
+# overlay, which mounts that tree read-only and sets EVAL_RUNS_LEGACY_ROOT:
+#
+#   EVAL_RUNS_LEGACY_ROOT_HOST_PATH=/opt/eval-platform-model/eval/runs \
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml \
+#     -f eval/docker-compose.dashboard.real.yml \
+#     -f eval/docker-compose.dashboard.legacy.yml up --build
+#
+# The read API searches both runs roots; a record present in two different roots
+# is ambiguous (never arbitrarily chosen), and the same root configured twice is
+# read once.
 
 volumes:
   # The frontend's dependencies, kept out of the bind-mounted working tree.
@@ -42,20 +64,44 @@ services:
       EVAL_PROJECT_DATA_ROOT: /srv/eval-project-data
       EVAL_AGENT_BASE_URL: http://agent:8080
       EVAL_INSTANCE_ID: ${EVAL_INSTANCE_ID:-eval-server-1}
-      # The harness runs root holds each finished Trial's authoritative record
-      # (arbitrary filename); the recorded-spend block resolves it by full
+      # The primary harness runs root holds each finished Trial's authoritative
+      # record (arbitrary filename); the recorded-spend block resolves it by full
       # Trial identity. Mounted read-only, and never required for the rest of
       # the report: an unset host path leaves spend "non disponibile".
+      # The optional historical root is added by the legacy overlay, which sets
+      # EVAL_RUNS_LEGACY_ROOT beside this one.
       EVAL_RUNS_ROOT: /srv/eval-runs
     volumes:
-      - ./eval:/srv/eval:ro
-      - ${EVAL_ARTIFACT_STORE_HOST_PATH:-/srv/eval-artifacts}:/srv/eval-artifacts:ro
-      # The raw project data root, always read-only.
-      - ${EVAL_PROJECT_DATA_ROOT_HOST_PATH:-/opt/polymerhus-dev/eval/instances/eval-server-1/data}:/srv/eval-project-data:ro
-      # The harness runs root, always read-only. It is a separate source from
-      # the artifact store: the store holds the materialized Trial, the runs
-      # root holds the harness's own record with its spend fields.
-      - ${EVAL_RUNS_ROOT_HOST_PATH:-/opt/polymerhus-dev/eval/runs}:/srv/eval-runs:ro
+      # Every source is a read-only bind that must already exist.
+      - type: bind
+        source: ./eval
+        target: /srv/eval
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${EVAL_ARTIFACT_STORE_HOST_PATH:-/srv/eval-artifacts}
+        target: /srv/eval-artifacts
+        read_only: true
+        bind:
+          create_host_path: false
+      # The eval instance's persistent project data root (the driver's
+      # EVAL_DATA_ROOT default), always read-only.
+      - type: bind
+        source: ${EVAL_PROJECT_DATA_ROOT_HOST_PATH:-/opt/polymerhus-dev/eval/instances/data/eval-server-1}
+        target: /srv/eval-project-data
+        read_only: true
+        bind:
+          create_host_path: false
+      # The primary harness runs root, always read-only. It is a separate source
+      # from the artifact store: the store holds the materialized Trial, the
+      # runs root holds the harness's own record with its spend fields.
+      - type: bind
+        source: ${EVAL_RUNS_ROOT_HOST_PATH:-/opt/polymerhus-dev/eval/runs}
+        target: /srv/eval-runs
+        read_only: true
+        bind:
+          create_host_path: false
     command:
       - python
       - -m

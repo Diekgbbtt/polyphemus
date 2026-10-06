@@ -45,6 +45,7 @@ BASE_SERVICES = {"agent", "kali", "postgres", "neo4j", "lightrag"}
 EVAL_OVERLAY = "eval/docker-compose.eval.yml"
 DASHBOARD_OVERLAY = "eval/docker-compose.dashboard.yml"
 REAL_OVERLAY = "eval/docker-compose.dashboard.real.yml"
+LEGACY_OVERLAY = "eval/docker-compose.dashboard.legacy.yml"
 OPERATOR_OVERLAY = "eval/docker-compose.dashboard.operator.yml"
 # The demo trio the dashboard overlay adds; nothing else may appear with it.
 DASHBOARD_SERVICES = {"eval-store", "eval-api", "eval-dashboard"}
@@ -66,6 +67,7 @@ def stage(
     with_dashboard: bool = False,
     with_real: bool = False,
     with_operator: bool = False,
+    with_legacy: bool = False,
 ) -> Path:
     """A tmp compose project mirroring the instance layout (root files plus
     the eval overlay under `eval/`); the repo-root `.env` is never read."""
@@ -78,6 +80,8 @@ def stage(
         shutil.copy(REPO_ROOT / DASHBOARD_OVERLAY, tmp_path / DASHBOARD_OVERLAY)
     if with_real:
         shutil.copy(REPO_ROOT / REAL_OVERLAY, tmp_path / REAL_OVERLAY)
+    if with_legacy:
+        shutil.copy(REPO_ROOT / LEGACY_OVERLAY, tmp_path / LEGACY_OVERLAY)
     if with_operator:
         shutil.copy(REPO_ROOT / OPERATOR_OVERLAY, tmp_path / OPERATOR_OVERLAY)
     if env is not None:
@@ -328,6 +332,101 @@ def test_real_dashboard_services_restart_after_daemon_restart(tmp_path: Path) ->
     services = yaml.safe_load(rendered.stdout)["services"]
     assert services["eval-api"]["restart"] == "unless-stopped"
     assert services["eval-dashboard"]["restart"] == "unless-stopped"
+
+
+@docker
+def test_real_overlay_never_creates_a_missing_host_path(tmp_path: Path) -> None:
+    project = stage(tmp_path, COMPLETE_ENV, with_real=True)
+
+    config = yaml.safe_load(real_render(project).stdout)
+    api_mounts = mounts(config["services"]["eval-api"])
+
+    # Every source is an explicit, read-only bind that must already exist: a
+    # missing root fails loudly instead of becoming an empty directory.
+    for target, mount in api_mounts.items():
+        assert mount["type"] == "bind", target
+        assert mount["read_only"] is True, target
+        # A default bind renders `create_host_path: true`; ours must not.
+        assert mount["bind"].get("create_host_path") is not True, target
+
+
+@docker
+def test_real_overlay_defaults_the_raw_root_to_the_instance_data_root(
+    tmp_path: Path,
+) -> None:
+    project = stage(tmp_path, COMPLETE_ENV, with_real=True)
+
+    config = yaml.safe_load(real_render(project).stdout)
+
+    assert mounts(config["services"]["eval-api"])["/srv/eval-project-data"][
+        "source"
+    ] == "/opt/polymerhus-dev/eval/instances/data/eval-server-1"
+
+
+def legacy_render(project: Path, extra: dict[str, str] | None = None):
+    return render(
+        project,
+        [
+            "docker-compose.yml",
+            "docker-compose.dev.yml",
+            REAL_OVERLAY,
+            LEGACY_OVERLAY,
+        ],
+        extra=extra,
+    )
+
+
+@docker
+def test_legacy_overlay_adds_the_historical_runs_root_read_only(
+    tmp_path: Path,
+) -> None:
+    project = stage(tmp_path, COMPLETE_ENV, with_real=True, with_legacy=True)
+
+    rendered = legacy_render(project)
+
+    assert rendered.returncode == 0, rendered.stderr
+    api = yaml.safe_load(rendered.stdout)["services"]["eval-api"]
+    api_mounts = mounts(api)
+    assert set(api_mounts) == {
+        "/srv/eval",
+        "/srv/eval-artifacts",
+        "/srv/eval-project-data",
+        "/srv/eval-runs",
+        "/srv/eval-runs-legacy",
+    }
+    legacy = api_mounts["/srv/eval-runs-legacy"]
+    assert legacy["source"] == "/opt/eval-platform-model/eval/runs"
+    assert legacy["read_only"] is True
+    assert legacy["bind"].get("create_host_path") is not True
+    assert api["environment"]["EVAL_RUNS_LEGACY_ROOT"] == "/srv/eval-runs-legacy"
+    # The primary root keeps its own mount and variable.
+    assert api_mounts["/srv/eval-runs"]["read_only"] is True
+    assert api["environment"]["EVAL_RUNS_ROOT"] == "/srv/eval-runs"
+
+
+@docker
+def test_legacy_overlay_host_path_is_overridable(tmp_path: Path) -> None:
+    project = stage(tmp_path, COMPLETE_ENV, with_real=True, with_legacy=True)
+
+    config = yaml.safe_load(
+        legacy_render(
+            project, extra={"EVAL_RUNS_LEGACY_ROOT_HOST_PATH": "/tmp/legacy-runs"}
+        ).stdout
+    )
+
+    assert mounts(config["services"]["eval-api"])["/srv/eval-runs-legacy"][
+        "source"
+    ] == "/tmp/legacy-runs"
+
+
+@docker
+def test_the_real_overlay_alone_configures_no_legacy_root(tmp_path: Path) -> None:
+    project = stage(tmp_path, COMPLETE_ENV, with_real=True)
+
+    api = yaml.safe_load(real_render(project).stdout)["services"]["eval-api"]
+
+    assert "/srv/eval-runs-legacy" not in mounts(api)
+    assert api["environment"].get("EVAL_RUNS_LEGACY_ROOT") in (None, "")
 
 
 @docker

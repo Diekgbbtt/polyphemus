@@ -1,0 +1,31 @@
+# Eval legacy runs overlay (historical Trial records).
+#
+# OPTIONAL, and only for a host that still holds earlier eval records beside the
+# current runs root. A fresh installation needs `docker-compose.dashboard.real.yml`
+# alone; shipping this file changes nothing until it is passed with `-f`.
+#
+#   EVAL_RUNS_LEGACY_ROOT_HOST_PATH=/opt/eval-platform-model/eval/runs \
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml \
+#     -f eval/docker-compose.dashboard.real.yml \
+#     -f eval/docker-compose.dashboard.legacy.yml up --build
+#
+# It adds one read-only bind to the existing eval-api service: the historical
+# harness runs root, published at a fixed container path and read as
+# EVAL_RUNS_LEGACY_ROOT beside the primary EVAL_RUNS_ROOT. The recorded-spend
+# resolver searches both roots by the Trial's full identity; a record that
+# appears in two different roots is ambiguous (never arbitrarily chosen), and a
+# root listed twice is read once. The bind must already exist
+# (`bind.create_host_path: false`): a missing or mistyped path fails loudly
+# instead of becoming an empty directory.
+
+services:
+  eval-api:
+    environment:
+      EVAL_RUNS_LEGACY_ROOT: /srv/eval-runs-legacy
+    volumes:
+      - type: bind
+        source: ${EVAL_RUNS_LEGACY_ROOT_HOST_PATH:-/opt/eval-platform-model/eval/runs}
+        target: /srv/eval-runs-legacy
+        read_only: true
+        bind:
+          create_host_path: false

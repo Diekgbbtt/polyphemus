@@ -546,10 +546,19 @@ def test_compose_overlay_configures_the_resolved_sources_read_only() -> None:
     # The instance id may be parametrised, but it must be present.
     assert "EVAL_INSTANCE_ID" in environment
 
-    mounts = [str(mount) for mount in api.get("volumes", [])]
-    # The raw project data root is mounted, and every mount is read-only.
-    assert any(mount.endswith(":/srv/eval-project-data:ro") for mount in mounts)
-    assert all(not mount.endswith(":rw") for mount in mounts)
+    volumes = {volume["target"]: volume for volume in api.get("volumes", [])}
+    # The raw project data root is mounted, and every source is an explicit,
+    # read-only bind that must already exist.
+    assert "/srv/eval-project-data" in volumes
+    for target, volume in volumes.items():
+        assert volume["type"] == "bind", target
+        assert volume["read_only"] is True, target
+        assert volume["bind"]["create_host_path"] is False, target
+    # The default raw root is the eval instance's persistent data root.
+    assert volumes["/srv/eval-project-data"]["source"] == (
+        "${EVAL_PROJECT_DATA_ROOT_HOST_PATH:-"
+        "/opt/polymerhus-dev/eval/instances/data/eval-server-1}"
+    )
     # No destructive service management was added by the overlay.
     assert "down" not in str(api.get("command", ""))
 
@@ -622,8 +631,10 @@ def test_compose_overlay_mounts_the_runs_root_read_only() -> None:
     api = overlay["services"]["eval-api"]
 
     assert api["environment"]["EVAL_RUNS_ROOT"] == "/srv/eval-runs"
-    mounts = [str(mount) for mount in api.get("volumes", [])]
-    assert any(mount.endswith(":/srv/eval-runs:ro") for mount in mounts)
+    volumes = {volume["target"]: volume for volume in api.get("volumes", [])}
+    runs = volumes["/srv/eval-runs"]
+    assert runs["read_only"] is True
+    assert runs["bind"]["create_host_path"] is False
 
 
 def test_filesystem_factory_reads_the_runs_root_from_the_environment(
@@ -634,3 +645,122 @@ def test_filesystem_factory_reads_the_runs_root_from_the_environment(
     built = source.filesystem_source()
 
     assert built.runs_root == str(tmp_path / "runs")
+
+
+def test_snapshot_reads_spend_from_the_legacy_root_too(tmp_path: Path) -> None:
+    store = tmp_path / "store"
+    _seed_identified_trial(store)
+    primary = tmp_path / "runs"
+    legacy = tmp_path / "legacy-runs"
+    primary.mkdir()
+    _seed_spend_record(legacy, name="historical.yaml")
+
+    adapter = source.ArtifactStoreSnapshotSource(
+        store, runs_root=primary, legacy_runs_root=legacy
+    )
+    trial = adapter.snapshot()["trials"][0]
+
+    assert trial["spend"]["status"] == "available"
+    assert trial["spend"]["spent_tokens"] == 500
+
+
+def test_the_same_runs_root_configured_twice_is_not_ambiguous(tmp_path: Path) -> None:
+    store = tmp_path / "store"
+    _seed_identified_trial(store)
+    root = tmp_path / "runs"
+    _seed_spend_record(root)
+
+    adapter = source.ArtifactStoreSnapshotSource(
+        store, runs_root=root, legacy_runs_root=root
+    )
+    trial = adapter.snapshot()["trials"][0]
+
+    assert trial["spend"]["status"] == "available"
+    assert trial["spend"]["spent_tokens"] == 500
+
+
+def test_a_record_in_two_different_roots_is_ambiguous(tmp_path: Path) -> None:
+    store = tmp_path / "store"
+    _seed_identified_trial(store)
+    primary = tmp_path / "runs"
+    legacy = tmp_path / "legacy-runs"
+    _seed_spend_record(primary, name="current.yaml")
+    _seed_spend_record(legacy, name="historical.yaml")
+
+    adapter = source.ArtifactStoreSnapshotSource(
+        store, runs_root=primary, legacy_runs_root=legacy
+    )
+    spend = adapter.snapshot()["trials"][0]["spend"]
+
+    assert spend["status"] == "unavailable"
+    assert spend["reason"] == "spend_record_ambiguous"
+
+
+def test_filesystem_factory_reads_the_legacy_runs_root_from_the_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("EVAL_RUNS_LEGACY_ROOT", str(tmp_path / "legacy-runs"))
+
+    built = source.filesystem_source()
+
+    assert built.legacy_runs_root == str(tmp_path / "legacy-runs")
+
+
+def _inventory_paths(body: dict) -> set[str]:
+    paths: set[str] = set()
+
+    def visit(groups: list[dict]) -> None:
+        for group in groups:
+            for entry in group.get("entries", []):
+                paths.add(entry["relative_path"])
+            visit(group.get("children", []))
+
+    visit(body.get("groups", []))
+    return paths
+
+
+def test_a_second_request_sees_new_data_without_a_restart(tmp_path: Path) -> None:
+    store = tmp_path / "store"
+    _seed_identified_trial(store)
+    raw = tmp_path / "raw"
+    _raw_project(
+        raw,
+        PROJECT_ID,
+        {"hunting/orchestration/hunt_configs/produced/prod.yaml": b"a\n"},
+    )
+    runs_root = tmp_path / "runs"
+    adapter = source.ArtifactStoreSnapshotSource(
+        store, project_data_root=raw, instance_id=INSTANCE, runs_root=runs_root
+    )
+
+    first = adapter.snapshot()
+    assert [trial["trial_id"] for trial in first["trials"]] == ["t1"]
+    assert first["trials"][0]["spend"]["status"] == "unavailable"
+
+    # The next evaluation adds a materialized Trial, an allowlisted artifact and
+    # a spend record. The same adapter (no restart, no cache) must see all three.
+    _seed_identified_trial(store, trial="t2")
+    _raw_project(
+        raw,
+        PROJECT_ID,
+        {"hunting/orchestration/hunt_configs/produced/new.yaml": b"b\n"},
+    )
+    _seed_spend_record(runs_root, trial="t1")
+
+    second = adapter.snapshot()
+    assert [trial["trial_id"] for trial in second["trials"]] == ["t1", "t2"]
+    assert second["trials"][0]["spend"]["status"] == "available"
+    assert second["trials"][0]["spend"]["spent_tokens"] == 500
+    assert "hunting/orchestration/hunt_configs/produced/new.yaml" in _inventory_paths(
+        adapter.list_resolved_artifacts("comfyui-1", "run-a", "t1")
+    )
+
+
+def test_filesystem_factory_leaves_the_legacy_root_unset_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("EVAL_RUNS_LEGACY_ROOT", raising=False)
+
+    built = source.filesystem_source()
+
+    assert built.legacy_runs_root is None

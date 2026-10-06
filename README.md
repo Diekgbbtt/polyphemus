@@ -169,13 +169,38 @@ the read API writes to it. `EVAL_AGENT_BASE_URL` is only ever queried for a Tria
 The production overlay `eval/docker-compose.dashboard.real.yml` wires them for the eval server:
 
     EVAL_ARTIFACT_STORE_HOST_PATH=/srv/eval-artifacts \
-    EVAL_PROJECT_DATA_ROOT_HOST_PATH=/opt/polymerhus-dev/eval/instances/eval-server-1/data \
+    EVAL_PROJECT_DATA_ROOT_HOST_PATH=/opt/polymerhus-dev/eval/instances/data/eval-server-1 \
+    EVAL_RUNS_ROOT_HOST_PATH=/opt/polymerhus-dev/eval/runs \
       docker compose -f docker-compose.yml -f docker-compose.dev.yml \
         -f eval/docker-compose.dashboard.real.yml up --build
 
-Both mounts are read-only and only `eval-api`/`eval-dashboard` are started; the agent, Neo4j,
-Postgres, and the eval workers are untouched. On a headless server, reach the SPA through an
-SSH tunnel rather than exposing the ports:
+Every source is a read-only bind that must already exist (`bind.create_host_path: false`), so a
+missing or mistyped root fails loudly instead of silently becoming an empty directory. The
+defaults are the instance's persistent project data root (the driver's `EVAL_DATA_ROOT`), the
+materialized store, and the **primary** harness runs root (`/opt/polymerhus-dev/eval/runs`) that
+holds the new Trials' records. All of them are read at request time, so a new evaluation shows up
+on the next poll with no API restart.
+
+Because nothing is auto-created, create a root that does not exist yet before the first `up` — the
+driver creates its own runs root on the first run, or `mkdir -p /opt/polymerhus-dev/eval/runs`.
+
+Historical Trials live in a second, **optional** runs root. A fresh install never needs it; a host
+that still holds earlier records adds the companion overlay:
+
+    EVAL_RUNS_LEGACY_ROOT_HOST_PATH=/opt/eval-platform-model/eval/runs \
+      docker compose -f docker-compose.yml -f docker-compose.dev.yml \
+        -f eval/docker-compose.dashboard.real.yml \
+        -f eval/docker-compose.dashboard.legacy.yml up --build
+
+`EVAL_RUNS_LEGACY_ROOT_HOST_PATH` defaults to `/opt/eval-platform-model/eval/runs` and is mounted
+read-only at `/srv/eval-runs-legacy`; the API reads it as `EVAL_RUNS_LEGACY_ROOT` beside
+`EVAL_RUNS_ROOT`. The recorded-spend resolver searches both roots by the Trial's full identity: a
+record that appears in two different roots is ambiguous (never chosen arbitrarily), and the same
+root configured twice is read once.
+
+Only `eval-api`/`eval-dashboard` are started; the agent, Neo4j, Postgres, and the eval workers are
+untouched. On a headless server, reach the SPA through an SSH tunnel rather than exposing the
+ports:
 
     ssh -L 5173:127.0.0.1:5173 -L 8090:127.0.0.1:8090 root@<eval-server>
     # then open http://localhost:5173/  (the Target catalog)
@@ -332,10 +357,14 @@ generator — and binds the operator's store read-only:
         -f eval/docker-compose.dashboard.real.yml up --build
 
 `EVAL_ARTIFACT_STORE_HOST_PATH` defaults to `/srv/eval-artifacts` and is mounted read-only at the
-container's `/srv/eval-artifacts` (its `EVAL_ARTIFACT_STORE`). The overlay never mounts the
-instance data root or the raw `live/` mirror: the only historical source is the immutable Trial
-trees. Both published ports are loopback-only and configurable (`EVAL_API_PORT`,
-`EVAL_DASHBOARD_PORT`).
+container's `/srv/eval-artifacts` (its `EVAL_ARTIFACT_STORE`). The overlay also binds the eval
+instance's persistent project data root (`EVAL_PROJECT_DATA_ROOT_HOST_PATH`, default
+`/opt/polymerhus-dev/eval/instances/data/eval-server-1`) and the primary harness runs root
+(`EVAL_RUNS_ROOT_HOST_PATH`, default `/opt/polymerhus-dev/eval/runs`), both read-only; it never
+mounts the raw `live/` mirror. Historical records come from the optional companion overlay
+`eval/docker-compose.dashboard.legacy.yml` (see the section above). Every bind uses
+`bind.create_host_path: false`, so a missing root is an error rather than an empty directory. Both
+published ports are loopback-only and configurable (`EVAL_API_PORT`, `EVAL_DASHBOARD_PORT`).
 
 Open **http://localhost:5173/p** for the project hub and **http://localhost:5173/eval** for the
 read-only eval pages; the API is reachable at `http://localhost:8090/health` and

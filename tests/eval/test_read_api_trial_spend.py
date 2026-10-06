@@ -259,3 +259,87 @@ def test_a_corrupt_yaml_record_is_ignored_not_a_crash(tmp_path: Path) -> None:
 
     assert spend.status == "available"
     assert spend.spent_tokens == 500
+
+
+# --- primary + optional legacy runs roots ---------------------------------------
+
+
+def _resolve_in(primary: Path | None, legacy: Path | None):
+    return trial_spend.resolve_trial_spend(
+        primary,
+        legacy_runs_root=legacy,
+        target_id=TARGET,
+        target_run_id=RUN,
+        trial_id=TRIAL,
+        project_id=PROJECT,
+        instance_id=INSTANCE,
+    )
+
+
+def test_the_legacy_root_supplies_a_record_the_primary_root_does_not(
+    tmp_path: Path,
+) -> None:
+    primary = tmp_path / "runs"
+    legacy = tmp_path / "legacy-runs"
+    primary.mkdir()
+    _write_record(legacy, "historical.yaml", _identity())
+
+    spend = _resolve_in(primary, legacy)
+
+    assert spend.status == "available"
+    assert spend.spent_tokens == 500
+
+
+def test_the_primary_root_supplies_a_record_the_legacy_root_does_not(
+    tmp_path: Path,
+) -> None:
+    primary = tmp_path / "runs"
+    legacy = tmp_path / "legacy-runs"
+    legacy.mkdir()
+    _write_record(primary, "current.yaml", _identity())
+
+    spend = _resolve_in(primary, legacy)
+
+    assert spend.status == "available"
+    assert spend.spent_tokens == 500
+
+
+def test_the_same_root_configured_twice_is_not_a_conflict(tmp_path: Path) -> None:
+    root = tmp_path / "runs"
+    _write_record(root, "only.yaml", _identity())
+
+    spend = _resolve_in(root, root)
+
+    assert spend.status == "available"
+    assert spend.spent_tokens == 500
+
+
+def test_one_identity_in_two_different_roots_is_ambiguous(tmp_path: Path) -> None:
+    primary = tmp_path / "runs"
+    legacy = tmp_path / "legacy-runs"
+    _write_record(primary, "current.yaml", _identity())
+    _write_record(legacy, "historical.yaml", _identity())
+
+    spend = _resolve_in(primary, legacy)
+
+    assert spend.status == "unavailable"
+    assert spend.reason == trial_spend.SPEND_RECORD_AMBIGUOUS
+    assert spend.spent_tokens is None
+
+
+def test_no_configured_root_stays_unavailable(tmp_path: Path) -> None:
+    spend = _resolve_in(None, None)
+
+    assert spend.status == "unavailable"
+    assert spend.reason == trial_spend.SPEND_ROOT_UNCONFIGURED
+
+
+def test_loading_records_skips_a_missing_and_a_repeated_root(tmp_path: Path) -> None:
+    root = tmp_path / "runs"
+    _write_record(root, "only.yaml", _identity())
+
+    records = trial_spend.load_spend_records_from_roots(
+        [root, tmp_path / "missing", root]
+    )
+
+    assert len(records) == 1

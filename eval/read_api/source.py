@@ -47,7 +47,7 @@ from .project_graph import HistoricalProjectGraphError, read_project_graph
 from .trial_spend import (
     SPEND_ROOT_UNCONFIGURED,
     TrialSpend,
-    load_spend_records,
+    load_spend_records_from_roots,
     match_spend,
 )
 
@@ -60,6 +60,10 @@ ENV_INSTANCE_ID = "EVAL_INSTANCE_ID"
 # The harness's runs root, holding each finished Trial's authoritative record
 # (arbitrary filename). Read-only, and only for the recorded-spend block.
 ENV_RUNS_ROOT = "EVAL_RUNS_ROOT"
+# The optional legacy runs root, holding the historical Trials' records. Unset
+# on a fresh install; when set, it is searched beside the primary root and a
+# record present in both is ambiguous rather than arbitrarily chosen.
+ENV_LEGACY_RUNS_ROOT = "EVAL_RUNS_LEGACY_ROOT"
 
 MANIFEST_FILENAME = "run-manifest.yaml"
 # Non-Trial siblings a store also contains: the materializer's scratch root, the
@@ -163,6 +167,9 @@ class ArtifactStoreSnapshotSource:
     # The read-only harness runs root the recorded-spend block resolves against;
     # None leaves every Trial's spend `unavailable` (never guessed).
     runs_root: str | Path | None = None
+    # The optional read-only legacy runs root (historical records). Searched
+    # beside the primary root; unset by default.
+    legacy_runs_root: str | Path | None = None
     graph_client_factory: Callable[[], ProjectGraphClient | None] | None = None
 
     def snapshot(self) -> dict[str, Any]:
@@ -276,7 +283,8 @@ class ArtifactStoreSnapshotSource:
         trials = snapshot.get("trials")
         if not isinstance(trials, list):
             return
-        if not self.runs_root:
+        roots = [root for root in (self.runs_root, self.legacy_runs_root) if root]
+        if not roots:
             block = TrialSpend(
                 status="unavailable", reason=SPEND_ROOT_UNCONFIGURED
             ).to_dict()
@@ -284,7 +292,7 @@ class ArtifactStoreSnapshotSource:
                 if isinstance(trial, dict):
                     trial["spend"] = dict(block)
             return
-        records = load_spend_records(self.runs_root, files=FileStore())
+        records = load_spend_records_from_roots(roots, files=FileStore())
         for trial in trials:
             if not isinstance(trial, dict):
                 continue
@@ -423,4 +431,5 @@ def filesystem_source() -> SnapshotSource:
         agent_base_url=os.environ.get(ENV_AGENT_BASE_URL) or None,
         instance_id=os.environ.get(ENV_INSTANCE_ID) or None,
         runs_root=os.environ.get(ENV_RUNS_ROOT) or None,
+        legacy_runs_root=os.environ.get(ENV_LEGACY_RUNS_ROOT) or None,
     )
