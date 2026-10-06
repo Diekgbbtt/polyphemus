@@ -84,6 +84,7 @@ Confidence: HIGH = code/evidence confirmed; POTENTIAL = needs `diagnosing-bugs`.
 |---|---|---|---|---|
 | EV-21 | a persistent provider `429` fails the hunting run and poisons pod verdicts | No fallback model group. The orchestrator's `DegradedTurnBreaker` (#280 Part 2) aborts the pass after 5 consecutive degraded turns -> run `failed`; the hunter/pod sessions have no equivalent backoff and keep hammering; a pod raise degrades to `technical-infeasibility` with the raw error (`pod/pod.py:114-118`), mis-classifying a provider throttle as target infeasibility. `_phase_hunting` also drops the reason (`failure=None`). **Code side FIXED by #329** (`hunting-329-provider-failure-classification-adr.md`): a typed `ProviderUnavailableError`, the pod/triager/surfer provider propagation, and a provider-caused pass abort landing `interrupted`. The gateway guard (#330) and the stop/flush/resume + eval-monitor handling (#331) remain. | HIGH | #329 |
 | EV-22 | token tracking not durable | in-memory ledger (`app/llm/usage.py::_LEDGER`) resets on restart so the budget never trips; compounded by the Langfuse gate requiring `LANGFUSE_HOST` so `LANGFUSE_BASE_URL` alone silently disables tracing | HIGH | #326, #327 |
+| EV-24 | gateway sync rejects a non-`sk-` provider key (opencode-go `oc_sk_...`) as a litellm virtual key -> sync HARD, agent never starts | ADR D3 made the provider API key itself the litellm virtual key, assuming the `sk-` format (old zen keys were `sk-...`). LiteLLM's `POST /key/generate` enforces `sk-` ("Virtual Key must start with 'sk-'") and 400s on `oc_sk_...`, so `sync.py::ensure_virtual_key` aborts the sync (exit 1, D9 cold stop). Deterministic on any gateway-mode boot with the new key; affects every non-`sk-` provider key. **HIGH priority - blocks the whole agent in gateway mode.** Deep-dive in section 11. | HIGH | #335 |
 
 ### Lifecycle
 
@@ -188,3 +189,20 @@ EV-11 (#279) is a naming-convention item, not a mechanical split fix. The semant
 2. **The `__singleton__` distinguisher.** `System:AuthorizationSystem::__singleton__` uses a magic literal for the singleton System unit. The decision is what replaces it: a stable, unique, meaningful key (the System's own identity separate from its display name; a typed `(kind, name, scope)` triple; or one reserved singleton sentinel defined in a single place). The replacement must be unique across the graph and readable in the semantic key.
 
 Both are operator decisions (like A and B). The #279 implementer must grill them with grill-with-docs before choosing and record the outcome as an ADR; the CWE-token anchor is acceptable only as the interim behavior, never as the final grammar.
+
+## 11. Failure deep-dive C - the litellm virtual-key format (EV-24)
+
+### What actually happened
+The opencode-go provider key is now `oc_sk_...` (it was `sk-...` in an earlier form). In gateway mode the D2/D9 sync provisions each configured provider's key as a litellm virtual key (`sync.py::ensure_virtual_key`, `POST /key/generate {key, models}`). LiteLLM's `user_api_key_auth` accepts only master_key and `LiteLLM_VerificationTokenTable` rows, and `/key/generate` enforces the `sk-` key format. `oc_sk_...` is rejected with `400 Invalid key format. LiteLLM Virtual Key must start with 'sk-'. Received: oc_s****uLz3`, the sync takes the HARD path (exit 1) and the agent halts before starting (D9 cold stop). The models themselves register fine; only the key mint fails.
+
+### Why it is deep
+The defect is not in the sync control flow - that is correct and loudly safe. It is the **ADR D3 assumption** that the provider's own API key can double as the gateway virtual key ("the client's existing bearer just works"). That held only while every provider key was `sk-`-prefixed. Any non-`sk-` provider key breaks gateway mode entirely, so the fix is a boundary/identity decision (what is the client's gateway credential vs what the gateway holds upstream), not a patch.
+
+### The fix direction (design decision)
+Decouple the virtual key from the provider key: mint a litellm-native `sk-...` virtual key (per provider, or one app key), keep the provider credential in the model's `litellm_params.api_key` (already the case), and have the client send the minted key when `LLM_GATEWAY_URL` is set. Alternatives (a deterministic derived key, or relaxing litellm) are noted in #335. Preserve `key_info`/`ensure_virtual_key` idempotency (C9). Record as an ADR amending D3.
+
+### Secondary (low): misleading warning
+`sync.py:643-646` prints the env var as `API_KEY_%s` with `provider.upper()` (dash: `API_KEY_OPENCODE-GO`), while the lookup uses `_key_env(provider)` (underscore: `API_KEY_OPENCODE_GO`). Cosmetic; fix with the same change.
+
+### Operator-side context (not part of this defect)
+Provider chat calls are separately gated by opencode workspace Privacy settings: `deepseek-v4.1-flash` -> "requires Global regions"; `muse-spark-1.3-contributor` -> "trains on request data. Allow paid endpoints that train on request data". These are operator actions; they block live chat verification but not the sync fix.
