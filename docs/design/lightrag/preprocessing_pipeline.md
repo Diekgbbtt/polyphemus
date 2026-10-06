@@ -83,8 +83,11 @@ Current decisions:
 
 - Keep the ten-type methodology ontology unchanged. Do not add a
   `WSTGScenario` entity type yet.
-- Keep WSTG IDs, titles, source paths, and file names as scenario anchors and
-  manifest metadata, not as ontology entities.
+- Keep WSTG IDs, titles, source file names, and source paths as scenario
+  anchors and manifest metadata, not as ontology entities. Rendered documents
+  anchor on the source file name; the manifest keeps the full source path. A
+  rendered document never embeds a filesystem path, so its size cannot depend
+  on the checkout or temporary directory it was rendered from (#324).
 - Add deterministic `Ontology Query Anchors` inside each selected WSTG scenario
   document. These map likely Phase 2 terms to ontology types such as
   `TechnologyStack`, `PreconditionEnvironment`, `VulnerabilityClass`,
@@ -139,6 +142,12 @@ The WSTG corpus is shaped for LightRAG before any model call:
 - **Static QA before upload:** `--qa-only --fail-on-qa-issues` blocks missing
   anchors, duplicate/unknown WSTG IDs, missing primary documents, and known
   noise markers before LightRAG indexing spends tokens.
+- **Compact scenario cards within one char budget:** the broad
+  architecture-mapping and API reconnaissance / BOLA scenarios render as fixed
+  compact cards instead of the fanout composite. `WSTG_COMPACT_DOCUMENT_MAX_CHARS`
+  (`lightrag/preprocess.py`) is the single source for the compact 8000-char
+  budget; the static QA fails a compact card that exceeds it
+  (`compact_document_over_budget`).
 - **Smaller staged batches:** first clean rebuild uses `--batch-size 5` and
   `MAX_PARALLEL_INSERT=1` to reduce worker timeout risk and make failed batches
   cheap to isolate.
@@ -963,6 +972,11 @@ wstg_bypass_relations: passed
 This live validated store predates the 2026-07-30 ontology-query anchor update.
 Do not treat the new anchors as available to retrieval until the store has been
 reset and rebuilt from `data/lightrag/inputs/wstg_preprocessed`.
+
+The committed `rag_storage` snapshot also predates the #324 portable source line:
+its WSTG cards still carry the old relative-path anchor.
+The next regeneration from `lightrag/data/lightrag/inputs/wstg_preprocessed` picks
+up the file-name anchor; see `docs/design/wstg-compaction-324-adr.md`.
 
 The local test suite for the LightRAG package passed after the final gate
 updates:

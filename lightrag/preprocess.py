@@ -14,6 +14,8 @@ DEFAULT_OUTPUT_DIR = Path("lightrag/data/lightrag/inputs/__preprocessed__")
 DEFAULT_WSTG_OUTPUT_DIR = Path("lightrag/data/lightrag/inputs/wstg_preprocessed")
 DEFAULT_WRITEUP_OUTPUT_DIR = Path("lightrag/data/lightrag/inputs/writeups_overlay")
 
+WSTG_COMPACT_DOCUMENT_MAX_CHARS = 8000
+
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
 _LIST_RE = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+")
 _CODE_FENCE_RE = re.compile(r"^\s*(```|~~~)")
@@ -1096,7 +1098,7 @@ def _render_wstg_anchor_block(
         f"- WSTG ID: {wstg_id}",
         f"- WSTG title: {title}",
         f"- WSTG category: {category_name} ({category_code})",
-        f"- Source file: {source_file.as_posix()}",
+        f"- Source file: {source_file.name}",
         f"- Canonical aliases: {', '.join(aliases)}",
     ]
     if vulnerability_aliases:
@@ -2391,6 +2393,13 @@ def _render_wstg_apit_02_compact_document(
     return "\n".join(lines).rstrip() + "\n"
 
 
+_WSTG_COMPACT_DOCUMENT_RENDERERS = {
+    "WSTG-INFO-10": _render_wstg_info_10_compact_document,
+    "WSTG-APIT-01": _render_wstg_apit_01_compact_document,
+    "WSTG-APIT-02": _render_wstg_apit_02_compact_document,
+}
+
+
 def _render_wstg_composite_document(
     *,
     wstg_id: str,
@@ -2399,20 +2408,9 @@ def _render_wstg_composite_document(
     fragments: Sequence[SourceFragment],
     fragment_facets: dict[str, list[str]],
 ) -> str:
-    if wstg_id.upper() == "WSTG-INFO-10":
-        return _render_wstg_info_10_compact_document(
-            wstg_id=wstg_id,
-            title=title,
-            source_file=source_file,
-        )
-    if wstg_id.upper() == "WSTG-APIT-01":
-        return _render_wstg_apit_01_compact_document(
-            wstg_id=wstg_id,
-            title=title,
-            source_file=source_file,
-        )
-    if wstg_id.upper() == "WSTG-APIT-02":
-        return _render_wstg_apit_02_compact_document(
+    compact_renderer = _WSTG_COMPACT_DOCUMENT_RENDERERS.get(wstg_id.upper())
+    if compact_renderer is not None:
+        return compact_renderer(
             wstg_id=wstg_id,
             title=title,
             source_file=source_file,
@@ -3727,6 +3725,22 @@ def _add_wstg_document_qa_issues(
                 message=(
                     f"Document has {len(text)} characters; this can increase "
                     "LightRAG extraction latency and timeout risk."
+                ),
+            )
+        )
+
+    if (
+        wstg_id in _WSTG_COMPACT_DOCUMENT_RENDERERS
+        and len(text) > WSTG_COMPACT_DOCUMENT_MAX_CHARS
+    ):
+        issues.append(
+            CorpusQAIssue(
+                severity="error",
+                code="compact_document_over_budget",
+                path=document_path.as_posix(),
+                message=(
+                    f"Compact document has {len(text)} characters; the compact "
+                    f"budget is {WSTG_COMPACT_DOCUMENT_MAX_CHARS}."
                 ),
             )
         )

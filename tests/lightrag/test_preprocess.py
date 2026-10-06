@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 from lightrag.preprocess import (
+    WSTG_COMPACT_DOCUMENT_MAX_CHARS,
     build_preprocessed_documents,
     classify_fragment,
     is_relation_fragment,
@@ -622,13 +623,68 @@ Because a WAF blocks malicious requests, it can be detected by adding common att
     preprocess_wstg_for_lightrag([source], output_dir)
 
     methodology_text = (output_dir / "wstg-info-10-methodology.md").read_text(encoding="utf-8")
-    assert len(methodology_text) < 8000
+    assert len(methodology_text) <= WSTG_COMPACT_DOCUMENT_MAX_CHARS
     assert "Wikipedia" not in methodology_text
     assert "Map Application Architecture" in methodology_text
     assert "Akamai, Cloudflare or Fastly" in methodology_text
     assert "WHOIS lookup" in methodology_text
     assert "Web Application Firewall" in methodology_text
     assert "## Relation Briefs" in methodology_text
+
+
+def test_wstg_compact_document_is_independent_of_source_path(tmp_path):
+    source_text = """# Map Application Architecture
+
+ID
+---
+WSTG-INFO-10
+
+## Summary
+
+Modern web applications can vary significantly in complexity.
+
+## Test Objectives
+
+- Understand the architecture of the application and the technologies in use.
+"""
+
+    shallow_source = tmp_path / "10-Map_Application_Architecture.md"
+    shallow_source.write_text(source_text, encoding="utf-8")
+    deep_dir = tmp_path / "a" / "b" / "c" / "d" / "e"
+    deep_dir.mkdir(parents=True)
+    deep_source = deep_dir / "10-Map_Application_Architecture.md"
+    deep_source.write_text(source_text, encoding="utf-8")
+
+    shallow_output = tmp_path / "shallow"
+    deep_output = tmp_path / "deep"
+    preprocess_wstg_for_lightrag([shallow_source], shallow_output)
+    preprocess_wstg_for_lightrag([deep_source], deep_output)
+
+    shallow_text = (shallow_output / "wstg-info-10-methodology.md").read_text(encoding="utf-8")
+    deep_text = (deep_output / "wstg-info-10-methodology.md").read_text(encoding="utf-8")
+
+    assert shallow_text == deep_text
+    assert str(tmp_path) not in shallow_text
+    assert len(shallow_text) <= WSTG_COMPACT_DOCUMENT_MAX_CHARS
+
+
+def test_wstg_compact_document_over_budget_is_flagged_by_qa(tmp_path, monkeypatch):
+    source = tmp_path / "10-Map_Application_Architecture.md"
+    source.write_text(
+        "# Map Application Architecture\n\nID\n---\nWSTG-INFO-10\n",
+        encoding="utf-8",
+    )
+    output_dir = tmp_path / "wstg"
+    preprocess_wstg_for_lightrag([source], output_dir)
+
+    monkeypatch.setattr(
+        "lightrag.preprocess.WSTG_COMPACT_DOCUMENT_MAX_CHARS",
+        100,
+    )
+    qa_result = qa_wstg_preprocessed_corpus(output_dir)
+
+    assert qa_result.passed is False
+    assert "compact_document_over_budget" in {issue.code for issue in qa_result.issues}
 
 
 def test_wstg_profile_compacts_api_recon_and_bola_scenarios(tmp_path):
@@ -691,8 +747,8 @@ Broken Object Level Authorization occurs when object identifiers are accepted wi
     apit02_text = (output_dir / "wstg-apit-02-methodology.md").read_text(encoding="utf-8")
 
     assert qa_result.passed is True
-    assert len(apit01_text) < 8500
-    assert len(apit02_text) < 7500
+    assert len(apit01_text) <= WSTG_COMPACT_DOCUMENT_MAX_CHARS
+    assert len(apit02_text) <= WSTG_COMPACT_DOCUMENT_MAX_CHARS
     assert apit01_text.count("Anchor: WSTG ID") == 0
     assert apit02_text.count("Anchor: WSTG ID") == 0
     assert "## Ontology Query Anchors" in apit01_text
