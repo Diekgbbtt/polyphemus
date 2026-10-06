@@ -193,12 +193,16 @@ def test_layout_gives_the_live_mirror_and_the_per_trial_tree_distinct_paths(tmp_
     )
 
 
-def test_instance_data_root_is_the_instance_worktree_data_dir(tmp_path) -> None:
+def test_instance_data_root_is_outside_the_instance_worktree(tmp_path) -> None:
+    """The data root is a host path OUTSIDE the worktree (never destroyed with it)."""
     instances_root = tmp_path / "instances"
 
-    assert store.instance_data_root(instances_root, "arm-a") == (
-        instances_root / "arm-a" / "data"
-    )
+    root = store.instance_data_root(instances_root, "arm-a")
+
+    assert root == instances_root / "data" / "arm-a"
+    # A sibling of the worktree, not a descendant of it.
+    worktree = instances_root / "arm-a"
+    assert worktree not in root.parents
 
 
 # --- sync rendering -----------------------------------------------------------
@@ -240,8 +244,8 @@ def test_plan_sync_emits_one_config_and_unit_per_instance(tmp_path) -> None:
     }
     # One sync block per config, each with its own data root.
     assert by_name["eval-store-arm-a.conf"].content.count("sync {") == 1
-    assert "instances/arm-a/data" in by_name["eval-store-arm-a.conf"].content
-    assert "arm-b/data" in by_name["eval-store-arm-b.conf"].content
+    assert "instances/data/arm-a" in by_name["eval-store-arm-a.conf"].content
+    assert "data/arm-b" in by_name["eval-store-arm-b.conf"].content
 
 
 def test_rendered_unit_invokes_lsyncd_on_the_instances_config(tmp_path) -> None:

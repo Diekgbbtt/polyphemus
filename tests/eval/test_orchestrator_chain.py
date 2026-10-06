@@ -81,6 +81,7 @@ def _paths(tmp_path, instance):
         instance=instance,
         worktree=tmp_path / "wt",
         env_file=tmp_path / "wt" / ".env",
+        data_root=tmp_path / "data" / instance.instance_id,
         compose_project="ph-test",
         compose_files=(),
         repo=tmp_path,

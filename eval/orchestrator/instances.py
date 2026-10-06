@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Mapping
 
 from orchestrator.commands import Command, CommandRunner, require_ok
 from orchestrator.ids import short_id
@@ -41,10 +42,28 @@ class InstancePaths:
     instance: Instance
     worktree: Path
     env_file: Path
+    data_root: Path
     compose_project: str
     compose_files: tuple[str, ...]
     repo: Path
     branch: str
+
+
+def instance_data_root(instances_root: Path | str, instance_id: str) -> Path:
+    """The instance data root: a HOST path OUTSIDE the worktree.
+
+    `<instances_root>/data/<instance_id>` is a sibling of the worktree
+    (`<instances_root>/<instance_id>`), so removing the worktree never touches
+    the data root - the live evidence (hunt store, project/pod memory, L0+L1
+    graph, auth, skills). It is bind-mounted into the agent container through
+    `INSTANCE_DATA_ROOT` and is the lsyncd sync source.
+    """
+    return Path(instances_root) / "data" / instance_id
+
+
+def data_env(paths: InstancePaths) -> Mapping[str, str]:
+    """The compose env that points the agent data bind at the external root."""
+    return {"INSTANCE_DATA_ROOT": str(paths.data_root)}
 
 
 def compose_project(instance: Instance) -> str:
@@ -79,6 +98,7 @@ def instance_paths(
         instance=instance,
         worktree=worktree,
         env_file=env,
+        data_root=instance_data_root(root, instance.instance_id),
         compose_project=compose_project(instance),
         compose_files=compose_files,
         repo=Path(repo),
@@ -141,6 +161,7 @@ def plan_render(paths: InstancePaths) -> Command:
     return Command(
         argv=tuple(compose_argv(paths, "config")),
         cwd=str(paths.worktree),
+        env=data_env(paths),
         description=f"render {paths.compose_project}",
     )
 
@@ -154,6 +175,7 @@ def plan_up(paths: InstancePaths) -> list[Command]:
         Command(
             argv=tuple(compose_argv(paths, "up", "-d")),
             cwd=str(paths.worktree),
+            env=data_env(paths),
             description=f"up {paths.compose_project}",
         ),
     ]
@@ -172,6 +194,7 @@ def plan_down(paths: InstancePaths) -> list[Command]:
         Command(
             argv=tuple(compose_argv(paths, "down", "-v", "--remove-orphans")),
             cwd=str(paths.worktree),
+            env=data_env(paths),
             description=f"down {paths.compose_project}",
         ),
     ]
@@ -181,6 +204,7 @@ def plan_status(paths: InstancePaths) -> Command:
     return Command(
         argv=tuple(compose_argv(paths, "ps")),
         cwd=str(paths.worktree),
+        env=data_env(paths),
         description=f"status {paths.compose_project}",
     )
 

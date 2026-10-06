@@ -153,7 +153,7 @@ def test_render_sync_writes_the_config_and_unit(tmp_path) -> None:
 def test_materialize_dry_run_prints_and_writes_nothing(tmp_path, capsys) -> None:
     store_dir = tmp_path / "store"
     setup = _write_setup(tmp_path, store_dir)
-    data_root = tmp_path / "instances" / "arm-a" / "data"
+    data_root = tmp_path / "instances" / "data" / "arm-a"
     _make_data_root(data_root)
     trial_dir = _make_trial(tmp_path, data_root)
 
@@ -180,7 +180,7 @@ def test_materialize_dry_run_prints_and_writes_nothing(tmp_path, capsys) -> None
 def test_materialize_writes_the_trial_tree(tmp_path) -> None:
     store_dir = tmp_path / "store"
     setup = _write_setup(tmp_path, store_dir)
-    data_root = tmp_path / "instances" / "arm-a" / "data"
+    data_root = tmp_path / "instances" / "data" / "arm-a"
     _make_data_root(data_root)
     trial_dir = _make_trial(tmp_path, data_root)
 

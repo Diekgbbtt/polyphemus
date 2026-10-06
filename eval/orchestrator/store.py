@@ -26,6 +26,7 @@ import yaml
 
 from orchestrator import diagnosis, evidence, subagents, verdicts
 from orchestrator.files import FileStore
+from orchestrator.instances import instance_data_root  # re-export (host-side, outside the worktree)
 from orchestrator.setup import EvalSetup
 
 LIVE_DIRNAME = "live"
@@ -68,9 +69,9 @@ def store_trial_dir(
     return Path(store) / target_id / target_run_id / trial_id
 
 
-def instance_data_root(instances_root: str | Path, instance_id: str) -> Path:
-    """`<instances_root>/<instance_id>/data`: the instance worktree's data root (D29)."""
-    return Path(instances_root) / instance_id / "data"
+# `instance_data_root` is re-exported from `orchestrator.instances`: the data
+# root is a host path OUTSIDE the worktree (`<instances_root>/data/<instance_id>`),
+# so a worktree removal can never destroy it (imported at module top).
 
 
 def is_within(root: str | Path, path: str | Path) -> bool:
