@@ -20,8 +20,9 @@ from typing import Callable, Mapping
 
 # The persisted-status vocabularies (mirrors `pg.py` / `ph.py`). Recon and
 # hunting terminals are the documented pipeline contract; analysis's only live
-# state is `draining`.
-RECON_TERMINAL = frozenset({"complete", "failed"})
+# state is `draining`. Recon `stopped` is a deliberate stop (the pipeline's
+# cancellation path, #287), distinct from a crash (`failed`).
+RECON_TERMINAL = frozenset({"complete", "failed", "stopped"})
 HUNTING_TERMINAL = frozenset({"complete", "stopped", "failed", "interrupted"})
 ANALYSIS_TERMINAL = frozenset({"drained", "withheld", "stopped", "interrupted"})
 

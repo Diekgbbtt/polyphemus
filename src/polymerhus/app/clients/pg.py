@@ -19,7 +19,13 @@ async def ensure_checkpoint_tables() -> None:
 
 # --- Recon pipeline registry (sync, mirrors check()'s psycopg pattern) -----
 
-_TERMINAL_RUN_STATUSES = {"complete", "failed"}
+# Recon-run statuses: `running` is the only live state; the rest are terminal.
+# `complete` = the pipeline finished its plan, `stopped` = a deliberate operator
+# stop / forced teardown (written by the pipeline's cancellation path, #287),
+# `failed` = a fail-close terminal or the reaper's verdict on a run whose
+# process stopped without saying anything. Keeping `stopped` distinct is what
+# lets a deliberate stop be told apart from a crash at the row level.
+_TERMINAL_RUN_STATUSES = {"complete", "failed", "stopped"}
 _TERMINAL_JOB_STATUSES = {"success", "degraded", "failed", "skipped"}
 
 # Out-of-band phase sentinel: a targeted AnalyserReconRequest job (interface

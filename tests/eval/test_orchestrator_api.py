@@ -141,7 +141,7 @@ def test_usage_parsers_default_when_absent_or_malformed() -> None:
 
 
 def test_terminal_vocabularies_match_the_repository() -> None:
-    assert api.RECON_TERMINAL == frozenset({"complete", "failed"})
+    assert api.RECON_TERMINAL == frozenset({"complete", "failed", "stopped"})
     assert api.HUNTING_TERMINAL == frozenset(
         {"complete", "stopped", "failed", "interrupted"}
     )

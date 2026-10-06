@@ -74,6 +74,17 @@ One execution of the pipeline over a Project's phase plan, keyed by `run_id`.
 Re-running re-derives the graph rather than duplicating it.
 _Avoid_: scan, session.
 
+**Run terminal**:
+The status a recon Run settles to once it stops advancing: `complete` (the plan
+ran to its end), `stopped` (a deliberate operator stop or forced teardown,
+written promptly by the pipeline's cancellation path, #287), or `failed` (a
+fail-close stop, or the reaper's verdict on a run whose process stopped without
+reaching a terminal). `running` is the only live state.
+A `stopped` run is deliberately distinct from a crash, so the status surface and
+`GET /app-state` never conflate a stop with a failure.
+_Avoid_: reading a stop as `complete`; letting the reaper's `failed` stand in
+for a deliberate stop.
+
 **Phase**:
 An ordered stage of the phase plan whose jobs run before the next stage begins; each phase seeds the next from the assets the prior phase produced.
 _Avoid_: stage, round.

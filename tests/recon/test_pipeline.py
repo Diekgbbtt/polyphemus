@@ -7,6 +7,8 @@ all injected fakes. No live Neo4j/Postgres/pod graph involved.
 """
 import asyncio
 
+import pytest
+
 from polymerhus.recon.control import pipeline
 from polymerhus.recon.domain.types import PodExport
 
@@ -957,3 +959,94 @@ def test_pipeline_terminal_runs_the_shared_run_scoped_flush(monkeypatch):
     ))
 
     assert calls == [("recon", "run1")]
+
+
+def test_cancelling_the_pipeline_writes_a_stopped_terminal_not_complete(monkeypatch):
+    """A deliberate stop (module cancel / forced teardown) is a first-class run
+    terminal: the cancellation path writes `stopped` promptly, so the row never
+    lingers `running` until the reaper flips it to `failed` (#287). The normal
+    `complete` terminal must not race it."""
+    started = asyncio.Event()
+    hold = asyncio.Event()
+
+    async def run_job(job, input_assets, *, run_id, phase, extra):
+        started.set()
+        await hold.wait()
+        return [PodExport(input_asset={}, verdict="success")]
+
+    class _Gateway:
+        async def run_gateway(self, **kw):
+            return None
+
+        async def stop(self):
+            pass
+
+    registry = FakeRegistry()
+    monkeypatch.setattr(pipeline, "_touch_heartbeat", lambda run_id: None)
+
+    async def scenario():
+        task = asyncio.create_task(
+            pipeline.run_pipeline(
+                "proj1",
+                run_id="run1",
+                job_subset=["subfinder"],
+                run_job=run_job,
+                load_settings=make_load_settings({"target_domain": "*.t.com"}),
+                registry=registry,
+                read_assets=make_read_assets(),
+                orchestrator_factory=lambda run_id: _Gateway(),
+            )
+        )
+        await started.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(scenario())
+
+    assert ("run1", "stopped", None) in registry.set_run_status_calls
+    assert ("run1", "complete", None) not in registry.set_run_status_calls
+
+
+def test_cancelling_during_teardown_still_writes_a_stopped_terminal(monkeypatch):
+    """A stop can land while the pipeline is already in its exit teardown (the
+    orchestrator reap / flush awaits). That is still a deliberate stop and must
+    settle `stopped`, not be left for the reaper (#287)."""
+    teardown_started = asyncio.Event()
+
+    async def run_job(job, input_assets, *, run_id, phase, extra):
+        return [PodExport(input_asset={}, verdict="success")]
+
+    class _Gateway:
+        async def run_gateway(self, **kw):
+            return None
+
+        async def stop(self):
+            teardown_started.set()
+            await asyncio.Event().wait()  # hold the teardown open until cancelled
+
+    registry = FakeRegistry()
+    monkeypatch.setattr(pipeline, "_touch_heartbeat", lambda run_id: None)
+
+    async def scenario():
+        task = asyncio.create_task(
+            pipeline.run_pipeline(
+                "proj1",
+                run_id="run1",
+                job_subset=["subfinder"],
+                run_job=run_job,
+                load_settings=make_load_settings({"target_domain": "*.t.com"}),
+                registry=registry,
+                read_assets=make_read_assets(),
+                orchestrator_factory=lambda run_id: _Gateway(),
+            )
+        )
+        await teardown_started.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(scenario())
+
+    assert ("run1", "stopped", None) in registry.set_run_status_calls
+    assert ("run1", "complete", None) not in registry.set_run_status_calls

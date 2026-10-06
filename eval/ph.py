@@ -16,10 +16,12 @@ Usage:
   ph.py hunting poll <project> <hunting_run_id> [--timeout-s S] [--interval-s S]
   ph.py graph get <project> [--out FILE]
 
-Terminal statuses: recon runs end in {complete, failed}; hunting runs end in
-{complete, stopped, failed, interrupted}. Polling exits 0 only on a terminal
-status and prints the run summary (recon: per-job statuses, the liveness gate
-input; hunting: the status row).
+Terminal statuses: recon runs end in {complete, failed, stopped}; hunting runs
+end in {complete, stopped, failed, interrupted}. A recon `stopped` is a
+deliberate stop (#287), distinct from a crash (`failed`). Polling prints the
+run summary (recon: per-job statuses, the liveness gate input; hunting: the
+status row) and exits 0 on success; a recon run ending failed/stopped exits
+non-zero naming the status.
 """
 from __future__ import annotations
 
@@ -33,7 +35,7 @@ import urllib.request
 
 API_BASE = os.environ.get("PH_API", "http://localhost:8080").rstrip("/")
 
-RECON_TERMINAL = {"complete", "failed"}
+RECON_TERMINAL = {"complete", "failed", "stopped"}
 HUNTING_TERMINAL = {"complete", "stopped", "failed", "interrupted"}
 
 

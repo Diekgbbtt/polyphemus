@@ -537,9 +537,11 @@ class Trial:
                     terminal = "blocked"
                 elif phase.status == "timeout":
                     terminal = "timeout"
-                elif _spend_stopped(phase, self._spend):
-                    # A token-budget stop ends the trial here; unlike a natural
-                    # recon stop (which cannot occur) it never chains to hunting.
+                elif phase.status == "stopped":
+                    # A recon stop ends the trial here and never chains into
+                    # hunting, whether it is a token-budget stop (spend set) or a
+                    # natural stop the surfer issued (#287). A `stopped` run row
+                    # is a deliberate stop, distinct from a crash.
                     terminal = "stopped"
                 elif _phase_failed(phase):
                     terminal = "failed"
