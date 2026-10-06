@@ -375,6 +375,62 @@ def test_failing_orchestration_still_lands_a_terminal_status(monkeypatch):
     assert fake.statuses == [("running", "rt-hunt-0001"), ("rt-hunt-0001", "failed")]
 
 
+# --- #329: a provider-caused pass abort pauses the run, never fails it ---------
+
+def _patch_pg(monkeypatch, fake):
+    monkeypatch.setattr("polymerhus.app.clients.pg.create_hunting_run", fake.create_hunting_run)
+    monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_status", fake.set_hunting_run_status)
+    monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
+
+
+def test_provider_caused_pass_abort_persists_interrupted(monkeypatch):
+    """#329 AC1: a sustained provider throttle does not fail the run outright -
+    the pass aborts operator-visibly but the run lands the resumable terminal
+    `interrupted`, never `failed`."""
+    from polymerhus.attack.hunting.hunt_orchestrator import HuntOrchestrationDegradedError
+
+    fake = _FakePg()
+    _patch_pg(monkeypatch, fake)
+
+    async def provider_abort(*args, **kwargs):
+        raise HuntOrchestrationDegradedError(
+            phase="hypothesise", streak=5, threshold=5, provider_cause=True)
+
+    monkeypatch.setattr(
+        "polymerhus.attack.hunting.hunt_orchestrator.arun_orchestration",
+        provider_abort)
+
+    hid = asyncio.run(hunting_runtime.start_hunting(
+        "rt-project", candidates=[_candidate()],
+        control=_FakeControl(), tick_interval=0.001,
+    ))
+    assert hid == "rt-hunt-0001"
+    assert fake.statuses == [("running", "rt-hunt-0001"), ("rt-hunt-0001", "interrupted")]
+
+
+def test_non_provider_pass_abort_still_fails(monkeypatch):
+    """A degradation abort that is NOT provider-caused remains a genuine domain
+    failure: it lands `failed`, unchanged."""
+    from polymerhus.attack.hunting.hunt_orchestrator import HuntOrchestrationDegradedError
+
+    fake = _FakePg()
+    _patch_pg(monkeypatch, fake)
+
+    async def degraded_abort(*args, **kwargs):
+        raise HuntOrchestrationDegradedError(
+            phase="hypothesise", streak=5, threshold=5, provider_cause=False)
+
+    monkeypatch.setattr(
+        "polymerhus.attack.hunting.hunt_orchestrator.arun_orchestration",
+        degraded_abort)
+
+    asyncio.run(hunting_runtime.start_hunting(
+        "rt-project", candidates=[_candidate()],
+        control=_FakeControl(), tick_interval=0.001,
+    ))
+    assert fake.statuses == [("running", "rt-hunt-0001"), ("rt-hunt-0001", "failed")]
+
+
 def test_build_production_hunting_agent_wires_real_seams(tmp_path):
     """The production default dispatch closure: construction is inert (no I/O,
     no LLM, no network) and returns a callable dispatch plus a reapable

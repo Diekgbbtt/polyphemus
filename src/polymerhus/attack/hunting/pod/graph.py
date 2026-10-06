@@ -20,7 +20,8 @@ and the contract:
   G4 honesty     - every exec result is recorded RAW in the experiment log (D6)
      by the exec tool before curation.
   G5 fail-open   - a raising collaborator degrades to a terminal with the partial
-     trail; nothing raises past `arun_pod`.
+     trail; nothing raises a DOMAIN failure past `arun_pod` (a provider
+     failure propagates as the typed `ProviderUnavailableError`, #329).
 
 The FSM (production):
 

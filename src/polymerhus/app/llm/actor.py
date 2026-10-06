@@ -177,35 +177,15 @@ async def _coerce(value):
 
 def _is_retryable(exc: BaseException) -> bool:
     """Classify a turn raise as retryable: the transport/timeout/5xx/429 class
-    (#186). Lazy-imports the provider SDKs so this module's import stays I/O- and
-    env-var-free (CODING_STANDARD section 6); a raise that matches none of the
-    known classes is treated as non-retryable (a genuine application error
-    degrades immediately rather than burning the escalating budget)."""
-    if isinstance(exc, asyncio.TimeoutError):  # builtin: a wait_for-wrapped model call
-        return True
-    try:
-        import httpx  # noqa: PLC0415
+    (#186). Delegates to the shared `app/llm/provider_failure` classifier (#329)
+    so the actor's retry budget and the provider-failure classification can never
+    drift; a raise that matches none of the known classes is non-provider (a
+    genuine application error degrades immediately rather than burning the
+    escalating budget). Lazy import keeps this module's import I/O- and
+    env-var-free (CODING_STANDARD section 6)."""
+    from polymerhus.app.llm.provider_failure import is_provider_unavailable
 
-        if isinstance(exc, (httpx.TimeoutException, httpx.TransportError)):
-            return True
-    except Exception:  # noqa: BLE001 - httpx unavailable: fall through to openai
-        pass
-    try:
-        import openai  # noqa: PLC0415
-
-        if isinstance(exc, openai.APITimeoutError):
-            return True
-        if isinstance(exc, openai.APIConnectionError):
-            return True
-        if isinstance(exc, openai.RateLimitError):  # 429
-            return True
-        if isinstance(exc, openai.APIStatusError):
-            status = getattr(exc, "status_code", None)
-            if status is not None and status >= 500:  # 5xx (500/502/503/504)
-                return True
-    except Exception:  # noqa: BLE001 - openai unavailable: nothing matches
-        pass
-    return False
+    return is_provider_unavailable(exc)
 
 
 async def run_session_agent(

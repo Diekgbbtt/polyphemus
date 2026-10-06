@@ -468,8 +468,9 @@ def _default_hunter_builder(*, run_id, project_id, hunter_store, **kw):
 async def _default_pod_builder(spec, *, run_id, project_id, memory_store, spec_id):
     """The production pod-session builder seam (T4): `arun_pod` with the
     run's pod memory store and the semantic `<fault>_<strategy>` spec id (ADR
-    Q13). The pod never raises into the run (IA-4); the surfer's wrapper adds
-    the export-delivery ring on top."""
+    Q13). The pod never raises a DOMAIN failure into the run (IA-4); a provider
+    failure propagates as the typed `ProviderUnavailableError` (#329). The
+    surfer's wrapper adds the export-delivery ring on top."""
     from polymerhus.attack.hunting.pod.pod import arun_pod  # noqa: PLC0415
     from polymerhus.app.clients.kali_http_history import default_replay_fn  # noqa: PLC0415
 
@@ -549,6 +550,7 @@ async def start_hunting(
     async with hunting_module_context():
         from polymerhus.app.clients import pg  # noqa: PLC0415
         from polymerhus.attack.hunting.hunt_orchestrator import (  # noqa: PLC0415
+            HuntOrchestrationDegradedError,
             OrchestratorTools,
             ReadOnlyGraphView,
             _reap_orchestrator,
@@ -760,6 +762,23 @@ async def start_hunting(
         except asyncio.CancelledError:
             status = None  # external stop: stop_hunting stamps 'stopped'
             raise
+        except HuntOrchestrationDegradedError as exc:
+            # #329: a provider-caused pass abort is an INFRASTRUCTURE pause, not
+            # a domain failure - land the resumable terminal `interrupted` so a
+            # throttle does not fail the run outright. A non-provider degradation
+            # (a poisoned actor thread) stays a genuine `failed`.
+            if exc.provider_cause:
+                logger.warning(
+                    "start_hunting: run %s aborted on provider degradation; "
+                    "persisting 'interrupted'", hunting_run_id,
+                )
+                status = "interrupted"
+            else:
+                logger.exception(
+                    "start_hunting: run %s degraded; persisting 'failed'",
+                    hunting_run_id,
+                )
+                status = "failed"
         except Exception:  # noqa: BLE001 - fail-open: land a terminal status
             logger.exception(
                 "start_hunting: run %s degraded; persisting 'failed'",

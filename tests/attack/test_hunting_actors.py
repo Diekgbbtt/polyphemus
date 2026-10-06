@@ -258,6 +258,51 @@ def test_hunt_orchestrator_actor_fail_open_on_raising_model():
     assert decision is None
 
 
+def test_orchestrator_actor_records_the_provider_degrade_cause():
+    """#329: a turn that dies on a provider 429 is swallowed into a no-decision
+    (the actor survives), and the actor RECORDS the exception so the pass can
+    classify the abort as provider-caused."""
+    import httpx
+    import openai
+
+    from polymerhus.app.llm.provider_failure import is_provider_unavailable
+
+    def _rate_limit():
+        request = httpx.Request("POST", "https://api.example.test/v1")
+        return openai.RateLimitError(
+            "Rate limit exceeded", response=httpx.Response(429, request=request),
+            body=None)
+
+    class _Throttled(BaseChatModel):
+        def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+            raise _rate_limit()
+
+        async def _agenerate(self, messages, stop=None, run_manager=None, **kwargs):
+            raise _rate_limit()
+
+        @property
+        def _llm_type(self) -> str:
+            return "fake"
+
+        def bind_tools(self, tools, **kwargs):
+            return self
+
+    async def _drive():
+        actor = HuntOrchestratorActor(
+            "run1", checkpointer=InMemorySaver(),
+            model_factory=lambda role: _Throttled(), observe=False,
+        )
+        decision = await actor.reason(_gate_input())
+        cause = actor.last_degrade_cause()
+        await actor.stop()
+        return decision, cause
+
+    decision, cause = asyncio.run(_drive())
+    assert decision is None
+    assert cause is not None
+    assert is_provider_unavailable(cause)
+
+
 def test_hunt_orchestrator_actor_reason_without_candidates_is_noop():
     async def _drive():
         actor = HuntOrchestratorActor("run1", checkpointer=InMemorySaver(), observe=False)
