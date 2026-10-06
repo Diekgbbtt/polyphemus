@@ -518,12 +518,16 @@ def test_c8_live_soft_source_failure_keeps_db_and_exits_2():
 
 
 def test_c8_live_virtual_key_provisioned_and_converges():
-    """D3 C8 (the silent key path): each configured provider key exists as a
-    virtual key scoped to its registered model_names (GET /key/info, keys read
-    from the container env), and a SECOND clean sync leaves the scope
-    unchanged - convergence to a no-op proves ensure_virtual_key is idempotent.
-    ASSUMPTION: this test only runs clean syncs (no net mutation); the scope
-    it asserts is the converged one."""
+    """D3 C8 (the silent key path), amended #335: each configured provider's
+    APP-MINTED litellm-native virtual key (`gateway_virtual_key(provider, key)`,
+    the same value the client presents in gateway mode) exists scoped to that
+    provider's registered model_names (GET /key/info), and a SECOND clean sync
+    leaves the scope unchanged - convergence to a no-op proves
+    ensure_virtual_key is idempotent. The provider credential itself is NEVER
+    a virtual key. ASSUMPTION: this test only runs clean syncs (no net
+    mutation); the scope it asserts is the converged one."""
+    from polymerhus.app.llm.providers import gateway_virtual_key
+
     exit_code, output = _run_sync_in_container()
     assert exit_code == 0, f"clean sync failed (exit {exit_code}):\n{output}"
 
@@ -542,13 +546,16 @@ def test_c8_live_virtual_key_provisioned_and_converges():
         provider = env_var[len("API_KEY_"):].lower().replace("_", "-")
         scope = sorted(n for n in registered
                        if isinstance(n, str) and n.startswith(f"{provider}/"))
-        info = _key_record(key)
+        info = _key_record(gateway_virtual_key(provider, key))
         assert info is not None, (
-            f"provider {provider} key is not a virtual key (D3): the client's "
-            f"gateway-mode bearer would 401")
+            f"provider {provider}: the client's app-minted virtual key is not "
+            f"provisioned (D3 amended #335): its gateway-mode bearer would 401")
         assert sorted(info.get("models") or []) == scope, (
             f"{provider}: stored key scope {sorted(info.get('models') or [])} "
             f"!= registered names {scope}")
+        assert gateway_virtual_key(provider, key) != key, (
+            f"provider {provider}: the provider credential must never be the "
+            f"inbound virtual key (#335)")
 
     exit_code, second = _run_sync_in_container()
     assert exit_code == 0, f"second sync failed (exit {exit_code}):\n{second}"
@@ -558,7 +565,7 @@ def test_c8_live_virtual_key_provisioned_and_converges():
         provider = env_var[len("API_KEY_"):].lower().replace("_", "-")
         scope = sorted(n for n in registered
                        if isinstance(n, str) and n.startswith(f"{provider}/"))
-        info = _key_record(key)
+        info = _key_record(gateway_virtual_key(provider, key))
         assert info is not None and sorted(info.get("models") or []) == scope, (
             f"{provider}: key scope changed after a no-op sync - "
             f"ensure_virtual_key is not idempotent")

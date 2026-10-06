@@ -398,6 +398,26 @@ def test_provider_without_configured_key_is_skipped_not_soft(caplog):
     assert any("skipping" in r.message.lower() for r in caplog.records)
 
 
+def test_skip_warning_names_the_real_hyphenated_env_var(caplog):
+    # #335 (secondary): the skip warning must print `_key_env`'s real name -
+    # `API_KEY_OPENCODE_GO` (underscore) - not `provider.upper()`'s dash form
+    # (`API_KEY_OPENCODE-GO`), which was the misleading string in the exact
+    # oc_sk_ failure the ticket reports.
+    gw = FakeGateway()
+    with caplog.at_level("WARNING"):
+        S.run_sync(**_default_run_args(
+            gateway=gw,
+            providers={"opencode-go": "https://opencode.ai/zen/go/v1",
+                       "openai": "https://api.openai.com/v1"},
+            read_api_key=lambda provider: ("sk-oai" if provider == "openai"
+                                           else None)))
+    messages = [r.message for r in caplog.records]
+    assert any("API_KEY_OPENCODE_GO" in m for m in messages), \
+        f"the skip warning must name the real env var, got {messages}"
+    assert not any("API_KEY_OPENCODE-GO" in m for m in messages), \
+        "the dash form must never be printed (there is no such env var)"
+
+
 # ---------------------------------------------------------------------------
 # Collapse: hard, abort push, exit 1 (D9 cold stop) --------------------------
 # ---------------------------------------------------------------------------
@@ -679,8 +699,8 @@ def test_gateway_client_upsert_snapshot_updates_existing_else_adds():
 
 
 def test_gateway_client_ensure_virtual_key_generates_when_absent():
-    # Absent -> POST /key/generate with the per-provider key VALUE as the key
-    # and the provider-scoped registered model names (D3 client identity).
+    # Absent -> POST /key/generate with the app-minted virtual key VALUE and
+    # the provider-scoped registered model names (D3 client identity).
     http = StubHTTP(get_result=_response({}, status=404),
                     post_results=[_response({})])
     gw = S.GatewayClient("http://127.0.0.1:4000", "sk-master", client=http)
@@ -688,6 +708,19 @@ def test_gateway_client_ensure_virtual_key_generates_when_absent():
     method, url, headers, body = http.requests[1]
     assert method == "POST" and url == "http://127.0.0.1:4000/key/generate"
     assert body == {"key": "sk-provider-key", "models": ["opencode/a", "opencode/b"]}
+
+
+def test_gateway_client_refuses_a_non_sk_virtual_key():
+    # #335: the mint write boundary refuses a non-`sk-` key outright, before
+    # any request. A relayed provider credential would otherwise only fail at
+    # litellm's 400 (and hard-stop the sync deep in the pipeline); fail loud
+    # here with a named error, and never echo the secret.
+    http = StubHTTP(get_result=_response({}, status=404),
+                    post_results=[_response({})])
+    gw = S.GatewayClient("http://127.0.0.1:4000", "sk-master", client=http)
+    with pytest.raises(S.SyncPushError):
+        gw.ensure_virtual_key("oc_sk_provider_credential", ["opencode/a"])
+    assert http.requests == [], "no request may be sent for a non-sk key"
 
 
 def test_gateway_client_ensure_virtual_key_updates_only_on_scope_change():
@@ -710,9 +743,10 @@ def test_gateway_client_ensure_virtual_key_updates_only_on_scope_change():
 
 
 def test_sync_provisions_virtual_keys_per_provider():
-    # Every configured provider's key becomes a virtual key scoped to ITS
-    # registered records (D3): the client's gateway-mode bearer is the
-    # per-provider key, and the proxy's auth accepts only master + virtual.
+    # Every configured provider gets an APP-MINTED litellm-native virtual key,
+    # scoped to ITS registered records (D3, amended #335): the client derives
+    # the same key as its gateway-mode bearer, and the provider credential is
+    # never the inbound key.
     gw = FakeGateway()
     rc = S.run_sync(**_default_run_args(
         gateway=gw,
@@ -721,12 +755,84 @@ def test_sync_provisions_virtual_keys_per_provider():
     assert rc == S.SYNC_OK
     key_calls = [c for c in gw.calls if c[0] == "key"]
     assert len(key_calls) == 2  # openai + opencode keys from the fixtures
-    by_key = {c[1]: c[2] for c in key_calls}
-    assert by_key["dummy-key"] == ["opencode/deepseek-v4-flash-free",
-                                   "opencode/deepseek-v4-pro"]
-    assert by_key["sk-openai-proxy-key"] == ["openai/gpt-4o",
-                                             "openai/gpt-4o-2024-08-06"]
-    assert rc == S.SYNC_OK
+    assert {tuple(c[2]) for c in key_calls} == {
+        ("opencode/deepseek-v4-flash-free", "opencode/deepseek-v4-pro"),
+        ("openai/gpt-4o", "openai/gpt-4o-2024-08-06"),
+    }
+    for _kind, key, _scope in key_calls:
+        assert key.startswith("sk-"), "every minted key must be litellm-native"
+        assert key not in ("dummy-key", "sk-openai-proxy-key"), \
+            "the provider credential must never be the inbound virtual key"
+
+
+def test_sync_mints_the_same_virtual_key_the_client_derives():
+    # The load-bearing #335 agreement: the sync's minted inbound key equals the
+    # client's gateway-mode bearer for the same provider credential, so the
+    # client authenticates with no persisted mapping and no new env var.
+    from polymerhus.app.llm.providers import gateway_virtual_key
+
+    gw = FakeGateway()
+    S.run_sync(**_default_run_args(
+        gateway=gw,
+        read_api_key=lambda provider: {"opencode": "oc_sk_go",
+                                       "openai": "sk-oai"}[provider]))
+    minted = {c[1] for c in gw.calls if c[0] == "key"}
+    assert minted == {gateway_virtual_key("opencode", "oc_sk_go"),
+                      gateway_virtual_key("openai", "sk-oai")}
+
+
+class LiteLLMNativeKeyEnforcingGateway(FakeGateway):
+    """A FakeGateway that enforces litellm's inbound virtual-key format rule.
+
+    `POST /key/generate` (and `/key/update`) rejects any key not prefixed
+    `sk-` with the live 400 (`litellm.proxy.proxy_server.generate_key_fn`,
+    #335): a non-`sk-` provider key surfaces here exactly as it does against
+    the live gateway - as a `SyncPushError` -> `SYNC_HARD`."""
+
+    def ensure_virtual_key(self, key, models):
+        if not key.startswith("sk-"):
+            raise S.SyncPushError(
+                "POST /key/generate failed: 400 Invalid key format. LiteLLM "
+                "Virtual Key must start with 'sk-'. Received: "
+                f"{key[:4]}****")
+        super().ensure_virtual_key(key, models)
+
+
+def test_non_sk_provider_key_is_minted_as_a_litellm_native_virtual_key():
+    # #335: the opencode-go provider key is now `oc_sk_...`, which litellm's
+    # /key/generate rejects (400, "must start with 'sk-'"). The sync must MINT
+    # a litellm-native virtual key per provider, never pass the provider
+    # credential through as the inbound key.
+    gw = LiteLLMNativeKeyEnforcingGateway()
+    rc = S.run_sync(**_default_run_args(
+        gateway=gw,
+        read_api_key=lambda provider: ("oc_sk_opencode_go_provider"
+                                       if provider == "opencode"
+                                       else "sk-openai-provider")))
+    assert rc == S.SYNC_OK, (
+        "a non-sk provider key must not hard-stop the sync (#335)")
+    minted = {c[1] for c in gw.calls if c[0] == "key"}
+    assert minted, "the sync must provision a virtual key per provider"
+    assert all(k.startswith("sk-") for k in minted), \
+        f"every minted key must be litellm-native (sk-), got {minted}"
+    assert "oc_sk_opencode_go_provider" not in minted, \
+        "the provider credential must never be the inbound virtual key"
+
+
+def test_non_sk_provider_key_still_reaches_the_models_as_the_upstream_credential():
+    # The provider credential still lands in each model's
+    # litellm_params.api_key (the gateway's upstream key custody, #193) - only
+    # the inbound virtual key is decoupled from it.
+    gw = LiteLLMNativeKeyEnforcingGateway()
+    S.run_sync(**_default_run_args(
+        gateway=gw,
+        read_api_key=lambda provider: ("oc_sk_opencode_go_provider"
+                                       if provider == "opencode"
+                                       else "sk-openai-provider")))
+    _, name, params, _info = next(
+        c for c in gw.calls
+        if c[0] == "add" and c[1] == "opencode/deepseek-v4-flash-free")
+    assert params["api_key"] == "oc_sk_opencode_go_provider"
 
 
 def test_gateway_client_http_failure_raises_sync_push_error():

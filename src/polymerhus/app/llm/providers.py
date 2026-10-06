@@ -1,3 +1,4 @@
+import hashlib
 import logging
 import os
 from dataclasses import dataclass
@@ -307,6 +308,39 @@ def gateway_base_url() -> str | None:
     if raw is None or raw.strip() == "":
         return None
     return raw
+
+# --- #335: the app-minted gateway virtual key --------------------------------
+#
+# The gateway's inbound auth (`user_api_key_auth`) accepts only
+# `LiteLLM_VerificationTokenTable` entries, and `/key/generate` enforces the
+# litellm key format (`sk-` prefix). The provider credential can no longer
+# double as the inbound key: opencode-go's key is now `oc_sk_...`, which
+# litellm rejects with HTTP 400, hard-stopping the whole agent in gateway mode
+# (ADR D3, amended 2026-10-06). The client's gateway credential is therefore
+# an APP-MINTED litellm-native virtual key, derived deterministically from the
+# provider id + its credential so the sync (which mints it) and the client
+# (which presents it) agree by construction - no persisted mapping, no new env
+# var. The provider credential itself still rides each model's
+# `litellm_params.api_key` (the sync's push, #193); the virtual key is only
+# the client's inbound identity (D3).
+
+GATEWAY_VIRTUAL_KEY_PREFIX = "sk-ph-"
+
+
+def gateway_virtual_key(provider: str, api_key: str) -> str:
+    """The app-minted litellm-native virtual key for a provider (#335).
+
+    A deterministic, `sk-`-prefixed digest of the provider id and its API key:
+    the sync mints exactly this key (scoped to the provider's registered
+    models) and the client presents exactly this key as its gateway bearer, so
+    the two agree by construction. The provider credential is the derivation
+    seed only - the returned value is never equal to it, so a non-`sk-`
+    provider key (opencode-go's `oc_sk_...`) no longer reaches
+    `/key/generate`, which requires an `sk-` prefix (ADR D3, amended). A
+    provider-key rotation rotates the virtual key too: either side derives the
+    new value automatically, with no human step."""
+    digest = hashlib.sha256(f"{provider}\x00{api_key}".encode("utf-8")).hexdigest()
+    return f"{GATEWAY_VIRTUAL_KEY_PREFIX}{digest}"
 
 # --- The role record (#93/#94) ------------------------------------------------
 #
@@ -692,7 +726,7 @@ def build_chat_model(provider: str, model: str, *, temperature: float = 0,
     # gateway; the id strip is NOT run client-side (the gateway's mapping layer
     # owns id translation, D5) and the `provider:model` string goes verbatim.
     base_url = gateway_base_url()
-    routing_prefix = None
+    gateway_mode = base_url is not None
     if base_url is None:
         base_url = PROVIDERS[provider]
         if provider in _ZEN_FAMILY:
@@ -716,6 +750,13 @@ def build_chat_model(provider: str, model: str, *, temperature: float = 0,
     api_key = os.environ.get(_key_env(provider))
     if not api_key:
         raise LLMConfigError(f"missing {_key_env(provider)} for provider {provider!r}")
+    if gateway_mode:
+        # #335 (D3 amended): the gateway credential is the app-minted virtual
+        # key, never the provider credential - litellm's inbound auth accepts
+        # only `sk-`-prefixed virtual keys, and opencode-go's key is `oc_sk_`.
+        # The provider key stays the derivation seed (and the sync pushes it
+        # into the model's litellm_params.api_key); only the bearer swaps.
+        api_key = gateway_virtual_key(provider, api_key)
     # `read_timeout` lets the escalating-budget wrapper (#73) build a per-ATTEMPT
     # client whose read budget grows across retries. Unset keeps the standing
     # `request_timeout()` (the #32 default), so every non-escalating caller is
