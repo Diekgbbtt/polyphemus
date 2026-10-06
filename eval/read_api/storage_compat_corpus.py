@@ -24,6 +24,7 @@ an API restart.
 from __future__ import annotations
 
 import argparse
+import shlex
 import shutil
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -237,7 +238,10 @@ HISTORICAL = CaseSpec(
     # schema-v1 manifest, no graph was ever captured, artifacts live in raw.
     schema_version=1,
     capture_snapshot=False,
-    pod_exports=(),
+    # An identified verdict needs an auditable chain: the pod that confirmed the
+    # stored-XSS symptom wrote a variant, an experiment log and its terminal
+    # export, so the chain resolves a real ExperimentLog and PodExport.
+    pod_exports=(PodExportSpec("demo-spec-legacy", "symptom-confirmed", "successful", 3, True),),
     with_skill=True,
     produced_hunt_config=True,
     consumed_test_spec=True,
@@ -569,7 +573,14 @@ def refresh(root: str | Path = DEFAULT_ROOT) -> Roots:
 
 def instructions(roots: Roots) -> str:
     """The roots just written plus the commands to view them (demo-scoped only)."""
-    env = " ".join(f"{key}={value}" for key, value in roots.environment().items())
+    # Every value is shell-quoted, so a corpus root that contains spaces still
+    # parses. The EVAL_* assignments prefix the Python process (not a `cd`), so
+    # they really reach uvicorn, and `PYTHONPATH=eval` keeps the command runnable
+    # straight from the repository root.
+    env = " ".join(
+        f"{key}={shlex.quote(value)}" for key, value in roots.environment().items()
+    )
+    root = shlex.quote(str(roots.root))
     return (
         f"Synthetic storage-compatibility corpus ready: {roots.root}\n"
         f"  store       {roots.store}\n"
@@ -578,13 +589,13 @@ def instructions(roots: Roots) -> str:
         f"  runs-legacy {roots.legacy_runs}\n"
         f"\nThis is FAKE data (dataset {DATASET_NAME}); it is not a real eval result.\n"
         f"The generator writes only these four roots and never deletes anything.\n"
-        f"\nStart the read API (never the base stack):\n"
-        f"  {env} \\\n"
-        f"    cd eval && PYTHONPATH=. python -m uvicorn read_api.app:app --port 28090\n"
+        f"\nStart the read API from the repository root (never the base stack):\n"
+        f"  {env} PYTHONPATH=eval \\\n"
+        f"    python -m uvicorn read_api.app:app --port 28090\n"
         f"\n  curl -s localhost:28090/health\n"
         f"  curl -s localhost:28090/snapshot\n"
         f"\nAdd new data without a restart, then watch the next poll:\n"
-        f"  python -m read_api.storage_compat_corpus --root {roots.root} --refresh\n"
+        f"  PYTHONPATH=eval python -m read_api.storage_compat_corpus --root {root} --refresh\n"
     )
 
 

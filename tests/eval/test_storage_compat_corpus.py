@@ -20,14 +20,20 @@ benchmark checkout.
 from __future__ import annotations
 
 import hashlib
+import os
+import subprocess
 from collections import Counter
 from pathlib import Path
 
 import pytest
 import yaml
 
+from orchestrator import verdicts as orchestrator_verdicts
+from orchestrator.files import FileStore
 from read_api import source as source_module
 from read_api import storage_compat_corpus as corpus
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 COMPLETE = ("demo-complete-1", "demo-run-a", "demo-complete-trial-1")
 INTERRUPTED = ("demo-interrupted-1", "demo-run-a", "demo-interrupted-trial-1")
@@ -589,6 +595,172 @@ def test_instructions_expose_every_root_and_a_demo_only_command(
     assert str(roots.legacy_runs) in text
     assert "28090" in text
     assert "--root" in text and str(roots.root) in text
+
+
+# --- the production validator accepts every verdict chain ----------------------
+
+
+def _validate_case(roots: "corpus.Roots", spec: "corpus.CaseSpec"):
+    """Validate one case's `verdicts.yaml` with the real production reader."""
+    trial_dir = roots.store / spec.target_id / spec.target_run_id / spec.trial_id
+    rows = yaml.safe_load((trial_dir / "verdicts.yaml").read_text(encoding="utf-8"))
+    return orchestrator_verdicts.validate_verdicts(
+        rows,
+        data_root=roots.raw,
+        files=FileStore(),
+        eval_sha=spec.eval_sha,
+        stack_fingerprint=spec.stack_fingerprint,
+    )
+
+
+@pytest.mark.parametrize("spec", corpus.CASES, ids=lambda spec: spec.trial_id)
+def test_every_case_verdict_chain_passes_the_production_validator(
+    tmp_path: Path, spec: "corpus.CaseSpec"
+) -> None:
+    roots = corpus.generate(tmp_path / "corpus")
+
+    verdicts = _validate_case(roots, spec)
+
+    assert verdicts, "every case must expose at least one verdict row"
+    for verdict in verdicts:
+        if verdict.identified in ("identified", "partial"):
+            assert verdict.evidence_chain is not None
+
+
+def test_historical_case_chain_points_at_a_real_log_and_pod_export(
+    tmp_path: Path,
+) -> None:
+    roots = corpus.generate(tmp_path / "corpus")
+    adapter = _adapter(roots)
+    project_id = "demo-project-historical-1"
+    entries = {entry["relative_path"]: entry for entry in _inventory(adapter, HISTORICAL)}
+
+    trial = _trial(adapter.snapshot(), HISTORICAL[2])
+    linked: list[str] = []
+    for verdict in trial["verdicts"]:
+        for reference in verdict["evidence"]:
+            candidate = reference
+            if candidate.startswith(f"{project_id}/"):
+                candidate = candidate[len(project_id) + 1 :]
+            if candidate in entries:
+                linked.append(candidate)
+
+    logs = [path for path in linked if path.endswith("/experiment-log/0.yaml")]
+    exports = [path for path in linked if entries[path]["kind"] == "pod_export"]
+    assert logs, "the historical chain must resolve a real ExperimentLog"
+    assert len(exports) == 1, "the historical chain must resolve exactly one PodExport"
+    # The export keeps the producer's official `<spec_id>/<run_id>.yaml` layout.
+    export_path = exports[0]
+    assert export_path.endswith(f"/{corpus.POD_RUN_ID}.yaml")
+    assert "/test-executor-pod/" in export_path
+
+    # Inventory/detail/content expose the new artifacts, and the export carries
+    # the real envelope: verdict at the root, D5 under evidence.
+    for path in logs + exports:
+        entry = entries[path]
+        detail = adapter.get_resolved_artifact(*HISTORICAL, entry["artifact_id"])
+        assert detail["entry"]["relative_path"] == path
+        download = adapter.stream_resolved_artifact(
+            *HISTORICAL, entry["artifact_id"], entry["sha256"]
+        )
+        body = yaml.safe_load(b"".join(download.chunks))
+        if entry["kind"] == "pod_export":
+            assert set(body) == {"verdict", "evidence"}
+            assert body["verdict"] in {"successful", "unsuccessful"}
+            assert body["evidence"]["terminal_reason"] in corpus.TERMINAL_REASONS
+            assert isinstance(body["evidence"]["iterations"], int)
+            assert isinstance(body["evidence"]["clean"], bool)
+
+
+def test_historical_invariants_survive_the_chain_fix(tmp_path: Path) -> None:
+    roots = corpus.generate(tmp_path / "corpus")
+    adapter = _adapter(roots)
+
+    # Still a schema-v1 historical capture read from the raw fallback...
+    manifest = (
+        roots.store / HISTORICAL[0] / HISTORICAL[1] / HISTORICAL[2] / "run-manifest.yaml"
+    ).read_text(encoding="utf-8")
+    assert "schema_version: 1" in manifest
+    inventory = adapter.list_resolved_artifacts(*HISTORICAL)
+    assert inventory["source"] == "project_storage"
+    assert inventory["fallback_reason"] == "project_artifacts_unavailable"
+    # ...with no captured graph and a real zero spend from the legacy root.
+    assert adapter.resolved_graph(*HISTORICAL)["status"] == "unavailable"
+    assert _trial(adapter.snapshot(), HISTORICAL[2])["spend"]["spent_tokens"] == 0
+    # And the interrupted Trial still invents no PodExport.
+    assert not any(
+        entry["kind"] == "pod_export" for entry in _inventory(adapter, INTERRUPTED)
+    )
+
+
+# --- the printed startup command is really executable --------------------------
+
+
+def _serve_command(instructions_text: str) -> str:
+    """The read-API startup line, joining its backslash continuations."""
+    lines = instructions_text.splitlines()
+    index = next(i for i, line in enumerate(lines) if "uvicorn" in line)
+    start = index
+    while start > 0 and lines[start - 1].rstrip().endswith("\\"):
+        start -= 1
+    parts: list[str] = []
+    cursor = start
+    while cursor < len(lines):
+        raw = lines[cursor].strip()
+        parts.append(raw.rstrip("\\").strip())
+        if not raw.endswith("\\"):
+            break
+        cursor += 1
+    return " ".join(part for part in parts if part)
+
+
+def test_instructions_command_runs_from_the_root_with_the_eval_environment(
+    tmp_path: Path,
+) -> None:
+    # A corpus root that contains a space: the command must still parse.
+    roots = corpus.generate(tmp_path / "my corpus")
+    command = _serve_command(corpus.instructions(roots))
+    assert "uvicorn" in command and "28090" in command
+
+    stub_dir = tmp_path / "stub-bin"
+    stub_dir.mkdir()
+    args_out = tmp_path / "argv.txt"
+    env_out = tmp_path / "env.txt"
+    stub = stub_dir / "python"
+    stub.write_text(
+        "#!/bin/sh\n"
+        f'printf "%s\\n" "$@" > "{args_out}"\n'
+        f'env > "{env_out}"\n',
+        encoding="utf-8",
+    )
+    stub.chmod(0o755)
+
+    env = {"PATH": f"{stub_dir}{os.pathsep}{os.environ.get('PATH', '')}"}
+    result = subprocess.run(
+        ["sh", "-c", command], cwd=REPO_ROOT, env=env, capture_output=True, text=True
+    )
+
+    assert result.returncode == 0, result.stderr
+    # The stub replaced only the Python process: it receives the uvicorn argv...
+    argv = args_out.read_text(encoding="utf-8").splitlines()
+    assert argv == ["-m", "uvicorn", "read_api.app:app", "--port", "28090"]
+    # ...and the whole EVAL_* environment, in the Python process - not a `cd`.
+    envmap = dict(
+        line.split("=", 1)
+        for line in env_out.read_text(encoding="utf-8").splitlines()
+        if "=" in line
+    )
+    for key, value in roots.environment().items():
+        assert envmap.get(key) == value, key
+    assert envmap.get("PYTHONPATH") == "eval"
+
+
+def test_instructions_refresh_command_quotes_a_root_with_spaces(tmp_path: Path) -> None:
+    roots = corpus.generate(tmp_path / "my corpus")
+
+    text = corpus.instructions(roots)
+
+    assert f"'{roots.root}'" in text or f'"{roots.root}"' in text
 
 
 if __name__ == "__main__":  # pragma: no cover

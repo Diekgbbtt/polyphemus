@@ -375,7 +375,9 @@ captured L0/L1 graph, Hunting + Skill artifacts, linkable Evidence references an
 spend from the primary root), an **interrupted** Trial (partial artifacts in the external raw
 tree, no invented PodExport, `spent_tokens` absent rather than zero) and a **historical** Trial
 (schema-v1 manifest in the legacy runs root, artifacts served from the raw fallback, no captured
-graph). PodExport artifacts cover all six producer `terminal_reason` values, including the
+graph). Every case's `verdicts.yaml` resolves through the production validator, so the historical
+Trial's identified verdict carries a real Evidence chain (its variant, ExperimentLog and
+PodExport). PodExport artifacts cover all six producer `terminal_reason` values, including the
 `iterations: 0` / `clean: false` boundary. The dataset is clearly labelled synthetic
 (`Synthetic — storage compatibility`).
 
