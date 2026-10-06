@@ -1,0 +1,20 @@
+# Keep the build context small. Excludes only non-build inputs.
+# Agent build needs: src/, lightrag/*.py, db/, skills/, gateway/, data/, requirements-app.txt
+# Kali build needs: kali/
+.git
+.agents
+.claude
+.opencode
+.venv
+docs
+tests
+eval
+tools
+frontend
+lightrag/data
+**/__pycache__
+**/*.pyc
+**/*.log
+.pytest_cache
+.ruff_cache
+node_modules

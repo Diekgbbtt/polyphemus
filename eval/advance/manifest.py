@@ -72,6 +72,7 @@ PATH_RULES: tuple[PathRule, ...] = (
 # prefix (the authoring prompts).
 IGNORED_PREFIXES: tuple[str, ...] = (
     ".agents",
+    ".dockerignore",
     ".gitattributes",
     ".github",
     ".gitignore",
