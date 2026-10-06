@@ -31,11 +31,13 @@ Assertion catalogue (bounded, spec 6.2 E1 + H1/H2):
       with an experiment log holding the variant spec, the raw observation, and
       the interpretation (H1, D6 provenance), and the response status read back
       from the tool-call log.
-  E1/2 space-exhausted  - the symptom never appears across the probe space:
-      `{unsuccessful, space-exhausted}` (clean trail), ONE consolidated
-      `experiment_summary` note written to the pod experiment-memory store as
-      the runner's FINAL tool call (H2/C14), and the Triager's production
-      note-reading turn lands the terminal (D84-23).
+  E1/2 space-exhausted  - on an AVAILABLE knowledge base the symptom never
+      appears across the probe space: `{unsuccessful, space-exhausted}` (clean
+      trail), ONE consolidated `experiment_summary` note written to the pod
+      experiment-memory store as the runner's FINAL tool call (H2/C14), and the
+      Triager's production note-reading turn lands the terminal (D84-23). A
+      DEGRADED KB read instead lands `{unsuccessful, no-symptom-evidence,
+      clean=false}` (#304) - unavailable evidence is never absence.
 
 The full-pipeline chain walkthroughs (E2-E4, orchestrator -> hunter -> pod) are
 OUT OF SCOPE (2026-08-22): the operator narrowed this workstream to the
@@ -157,6 +159,24 @@ _REACT_KB_EXEC_NOTE_CONCLUDE = [
     AIMessage(content="probe space exhausted; the consolidated summary was written"),
 ]
 
+# P3 space exhaustion on an AVAILABLE knowledge base (#304): the runner does NOT
+# query the KB, so no degraded `KbObservation` is recorded - the clean-exhaustion
+# claim is creditable. The runner still writes the ONE consolidated
+# experiment_summary note as its FINAL tool call.
+_REACT_EXEC_NOTE_CONCLUDE = [
+    AIMessage(content="", tool_calls=[
+        {"name": "exec", "args": {"command": "curl -k -sS https://t/"}, "id": "c1"}]),
+    AIMessage(content="", tool_calls=[
+        {"name": "note", "args": {"operation": "write", "order": 0,
+                                  "note_name": "experiment",
+                                  "kind": "experiment_summary",
+                                  "body": "the default probe returned HTTP 404 "
+                                          "with an empty body; the probe space is "
+                                          "cleanly exercised"},
+         "id": "c2"}]),
+    AIMessage(content="probe space exhausted; the consolidated summary was written"),
+]
+
 # The Triager's production turn (D84-23): a `ToolStrategy(TriagerDecision)`
 # structured call terminating the run with `{unsuccessful, space-exhausted}`.
 _TRIAGER_ABSENT = [
@@ -245,11 +265,14 @@ def test_trivial_real_run(tmp_path):
 
 # --- E1/2: space-exhausted (spec 2 H2, C14) -----------------------------------
 
-def test_space_exhausted_run_writes_the_p3_note(tmp_path, monkeypatch):
-    """The runner concludes with no symptom in the probe space, writes the ONE
-    consolidated `experiment_summary` P3 note as its FINAL tool call, and the
-    Triager's production note-reading turn terminates `{unsuccessful,
-    space-exhausted}` with a clean trail."""
+def test_degraded_kb_run_does_not_claim_clean_exhaustion(tmp_path, monkeypatch):
+    """#304: the runner reads a DEGRADED knowledge base (the always-bound
+    `query_lightrag` fails open in this hermetic env) as "no new primitive" and
+    the triager terminates `space-exhausted`. A degraded KB is UNAVAILABLE
+    evidence, so the graph must refuse the clean exhaustion and land
+    `{unsuccessful, no-symptom-evidence, clean=false}` - the P3 note is still
+    written as the runner's FINAL tool call, and the triager's production
+    note-reading turn still runs."""
     _negotiation_for_pod_triager(monkeypatch)
     exec_calls = []
     store = PodMemoryStore(tmp_path)
@@ -260,8 +283,8 @@ def test_space_exhausted_run_writes_the_p3_note(tmp_path, monkeypatch):
                                 POD_TRIAGER_ROLE: _TRIAGER_ABSENT})))
 
     assert env["verdict"] == "unsuccessful"
-    assert env["evidence"]["terminal_reason"] == "space-exhausted"
-    assert env["evidence"]["clean"] is True
+    assert env["evidence"]["terminal_reason"] == "no-symptom-evidence"
+    assert env["evidence"]["clean"] is False
     assert len(exec_calls) == 1
     assert len(env["evidence"]["raw_observations"]) == 1
     assert env["evidence"]["raw_observations"][0]["status"] == 404
@@ -269,14 +292,41 @@ def test_space_exhausted_run_writes_the_p3_note(tmp_path, monkeypatch):
     # interpretation) - not a symbolic fast path.
     assert "third-party miner" in env["evidence"]["interpretations"][0]["note"]
 
-    # C14/H6 (T2 re-scoped): the ONE consolidated experiment-summary lands as
-    # the TERMINAL RECORD of the variant's experiment-log slice - keyed by the
-    # spec id + variant order - NOT in notes.yaml (kb_insight/freeform only).
+    # The P3 note still lands as the TERMINAL RECORD of the variant slice.
+    from polymerhus.attack.hunting.pod.pod_memory import read_variant_summary
+    slice = store.read_experiment_log(SPEC_ID, 0)
+    assert "no kb primitive differs from the initial set" in slice["experiment_summary"]
+    assert read_variant_summary(store, SPEC_ID, 0) == slice["experiment_summary"]
+    assert store.read_notes(SPEC_ID) == []
+
+
+def test_clean_space_exhausted_run_writes_the_p3_note(tmp_path, monkeypatch):
+    """The runner concludes with no symptom in the probe space on an AVAILABLE
+    knowledge base (no KB read), writes the ONE consolidated `experiment_summary`
+    P3 note as its FINAL tool call, and the Triager's production note-reading
+    turn terminates `{unsuccessful, space-exhausted}` with a clean trail."""
+    _negotiation_for_pod_triager(monkeypatch)
+    exec_calls = []
+    store = PodMemoryStore(tmp_path)
+    env = _run(arun_pod(
+        VALID_SPEC, exec_fn=_exec(_ABSENT, calls=exec_calls),
+        trace_fn=_no_trace, memory_store=store, spec_id=SPEC_ID,
+        model_factory=_factory({POD_RUNNER_ROLE: _REACT_EXEC_NOTE_CONCLUDE,
+                                POD_TRIAGER_ROLE: _TRIAGER_ABSENT})))
+
+    assert env["verdict"] == "unsuccessful"
+    assert env["evidence"]["terminal_reason"] == "space-exhausted"
+    assert env["evidence"]["clean"] is True
+    assert len(exec_calls) == 1
+    assert len(env["evidence"]["raw_observations"]) == 1
+    assert env["evidence"]["raw_observations"][0]["status"] == 404
+    assert "third-party miner" in env["evidence"]["interpretations"][0]["note"]
+
     from polymerhus.attack.hunting.pod.pod_memory import read_variant_summary
     slice = store.read_experiment_log(SPEC_ID, 0)
     assert slice["experiment_summary"] == (
-        "the default probe returned HTTP 404 with an empty body; no kb "
-        "primitive differs from the initial set")
+        "the default probe returned HTTP 404 with an empty body; the probe space "
+        "is cleanly exercised")
     assert slice["variant_ref"] == "v0"
     assert read_variant_summary(store, SPEC_ID, 0) == slice["experiment_summary"]
     assert "404" in slice["experiment_summary"]
