@@ -114,6 +114,12 @@ Confidence: HIGH = code/evidence confirmed; POTENTIAL = needs `diagnosing-bugs`.
 | EV-16 | trial completion does not auto-dispatch the assessment | `trial` has no dispatch seam; the monitor now owns it | HIGH (superseded) | #289 |
 | EV-17 | observability reports queue drain, not exporter outcome | delivery truth read from the queue | HIGH | #235 |
 
+### Test infrastructure
+
+| id | failure | diagnosis | conf | ticket |
+|---|---|---|---|---|
+| EV-23 | `tests/test_steel_exec.py` fails on `dev` (`TypeError: 'coroutine' object is not subscriptable`) | `9119348` made the kali `steel_exec` tool non-blocking (`async def steel_exec` + `_offload`), so `m.steel_exec.fn` is a coroutine function, but the tests still call it synchronously; pre-existing on `ce0321a`, unrelated to the #329/#287 merges | HIGH | #334 |
+
 ## 6. Noise removal applied
 
 - **Closed tickets removed**: #305, #306, #307, #311, #320, #225/#226.
