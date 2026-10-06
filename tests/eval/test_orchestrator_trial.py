@@ -1071,6 +1071,28 @@ def test_failed_recon_terminal_stops_the_trial(tmp_path) -> None:
     assert not any(c.path.endswith("/hunting") for c in api_runner.calls)
 
 
+def test_stopped_recon_terminal_stops_the_trial(tmp_path) -> None:
+    """#287: a deliberate recon stop (`stopped`) is a terminal, not a failure
+    and not a completion - it stops the trial and never chains into hunting."""
+    api_runner = FakeApi(
+        {
+            "GET /projects/pid/recon/r1": {"status": "stopped", "per_job": [], "stats": {}},
+            "POST /projects/pid/recon": {"run_id": "r1"},
+            "GET /projects/pid/graph": GRAPH_L1_L0,
+            "GET /projects": PROJECTS,
+        }
+    )
+
+    record = _trial(tmp_path, api_runner, project_id="pid").run()
+
+    assert record.terminal == "stopped"
+    assert [p.phase for p in record.phases] == ["recon"]
+    assert record.phases[0].status == "stopped"
+    assert record.phases[0].failure is None
+    # It never chains into hunting (the fake has no hunting route at all).
+    assert not any(c.path.endswith("/hunting") for c in api_runner.calls)
+
+
 def test_failed_analysis_terminal_stops_the_trial(tmp_path) -> None:
     api_runner = FakeApi(
         {

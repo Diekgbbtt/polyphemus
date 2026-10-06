@@ -418,7 +418,12 @@ async def stop_recon(project_id: str, run_id: str) -> dict:
     """Stop recon ONLY (#75 D6): cancel the recon task. Its `finally` enqueues the
     terminal marker so the independent analysis consumer can still drain what was
     already pushed; analysis is never touched here. (The instant per-job kill +
-    output suppression is #76.)"""
+    output suppression is #76.)
+
+    The response acknowledges the cancel; the run row reaches its first-class
+    `stopped` terminal promptly on the pipeline's cancellation path (#287), not
+    after the reaper's TTL - so a deliberate stop is distinguishable from a crash
+    and `GET /app-state` stops reporting the run as in-flight."""
     runtime = _runtime()
     if runtime is None:
         raise HTTPException(

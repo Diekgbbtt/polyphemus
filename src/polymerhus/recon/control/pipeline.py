@@ -7,7 +7,11 @@ recording per-job/per-run status in the Postgres registry
 
 Best-effort by design (design §10.6): one job's failure (all its pods
 failing, or `run_job` itself raising) degrades that job but never aborts the
-run - the pipeline always reaches a terminal `set_run_status(..., "complete")`.
+run - a run that runs to the end of its plan reaches a terminal
+`set_run_status(..., "complete")`. A deliberate stop (module cancel / forced
+teardown) instead reaches the first-class `stopped` terminal from the
+cancellation path (#287), and a fail-close gateway stop reaches `failed`; the
+run never lingers `running` for the reaper to call `failed`.
 
 Every phase is a hard barrier: a phase's jobs run sequentially, one job's
 `run_job` call (its MAX_PODS pod fan-out included) completing before the next
@@ -479,8 +483,9 @@ async def run_pipeline(
                 # The verdict released browser-only collection but the plan
                 # holds no browser path (e.g. a subset without the Steel
                 # crawl): nothing could run, so "complete" would be a lie.
-                # Fail loudly (the run-level terminals are complete|failed;
-                # a contradicted release is a failure, never silent).
+                # Fail loudly (the run-level terminals are
+                # complete|failed|stopped; a contradicted release is a failure,
+                # never silent - `stopped` is only a deliberate stop, #287).
                 # Request phases are NOT kept: the verdict said browser-only.
                 logger.error("run %s browser-only release pruned every phase "
                              "(no steel_crawl in plan); marking failed, nothing ran",
@@ -761,6 +766,16 @@ async def run_pipeline(
             except Exception:  # a drain failure must never fail a healthy recon run
                 logger.warning("inline analysis drain raised for run %s (recon continues)",
                                run_id, exc_info=True)
+    except asyncio.CancelledError:
+        # #287: a deliberate stop (module cancel / forced teardown) is a
+        # first-class run terminal, never a crash. Write `stopped` NOW - before
+        # the teardown `finally` and before the re-raise - so the row leaves
+        # `running` promptly instead of lingering until the reaper flips it to
+        # `failed` after REAP_TTL_SECONDS. The clean path writes `complete`
+        # after the `finally`; this re-raise propagates past that write, so the
+        # two terminals never race.
+        await asyncio.to_thread(registry.set_run_status, run_id, "stopped")
+        raise
     finally:
         # #75 D4: on EVERY exit path (clean complete OR stop/kill) tell the analysis
         # consumer "no more chunks" by enqueuing the terminal marker - fire-and-forget,

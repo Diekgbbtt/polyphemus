@@ -246,7 +246,7 @@ drains, every 60-120s while hunting runs.
 | # | Operation | Interface and semantics |
 |---|---|---|
 | R1 | Note-and-continue | A SINGLE failed job is not a failure: the pipeline is best-effort per job (design 10.6), the run completes, that slice of surface is degraded. Record it, continue. |
-| R2 | Graceful recon stop (the workhorse) | `POST /projects/{id}/recon/{run_id}/stop`. Cancels recon ONLY; the terminal marker is enqueued so the ANALYSIS CONSUMER STILL DRAINS what was already pushed. Then wait for the analysis to drain (`analysis_drained` true, or the analysis run terminal), THEN proceed to hunting. The partial surface is judged as-is. |
+| R2 | Graceful recon stop (the workhorse) | `POST /projects/{id}/recon/{run_id}/stop`. Cancels recon ONLY; the run row reaches its first-class `stopped` terminal promptly (never the reaper's `failed` after the TTL), and the terminal marker is enqueued so the ANALYSIS CONSUMER STILL DRAINS what was already pushed. Then wait for the analysis to drain (`analysis_drained` true, or the analysis run terminal), THEN proceed to hunting. The partial surface is judged as-is. |
 | R3 | Narrow job suppression | Over-saturation attributable to ONE job: stop the run (R2), start a FRESH project/attempt with that job removed from the contract subset. Suppress the local failure narrowly; never re-add the excluded jobs. |
 | R4 | Analysis resume | After a graceful stop whose analysis did not drain (the queue was preserved): `POST /projects/{id}/analysis` `{run_id}` resumes the consumer (D7). Wait for the drain. |
 | R5 | Graceful analysis stop | `POST /projects/{id}/analysis/{run_id}/stop` - finish the in-flight chunk, preserve the queue for a resume. |

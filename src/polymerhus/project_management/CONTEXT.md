@@ -40,6 +40,15 @@ An operator's request to recon a project - `POST /projects/{id}/recon`.
 It is guarded before launch (the project must exist, any job subset must be valid, and a `target_domain` must be configured - a targetless run is refused so the pipeline never silently scans the example.com placeholder) and then scheduled non-blocking, returning a `run_id` immediately.
 The Run *entity* itself (its phases, jobs, heartbeat, terminal status) is Recon vocabulary; project-management owns only the request for one and the polling of its status.
 
+**Recon stop** (`POST /projects/{id}/recon/{run_id}/stop`):
+The operator's request to cancel a running recon, recon ONLY - the analysis
+consumer is never touched and still drains what was already pushed. The handler
+is a thin adapter over `RuntimeManager.cancel_run`; the Run row's first-class
+`stopped` terminal is written by Recon's pipeline cancellation path (#287),
+never here. Project-management requests the stop; Recon owns the Run terminal.
+_Avoid_: writing the run status in the HTTP adapter (the terminal belongs to the
+pipeline).
+
 **App-state read surface**:
 The instance-wide running-state read - `GET /app-state` (optional `?project_id` scope, `idle` reflects the scope).
 Per project it reports the in-flight runs of every run class the store expresses (recon `running`, analysis `draining`, hunting `running` - each the only live state of its lifecycle) plus the top-level `idle`; read-only, no mutation surface, with the equivalent direct-postgres query documented on the route as the fallback.

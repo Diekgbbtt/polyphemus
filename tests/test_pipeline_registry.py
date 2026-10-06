@@ -111,6 +111,18 @@ def test_set_run_status_terminal_sets_finished_at(monkeypatch):
     assert 3 in params
 
 
+def test_set_run_status_stopped_is_terminal(monkeypatch):
+    # #287: a deliberate stop is a first-class terminal, so `stopped` stamps
+    # finished_at exactly like complete/failed - the reaper never has to.
+    cur = patch_connect(monkeypatch, FakeCursor())
+    pg.set_run_status("run1", "stopped")
+
+    query, params = cur.executed[0]
+    assert "finished_at = now()" in query
+    assert "run1" in params
+    assert "stopped" in params
+
+
 def test_set_run_status_nonterminal_leaves_finished_at(monkeypatch):
     cur = patch_connect(monkeypatch, FakeCursor())
     pg.set_run_status("run1", "running", current_phase=2)
