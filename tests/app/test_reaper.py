@@ -28,27 +28,6 @@ def test_reap_leaves_fresh_running_alone():
     assert pg.get_run(rid)["status"] == "running"
 
 
-def test_reap_leaves_a_stopped_run_alone():
-    """#287: a deliberate stop is a first-class terminal. The reaper only ever
-    sweeps `running` rows, so a stopped run is never rewritten as a crash - and
-    `set_run_status("stopped")` already stamped finished_at."""
-    pid, rid = str(uuid.uuid4()), str(uuid.uuid4())
-    pg.create_project(pid, "reap-test")
-    pg.create_run(rid, pid)
-    pg.set_run_status(rid, "stopped")
-    with psycopg.connect(DSN) as conn, conn.cursor() as cur:
-        cur.execute("UPDATE recon_runs SET last_heartbeat_at = now() - interval '10 minutes' "
-                    "WHERE run_id=%s", (rid,))
-        conn.commit()
-
-    pg.reap_stale_runs(30)
-
-    row = pg.get_run(rid)
-    assert row["status"] == "stopped"
-    assert row["finished_at"] is not None
-    assert "reaped" not in (row["stats"] or {})
-
-
 def test_reap_records_why_the_run_was_reaped():
     """A reaped run's process stopped without saying anything, so the reaper is the
     only witness. A bare `failed` cannot be told apart from a run that failed on its

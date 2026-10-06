@@ -766,47 +766,53 @@ async def run_pipeline(
             except Exception:  # a drain failure must never fail a healthy recon run
                 logger.warning("inline analysis drain raised for run %s (recon continues)",
                                run_id, exc_info=True)
-    except asyncio.CancelledError:
-        # #287: a deliberate stop (module cancel / forced teardown) is a
-        # first-class run terminal, never a crash. Write `stopped` NOW - before
-        # the teardown `finally` and before the re-raise - so the row leaves
-        # `running` promptly instead of lingering until the reaper flips it to
-        # `failed` after REAP_TTL_SECONDS. The clean path writes `complete`
-        # after the `finally`; this re-raise propagates past that write, so the
-        # two terminals never race.
-        await asyncio.to_thread(registry.set_run_status, run_id, "stopped")
-        raise
     finally:
-        # #75 D4: on EVERY exit path (clean complete OR stop/kill) tell the analysis
-        # consumer "no more chunks" by enqueuing the terminal marker - fire-and-forget,
-        # never waiting for analysis. The consumer is owned by the analysis lifecycle
-        # module (NOT this task), so recon never cancels it: it drains the FIFO
-        # naturally and records its own status. For the inline feed this is a no-op.
-        if feed is not None:
-            try:
-                await feed.signal_end()
-            except Exception:
-                logger.warning("analysis signal_end raised for run %s (recon continues)",
-                               run_id, exc_info=True)
-        # feat/async-actor-agents: reap the recon-orchestrator actor (if any) so no
-        # orphan task outlives the run - on a clean stop AND on every error path.
-        if orchestrator is not None:
-            try:
-                await orchestrator.stop()
-            except Exception:  # teardown must never fail a healthy recon run
-                logger.warning("recon-orchestrator stop raised for run %s (recon continues)",
-                               run_id, exc_info=True)
-        # #211 TD-1: flush the recon index for THIS run at the pipeline's terminal
-        # (clean complete AND stop paths) - the strict flush -> assert -> teardown
-        # dependency at the run surface - via the SHARED run-scoped chokepoint
-        # (loud drop, fail-open).
-        from polymerhus.app.llm.checkpoints import flush_run_scoped  # noqa: PLC0415
-        await flush_run_scoped("recon", run_id)
-        hb.cancel()
         try:
-            await hb
-        except asyncio.CancelledError:
-            pass
+            # #75 D4: on EVERY exit path (clean complete OR stop/kill) tell the analysis
+            # consumer "no more chunks" by enqueuing the terminal marker - fire-and-forget,
+            # never waiting for analysis. The consumer is owned by the analysis lifecycle
+            # module (NOT this task), so recon never cancels it: it drains the FIFO
+            # naturally and records its own status. For the inline feed this is a no-op.
+            if feed is not None:
+                try:
+                    await feed.signal_end()
+                except Exception:
+                    logger.warning("analysis signal_end raised for run %s (recon continues)",
+                                   run_id, exc_info=True)
+            # feat/async-actor-agents: reap the recon-orchestrator actor (if any) so no
+            # orphan task outlives the run - on a clean stop AND on every error path.
+            if orchestrator is not None:
+                try:
+                    await orchestrator.stop()
+                except Exception:  # teardown must never fail a healthy recon run
+                    logger.warning("recon-orchestrator stop raised for run %s (recon continues)",
+                                   run_id, exc_info=True)
+            # #211 TD-1: flush the recon index for THIS run at the pipeline's terminal
+            # (clean complete AND stop paths) - the strict flush -> assert -> teardown
+            # dependency at the run surface - via the SHARED run-scoped chokepoint
+            # (loud drop, fail-open).
+            from polymerhus.app.llm.checkpoints import flush_run_scoped  # noqa: PLC0415
+            await flush_run_scoped("recon", run_id)
+            hb.cancel()
+            try:
+                await hb
+            except asyncio.CancelledError:
+                pass
+        finally:
+            # A cancellation landing during the teardown can skip its own
+            # `hb.cancel()`; a stopped run must never keep a live heartbeat task.
+            hb.cancel()
+            # #287: a deliberate stop (module cancel / forced teardown) is a
+            # first-class run terminal, never a crash. A pending cancellation -
+            # whether it interrupted the phase loop or landed during the teardown
+            # above - means the run was stopped, so settle it `stopped` after the
+            # flush rather than leaving the row `running` until the reaper calls
+            # it `failed` after REAP_TTL_SECONDS. On the clean and fail-close
+            # paths no cancellation is pending, so this never touches
+            # `complete`/`failed` (both are written on their own path below).
+            task = asyncio.current_task()
+            if task is not None and task.cancelling():
+                await asyncio.to_thread(registry.set_run_status, run_id, "stopped")
     # Recon reaches complete the instant its jobs finish - it does NOT wait on
     # analysis (#75 D3). Analysis settles independently on its own run row.
     await asyncio.to_thread(registry.set_run_status, run_id, "complete")

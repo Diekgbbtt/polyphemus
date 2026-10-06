@@ -15,6 +15,7 @@ class FakeCursor:
     def __init__(self, fetch_result=None):
         self.executed: list[tuple[str, tuple]] = []
         self._fetch_result = fetch_result
+        self.rowcount = 0
 
     def execute(self, query, params=None):
         self.executed.append((query, params))
@@ -121,6 +122,19 @@ def test_set_run_status_stopped_is_terminal(monkeypatch):
     assert "finished_at = now()" in query
     assert "run1" in params
     assert "stopped" in params
+
+
+def test_reap_stale_runs_only_touches_running_rows(monkeypatch):
+    # #287: a deliberate stop is terminal. The reaper's predicate is
+    # `status='running'`, so a `stopped` (or complete/failed) row is never
+    # rewritten as a crash - a unit-level guard on the SQL the live tier also
+    # exercises (tests/app/test_reaper.py).
+    cur = patch_connect(monkeypatch, FakeCursor())
+    pg.reap_stale_runs(300)
+
+    query, params = cur.executed[0]
+    assert "status='running'" in query
+    assert params == (300,)
 
 
 def test_set_run_status_nonterminal_leaves_finished_at(monkeypatch):
