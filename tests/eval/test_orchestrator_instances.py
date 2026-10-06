@@ -96,18 +96,22 @@ def test_plan_up_sequence(tmp_path, eval_repo) -> None:
     assert str(paths.worktree) in worktree_add
     assert "eval" in worktree_add
 
-    preflight = plan[1]
+    seed = plan[1].argv
+    assert seed[:2] == ("cp", "-rn")
+    assert str(paths.data_root) in seed[-1]
+
+    preflight = plan[2]
     assert "env_preflight.py" in preflight.argv[1]
     assert str(paths.env_file) in preflight.argv
     assert preflight.cwd == str(paths.worktree)
 
-    render = plan[2].argv
+    render = plan[3].argv
     assert render[-1] == "config"
     assert render[render.index("-p") + 1] == paths.compose_project
 
-    up = plan[3].argv
+    up = plan[4].argv
     assert up[-2:] == ("up", "-d")
-    assert plan[3].cwd == str(paths.worktree)
+    assert plan[4].cwd == str(paths.worktree)
 
 
 def test_plan_down_sequence_only_touches_its_own_project(tmp_path, eval_repo) -> None:

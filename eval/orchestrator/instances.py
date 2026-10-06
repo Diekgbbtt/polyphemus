@@ -170,6 +170,7 @@ def plan_up(paths: InstancePaths) -> list[Command]:
     """Worktree, then preflight, render, and start the instance stack."""
     return [
         plan_worktree_add(paths),
+        plan_seed_data_root(paths),
         plan_preflight(paths),
         plan_render(paths),
         Command(
@@ -218,6 +219,30 @@ def ensure_worktree(paths: InstancePaths, run: CommandRunner) -> None:
     require_ok(run(command), command, error=InstanceError)
 
 
+def plan_seed_data_root(paths: InstancePaths) -> Command:
+    """Copy the worktree's committed `data/` seed into the external data root.
+
+    The app-owned data root carries the TRACKED fault-KB catalogue
+    (`data/hunting/fault-kb.yaml`); the runtime evidence is written beside it.
+    Because the data root lives OUTSIDE the worktree, `up` must seed it from the
+    worktree's committed `data/` (no-clobber, so a resume keeps runtime data).
+    """
+    return Command(
+        argv=("cp", "-rn", f"{paths.worktree / 'data'}/.", f"{paths.data_root}/"),
+        description=f"seed data root {paths.data_root}",
+    )
+
+
+def ensure_data_root(paths: InstancePaths, run: CommandRunner) -> None:
+    """Seed the external data root from the worktree's committed `data/` (idempotent)."""
+    seed = paths.worktree / "data"
+    if not seed.is_dir():
+        return
+    paths.data_root.mkdir(parents=True, exist_ok=True)
+    command = plan_seed_data_root(paths)
+    require_ok(run(command), command, error=InstanceError)
+
+
 def remove_worktree(paths: InstancePaths, run: CommandRunner) -> None:
     """Operator-only: remove the instance worktree (and its data root).
 
@@ -231,8 +256,9 @@ def remove_worktree(paths: InstancePaths, run: CommandRunner) -> None:
 
 
 def up(paths: InstancePaths, run: CommandRunner) -> None:
-    """Bring up one instance stack: worktree, preflight, render, compose up."""
+    """Bring up one instance stack: worktree, data seed, preflight, render, up."""
     ensure_worktree(paths, run)
+    ensure_data_root(paths, run)
     for command in (plan_preflight(paths), plan_render(paths), plan_up(paths)[-1]):
         require_ok(run(command), command, error=InstanceError)
 
