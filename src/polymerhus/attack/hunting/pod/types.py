@@ -124,7 +124,14 @@ class KbObservation(BaseModel):
     query, the fault/axis join-key context, the returned symptoms/techniques/
     source bundle, and the variant it drove. A first-class typed record
     DISTINCT from an exec `RawObservation` - it captures which KB knowledge
-    informed a probe's concretization (the spec's KB-recording work item)."""
+    informed a probe's concretization (the spec's KB-recording work item).
+
+    `degraded` marks an UNAVAILABLE answer (#304): the KB tool fell back to its
+    deterministic bundle (no validated model answer) or failed open. A degraded
+    observation is impaired evidence - it can never license a clean
+    `space-exhausted` verdict, which is the domain-level reading of an
+    infrastructure condition. The flag is evidence metadata on the trail, never
+    a domain result."""
 
     variant_ref: str = ""
     query: str = ""
@@ -133,6 +140,7 @@ class KbObservation(BaseModel):
     symptoms: list[str] = Field(default_factory=list)
     techniques: list[str] = Field(default_factory=list)
     source: str | None = None
+    degraded: bool = False
 
 
 class Interpretation(BaseModel):

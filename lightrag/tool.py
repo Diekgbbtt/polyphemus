@@ -182,7 +182,15 @@ class LightRagQueryTool(BaseTool):
     def _run(self, **kwargs: Any) -> str:
         spec = QuerySpecV1(**kwargs)
         events = list(self.stream(spec))
-        return json_dump(events[-1]["answer"])
+        final = events[-1]
+        answer = dict(final.get("answer") or {})
+        # #304: expose the acceptance as a machine-readable flag on the answer.
+        # An unaccepted bundle is the deterministic fallback (an empty retrieval,
+        # a validation failure, or `tool_failed`) - it carries no validated model
+        # answer, so the consuming agent must treat it as UNAVAILABLE evidence,
+        # never as evidence of absence. The flag is also model-visible.
+        answer["degraded"] = not bool(final.get("accepted"))
+        return json_dump(answer)
 
     async def _arun(self, **kwargs: Any) -> str:
         return self._run(**kwargs)

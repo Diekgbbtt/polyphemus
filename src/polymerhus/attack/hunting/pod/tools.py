@@ -210,6 +210,11 @@ class KbQueryTool(BaseTool):
             try:
                 answer = json.loads(answer_text)
                 observation.source = str(answer.get("schema_version") or "lightrag-answer/v2")
+                # #304: an unaccepted/degraded answer is UNAVAILABLE evidence.
+                # The real tool marks it; the pod's own fail-open bundle does
+                # too, so the trail can never mistake a fallen-back KB for a
+                # KB that genuinely returned nothing.
+                observation.degraded = bool(answer.get("degraded"))
                 observation.symptoms = [
                     str(x.get("entity_name") or x.get("entity_type") or "")
                     for x in (answer.get("ontology_explanations") or [])
@@ -217,6 +222,7 @@ class KbQueryTool(BaseTool):
                 ][:8]
             except (ValueError, TypeError):
                 observation.source = "lightrag-answer/v2"
+                observation.degraded = True
             self._log.record_kb_observation(observation)
         except Exception:  # noqa: BLE001 - fail-open (O13)
             pass
@@ -235,6 +241,7 @@ class KbQueryTool(BaseTool):
                 "provenance_references": [],
                 "knowledge_gaps": [f"knowledge base unavailable ({type(exc).__name__})"],
                 "notes": "degraded",
+                "degraded": True,
             }
             self._record(kwargs, json.dumps(degraded))
             return json.dumps(degraded)
@@ -253,6 +260,7 @@ class KbQueryTool(BaseTool):
                 "provenance_references": [],
                 "knowledge_gaps": [f"knowledge base unavailable ({type(exc).__name__})"],
                 "notes": "degraded",
+                "degraded": True,
             }
             self._record(kwargs, json.dumps(degraded))
             return json.dumps(degraded)

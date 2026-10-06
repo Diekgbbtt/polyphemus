@@ -144,11 +144,48 @@ def _step(state: PodState) -> RunnerStep:
         return RunnerStep(action="conclude", exhausted=True)
 
 
+def _degraded_kb_evidence(log: ExperimentLog) -> bool:
+    """#304: whether any KB observation in the run was degraded (the tool fell
+    back to its deterministic bundle or failed open). An UNAVAILABLE KB result is
+    not absence evidence: `space-exhausted` asserts the testing space was fully
+    and cleanly exercised, and a degraded KB read anywhere in the run means the
+    knowledge-space exploration was impaired. The whole-run scope is deliberate;
+    the over-blocking direction is safe - it yields `insufficient-evidence`,
+    never a false absence."""
+    return any(getattr(k, "degraded", False) for k in getattr(log, "kb_observations", []))
+
+
 def _clean_from_trail(log: ExperimentLog) -> bool:
+    if _degraded_kb_evidence(log):
+        return False
     for obs in log.raw_observations:
         if obs.status is None and (obs.returncode not in (0, None)):
             return False
     return bool(log.raw_observations)
+
+
+def _guard_degraded_kb(decision: dict, log: ExperimentLog) -> dict:
+    """#304: a degraded KB observation is unavailable evidence and can never
+    license a clean absence. A `space-exhausted` claim over degraded KB coverage
+    is downgraded to an impaired `no-symptom-evidence` (which the hypothesis
+    derivation maps to `insufficient-evidence`), and any other absence claim's
+    `clean` flag is forced false. Positive (symptom-confirmed) and structural
+    (technical-infeasibility, specific-defence-prevention) terminals are
+    untouched: they do not depend on KB coverage."""
+    if decision.get("action") != "terminate" or not _degraded_kb_evidence(log):
+        return decision
+    reason = decision.get("terminal_reason")
+    if reason == SPACE_EXHAUSTED:
+        return {**decision, "terminal_reason": NO_SYMPTOM_EVIDENCE, "clean": False,
+                "note": (decision.get("note", "") +
+                         " [unavailable-domain: KB evidence degraded, so the "
+                         "space is not credibly exhausted]").strip()}
+    if reason in (NO_SYMPTOM_EVIDENCE, BUDGET_TIMEOUT) and decision.get("clean"):
+        return {**decision, "clean": False,
+                "note": (decision.get("note", "") +
+                         " [unavailable-domain: KB evidence degraded, so the "
+                         "absence is not credibly established]").strip()}
+    return decision
 
 
 async def _await_seam(fn, *args):
@@ -554,6 +591,7 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
                             "terminal_reason": NO_SYMPTOM_EVIDENCE, "clean": False,
                             "note": "triager action missing; degraded"}
 
+        decision = _guard_degraded_kb(decision, log)
         log.record_interpretation(Interpretation(
             variant=state.get("current_variant_ref", "v0"),
             classification=decision.get("classification", ""), note=decision.get("note", "")))

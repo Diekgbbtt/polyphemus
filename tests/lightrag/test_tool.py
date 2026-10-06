@@ -98,6 +98,23 @@ def test_arun_returns_fallback_json_on_llm_error():
     assert not parsed["ontology_explanations"][0]["evidence_references"]
 
 
+def test_arun_marks_a_validated_answer_available():
+    """#304: an accepted answer carries `degraded: false` so the consuming agent
+    knows it is real evidence, not absence."""
+    tool = LightRagQueryTool(client=_FakeClient(), llm=_FakeLlm())
+    parsed = json.loads(asyncio.run(tool._arun(**_spec().model_dump())))
+    assert parsed["degraded"] is False
+
+
+def test_arun_marks_a_fallback_answer_degraded():
+    """#304: an unaccepted answer (the deterministic fallback - an LLM outage,
+    an empty retrieval, or a validation failure) carries `degraded: true`, so a
+    downstream triager can never read it as 'the KB returned nothing'."""
+    tool = LightRagQueryTool(client=_FakeClient(), llm=_RaisingLlm())
+    parsed = json.loads(asyncio.run(tool._arun(**_spec().model_dump())))
+    assert parsed["degraded"] is True
+
+
 def test_stream_fails_open_on_retrieval_error():
     tool = LightRagQueryTool(client=_RaisingClient(), llm=_FakeLlm())
     events = list(tool.stream(_spec()))

@@ -56,7 +56,7 @@ The three stopped trials carry `verdicts.yaml`/`diagnoses.yaml` (6 each), all `m
 | ae3eb805 | 7 | 2 | 0 | 2 | 11 |
 | 9132be4d | 7 | 1 | 0 | 0 | 8 |
 
-The round-3 signature is **429-driven `technical-infeasibility`**, not triager laundering. `d76f1bcc` (the earlier working run) shows the healthy mix.
+The round-3 signature is **429-driven `technical-infeasibility`**, not triager laundering. `d76f1bcc` (the earlier working run) shows the healthy mix. Triager laundering IS a distinct, confirmed defect on other runs (EV-25, found by the C1 cortex review round 2, not in this round-3 sample).
 
 ## 4. Symptom-confirmed -> ground-truth mapping (comfyui kill chains)
 
@@ -98,6 +98,7 @@ Confidence: HIGH = code/evidence confirmed; POTENTIAL = needs `diagnosing-bugs`.
 |---|---|---|---|---|
 | EV-3 | assessment/diagnoser prompts show paths without the required `<project_id>/` prefix | prompt examples omit the mandatory first segment | HIGH | #288 |
 | EV-4 | all comfyui verdicts `missed`; comfyui-001 never selected | Tier-0 starvation (schedule + cap, since fixed) AND the exposure-family KB coverage gap: CWE-552 (selection tier) carries `predicate: null` + `enum_kinds: [WebPresentation]`, so a Service/RESTApi data unit is pruned-by-tag and the userdata info-disclosure fault is never bound | HIGH (starve) / HIGH (KB) | #315, #321 |
+| EV-25 | pod triager launders a degraded KB tool into a clean `space-exhausted` verdict | The KB tool fails OPEN (returns the deterministic fallback, `lightrag/tool.py`), so the triager's EXHAUSTION rule read "the KB returned no new variant" as evidence of absence and terminated `{unsuccessful, space-exhausted, clean=true}` - a degraded domain recorded as exhausted. 33/72 observations mention a degraded domain, 36/72 `space-exhausted`, 42/72 both (traces `11881bf0...`, `13cb49bf...`). **FIXED by #304**: the KB answer is marked `degraded = not accepted`, `KbObservation.degraded` records it, and the graph's triager node deterministically downgrades a clean exhaustion over degraded coverage to `no-symptom-evidence`/`clean=false` (deriving `insufficient-evidence`); the prompt states the rule. | HIGH | #304 |
 
 ### Contract and design
 

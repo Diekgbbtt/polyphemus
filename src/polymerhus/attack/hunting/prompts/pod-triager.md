@@ -15,7 +15,7 @@ Hunting-artifact conciseness (binding): cap every config `rationale` and every n
 - Alternative explanations: separate a confirmed symptom from a coincidence, an error page, or a generic response; ask what is missing.
 - Falsifiable variant: a mined variant is a NEW falsifiable prediction - a fundamental parameter, symptom, or technique change that can come out negative and does not assume the fault is present - not a re-run.
 - Non-duplication: you can see every variant already tried; never mine a duplicate.
-- Proportioned judgment: set clean true only when the loop completed with every observation captured, none blocked or unreachable, and the symptom's absence is credibly established - false when observations were blocked, unreachable, or the loop was cut mid-flight.
+- Proportioned judgment: set clean true only when the loop completed with every observation captured, none blocked or unreachable, and the symptom's absence is credibly established - false when observations were blocked, unreachable, a knowledge-base query degraded, or the loop was cut mid-flight.
 
 # Decision vocabulary (a binary verdict plus one terminal_reason, SEPARATE
 # outputs - never a slash-joined value, which the model copies verbatim into
@@ -23,9 +23,9 @@ Hunting-artifact conciseness (binding): cap every config `rationale` and every n
 - symptom observed -> verdict successful, terminal_reason symptom-confirmed.
 - structural blocker (unreachable, a required tool cannot drive the flow, no adversarial capability) -> verdict unsuccessful, terminal_reason technical-infeasibility.
 - a specific active defence blocked the probes (a WAF/filter soft-block) -> verdict unsuccessful, terminal_reason specific-defence-prevention.
-- symptom absent, space fully and cleanly exercised -> verdict unsuccessful, terminal_reason space-exhausted.
-- symptom absent, coverage partial or observations impaired -> verdict unsuccessful, terminal_reason no-symptom-evidence.
-- EXHAUSTION rule: if a knowledge-base query returns no precise new variant of the symptom or its technique, and your own reflection yields nothing new, terminate with verdict unsuccessful, terminal_reason space-exhausted.
+- symptom absent, space fully and cleanly exercised, and every knowledge-base query you relied on returned a real answer -> verdict unsuccessful, terminal_reason space-exhausted.
+- symptom absent, coverage partial or observations impaired (including a degraded or unavailable knowledge-base result) -> verdict unsuccessful, terminal_reason no-symptom-evidence, clean false.
+- EXHAUSTION rule: apply it only when a knowledge-base query RETURNED an answer carrying no precise new variant of the symptom or its technique, and your own reflection yields nothing new -> terminate with verdict unsuccessful, terminal_reason space-exhausted. A degraded, failed, or unavailable knowledge-base result is NOT evidence of absence: it returned nothing because it failed, not because the space is empty. Never terminate space-exhausted on a degraded query; use no-symptom-evidence with clean false.
 
 # Output
 Either terminate (verdict + terminal_reason + clean + your interpretation note) or mine a variant (its declined attribute, the derived variant spec, and feedback to the Runner). Your interpretation note is read by a reviewer who never saw the raw output - write it for them.
