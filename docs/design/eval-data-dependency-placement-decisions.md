@@ -84,11 +84,18 @@ The store's write path is reused, never hand-rolled:
   `put_credentials` defaults a missing `origin` to `operator`, stamps `updated_at` server-side, and refuses an identity collision with `DuplicateIdentityError`.
 - `SkillStore.replace_bundle` writes a pre-built bundle verbatim (no frontmatter composition or version bump), re-validating the `SKILL.md` frontmatter and rejecting unsafe paths.
 
-## D6 - `l1-surface.yaml` is NOT delivered
+## D6 - `l1-surface.yaml` is delivered as the graph-ready companion (amended 2026-10-07)
 
-Confirmed by the operator: the L1 bootstrap consumes `operator_kb.md` ONLY.
-The graph-ready `l1-surface.yaml` (explicit `EXPOSED_VIA`/`AUTHORIZED_BY` edges) is NOT delivered and NO converter is built for it.
-The eval harness places `operator_kb.md` for the L1 skeleton and nothing else.
+Originally: the L1 bootstrap consumed `operator_kb.md` ONLY and the graph-ready `l1-surface.yaml` was NOT delivered, with no converter built for it.
+Amended: the `l1-surface.yaml` IS delivered for every pre-pulled target.
+It is the graph-ready rendering of the same surface `operator_kb.md` describes - pure Neo4j knowledge-graph data the backend persists at project start through one parameterised MERGE per unit and per edge, with `project_id` the sole query parameter (never baked into the file), exposed through the data-dependency placement REST face.
+Its format is the L1 write contract:
+
+- `label` in `{Service, System}`; a Service is keyed `business_function_slug`, a System `kind` + `discriminator` (the identify/authenticate/authorize linchpins use the literal `__singleton__`).
+- `props` are valid L1 props only; edges are `EXPOSED_VIA` / `AUTHENTICATED_BY` / `AUTHORIZED_BY` (and `CONSUMES` / `PRODUCES` where a DataItem exists).
+- Every edge endpoint resolves within the file and every identity is unique.
+
+The delivered `operator_kb.md` remains the companion the deterministic scaffold consumes; the `l1-surface.yaml` node set is verified equal to `shells_to_batch`'s output (set-equality), so the two renderings cannot drift.
 
 ## Build-artifact conformance (normalized 2026-10-04)
 
