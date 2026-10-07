@@ -390,3 +390,21 @@ A re-run that does not call `down` first therefore leaves the prior run's last s
 - The chain state file has one reader, `Chain._load`; no other module reads `active_target` or `chain-state.yaml`.
 - The reset does not change the on-disk schema.
 - A completed chain's last target is still torn down by `orchestrator down`, which does not read the chain state.
+
+### D51 - A trial brings up only its own target, not the whole serial pipeline
+*2026-10-08.* `orchestrator trial` passed `bring_up=orchestrator.up`, and `up` starts every declared target of every instance.
+For a single-target setup (`first.yaml`) that is correct.
+For the multi-target setups (the 8-target aarch64 slice, the 15-target chain) the production driver runs `next-target` then `trial` per target, so the trial's bring-up started the ENTIRE serial pipeline at once.
+On the 15GB eval host the trial hung - all 8 targets up, 27 containers, memory exhausted - and never reached project creation.
+
+**Decision.** `Orchestrator.up` takes an optional `target_id`.
+When set it still brings up every instance stack, but starts and readiness-checks only the matching target; `None` keeps the whole-setup behaviour the `up` verb needs.
+`_run_trial` passes the trial's own target, so a bare `trial` is self-contained (it deploys its target) without starting the rest of the pipeline.
+The chain's `next-target` remains the per-target bring-up the driver calls first; the trial's scoped `up` is idempotent on the already-up target.
+
+**Why not drop the bring-up.** A `trial` invoked without a prior `up`/`next-target` must still deploy its target; scoping to that target keeps the guarantee while removing the blow-up.
+
+**Falsification checks.**
+- `up()` with no `target_id` still starts every target (the whole-setup verb), proven by `test_up_drives_the_instance_and_target`.
+- `up(target_id=...)` starts only the named target and still brings up the instance stack, proven by `test_up_scopes_to_one_target_when_target_id_given`.
+- The single-target flow (`first.yaml`) is unchanged because the one target matches.

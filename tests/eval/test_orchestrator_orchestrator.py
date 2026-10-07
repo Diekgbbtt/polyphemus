@@ -159,6 +159,35 @@ def test_up_drives_the_instance_and_target(tmp_path, recording_runner, fake_resu
     assert any("scripts/targetctl up jetlinks" in t for t in texts)
 
 
+def test_up_scopes_to_one_target_when_target_id_given(
+    tmp_path, recording_runner, fake_result
+) -> None:
+    runner = recording_runner(
+        routes={
+            "scripts/targetctl up": fake_result(0, "UI: http://127.0.0.1:32768/\n"),
+            "getent hosts": fake_result(0, "172.17.0.1 host.docker.internal\n"),
+            "curl": fake_result(0, "200"),
+            "ps -a --format json": fake_result(0, '[{"Health": "healthy"}]\n'),
+        }
+    )
+    setup = _setup_dict(
+        targets=[
+            {"target_key": "mock/jetlinks", "target_id": "jetlinks-1"},
+            {"target_key": "mock/siyucms", "target_id": "siyucms-1"},
+        ]
+    )
+
+    results = _orchestrator(setup, tmp_path, runner=runner).up(target_id="siyucms-1")
+
+    (instance_result,) = results
+    assert [t.host for t in instance_result.targets] == [
+        routing.synthetic_host("arm-a/siyucms-1")
+    ]
+    texts = runner.argv_texts
+    assert any("scripts/targetctl up siyucms" in t for t in texts)
+    assert not any("scripts/targetctl up jetlinks" in t for t in texts)
+
+
 def test_down_removes_targets_then_the_instance(tmp_path, recording_runner) -> None:
     runner = recording_runner()
     # A real teardown follows a bring-up that created the worktree.

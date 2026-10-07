@@ -209,11 +209,18 @@ class Orchestrator:
 
     # --- execution ------------------------------------------------------------
 
-    def up(self) -> list[InstanceResult]:
+    def up(self, *, target_id: str | None = None) -> list[InstanceResult]:
         """Gate the work items, then bring up every instance and its targets.
 
         Each target is started, then its readiness is verified under the
         strategy's bounded plan; the target's own `up` never blocks on health.
+
+        `target_id` scopes the target bring-up to ONE target while still
+        bringing up every instance stack. A single trial passes its own target,
+        so a multi-target setup never starts the whole serial pipeline at once
+        (the chain's `next-target` already brought the target up; this keeps a
+        bare `trial` self-contained without the blow-up). `None` brings up every
+        target, the whole-setup `up` verb's behaviour.
         """
         require_complete(self.setup.work_items)
         runner = self._require_runner()
@@ -225,6 +232,8 @@ class Orchestrator:
             instances.up(paths, runner)
             target_results: list[TargetUpResult] = []
             for run in instance.targets:
+                if target_id is not None and run.target_id != target_id:
+                    continue
                 strategy = self._strategy(paths, run)
                 target_results.append(strategy.up(runner))
                 strategy.await_ready(runner)
