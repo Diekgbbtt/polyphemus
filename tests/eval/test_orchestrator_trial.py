@@ -581,6 +581,7 @@ def test_a_malformed_usage_payload_never_falsely_stops(tmp_path) -> None:
         {
             "GET /projects/pid/usage": {"generated_tokens": "not-an-int", "by_agent": "oops"},
             "GET /projects/pid/hunting/h1": {"status": "running"},
+            "POST /projects/pid/hunting/h1/stop": {"stopping": True},
             "POST /projects/pid/hunting": {"hunting_run_id": "h1"},
             "GET /projects/pid/graph": GRAPH_L1_L0,
         }
@@ -597,7 +598,11 @@ def test_a_malformed_usage_payload_never_falsely_stops(tmp_path) -> None:
     ).run()
 
     assert record.terminal == "timeout"
-    assert not any(c.path.endswith("/stop") for c in api_runner.calls)
+    # The malformed payload never trips the token budget: no spend is recorded.
+    assert record.spent_tokens is None
+    # The trial deadline still stops the run (#338); it is not a budget stop.
+    stops = [c for c in api_runner.calls if c.path.endswith("/stop")]
+    assert [c.path for c in stops] == ["/projects/pid/hunting/h1/stop"]
 
 
 # --- pre-mined artifacts ------------------------------------------------------
@@ -714,6 +719,7 @@ def test_budget_timeout_is_recorded_not_raised(tmp_path) -> None:
     api_runner = FakeApi(
         {
             "GET /projects/pid/recon/r1": {"status": "running"},
+            "POST /projects/pid/recon/r1/stop": {"stopping": True},
             "POST /projects/pid/recon": {"run_id": "r1"},
             "GET /projects/pid/graph": GRAPH_L1_L0,
             "GET /projects": PROJECTS,
@@ -733,6 +739,95 @@ def test_budget_timeout_is_recorded_not_raised(tmp_path) -> None:
     assert record.terminal == "timeout"
     assert record.phases[0].status == "timeout"
     assert clock.t >= 25.0
+
+
+def test_a_wall_clock_timeout_stops_the_recon_run(tmp_path) -> None:
+    # #338: a timed-out trial must not leave its run running. No surfer runs by
+    # default, so the poll stops the recon run exactly as the spend path does.
+    api_runner = FakeApi(
+        {
+            "GET /projects/pid/recon/r1": {"status": "running"},
+            "POST /projects/pid/recon/r1/stop": {"stopping": True},
+            "POST /projects/pid/recon": {"run_id": "r1"},
+            "GET /projects/pid/graph": GRAPH_L1_L0,
+            "GET /projects": PROJECTS,
+        }
+    )
+
+    record = _trial(
+        tmp_path,
+        api_runner,
+        clock=FakeClock(),
+        project_id="pid",
+        budget_s=25.0,
+        poll_s=10.0,
+    ).run()
+
+    assert record.terminal == "timeout"
+    assert record.phases[0].status == "timeout"
+    stops = [c for c in api_runner.calls if c.path.endswith("/stop")]
+    assert [c.path for c in stops] == ["/projects/pid/recon/r1/stop"]
+
+
+def test_a_wall_clock_timeout_stops_the_hunting_run(tmp_path) -> None:
+    api_runner = FakeApi(
+        {
+            "GET /projects/pid/hunting/h1": {"status": "running"},
+            "POST /projects/pid/hunting/h1/stop": {"stopping": True},
+            "POST /projects/pid/hunting": {"hunting_run_id": "h1"},
+            "GET /projects/pid/graph": GRAPH_L1_L0,
+        }
+    )
+
+    record = _trial(
+        tmp_path,
+        api_runner,
+        clock=FakeClock(),
+        start_phase="hunting",
+        project_id="pid",
+        budget_s=25.0,
+        poll_s=10.0,
+    ).run()
+
+    assert record.terminal == "timeout"
+    assert record.phases[0].status == "timeout"
+    stops = [c for c in api_runner.calls if c.path.endswith("/stop")]
+    assert [c.path for c in stops] == ["/projects/pid/hunting/h1/stop"]
+
+
+def test_a_wall_clock_timeout_stops_the_analysis_run_by_recon_id(tmp_path) -> None:
+    # The analysis stop verb is keyed by the recon run id, not the consumer
+    # surrogate; a timeout stop must name the same id a budget stop does.
+    api_runner = FakeApi(
+        {
+            "GET /projects/pid/recon/r0": {
+                "status": "complete",
+                "per_job": [{"job": "crawl", "status": "complete"}],
+                "stats": {},
+            },
+            "POST /projects/pid/analysis/r0/stop": {"stopped": True},
+            "POST /projects/pid/analysis": {"analysis_run_id": "a1"},
+            "GET /projects/pid/analysis/r0": {"status": "draining"},
+            "GET /projects/pid/graph": GRAPH_L1_L0,
+        }
+    )
+
+    record = _trial(
+        tmp_path,
+        api_runner,
+        clock=FakeClock(),
+        start_phase="analysis",
+        project_id="pid",
+        recon_run_id="r0",
+        budget_s=25.0,
+        poll_s=10.0,
+    ).run()
+
+    assert record.terminal == "timeout"
+    assert record.phases[0].run_id == "a1"
+    assert record.phases[0].stop_run_id == "r0"
+    stops = [c for c in api_runner.calls if c.path.endswith("/stop")]
+    assert [c.path for c in stops] == ["/projects/pid/analysis/r0/stop"]
 
 
 # --- bootstrap: auth, scaffold, plan ------------------------------------------

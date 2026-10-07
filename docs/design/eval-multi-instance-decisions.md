@@ -492,3 +492,26 @@ The prompt rewrite landed in `c6371f1` (#288); this change adds the missing regr
 **Falsification checks.**
 - Both prompts carry `<project_id>/hunting/orchestration/hunt_configs/`, `<project_id>/hunting/hunter/test-specs/`, and `<project_id>/hunting/test-executor-pod/`.
 - `files.hunt_configs_dir`, `files.hunter_test_specs_fault_dir`, and `files.pod_dir` each resolve under `data_root/<project_id>/...`.
+
+## Round-12 decision (the trial deadline stops the active run, #338, 2026-10-07)
+
+### D54 - A trial deadline stops the active run before the trial advances
+*2026-10-07.* The trial poll (`orchestrator/trial.py::_poll` and `::_poll_hunting`) returned `timeout` at its wall-clock deadline without stopping the run it had launched, while the token-budget poll stopped it (`_check_spend` calls `api.stop_run`). A timed-out trial therefore advanced to the next target while its run kept running.
+
+Evidence (eval server 2026-10-07): the jetlinks-1 hunting run `665ba875` was still `running` about 8h after its trial timed out at about 14:04, and siyucms-1 `699859a8` about 3h. The orphaned runs contended the agent and the provider and amplified further timeouts. Both were stopped by hand as an immediate heal.
+
+**Decision.** The trial owns the run it launched. On a wall-clock deadline the poll stops that run before returning `timeout`, mirroring the token-budget stop exactly through one shared call, `api.stop_run(project_id, run_kind, run_id)`. Recon and hunting stop their own run id; analysis stops the recon run id its stop verb is keyed by, which the phase record already carries as `stop_run_id`.
+
+**Why stop and not leave the run for the surfer.** The surfer nominally owns non-complete terminals, but no surfer runs by default, and the surfer has no timeout trigger at all - `cap_triggers`, `spend_triggers`, and `failed_run_trigger` never fire on a `timeout`. Left unstopped, the run leaks until an operator stops it. Stopping at the source is the only bound that holds without a surfer.
+
+**The terminal stays `timeout`, not `stopped`.** `timeout` is what the monitor defers to the surfer and what the trial record must keep distinct from a token-budget stop. Only the stop CALL is added: the phase `status`, the trial `terminal`, and the phase `stop_run_id` are unchanged.
+
+**No reaper race.** The stop endpoints settle a live run to `stopped` promptly (#287 added the distinct `stopped` terminal); the reaper only acts on a run whose heartbeat went stale. Issuing the stop after a non-terminal status read, and on a run that turns terminal concurrently, is a safe no-op.
+
+**Amends the settle conditions.** This completes the three conditions named by the removed hunt cap (`eval/CONTEXT.md` "Hunting cap": a trial settles on the run's own quiesce, the **Token budget**, or the **Trial deadline**). Previously only the quiesce and the budget settled the run; the deadline now settles it too.
+
+**Falsification checks.**
+- A recon wall-clock timeout issues `POST /projects/{id}/recon/{run}/stop` before the record is written (`test_a_wall_clock_timeout_stops_the_recon_run`).
+- A hunting wall-clock timeout issues `POST /projects/{id}/hunting/{run}/stop` (`test_a_wall_clock_timeout_stops_the_hunting_run`).
+- An analysis wall-clock timeout issues `POST /projects/{id}/analysis/{recon_run}/stop`, the recon run id the stop verb is keyed by (`test_a_wall_clock_timeout_stops_the_analysis_run_by_recon_id`).
+- A below-budget poll with a malformed usage payload still times out and stops the run once, and records no spend stop (`test_a_malformed_usage_payload_never_falsely_stops`).
