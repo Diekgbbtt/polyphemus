@@ -691,6 +691,22 @@
   margin-bottom: 0.25rem;
 }
 
+/* A neutral, non-alarming notice: "this Trial was not materialized". */
+.eval-notice-info {
+  border-color: #2d4a6b;
+  background: #0e1725;
+}
+
+/* An independent per-file results availability line, inside `Results`. Never a
+   count: a missing file is stated as unavailable, not as zero. */
+.eval-notice-line {
+  margin: 0.25rem 0;
+  padding: 0.35rem 0.75rem;
+  border-left: 3px solid #6b5a1f;
+  background: #1a1708;
+  color: #d9d2b8;
+}
+
 .eval-status,
 .eval-empty {
   color: #9aa0a6;

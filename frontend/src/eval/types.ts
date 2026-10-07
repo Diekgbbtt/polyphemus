@@ -78,6 +78,24 @@ export interface EvalPhase {
 
 export type EvalAvailability = "complete" | "degraded"
 
+// Where a projected Trial's data came from: the materialized store tree, or
+// the authoritative record the harness wrote under a runs root (not yet
+// copied). Absent on an older server/fixture and read as `materialized`.
+export type TrialStorageSource = "materialized" | "run_record"
+
+export interface ResultsAvailabilityEntry {
+  status: "available" | "unavailable"
+  reason: string | null
+}
+
+// The independent availability of the two results files. A missing file is
+// `unavailable`; a present-but-empty file is `available` with no rows. Absent
+// on an older server/fixture and read as `available`.
+export interface ResultsAvailability {
+  verdicts: ResultsAvailabilityEntry
+  diagnoses: ResultsAvailabilityEntry
+}
+
 // The lightweight project-snapshot summaries the dashboard reads from
 // `/snapshot`: counts and status only, never inventory entries or graph bodies.
 export type ProjectArtifactStatus =
@@ -186,6 +204,8 @@ export interface EvalTrial {
   target_id: string
   target_run_id: string
   trial_id: string
+  // Optional: an older snapshot predates the storage-source metadata.
+  storage_source?: TrialStorageSource
   instance_id: string | null
   project_id: string | null
   start_phase: string | null
@@ -196,6 +216,8 @@ export interface EvalTrial {
   stack_fingerprint: string | null
   verdicts: EvalVerdict[]
   diagnoses: EvalDiagnosis[]
+  // Optional: an older snapshot predates the per-file results availability.
+  results_availability?: ResultsAvailability | null
   availability: EvalAvailability
   reason: string | null
   artifact_summary: ProjectArtifactSummary
@@ -338,4 +360,7 @@ export interface EvalSnapshot {
   degraded_trials: EvalDegradedTrial[]
   // Optional for older fixtures/servers; the current backend always emits it.
   unassigned_saved_data?: UnassignedSavedData[]
+  // Path-free catalogue issues (e.g. `run_record_ambiguous`); optional for
+  // older fixtures/servers.
+  issues?: string[]
 }

@@ -42,8 +42,15 @@ from orchestrator.project_artifacts import (
     ProjectArtifactError,
     collect_project_artifacts,
 )
-from .projection import DEFAULT_DATASET_ID, DEFAULT_DATASET_NAME, build_snapshot
+from .projection import (
+    DEFAULT_DATASET_ID,
+    DEFAULT_DATASET_NAME,
+    assemble_snapshot,
+    project_run_record,
+    project_store_trials,
+)
 from .project_graph import HistoricalProjectGraphError, read_project_graph
+from .run_records import load_run_record_catalog
 from .trial_spend import (
     SPEND_ROOT_UNCONFIGURED,
     TrialSpend,
@@ -173,16 +180,47 @@ class ArtifactStoreSnapshotSource:
     graph_client_factory: Callable[[], ProjectGraphClient | None] | None = None
 
     def snapshot(self) -> dict[str, Any]:
-        snapshot = self._projected_snapshot()
+        snapshot = self._catalog_snapshot()
         snapshot["unassigned_saved_data"] = self._unassigned_saved_data(snapshot)
         self._attach_spend(snapshot)
         return snapshot
 
-    def _projected_snapshot(self) -> dict[str, Any]:
+    def _catalog_snapshot(self) -> dict[str, Any]:
+        """The unified catalogue: materialized Trials plus authoritative records.
+
+        The store tree is projected first, then every unique run record whose
+        identity is not already materialized is added. A shared identity keeps
+        the materialized capture (never overwritten by current files), and a
+        physically ambiguous identity is left out and reported as a path-free
+        issue instead of being arbitrated. The whole report is re-aggregated
+        from the merged Trial list, so targets, summary, versions, successes and
+        the degraded list stay coherent.
+        """
         if not self.store:
             raise SnapshotSourceUnavailable(f"{ENV_STORE} is not configured")
-        return build_snapshot(
-            self.store, dataset_id=self.dataset_id, dataset_name=self.dataset_name
+        trials = project_store_trials(self.store)
+        materialized = {
+            (trial["target_id"], trial["target_run_id"], trial["trial_id"])
+            for trial in trials
+        }
+        catalog = load_run_record_catalog(self._runs_roots(), files=FileStore())
+        for identity in sorted(catalog.records):
+            if identity in materialized:
+                continue
+            trials.append(project_run_record(catalog.records[identity]))
+        snapshot = assemble_snapshot(
+            trials, dataset_id=self.dataset_id, dataset_name=self.dataset_name
+        )
+        # A materialized capture already resolves its identity, so an ambiguity
+        # over that same identity never reaches the operator: only an ambiguous
+        # identity that no capture covers is a catalogue issue.
+        unresolved = [identity for identity in catalog.ambiguous if identity not in materialized]
+        snapshot["issues"] = list(catalog.issues) if unresolved else []
+        return snapshot
+
+    def _runs_roots(self) -> tuple[str | Path, ...]:
+        return tuple(
+            root for root in (self.runs_root, self.legacy_runs_root) if root
         )
 
     def get_project_graph(
@@ -251,7 +289,7 @@ class ArtifactStoreSnapshotSource:
         self, target_id: str, target_run_id: str, trial_id: str
     ) -> TrialContext:
         return resolve_trial_context(
-            self._projected_snapshot(),
+            self._catalog_snapshot(),
             target_id,
             target_run_id,
             trial_id,
@@ -377,6 +415,7 @@ class ArtifactStoreSnapshotSource:
         configured = bool(self.store)
         readable = configured and Path(self.store).is_dir()
         trials = _count_materialized_trials(self.store) if readable else 0
+        run_records = _count_run_record_trials(self.store, self._runs_roots())
         data_root = Path(self.project_data_root) if self.project_data_root else None
         return SourceHealth(
             ok=configured and readable,
@@ -384,6 +423,9 @@ class ArtifactStoreSnapshotSource:
                 "store_configured": configured,
                 "store_readable": readable,
                 "materialized_trials": trials,
+                # Catalogued authoritative records not yet copied into the
+                # store; `materialized_trials` keeps its exact former meaning.
+                "run_record_trials": run_records,
                 "project_data_configured": bool(self.project_data_root),
                 "project_data_readable": bool(data_root and data_root.is_dir()),
                 "graph_client_configured": bool(
@@ -418,6 +460,32 @@ def _count_materialized_trials(store: str | Path | None) -> int:
                         count += 1
     except OSError:
         return 0
+    return count
+
+
+def _count_run_record_trials(
+    store: str | Path | None, roots: tuple[str | Path, ...]
+) -> int:
+    """Authoritative records catalogued from the runs roots but not materialized.
+
+    The health block keeps `materialized_trials` as the exact store count and
+    reports these separately, so a catalogued-but-uncopied Trial is never
+    mistaken for a materialized one. All read errors degrade the count to zero.
+    """
+    if not roots:
+        return 0
+    try:
+        catalog = load_run_record_catalog(roots, files=FileStore())
+    except OSError:
+        return 0
+    root = Path(store) if store else None
+    count = 0
+    for target_id, target_run_id, trial_id in catalog.records:
+        if root is not None and (
+            root / target_id / target_run_id / trial_id / MANIFEST_FILENAME
+        ).is_file():
+            continue
+        count += 1
     return count
 
 

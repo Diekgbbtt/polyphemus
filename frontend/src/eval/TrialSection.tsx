@@ -9,6 +9,13 @@ import { SavedOn } from "./SavedOn"
 import { TrialProjectGraph } from "./TrialProjectGraph"
 import { TrialResults } from "./TrialResults"
 import { ARTIFACT_LABELS, ARTIFACT_ORDER, summarizeArtifact } from "./TrialArtifactPage"
+import {
+  diagnosesAvailable,
+  isMaterialized,
+  resultsReason,
+  timeoutDuringHunting,
+  verdictsAvailable,
+} from "./trialAvailability"
 import type { EvalTrial } from "./types"
 
 // A stable DOM anchor for one Trial, keyed by the full (run, trial) identity so
@@ -185,13 +192,21 @@ export function TrialSection({
             <span className="eval-chip-value">{trial.terminal ?? "—"}</span>
           </li>
           <li>
+            <span className="eval-chip-label">Source</span>
+            <span className="eval-chip-value">
+              {isMaterialized(trial) ? "materializzato" : "non materializzato"}
+            </span>
+          </li>
+          <li>
             <span className="eval-chip-label">Availability</span>
             <span className="eval-chip-value">{trial.availability}</span>
           </li>
           <li>
             <span className="eval-chip-label">Outcome</span>
             <span className="eval-chip-value">
-              {counts.identified} identified / {counts.partial} partial / {counts.missed} missed
+              {verdictsAvailable(trial)
+                ? `${counts.identified} identified / ${counts.partial} partial / ${counts.missed} missed`
+                : "Risultati non disponibili"}
             </span>
           </li>
         </ul>
@@ -199,6 +214,31 @@ export function TrialSection({
           <span className="eval-chip-label">Phases</span> {phasesLabel(trial)}
         </p>
       </header>
+
+      {!isMaterialized(trial) && (
+        <section className="eval-notice eval-notice-info" aria-label="Unmaterialized trial">
+          <h2>Non materializzato</h2>
+          <p>
+            Questo Trial è letto dal record autorevole nella runs root; non è
+            stato copiato nello store. I dati mancanti restano esplicitamente
+            non disponibili.
+          </p>
+        </section>
+      )}
+
+      {trial.terminal === "timeout" && (
+        <section className="eval-notice" aria-label="Timeout trial">
+          <h2>
+            {timeoutDuringHunting(trial)
+              ? "Timeout durante hunting"
+              : "Trial terminato per timeout"}
+          </h2>
+          <p>
+            Il Trial ha registrato il terminal <span className="eval-ref">timeout</span>.
+            Lo stato del Trial non dice nulla sullo stato corrente del worker.
+          </p>
+        </section>
+      )}
 
       {trial.availability === "degraded" && (
         <section className="eval-notice" aria-label="Degraded trial">
@@ -240,7 +280,9 @@ export function TrialSection({
           }
         />
       </ResolvedArtifactsProvider>
-      <MaterializedArtifacts trial={trial} />
+      {/* A Trial with no materialized tree has no materialized artifact files:
+          never link a route whose files and endpoints do not exist. */}
+      {isMaterialized(trial) && <MaterializedArtifacts trial={trial} />}
     </section>
   )
 }

@@ -38,6 +38,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 COMPLETE = ("demo-complete-1", "demo-run-a", "demo-complete-trial-1")
 INTERRUPTED = ("demo-interrupted-1", "demo-run-a", "demo-interrupted-trial-1")
 HISTORICAL = ("demo-historical-1", "demo-run-legacy", "demo-historical-trial-1")
+TIMEOUT = ("demo-timeout-1", "demo-run-a", "demo-timeout-trial-1")
 DELTA = ("demo-complete-1", "demo-run-a", "demo-delta-trial-1")
 
 FOUR_KINDS = {
@@ -146,6 +147,11 @@ def test_generate_keeps_the_four_roots_separate(tmp_path: Path) -> None:
     assert not (roots.raw / COMPLETE[0] / COMPLETE[1]).exists()
     assert (roots.runs / COMPLETE[0] / f"{COMPLETE[2]}.yaml").is_file()
     assert (roots.legacy_runs / HISTORICAL[0] / f"{HISTORICAL[2]}.yaml").is_file()
+    # The unmaterialized timeout Trial lives only as a runs-root record: no
+    # store tree, but its raw project tree still exists for the fallback.
+    assert (roots.runs / TIMEOUT[0] / TIMEOUT[2] / "trial.yaml").is_file()
+    assert not (roots.store / TIMEOUT[0]).exists()
+    assert (roots.raw / "demo-project-timeout-1").is_dir()
 
 
 def test_generate_leaves_unknown_files_untouched(tmp_path: Path) -> None:
@@ -171,12 +177,14 @@ def test_snapshot_dataset_identity_and_summary(tmp_path: Path) -> None:
         "name": corpus.DATASET_NAME,
     }
     assert snapshot["summary"] == {
-        "targets": 3,
-        "trials": 3,
+        "targets": 4,
+        "trials": 4,
         "identified": 2,
         "partial": 1,
         "missed": 2,
-        "degraded": 0,
+        # The unmaterialized timeout Trial wrote no results: it is catalogued
+        # and degraded, never counted as an assessment of zero vulnerabilities.
+        "degraded": 1,
     }
 
 
@@ -188,12 +196,13 @@ def test_snapshot_trials_carry_full_identity_and_instance(tmp_path: Path) -> Non
     identities = {
         (t["target_id"], t["target_run_id"], t["trial_id"]) for t in trials
     }
-    assert {COMPLETE, INTERRUPTED, HISTORICAL} == identities
+    assert {COMPLETE, INTERRUPTED, HISTORICAL, TIMEOUT} == identities
     assert {t["instance_id"] for t in trials} == {corpus.INSTANCE_ID}
     assert {t["project_id"] for t in trials} == {
         "demo-project-complete-1",
         "demo-project-interrupted-1",
         "demo-project-historical-1",
+        "demo-project-timeout-1",
     }
 
 
@@ -476,6 +485,69 @@ def test_historical_trial_reports_no_captured_graph(tmp_path: Path) -> None:
     assert body["reason"] == "project_graph_unavailable"
 
 
+# --- unmaterialized timeout Trial: catalogued, honest about missing results ----
+
+
+def test_unmaterialized_timeout_is_catalogued_without_a_manifest(tmp_path: Path) -> None:
+    adapter = _adapter(corpus.generate(tmp_path / "corpus"))
+
+    trial = _trial(adapter.snapshot(), TIMEOUT[2])
+
+    assert trial["storage_source"] == "run_record"
+    assert trial["terminal"] == "timeout"
+    assert trial["copied_at"] is None  # nothing was ever materialized
+    assert trial["verdicts"] == []
+    assert trial["diagnoses"] == []
+    assert trial["results_availability"] == {
+        "verdicts": {"status": "unavailable", "reason": "verdicts_missing"},
+        "diagnoses": {"status": "unavailable", "reason": "diagnoses_missing"},
+    }
+
+
+def test_unmaterialized_timeout_falls_back_to_the_raw_project(tmp_path: Path) -> None:
+    adapter = _adapter(corpus.generate(tmp_path / "corpus"))
+
+    body = adapter.list_resolved_artifacts(*TIMEOUT)
+
+    assert body["status"] == "available"
+    assert body["source"] == "project_storage"
+    assert _flatten(body["groups"])
+
+
+def test_unmaterialized_timeout_invents_no_results(tmp_path: Path) -> None:
+    snapshot = _adapter(corpus.generate(tmp_path / "corpus")).snapshot()
+
+    # No synthesized missed verdict, no success, and the Trial is degraded.
+    assert all(s["trial_id"] != TIMEOUT[2] for s in snapshot["successes"])
+    assert TIMEOUT[2] in {d["trial_id"] for d in snapshot["degraded_trials"]}
+    assert all(
+        verdict["identified"] != "missed"
+        for trial in snapshot["trials"]
+        if trial["trial_id"] == TIMEOUT[2]
+        for verdict in trial["verdicts"]
+    )
+
+
+def test_unmaterialized_timeout_has_no_captured_graph(tmp_path: Path) -> None:
+    adapter = _adapter(corpus.generate(tmp_path / "corpus"))
+
+    body = adapter.resolved_graph(*TIMEOUT)
+
+    assert body["status"] == "unavailable"
+    assert body["project_id"] == "demo-project-timeout-1"
+
+
+def test_refresh_never_materializes_the_timeout_trial(tmp_path: Path) -> None:
+    roots = corpus.generate(tmp_path / "corpus")
+    adapter = _adapter(roots)
+
+    corpus.refresh(roots.root)
+
+    trial = _trial(adapter.snapshot(), TIMEOUT[2])
+    assert trial["storage_source"] == "run_record"
+    assert not (roots.store / TIMEOUT[0]).exists()
+
+
 # --- graph: the complete Trial's L0/L1 projection is meaningful ----------------
 
 
@@ -613,7 +685,7 @@ def _validate_case(roots: "corpus.Roots", spec: "corpus.CaseSpec"):
     )
 
 
-@pytest.mark.parametrize("spec", corpus.CASES, ids=lambda spec: spec.trial_id)
+@pytest.mark.parametrize("spec", corpus.VALIDATABLE_CASES, ids=lambda spec: spec.trial_id)
 def test_every_case_verdict_chain_passes_the_production_validator(
     tmp_path: Path, spec: "corpus.CaseSpec"
 ) -> None:

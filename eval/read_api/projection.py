@@ -17,6 +17,8 @@ dependency; import performs no I/O.
 """
 from __future__ import annotations
 
+import os
+import stat
 from collections import Counter
 from collections.abc import Iterator, Mapping
 from pathlib import Path
@@ -35,6 +37,13 @@ ARTIFACTS_UNAVAILABLE = "project_artifacts_unavailable"
 GRAPH_UNAVAILABLE = "project_graph_unavailable"
 SNAPSHOT_UNAVAILABLE = "project_snapshot_unavailable"
 STORE_SCHEMA_V2 = 2
+# Where a projected Trial's data came from: the materialized store tree, or the
+# authoritative record the harness wrote under a runs root (not yet copied).
+STORAGE_MATERIALIZED = "materialized"
+STORAGE_RUN_RECORD = "run_record"
+# The independent results availability of each results file.
+RESULTS_AVAILABLE = "available"
+RESULTS_UNAVAILABLE = "unavailable"
 _ARTIFACT_CATEGORIES = ("hunting", "skill")
 # The non-authoritative siblings the store also contains (D7/D12, project
 # artifacts): the rendered deploy dir, the raw one-way live mirror, and the
@@ -138,8 +147,45 @@ def build_snapshot(
     dataset_name: str = DEFAULT_DATASET_NAME,
 ) -> dict[str, Any]:
     """A complete, deterministic, JSON-serializable report of the store."""
+    return assemble_snapshot(
+        project_store_trials(store),
+        dataset_id=dataset_id,
+        dataset_name=dataset_name,
+    )
+
+
+def project_store_trials(store: str | Path) -> list[dict[str, Any]]:
+    """Every materialized Trial tree under `store`, projected (never raises)."""
     root = Path(store)
     trials: list[dict[str, Any]] = []
+    for target_dir in _child_dirs(root):
+        for run_dir in _child_dirs(target_dir):
+            for trial_dir in _child_dirs(run_dir):
+                trials.append(
+                    _read_trial(
+                        trial_dir,
+                        default_target_id=target_dir.name,
+                        default_target_run_id=run_dir.name,
+                    )
+                )
+    return trials
+
+
+def assemble_snapshot(
+    trials: list[dict[str, Any]],
+    *,
+    dataset_id: str = DEFAULT_DATASET_ID,
+    dataset_name: str = DEFAULT_DATASET_NAME,
+) -> dict[str, Any]:
+    """Aggregate already-projected Trial records into the full report.
+
+    The catalogue's union (store + runs roots) is aggregated here, so every
+    derived section - targets, summary, versions, coverage, successes and the
+    degraded list - is recomputed coherently after the merge.
+    """
+    trials = sorted(
+        trials, key=lambda t: (t["target_id"], t["target_run_id"], t["trial_id"])
+    )
     successes: list[dict[str, Any]] = []
     degraded: list[dict[str, Any]] = []
     trial_counts: Counter[str] = Counter()
@@ -147,34 +193,25 @@ def build_snapshot(
     partial_counts: Counter[str] = Counter()
     missed_counts: Counter[str] = Counter()
 
-    for target_dir in _child_dirs(root):
-        for run_dir in _child_dirs(target_dir):
-            for trial_dir in _child_dirs(run_dir):
-                record = _read_trial(
-                    trial_dir,
-                    default_target_id=target_dir.name,
-                    default_target_run_id=run_dir.name,
-                )
-                trials.append(record)
-                target_id = record["target_id"]
-                trial_counts[target_id] += 1
-                counts = Counter(row["identified"] for row in record["verdicts"])
-                identified_counts[target_id] += counts["identified"]
-                partial_counts[target_id] += counts["partial"]
-                missed_counts[target_id] += counts["missed"]
-                if record["availability"] == "degraded":
-                    degraded.append(
-                        {
-                            key: record[key]
-                            for key in ("target_id", "target_run_id", "trial_id", "reason")
-                        }
-                    )
-                    continue
-                for row in record["verdicts"]:
-                    if row["identified"] == "identified":
-                        successes.append(_success_row(record, row))
+    for record in trials:
+        target_id = record["target_id"]
+        trial_counts[target_id] += 1
+        counts = Counter(row["identified"] for row in record["verdicts"])
+        identified_counts[target_id] += counts["identified"]
+        partial_counts[target_id] += counts["partial"]
+        missed_counts[target_id] += counts["missed"]
+        if record["availability"] == "degraded":
+            degraded.append(
+                {
+                    key: record[key]
+                    for key in ("target_id", "target_run_id", "trial_id", "reason")
+                }
+            )
+            continue
+        for row in record["verdicts"]:
+            if row["identified"] == "identified":
+                successes.append(_success_row(record, row))
 
-    trials.sort(key=lambda t: (t["target_id"], t["target_run_id"], t["trial_id"]))
     successes.sort(
         key=lambda r: (r["target_id"], r["target_run_id"], r["trial_id"], r["vuln_id"])
     )
@@ -219,6 +256,7 @@ def _read_trial(
     *,
     default_target_id: str,
     default_target_run_id: str,
+    storage_source: str = STORAGE_MATERIALIZED,
 ) -> dict[str, Any]:
     """Read one trial tree into an allowlisted record (never raises)."""
     manifest_path = trial_dir / MANIFEST_FILENAME
@@ -226,7 +264,12 @@ def _read_trial(
     if manifest is None:
         reason = "manifest_missing" if not manifest_path.exists() else "manifest_invalid"
         return _record(
-            default_target_id, default_target_run_id, trial_dir.name, reason=reason
+            default_target_id,
+            default_target_run_id,
+            trial_dir.name,
+            reason=reason,
+            storage_source=storage_source,
+            results_availability=_unavailable_results(reason),
         )
 
     target_id = _safe_id(manifest.get("target_id")) or default_target_id
@@ -245,6 +288,8 @@ def _read_trial(
             meta=meta,
             artifact_summary=artifact_summary,
             project_graph_summary=project_graph_summary,
+            storage_source=storage_source,
+            results_availability=_unavailable_results("identity_missing"),
         )
 
     identity = {
@@ -254,16 +299,47 @@ def _read_trial(
         "artifact_summary": artifact_summary,
         "project_graph_summary": project_graph_summary,
     }
-    verdicts_path = trial_dir / VERDICTS_FILENAME
-    if not verdicts_path.exists():
-        return _record(
-            target_id, target_run_id, trial_id, reason="verdicts_missing", **identity
-        )
-    payload = _load_payload(verdicts_path)
+    verdicts, verdicts_availability, verdict_defect = _read_verdicts(trial_dir)
+    diagnoses, diagnoses_availability, diagnosis_defect = _read_diagnoses(
+        trial_dir,
+        verdicts,
+        verdicts_available=verdicts_availability["status"] == RESULTS_AVAILABLE,
+    )
+    defect = verdict_defect or diagnosis_defect
+
+    return _record(
+        target_id,
+        target_run_id,
+        trial_id,
+        availability="degraded" if defect else "complete",
+        reason=defect,
+        verdicts=verdicts,
+        diagnoses=diagnoses,
+        **identity,
+        storage_source=storage_source,
+        results_availability=_results_block(
+            verdicts_availability, diagnoses_availability
+        ),
+    )
+
+
+def _read_verdicts(
+    trial_dir: Path, *, strict: bool = False
+) -> tuple[list[dict[str, Any]], dict[str, Any], str | None]:
+    """Every valid verdict row, plus its availability and any defect code.
+
+    A missing file is `unavailable`; a present file is `available` even when it
+    is empty or carries an unusable row (in which case the valid siblings are
+    kept and the Trial reports the stable defect). With `strict`, only a regular
+    non-symlink file counts, so an unmaterialized Trial never follows a link out
+    of its own record directory.
+    """
+    path = trial_dir / VERDICTS_FILENAME
+    if not _present(path, strict=strict):
+        return [], _availability(RESULTS_UNAVAILABLE, "verdicts_missing"), "verdicts_missing"
+    payload = _load_payload(path)
     if payload is _INVALID or not isinstance(payload, list):
-        return _record(
-            target_id, target_run_id, trial_id, reason="verdicts_invalid", **identity
-        )
+        return [], _availability(RESULTS_UNAVAILABLE, "verdicts_invalid"), "verdicts_invalid"
 
     verdicts: list[dict[str, Any]] = []
     defect: str | None = None
@@ -277,35 +353,39 @@ def _read_trial(
         if status == "ok":
             verdicts.append(row)
     verdicts.sort(key=lambda row: row["vuln_id"])
-
-    diagnoses, diagnosis_defect = _read_diagnoses(trial_dir, verdicts)
-    if defect is None:
-        defect = diagnosis_defect
-
-    return _record(
-        target_id,
-        target_run_id,
-        trial_id,
-        availability="degraded" if defect else "complete",
-        reason=defect,
-        verdicts=verdicts,
-        diagnoses=diagnoses,
-        **identity,
-    )
+    return verdicts, _availability(RESULTS_AVAILABLE, None), defect
 
 
 def _read_diagnoses(
-    trial_dir: Path, verdicts: list[dict[str, Any]]
-) -> tuple[list[dict[str, Any]], str | None]:
-    """The valid diagnoses, plus the safe reason when some row was unusable."""
-    required = {row["vuln_id"] for row in verdicts if row["identified"] in DIAGNOSABLE}
+    trial_dir: Path,
+    verdicts: list[dict[str, Any]],
+    *,
+    verdicts_available: bool = True,
+    strict: bool = False,
+) -> tuple[list[dict[str, Any]], dict[str, Any], str | None]:
+    """The valid diagnoses, plus its availability and any defect code.
+
+    Availability is independent of the verdicts: a present diagnoses file is
+    `available` even when every verdicts file is missing. When the verdicts are
+    available, a partial/missed verdict still demands a paired entry; when they
+    are not, the rows are read structurally without inventing a pairing.
+    """
+    required = (
+        {row["vuln_id"] for row in verdicts if row["identified"] in DIAGNOSABLE}
+        if verdicts_available
+        else set()
+    )
     path = trial_dir / DIAGNOSES_FILENAME
-    if not path.exists():
-        return [], "diagnoses_missing" if required else None
+    if not _present(path, strict=strict):
+        defect = "diagnoses_missing" if required else None
+        return [], _availability(RESULTS_UNAVAILABLE, "diagnoses_missing"), defect
     payload = _load_payload(path)
     if payload is _INVALID or not isinstance(payload, list):
-        return [], "diagnoses_invalid"
-    return _parse_diagnoses(payload, required)
+        return [], _availability(RESULTS_UNAVAILABLE, "diagnoses_invalid"), "diagnoses_invalid"
+    parsed, defect = _parse_diagnoses(
+        payload, required, gate_on_required=verdicts_available
+    )
+    return parsed, _availability(RESULTS_AVAILABLE, None), defect
 
 
 def _parse_verdict(raw: object) -> tuple[str, dict[str, Any] | None]:
@@ -380,25 +460,29 @@ def _evidence_refs(chain: object) -> tuple[list[str], bool]:
 
 
 def _parse_diagnoses(
-    rows: list, required: set[str]
+    rows: list, required: set[str], *, gate_on_required: bool = True
 ) -> tuple[list[dict[str, Any]], str | None]:
     """The valid diagnoses, plus the stable reason when a row was unusable.
 
     A malformed row is dropped without erasing its valid siblings; the caller
     degrades the Trial. A partial/missed verdict left without any diagnosis is
-    itself a defect, so the pairing rule still holds.
+    itself a defect, so the pairing rule still holds. `gate_on_required` is
+    false only when the verdicts are themselves unavailable, so the rows are
+    read structurally without inventing a pairing that cannot be checked.
     """
     parsed: list[dict[str, Any]] = []
     seen: set[str] = set()
     defect: str | None = None
     for raw in rows:
-        row = _parse_diagnosis(raw, required=required, seen=seen)
+        row = _parse_diagnosis(
+            raw, required=required, seen=seen, gate_on_required=gate_on_required
+        )
         if row is None:
             defect = "diagnoses_invalid"
             continue
         seen.add(row["vuln"])
         parsed.append(row)
-    if required - seen:
+    if gate_on_required and required - seen:
         # A partial/missed verdict with no diagnosis entry is a defect.
         defect = "diagnoses_invalid"
     parsed.sort(key=lambda row: row["vuln"])
@@ -406,13 +490,15 @@ def _parse_diagnoses(
 
 
 def _parse_diagnosis(
-    raw: object, *, required: set[str], seen: set[str]
+    raw: object, *, required: set[str], seen: set[str], gate_on_required: bool = True
 ) -> dict[str, Any] | None:
     """One diagnosis row, or `None` when it is not a usable paired entry."""
     if not isinstance(raw, Mapping):
         return None
     vuln = _safe_id(raw.get("vuln"))
-    if not vuln or vuln not in required or vuln in seen:
+    if not vuln or vuln in seen:
+        return None
+    if gate_on_required and vuln not in required:
         return None
 
     failure_mode = _safe_id(raw.get("failure_mode"))
@@ -740,12 +826,15 @@ def _record(
     diagnoses: list[dict[str, Any]] | None = None,
     artifact_summary: Mapping[str, Any] | None = None,
     project_graph_summary: Mapping[str, Any] | None = None,
+    storage_source: str = STORAGE_MATERIALIZED,
+    results_availability: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     meta = meta or {}
     return {
         "target_id": target_id,
         "target_run_id": target_run_id,
         "trial_id": trial_id,
+        "storage_source": storage_source,
         "instance_id": meta.get("instance_id"),
         "project_id": meta.get("project_id"),
         "start_phase": meta.get("start_phase"),
@@ -756,6 +845,11 @@ def _record(
         "stack_fingerprint": stack_fingerprint,
         "verdicts": verdicts or [],
         "diagnoses": diagnoses or [],
+        "results_availability": (
+            dict(results_availability)
+            if results_availability is not None
+            else _unavailable_results(None)
+        ),
         "availability": availability,
         "reason": reason,
         "artifact_summary": artifact_summary or _historical_artifact_summary(),
@@ -763,6 +857,89 @@ def _record(
     }
 
 
+# --- results availability -------------------------------------------------------
+
+
+def _availability(status: str, reason: str | None) -> dict[str, Any]:
+    """One results file's availability: `available`, else a stable reason code."""
+    return {"status": status, "reason": reason}
+
+
+def _results_block(
+    verdicts: Mapping[str, Any], diagnoses: Mapping[str, Any]
+) -> dict[str, Any]:
+    return {"verdicts": dict(verdicts), "diagnoses": dict(diagnoses)}
+
+
+def _unavailable_results(reason: str | None) -> dict[str, Any]:
+    """Both results blocks unavailable for the same reason (no file read)."""
+    return _results_block(
+        _availability(RESULTS_UNAVAILABLE, reason),
+        _availability(RESULTS_UNAVAILABLE, reason),
+    )
+
+
+def _present(path: Path, *, strict: bool) -> bool:
+    """Whether a results file is present; `strict` rejects a symlink/special.
+
+    The materialized tree keeps its historical `exists()` behavior; a run
+    record is read only from a real regular file, so a link planted there can
+    never redirect the reader outside the Trial's own directory.
+    """
+    if not strict:
+        return path.exists()
+    try:
+        return stat.S_ISREG(os.lstat(path).st_mode)
+    except OSError:
+        return False
+
+
+# --- one authoritative run record (not yet materialized) ------------------------
+
+
+def project_run_record(record: Any) -> dict[str, Any]:
+    """Project one validated run record into a Trial, reading its own results.
+
+    The identity and phases come from the record; `copied_at` stays null because
+    nothing was materialized. Verdicts and diagnoses are read from the record's
+    directory with the strict, symlink-free reader, and each one's availability
+    is independent of the other.
+    """
+    target_id, target_run_id, trial_id = record.identity
+    meta = {
+        "instance_id": record.instance_id,
+        "project_id": record.project_id,
+        "start_phase": record.start_phase,
+        "terminal": record.terminal,
+        "copied_at": None,
+        "phases": _phases(list(record.phases)),
+    }
+    verdicts, verdicts_availability, verdict_defect = _read_verdicts(
+        record.directory, strict=True
+    )
+    diagnoses, diagnoses_availability, diagnosis_defect = _read_diagnoses(
+        record.directory,
+        verdicts,
+        verdicts_available=verdicts_availability["status"] == RESULTS_AVAILABLE,
+        strict=True,
+    )
+    defect = verdict_defect or diagnosis_defect
+    return _record(
+        target_id,
+        target_run_id,
+        trial_id,
+        availability="degraded" if defect else "complete",
+        reason=defect,
+        eval_sha=record.eval_sha,
+        stack_fingerprint=record.stack_fingerprint,
+        meta=meta,
+        verdicts=verdicts,
+        diagnoses=diagnoses,
+        storage_source=STORAGE_RUN_RECORD,
+        results_availability=_results_block(
+            verdicts_availability, diagnoses_availability
+        ),
+    )
 def _success_row(record: Mapping[str, Any], verdict: Mapping[str, Any]) -> dict[str, Any]:
     matched = verdict["matched"]
     return {

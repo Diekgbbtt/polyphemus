@@ -97,6 +97,12 @@ class CaseSpec:
     schema_version: int = 2
     # Only the complete Trial captured its project snapshot before teardown.
     capture_snapshot: bool = False
+    # A materialized case gets a store tree; an unmaterialized one is left as
+    # the authoritative record under the runs root and never copied.
+    materialized: bool = True
+    # Results (verdicts/diagnoses) written beside the store trial. Unmaterialized
+    # cases carry their own results directory only when the producer wrote them.
+    produces_results: bool = True
     # Pod exports this case's pods reached; the interrupted Trial reached none.
     pod_exports: tuple[PodExportSpec, ...] = ()
     with_skill: bool = False
@@ -247,7 +253,39 @@ HISTORICAL = CaseSpec(
     consumed_test_spec=True,
 )
 
-CASES: tuple[CaseSpec, ...] = (COMPLETE, INTERRUPTED, HISTORICAL)
+# The unmaterialized case: a Trial whose authoritative record is written under
+# the runs root but which the materializer never copied into the store. It
+# timed out while hunting, wrote no verdicts and no diagnoses, and its raw
+# project tree (and the current graph) is all that remains browsable.
+TIMEOUT = CaseSpec(
+    target_id="demo-timeout-1",
+    target_run_id="demo-run-a",
+    trial_id="demo-timeout-trial-1",
+    project_id="demo-project-timeout-1",
+    eval_sha="demo-sha-timeout",
+    stack_fingerprint="demo-env-timeout",
+    terminal="timeout",
+    start_phase="hunting",
+    phases=(
+        ("recon", "complete", "demo-recon"),
+        ("hunting", "timeout", "demo-hunt"),
+    ),
+    verdicts=(),
+    diagnoses=(),
+    # No capture, no store tree: only the record and the raw project survive.
+    capture_snapshot=False,
+    materialized=False,
+    produces_results=False,
+    pod_exports=(),
+    with_skill=False,
+    produced_hunt_config=True,
+    consumed_test_spec=False,
+)
+
+CASES: tuple[CaseSpec, ...] = (COMPLETE, INTERRUPTED, HISTORICAL, TIMEOUT)
+# The cases whose chain the production verdicts validator can read (the
+# unmaterialized timeout Trial wrote no results at all).
+VALIDATABLE_CASES: tuple[CaseSpec, ...] = (COMPLETE, INTERRUPTED, HISTORICAL)
 
 
 @dataclass(frozen=True)
@@ -442,9 +480,44 @@ def _v1_manifest(spec: CaseSpec, rows: list[dict]) -> dict:
     }
 
 
+def _write_run_record(runs_root: Path, spec: CaseSpec) -> None:
+    """The authoritative ``trial.yaml`` under the runs root, never materialized.
+
+    The harness writes the record at ``<runs_root>/<target_id>/<trial_id>/``.
+    Its identity is the content, so the read API catalogues it without any
+    manifest, and the raw project tree is what the resolved endpoints fall back
+    to. No verdicts or diagnoses are written: a timeout never reached the
+    assessment.
+    """
+    record = {
+        "schema_version": 1,
+        "trial_id": spec.trial_id,
+        "target_id": spec.target_id,
+        "target_run_id": spec.target_run_id,
+        "instance_id": spec.instance_id,
+        "project_id": spec.project_id,
+        "start_phase": spec.start_phase,
+        "terminal": spec.terminal,
+        "phases": [
+            {"phase": phase, "status": status, "run_id": run_id}
+            for phase, status, run_id in spec.phases
+        ],
+        "eval_sha": spec.eval_sha,
+        "stack_fingerprint": spec.stack_fingerprint,
+    }
+    _write_yaml(runs_root / spec.target_id / spec.trial_id / "trial.yaml", record)
+
+
 def _write_case(files: artifact_files.FileStore, roots: Roots, spec: CaseSpec) -> None:
     """One Trial: its raw project tree, its materialized record, its spend."""
     _write_project_tree(files, roots.raw, spec)
+    if not spec.materialized:
+        # The authoritative record under the runs root, with no store copy. The
+        # producer only writes verdicts/diagnoses when it reached assessment, so
+        # a timeout record carries neither.
+        _write_run_record(roots.runs, spec)
+        return
+
     chain = _chain(roots.raw, spec)
     rows = [
         demo._verdict_row(spec, verdict, chain if verdict.identified != "missed" else None)

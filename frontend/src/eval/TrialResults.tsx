@@ -9,6 +9,7 @@ import {
 import { useEvidenceResolver } from "./ResolvedArtifactsProvider"
 import { isSafeEvidenceReference } from "./projectArtifacts"
 import type { EvidenceResolution } from "./projectArtifacts"
+import { diagnosesAvailable, resultsReason, verdictsAvailable } from "./trialAvailability"
 import type { EvalDiagnosis, EvalTrial, EvalVerdict } from "./types"
 
 // One Trial's results: every materialized verdict as its own row, with the
@@ -403,11 +404,33 @@ export function TrialResults({
   trial: EvalTrial
   groundTruth?: GroundTruthState
 }) {
+  const noVerdicts = !verdictsAvailable(trial)
+  const noDiagnoses = !diagnosesAvailable(trial)
   const empty = trial.verdicts.length === 0 && trial.diagnoses.length === 0
   return (
     <section aria-label="Trial results" className="trial-results">
       <h2>Results</h2>
-      {empty ? (
+      {/* The two files are independent: a missing verdicts.yaml must not hide a
+          present diagnoses.yaml, and neither is a synthetic zero. */}
+      {noVerdicts && (
+        <p className="eval-notice-line" data-availability="verdicts">
+          Verdicts non disponibili
+          {resultsReason(trial, "verdicts")
+            ? ` (${resultsReason(trial, "verdicts")})`
+            : ""}
+          .
+        </p>
+      )}
+      {noDiagnoses && (
+        <p className="eval-notice-line" data-availability="diagnoses">
+          Diagnoses non disponibili
+          {resultsReason(trial, "diagnoses")
+            ? ` (${resultsReason(trial, "diagnoses")})`
+            : ""}
+          .
+        </p>
+      )}
+      {empty && !noVerdicts && !noDiagnoses ? (
         <p className="eval-empty">No results were materialized for this Trial.</p>
       ) : (
         <VerdictList trial={trial} groundTruth={groundTruth} />

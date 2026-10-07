@@ -3,6 +3,7 @@ import { targetPaths } from "../projectPaths"
 import { EvalBreadcrumbs, evalPaths } from "./EvalBreadcrumbs"
 import { useEvalData } from "./EvalDataProvider"
 import { SavedOn } from "./SavedOn"
+import { isMaterialized, verdictsAvailable } from "./trialAvailability"
 import type { EvalTrial } from "./types"
 
 // Stable per-TargetRun anchor; the Trial breadcrumb links its TargetRun crumb
@@ -109,6 +110,7 @@ export function TargetPage() {
           <ul className="trial-index">
             {runTrials.map((trial) => {
               const counts = verdictCounts(trial)
+              const materialized = isMaterialized(trial)
               return (
                 <li key={trial.trial_id} className="trial-index-row">
                   <Link
@@ -122,11 +124,16 @@ export function TargetPage() {
                     {trial.trial_id}
                   </Link>
                   <span className="trial-index-outcome">
-                    {counts.identified} identified / {counts.partial} partial /{" "}
-                    {counts.missed} missed
+                    {verdictsAvailable(trial)
+                      ? `${counts.identified} identified / ${counts.partial} partial / ${counts.missed} missed`
+                      : "Risultati non disponibili"}
                   </span>
                   <span className="trial-index-saved">
-                    <SavedOn copiedAt={trial.copied_at} />
+                    {materialized ? (
+                      <SavedOn copiedAt={trial.copied_at} />
+                    ) : (
+                      <span className="eval-status">Non materializzato</span>
+                    )}
                   </span>
                 </li>
               )
