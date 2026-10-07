@@ -245,6 +245,12 @@ The memory + status lifecycle is synergistic in two directions:
 
 - The store is per-project and per-pass durable: the config files and `memory.yaml` survive the pass, the process,
   and the run (the old `memory.md` cross-run file and the per-run kind files are gone).
+- **Every whole-file write is atomic (#340).** The orchestrator's `hunt_configs` and `memory.yaml`, the hunter's
+  `notes.yaml` and spec files, and the pod's variant/experiment/export/notes files land through the shared
+  `app.atomic_write` primitive (same-directory temp + `fsync` + `os.replace`), so an aborted or killed write leaves
+  the previous complete file intact and a reader never sees a partial file - the corruption failure mode of EV-29.
+  The unbounded growth of one `notes.yaml` (18 MB under the #338 orphan) is a SEPARATE deferred concern
+  (`docs/design/atomic-write-340-adr.md`).
 - **The persisted environment state IS the fault-processing tracker** (G10): the created fault configs express
   which faults are done (ratified), in-progress (hypothesised), or left (absent) - `run.md` is removed as
   redundant.

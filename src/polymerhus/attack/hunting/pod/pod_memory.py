@@ -55,6 +55,7 @@ from pathlib import Path
 
 import yaml
 
+from polymerhus.app.atomic_write import write_text_atomic
 from polymerhus.app.data_root import project_dir
 
 # The hunting module's data seam (D84-33): the `test-executor-pod/` bucket
@@ -236,9 +237,7 @@ class PodMemoryStore:
         (D84-37): `variants/<ref>.yaml`. A write failure raises for the caller
         to degrade (O3)."""
         path = self._variant_file(spec_id, variant_ref)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("w", encoding="utf-8") as fh:
-            yaml.safe_dump(variant, fh, sort_keys=False)
+        write_text_atomic(path, yaml.safe_dump(variant, sort_keys=False))
 
     def read_variant(self, spec_id: str, variant_ref: str) -> dict:
         """A minted variant, or {} when absent. A corrupt file raises (O4)."""
@@ -275,9 +274,7 @@ class PodMemoryStore:
         `experiment_summary`. A write failure raises for the caller to degrade
         (O3)."""
         path = self._experiment_log_file(spec_id, order)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("w", encoding="utf-8") as fh:
-            yaml.safe_dump(slice, fh, sort_keys=False)
+        write_text_atomic(path, yaml.safe_dump(slice, sort_keys=False))
 
     def read_experiment_log(self, spec_id: str, order: int) -> dict:
         """The variant's persisted experiment-log slice, or {} when absent. A
@@ -320,9 +317,7 @@ class PodMemoryStore:
         returned to the parent. A write failure raises for the caller to degrade
         (O3)."""
         path = self._pod_export_file(spec_id, run_id)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("w", encoding="utf-8") as fh:
-            yaml.safe_dump(export_dict, fh, sort_keys=False)
+        write_text_atomic(path, yaml.safe_dump(export_dict, sort_keys=False))
 
     def read_pod_export(self, spec_id: str, run_id: str) -> dict:
         """The persisted `PodExport` envelope, or {} when absent. A corrupt file
@@ -378,9 +373,7 @@ class PodMemoryStore:
 
     def _write_notes_records(self, records: list[dict]) -> None:
         path = self._notes_file()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("w", encoding="utf-8") as fh:
-            yaml.safe_dump(records, fh, sort_keys=False)
+        write_text_atomic(path, yaml.safe_dump(records, sort_keys=False))
 
     # -- write ---------------------------------------------------------------
 

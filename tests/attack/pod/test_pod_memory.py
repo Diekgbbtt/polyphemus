@@ -449,3 +449,40 @@ def test_compose_memory_guidance_marks_an_empty_index(store):
 
 def test_compose_memory_guidance_is_fail_open_without_a_store():
     assert compose_memory_guidance(None, SPEC_ID) != ""
+
+
+# --- #340: the pod's own YAML bodies are written atomically -------------------
+
+def test_failed_pod_export_dump_leaves_prior_content_intact(store, monkeypatch):
+    """#340: `write_pod_export` rewrote the whole file with a plain truncate +
+    dump, so an aborted write left an empty export a later read rejected. The
+    atomic write renders first, so the prior complete export survives."""
+    store.write_pod_export(SPEC_ID, "run-1", {"verdict": "unsuccessful", "n": 1})
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("dump crashed (fixture)")
+
+    monkeypatch.setattr(
+        "polymerhus.attack.hunting.pod.pod_memory.yaml.safe_dump", boom)
+    with pytest.raises(RuntimeError):
+        store.write_pod_export(SPEC_ID, "run-1", {"verdict": "successful", "n": 2})
+    monkeypatch.undo()
+
+    assert store.read_pod_export(SPEC_ID, "run-1") == {"verdict": "unsuccessful", "n": 1}
+
+
+def test_failed_variant_dump_leaves_prior_content_intact(store, monkeypatch):
+    """#340: `write_variant` is the same whole-file rewrite - a raising dump
+    must leave the prior complete variant on disk, never a truncated one."""
+    store.write_variant(SPEC_ID, "v0", {"variant_ref": "v0", "payload": "a"})
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("dump crashed (fixture)")
+
+    monkeypatch.setattr(
+        "polymerhus.attack.hunting.pod.pod_memory.yaml.safe_dump", boom)
+    with pytest.raises(RuntimeError):
+        store.write_variant(SPEC_ID, "v0", {"variant_ref": "v0", "payload": "b"})
+    monkeypatch.undo()
+
+    assert store.read_variant(SPEC_ID, "v0") == {"variant_ref": "v0", "payload": "a"}

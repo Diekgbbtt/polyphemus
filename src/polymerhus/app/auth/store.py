@@ -31,16 +31,15 @@ from __future__ import annotations
 
 import copy
 import logging
-import os
 import re
 import threading
-import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import yaml
 
+from polymerhus.app.atomic_write import write_text_atomic
 from polymerhus.app.auth.records import (
     AuthInvalidError,
     validate_account,
@@ -208,20 +207,11 @@ class AuthStore:
 
     @staticmethod
     def _dump_yaml_atomic(path: Path, body) -> None:
-        """Write `body` as YAML atomically: dump to a temp file in the SAME
-        directory, then `os.replace` onto the target, so every file on disk
-        always parses and a crash mid-dump never leaves a partial target."""
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_name(f".{path.name}.{uuid.uuid4().hex[:8]}.tmp")
-        try:
-            with tmp.open("w", encoding="utf-8") as fh:
-                yaml.safe_dump(body, fh, sort_keys=False)
-            os.replace(tmp, path)
-        finally:
-            try:
-                tmp.unlink()
-            except FileNotFoundError:
-                pass
+        """Write `body` as YAML atomically through the shared app primitive
+        (#340): render the body in memory, then temp + fsync + `os.replace`,
+        so every file on disk always parses and a crash mid-dump never leaves
+        a partial target."""
+        write_text_atomic(path, yaml.safe_dump(body, sort_keys=False))
 
     # --- reads: full state or dotted projection, always fail-open ---------------
 

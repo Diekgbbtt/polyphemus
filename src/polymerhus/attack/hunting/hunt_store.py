@@ -59,6 +59,7 @@ from pathlib import Path
 
 import yaml
 
+from polymerhus.app.atomic_write import write_text_atomic
 from polymerhus.app.data_root import DATA_ROOT, project_dir
 
 logger = logging.getLogger(__name__)
@@ -275,22 +276,12 @@ class HuntStore:
 
     @staticmethod
     def _dump_yaml_atomic(path: Path, body) -> None:
-        """Write `body` as YAML atomically: dump to a temp file in the SAME
-        directory, then `os.replace` onto the target. A crash mid-dump leaves
-        the previous file content intact (the old store's documented "append
-        is atomic per file" guarantee) and never a partial target; the leftover
-        temp is cleaned up best-effort."""
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_name(f".{path.name}.{uuid.uuid4().hex[:8]}.tmp")
-        try:
-            with tmp.open("w", encoding="utf-8") as fh:
-                yaml.safe_dump(body, fh, sort_keys=False)
-            os.replace(tmp, path)
-        finally:
-            try:
-                tmp.unlink()
-            except FileNotFoundError:
-                pass
+        """Write `body` as YAML atomically through the shared app primitive
+        (#340): render the body in memory, then temp + fsync + `os.replace`.
+        A crash mid-dump leaves the previous file content intact (the old
+        store's documented "append is atomic per file" guarantee) and never a
+        partial target; the leftover temp is cleaned up best-effort."""
+        write_text_atomic(path, yaml.safe_dump(body, sort_keys=False))
 
     # --- config surface ----------------------------------------------------------
 
@@ -752,9 +743,7 @@ class ProjectMemoryStore:
 
     @classmethod
     def _write_records(cls, path: Path, records: list[dict]) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("w", encoding="utf-8") as fh:
-            yaml.safe_dump(records, fh, sort_keys=False)
+        write_text_atomic(path, yaml.safe_dump(records, sort_keys=False))
 
     # -- configs (direction-stamp memory) -----------------------------------
 

@@ -14,8 +14,12 @@ hangs in `running`, F5).
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 from typing import Literal
+
+import pytest
+import yaml
 
 from polymerhus.attack.hunting.hunter_memory import HunterMemoryStore
 
@@ -149,3 +153,114 @@ def test_config_key_from_fault_key_accepts_a_system_unit_with_double_colon():
     )
     assert config_key_from_fault_key(folder) == key
     HunterMemoryStore._validate_fault_key(key)
+
+
+# --- #340: notes.yaml is written atomically ----------------------------------
+
+def _notes_file(tmp_path: Path) -> Path:
+    return tmp_path / PROJECT / "hunting" / "hunter" / "notes.yaml"
+
+
+def _tmp_leftovers(directory: Path) -> list[Path]:
+    if not directory.exists():
+        return []
+    return [p for p in directory.iterdir() if p.name.endswith(".tmp")]
+
+
+def _append(store: HunterMemoryStore, body: str) -> None:
+    store.write_note(
+        PROJECT, action="append", fault_key=FAULT_KEY, note_name="n1",
+        kind="freeform", body=body,
+    )
+
+
+def test_failed_notes_dump_leaves_prior_content_intact(tmp_path, monkeypatch, caplog):
+    """#340: a raising dump must never truncate notes.yaml. The old plain
+    `path.open("w")` truncated the file before dumping, so a mid-dump abort
+    left it empty/malformed and every later read raised. The atomic write
+    renders the body first, so the previous file survives untouched."""
+    store = HunterMemoryStore(root_dir=tmp_path)
+    _append(store, "first")
+    notes = _notes_file(tmp_path)
+    before = notes.read_text(encoding="utf-8")
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("dump crashed (fixture)")
+
+    monkeypatch.setattr(
+        "polymerhus.attack.hunting.hunter_memory.yaml.safe_dump", boom)
+    with caplog.at_level(logging.WARNING):
+        with pytest.raises(RuntimeError):
+            _append(store, "second")
+    monkeypatch.undo()
+
+    assert notes.read_text(encoding="utf-8") == before
+    assert [n["body"] for n in store.read_notes(PROJECT)] == ["first"]
+    assert _tmp_leftovers(notes.parent) == []
+
+
+def test_aborted_replace_leaves_prior_notes_intact(tmp_path, monkeypatch):
+    """#340: an abort AFTER the temp file is fully written but BEFORE the
+    `os.replace` lands leaves the previous notes.yaml intact and cleans up the
+    temp. Only the atomic rename mutates the live file."""
+    store = HunterMemoryStore(root_dir=tmp_path)
+    _append(store, "first")
+    notes = _notes_file(tmp_path)
+    before = notes.read_text(encoding="utf-8")
+
+    def boom(src, dst):
+        raise OSError("simulated kill before the atomic rename")
+
+    monkeypatch.setattr(os, "replace", boom)
+    with pytest.raises(OSError):
+        _append(store, "second")
+    monkeypatch.undo()
+
+    assert notes.read_text(encoding="utf-8") == before
+    assert [n["body"] for n in store.read_notes(PROJECT)] == ["first"]
+    assert _tmp_leftovers(notes.parent) == []
+
+
+def test_reader_never_sees_a_partial_notes_file(tmp_path, monkeypatch):
+    """#340: a concurrent reader observes the OLD complete file for the whole
+    write, because the new content only becomes visible at the atomic rename.
+    The hook fires exactly at that boundary and records what a reader sees."""
+    store = HunterMemoryStore(root_dir=tmp_path)
+    _append(store, "first")
+    notes = _notes_file(tmp_path)
+    before = notes.read_text(encoding="utf-8")
+    observed: list[str] = []
+    real_replace = os.replace
+
+    def observe(src, dst):
+        observed.append(notes.read_text(encoding="utf-8"))
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", observe)
+    _append(store, "second")
+    monkeypatch.undo()
+
+    assert observed == [before]
+    assert [n["body"] for n in store.read_notes(PROJECT)] == ["second", "first"]
+    assert _tmp_leftovers(notes.parent) == []
+
+
+def test_failed_spec_dump_leaves_no_partial_file(tmp_path, monkeypatch):
+    """#340: `write_spec` writes the produced spec file the same way, so the
+    same hazard applies. A raising dump must leave no partial spec file on
+    disk (the old truncate-then-dump left an empty file the reader refused)."""
+    store = HunterMemoryStore(root_dir=tmp_path)
+    k = dict(fault_keyword="registration", strategy_keyword="probe")
+    spec_file = _spec_file(tmp_path, "produced")
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("dump crashed (fixture)")
+
+    monkeypatch.setattr(
+        "polymerhus.attack.hunting.hunter_memory.yaml.safe_dump", boom)
+    with pytest.raises(RuntimeError):
+        store.write_spec(PROJECT, FAULT_KEY, mode="create", spec=_spec(), **k)
+    monkeypatch.undo()
+
+    assert not spec_file.exists()
+    assert _tmp_leftovers(spec_file.parent) == []
