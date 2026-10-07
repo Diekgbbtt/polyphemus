@@ -265,6 +265,31 @@ def test_gateway_skips_the_loop_on_no_auth_surface(tmp_path):
     asyncio.run(actor.stop())  # safe when never spawned
 
 
+def test_gateway_takes_the_anonymous_path_for_a_comfyui_shaped_overview(tmp_path):
+    """#339: an explicit no-mechanism with empty containers and only the
+    derived replayability fact is NO auth surface - the empty store is the
+    expected shape, so the gateway skips the loop and never fail-closes."""
+    comfyui_overview = {
+        "mechanism": "none",
+        "defences": [],
+        "anti-bot": None,
+        "required_headers": [],
+        "http-client-replayability": True,
+        "notes": "ComfyUI runs without any authentication surface.",
+    }
+    make, seen = _script_model([_verdict_call()])
+    actor = _actor("r1", store=_seeded_store(tmp_path, overview=comfyui_overview),
+                   model_factory=make, tmp_path=tmp_path)
+
+    verdict = asyncio.run(actor.run_gateway())
+
+    assert verdict.outcome == "anonymous"
+    assert verdict.account is None
+    assert actor._task is None
+    assert seen["bound"] == []
+    asyncio.run(actor.stop())
+
+
 def test_gateway_stops_loudly_without_credentials(tmp_path, caplog):
     """A declared surface with no accounts is a missing prerequisite, not a
     gateway failure: the run stops loudly (fail-close, D223-2 does not

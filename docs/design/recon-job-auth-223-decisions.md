@@ -248,6 +248,10 @@ instructs the write and the verdict restates the validity.
 
 ### IR-3 - The no-auth-surface marker is `overview.notes`
 
+SUPERSEDED by IR-13 (#339) - the notes substring is retained only as a legacy
+secondary marker; the primary signal is structural (`mechanism: none`) and the
+surface predicate is an allowlist. The original settlement follows.
+
 The D223-17 structural discriminator is settled: `overview.notes` carrying
 "no authenticated surface" (case-insensitive; the only free-text overview
 field). Gate rule (`classify_gate`): any accounts at all run the loop (even
@@ -380,6 +384,43 @@ with the steering machinery. The `configurator` ROLE record
 #238 rate-limit work to bind its profile-driven configuration onto - no new
 role is minted then. The pipeline performs no live-database reach per
 phase anymore (no signal refresh under the loop).
+
+### IR-13 - The no-auth discriminator is structural: `mechanism: none` (#339)
+
+IR-3's notes-substring discriminator was the wrong shape.
+`declares_auth_surface` counted any truthy field other than `notes`, so an
+explicit `mechanism: none` and the derived `http-client-replayability: true`
+both read as a declared surface.
+Meanwhile the free-text marker missed the natural phrasing ("without any
+authentication surface").
+The comfyui empty store therefore fail-closed as `missing_credentials`
+(`GatewayStop`) instead of taking the anonymous path.
+
+The corrected discriminator lives in `recon/control/authn_loop.py` and stays
+structural in the store, never inferred from behaviour:
+
+- `declares_auth_surface` is now an ALLOWLIST over the surface-declaring
+  overview fields: `login_endpoint`, a real `mechanism`, `defences`,
+  `anti-bot`, `required_headers`, `fingerprinting`, `technical_conditions`.
+  The free-text `notes` and the derived `http-client-replayability` fact never
+  declare a surface; `mechanism` declares one only when it names a real
+  mechanism (not absent, null, blank, or the sentinel `none`).
+  A future derived overview fact is therefore ignored by default, instead of
+  being miscounted as a surface the way the old "any truthy field" predicate
+  did.
+- `has_no_auth_marker` takes an explicit `mechanism: none` (case-insensitive,
+  trimmed) as the PRIMARY structural no-auth signal; the IR-3 notes substring
+  is retained as a secondary marker for overviews seeded before it.
+  An absent or null mechanism is UNKNOWN, never an explicit no-auth statement,
+  so a surface declared beside an unset mechanism still fail-closes.
+
+`classify_gate`'s three paths are unchanged: any accounts run the loop; with no
+accounts a marked (structural or notes) or undeclared surface is the anonymous
+path; a declared surface with no accounts fail-closes.
+comfyui's overview (`mechanism: none`, empty containers,
+`http-client-replayability: true`, empty accounts) now takes the anonymous path
+with NO data change - the structural signal is already present, so no overview
+heal is required.
 
 ## T5 verification record (#244, live verification and integration)
 

@@ -308,6 +308,49 @@ def test_gate_empty_store_is_no_auth_surface():
     assert L.classify_gate(None, {}) == "no_auth_surface"
 
 
+COMFYUI_OVERVIEW = {
+    "mechanism": "none",
+    "defences": [],
+    "anti-bot": None,
+    "required_headers": [],
+    "http-client-replayability": True,
+    "notes": "ComfyUI runs without any authentication surface. There is no "
+             "sign-in, and the accounts store is empty.",
+}
+
+
+def test_gate_comfyui_shaped_overview_is_no_auth_surface():
+    # #339: an explicit no-mechanism plus empty surface containers and the
+    # derived replayability fact declare NO surface; the empty store is the
+    # expected shape (anonymous), never a missing-credentials fail-close.
+    assert L.declares_auth_surface(COMFYUI_OVERVIEW) is False
+    assert L.classify_gate(COMFYUI_OVERVIEW, {}) == "no_auth_surface"
+
+
+def test_declares_auth_surface_ignores_derived_and_freetext_facts():
+    assert L.declares_auth_surface({"http-client-replayability": True}) is False
+    assert L.declares_auth_surface({"notes": "somewhere there is a login"}) is False
+    assert L.declares_auth_surface({}) is False
+    assert L.declares_auth_surface(None) is False
+
+
+def test_declares_auth_surface_ignores_an_explicit_no_mechanism():
+    assert L.declares_auth_surface({"mechanism": "none"}) is False
+    assert L.declares_auth_surface({"mechanism": "NONE"}) is False
+    assert L.declares_auth_surface({"mechanism": "  none  "}) is False
+
+
+def test_declares_auth_surface_counts_a_real_mechanism():
+    assert L.declares_auth_surface({"mechanism": "form"}) is True
+
+
+def test_no_auth_marker_is_structural_mechanism_none():
+    assert L.has_no_auth_marker({"mechanism": "none"}) is True
+    assert L.has_no_auth_marker({"mechanism": "NONE"}) is True
+    assert L.has_no_auth_marker({}) is False
+    assert L.has_no_auth_marker(None) is False
+
+
 def test_gate_declared_surface_without_accounts_is_missing_credentials():
     assert L.classify_gate({"login_endpoint": "https://x/login"}, {}) == "missing_credentials"
     assert L.classify_gate({"anti-bot": "waf:x"}, {}) == "missing_credentials"
