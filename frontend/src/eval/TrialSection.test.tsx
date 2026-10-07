@@ -118,7 +118,7 @@ test("zero is a value, not a missing field", async () => {
   expect(spendCell("overshoot").textContent).toBe("0")
 })
 
-test("a missing field is shown as non disponibile while zero stays zero", async () => {
+test("a missing field is shown as Unavailable while zero stays zero", async () => {
   renderTrial({
     status: "available",
     spent_tokens: null,
@@ -127,11 +127,11 @@ test("a missing field is shown as non disponibile while zero stays zero", async 
     reason: null,
   })
 
-  await waitFor(() => expect(spendCell("spent").textContent).toBe("non disponibile"))
+  await waitFor(() => expect(spendCell("spent").textContent).toBe("Unavailable"))
   expect(spendCell("overshoot").textContent).toBe("0")
 })
 
-test("an unavailable spend block is non disponibile", async () => {
+test("an unavailable spend block is Unavailable", async () => {
   renderTrial({
     status: "unavailable",
     spent_tokens: null,
@@ -140,14 +140,14 @@ test("an unavailable spend block is non disponibile", async () => {
     reason: "spend_record_not_found",
   })
 
-  await waitFor(() => expect(spendCell("spent").textContent).toBe("non disponibile"))
-  expect(spendCell("overshoot").textContent).toBe("non disponibile")
+  await waitFor(() => expect(spendCell("spent").textContent).toBe("Unavailable"))
+  expect(spendCell("overshoot").textContent).toBe("Unavailable")
 })
 
-test("a trial with no spend block at all is non disponibile", async () => {
+test("a trial with no spend block at all is Unavailable", async () => {
   renderTrial(undefined)
 
-  await waitFor(() => expect(spendCell("spent").textContent).toBe("non disponibile"))
+  await waitFor(() => expect(spendCell("spent").textContent).toBe("Unavailable"))
 })
 
 test("the workspace polls the resolved inventory exactly once", async () => {

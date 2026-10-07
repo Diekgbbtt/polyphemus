@@ -147,9 +147,9 @@ const POD_EXPORT_REASON_LABELS: Record<PodExportReason, string> = {
   "budget-timeout": "Budget timeout",
 }
 const POD_EXPORT_UNAVAILABLE = "unavailable"
-const POD_EXPORT_UNAVAILABLE_LABEL = "Esito non disponibile"
+const POD_EXPORT_UNAVAILABLE_LABEL = "Outcome unavailable"
 const POD_EXPORT_PENDING = "pending"
-const POD_EXPORT_PENDING_LABEL = "Classificazione in corso"
+const POD_EXPORT_PENDING_LABEL = "Classifying"
 
 // The outcome carried by a parsed PodExport envelope. A missing, malformed, or
 // unrecognized `evidence.terminal_reason` is null - never guessed from `verdict`.

@@ -545,7 +545,7 @@ test("keeps every export visible while its outcome is still loading", async () =
   const { container } = renderSection()
 
   await waitFor(() =>
-    expect(screen.getByRole("heading", { name: "Classificazione in corso" })).toBeDefined(),
+    expect(screen.getByRole("heading", { name: "Classifying" })).toBeDefined(),
   )
   expandAll(container)
   expect(screen.getByRole("link", { name: x1.relative_path })).toBeDefined()
@@ -560,7 +560,7 @@ test("an outcome error never hides an export, log, or variant", async () => {
   const { container } = renderSection()
 
   await waitFor(() =>
-    expect(screen.getByRole("heading", { name: "Esito non disponibile" })).toBeDefined(),
+    expect(screen.getByRole("heading", { name: "Outcome unavailable" })).toBeDefined(),
   )
   expandAll(container)
   expect(screen.getByRole("link", { name: x1.relative_path })).toBeDefined()
@@ -1024,9 +1024,9 @@ test("warns when the current source fails but keeps the stored artifacts", async
 
   const warning = await screen.findByRole("status")
   expect(warning.textContent).toContain(
-    "Artifact correnti non consultabili (artifact_unsafe)",
+    "Current artifacts unavailable (artifact_unsafe)",
   )
-  expect(warning.textContent).toContain("mostrati gli artifact salvati disponibili")
+  expect(warning.textContent).toContain("showing the available saved artifacts")
   // The stored artifact stays visible and linkable.
   const link = container.querySelector(".project-artifact-entries a")
   expect(link?.textContent).toContain("captured.yaml")
@@ -1043,7 +1043,7 @@ test("shows no current-source warning for a clean inventory", async () => {
   await waitFor(() =>
     expect(document.querySelector(".artifact-source")).not.toBeNull(),
   )
-  expect(screen.queryByText(/Artifact correnti non consultabili/)).toBeNull()
+  expect(screen.queryByText(/Current artifacts unavailable/)).toBeNull()
 })
 
 
@@ -1057,12 +1057,12 @@ test("removes the warning once the current source is readable again", async () =
   renderSection()
 
   await act(async () => {})
-  expect(screen.getByText(/Artifact correnti non consultabili/)).toBeDefined()
+  expect(screen.getByText(/Current artifacts unavailable/)).toBeDefined()
 
   body = inventory({ source: "trial_snapshot", issues: [] })
   await act(async () => {
     await vi.advanceTimersByTimeAsync(POLL)
   })
 
-  expect(screen.queryByText(/Artifact correnti non consultabili/)).toBeNull()
+  expect(screen.queryByText(/Current artifacts unavailable/)).toBeNull()
 })

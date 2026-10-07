@@ -225,7 +225,7 @@ test("a later snapshot adds a Target to the catalog without remounting the page"
   expect(screen.getByText("late-target")).toBeDefined()
 })
 
-test("the Aggiorna button re-reads both sources and shows the last update time", async () => {
+test("the Refresh button re-reads both sources and shows the last update time", async () => {
   vi.useFakeTimers()
   vi.setSystemTime(new Date(2026, 2, 4, 9, 8, 7))
   let snap: unknown = SNAPSHOT
@@ -237,13 +237,13 @@ test("the Aggiorna button re-reads both sources and shows the last update time",
   )
 
   await act(async () => {})
-  expect(screen.getByText("Ultimo aggiornamento 09:08:07")).toBeDefined()
+  expect(screen.getByText("Last updated 09:08:07")).toBeDefined()
   expect(calls.live).toBe(1)
   expect(calls.snapshot).toBe(1)
 
   snap = SNAPSHOT_WITH_LATE
   await act(async () => {
-    fireEvent.click(screen.getByRole("button", { name: "Aggiorna" }))
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }))
   })
 
   expect(screen.getByText("late-target")).toBeDefined()
@@ -271,7 +271,7 @@ test("a failed refresh keeps the catalog with a non-blocking notice, then recove
 
   failing = true
   await act(async () => {
-    fireEvent.click(screen.getByRole("button", { name: "Aggiorna" }))
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }))
   })
 
   // The previous catalog stays on screen; the failure is a soft notice.

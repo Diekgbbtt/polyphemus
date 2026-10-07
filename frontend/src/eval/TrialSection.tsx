@@ -40,7 +40,7 @@ function phasesLabel(trial: EvalTrial): string {
 
 // The one "not available" string the recorded-spend block uses; a missing field
 // and an unavailable association read the same to an operator.
-const SPEND_MISSING = "non disponibile"
+const SPEND_MISSING = "Unavailable"
 
 // One Trial's RECORDED spend, read from the harness's authoritative record.
 //
@@ -49,8 +49,8 @@ const SPEND_MISSING = "non disponibile"
 // Trial actually recorded against its budget. `spent_tokens` is the recorded
 // consumption, `spend_overshoot` is the tokens spent past the bound (reported
 // separately and never added to the total), and `spend_by_agent` is the
-// recorded breakdown. Zero is shown as zero; a missing field is "non
-// disponibile", so the two are never confused.
+// recorded breakdown. Zero is shown as zero; a missing field is "Unavailable",
+// so the two are never confused.
 function RecordedSpend({ trial }: { trial: EvalTrial }) {
   const spend = trial.spend
   const available = spend?.status === "available"
@@ -63,20 +63,20 @@ function RecordedSpend({ trial }: { trial: EvalTrial }) {
       <h2>Recorded spend</h2>
       <dl className="eval-spend-totals">
         <div>
-          <dt>Consumo registrato</dt>
+          <dt>Recorded spend</dt>
           <dd data-spend="spent">{value(spend?.spent_tokens)}</dd>
         </div>
         <div>
-          <dt>Sforamento</dt>
+          <dt>Budget overshoot</dt>
           <dd data-spend="overshoot">{value(spend?.spend_overshoot)}</dd>
         </div>
       </dl>
       {agents.length > 0 ? (
         <table className="eval-spend-agents">
-          <caption>Breakdown registrato</caption>
+          <caption>Recorded breakdown</caption>
           <thead>
             <tr>
-              <th scope="col">Agente</th>
+              <th scope="col">Agent</th>
               <th scope="col">Token</th>
             </tr>
           </thead>
@@ -93,7 +93,7 @@ function RecordedSpend({ trial }: { trial: EvalTrial }) {
           </tbody>
         </table>
       ) : (
-        <p className="eval-spend-unavailable">Breakdown registrato: {SPEND_MISSING}</p>
+        <p className="eval-spend-unavailable">Recorded breakdown: {SPEND_MISSING}</p>
       )}
     </section>
   )
@@ -190,7 +190,7 @@ export function TrialSection({
           <li>
             <span className="eval-chip-label">Source</span>
             <span className="eval-chip-value">
-              {isMaterialized(trial) ? "materializzato" : "non materializzato"}
+              {isMaterialized(trial) ? "Materialized" : "Not materialized"}
             </span>
           </li>
           <li>
@@ -202,7 +202,7 @@ export function TrialSection({
             <span className="eval-chip-value">
               {verdictsAvailable(trial)
                 ? `${counts.identified} identified / ${counts.partial} partial / ${counts.missed} missed`
-                : "Risultati non disponibili"}
+                : "Results unavailable"}
             </span>
           </li>
         </ul>
@@ -213,11 +213,11 @@ export function TrialSection({
 
       {!isMaterialized(trial) && (
         <section className="eval-notice eval-notice-info" aria-label="Unmaterialized trial">
-          <h2>Non materializzato</h2>
+          <h2>Not materialized</h2>
           <p>
-            Questo Trial è letto dal record autorevole nella runs root; non è
-            stato copiato nello store. I dati mancanti restano esplicitamente
-            non disponibili.
+            This Trial is read from the authoritative run record under the runs
+            root; it was not copied into the artifact store. Missing data stays
+            explicitly unavailable.
           </p>
         </section>
       )}
@@ -226,12 +226,12 @@ export function TrialSection({
         <section className="eval-notice" aria-label="Timeout trial">
           <h2>
             {timeoutDuringHunting(trial)
-              ? "Timeout durante hunting"
-              : "Trial terminato per timeout"}
+              ? "Timeout during hunting"
+              : "Trial timed out"}
           </h2>
           <p>
-            Il Trial ha registrato il terminal <span className="eval-ref">timeout</span>.
-            Lo stato del Trial non dice nulla sullo stato corrente del worker.
+            The Trial recorded the terminal <span className="eval-ref">timeout</span>;
+            that does not establish the worker&rsquo;s current state.
           </p>
         </section>
       )}

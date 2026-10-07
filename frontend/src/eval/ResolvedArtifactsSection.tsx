@@ -204,8 +204,8 @@ function ResolvedArtifactsView({
               className="eval-status eval-unavailable"
               role="status"
             >
-              Artifact correnti non consultabili ({issue.reason}); mostrati gli
-              artifact salvati disponibili.
+              Current artifacts unavailable ({issue.reason}); showing the
+              available saved artifacts.
             </p>
           ))}
           {artifactSections(groups).map((section) => (

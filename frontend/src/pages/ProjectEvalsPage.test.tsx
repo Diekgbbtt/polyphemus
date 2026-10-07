@@ -568,7 +568,7 @@ test("the project eval shell refreshes its Trial list in place", async () => {
     }),
   ])
   await act(async () => {
-    fireEvent.click(screen.getByRole("button", { name: "Aggiorna" }))
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }))
   })
 
   expect(screen.getByRole("link", { name: "trial-2" })).toBeDefined()

@@ -115,11 +115,11 @@ export function ProjectsPage() {
         <h1>Targets</h1>
         <div className="eval-refresh-controls">
           <button type="button" className="eval-refresh" onClick={refresh}>
-            Aggiorna
+            Refresh
           </button>
           {updatedAt !== null && (
             <span className="eval-updated">
-              Ultimo aggiornamento {formatClockTime(updatedAt)}
+              Last updated {formatClockTime(updatedAt)}
             </span>
           )}
         </div>

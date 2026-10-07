@@ -14,10 +14,11 @@ export function parseInstant(value: string | null | undefined): number | null {
   return Number.isNaN(millis) ? null : millis
 }
 
-// Date, time with seconds, and the reader's zone name. Built per call rather
-// than cached at module load, so it never freezes an ambient timezone.
+// Date, time with seconds, and the reader's zone name, in an explicit English
+// (en-GB) locale. Built per call rather than cached at module load, so it never
+// freezes an ambient timezone.
 export function formatInstant(instant: Date): string {
-  return new Intl.DateTimeFormat(undefined, {
+  return new Intl.DateTimeFormat("en-GB", {
     year: "numeric",
     month: "short",
     day: "numeric",
@@ -56,7 +57,7 @@ function TimeLabel({
     return (
       <span className="trial-time">
         <span className="trial-time-label">{label}</span>{" "}
-        <span className="eval-status">data non disponibile</span>
+        <span className="eval-status">Date unavailable</span>
       </span>
     )
   }
@@ -69,11 +70,11 @@ function TimeLabel({
 }
 
 export function StartedOn({ value }: { value: string | null | undefined }): ReactElement {
-  return <TimeLabel label="Avviato il" value={value} />
+  return <TimeLabel label="Started at" value={value} />
 }
 
 export function FinishedOn({ value }: { value: string | null | undefined }): ReactElement {
-  return <TimeLabel label="Terminato il" value={value} />
+  return <TimeLabel label="Finished at" value={value} />
 }
 
 // Both execution instants of one Trial, shared by the index and the detail.

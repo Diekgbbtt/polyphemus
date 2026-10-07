@@ -57,13 +57,13 @@ type UsageView =
   | { status: "ready"; usage: ProjectUsage }
 
 const COUNTERS: { field: string; label: string }[] = [
-  { field: "cached", label: "Contesto cached" },
-  { field: "uncached", label: "Contesto uncached" },
-  { field: "reasoning", label: "Output reasoning" },
-  { field: "visible", label: "Output visibile" },
-  { field: "total", label: "Token totali, cache inclusa" },
-  { field: "capped", label: "Token esclusi i cache read" },
-  { field: "calls", label: "Chiamate" },
+  { field: "cached", label: "Cached context tokens" },
+  { field: "uncached", label: "Uncached context tokens" },
+  { field: "reasoning", label: "Reasoning output tokens" },
+  { field: "visible", label: "Visible output tokens" },
+  { field: "total", label: "Total tokens, including cache reads" },
+  { field: "capped", label: "Tokens excluding cache reads" },
+  { field: "calls", label: "Calls" },
 ]
 
 function counters(tokens: UsageTokens): Record<string, number> {
@@ -81,20 +81,21 @@ function counters(tokens: UsageTokens): Record<string, number> {
 // The current project's cumulative token usage, read from the app's in-memory
 // ledger. Every counter is attributed to the PROJECT (the endpoint carries no
 // per-run attribution) and is cumulative since the agent started, so it is
-// labelled "Usage corrente progetto" - never the current context size. Each poll
-// REPLACES the previous snapshot; nothing is summed across polls or calls, and
-// every value shown is returned by the endpoint (zero included).
+// labelled "Current project usage" - never the current context size or an
+// individual run. Each poll REPLACES the previous snapshot; nothing is summed
+// across polls or calls, and every value shown is returned by the endpoint
+// (zero included).
 function UsagePanel({ view }: { view: UsageView }) {
   return (
-    <section className="runs-usage" aria-label="Usage corrente progetto">
-      <h2>Usage corrente progetto</h2>
+    <section className="runs-usage" aria-label="Current project usage">
+      <h2>Current project usage</h2>
       <p className="runs-usage-note">
-        Contatori cumulativi del progetto dall&rsquo;avvio dell&rsquo;agent; non rappresentano la
-        dimensione del contesto corrente.
+        Cumulative counters for the project since the agent started; they are not
+        the current context size or an individual run.
       </p>
       {view.status === "unavailable" && (
         <p className="runs-usage-unavailable" role="status">
-          Usage non disponibile.
+          Usage unavailable.
         </p>
       )}
       {view.status === "ready" && <UsageCounters usage={view.usage} />}
@@ -118,10 +119,10 @@ function UsageCounters({ usage }: { usage: ProjectUsage }) {
       {agents.length > 0 && (
         <div className="runs-usage-table">
           <table className="runs-usage-agents">
-            <caption>Breakdown per agente</caption>
+            <caption>Breakdown by agent</caption>
             <thead>
               <tr>
-                <th scope="col">Agente</th>
+                <th scope="col">Agent</th>
                 {COUNTERS.map(({ field, label }) => (
                   <th scope="col" key={field}>
                     {label}

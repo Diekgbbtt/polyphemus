@@ -246,7 +246,7 @@ test("two rows for the same vulnerability both receive the same reference", () =
 test("a missing reference shows the exact fallback without touching the verdict", () => {
   renderWithGroundTruth(trial(), GROUND_TRUTH_READY)
   const missing = rows()[3] // DEMO-3 has no reference entry
-  expect(within(missing).getByText("Ground truth non disponibile")).toBeDefined()
+  expect(within(missing).getByText("Ground truth unavailable")).toBeDefined()
   // The verdict itself is untouched.
   expect(within(missing).getAllByText("missed").length).toBeGreaterThan(0)
 })
@@ -255,7 +255,7 @@ test("a missing reference shows the exact fallback without touching the verdict"
 test("an unavailable API shows the fallback on every row and hides nothing", () => {
   renderWithGroundTruth(trial(), { status: "unavailable" })
   for (const row of rows()) {
-    expect(within(row).getByText("Ground truth non disponibile")).toBeDefined()
+    expect(within(row).getByText("Ground truth unavailable")).toBeDefined()
   }
   // Rejection never hides the materialized results.
   expect(screen.getAllByText("90%").length).toBeGreaterThan(0)
@@ -273,7 +273,7 @@ test("no reference panel is rendered when a caller supplies no state", () => {
   renderResults(trial())
 
   expect(screen.queryByText("Ground truth (current benchmark)")).toBeNull()
-  expect(screen.queryByText("Ground truth non disponibile")).toBeNull()
+  expect(screen.queryByText("Ground truth unavailable")).toBeNull()
 })
 
 // --- evidence -> artifact links -------------------------------------------------
@@ -378,13 +378,13 @@ test("links a matching evidence reference to the canonical artifact route", asyn
   expect(link.getAttribute("href")).toBe("/targets/comfyui-1/trials/run-a/t1/artifacts/a1")
 })
 
-test("keeps a safe unmatched reference as text with Artifact non disponibile", async () => {
+test("keeps a safe unmatched reference as text with Artifact unavailable", async () => {
   const t = trialWithEvidence(["proj-1/hunting/nope.yaml"])
   stubInventory(availableInventory([artifactEntry("a1", "hunting/x.yaml")]))
 
   renderInWorkspace(t)
 
-  await waitFor(() => expect(screen.getByText(/Artifact non disponibile/)).toBeDefined())
+  await waitFor(() => expect(screen.getByText(/Artifact unavailable/)).toBeDefined())
   expect(screen.getByText("proj-1/hunting/nope.yaml")).toBeDefined()
   expect(screen.queryByRole("link", { name: "proj-1/hunting/nope.yaml" })).toBeNull()
 })
@@ -400,7 +400,7 @@ test("a directory reference (spec_dir) stays unlinked", async () => {
 
   renderInWorkspace(t)
 
-  await waitFor(() => expect(screen.getByText(/Artifact non disponibile/)).toBeDefined())
+  await waitFor(() => expect(screen.getByText(/Artifact unavailable/)).toBeDefined())
   expect(screen.queryByRole("link", { name: "proj-1/hunting/hunter/test-specs/F" })).toBeNull()
 })
 
@@ -410,11 +410,11 @@ test("a different project's prefix is never linked", async () => {
 
   renderInWorkspace(t)
 
-  await waitFor(() => expect(screen.getByText(/Artifact non disponibile/)).toBeDefined())
+  await waitFor(() => expect(screen.getByText(/Artifact unavailable/)).toBeDefined())
   expect(screen.queryByRole("link", { name: "proj-2/hunting/x.yaml" })).toBeNull()
 })
 
-test("shows Verifica artifact in corso while the first inventory load is pending", async () => {
+test("shows Checking artifact availability while the first inventory load is pending", async () => {
   const t = trialWithEvidence(["proj-1/hunting/x.yaml"])
   globalThis.fetch = (async (_input: unknown, init?: RequestInit) =>
     await new Promise<Response>((_resolve, reject) => {
@@ -427,10 +427,10 @@ test("shows Verifica artifact in corso while the first inventory load is pending
 
   renderInWorkspace(t)
 
-  await waitFor(() => expect(screen.getByText(/Verifica artifact in corso/)).toBeDefined())
+  await waitFor(() => expect(screen.getByText(/Checking artifact availability/)).toBeDefined())
   expect(screen.getByText("proj-1/hunting/x.yaml")).toBeDefined()
   expect(screen.queryByRole("link", { name: "proj-1/hunting/x.yaml" })).toBeNull()
-  expect(screen.queryByText(/Artifact non disponibile/)).toBeNull()
+  expect(screen.queryByText(/Artifact unavailable/)).toBeNull()
 })
 
 test("an inventory error keeps the results and never claims absence", async () => {
@@ -442,8 +442,8 @@ test("an inventory error keeps the results and never claims absence", async () =
   await waitFor(() => expect(screen.getByText("proj-1/hunting/x.yaml")).toBeDefined())
   expect(screen.getAllByText("50%").length).toBeGreaterThan(0)
   expect(screen.queryByRole("link", { name: "proj-1/hunting/x.yaml" })).toBeNull()
-  expect(screen.queryByText(/Artifact non disponibile/)).toBeNull()
-  expect(screen.queryByText(/Verifica artifact in corso/)).toBeNull()
+  expect(screen.queryByText(/Artifact unavailable/)).toBeNull()
+  expect(screen.queryByText(/Checking artifact availability/)).toBeNull()
 })
 
 test("a reference that was missing becomes clickable after the inventory refreshes", async () => {
@@ -459,7 +459,7 @@ test("a reference that was missing becomes clickable after the inventory refresh
   renderInWorkspace(t)
   await act(async () => {})
   fireEvent.click(rowToggle(rows()[0]))
-  expect(screen.getByText(/Artifact non disponibile/)).toBeDefined()
+  expect(screen.getByText(/Artifact unavailable/)).toBeDefined()
 
   body = availableInventory([artifactEntry("a1", "hunting/x.yaml")])
   await act(async () => {
@@ -733,6 +733,6 @@ test("unavailable ground truth keeps the fallback on every row", () => {
 
   for (const row of rows()) {
     fireEvent.click(rowToggle(row))
-    expect(within(row).getByText("Ground truth non disponibile")).toBeDefined()
+    expect(within(row).getByText("Ground truth unavailable")).toBeDefined()
   }
 })

@@ -238,8 +238,8 @@ test("a row shows the outcome summary and the execution timestamps", async () =>
   await waitFor(() => expect(rowFor("trial-1")).toBeDefined())
   const row = rowFor("trial-1")
   expect(row.textContent).toContain("1 identified / 0 partial / 2 missed")
-  expect(row.textContent).toContain("Avviato il")
-  expect(row.textContent).toContain("Terminato il")
+  expect(row.textContent).toContain("Started at")
+  expect(row.textContent).toContain("Finished at")
   // Each instant is a semantic <time> whose machine-readable value is the
   // recorded one; the visible text is its browser-local rendering with seconds.
   const times = row.querySelectorAll("time")
@@ -259,7 +259,7 @@ test("a row without an execution timestamp says the date is not available", asyn
   goto("/targets/comfyui-1")
 
   await waitFor(() => expect(rowFor("trial-1")).toBeDefined())
-  expect(rowFor("trial-1").textContent).toContain("data non disponibile")
+  expect(rowFor("trial-1").textContent).toContain("Date unavailable")
 })
 
 test("the Trial detail shows the same execution timestamps", async () => {
@@ -283,8 +283,8 @@ test("the Trial detail shows the same execution timestamps", async () => {
     expect(screen.getByRole("region", { name: "Trial trial-1" })).toBeDefined(),
   )
   const section = screen.getByRole("region", { name: "Trial trial-1" })
-  expect(within(section).getByText(/Avviato il/)).toBeDefined()
-  expect(within(section).getByText(/Terminato il/)).toBeDefined()
+  expect(within(section).getByText(/Started at/)).toBeDefined()
+  expect(within(section).getByText(/Finished at/)).toBeDefined()
   const started = section.querySelector("time")
   expect(started?.getAttribute("dateTime")).toBe("2024-01-02T00:00:00+00:00")
   expect(started?.textContent).not.toBe("2024-01-02T00:00:00+00:00")
@@ -304,7 +304,7 @@ test("the Trial detail without an execution timestamp says the date is not avail
     expect(screen.getByRole("region", { name: "Trial trial-1" })).toBeDefined(),
   )
   const section = screen.getByRole("region", { name: "Trial trial-1" })
-  expect(within(section).getAllByText("data non disponibile").length).toBeGreaterThan(0)
+  expect(within(section).getAllByText("Date unavailable").length).toBeGreaterThan(0)
 })
 
 const GROUND_TRUTH = {
@@ -357,7 +357,7 @@ test("the Trial detail pairs each verdict with the current-benchmark reference",
     expect(screen.getByText("http://comfyui-manager:8288/view")).toBeDefined(),
   )
   // The trial with the missing entry says so instead of borrowing V1's reference.
-  expect(screen.getAllByText("Ground truth non disponibile").length).toBeGreaterThan(0)
+  expect(screen.getAllByText("Ground truth unavailable").length).toBeGreaterThan(0)
 })
 
 test("a rejected ground-truth request leaves the results readable", async () => {
@@ -372,7 +372,7 @@ test("a rejected ground-truth request leaves the results readable", async () => 
     expect(screen.getByRole("region", { name: "Trial trial-1" })).toBeDefined(),
   )
   await waitFor(() =>
-    expect(screen.getAllByText("Ground truth non disponibile").length).toBeGreaterThan(0),
+    expect(screen.getAllByText("Ground truth unavailable").length).toBeGreaterThan(0),
   )
   // Verdicts stay visible; a missing reference never hides them.
   expect(screen.getAllByText("V1").length).toBeGreaterThan(0)
@@ -440,7 +440,7 @@ test("an unmaterialized Trial still shows its real execution dates", async () =>
   expect(times[0]?.getAttribute("dateTime")).toBe("2026-10-06T08:12:15+00:00")
   expect(times[1]?.getAttribute("dateTime")).toBe("2026-10-06T10:41:29+00:00")
   // The provenance marker stays separate from the dates.
-  expect(row.textContent).toContain("Non materializzato")
+  expect(row.textContent).toContain("Not materialized")
 })
 
 test("a refresh updates the execution dates without duplicating the Trial", async () => {

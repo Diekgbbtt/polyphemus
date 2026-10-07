@@ -24,7 +24,7 @@ test("renders the saved instant in the browser timezone with a machine-readable 
   expect(time?.textContent).not.toContain("10:30")
   expect(time?.textContent).toMatch(/8:30/)
   expect(time?.textContent).toMatch(/UTC/)
-  expect(document.body.textContent).toContain("Salvato il")
+  expect(document.body.textContent).toContain("Saved at")
 })
 
 test("two spellings of the same instant render the same text", () => {
@@ -40,12 +40,12 @@ test("two spellings of the same instant render the same text", () => {
 
 test("missing or invalid timestamps render the fallback and no synthesized time", () => {
   const { container, rerender } = render(<SavedOn copiedAt={null} />)
-  expect(container.textContent).toContain("Data non disponibile")
+  expect(container.textContent).toContain("Date unavailable")
   expect(container.querySelector("time")).toBeNull()
   expect(container.textContent).not.toMatch(/\d{4}/)
 
   rerender(<SavedOn copiedAt="not-a-timestamp" />)
-  expect(container.textContent).toContain("Data non disponibile")
+  expect(container.textContent).toContain("Date unavailable")
   expect(container.querySelector("time")).toBeNull()
   expect(container.textContent).not.toContain("not-a-timestamp")
 })

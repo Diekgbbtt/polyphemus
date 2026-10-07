@@ -66,7 +66,7 @@ export function ProjectEvalsPage() {
                 {!isMaterialized(trial) && (
                   <li>
                     <span className="eval-chip-label">Source</span>
-                    <span className="eval-chip-value">non materializzato</span>
+                    <span className="eval-chip-value">Not materialized</span>
                   </li>
                 )}
                 <li>

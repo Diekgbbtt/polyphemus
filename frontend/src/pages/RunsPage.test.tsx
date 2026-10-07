@@ -83,7 +83,7 @@ function counter(field: string): string {
 }
 
 function usagePanel(): HTMLElement {
-  return screen.getByRole("region", { name: "Usage corrente progetto" })
+  return screen.getByRole("region", { name: "Current project usage" })
 }
 
 afterEach(() => {
@@ -160,7 +160,7 @@ test("all-zero counters are shown as zero, never as unavailable", async () => {
   for (const field of ["cached", "uncached", "reasoning", "visible", "capped", "calls"]) {
     expect(counter(field)).toBe("0")
   }
-  expect(within(usagePanel()).queryByText(/non disponibile/i)).toBeNull()
+  expect(within(usagePanel()).queryByText(/unavailable/i)).toBeNull()
 })
 
 test("an empty agent breakdown keeps the project panel and invents no rows", async () => {
@@ -197,7 +197,7 @@ for (const [index, body] of MALFORMED_BODIES.entries()) {
     renderRuns()
 
     await waitFor(() =>
-      expect(within(usagePanel()).getByText(/usage non disponibile/i)).toBeDefined(),
+      expect(within(usagePanel()).getByText(/usage unavailable/i)).toBeDefined(),
     )
     expect(counter("total")).toBe("")
     expect(screen.getByText(/stalled/i)).toBeDefined()
@@ -209,7 +209,7 @@ test("an endpoint error never hides the runs", async () => {
   renderRuns()
 
   await waitFor(() => expect(screen.getByText(/stalled/i)).toBeDefined())
-  expect(within(usagePanel()).getByText(/usage non disponibile/i)).toBeDefined()
+  expect(within(usagePanel()).getByText(/usage unavailable/i)).toBeDefined()
 })
 
 // A router whose navigate function the test can call to switch project route.
@@ -300,9 +300,10 @@ test("labels the counters as cumulative and attributing them to no single run", 
 
   await waitFor(() => expect(counter("total")).toBe("50"))
   const panel = usagePanel().textContent ?? ""
-  expect(panel).toContain("Contatori cumulativi del progetto")
-  expect(panel).toContain("non rappresentano la dimensione del contesto corrente")
+  expect(panel).toContain("Current project usage")
+  expect(panel).toContain("Cumulative counters for the project since the agent started")
+  expect(panel).toContain("not the current context size or an individual run")
   // capped_tokens is not the trial budget, and no counter belongs to one run.
   expect(panel).not.toMatch(/budget/i)
-  expect(panel).not.toMatch(/del run|per run/i)
+  expect(panel).not.toMatch(/per run/i)
 })

@@ -29,7 +29,7 @@ export type GroundTruthState =
 
 export const DEFAULT_OPERATOR_GT_BASE_URL = "http://localhost:18091"
 export const OPERATOR_GT_UNAVAILABLE = "operator ground truth unavailable"
-export const GROUND_TRUTH_FALLBACK = "Ground truth non disponibile"
+export const GROUND_TRUTH_FALLBACK = "Ground truth unavailable"
 
 // One stable, path-free failure: every rejection mode (bad configuration,
 // network error, non-2xx, malformed or mismatched payload) is this error.

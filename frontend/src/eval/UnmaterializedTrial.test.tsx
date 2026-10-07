@@ -138,8 +138,8 @@ test("the Target index shows an unmaterialized Trial honestly", async () => {
   await waitFor(() => expect(document.querySelector(".trial-index-row")).not.toBeNull())
   const row = document.querySelector(".trial-index-row") as HTMLElement
   // Not a synthetic 0 identified / 0 partial / 0 missed assessment.
-  expect(within(row).getByText("Risultati non disponibili")).toBeDefined()
-  expect(within(row).getByText("Non materializzato")).toBeDefined()
+  expect(within(row).getByText("Results unavailable")).toBeDefined()
+  expect(within(row).getByText("Not materialized")).toBeDefined()
   expect(row.textContent).not.toContain("0 identified")
 })
 
@@ -153,14 +153,14 @@ test("a deep link opens the unmaterialized workspace with independent warnings",
   )
   // Both files are missing: two independent warnings, never a count.
   expect(
-    screen.getByText(/Verdicts non disponibili/, { selector: ".eval-notice-line" }),
+    screen.getByText(/Verdicts unavailable/, { selector: ".eval-notice-line" }),
   ).toBeDefined()
   expect(
-    screen.getByText(/Diagnoses non disponibili/, { selector: ".eval-notice-line" }),
+    screen.getByText(/Diagnoses unavailable/, { selector: ".eval-notice-line" }),
   ).toBeDefined()
   // The Trial is recognized as unmaterialized, and no materialized artifact
   // link is offered for files that do not exist.
-  expect(screen.getByRole("heading", { name: "Non materializzato" })).toBeDefined()
+  expect(screen.getByRole("heading", { name: "Not materialized" })).toBeDefined()
   expect(screen.queryByRole("heading", { name: "Materialized artifacts" })).toBeNull()
 })
 
@@ -183,10 +183,10 @@ test("verdicts and diagnoses availability are independent", async () => {
     expect(screen.getByRole("region", { name: "Trial t-timeout" })).toBeDefined(),
   )
   expect(
-    screen.getByText(/Verdicts non disponibili/, { selector: ".eval-notice-line" }),
+    screen.getByText(/Verdicts unavailable/, { selector: ".eval-notice-line" }),
   ).toBeDefined()
   expect(
-    screen.queryByText(/Diagnoses non disponibili/, { selector: ".eval-notice-line" }),
+    screen.queryByText(/Diagnoses unavailable/, { selector: ".eval-notice-line" }),
   ).toBeNull()
   expect(screen.getByText("overview")).toBeDefined()
 })
@@ -197,7 +197,7 @@ test("a timeout is not presented as the worker being stopped", async () => {
   goto(DEEP)
 
   await waitFor(() =>
-    expect(screen.getByRole("heading", { name: "Timeout durante hunting" })).toBeDefined(),
+    expect(screen.getByRole("heading", { name: "Timeout during hunting" })).toBeDefined(),
   )
   // The notice states the two are distinct; nothing calls the worker stopped.
   expect(screen.getByRole("region", { name: "Timeout trial" }).textContent).toContain(
@@ -222,10 +222,10 @@ test("a timeout without a hunting-phase confirmation stays generic", async () =>
 
   await waitFor(() =>
     expect(
-      screen.getByRole("heading", { name: "Trial terminato per timeout" }),
+      screen.getByRole("heading", { name: "Trial timed out" }),
     ).toBeDefined(),
   )
-  expect(screen.queryByRole("heading", { name: "Timeout durante hunting" })).toBeNull()
+  expect(screen.queryByRole("heading", { name: "Timeout during hunting" })).toBeNull()
 })
 
 test("open verdict rows survive a refresh and reset on a Trial change", async () => {
@@ -259,7 +259,7 @@ test("open verdict rows survive a refresh and reset on a Trial change", async ()
   fireEvent.click(toggle)
   await waitFor(() => expect(toggle.getAttribute("aria-expanded")).toBe("true"))
 
-  fireEvent.click(screen.getByRole("button", { name: "Aggiorna" }))
+  fireEvent.click(screen.getByRole("button", { name: "Refresh" }))
   await waitFor(() => expect(toggle.getAttribute("aria-expanded")).toBe("true"))
 
   // Navigating to the other Trial resets the open set.

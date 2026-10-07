@@ -181,7 +181,7 @@ test("a later snapshot adds a TargetRun and Trial without remounting the page", 
   expect(screen.getByRole("heading", { name: /run-demo-late/ })).toBeDefined()
 })
 
-test("the Aggiorna button re-reads the snapshot and shows the new data", async () => {
+test("the Refresh button re-reads the snapshot and shows the new data", async () => {
   vi.useFakeTimers()
   let body: unknown = SNAPSHOT
   stubBodies(() => body)
@@ -193,7 +193,7 @@ test("the Aggiorna button re-reads the snapshot and shows the new data", async (
 
   body = GROWN
   await act(async () => {
-    fireEvent.click(screen.getByRole("button", { name: "Aggiorna" }))
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }))
   })
 
   expect(screen.getByText("trial-late")).toBeDefined()
@@ -214,19 +214,19 @@ test("a failed refresh keeps the visible data with a non-blocking notice, then r
 
   failing = true
   await act(async () => {
-    fireEvent.click(screen.getByRole("button", { name: "Aggiorna" }))
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }))
   })
 
   // The previous snapshot is still on screen; the failure is a soft notice.
   expect(screen.getByText("trial-1")).toBeDefined()
-  expect(screen.getByText(/aggiornamento non riuscito/i)).toBeDefined()
+  expect(screen.getByText(/refresh failed/i)).toBeDefined()
   expect(screen.queryByRole("alert")).toBeNull()
 
   failing = false
   await act(async () => {
     await vi.advanceTimersByTimeAsync(POLL)
   })
-  expect(screen.queryByText(/aggiornamento non riuscito/i)).toBeNull()
+  expect(screen.queryByText(/refresh failed/i)).toBeNull()
 })
 
 test("shows the last successful update time, distinct from a Trial's recorded time", async () => {
@@ -237,10 +237,10 @@ test("shows the last successful update time, distinct from a Trial's recorded ti
   render(<App />)
 
   await act(async () => {})
-  expect(screen.getByText("Ultimo aggiornamento 09:08:07")).toBeDefined()
+  expect(screen.getByText("Last updated 09:08:07")).toBeDefined()
   // The Trial's own recorded execution time is a different value.
-  expect(screen.getByText(/Avviato il/)).toBeDefined()
-  expect(screen.queryByText(/Ultimo aggiornamento .*2024/)).toBeNull()
+  expect(screen.getByText(/Started at/)).toBeDefined()
+  expect(screen.queryByText(/Last updated .*2024/)).toBeNull()
 })
 
 test("suspends polling while the tab is hidden and refreshes when it returns", async () => {
@@ -443,7 +443,7 @@ test("a later snapshot updates the open Trial's results and recorded spend in pl
   expect(spendCellText()).toBe("250")
 })
 
-test("the manual Aggiorna also re-reads the open Trial's graph and inventory", async () => {
+test("the manual Refresh also re-reads the open Trial's graph and inventory", async () => {
   vi.useFakeTimers()
   const base = SNAPSHOT.trials[0]
   const graphCalls: string[] = []
@@ -492,7 +492,7 @@ test("the manual Aggiorna also re-reads the open Trial's graph and inventory", a
   expect(artifactCalls).toHaveLength(1)
 
   await act(async () => {
-    fireEvent.click(screen.getByRole("button", { name: "Aggiorna" }))
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }))
   })
 
   expect(graphCalls).toHaveLength(2)

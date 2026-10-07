@@ -346,7 +346,7 @@ test("keeps unclassified exports visible: pending and unavailable are separate g
 
   const loading = withPodExportOutcomes(groups, new Map())
   expect(podExportsRoot(loading)?.children.map((c) => c.label)).toEqual([
-    "Classificazione in corso",
+    "Classifying",
   ])
   expect(podExportsRoot(loading)?.children[0].entries.map((e) => e.artifact_id)).toEqual(["x1", "x2"])
 
@@ -358,8 +358,8 @@ test("keeps unclassified exports visible: pending and unavailable are separate g
     ]),
   )
   expect(podExportsRoot(ready)?.children.map((c) => c.label)).toEqual([
-    "Esito non disponibile",
-    "Classificazione in corso",
+    "Outcome unavailable",
+    "Classifying",
   ])
 })
 

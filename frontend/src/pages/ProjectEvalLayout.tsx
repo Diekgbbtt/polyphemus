@@ -38,7 +38,7 @@ function ProjectEvalShell() {
       )}
       {status === "ready" && refreshError && (
         <p className="eval-notice" role="status">
-          Aggiornamento non riuscito: {refreshError}. Sono mostrati i dati precedenti.
+          Refresh failed: {refreshError}. The previous data is still shown.
         </p>
       )}
       {status === "ready" && <Outlet />}

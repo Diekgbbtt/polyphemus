@@ -95,10 +95,10 @@ export function EvidenceList({
           <li key={ref}>
             <span className="eval-ref">{ref}</span>
             {resolution.kind === "loading" && (
-              <span className="eval-hint"> Verifica artifact in corso</span>
+              <span className="eval-hint"> Checking artifact availability</span>
             )}
             {resolution.kind === "missing" && (
-              <span className="eval-hint"> Artifact non disponibile</span>
+              <span className="eval-hint"> Artifact unavailable</span>
             )}
           </li>
         )
@@ -414,7 +414,7 @@ export function TrialResults({
           present diagnoses.yaml, and neither is a synthetic zero. */}
       {noVerdicts && (
         <p className="eval-notice-line" data-availability="verdicts">
-          Verdicts non disponibili
+          Verdicts unavailable
           {resultsReason(trial, "verdicts")
             ? ` (${resultsReason(trial, "verdicts")})`
             : ""}
@@ -423,7 +423,7 @@ export function TrialResults({
       )}
       {noDiagnoses && (
         <p className="eval-notice-line" data-availability="diagnoses">
-          Diagnoses non disponibili
+          Diagnoses unavailable
           {resultsReason(trial, "diagnoses")
             ? ` (${resultsReason(trial, "diagnoses")})`
             : ""}

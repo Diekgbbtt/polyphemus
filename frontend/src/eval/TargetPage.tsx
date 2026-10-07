@@ -113,14 +113,14 @@ export function TargetPage() {
                   <span className="trial-index-outcome">
                     {verdictsAvailable(trial)
                       ? `${counts.identified} identified / ${counts.partial} partial / ${counts.missed} missed`
-                      : "Risultati non disponibili"}
+                      : "Results unavailable"}
                   </span>
                   <span className="trial-index-times">
                     <TrialExecutionTimes trial={trial} />
                   </span>
                   <span className="trial-index-saved">
                     {materialized ? null : (
-                      <span className="eval-status">Non materializzato</span>
+                      <span className="eval-status">Not materialized</span>
                     )}
                   </span>
                 </li>

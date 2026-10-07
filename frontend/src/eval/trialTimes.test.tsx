@@ -50,18 +50,18 @@ test("StartedOn renders a semantic <time> with seconds and a zone", () => {
   const time = container.querySelector("time")
   expect(time?.getAttribute("dateTime")).toBe("2024-01-02T10:30:07+02:00")
   expect(time?.textContent).toMatch(/\d{1,2}:\d{2}:\d{2}/)
-  expect(container.textContent).toContain("Avviato il")
+  expect(container.textContent).toContain("Started at")
 })
 
 test("StartedOn and FinishedOn state a missing instant explicitly", () => {
   const started = render(<StartedOn value={null} />)
-  expect(started.container.textContent).toContain("Avviato il")
-  expect(started.container.textContent).toContain("data non disponibile")
+  expect(started.container.textContent).toContain("Started at")
+  expect(started.container.textContent).toContain("Date unavailable")
   expect(started.container.querySelector("time")).toBeNull()
 
   const finished = render(<FinishedOn value="not-a-date" />)
-  expect(finished.container.textContent).toContain("Terminato il")
-  expect(finished.container.textContent).toContain("data non disponibile")
+  expect(finished.container.textContent).toContain("Finished at")
+  expect(finished.container.textContent).toContain("Date unavailable")
 })
 
 test("orders by the real instant across offsets, never lexically", () => {
