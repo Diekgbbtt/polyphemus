@@ -8,6 +8,8 @@
 
 *Implementation note (#331, 2026-10-06): the slice that records an `interrupted` run's CAUSE and surfaces it to the eval has LANDED (`docs/design/hunting-331-provider-resume-adr.md`): the abort carries the typed `ProviderUnavailableError`, `runtime.start_hunting` stamps `hunting_runs.stats` (`interrupt_reason`/`provider_status`/`quota_exhausted`/`retry_after_s`), the eval trial reads it into the hunting-phase `failure` (fixing the `_phase_hunting` `failure=None` gap), and the monitor is pinned to defer `interrupted` rather than escalate it. The app-layer resume re-scheduling and the 429-vs-consumed-credits policy are ESCALATED operator decisions.*
 
+*Implementation note (#312, 2026-10-08): the re-verification of the `trial-2` zero-spec outcome found the hunter and pod sessions were NOT covered by the #329/#331 slices - a provider failure in a dispatched hunter was swallowed by the harness and the run quiesced `complete` with zero specs and no cause. The hunter harness now propagates the typed error, `RunDispatchState` carries a child-session failure to the surfer, and `start_hunting` maps it to the same `interrupted` + `stats` terminal (`docs/design/hunting-312-hunter-provider-failure-adr.md`). This is the per-agent-type terminal-marking half of Part 2.2; the stop/flush/resume re-scheduling remains ESCALATED.*
+
 ## Part 1 - Gateway cost guard (failure A)
 
 ### 1.1 The provider cap, verified

@@ -181,6 +181,7 @@ class _FakePg:
         self.fail_create = fail_create
         self.fail_status = fail_status
         self.statuses: list[tuple[str, str]] = []
+        self.stats_writes: list[tuple[str, str, dict | None]] = []
         self.seed = list(seeded_running)
         self.next_id = RUN
 
@@ -195,6 +196,7 @@ class _FakePg:
         if self.fail_status:
             raise OSError("pg down (fixture)")
         self.statuses.append((hunting_run_id, status))
+        self.stats_writes.append((hunting_run_id, status, stats))
 
     def list_hunting_runs(self, project_id: str) -> list[dict]:
         state: dict[str, dict] = {
@@ -487,6 +489,56 @@ def test_specified_spec_dispatches_one_pod_through_the_same_mover(stores, monkey
     assert pod_session_id(RUN, FAULT_KEY, SPEC_FILE) in control.started
     assert hunter.produced_spec_files(PROJECT, FAULT_KEY) == []   # moved to consumed
     assert len(hunter.read_specs(PROJECT, FAULT_KEY, sides=("consumed",))) == 1
+
+
+def test_pod_provider_failure_interrupts_the_run(stores, monkeypatch):
+    """#312/#329: a provider failure in a dispatched POD session is
+    infrastructure - the run pauses (`interrupted` with the provider cause), it
+    never quiesces `complete` silently. Completes #329's pod propagation to the
+    run terminal (the propagation was inert while the scheduled session's raise
+    landed in an unawaited future)."""
+    from polymerhus.app.llm.provider_failure import ProviderUnavailableError
+
+    hunt, hunter, pod = stores
+    fake = _FakePg()
+    monkeypatch.setattr("polymerhus.app.clients.pg.create_hunting_run", fake.create_hunting_run)
+    monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_status", fake.set_hunting_run_status)
+    monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
+    h, r, n = _single_class_seams(hunt)
+
+    def spec_hunts(*, run_id, project_id, hunter_store, **kw):
+        async def dispatch(config):
+            hunter_store.write_spec(
+                project_id, FAULT_KEY,
+                fault_keyword="sqli", strategy_keyword="blind",
+                spec={
+                    "status": "specified", "spec_id": SPEC_FILE,
+                    "fault_key": FAULT_KEY,
+                    "fault": {"fault_id": "f1", "mechanism": "m",
+                              "supports": [], "conflicts": [], "test": "t",
+                              "status": "specified"},
+                    "strategy": "blind", "spec_ref": "sr", "experiment_ref": "",
+                },
+                mode="create", side="produced",
+            )
+            return DispatchResult(hypothesis_verdict=None, feedback="concluded")
+        return dispatch, None
+
+    async def throttled_pods(spec, *, run_id, project_id, memory_store, spec_id):
+        raise ProviderUnavailableError(
+            "Go usage limit exceeded", status_code=429, quota_exhausted=True)
+
+    asyncio.run(hunting_runtime.start_hunting(
+        PROJECT, candidates=[_candidate()], tools=_tools(hunt),
+        hypothesise_fn=h, ratify_fn=r, note_fn=n,
+        control=_FakeControl(), tick_interval=0.001,
+        hunt_store=hunt, hunter_store=hunter, pod_store=pod,
+        hunter_builder=spec_hunts, pod_builder=throttled_pods,
+    ))
+    _, status, stats = fake.stats_writes[-1]
+    assert status == "interrupted"
+    assert stats["provider_status"] == 429
+    assert stats["quota_exhausted"] is True
 
 
 def test_unratified_config_is_refused_and_stays_produced(stores, monkeypatch):

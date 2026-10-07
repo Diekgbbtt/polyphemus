@@ -14,7 +14,7 @@ Consequences, all traced to this one cause:
 
 - The `comfyui-1` round-3 hunting run `c4ed6cea` degraded and `runtime.start_hunting` persisted `failed` (08:11:05 -> 09:45:25).
 - **23 of 27** round-3 pod exports carry `terminal_reason: technical-infeasibility` with `error="Error code: 429 ..."` (a pod raise degrades there by design: `pod/pod.py:114-118`).
-- `trial-2` (`75991388`) consumed 11 `ratified` configs but authored 0 specs - the hunter turns degraded.
+- `trial-2` (`75991388`) consumed 11 `ratified` configs but authored 0 specs - the hunter turns degraded. **Re-verified 2026-10-08 (#312): the consumed configs prove the pass completed, so this was a HUNTER-phase silent swallow, a distinct defect from the pass abort (EV-10).**
 
 The eval pipeline is otherwise functional: when quota was available (`d76f1bcc`, `5603e6eb`, `9132be4d`) it produced 16/8/7 symptom-confirmed pods. The recent regression is quota-driven, amplified by eval-system resilience gaps (see EV-21).
 
@@ -110,7 +110,7 @@ Confidence: HIGH = code/evidence confirmed; POTENTIAL = needs `diagnosing-bugs`.
 | EV-7 | tick dispatches assessment/diagnosis synchronously | design-level; blocks the tick | HIGH | #316 (folds #288; OPEN) |
 | EV-8 | the cap terminates the whole trial instead of bounding the hunting phase | design-level; partly addressed by the cap removal | HIGH | #315 |
 | EV-9 | hunt-config/spec schema varies by status | **TRIAGED, INTENDED (not a writer defect)**: the status lifecycle IS the fault-processing tracker, so the persisted schema varies by design - a hunt config is one typed `HuntConfig` (content progressive), a hunter spec is a hypothesis-only `FaultItem` draft while non-`specified` and the typed `TestImplementationSpec` base once `specified`. The contract was under-documented and two consumers read the retired hybrid `SpecItem` shape instead of the typed base: `HuntStore.read_hunter_specs`/`_prior_spec_insight` surfaced dropped/hypothesised drafts as completed `prior_spec` insights and projected absent keys (so a real `specified` spec yielded only `{kind, status}`); `hunter_state._with_specified` derived an EMPTY `spec_id`, collapsing every ratified spec under one key. **Fixed** (2026-10-08, branch `fix/313-hunt-schema`): `read_hunter_specs` surfaces only `specified` records and derives the semantic `<fault>_<strategy>` identity from the file-name stem; `_with_specified` derives it from the typed payload's `fault_keyword`/`strategy_keyword`. Contract pinned in `hunting-store-write-decisions.md` section 10 + the hunting `CONTEXT.md`; regression pins in `tests/attack/test_hunt_store.py` and `tests/attack/test_hunter_state.py`. | RESOLVED (intended, documented) | #313 |
-| EV-10 | hunting yields zero test-specs/pods (trial-2, 75991388) | 11 `ratified` configs consumed, 0 specs authored; consistent with hunter-turn 429 degradation (section 0), not a mover defect | HIGH (429) | #312 |
+| EV-10 | hunting yields zero test-specs/pods (trial-2, 75991388) | 11 `ratified` configs consumed, 0 specs authored. **RE-VERIFIED (2026-10-08) as a DISTINCT defect, not the already-fixed provider degradation**: the 11 consumed configs prove the orchestrator pass COMPLETED, so the failure was in the HUNTER phase - which #329/#331 never covered. The hunting-agent harness swallowed every exception (including the typed `ProviderUnavailableError`) and the surfer's `run_hunter_session` idled anyway, so the run quiesced `complete` with zero specs and no typed reason. The pod's #329 re-raise was also inert (it landed in an unawaited scheduled-session future). **FIXED by #312** (`docs/design/hunting-312-hunter-provider-failure-adr.md`): the hunter harness propagates the typed error, `RunDispatchState.provider_failure` carries a child-session failure to the surfer, and `start_hunting` maps it to `interrupted` + `stats`. | RESOLVED (distinct defect) | #312 |
 | EV-11 | mover cannot consume configs whose System unit id contains `::` | naive `split('::')` in `HuntStore.consume_config` and siblings | HIGH | #279 |
 | EV-12 | recon stop leaves the row `running` for `REAP_TTL_SECONDS`, then flips to `failed` | no distinct `stopped` terminal | HIGH | #287 (closed) |
 | EV-13 | no-healthcheck target declared ready before its app binds -> recon 502 | readiness treats `running` with no healthcheck as immediately ready; and a multi-service app whose front root is served by a fast sibling (jetlinks `ui`) while the backend JVM boots. **FIXED by #325** (composite front + compose plan) and **#323** (one probe per published application service: `eval/orchestrator/readiness.py::plan_service_port`, `eval/orchestrator/datasets/base.py::app_published_ports`; the hunter also treats a front 5xx as upstream-unavailable, `attack/hunting/hunting_status.py`). Live re-verification across a real boot window pending. | HIGH | #325, #323 |
@@ -129,7 +129,7 @@ Confidence: HIGH = code/evidence confirmed; POTENTIAL = needs `diagnosing-bugs`.
 
 - **Closed tickets removed**: #305, #306, #307, #311, #320, #225/#226.
 - **Resolved on dev, ticket closed**: #321 (L0->L1 AGGREGATES) - the drained jetlinks analysis produced 24 `AGGREGATES`; the comfyui zeros predate the streamed-analysis fix.
-- **Diagnosed as 429, linked not closed**: #312 (zero test-specs) - hunter-turn 429 degradation; a comment links it to #329.
+- **Diagnosed as 429, linked not closed**: #312 (zero test-specs) - re-verified 2026-10-08 as a DISTINCT hunter-phase silent-swallow defect, not the pass abort; FIXED by #312 (see EV-10).
 - **Not a bug, removed**: analysis `draining` was a transient settle state (now `drained`); the alignment hold works as specified.
 - **Merged by root cause**: all 429-caused failures -> EV-21; the all-missed assessment -> EV-4; the token-ledger + Langfuse gate -> EV-22.
 - **Infra/dependency family disregarded**: no `apscheduler` reference exists in the tree and it is not installed; no dependency was added. #281 and the `test_gateway_reasoning_passthrough.py` collection error remain infra.
@@ -140,7 +140,7 @@ Confidence: HIGH = code/evidence confirmed; POTENTIAL = needs `diagnosing-bugs`.
 
 1. ~~EV-9 status-varying hunt-config/spec schema (may be intended)~~ - resolved: intended, documented, consumers fixed (#313).
 2. EV-4 exposure-family KB predicate authoring (app-side KB artifact).
-3. EV-10 confirm the trial-2 zero-specs attribution (log window may have rotated).
+3. ~~EV-10 confirm the trial-2 zero-specs attribution (log window may have rotated)~~ - resolved 2026-10-08: re-verified from the code and the ticket evidence as a distinct hunter-phase silent-swallow defect; fixed by #312.
 
 ## 8. Failure deep-dive A - the provider quota (EV-21)
 

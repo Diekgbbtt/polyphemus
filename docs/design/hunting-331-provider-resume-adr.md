@@ -54,6 +54,13 @@ The ticket is design-gated and two #331 edges need an operator decision; they ar
 
 The `#329` slice's `retry_after_s`-driven backoff and the eval monitor's execution-state introspection script remain #331/#330 and are not part of this change.
 
+## Amendment (#312, 2026-10-08)
+
+Decision 2 (an `interrupted` run records its cause in `hunting_runs.stats`) was scoped to a provider-caused ORCHESTRATOR pass abort.
+A re-verification of the `trial-2` zero-spec outcome (ticket #312) found a provider failure in a dispatched HUNTER or POD session was still silently swallowed, so the run quiesced `complete` with zero specs and no cause.
+The child-session failure now records on the run-local `RunDispatchState`, the surfer surfaces it, and `start_hunting` maps it to the same `interrupted` + `stats` terminal.
+This is the terminal-marking half only; the resume re-scheduling named in ESCALATED item 2 remains the operator's. See `hunting-312-hunter-provider-failure-adr.md`.
+
 ## Impact map (as built)
 
 - `src/polymerhus/app/llm/provider_failure.py` - `ProviderUnavailableError.interrupt_reason()`.

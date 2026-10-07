@@ -596,6 +596,9 @@ async def start_hunting(
             run_surfer_loop,
             surfer_session_id,
         )
+        from polymerhus.app.llm.provider_failure import (  # noqa: PLC0415
+            ProviderUnavailableError,
+        )
 
         hunting_run_id = run_id
 
@@ -809,6 +812,19 @@ async def start_hunting(
                     hunting_run_id,
                 )
                 status = "failed"
+        except ProviderUnavailableError as exc:
+            # #312/#329: a provider failure in a dispatched HUNTER or POD session
+            # surfaces through the surfer's outcome - pause the run as the
+            # resumable `interrupted` with the provider cause, exactly like a
+            # provider-caused orchestrator abort. A throttle pauses the run; it
+            # never fails it and never lets it quiesce `complete` with zero specs
+            # and no typed reason (the trial-2 outcome).
+            logger.warning(
+                "start_hunting: run %s paused on a child-session provider "
+                "failure; persisting 'interrupted'", hunting_run_id,
+            )
+            status = "interrupted"
+            terminal_stats = _provider_interrupt_stats(exc)
         except Exception:  # noqa: BLE001 - fail-open: land a terminal status
             logger.exception(
                 "start_hunting: run %s degraded; persisting 'failed'",

@@ -45,8 +45,11 @@ source of experimental evidence for the committed hypothesis.
 Everything external is a typed seam, injected at construction: the `graph_view` /
 `kb_query` / `exec` tool bodies, the per-project `HunterMemoryStore`, the session
 `model_factory` / `checkpointer` / compaction `middleware`. Never raise out of
-`dispatch_fn`; every collaborator failure degrades (fail-open) and is flagged in
-the feedback (O3/O4/C2/C3). The whole hunt runs under the handler-carried trace
+`dispatch_fn` EXCEPT for a `ProviderUnavailableError`: every other collaborator
+failure degrades (fail-open) and is flagged in the feedback (O3/O4/C2/C3),
+while a provider failure is infrastructure and propagates so the run pauses
+(`interrupted`) rather than concluding with no spec and no typed reason (#312).
+The whole hunt runs under the handler-carried trace
 (attributed `arun_session_turn` steps with the run tag for the join, explicit
 thin-exception step spans) + the `hunt_session` ContextVar rollback lane
 (unchanged) and under `module_context("hunting")`, so `get_session_checkpointer()`
@@ -80,6 +83,7 @@ from polymerhus.attack.hunting.hunting_tracing import (
     flush_hunting_traces,
     trace_span,
 )
+from polymerhus.app.llm.provider_failure import ProviderUnavailableError
 
 logger = logging.getLogger(__name__)
 
@@ -543,6 +547,12 @@ def build_hunting_agent(
                     extra_tags=[run_id],
                     usage_scope=project_id,
                 )
+            except ProviderUnavailableError:
+                # #329/#312: a provider failure is infrastructure, never a hunt
+                # degrade - propagate it so the run pauses (`interrupted`) rather
+                # than concluding with no spec and no reason. Genuine internal
+                # errors keep the O3/C2/C3 fail-open below.
+                raise
             except Exception as exc:  # noqa: BLE001 - O3/C2/C3: degrade, never raise
                 logger.warning("hunt %s step degraded (%s)", hunt_id, exc, exc_info=True)
                 feedback.append(f"hunter turn unavailable ({exc})")
@@ -649,6 +659,12 @@ def build_hunting_agent(
                     cp = checkpointer if checkpointer is not None else get_session_checkpointer()
                     mw = middleware if middleware is not None else [build_hunter_compaction_middleware()]
                     return await _run_hunt(config, feedback, cp, mw)
+        except ProviderUnavailableError:
+            # #329/#312: a provider failure is infrastructure, never a hunt
+            # degrade - propagate it (mirroring the pod) so the run pauses
+            # (`interrupted`) rather than returning a spec-less DispatchResult
+            # and letting the run quiesce `complete` with no typed reason.
+            raise
         except Exception as exc:  # noqa: BLE001 - never raise out of dispatch_fn
             logger.warning("hunt %s degraded (%s)", hunt_id, exc, exc_info=True)
             return DispatchResult(hypothesis_verdict=None,

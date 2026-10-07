@@ -233,6 +233,12 @@ a stub for now.
   item's own persisted status. No produced `specified` spec can wedge the quiesce:
   it is always dispatchable on its own status. The run reaches terminal only when no
   dispatchable produced item remains and all dispatched sessions have settled.
+- **Abort path (amended #312, 2026-10-08):** the settle-to-terminal above is the
+  NORMAL path. A `ProviderUnavailableError` raised by a dispatched hunter or pod
+  records on the run-local `RunDispatchState`; the surfer surfaces it and the run
+  pauses as `interrupted` with the typed cause, rather than settling `complete` with
+  zero specs and no reason. See `hunting-312-hunter-provider-failure-adr.md` (and
+  `hunting-329`/`hunting-331` for the classifier and the cause-on-row).
 
 ## Consequences
 

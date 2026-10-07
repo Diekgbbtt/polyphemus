@@ -472,6 +472,47 @@ def test_provider_caused_pass_abort_records_the_cause_on_the_run(monkeypatch):
     assert "quota" in stats["interrupt_reason"].lower()
 
 
+def test_hunter_provider_failure_interrupts_the_run(tmp_path, monkeypatch):
+    """#312: a provider failure inside a dispatched HUNTER - after the pass has
+    ratified and the surfer consumed the configs - must pause the run as the
+    resumable `interrupted` with the provider cause, never let it quiesce
+    `complete` with zero specs and no reason. This is the trial-2 outcome: 11
+    configs consumed, 0 specs authored, no typed reason. The #329/#331 fixes
+    scoped the orchestrator pass and the pod verdict; the hunter harness still
+    swallowed the typed provider error and the run quiesced silently."""
+    from polymerhus.app.llm.provider_failure import ProviderUnavailableError
+
+    fake = _FakePg()
+    _patch_pg(monkeypatch, fake)
+
+    async def provider_hunter(config):
+        raise ProviderUnavailableError(
+            "Go usage limit exceeded", status_code=429, quota_exhausted=True)
+
+    def provider_hunter_builder(*, run_id, project_id, hunter_store, **kw):
+        return provider_hunter, None
+
+    tools = _tools(HuntStore(tmp_path))
+    h, r, n = _phase_seams(tools)
+    hid = asyncio.run(hunting_runtime.start_hunting(
+        "rt-project", candidates=[_candidate()], tools=tools,
+        hypothesise_fn=h, ratify_fn=r, note_fn=n,
+        hunt_store=HuntStore(tmp_path),
+        hunter_store=HunterMemoryStore(tmp_path),
+        control=_FakeControl(),
+        hunter_builder=provider_hunter_builder, pod_builder=_noop_pod_builder,
+        tick_interval=0.001,
+    ))
+
+    assert hid == "rt-hunt-0001"
+    _, status, stats = fake.stats_writes[-1]
+    assert status == "interrupted", (
+        "a hunter provider failure must pause the run, not let it quiesce complete")
+    assert stats["interrupted"] is True
+    assert stats["provider_status"] == 429
+    assert stats["quota_exhausted"] is True
+
+
 def test_build_production_hunting_agent_wires_real_seams(tmp_path):
     """The production default dispatch closure: construction is inert (no I/O,
     no LLM, no network) and returns a callable dispatch plus a reapable
