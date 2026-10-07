@@ -631,7 +631,38 @@ def test_c8_live_independent_oracle_value_checks():
     assert info.get("max_output_tokens") == limits["output"]
     assert info.get("input_cost_per_token") == expected_input
     assert info.get("output_cost_per_token") == expected_output
-    assert info.get("input_cost_per_token_cache_read") == expected_cache_read
+    assert info.get("cache_read_input_token_cost") == expected_cache_read
     assert info.get("reasoning_in_response") is True
     assert info.get("reasoning_field") == "reasoning_content"
     assert info.get("capability_source") == "models.dev/opencode-go/deepseek-v4-flash"
+
+
+def test_c8_live_provider_cost_override_authors_the_effective_rate():
+    """#330 iteration 2: the sync re-authors the overridden model's `model_info`
+    cost from the provider-specific override, so the budget guard counts the
+    effective off-peak rate, not the models.dev record. A clean sync is run
+    first (the override is re-authored on every sync, so the live record must
+    carry it regardless of what the bootstrap left behind). ASSUMPTION:
+    read-only (one clean sync keeps the set converged)."""
+    exit_code, output = _run_sync_in_container()
+    assert exit_code == 0, f"clean sync failed (exit {exit_code}):\n{output}"
+
+    from polymerhus.app.llm.sync_mapping import (
+        COST_SOURCE_OVERRIDE, cost_override)
+
+    override = cost_override("opencode-go", "deepseek-v4.1-flash")
+    assert override is not None, "the override table lost its seeded entry"
+    desired_names = {m.model_name for m in gs.oracle_desired()}
+    if "opencode-go/deepseek-v4.1-flash" not in desired_names:
+        pytest.skip("opencode-go/deepseek-v4.1-flash is not in the live desired set")
+
+    matches = [e for e in gs.model_info()
+               if e.get("model_name") == "opencode-go/deepseek-v4.1-flash"]
+    assert matches, "the overridden model is not registered live"
+    info = matches[0].get("model_info") or {}
+    assert info.get("input_cost_per_token") == override["input"], (
+        f"the guard would count models.dev's input rate, not the override: "
+        f"{info.get('input_cost_per_token')!r}")
+    assert info.get("output_cost_per_token") == override["output"]
+    assert info.get("cache_read_input_token_cost") == override["cache_read"]
+    assert info.get("cost_source") == COST_SOURCE_OVERRIDE

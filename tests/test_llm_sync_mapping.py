@@ -231,8 +231,8 @@ def test_capability_to_model_info_full_record():
     assert info["max_output_tokens"] == 32768
     assert info["input_cost_per_token"] == 0.00000014
     assert info["output_cost_per_token"] == 0.00000028
-    assert info["input_cost_per_token_cache_read"] == 0.0000000028
-    assert info["input_cost_per_token_cache_write"] == 0.0
+    assert info["cache_read_input_token_cost"] == 0.0000000028
+    assert info["cache_creation_input_token_cost"] == 0.0
     assert info["supports_function_calling"] is True
     assert info["supports_parallel_function_calling"] is True
     assert info["supports_structured_output"] is True
@@ -260,8 +260,8 @@ def test_capability_to_model_info_absence_is_unknown():
     )
     info = M.capability_to_model_info(rec)
     for key in ("max_input_tokens", "max_output_tokens", "input_cost_per_token",
-                "output_cost_per_token", "input_cost_per_token_cache_read",
-                "input_cost_per_token_cache_write", "supports_function_calling",
+                "output_cost_per_token", "cache_read_input_token_cost",
+                "cache_creation_input_token_cost", "supports_function_calling",
                 "supports_parallel_function_calling", "supports_structured_output",
 "supports_reasoning", "reasoning_in_response", "reasoning_field",
                  "reasoning_control", "reasoning_efforts", "thinking_budget_bounds",
@@ -427,3 +427,118 @@ def test_capability_record_from_resolved_authors_thinking_surface():
     assert rec.reasoning_control == "effort+toggle"
     assert rec.reasoning_efforts == ("minimum", "high")
     assert rec.thinking_budget_bounds is None
+
+
+# ---------------------------------------------------------------------------
+# #330 iteration 2: provider-specific effective cost override ----------------
+# ---------------------------------------------------------------------------
+#
+# models.dev carries the registry price for a provider offering; the provider's
+# effective per-token rate can differ (opencode-go's off-peak rate for
+# deepseek-v4.1-flash is ~6x below the models.dev record). LiteLLM prices a
+# provider offering as a deployment and reads the authored `model_info` cost
+# keys, so the override is consulted at the authoring seam on EVERY sync. This
+# is the red-capable seam: on `dev` the authored record carries models.dev's
+# ~6x-higher cost.
+
+def test_provider_cost_override_is_seeded_with_the_off_peak_default():
+    # The ticket's off-peak values, PER TOKEN (model_info's unit): $0.025 / $0.10
+    # / $0.003 per million tokens.
+    assert M.cost_override("opencode-go", "deepseek-v4.1-flash") == {
+        "input": 2.5e-08, "output": 1.0e-07, "cache_read": 3e-09}
+    # No override for a sibling offering - the table is exact, not per-provider.
+    assert M.cost_override("opencode-go", "deepseek-v4-flash") is None
+    assert M.cost_override("opencode", "deepseek-v4.1-flash") is None
+
+
+def test_capability_to_model_info_replaces_the_models_dev_cost_with_the_override():
+    rec = M.CapabilityRecord(
+        model_id="deepseek-v4.1-flash",
+        provider="opencode-go",
+        context_limit=1000000,
+        output_limit=384000,
+        cost_input=1.5e-07,    # models.dev: $0.15 / 1M
+        cost_output=6e-07,     # models.dev: $0.60 / 1M
+        cost_cache_read=None,  # models.dev carries no cache_read for this record
+        source="models.dev/opencode-go/deepseek-v4.1-flash",
+        synced_at="2026-10-06T00:00:00+00:00",
+        staleness="fresh",
+    )
+    info = M.capability_to_model_info(rec)
+    assert info["input_cost_per_token"] == 2.5e-08
+    assert info["output_cost_per_token"] == 1.0e-07
+    assert info["cache_read_input_token_cost"] == 3e-09
+    # The override is an operator pricing correction: its provenance is marked,
+    # while the capability provenance stays models.dev-sourced (Rule 1).
+    assert info["cost_source"] == M.COST_SOURCE_OVERRIDE
+    assert info["capability_source"] == "models.dev/opencode-go/deepseek-v4.1-flash"
+
+
+def test_budget_guard_usd_math_reads_the_override_not_models_dev():
+    # The cost guard's USD math is LiteLLM's spend count over the authored
+    # `model_info` cost keys. For a 1M-input / 1M-output request the authored
+    # record must therefore price at the effective override, ~6x below the
+    # models.dev record, or the guard under-counts and trips late (or never).
+    rec = M.CapabilityRecord(
+        model_id="deepseek-v4.1-flash",
+        provider="opencode-go",
+        cost_input=1.5e-07,
+        cost_output=6e-07,
+        source="models.dev/opencode-go/deepseek-v4.1-flash",
+        synced_at="2026-10-06T00:00:00+00:00",
+        staleness="fresh",
+    )
+    info = M.capability_to_model_info(rec)
+    usd = (1_000_000 * info["input_cost_per_token"]
+           + 1_000_000 * info["output_cost_per_token"])
+    assert usd == pytest.approx(0.025 + 0.10)
+    models_dev_usd = 1_000_000 * 1.5e-07 + 1_000_000 * 6e-07
+    assert usd < models_dev_usd / 5
+
+
+def test_capability_to_model_info_without_an_override_keeps_models_dev_cost():
+    rec = M.CapabilityRecord(
+        model_id="deepseek-v4-flash",
+        provider="opencode-go",
+        cost_input=2.2e-07,
+        cost_output=6.6e-07,
+        source="models.dev/opencode-go/deepseek-v4-flash",
+        synced_at="2026-10-06T00:00:00+00:00",
+        staleness="fresh",
+    )
+    info = M.capability_to_model_info(rec)
+    assert info["input_cost_per_token"] == 2.2e-07
+    assert info["output_cost_per_token"] == 6.6e-07
+    assert M.COST_SOURCE_KEY not in info
+
+
+def test_apply_cost_override_is_idempotent_and_pure():
+    original = {"input_cost_per_token": 1.5e-07, "output_cost_per_token": 6e-07,
+                "capability_source": "models.dev/opencode-go/deepseek-v4.1-flash"}
+    once = M.apply_cost_override(original, "opencode-go", "deepseek-v4.1-flash")
+    twice = M.apply_cost_override(once, "opencode-go", "deepseek-v4.1-flash")
+    assert once == twice
+    # Pure: the input dict is not mutated.
+    assert original["input_cost_per_token"] == 1.5e-07
+    assert M.COST_SOURCE_KEY not in original
+
+
+def test_apply_cost_override_leaves_a_non_overridden_record_untouched():
+    original = {"input_cost_per_token": 2.2e-07}
+    assert M.apply_cost_override(original, "opencode-go", "deepseek-v4-flash") is original
+
+
+def test_authored_cache_keys_are_the_ones_litellm_reads():
+    # Regression pin (#330 iteration 2): the D5-historic cache keys
+    # `input_cost_per_token_cache_read` / `_cache_write` appear NOWHERE in the
+    # pinned litellm 1.96.0 package, so litellm priced cache reads at 0. The
+    # authored keys are the ones `_get_token_base_cost` actually reads.
+    rec = M.CapabilityRecord(
+        model_id="m", provider="p", cost_cache_read=1e-09, cost_cache_write=2e-09,
+        source="models.dev/p/m", synced_at="2026-10-06T00:00:00+00:00",
+        staleness="fresh")
+    info = M.capability_to_model_info(rec)
+    assert "cache_read_input_token_cost" in info
+    assert "cache_creation_input_token_cost" in info
+    assert "input_cost_per_token_cache_read" not in info
+    assert "input_cost_per_token_cache_write" not in info

@@ -87,8 +87,10 @@ from polymerhus.app.llm.sync_mapping import (
     PROVENANCE_SOURCE_KEY,
     PROVENANCE_STALENESS_KEY,
     PROVENANCE_SYNCED_AT_KEY,
+    PROVIDER_COST_OVERRIDES,
     STALENESS_FRESH,
     UNKNOWN_SOURCE,
+    apply_cost_override,
     capability_record_from_resolved,
     capability_to_model_info,
     ROUTING_PROVIDER_PREFIX,
@@ -173,7 +175,8 @@ def _now_iso() -> str:
 #
 # LiteLLM's native virtual-key `budget_limits` (USD) mirror opencode-go's
 # dollar-denominated cap. A conservatism factor `k` (default 0.5) scales each
-# cap: LiteLLM counts spend at the OFF-PEAK models.dev price while opencode-go
+# cap: LiteLLM counts spend at the effective OFF-PEAK price the sync authors
+# (the provider-specific cost override, #330 iteration 2) while opencode-go
 # charges 2x at peak (01-04, 06-10 UTC Mon-Fri), so the counted budget must be
 # half the dollar cap for the guard to trip before the provider 429s. The
 # provider caps and `k` are env-tunable; an unusable override is a config lie
@@ -379,7 +382,8 @@ def build_desired(provider_ids: dict[str, set[str]], catalog: dict, *,
             record = provider_models.get(model_id)
             resolved = resolve_model_record(record, global_models) if isinstance(record, dict) else None
             if resolved is None:
-                info = unknown_model_info(synced_at)
+                info = apply_cost_override(
+                    unknown_model_info(synced_at), provider, model_id)
                 logger.info(
                     "unknown model gap (D9): %s/%s exists on /v1/models but has no "
                     "models.dev registry entry - registered for routing without "
@@ -396,7 +400,26 @@ def build_desired(provider_ids: dict[str, set[str]], catalog: dict, *,
                 model_info=info,
                 known=resolved is not None,
             ))
+    _warn_unreachable_cost_overrides(provider_ids)
     return desired
+
+
+def _warn_unreachable_cost_overrides(provider_ids: dict[str, set[str]]) -> None:
+    """Surface a configured cost override (#330 iteration 2) that no live
+    `/v1/models` id can satisfy, so it never disappears silently.
+
+    Only a CONFIGURED provider is checked: a provider absent from this
+    deployment's `provider_ids` (no API key) is out of scope, and its override
+    is inert by design. The sync applies the override on both the known and the
+    D9 unknown path, so a models.dev price change or a dropped models.dev
+    record can never unseat it - only the provider withdrawing the model can."""
+    for name in PROVIDER_COST_OVERRIDES:
+        provider, model_id = name.split("/", 1)
+        if provider in provider_ids and model_id not in provider_ids[provider]:
+            logger.warning(
+                "cost-override gap (#330): configured override %s has no live "
+                "model on /v1/models - it is NOT applied; the model prices at "
+                "the models.dev record (or fails OPEN if unpriced)", name)
 
 
 # --- The last-known-good snapshot (D9) ----------------------------------------

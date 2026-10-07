@@ -411,6 +411,75 @@ def capability_record_from_resolved(provider: str, model_id: str,
 
 
 # ---------------------------------------------------------------------------
+# Provider-specific effective cost override (#330 iteration 2, ADR D13) ------
+# ---------------------------------------------------------------------------
+#
+# models.dev carries the REGISTRY price for a provider offering; the provider's
+# effective per-token rate can differ (opencode-go's off-peak rate for
+# deepseek-v4.1-flash is ~6x below the models.dev record). LiteLLM prices a
+# provider offering as a deployment and reads the authored `model_info` cost
+# keys, so the budget guard's USD math counts what this table authors. The
+# table is consulted at the authoring seam on EVERY sync: a litellm-config-only
+# override would be clobbered by the next sync's models.dev re-authoring.
+#
+# Values are PER-TOKEN USD - the unit `model_info` carries (models.dev's
+# per-million `cost.*` is converted by `per_million_to_per_token`). The seeded
+# entry is opencode-go's OFF-PEAK rate, the default because ~90% of eval
+# wall-time is off-peak; the existing conservatism factor (ADR D13) sizes the
+# budget for the 2x peak.
+
+COST_SOURCE_KEY = "cost_source"
+COST_SOURCE_OVERRIDE = "provider-override"
+
+PROVIDER_COST_OVERRIDES: dict[str, dict[str, float]] = {
+    "opencode-go/deepseek-v4.1-flash": {
+        "input": 2.5e-08,      # $0.025 / 1M
+        "output": 1.0e-07,     # $0.10 / 1M
+        "cache_read": 3e-09,   # $0.003 / 1M
+    },
+}
+
+# (override key) -> (authored `model_info` cost key). The model_info keys are
+# the ones litellm 1.96.0 actually reads (`cache_read_input_token_cost`, not
+# the D5-historic `input_cost_per_token_cache_read`, which appears NOWHERE in
+# the pinned litellm package - see the D13 amendment).
+_OVERRIDE_COST_KEYS: tuple[tuple[str, str], ...] = (
+    ("input", "input_cost_per_token"),
+    ("output", "output_cost_per_token"),
+    ("cache_read", "cache_read_input_token_cost"),
+)
+
+
+def cost_override(provider: str, model_id: str) -> dict[str, float] | None:
+    """The provider-specific effective per-token cost override keyed by the
+    registered `<provider>/<model_id>` name, or `None` (no override)."""
+    return PROVIDER_COST_OVERRIDES.get(f"{provider}/{model_id}")
+
+
+def apply_cost_override(info: dict, provider: str, model_id: str) -> dict:
+    """Re-author an authored `model_info`'s cost keys from the override table.
+
+    Pure and idempotent: no override -> the input dict is returned unchanged;
+    an override -> each present override field replaces the models.dev value and
+    `cost_source` is set to `provider-override` so the pricing provenance is
+    auditable (the capability provenance stays models.dev-sourced, Rule 1).
+
+    Consulted on EVERY sync, keyed by the registered name rather than the
+    models.dev record, so the override survives both a models.dev price change
+    and a dropped/renamed models.dev record (the D9 unknown path)."""
+    override = cost_override(provider, model_id)
+    if override is None:
+        return info
+    merged = dict(info)
+    for override_key, info_key in _OVERRIDE_COST_KEYS:
+        value = override.get(override_key)
+        if value is not None:
+            merged[info_key] = value
+    merged[COST_SOURCE_KEY] = COST_SOURCE_OVERRIDE
+    return merged
+
+
+# ---------------------------------------------------------------------------
 # Capability Record -> LiteLLM model_info (the D5 table) ---------------------
 # ---------------------------------------------------------------------------
 
@@ -418,7 +487,9 @@ def capability_to_model_info(record: CapabilityRecord) -> dict:
     """Map the canonical Capability Record to the LiteLLM `model_info` schema
     per the D5 table. A `None` field is UNKNOWN and the key is ABSENT (Rule 1:
     `unknown` is never encoded as a value). The provenance keys are authored
-    on EVERY record, including unknown ones."""
+    on EVERY record, including unknown ones. The provider-specific effective
+    cost override (#330 iteration 2) is applied last, so it always wins over
+    the models.dev record."""
     info: dict[str, Any] = {}
     if record.context_limit is not None:
         info["max_input_tokens"] = record.context_limit
@@ -429,9 +500,13 @@ def capability_to_model_info(record: CapabilityRecord) -> dict:
     if record.cost_output is not None:
         info["output_cost_per_token"] = record.cost_output
     if record.cost_cache_read is not None:
-        info["input_cost_per_token_cache_read"] = record.cost_cache_read
+        # litellm 1.96.0 reads `cache_read_input_token_cost` in its cost path
+        # (`llm_cost_calc/utils.py::_get_token_base_cost`); the D5-historic
+        # `input_cost_per_token_cache_read` appears NOWHERE in the pinned
+        # package, so it was inert. Corrected in the #330 iteration-2 change.
+        info["cache_read_input_token_cost"] = record.cost_cache_read
     if record.cost_cache_write is not None:
-        info["input_cost_per_token_cache_write"] = record.cost_cache_write
+        info["cache_creation_input_token_cost"] = record.cost_cache_write
     if record.supports_tool_calling is not None:
         # D5: supports_tool_calling maps to BOTH keys (the crawl `bind_tools`
         # path uses the parallel form; models.dev carries no separate flag, so
@@ -463,7 +538,7 @@ def capability_to_model_info(record: CapabilityRecord) -> dict:
     info[PROVENANCE_SOURCE_KEY] = record.source
     info[PROVENANCE_SYNCED_AT_KEY] = record.synced_at
     info[PROVENANCE_STALENESS_KEY] = record.staleness
-    return info
+    return apply_cost_override(info, record.provider, record.model_id)
 
 
 def unknown_model_info(synced_at: str) -> dict:
