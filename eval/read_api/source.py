@@ -50,7 +50,7 @@ from .projection import (
     project_store_trials,
 )
 from .project_graph import HistoricalProjectGraphError, read_project_graph
-from .run_records import load_run_record_catalog
+from .run_records import RUN_RECORD_AMBIGUOUS, load_run_record_catalog
 from .trial_spend import (
     SPEND_ROOT_UNCONFIGURED,
     TrialSpend,
@@ -212,10 +212,12 @@ class ArtifactStoreSnapshotSource:
             trials, dataset_id=self.dataset_id, dataset_name=self.dataset_name
         )
         # A materialized capture already resolves its identity, so an ambiguity
-        # over that same identity never reaches the operator: only an ambiguous
-        # identity that no capture covers is a catalogue issue.
-        unresolved = [identity for identity in catalog.ambiguous if identity not in materialized]
-        snapshot["issues"] = list(catalog.issues) if unresolved else []
+        # over that same identity never reaches the operator. Scan/oversize
+        # issues are not attributable to one identity, so they always surface.
+        codes = set(catalog.issues)
+        if all(identity in materialized for identity in catalog.ambiguous):
+            codes.discard(RUN_RECORD_AMBIGUOUS)
+        snapshot["issues"] = sorted(codes)
         return snapshot
 
     def _runs_roots(self) -> tuple[str | Path, ...]:

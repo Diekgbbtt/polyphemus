@@ -19,7 +19,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from read_api import run_records, source
+from read_api import projection, run_records, source
 
 INSTANCE = "inst-1"
 PROJECT = "proj-alpha"
@@ -654,6 +654,280 @@ def test_health_distinguishes_catalogued_and_materialized(tmp_path: Path) -> Non
 
     assert health["materialized_trials"] == 1
     assert health["run_record_trials"] == 1
+
+
+# --- identity and terminal validation (review hardening) ------------------------
+
+
+def _base_mapping(
+    *,
+    target: str = IDENTITY[0],
+    run: object = IDENTITY[1],
+    trial: str = IDENTITY[2],
+    instance: object = INSTANCE,
+    project: object = PROJECT,
+    terminal: object = "timeout",
+    phases: object = None,
+) -> dict:
+    """A minimal valid record mapping; callers mutate the field under test."""
+    return {
+        "trial_id": trial,
+        "target_id": target,
+        "target_run_id": run,
+        "instance_id": instance,
+        "project_id": project,
+        "start_phase": "hunting",
+        "terminal": terminal,
+        "phases": phases
+        if phases is not None
+        else [
+            {"phase": "recon", "status": "complete", "run_id": "recon-1"},
+            {"phase": "hunting", "status": "timeout", "run_id": "hunt-1"},
+        ],
+    }
+
+
+def _write_mapping(directory: Path, mapping: dict, *, filename: str = "trial.yaml") -> Path:
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / filename
+    path.write_text(yaml.safe_dump(mapping, sort_keys=False), encoding="utf-8")
+    return path
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["../evil", "a/b", "a\\b", "", ".", "..", 123, 1.5, True, ["x"], {"a": 1}],
+    ids=repr,
+)
+def test_present_invalid_target_run_id_rejects_the_record(
+    tmp_path: Path, value: object
+) -> None:
+    runs = tmp_path / "runs"
+    _write_mapping(runs / IDENTITY[0] / IDENTITY[2], _base_mapping(run=value))
+    adapter = _adapter(tmp_path, runs=runs)
+
+    snapshot = adapter.snapshot()
+
+    # Present-but-invalid is never replaced by instance_id: the record is out.
+    assert snapshot["trials"] == []
+
+
+def test_invalid_target_run_id_host_path_never_leaks(tmp_path: Path) -> None:
+    runs = tmp_path / "runs"
+    _write_mapping(
+        runs / IDENTITY[0] / IDENTITY[2], _base_mapping(run="/etc/passwd")
+    )
+    adapter = _adapter(tmp_path, runs=runs)
+
+    snapshot = adapter.snapshot()
+
+    assert snapshot["trials"] == []
+    assert "/etc/passwd" not in repr(snapshot)
+    assert str(tmp_path) not in repr(snapshot)
+
+
+def test_absent_target_run_id_falls_back_to_instance_id(tmp_path: Path) -> None:
+    runs = tmp_path / "runs"
+    mapping = _base_mapping()
+    del mapping["target_run_id"]
+    _write_mapping(runs / IDENTITY[0] / IDENTITY[2], mapping)
+    adapter = _adapter(tmp_path, runs=runs)
+
+    trial = _trial(adapter.snapshot(), IDENTITY[2])
+
+    assert trial["target_run_id"] == INSTANCE
+
+
+def test_null_target_run_id_falls_back_to_instance_id(tmp_path: Path) -> None:
+    runs = tmp_path / "runs"
+    _write_mapping(
+        runs / IDENTITY[0] / IDENTITY[2], _base_mapping(run=None)
+    )
+    adapter = _adapter(tmp_path, runs=runs)
+
+    trial = _trial(adapter.snapshot(), IDENTITY[2])
+
+    assert trial["target_run_id"] == INSTANCE
+
+
+@pytest.mark.parametrize(
+    "terminal",
+    ["complete", "stopped", "timeout", "failed", "blocked", "interrupted"],
+)
+def test_supported_producer_terminal_is_accepted(
+    tmp_path: Path, terminal: str
+) -> None:
+    runs = tmp_path / "runs"
+    _write_mapping(
+        runs / IDENTITY[0] / IDENTITY[2], _base_mapping(terminal=terminal)
+    )
+    adapter = _adapter(tmp_path, runs=runs)
+
+    trial = _trial(adapter.snapshot(), IDENTITY[2])
+
+    assert trial["terminal"] == terminal
+
+
+@pytest.mark.parametrize(
+    "terminal",
+    ["pwned", "/etc/passwd", "a/b", "timeout ", "Timeout", "", 123, None, ["timeout"], True],
+    ids=repr,
+)
+def test_unsupported_terminal_is_rejected(tmp_path: Path, terminal: object) -> None:
+    runs = tmp_path / "runs"
+    _write_mapping(
+        runs / IDENTITY[0] / IDENTITY[2], _base_mapping(terminal=terminal)
+    )
+    adapter = _adapter(tmp_path, runs=runs)
+
+    assert adapter.snapshot()["trials"] == []
+
+
+def test_rejected_terminal_host_path_never_leaks(tmp_path: Path) -> None:
+    runs = tmp_path / "runs"
+    _write_mapping(
+        runs / IDENTITY[0] / IDENTITY[2], _base_mapping(terminal="/etc/passwd")
+    )
+    adapter = _adapter(tmp_path, runs=runs)
+
+    snapshot = adapter.snapshot()
+
+    assert snapshot["trials"] == []
+    assert "/etc/passwd" not in repr(snapshot)
+
+
+# --- bounded discovery and bounded results (review hardening) -------------------
+
+
+def _clutter(directory: Path, count: int) -> None:
+    directory.mkdir(parents=True, exist_ok=True)
+    for index in range(count):
+        (directory / f"filler-{index:05d}.txt").write_text("x", encoding="utf-8")
+
+
+def test_oversized_record_is_skipped_with_an_issue(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(run_records, "RECORD_MAX_BYTES", 512, raising=False)
+    runs = tmp_path / "runs"
+    big = _base_mapping(target="big", run="run-b", trial="t-big")
+    big["padding"] = "x" * 4096
+    _write_mapping(runs / "big" / "t-big", big)
+    _run_record(runs, target="other", run="run-b", trial="t-ok")
+    adapter = _adapter(tmp_path, runs=runs)
+
+    snapshot = adapter.snapshot()
+
+    assert [t["trial_id"] for t in snapshot["trials"]] == ["t-ok"]
+    assert "run_record_too_large" in snapshot["issues"]
+    assert str(tmp_path) not in repr(snapshot)
+
+
+def test_excessive_entries_report_scan_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(run_records, "SCAN_MAX_ENTRIES", 4, raising=False)
+    primary = tmp_path / "runs"
+    _clutter(primary, 50)
+    legacy = tmp_path / "runs-legacy"
+    _run_record(legacy, target="other", run="run-b", trial="t-ok")
+    adapter = _adapter(tmp_path, runs=primary, legacy=legacy)
+
+    snapshot = adapter.snapshot()
+
+    # The exhausted root reports the budget, but a valid Trial in the other
+    # root is still catalogueable.
+    assert [t["trial_id"] for t in snapshot["trials"]] == ["t-ok"]
+    assert "run_record_scan_limit" in snapshot["issues"]
+    assert str(tmp_path) not in repr(snapshot)
+
+
+def test_excessive_depth_reports_scan_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A record sits at depth 3 (<root>/<target>/<trial>/trial.yaml); the deep
+    # one is at depth 4 and must never be read.
+    monkeypatch.setattr(run_records, "SCAN_MAX_DEPTH", 3, raising=False)
+    runs = tmp_path / "runs"
+    _run_record(runs, target="shallow", run="run-b", trial="t-shallow")
+    _write_mapping(
+        runs / "one" / "two" / "three" / "trial.yaml",
+        _base_mapping(target="deep", run="run-c", trial="t-deep"),
+    )
+    adapter = _adapter(tmp_path, runs=runs)
+
+    snapshot = adapter.snapshot()
+
+    assert [t["trial_id"] for t in snapshot["trials"]] == ["t-shallow"]
+    assert "run_record_scan_limit" in snapshot["issues"]
+
+
+def test_oversized_verdicts_degrade_only_their_block(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(projection, "RESULTS_MAX_BYTES", 1024, raising=False)
+    runs = tmp_path / "runs"
+    _run_record(
+        runs,
+        verdicts_text=yaml.safe_dump([_verdict("V1", "identified")]) + "#" + "x" * 4096,
+        diagnoses=[_diagnosis("V9")],
+    )
+    adapter = _adapter(tmp_path, runs=runs)
+
+    trial = _trial(adapter.snapshot(), IDENTITY[2])
+
+    assert trial["results_availability"]["verdicts"] == {
+        "status": "unavailable",
+        "reason": "verdicts_too_large",
+    }
+    assert trial["results_availability"]["diagnoses"] == {
+        "status": "available",
+        "reason": None,
+    }
+    assert [d["vuln"] for d in trial["diagnoses"]] == ["V9"]
+
+
+def test_oversized_diagnoses_degrade_only_their_block(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(projection, "RESULTS_MAX_BYTES", 1024, raising=False)
+    runs = tmp_path / "runs"
+    _run_record(
+        runs,
+        verdicts=[_verdict("V1", "identified")],
+        diagnoses_text=yaml.safe_dump([_diagnosis("V1")]) + "#" + "x" * 4096,
+    )
+    adapter = _adapter(tmp_path, runs=runs)
+
+    trial = _trial(adapter.snapshot(), IDENTITY[2])
+
+    assert trial["results_availability"]["diagnoses"] == {
+        "status": "unavailable",
+        "reason": "diagnoses_too_large",
+    }
+    assert trial["results_availability"]["verdicts"] == {
+        "status": "available",
+        "reason": None,
+    }
+    assert [v["vuln_id"] for v in trial["verdicts"]] == ["V1"]
+
+
+def test_bind_alias_roots_do_not_double_the_scan_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runs = tmp_path / "runs"
+    _run_record(runs, target="solo", run="run-b", trial="t-solo")
+    # The record needs three entries; a budget of four fits one scan but a
+    # duplicated (non-deduplicated) scan of the same physical root would not.
+    monkeypatch.setattr(run_records, "SCAN_MAX_ENTRIES", 4, raising=False)
+    alias = tmp_path / "alias"
+    os.symlink(runs, alias, target_is_directory=True)
+    adapter = _adapter(tmp_path, runs=runs, legacy=alias)
+
+    snapshot = adapter.snapshot()
+
+    assert [t["trial_id"] for t in snapshot["trials"]] == ["t-solo"]
+    assert snapshot["issues"] == []
 
 
 if __name__ == "__main__":  # pragma: no cover

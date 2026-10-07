@@ -44,6 +44,11 @@ STORAGE_RUN_RECORD = "run_record"
 # The independent results availability of each results file.
 RESULTS_AVAILABLE = "available"
 RESULTS_UNAVAILABLE = "unavailable"
+# The two oversized-run-results reasons, and the byte bound each run-record
+# results file is read through. Read at call time so a test can lower it.
+VERDICTS_TOO_LARGE = "verdicts_too_large"
+DIAGNOSES_TOO_LARGE = "diagnoses_too_large"
+RESULTS_MAX_BYTES = 8 * 1024 * 1024
 _ARTIFACT_CATEGORIES = ("hunting", "skill")
 # The non-authoritative siblings the store also contains (D7/D12, project
 # artifacts): the rendered deploy dir, the raw one-way live mirror, and the
@@ -138,6 +143,8 @@ FILE_SUFFIXES = frozenset(
 )
 
 _INVALID = object()
+# A file that reads past its byte bound, distinct from one that cannot be read.
+_TOO_LARGE = object()
 
 
 def build_snapshot(
@@ -324,7 +331,7 @@ def _read_trial(
 
 
 def _read_verdicts(
-    trial_dir: Path, *, strict: bool = False
+    trial_dir: Path, *, strict: bool = False, limit: int | None = None
 ) -> tuple[list[dict[str, Any]], dict[str, Any], str | None]:
     """Every valid verdict row, plus its availability and any defect code.
 
@@ -332,12 +339,24 @@ def _read_verdicts(
     is empty or carries an unusable row (in which case the valid siblings are
     kept and the Trial reports the stable defect). With `strict`, only a regular
     non-symlink file counts, so an unmaterialized Trial never follows a link out
-    of its own record directory.
+    of its own record directory, and the file is read through a bounded byte
+    window: a file past `limit` (default `RESULTS_MAX_BYTES`) reports
+    `verdicts_too_large` instead of being read whole.
     """
     path = trial_dir / VERDICTS_FILENAME
     if not _present(path, strict=strict):
         return [], _availability(RESULTS_UNAVAILABLE, "verdicts_missing"), "verdicts_missing"
-    payload = _load_payload(path)
+    if strict:
+        bound = RESULTS_MAX_BYTES if limit is None else limit
+        payload = _load_payload_bounded(path, bound)
+        if payload is _TOO_LARGE:
+            return (
+                [],
+                _availability(RESULTS_UNAVAILABLE, VERDICTS_TOO_LARGE),
+                VERDICTS_TOO_LARGE,
+            )
+    else:
+        payload = _load_payload(path)
     if payload is _INVALID or not isinstance(payload, list):
         return [], _availability(RESULTS_UNAVAILABLE, "verdicts_invalid"), "verdicts_invalid"
 
@@ -362,13 +381,16 @@ def _read_diagnoses(
     *,
     verdicts_available: bool = True,
     strict: bool = False,
+    limit: int | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any], str | None]:
     """The valid diagnoses, plus its availability and any defect code.
 
     Availability is independent of the verdicts: a present diagnoses file is
     `available` even when every verdicts file is missing. When the verdicts are
     available, a partial/missed verdict still demands a paired entry; when they
-    are not, the rows are read structurally without inventing a pairing.
+    are not, the rows are read structurally without inventing a pairing. With
+    `strict`, a file past `limit` (default `RESULTS_MAX_BYTES`) reports
+    `diagnoses_too_large` instead of being read whole.
     """
     required = (
         {row["vuln_id"] for row in verdicts if row["identified"] in DIAGNOSABLE}
@@ -379,7 +401,17 @@ def _read_diagnoses(
     if not _present(path, strict=strict):
         defect = "diagnoses_missing" if required else None
         return [], _availability(RESULTS_UNAVAILABLE, "diagnoses_missing"), defect
-    payload = _load_payload(path)
+    if strict:
+        bound = RESULTS_MAX_BYTES if limit is None else limit
+        payload = _load_payload_bounded(path, bound)
+        if payload is _TOO_LARGE:
+            return (
+                [],
+                _availability(RESULTS_UNAVAILABLE, DIAGNOSES_TOO_LARGE),
+                DIAGNOSES_TOO_LARGE,
+            )
+    else:
+        payload = _load_payload(path)
     if payload is _INVALID or not isinstance(payload, list):
         return [], _availability(RESULTS_UNAVAILABLE, "diagnoses_invalid"), "diagnoses_invalid"
     parsed, defect = _parse_diagnoses(
@@ -673,6 +705,26 @@ def _load_payload(path: Path) -> object:
     try:
         return yaml.safe_load(path.read_text(encoding="utf-8"))
     except (OSError, yaml.YAMLError):
+        return _INVALID
+
+
+def _load_payload_bounded(path: Path, limit: int) -> object:
+    """The decoded YAML through a bounded byte window.
+
+    `_TOO_LARGE` when the file reads past `limit` (the bound is enforced on the
+    bytes actually read, not a pre-read stat), `_INVALID` when it cannot be read
+    or decoded, else the decoded value.
+    """
+    try:
+        with open(path, "rb") as handle:
+            raw = handle.read(limit + 1)
+    except OSError:
+        return _INVALID
+    if len(raw) > limit:
+        return _TOO_LARGE
+    try:
+        return yaml.safe_load(raw.decode("utf-8"))
+    except (yaml.YAMLError, UnicodeDecodeError):
         return _INVALID
 
 
