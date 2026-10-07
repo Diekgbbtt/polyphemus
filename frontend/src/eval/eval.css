@@ -971,6 +971,12 @@
   color: #9aa0a6;
 }
 
+/* A current-only file: read from the live project, not saved with the Trial. */
+.project-artifact-origin {
+  color: #d9b86b;
+  font-size: 0.85em;
+}
+
 /* --- artifact detail: metadata, cards, trees, code --------------------------- */
 
 .artifact-metadata,

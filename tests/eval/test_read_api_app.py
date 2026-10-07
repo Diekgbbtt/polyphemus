@@ -417,6 +417,80 @@ def test_resolved_unknown_trial_is_a_path_free_404(resolved_client: TestClient) 
     assert res.json()["detail"] == "trial_not_found"
 
 
+def _all_resolved_entries(inventory: dict) -> list[dict]:
+    entries: list[dict] = []
+    stack = list(inventory["groups"])
+    while stack:
+        node = stack.pop(0)
+        entries.extend(node["entries"])
+        stack.extend(node["children"])
+    return entries
+
+
+def _v1_store_only_client(tmp_path: Path) -> TestClient:
+    """A v1 Trial whose saved subtree exists but whose raw project does not."""
+    store = tmp_path / "store"
+    trial_dir = store / "comfyui-1" / "run-a" / "t1"
+    trial_dir.mkdir(parents=True)
+    files = {
+        RELATIVE: b"kind: hunt-config\n",
+        "hunting/test-executor-pod/spec-1/export.yaml": b"kind: pod-export\n",
+        "skills/authn/SKILL.md": b"# skill\n",
+    }
+    for relative, data in files.items():
+        path = trial_dir / PROJECT_ID / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+    (trial_dir / "run-manifest.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "schema_version": 1,
+                "trial_id": "t1",
+                "target_id": "comfyui-1",
+                "target_run_id": "run-a",
+                "instance_id": INSTANCE,
+                "project_id": PROJECT_ID,
+                "eval_sha": "eval-1",
+                "stack_fingerprint": "fp-1",
+            }
+        ),
+        encoding="utf-8",
+    )
+    source_obj = source_module.ArtifactStoreSnapshotSource(store, instance_id=INSTANCE)
+    return TestClient(app_module.create_app(lambda: source_obj))
+
+
+def test_v1_store_only_inventory_detail_content_over_http(tmp_path: Path) -> None:
+    client = _v1_store_only_client(tmp_path)
+
+    inventory = client.get(f"{_resolved_base()}/resolved-artifacts").json()
+    assert inventory["status"] == "available"
+    assert inventory["source"] == "trial_snapshot"
+    assert inventory["project_id"] == PROJECT_ID
+    entries = _all_resolved_entries(inventory)
+    paths = {entry["relative_path"] for entry in entries}
+    assert RELATIVE in paths
+    assert "hunting/test-executor-pod/spec-1/export.yaml" in paths
+    assert all(entry["origin"] == "captured" for entry in entries)
+
+    entry = next(e for e in entries if e["relative_path"] == RELATIVE)
+    detail = client.get(f"{_resolved_base()}/resolved-artifacts/{entry['artifact_id']}")
+    assert detail.status_code == 200
+    assert detail.json()["entry"]["relative_path"] == RELATIVE
+    url = detail.json()["content_url"]
+
+    content = client.get(url)
+    assert content.status_code == 200
+    assert content.content == b"kind: hunt-config\n"
+
+    wrong = client.get(
+        f"{_resolved_base()}/resolved-artifacts/{entry['artifact_id']}/content"
+        "?expected_sha256=deadbeef"
+    )
+    assert wrong.status_code == 409
+    assert wrong.json()["detail"] == "artifact_digest_mismatch"
+
+
 def test_snapshot_carries_the_recorded_spend_resolved_by_identity(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

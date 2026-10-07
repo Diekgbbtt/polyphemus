@@ -941,3 +941,54 @@ test("presents the same Test specs grouping inline and on the artifact page", as
   expect(inlineToggles["Test specs"]).toBe("true")
   expect(inlineToggles["FaultA"]).toBe("false")
 })
+
+
+test("labels current-only files and leaves captured files unlabelled", async () => {
+  const captured = entry({
+    artifact_id: "cap",
+    relative_path: "hunting/orchestration/hunt_configs/produced/captured.yaml",
+    origin: "captured",
+  })
+  const current = entry({
+    artifact_id: "cur",
+    relative_path: "hunting/orchestration/hunt_configs/produced/current.yaml",
+    origin: "current",
+  })
+  routeFetch([
+    [
+      "/resolved-artifacts",
+      () =>
+        json(
+          inventory({
+            source: "trial_snapshot",
+            groups: [
+              group({
+                key: "hunt-configs",
+                label: "Hunt configs",
+                entries: [captured, current],
+              }),
+            ],
+          }),
+        ),
+    ],
+  ])
+
+  const { container } = renderSection()
+
+  await waitFor(() =>
+    expect(container.querySelectorAll(".project-artifact-entries li")).toHaveLength(2),
+  )
+  // The inventory is labelled as captured with the Trial...
+  expect(container.querySelector(".artifact-source")?.textContent).toBe(
+    "Captured with Trial",
+  )
+  // ...and only the current-only entry carries the provenance marker.
+  const markers = [...container.querySelectorAll(".project-artifact-origin")]
+  expect(markers).toHaveLength(1)
+  expect(markers[0].textContent).toBe("Current project file")
+  const items = [...container.querySelectorAll<HTMLElement>(".project-artifact-entries li")]
+  const capturedItem = items.find((li) => li.textContent?.includes("captured.yaml"))
+  const currentItem = items.find((li) => li.textContent?.includes("current.yaml"))
+  expect(capturedItem?.querySelector(".project-artifact-origin")).toBeNull()
+  expect(currentItem?.querySelector(".project-artifact-origin")).not.toBeNull()
+})

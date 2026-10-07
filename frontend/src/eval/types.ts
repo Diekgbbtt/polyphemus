@@ -146,6 +146,11 @@ export type ProjectArtifactKind =
 
 export type ProjectArtifactRepresentation = "yaml" | "markdown" | "text" | "binary"
 
+// Where a resolved artifact came from: `captured` (saved with the Trial, in its
+// v1 store or v2 snapshot) or `current` (read from the live project root only).
+// Optional: the strict manifest-backed endpoint and older payloads omit it.
+export type ProjectArtifactOrigin = "captured" | "current"
+
 // One inventory entry, exactly as the manifest carries it. No host path and no
 // source handle ever appears here.
 export interface ProjectArtifactEntry {
@@ -157,6 +162,7 @@ export interface ProjectArtifactEntry {
   size_bytes: number
   sha256: string
   representation: ProjectArtifactRepresentation
+  origin?: ProjectArtifactOrigin
 }
 
 export interface ProjectArtifactGroup {

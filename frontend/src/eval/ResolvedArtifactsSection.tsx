@@ -111,6 +111,12 @@ export function ArtifactGroupNode({
                   {entry.size_bytes} bytes ·{" "}
                   <span className="eval-ref">{entry.artifact_id}</span>
                 </span>
+                {/* A current-only file (read from the live project, not saved
+                    with the Trial) is labelled so it is never mistaken for a
+                    captured artifact. */}
+                {entry.origin === "current" && (
+                  <span className="project-artifact-origin">Current project file</span>
+                )}
               </li>
             ))}
           </ul>

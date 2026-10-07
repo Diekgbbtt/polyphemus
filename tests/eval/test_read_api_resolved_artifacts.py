@@ -472,3 +472,213 @@ def test_raw_fallback_rejects_a_nested_symlinked_dir(tmp_path: Path) -> None:
     assert inventory.status == "unavailable"
     assert inventory.reason == "artifact_unsafe"
     assert str(tmp_path) not in repr(inventory)
+
+
+# --- v1 store: saved artifacts with no v2 snapshot and no raw project ----------
+
+# What the producer really copies into a v1 Trial tree, at data-root-relative
+# paths (project-prefixed): the hunt_config file, the spec_dir *directory*'s
+# children, the experiment logs, the pod export and a skill bundle.
+V1_CHAIN_FILES = {
+    "hunting/orchestration/hunt_configs/consumed/hunt.yaml": b"kind: hunt-config\n",
+    "hunting/hunter/test-specs/fault-a/produced/spec-1.yaml": b"kind: test-spec\n",
+    "hunting/hunter/test-specs/fault-a/produced/spec-2.yaml": b"kind: test-spec\n",
+    "hunting/test-executor-pod/spec-1/experiment-log/0.yaml": b"kind: experiment-log\n",
+    "hunting/test-executor-pod/spec-1/export.yaml": b"kind: pod-export\n",
+    "skills/authn/SKILL.md": b"# Authn skill\n",
+}
+
+
+def _v1_manifest(project_id: str = PROJECT_ID) -> dict:
+    return {
+        "schema_version": 1,
+        "trial_id": TRIAL,
+        "target_id": TARGET,
+        "target_run_id": RUN,
+        "instance_id": INSTANCE,
+        "project_id": project_id,
+        "chain_sources": [],
+        "diagnoses_present": False,
+    }
+
+
+def _write_v1_store(
+    store: Path,
+    project_files: dict[str, bytes],
+    *,
+    manifest: dict | None = None,
+) -> Path:
+    """A v1 Trial tree: the manifest plus the copied `<project_id>/...` subtree."""
+    trial_dir = store / TARGET / RUN / TRIAL
+    trial_dir.mkdir(parents=True, exist_ok=True)
+    project_id = (manifest or _v1_manifest()).get("project_id", PROJECT_ID)
+    for relative, data in project_files.items():
+        path = trial_dir / project_id / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+    (trial_dir / "run-manifest.yaml").write_text(
+        yaml.safe_dump(manifest or _v1_manifest(), sort_keys=False), encoding="utf-8"
+    )
+    return trial_dir
+
+
+def test_v1_store_without_raw_exposes_saved_artifacts(tmp_path: Path) -> None:
+    store = tmp_path / "store"
+    _write_v1_store(store, V1_CHAIN_FILES)
+
+    # Another instance and no raw root: the Trial's own saved evidence still reads.
+    inventory = resolved.resolve_inventory(
+        store, None, _context(instance_id="other-instance", eligible=False), files=FileStore()
+    )
+
+    assert inventory.status == "available"
+    assert inventory.source == resolved.TRIAL_SNAPSHOT
+    assert inventory.project_id == PROJECT_ID
+    assert _paths(inventory) == set(V1_CHAIN_FILES)
+    assert {entry["origin"] for entry in inventory.entries} == {"captured"}
+    assert str(tmp_path) not in repr(inventory)
+
+
+def test_v1_store_spec_dir_descendants_are_collected(tmp_path: Path) -> None:
+    store = tmp_path / "store"
+    _write_v1_store(store, V1_CHAIN_FILES)
+
+    inventory = resolved.resolve_inventory(store, None, _context(), files=FileStore())
+
+    paths = _paths(inventory)
+    assert "hunting/hunter/test-specs/fault-a/produced/spec-1.yaml" in paths
+    assert "hunting/hunter/test-specs/fault-a/produced/spec-2.yaml" in paths
+
+
+def test_v1_store_wins_a_shared_path_and_labels_current_only(tmp_path: Path) -> None:
+    store = tmp_path / "store"
+    shared = "hunting/orchestration/hunt_configs/produced/shared.yaml"
+    store_only = "hunting/hunter/test-specs/fault-a/produced/store-only.yaml"
+    raw_only = "hunting/orchestration/hunt_configs/produced/raw-only.yaml"
+    _write_v1_store(store, {shared: b"store bytes\n", store_only: b"stored\n"})
+    data_root = tmp_path / "raw"
+    _write_raw(data_root, {shared: b"raw bytes\n", raw_only: b"current\n"})
+
+    inventory = resolved.resolve_inventory(store, data_root, _context(), files=FileStore())
+
+    by_path = {entry["relative_path"]: entry for entry in inventory.entries}
+    assert by_path[shared]["sha256"] == hashlib.sha256(b"store bytes\n").hexdigest()
+    assert by_path[shared]["origin"] == "captured"
+    assert by_path[store_only]["origin"] == "captured"
+    assert by_path[raw_only]["sha256"] == hashlib.sha256(b"current\n").hexdigest()
+    assert by_path[raw_only]["origin"] == "current"
+
+    # The shared identity/bytes come from the store, never the raw copy.
+    captured = resolved.content_download(
+        inventory, by_path[shared]["artifact_id"], by_path[shared]["sha256"]
+    )
+    assert b"".join(captured.chunks) == b"store bytes\n"
+    current = resolved.content_download(
+        inventory, by_path[raw_only]["artifact_id"], by_path[raw_only]["sha256"]
+    )
+    assert b"".join(current.chunks) == b"current\n"
+
+
+def test_v1_store_detail_and_content_round_trip(tmp_path: Path) -> None:
+    store = tmp_path / "store"
+    _write_v1_store(store, V1_CHAIN_FILES)
+    inventory = resolved.resolve_inventory(store, None, _context(), files=FileStore())
+    entry = next(
+        e for e in inventory.entries if e["relative_path"].endswith("export.yaml")
+    )
+
+    detail = resolved.detail_response(inventory, TARGET, RUN, TRIAL, entry["artifact_id"])
+    assert detail["entry"] == entry
+    assert entry["origin"] == "captured"
+
+    download = resolved.content_download(
+        inventory, entry["artifact_id"], entry["sha256"]
+    )
+    assert b"".join(download.chunks) == V1_CHAIN_FILES[entry["relative_path"]]
+
+
+def test_v1_store_wrong_expected_digest_is_409(tmp_path: Path) -> None:
+    store = tmp_path / "store"
+    _write_v1_store(store, V1_CHAIN_FILES)
+    inventory = resolved.resolve_inventory(store, None, _context(), files=FileStore())
+    entry = next(
+        e for e in inventory.entries if e["relative_path"].endswith("hunt.yaml")
+    )
+
+    with pytest.raises(artifact_reader.ArtifactLookupError) as excinfo:
+        resolved.content_download(inventory, entry["artifact_id"], "deadbeef")
+
+    assert excinfo.value.code == "artifact_digest_mismatch"
+    assert excinfo.value.status_code == 409
+
+
+def test_v1_store_identity_mismatch_fails_closed(tmp_path: Path) -> None:
+    store = tmp_path / "store"
+    _write_v1_store(store, V1_CHAIN_FILES, manifest=_v1_manifest() | {"target_id": "other"})
+
+    inventory = resolved.resolve_inventory(store, None, _context(), files=FileStore())
+
+    assert inventory.status == "unavailable"
+    assert inventory.reason == "trial_identity_mismatch"
+    assert str(tmp_path) not in repr(inventory)
+
+
+def test_v1_store_project_mismatch_fails_closed(tmp_path: Path) -> None:
+    store = tmp_path / "store"
+    _write_v1_store(store, V1_CHAIN_FILES, manifest=_v1_manifest("other-project"))
+
+    inventory = resolved.resolve_inventory(store, None, _context(), files=FileStore())
+
+    assert inventory.status == "unavailable"
+    assert inventory.reason == "project_id_mismatch"
+
+
+def test_v1_store_missing_manifest_fails_closed(tmp_path: Path) -> None:
+    store = tmp_path / "store"
+    trial_dir = store / TARGET / RUN / TRIAL
+    (trial_dir / PROJECT_ID / "hunting/orchestration/hunt_configs/produced").mkdir(
+        parents=True
+    )
+    (trial_dir / PROJECT_ID / "hunting/orchestration/hunt_configs/produced/x.yaml").write_bytes(
+        b"x\n"
+    )
+
+    inventory = resolved.resolve_inventory(store, None, _context(), files=FileStore())
+
+    assert inventory.status == "unavailable"
+    assert inventory.reason == "manifest_missing"
+    assert str(tmp_path) not in repr(inventory)
+
+
+def test_v1_store_symlinked_project_subtree_fails_closed(tmp_path: Path) -> None:
+    store = tmp_path / "store"
+    trial_dir = _write_v1_store(store, {})
+    (tmp_path / "outside").mkdir()
+    (trial_dir / PROJECT_ID).symlink_to(tmp_path / "outside", target_is_directory=True)
+
+    inventory = resolved.resolve_inventory(store, None, _context(), files=FileStore())
+
+    assert inventory.status == "unavailable"
+    assert inventory.reason == "artifact_unsafe"
+    assert str(tmp_path) not in repr(inventory)
+
+
+def test_v1_store_symlinked_artifact_fails_closed(tmp_path: Path) -> None:
+    store = tmp_path / "store"
+    _write_v1_store(store, {"hunting/orchestration/hunt_configs/produced/ok.yaml": b"ok\n"})
+    outside = tmp_path / "outside.yaml"
+    outside.write_bytes(b"x\n")
+    link = (
+        store
+        / TARGET
+        / RUN
+        / TRIAL
+        / PROJECT_ID
+        / "hunting/orchestration/hunt_configs/produced/evil.yaml"
+    )
+    link.symlink_to(outside)
+
+    inventory = resolved.resolve_inventory(store, None, _context(), files=FileStore())
+
+    assert inventory.status == "unavailable"
+    assert inventory.reason == "artifact_unsafe"
