@@ -88,7 +88,8 @@ This is the durable rule, not a per-target `ready_path` or named-checker band-ai
 
 ## Consequences
 
-- Every published application service is asserted on its own port before readiness, so a recon trial never records the boot-window `502`.
+- Every published application service is asserted on its own port before readiness, so a recon trial does not read ready before the application backend binds.
+  This property is proven at the plan seam (unit tests with a fake runner); live re-verification across a real JVM boot window is pending (no eval server idle window was available).
   The eight reported targets, plus comfyui, jetlinks, mogu-blog-v2, ofbiz, and the mock target, all select the composite by default.
 - The jetlinks backend (`jetlinks:8848` published on an ephemeral host port) is now probed directly, so its JVM boot window cannot read ready while only its `ui` sibling answers.
 - The compose poll remains the only plan for a healthchecked application service (dify, phpbb, wordpress) and the sole readiness signal where the application declares its own health.
