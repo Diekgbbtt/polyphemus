@@ -23,6 +23,12 @@ Accepted (2026-10-05).
    `api.usage_generated`, never input (cached or not).
 3. The next eval (`eval/setups/webexploitbench-5.yaml`) features the 5 bundled
    targets, each with `token_budget: 15000000`.
+4. (2026-10-08, amendment) The all-targets run lowers the cap to
+   `token_budget: 4000000` per target
+   (`eval/setups/webexploitbench-all-pulled.yaml`, all 15 targets, images
+   pre-pulled from the dataset registry). 15M was calibrated for one
+   well-covered target; 4M bounds the total spend of a 15-target serial run
+   while still letting a single trial reach the hunting quiesce.
 
 ## Consequences
 - Hunting runs to its natural quiesce; coverage is bounded by the run's own
