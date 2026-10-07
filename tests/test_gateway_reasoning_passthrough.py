@@ -12,7 +12,9 @@ openai-compatible upstream. litellm is NOT a dependency of the dev venv
 (gateway-only, ADR D10); this file therefore runs under the dedicated
 verification venv `~/.cache/polymerhus-gateway-verify-venv` which carries
 the exact `gateway/requirements.txt` pin set (`litellm[proxy]==1.96.0`,
-`fastapi==0.140.6`, `httpx==0.28.1`). Reproduce with:
+`fastapi==0.140.6`, `httpx==0.28.1`). The proxy import is `importorskip`-guarded
+(#281) so a plain dev-venv run SKIPS cleanly instead of ERRORing at collection;
+the test still runs in full under the gateway venv. Reproduce with:
 
     ~/.cache/polymerhus-gateway-verify-venv/bin/pip install \
         "litellm[proxy]==1.96.0" fastapi==0.140.6 httpx==0.28.1 pytest
@@ -53,8 +55,18 @@ from typing import List
 
 import httpx
 import pytest
-from litellm.proxy.proxy_server import app as proxy_app
-from litellm.proxy.proxy_server import initialize
+
+_proxy_server = pytest.importorskip(
+    "litellm.proxy.proxy_server",
+    exc_type=ImportError,
+    reason=(
+        "the litellm[proxy] extra (apscheduler et al.) is absent from this venv; "
+        "run this transport test under the dedicated gateway venv "
+        "~/.cache/polymerhus-gateway-verify-venv (see the module docstring)"
+    ),
+)
+proxy_app = _proxy_server.app
+initialize = _proxy_server.initialize
 
 # Sentinel values proving byte-identical passthrough: any truncation, rewrap or
 # reordering by the transport breaks the exact-string equality.
