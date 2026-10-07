@@ -194,13 +194,32 @@ def _fault_key_to_config_key(fault_key: str) -> str | None:
     return None
 
 
-def _prior_spec_insight(spec: dict) -> dict:
-    """The shallow projection of a downstream TestImplementationSpec (#202, I3):
-    identity + status + strategy + the spec_ref + the discriminating test
-    summary, present-keys only - never the full record, so a config never
-    embeds another record's full content (the I3 no-snowball discipline)."""
+def _prior_spec_insight(spec: dict, spec_id: str | None = None) -> dict:
+    """The shallow projection of a COMPLETED downstream TestImplementationSpec
+    (#202, I3; #313): identity + status + the discriminating test summary,
+    present-keys only - never the full record, so a config never embeds another
+    record's full content (the I3 no-snowball discipline).
+
+    A `specified` body is the typed `TestImplementationSpec` base (#313): it
+    carries no `spec_id` field, so the semantic `<fault>_<strategy>` identity is
+    the `spec_id` argument (the spec's file-name stem, the canonical identity)
+    when given, else derived from the payload's file-name identity keywords; an
+    explicit `spec_id` (the legacy hybrid body) still wins. The typed base's
+    discriminating content (`testing_pattern` / `verification_symptoms`) rides
+    the projection beside the legacy draft keys, all present-keys only."""
     out: dict = {"kind": "prior_spec"}
-    for key in ("spec_id", "fault_id", "status", "strategy", "spec_ref", "test"):
+    explicit = spec.get("spec_id")
+    if explicit is not None:
+        out["spec_id"] = explicit
+    elif spec_id is not None:
+        out["spec_id"] = spec_id
+    else:
+        fault_keyword = spec.get("fault_keyword")
+        strategy_keyword = spec.get("strategy_keyword")
+        if fault_keyword and strategy_keyword:
+            out["spec_id"] = f"{fault_keyword}_{strategy_keyword}"
+    for key in ("fault_id", "status", "strategy", "spec_ref", "test",
+                "testing_pattern", "verification_symptoms", "target_identity"):
         if spec.get(key) is not None:
             out[key] = spec[key]
     return out
@@ -565,14 +584,19 @@ class HuntStore:
     # --- sibling hunter-memory reads (#202) ------------------------------------
 
     def read_hunter_specs(self, project_id: str, key: str) -> list[dict]:
-        """The downstream TestImplementationSpecs (hunter-memory SIBLING bucket,
-        #202): the `hunter/test-specs/<fault_key>/` produced/ + consumed/ spec
-        records whose config_key matches `key` (a 3-part semantic config_key or
-        a 2-part revival-key prefix), each shallow-projected
-        (`_prior_spec_insight`, I3) - the config's `prior_hunt_insights` (G3)
-        source. Fail-open per record (O4): a missing sibling, an unreadable
-        file, or a non-matching folder contributes nothing; never a raise into
-        the caller."""
+        """The downstream COMPLETED TestImplementationSpecs (hunter-memory SIBLING
+        bucket, #202): the `hunter/test-specs/<fault_key>/` produced/ + consumed/
+        `status == "specified"` spec records whose config_key matches `key` (a
+        3-part semantic config_key or a 2-part revival-key prefix), each
+        shallow-projected (`_prior_spec_insight`, I3) - the config's
+        `prior_hunt_insights` (G3) source.
+
+        #313: the hunter memory is a status-varying schema - a non-`specified`
+        record is a hypothesis-only FaultItem draft, NOT a TestImplementationSpec,
+        so it is SKIPPED: a dropped/hypothesised/verified draft must never be
+        laundered into a completed downstream insight. Fail-open per record (O4):
+        a missing sibling, an unreadable file, or a non-matching folder
+        contributes nothing; never a raise into the caller."""
         out: list[dict] = []
         specs_dir = (
             project_dir(project_id, "hunting/hunter", root=self._root) / "test-specs"
@@ -592,7 +616,12 @@ class HuntStore:
                     body = self._read_yaml(path)
                     if body is None:
                         continue
-                    out.append(_prior_spec_insight(body))
+                    # #313: only a `specified` record is a completed
+                    # TestImplementationSpec; a draft is hypothesis-only and is
+                    # never a downstream prior-hunt insight.
+                    if body.get("status") != "specified":
+                        continue
+                    out.append(_prior_spec_insight(body, path.stem))
         return out
 
     def read_hunter_notes(self, project_id: str, key: str) -> list[dict]:

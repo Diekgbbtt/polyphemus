@@ -190,6 +190,13 @@ data/<project_id>/hunting/test-specs/
 - The produced/ spec file carries the status: the `hypothesised` write creates the fault draft, `verified` updates
   it, `specified` completes it into the full spec - "the persisted environment state IS the fault-processing
   tracker".
+- **The persisted body shape varies by status (#313, pinned).** A non-`specified` body is a hypothesis-only
+  `FaultItem` draft (`fault_id` / `mechanism` / `supports` / `conflicts` / `test`); a `specified` body is the typed
+  `TestImplementationSpec` base (`target_identity` / `verification_symptoms` / `testing_pattern` / `assumptions` /
+  `payload_vector_space` + the two NL fields), the SAME D4 shape the pod's `validate_spec` gate consumes. The spec's
+  identity is the file-name stem `<fault_keyword>_<strategy_keyword>` (the ADR Q13 semantic `spec_id`), a derived
+  symbol, never a payload field. Consumers gate on the persisted status: only a `specified` spec dispatches to the
+  pod, only a `specified` spec is a prior-hunt insight, and a draft is never read as a completed spec.
 - Duplicate-write FAILS as a novelty gate (very rare); re-authoring updates the existing file in place.
 - **Experiment logs live in a DIFFERENT store** on the file system, linked via an identifier (the spec id /
   pod result ref) - not in this tree.

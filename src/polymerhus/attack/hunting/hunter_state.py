@@ -24,6 +24,8 @@ from __future__ import annotations
 import operator
 from typing import Annotated, Literal, TypedDict
 
+from polymerhus.attack.hunting.pod.pod_memory import spec_identifier
+
 # --- the lifecycle verbatim (GP4, spec 2.3) ----------------------------------
 
 FaultStatus = Literal["hypothesised", "verified", "dropped", "specified"]
@@ -188,11 +190,15 @@ def _move(
 def _with_specified(state: HuntState, item: FaultItem) -> HuntState:
     """Move the fault (by `fault_id`) to `ratified_specs` as a `SpecItem`.
 
-    Returns a NEW state, never mutating the input. The `spec_id` rides the
-    observed write (the model authors the spec, GP2(c)); when the write
-    carries none it falls back to the `fault_id` so the passive machine still
-    records the signal. Never rejects (the no-block invariant): a `specified`
-    verbatim is pushed even when the fault is not in `verified_faults`."""
+    Returns a NEW state, never mutating the input. The `spec_id` is derived in
+    priority order from the observed write (#313): an explicit `spec_id` (the
+    legacy hybrid body), else the canonical `<fault_keyword>_<strategy_keyword>`
+    id derived from the typed specified payload's file-name identity keywords
+    (each keyword sanitised through `spec_identifier`, so the in-memory id equals
+    the persisted file-name stem), else the `fault_id` - so the typed payload can
+    never key every ratified spec under an empty identity. Never rejects (the no-block
+    invariant): a `specified` verbatim is pushed even when the fault is not in
+    `verified_faults`."""
     new_state = dict(state)
     verified = list(state.get("verified_faults") or [])
     fault_id = item.get("fault_id")
@@ -204,11 +210,17 @@ def _with_specified(state: HuntState, item: FaultItem) -> HuntState:
     fault_content = dict(existing or {})
     fault_content.update({k: v for k, v in payload.items() if k in _FAULT_FIELDS})
     fault_item: FaultItem = {**fault_content, "status": "specified"}
+    fault_keyword = payload.get("fault_keyword")
+    strategy_keyword = payload.get("strategy_keyword")
+    derived_spec_id = (
+        spec_identifier(str(fault_keyword), str(strategy_keyword))
+        if fault_keyword and strategy_keyword else ""
+    )
     spec_item: SpecItem = {
-        "spec_id": str(payload.get("spec_id") or fault_id or ""),
+        "spec_id": str(payload.get("spec_id") or derived_spec_id or fault_id or ""),
         "fault_key": str(payload.get("fault_key") or ""),
         "fault": fault_item,
-        "strategy": str(payload.get("strategy") or ""),
+        "strategy": str(payload.get("strategy") or strategy_keyword or ""),
         "status": "specified",
         "spec_ref": str(payload.get("spec_ref") or ""),
         "experiment_ref": str(payload.get("experiment_ref") or ""),
