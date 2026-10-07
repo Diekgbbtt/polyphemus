@@ -27,7 +27,7 @@ On each later tick the monitor reads the destination:
   bounded count and budget.
 - **present but rejected, or absent past the budget** - the node escalates with
   one named failure recorded on the trial record: `empty_file` (no file),
-  `schema_invalid` (rejected), or `dispatcher_process` (the command raised).
+  `schema_invalid` (rejected), or `dispatcher_process` (the launch raised).
 
 ## What this node does not do
 

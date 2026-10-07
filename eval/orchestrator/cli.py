@@ -29,7 +29,7 @@ from orchestrator.dataset import (
 from orchestrator.datasets import helper_for
 from orchestrator.target_config import load_target_configuration
 from orchestrator.targets import build_strategy
-from orchestrator.commands import LocalRunner
+from orchestrator.commands import BackgroundRunner, LocalRunner
 from orchestrator.files import FileStore
 from orchestrator.instances import InstanceError
 from orchestrator.orchestrator import (
@@ -1935,6 +1935,7 @@ def main(
     argv: list[str] | None = None,
     *,
     runner_factory: RunnerFactory = LocalRunner,
+    monitor_runner_factory: RunnerFactory = BackgroundRunner,
     api_factory: ApiFactory | None = None,
     dispatch_factory: DispatchFactory | None = None,
     diagnose_dispatch_factory: DiagnoseDispatchFactory | None = None,
@@ -1996,7 +1997,7 @@ def main(
             )
         if args.verb == "monitor":
             return _run_monitor(
-                args, setup, out, err, runner_factory, dispatch_factory,
+                args, setup, out, err, monitor_runner_factory, dispatch_factory,
                 diagnose_dispatch_factory,
             )
         if args.verb == "next-target":

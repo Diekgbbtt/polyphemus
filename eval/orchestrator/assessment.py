@@ -16,7 +16,7 @@ clock - so the phase is exercised without a live agent. Import performs no I/O
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Callable, Mapping, Sequence
 
@@ -56,6 +56,15 @@ class AssessmentRequest:
 # inject a fake.
 SubagentDispatcher = Callable[[AssessmentRequest], None]
 
+# The background launch's output sink, beside the node's destination file.
+DISPATCH_LOG_SUFFIX = ".dispatch.log"
+
+
+def dispatch_log_path(destination: str | Path) -> Path:
+    """The log a background-launched assessment subagent writes to."""
+    target = Path(destination)
+    return target.with_name(target.name + DISPATCH_LOG_SUFFIX)
+
 
 def _format_fields(request: AssessmentRequest) -> dict[str, str]:
     return subagents.common_fields(request)
@@ -88,7 +97,8 @@ class CommandDispatcher(subagents.CommandDispatcher):
     error = AssessmentError
 
     def plan(self, request: AssessmentRequest) -> Command:
-        return plan_dispatch(request, self.argv, cwd=self.cwd, env=self.env)
+        command = plan_dispatch(request, self.argv, cwd=self.cwd, env=self.env)
+        return replace(command, log_path=dispatch_log_path(request.destination))
 
 
 def dispatch(

@@ -9,9 +9,12 @@ factories are parameters so a test can prove dry-run dispatches nothing.
 """
 from __future__ import annotations
 
+import time
+
 import yaml
 
 from orchestrator import cli
+from orchestrator.commands import CommandResult
 
 SHA = "eval-sha-1"
 FP = "fp-1"
@@ -339,3 +342,67 @@ def test_monitor_escalates_assessment_no_command(tmp_path, capsys) -> None:
         (tmp_path / "runs" / "comfyui" / "trial-1" / "trial.yaml").read_text()
     )
     assert payload["assessment"]["status"] == "escalated"
+
+
+# --- the non-blocking dispatch (#316) ------------------------------------------
+
+
+def test_monitor_dispatches_through_the_injected_runner(tmp_path) -> None:
+    setup = _write_setup(tmp_path, _setup_payload())
+    _write_trial(tmp_path)
+
+    class RecordingRunner:
+        def __init__(self):
+            self.commands = []
+
+        def __call__(self, command):
+            self.commands.append(command)
+            return CommandResult(0)
+
+    runner = RecordingRunner()
+
+    code = cli.main(
+        _base_args(tmp_path, setup),
+        monitor_runner_factory=lambda: runner,
+        dispatch_factory=None,
+        diagnose_dispatch_factory=None,
+    )
+
+    assert code == 0
+    assert len(runner.commands) == 1
+    assert runner.commands[0].description.startswith("assess ")
+    assert runner.commands[0].log_path is not None
+    payload = yaml.safe_load(
+        (tmp_path / "runs" / "comfyui" / "trial-1" / "trial.yaml").read_text()
+    )
+    assert payload["assessment"]["status"] == "dispatched"
+
+
+def test_monitor_tick_returns_without_waiting_for_the_subagent(tmp_path) -> None:
+    setup = _write_setup(tmp_path, _setup_payload())
+    _write_trial(tmp_path)
+    args = [
+        "monitor",
+        setup,
+        "--ground-truth",
+        str(tmp_path / "gt" / "comfyui"),
+        "--data-root",
+        str(tmp_path / "data"),
+        "--runs-root",
+        str(tmp_path / "runs"),
+        "--command",
+        "sleep 5",
+    ]
+
+    start = time.monotonic()
+    code = cli.main(args)
+    elapsed = time.monotonic() - start
+
+    assert code == 0
+    # The synchronous runner would block for the whole sleep; the background
+    # launcher returns as soon as the subagent is started.
+    assert elapsed < 2.0
+    payload = yaml.safe_load(
+        (tmp_path / "runs" / "comfyui" / "trial-1" / "trial.yaml").read_text()
+    )
+    assert payload["assessment"]["status"] == "dispatched"

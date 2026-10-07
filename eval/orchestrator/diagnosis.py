@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Callable, Mapping, Protocol, Sequence
 from urllib.parse import quote, urlparse
@@ -45,6 +45,16 @@ from orchestrator.files import FileStore
 
 # `eval/orchestrator/diagnosis.py` -> `eval/prompts/diagnoser.md`.
 DIAGNOSER_PROMPT = Path(__file__).parents[1] / "prompts" / "diagnoser.md"
+
+# The background launch's output sink, beside the node's destination file.
+DISPATCH_LOG_SUFFIX = ".dispatch.log"
+
+
+def dispatch_log_path(destination: str | Path) -> Path:
+    """The log a background-launched diagnoser subagent writes to."""
+    target = Path(destination)
+    return target.with_name(target.name + DISPATCH_LOG_SUFFIX)
+
 
 DIAGNOSES_FILENAME = "diagnoses.yaml"
 # Two dispatches before the bounded re-dispatch (mirrors #271/D15).
@@ -433,7 +443,8 @@ class CommandDispatcher(subagents.CommandDispatcher):
     error = DiagnosisError
 
     def plan(self, request: DiagnosisRequest) -> Command:
-        return plan_dispatch(request, self.argv, cwd=self.cwd, env=self.env)
+        command = plan_dispatch(request, self.argv, cwd=self.cwd, env=self.env)
+        return replace(command, log_path=dispatch_log_path(request.destination))
 
 
 def dispatch(

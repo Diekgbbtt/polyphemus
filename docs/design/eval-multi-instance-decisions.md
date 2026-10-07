@@ -22,6 +22,7 @@
 
 ### D6 - Asynchronous assessment; no polling
 *2026-09-25.* On execution completion the orchestrator dispatches a background subagent that writes `verdicts.yaml` into the trial directory. The orchestrator does not poll for it; the presence check is the workflow phase of D15.
+*Amended 2026-10-09 by D52.* "No polling" is now literal: the dispatch launches the subagent detached and the tick returns at once, so the presence check is the only completion signal.
 
 ### D7 - Durability: bind mount + active continuous sync
 *2026-09-25.* The instance data root is host-backed by a docker bind mount plus an active continuous sync to a durable artifact store.
@@ -156,6 +157,7 @@ One-way sync (D12) removes conflict classes; residual risks are lag, backlog gro
 
 ### R5 - Silent assessment failure without polling
 D15's presence phase (check, re-dispatch twice, then self-repair) is the mitigation; a dead subagent is caught at eval-close rather than immediately.
+*Amended 2026-10-09 by D52.* The presence check is now the monitor's per-tick node state (not only eval-close), with the same two-dispatch bound before a named escalation; a detached subagent that exits without writing its output is caught by that bound.
 
 ### R6 - Unscoped API endpoints within an instance
 Module pause/resume/drain, run stop/status, session verbs, `GET /runs`, LightRAG and ingestion are unscoped. Per-instance stacks mitigate cross-instance leakage; the endpoints stay unsafe for multiple projects in one instance.
@@ -415,3 +417,78 @@ The chain's `next-target` remains the per-target bring-up the driver calls first
 - `up()` with no `target_id` still starts every target (the whole-setup verb), proven by `test_up_drives_the_instance_and_target`.
 - `up(target_id=...)` starts only the named target and still brings up the instance stack, proven by `test_up_scopes_to_one_target_when_target_id_given`.
 - The single-target flow (`first.yaml`) is unchanged because the one target matches.
+
+## Round-11 decision (the non-blocking post-execution dispatch, #316, 2026-10-09)
+
+### D52 - The post-execution dispatch launches the subagent detached; the tick never blocks
+*2026-10-09.* Amends D6 and R5; the presence check stays D15's.
+The monitor tick (`orchestrator monitor`, #289) dispatched the assessment and diagnoser subagents through the synchronous `LocalRunner` (`subprocess.run`), so one tick blocked for the whole subagent run and could not advance other trials.
+The workflow prompts already promised a non-blocking dispatch; the code did not.
+This is the #316 defect.
+
+**Decision.**
+The monitor's dispatch path launches the configured agent command detached and returns at once.
+`BackgroundRunner` (`orchestrator/commands.py`) starts the command with `start_new_session=True`, redirects its stdout and stderr to a per-node log beside the node's destination (`<destination>.dispatch.log`), and never waits.
+The tick records the attempt and returns, so later ticks advance every other trial.
+
+**What "bounded" means.**
+A node is bounded by its wait budget and its dispatch count, both already in the tick decision (`DEFAULT_BUDGET_S`, `MAX_DISPATCHES = 2`).
+Within the budget the node is `awaiting`; past it the node re-dispatches up to the bound, then escalates with a named failure.
+At most two subagents are launched per node, so a hung first dispatch costs one extra launch, never a pile-up.
+
+**How completion is observed.**
+The node's output file is the contract and the only completion signal: `verdicts.yaml` for the assessment, `diagnoses.yaml` for the diagnosis.
+A later tick reads the file, validates it, advances the node, and never dispatches again.
+The detached process is not polled, so it may write the file long after the tick that launched it has exited.
+The log beside the destination records the subagent's output for the operator; it is diagnostic, never an input to the decision.
+
+**How the tick avoids double-dispatch.**
+The output-file gate is the primary guard: a present, valid file ends the node before any dispatch is considered.
+While the file is absent and the last dispatch is within budget, the tick awaits and does not re-dispatch.
+A re-dispatch can therefore only follow a budget expiry, and the dispatch count caps the overlap at two.
+Both subagents write the same destination with their own tools: they are external `opencode` commands, not in-process writers, and no atomic-rename wrapper exists on that path today. The validator accepts the first present-and-valid file, so a late first dispatch that finishes after a second can overwrite a newer valid file with older content. That staleness is a named residual risk, not mitigated today; the output-file gate remains the primary guard against double-dispatch.
+
+**Failure observation is weaker, and named.**
+A launch that raises (a missing executable) still propagates and is recorded as an `error` attempt, so the node escalates `dispatcher_process`.
+A subagent that starts and then exits non-zero without writing its output is not observed directly; the node re-dispatches within the bound and finally escalates `empty_file` (or `schema_invalid`).
+This preserves the D15/R5 posture: a dead subagent is caught by the presence check and the bound, not by process polling.
+
+**Surfer-loop interaction.**
+None is added.
+The surfer owns failed, blocked, and interrupted executions; the monitor defers those and never dispatches a subagent for them.
+The assessment and diagnosis nodes' failures surface on the trial record through the monitor's own escalation, not through the surfer.
+
+**Scope.**
+Only the `monitor` verb uses the non-blocking runner (`cli.main(monitor_runner_factory=BackgroundRunner)`).
+The manual `assess`/`diagnose` verbs and `close-verify` keep the synchronous runner, because an operator invokes them only when the trial's output already exists (`assess`/`diagnose` record one dispatch and return) or when the close phase checks within the invocation.
+
+**Rejected: a fixed timeout around the synchronous runner.**
+A timeout still blocks the tick for its duration, so it does not restore concurrency across trials; it also turns a slow but healthy subagent into a spurious failure.
+A bounded wait is not a non-blocking dispatch.
+
+**Rejected: a launch wrapper that records the child's exit status.**
+An exit-status sidecar would let the node name `dispatcher_process` sooner, but it adds a second observable and a race with the output-file gate for no correctness the output contract does not already give.
+The dispatch bound already resolves a crashed subagent; the sidecar is future hardening if the escalation latency proves costly.
+
+**Falsification checks.**
+- `BackgroundRunner` returns before a sleeping command finishes (`test_background_runner_returns_before_a_sleeping_command_finishes`).
+- A monitor tick whose dispatch is `sleep 5` returns in well under the sleep (`test_monitor_tick_returns_without_waiting_for_the_subagent`).
+- The monitor records the dispatch and advances the node through the injected runner (`test_monitor_dispatches_through_the_injected_runner`).
+- A launch failure still escalates `dispatcher_process`, and a late output still advances the node (the existing monitor tests).
+
+### D53 - Every evidence path is data-root-relative and begins with the `<project_id>/` segment (#288)
+*2026-10-09.* The assessor and diagnoser role prompts named evidence examples as bare data-root-relative paths (`hunting/orchestration/hunt_configs/...`), but the code resolves a verdict row's chain path as `data_root / relative` (`orchestrator/store.py::materialize`) and builds every evidence path under `<data_root>/<project_id>/` (`orchestrator/files.py`).
+A fresh subagent reading the bare examples would look outside the project bucket and fail the chain at materialize time.
+
+**Decision.**
+Every evidence path in the assessor and diagnoser role prompts (`eval/prompts/assessment.md` and `eval/prompts/diagnoser.md`) is written in the one resolvable shape: relative to the instance data root and beginning with the trial's `<project_id>/` segment.
+The prompts state that `<project_id>` is read from the trial record's `project_id` field.
+The assessment schema field and the diagnoser evidence reference each name the mandatory segment where the subagent reads the contract.
+
+**Landing.**
+The prompt rewrite landed in `c6371f1` (#288); this change adds the missing regression test at the prompt/contract seam and sharpens the field-level schema comments so the contract is stated beside the field a fresh subagent fills in.
+`tests/eval/test_evidence_path_contract.py` pins each prompt's example prefixes to `orchestrator/files.py`'s resolved path shape, so the two can never drift.
+
+**Falsification checks.**
+- Both prompts carry `<project_id>/hunting/orchestration/hunt_configs/`, `<project_id>/hunting/hunter/test-specs/`, and `<project_id>/hunting/test-executor-pod/`.
+- `files.hunt_configs_dir`, `files.hunter_test_specs_fault_dir`, and `files.pod_dir` each resolve under `data_root/<project_id>/...`.

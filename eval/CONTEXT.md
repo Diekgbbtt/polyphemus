@@ -200,7 +200,14 @@ _Avoid_: final check, audit
 The eval orchestrator's post-execution workflow driver (#289): one tick verifies every trial's execution state and advances a single node, from a successful execution to the background assessment and then to the diagnosis.
 It is one CLI tick (`orchestrator monitor`) wrapped as the `eval_monitor` custom tool, and it is the only automated path that dispatches the assessment and diagnoser subagents (the manual `assess`/`diagnose` verbs remain); a failed, blocked, or timed-out execution is deferred to the surfer loop.
 An `interrupted` execution (a provider-paused hunt, #331) is likewise deferred, never escalated - it is resumable, and its hunting-phase failure carries the recorded provider cause so the surfer can tell a transient throttle from consumed credits.
+The dispatch is non-blocking (#316, D52): the tick launches the configured agent command detached (`BackgroundRunner`) and returns at once, so one tick can advance every other trial while a subagent runs.
+The node's output file is the only completion signal; a detached subagent that never writes it is re-dispatched within the bounded count and budget and then escalated with a named failure.
+Each launch redirects the subagent's output to a dispatch log beside the node's destination (`<destination>.dispatch.log`); the log is diagnostic, never an input to the tick decision.
 _Avoid_: monitor loop, watcher, scheduler
+
+**Dispatch log**:
+The per-launch output sink `<destination>.dispatch.log` beside an assessment or diagnosis node's destination file, written by the detached `BackgroundRunner` so a background subagent outlives the tick that launched it.
+_Avoid_: stdout, agent log
 
 **Workflow node**:
 One step of the post-execution workflow (`execution`, `assessment`, `diagnosis`), driven by the tick control plane.

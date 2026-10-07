@@ -43,7 +43,7 @@ Write a YAML list, one row per ground-truth vulnerability:
   confidence: number
   matched: {unit, fault_class, symptom}
   evidence_chain:            # required for identified and partial
-    hunt_config: path        # data-root-relative
+    hunt_config: path        # data-root-relative; begins with the `<project_id>/` segment
     spec_dir: path
     experiment_logs: [path]
     pod_export: path
