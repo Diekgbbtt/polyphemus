@@ -279,6 +279,14 @@ export interface EvalDegradedTrial {
 // `Captured with Trial` and `Saved for project`; schema details never surface.
 export type ResolvedSource = "trial_snapshot" | "project_storage"
 
+// A path-free error from one resolved source: the current project storage could
+// not be read while the Trial's stored artifacts are still shown. Optional on
+// the wire; older server bodies omit it.
+export interface ResolvedArtifactIssue {
+  source: string
+  reason: string
+}
+
 export interface ResolvedProjectGraphAvailable {
   status: "available"
   source: ResolvedSource
@@ -308,6 +316,7 @@ export interface ResolvedArtifactInventoryAvailable {
   project_id: string | null
   fallback_reason: string | null
   groups: ProjectArtifactGroup[]
+  issues?: ResolvedArtifactIssue[]
 }
 
 export interface ResolvedArtifactInventoryUnavailable {
@@ -317,6 +326,7 @@ export interface ResolvedArtifactInventoryUnavailable {
   fallback_reason: string | null
   reason: string
   groups: []
+  issues?: ResolvedArtifactIssue[]
 }
 
 export type ResolvedArtifactInventory =

@@ -992,3 +992,77 @@ test("labels current-only files and leaves captured files unlabelled", async () 
   expect(capturedItem?.querySelector(".project-artifact-origin")).toBeNull()
   expect(currentItem?.querySelector(".project-artifact-origin")).not.toBeNull()
 })
+
+
+test("warns when the current source fails but keeps the stored artifacts", async () => {
+  const stored = entry({
+    artifact_id: "cap",
+    relative_path: "hunting/orchestration/hunt_configs/produced/captured.yaml",
+    origin: "captured",
+  })
+  routeFetch([
+    [
+      "/resolved-artifacts",
+      () =>
+        json(
+          inventory({
+            source: "trial_snapshot",
+            issues: [{ source: "project_storage", reason: "artifact_unsafe" }],
+            groups: [
+              group({
+                key: "hunt-configs",
+                label: "Hunt configs",
+                entries: [stored],
+              }),
+            ],
+          }),
+        ),
+    ],
+  ])
+
+  const { container } = renderSection()
+
+  const warning = await screen.findByRole("status")
+  expect(warning.textContent).toContain(
+    "Artifact correnti non consultabili (artifact_unsafe)",
+  )
+  expect(warning.textContent).toContain("mostrati gli artifact salvati disponibili")
+  // The stored artifact stays visible and linkable.
+  const link = container.querySelector(".project-artifact-entries a")
+  expect(link?.textContent).toContain("captured.yaml")
+})
+
+
+test("shows no current-source warning for a clean inventory", async () => {
+  routeFetch([
+    ["/resolved-artifacts", () => json(inventory({ source: "trial_snapshot", issues: [] }))],
+  ])
+
+  renderSection()
+
+  await waitFor(() =>
+    expect(document.querySelector(".artifact-source")).not.toBeNull(),
+  )
+  expect(screen.queryByText(/Artifact correnti non consultabili/)).toBeNull()
+})
+
+
+test("removes the warning once the current source is readable again", async () => {
+  vi.useFakeTimers()
+  let body: ResolvedArtifactInventory = inventory({
+    source: "trial_snapshot",
+    issues: [{ source: "project_storage", reason: "artifact_unsafe" }],
+  })
+  routeFetch([["/resolved-artifacts", () => json(body)]])
+  renderSection()
+
+  await act(async () => {})
+  expect(screen.getByText(/Artifact correnti non consultabili/)).toBeDefined()
+
+  body = inventory({ source: "trial_snapshot", issues: [] })
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(POLL)
+  })
+
+  expect(screen.queryByText(/Artifact correnti non consultabili/)).toBeNull()
+})

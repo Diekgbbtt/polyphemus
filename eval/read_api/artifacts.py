@@ -167,7 +167,10 @@ def _resolve_trial(
 
 
 def _load_inventory(
-    trial_dir: Path, *, require_coherent: bool = False
+    trial_dir: Path,
+    *,
+    require_coherent: bool = False,
+    manifest: Mapping | None = None,
 ) -> tuple[str, list[dict]]:
     """The manifest's project id and its validated, allowlisted inventory entries.
 
@@ -176,16 +179,21 @@ def _load_inventory(
     the atomic snapshot fingerprint (`project_snapshot.snapshot_sha256` ==
     `project_artifacts.snapshot_sha256`); the resolved layer uses that stricter
     form so a digest-inconsistent capture is never served as a Trial snapshot.
+
+    A caller that has already read and validated the manifest (the resolved
+    layer's pre-read guard) passes it as `manifest=` so this loader never touches
+    the file again - a symlinked or oversized manifest is never read here.
     """
-    manifest_path = trial_dir / MANIFEST_FILENAME
-    if not manifest_path.is_file():
-        raise _error(SNAPSHOT_UNAVAILABLE, 409)
-    try:
-        manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
-    except (OSError, yaml.YAMLError):
-        raise _error(ARTIFACT_UNSAFE, 409)
-    if not isinstance(manifest, Mapping):
-        raise _error(ARTIFACT_UNSAFE, 409)
+    if manifest is None:
+        manifest_path = trial_dir / MANIFEST_FILENAME
+        if not manifest_path.is_file():
+            raise _error(SNAPSHOT_UNAVAILABLE, 409)
+        try:
+            manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, yaml.YAMLError):
+            raise _error(ARTIFACT_UNSAFE, 409)
+        if not isinstance(manifest, Mapping):
+            raise _error(ARTIFACT_UNSAFE, 409)
 
     if manifest.get("schema_version") != STORE_SCHEMA_VERSION:
         raise _error(ARTIFACTS_UNAVAILABLE, 409)

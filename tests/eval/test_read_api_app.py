@@ -491,6 +491,51 @@ def test_v1_store_only_inventory_detail_content_over_http(tmp_path: Path) -> Non
     assert wrong.json()["detail"] == "artifact_digest_mismatch"
 
 
+def _v1_store_with_broken_raw_client(tmp_path: Path) -> TestClient:
+    """A v1 store capture plus a configured raw tree whose collection fails."""
+    store = tmp_path / "store"
+    trial_dir = store / "comfyui-1" / "run-a" / "t1"
+    (trial_dir / PROJECT_ID / RELATIVE).parent.mkdir(parents=True)
+    (trial_dir / PROJECT_ID / RELATIVE).write_bytes(b"store bytes\n")
+    (trial_dir / "run-manifest.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "schema_version": 1,
+                "trial_id": "t1",
+                "target_id": "comfyui-1",
+                "target_run_id": "run-a",
+                "instance_id": INSTANCE,
+                "project_id": PROJECT_ID,
+                "eval_sha": "eval-1",
+                "stack_fingerprint": "fp-1",
+            }
+        ),
+        encoding="utf-8",
+    )
+    raw = tmp_path / "raw"
+    raw_project = raw / PROJECT_ID / "hunting/orchestration/hunt_configs/produced"
+    raw_project.mkdir(parents=True)
+    (raw_project / "raw.yaml").write_bytes(b"raw\n")
+    (tmp_path / "outside.yaml").write_bytes(b"x\n")
+    (raw_project / "evil.yaml").symlink_to(tmp_path / "outside.yaml")
+    source_obj = source_module.ArtifactStoreSnapshotSource(
+        store, project_data_root=raw, instance_id=INSTANCE
+    )
+    return TestClient(app_module.create_app(lambda: source_obj))
+
+
+def test_raw_merge_failure_is_reported_over_http(tmp_path: Path) -> None:
+    client = _v1_store_with_broken_raw_client(tmp_path)
+
+    body = client.get(f"{_resolved_base()}/resolved-artifacts").json()
+
+    assert body["status"] == "available"
+    assert body["issues"] == [{"source": "project_storage", "reason": "artifact_unsafe"}]
+    paths = {entry["relative_path"] for entry in _all_resolved_entries(body)}
+    assert RELATIVE in paths
+    assert "/tmp" not in repr(body)
+
+
 def test_snapshot_carries_the_recorded_spend_resolved_by_identity(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -196,6 +196,18 @@ function ResolvedArtifactsView({
       {kind === "ready" && resource.data !== null && resource.data.status === "available" && (
         <>
           <p className="artifact-source">{sourceLabel(resource.data.source)}</p>
+          {/* A current-source failure is stated, never hidden: the stored
+              artifacts below remain the readable ones. */}
+          {(resource.data.issues ?? []).map((issue) => (
+            <p
+              key={`${issue.source}:${issue.reason}`}
+              className="eval-status eval-unavailable"
+              role="status"
+            >
+              Artifact correnti non consultabili ({issue.reason}); mostrati gli
+              artifact salvati disponibili.
+            </p>
+          ))}
           {artifactSections(groups).map((section) => (
             <section
               key={section.category}

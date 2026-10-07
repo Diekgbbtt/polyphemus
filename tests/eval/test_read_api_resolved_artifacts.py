@@ -9,6 +9,7 @@ path-safe failures.
 from __future__ import annotations
 
 import hashlib
+import os
 from pathlib import Path
 
 import pytest
@@ -682,3 +683,225 @@ def test_v1_store_symlinked_artifact_fails_closed(tmp_path: Path) -> None:
 
     assert inventory.status == "unavailable"
     assert inventory.reason == "artifact_unsafe"
+
+
+# --- review fixes: validate the manifest before reading it ----------------------
+
+MANIFEST_NAME = "run-manifest.yaml"
+
+
+def _trial_dir(store: Path) -> Path:
+    return store / TARGET / RUN / TRIAL
+
+
+def _open_spy(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Record every `Path.open` so a test can prove the target was never read."""
+    opened: list[str] = []
+    real_open = Path.open
+
+    def spy(self: Path, *args: object, **kwargs: object):
+        opened.append(str(self))
+        return real_open(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(Path, "open", spy)
+    return opened
+
+
+def test_symlinked_manifest_is_rejected_without_reading_the_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = tmp_path / "store"
+    trial_dir = _trial_dir(store)
+    trial_dir.mkdir(parents=True)
+    outside = tmp_path / "outside-manifest.yaml"
+    outside.write_text(yaml.safe_dump(_v1_manifest()), encoding="utf-8")
+    manifest = trial_dir / MANIFEST_NAME
+    manifest.symlink_to(outside)
+    opened = _open_spy(monkeypatch)
+
+    inventory = resolved.resolve_inventory(store, None, _context(), files=FileStore())
+
+    assert inventory.status == "unavailable"
+    assert inventory.reason == "artifact_unsafe"
+    # Neither the symlink nor its target was ever opened.
+    assert opened == []
+
+
+def test_broken_symlink_manifest_is_unsafe(tmp_path: Path) -> None:
+    store = tmp_path / "store"
+    trial_dir = _trial_dir(store)
+    trial_dir.mkdir(parents=True)
+    (trial_dir / MANIFEST_NAME).symlink_to(tmp_path / "does-not-exist.yaml")
+
+    inventory = resolved.resolve_inventory(store, None, _context(), files=FileStore())
+
+    assert inventory.status == "unavailable"
+    assert inventory.reason == "artifact_unsafe"
+
+
+def test_invalid_yaml_manifest_is_invalid(tmp_path: Path) -> None:
+    store = tmp_path / "store"
+    trial_dir = _trial_dir(store)
+    trial_dir.mkdir(parents=True)
+    (trial_dir / MANIFEST_NAME).write_text("trial_id: [unclosed\n", encoding="utf-8")
+
+    inventory = resolved.resolve_inventory(store, None, _context(), files=FileStore())
+
+    assert inventory.status == "unavailable"
+    assert inventory.reason == "manifest_invalid"
+
+
+def test_invalid_utf8_manifest_does_not_crash(tmp_path: Path) -> None:
+    store = tmp_path / "store"
+    trial_dir = _trial_dir(store)
+    trial_dir.mkdir(parents=True)
+    (trial_dir / MANIFEST_NAME).write_bytes(b"\xff\xfe\x00 not utf-8 \x80")
+
+    inventory = resolved.resolve_inventory(store, None, _context(), files=FileStore())
+
+    assert inventory.status == "unavailable"
+    assert inventory.reason == "manifest_invalid"
+
+
+def test_special_manifest_is_unsafe(tmp_path: Path) -> None:
+    store = tmp_path / "store"
+    trial_dir = _trial_dir(store)
+    trial_dir.mkdir(parents=True)
+    os.mkfifo(trial_dir / MANIFEST_NAME)
+
+    inventory = resolved.resolve_inventory(store, None, _context(), files=FileStore())
+
+    assert inventory.status == "unavailable"
+    assert inventory.reason == "artifact_unsafe"
+
+
+def test_oversized_manifest_is_too_large(tmp_path: Path) -> None:
+    store = tmp_path / "store"
+    trial_dir = _write_v1_store(store, {})
+    manifest = _v1_manifest()
+    manifest["padding"] = "x" * (1024 * 1024 + 1)
+    (trial_dir / MANIFEST_NAME).write_text(yaml.safe_dump(manifest), encoding="utf-8")
+
+    inventory = resolved.resolve_inventory(store, None, _context(), files=FileStore())
+
+    assert inventory.status == "unavailable"
+    assert inventory.reason == "manifest_too_large"
+
+
+def test_unreadable_manifest_is_reported(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = tmp_path / "store"
+    trial_dir = _write_v1_store(store, {})
+    manifest = str(trial_dir / MANIFEST_NAME)
+    import builtins
+
+    real_open = builtins.open
+
+    def failing_open(file: object, *args: object, **kwargs: object):
+        if str(file) == manifest:
+            raise PermissionError("denied")
+        return real_open(file, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(builtins, "open", failing_open)
+
+    inventory = resolved.resolve_inventory(store, None, _context(), files=FileStore())
+
+    assert inventory.status == "unavailable"
+    assert inventory.reason == "manifest_unreadable"
+
+
+def test_broken_symlinked_project_subtree_is_unsafe(tmp_path: Path) -> None:
+    store = tmp_path / "store"
+    trial_dir = _write_v1_store(store, {})
+    (trial_dir / PROJECT_ID).symlink_to(
+        tmp_path / "missing-target", target_is_directory=True
+    )
+
+    inventory = resolved.resolve_inventory(store, None, _context(), files=FileStore())
+
+    assert inventory.status == "unavailable"
+    assert inventory.reason == "artifact_unsafe"
+
+
+# --- review fixes: surface a raw-merge failure instead of hiding it ------------
+
+
+def _v1_store(store: Path) -> None:
+    _write_v1_store(
+        store, {"hunting/orchestration/hunt_configs/produced/ok.yaml": b"ok bytes\n"}
+    )
+
+
+def test_store_capture_survives_a_broken_raw_tree_with_an_issue(tmp_path: Path) -> None:
+    store = tmp_path / "store"
+    _v1_store(store)
+    data_root = tmp_path / "raw"
+    _write_raw(
+        data_root, {"hunting/orchestration/hunt_configs/produced/raw.yaml": b"raw\n"}
+    )
+    outside = tmp_path / "outside.yaml"
+    outside.write_bytes(b"x\n")
+    (
+        data_root / PROJECT_ID / "hunting/orchestration/hunt_configs/produced/evil.yaml"
+    ).symlink_to(outside)
+
+    inventory = resolved.resolve_inventory(store, data_root, _context(), files=FileStore())
+
+    assert inventory.status == "available"
+    assert inventory.source == resolved.TRIAL_SNAPSHOT
+    assert "hunting/orchestration/hunt_configs/produced/ok.yaml" in _paths(inventory)
+    assert inventory.issues == (
+        {"source": "project_storage", "reason": "artifact_unsafe"},
+    )
+
+    body = resolved.inventory_response(inventory, TARGET, RUN, TRIAL)
+    assert body["status"] == "available"
+    assert body["issues"] == [{"source": "project_storage", "reason": "artifact_unsafe"}]
+
+    # The stored artifact still resolves to its own saved bytes.
+    entry = next(e for e in inventory.entries if e["relative_path"].endswith("ok.yaml"))
+    download = resolved.content_download(
+        inventory, entry["artifact_id"], entry["sha256"]
+    )
+    assert b"".join(download.chunks) == b"ok bytes\n"
+
+
+def test_no_issue_on_a_successful_merge(tmp_path: Path) -> None:
+    store = tmp_path / "store"
+    _v1_store(store)
+    data_root = tmp_path / "raw"
+    _write_raw(
+        data_root, {"hunting/orchestration/hunt_configs/produced/raw.yaml": b"raw\n"}
+    )
+
+    inventory = resolved.resolve_inventory(store, data_root, _context(), files=FileStore())
+
+    assert inventory.issues == ()
+    assert resolved.inventory_response(inventory, TARGET, RUN, TRIAL)["issues"] == []
+
+
+def test_configured_missing_raw_root_is_reported(tmp_path: Path) -> None:
+    store = tmp_path / "store"
+    _v1_store(store)
+
+    inventory = resolved.resolve_inventory(
+        store, tmp_path / "no-such-raw", _context(), files=FileStore()
+    )
+
+    assert inventory.status == "available"
+    assert inventory.issues == (
+        {"source": "project_storage", "reason": "project_data_unavailable"},
+    )
+
+
+def test_raw_only_inventory_reports_an_empty_issue_list(tmp_path: Path) -> None:
+    store = tmp_path / "store"
+    _write_v1_trial(store)
+    data_root = tmp_path / "raw"
+    _write_raw(data_root, HUNTING_FILES)
+
+    inventory = resolved.resolve_inventory(store, data_root, _context(), files=FileStore())
+
+    assert inventory.issues == ()
+    assert resolved.inventory_response(inventory, TARGET, RUN, TRIAL)["issues"] == []
