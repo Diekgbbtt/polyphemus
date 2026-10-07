@@ -224,6 +224,10 @@ export interface EvalTrial {
   diagnoses: EvalDiagnosis[]
   // Optional: an older snapshot predates the per-file results availability.
   results_availability?: ResultsAvailability | null
+  // The producer's real execution instants (ISO-8601 with an explicit offset).
+  // Optional: an older snapshot predates them; a null value has no instant.
+  started_at?: string | null
+  finished_at?: string | null
   availability: EvalAvailability
   reason: string | null
   artifact_summary: ProjectArtifactSummary

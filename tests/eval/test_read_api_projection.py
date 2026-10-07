@@ -747,6 +747,8 @@ def test_payload_uses_only_the_allowlisted_fields(tmp_path: Path) -> None:
         "start_phase",
         "terminal",
         "copied_at",
+        "started_at",
+        "finished_at",
         "phases",
         "eval_sha",
         "stack_fingerprint",

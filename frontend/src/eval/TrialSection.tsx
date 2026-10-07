@@ -5,7 +5,6 @@ import { useEvalData } from "./EvalDataProvider"
 import { useOperatorGroundTruth } from "./operatorGroundTruth"
 import { ResolvedArtifactsProvider } from "./ResolvedArtifactsProvider"
 import { ResolvedArtifactsSection } from "./ResolvedArtifactsSection"
-import { SavedOn } from "./SavedOn"
 import { TrialProjectGraph } from "./TrialProjectGraph"
 import { TrialResults } from "./TrialResults"
 import { ARTIFACT_LABELS, ARTIFACT_ORDER, summarizeArtifact } from "./TrialArtifactPage"
@@ -16,6 +15,7 @@ import {
   timeoutDuringHunting,
   verdictsAvailable,
 } from "./trialAvailability"
+import { TrialExecutionTimes } from "./trialTimes"
 import type { EvalTrial } from "./types"
 
 // A stable DOM anchor for one Trial, keyed by the full (run, trial) identity so
@@ -37,10 +37,6 @@ function phasesLabel(trial: EvalTrial): string {
     .filter(Boolean)
   return phases.length > 0 ? phases.join(" → ") : "—"
 }
-
-// Kept as a re-export for callers that still import the timestamp from here;
-// the component itself now lives in its own module.
-export { SavedOn }
 
 // The one "not available" string the recorded-spend block uses; a missing field
 // and an unavailable association read the same to an operator.
@@ -183,8 +179,8 @@ export function TrialSection({
           <span className="eval-ref">{trial.trial_id}</span> · project{" "}
           <span className="eval-ref">{trial.project_id ?? "unassigned"}</span>
         </p>
-        <p className="trial-saved">
-          <SavedOn copiedAt={trial.copied_at} />
+        <p className="trial-execution-line">
+          <TrialExecutionTimes trial={trial} />
         </p>
         <ul className="eval-chips">
           <li>

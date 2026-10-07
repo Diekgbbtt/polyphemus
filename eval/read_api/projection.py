@@ -892,6 +892,10 @@ def _record(
         "start_phase": meta.get("start_phase"),
         "terminal": meta.get("terminal"),
         "copied_at": meta.get("copied_at"),
+        # The producer's real execution instants (from the authoritative record);
+        # `copied_at` stays the separate materialization time.
+        "started_at": meta.get("started_at"),
+        "finished_at": meta.get("finished_at"),
         "phases": meta.get("phases", []),
         "eval_sha": eval_sha,
         "stack_fingerprint": stack_fingerprint,
@@ -964,6 +968,8 @@ def project_run_record(record: Any) -> dict[str, Any]:
         "start_phase": record.start_phase,
         "terminal": record.terminal,
         "copied_at": None,
+        "started_at": record.started_at,
+        "finished_at": record.finished_at,
         "phases": _phases(list(record.phases)),
     }
     verdicts, verdicts_availability, verdict_defect = _read_verdicts(

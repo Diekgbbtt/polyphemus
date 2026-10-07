@@ -2,27 +2,14 @@ import { Link, useParams } from "react-router-dom"
 import { targetPaths } from "../projectPaths"
 import { EvalBreadcrumbs, evalPaths } from "./EvalBreadcrumbs"
 import { useEvalData } from "./EvalDataProvider"
-import { SavedOn } from "./SavedOn"
 import { isMaterialized, verdictsAvailable } from "./trialAvailability"
+import { TrialExecutionTimes, compareTrialsByStartedAt } from "./trialTimes"
 import type { EvalTrial } from "./types"
 
 // Stable per-TargetRun anchor; the Trial breadcrumb links its TargetRun crumb
 // here, so the two must keep the same shape.
 export function targetRunAnchor(targetRunId: string): string {
   return `targetrun-${targetRunId.replace(/[^A-Za-z0-9_-]/g, "-")}`
-}
-
-// Newest first by materialization time, then a stable lexical tie-break on the
-// full identity so two Trials that share a trial id never collapse or reorder
-// unpredictably.
-export function compareTargetTrials(a: EvalTrial, b: EvalTrial): number {
-  const left = a.copied_at ?? ""
-  const right = b.copied_at ?? ""
-  if (left !== right) return left < right ? 1 : -1
-  for (const key of ["target_id", "target_run_id", "trial_id"] as const) {
-    if (a[key] !== b[key]) return a[key] < b[key] ? -1 : 1
-  }
-  return 0
 }
 
 function verdictCounts(trial: EvalTrial): { identified: number; partial: number; missed: number } {
@@ -58,7 +45,7 @@ export function TargetPage() {
   const trials = snapshot.trials
     .filter((trial) => trial.target_id === targetId)
     .slice()
-    .sort(compareTargetTrials)
+    .sort(compareTrialsByStartedAt)
   const degraded = trials.filter((trial) => trial.availability === "degraded").length
 
   // Group by TargetRun for the anchors, but order both the groups and the
@@ -128,10 +115,11 @@ export function TargetPage() {
                       ? `${counts.identified} identified / ${counts.partial} partial / ${counts.missed} missed`
                       : "Risultati non disponibili"}
                   </span>
+                  <span className="trial-index-times">
+                    <TrialExecutionTimes trial={trial} />
+                  </span>
                   <span className="trial-index-saved">
-                    {materialized ? (
-                      <SavedOn copiedAt={trial.copied_at} />
-                    ) : (
+                    {materialized ? null : (
                       <span className="eval-status">Non materializzato</span>
                     )}
                   </span>

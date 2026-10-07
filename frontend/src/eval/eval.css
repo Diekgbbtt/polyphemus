@@ -861,8 +861,13 @@
   font-size: 0.9rem;
 }
 
-.trial-index-saved {
+.trial-index-times {
   margin-left: auto;
+  color: #9aa0a6;
+  font-size: 0.85rem;
+}
+
+.trial-index-saved {
   color: #9aa0a6;
   font-size: 0.85rem;
 }
@@ -873,8 +878,40 @@
   font-size: 0.85rem;
 }
 
+.trial-execution-line {
+  margin: 0.35rem 0 0;
+  color: #9aa0a6;
+  font-size: 0.85rem;
+}
+
+.project-eval-times {
+  margin: 0.2rem 0;
+  color: #9aa0a6;
+  font-size: 0.85rem;
+}
+
+/* The real execution instants: label + `<time>`, wrapped as one unit. */
+.trial-execution {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: baseline;
+}
+
+.trial-time {
+  color: inherit;
+}
+
+.trial-time-label {
+  color: #9aa0a6;
+}
+
+.trial-time-sep {
+  color: #5f6368;
+}
+
 @media (max-width: 640px) {
-  .trial-index-saved {
+  .trial-index-times {
     margin-left: 0;
   }
 }

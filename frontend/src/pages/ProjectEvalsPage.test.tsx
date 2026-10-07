@@ -202,25 +202,30 @@ test("a schema-v1 trial shows no graph or artifact counters", async () => {
   expect(item.textContent).not.toMatch(/Skills/)
 })
 
-test("orders by captured_at, then copied_at, then the full tuple", async () => {
+test("orders by the real start instant, not the copy or capture time", async () => {
   stubFetch(
     snapshot([
       trial({
         target_id: "t",
         target_run_id: "r",
-        trial_id: "captured-old",
+        trial_id: "started-oldest",
+        // Newest copy/capture, but the oldest real start.
+        copied_at: "2024-01-09T00:00:00+00:00",
+        started_at: "2024-01-02T00:00:00+00:00",
         project_graph_summary: {
           status: "available",
           nodes: 1,
           links: 0,
-          captured_at: "2024-01-02T00:00:00+00:00",
+          captured_at: "2024-01-09T00:00:00+00:00",
         },
       }),
       trial({
         target_id: "t",
         target_run_id: "r",
-        trial_id: "fallback-newest",
-        copied_at: "2024-01-04T00:00:00+00:00",
+        trial_id: "started-newest",
+        // Oldest copy/capture, but the newest real start.
+        copied_at: "2024-01-01T00:00:00+00:00",
+        started_at: "2024-01-04T00:00:00+00:00",
         project_graph_summary: {
           status: "available",
           nodes: 1,
@@ -231,12 +236,14 @@ test("orders by captured_at, then copied_at, then the full tuple", async () => {
       trial({
         target_id: "t",
         target_run_id: "r",
-        trial_id: "captured-new",
+        trial_id: "started-mid",
+        copied_at: "2024-01-01T00:00:00+00:00",
+        started_at: "2024-01-03T00:00:00+00:00",
         project_graph_summary: {
           status: "available",
           nodes: 1,
           links: 0,
-          captured_at: "2024-01-03T00:00:00+00:00",
+          captured_at: "2024-01-01T00:00:00+00:00",
         },
       }),
     ]),
@@ -245,9 +252,9 @@ test("orders by captured_at, then copied_at, then the full tuple", async () => {
 
   await waitFor(() => expect(trialHrefs()).toHaveLength(3))
   expect(trialHrefs()).toEqual([
-    projectPaths.trial("proj-a", "t", "r", "fallback-newest"),
-    projectPaths.trial("proj-a", "t", "r", "captured-new"),
-    projectPaths.trial("proj-a", "t", "r", "captured-old"),
+    projectPaths.trial("proj-a", "t", "r", "started-newest"),
+    projectPaths.trial("proj-a", "t", "r", "started-mid"),
+    projectPaths.trial("proj-a", "t", "r", "started-oldest"),
   ])
 })
 

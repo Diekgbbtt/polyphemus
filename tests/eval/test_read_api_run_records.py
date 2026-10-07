@@ -14,6 +14,7 @@ and no host path ever reaches the payload.
 from __future__ import annotations
 
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -968,6 +969,220 @@ def test_entry_budget_stops_enumeration_lazily(
 
     assert pulled["count"] <= run_records.SCAN_MAX_ENTRIES + 1
     assert pulled["count"] < 200
+
+
+# --- execution timestamps (started_at / finished_at) ---------------------------
+
+
+def _timed_record(
+    root: Path,
+    *,
+    target: str = IDENTITY[0],
+    run: str = IDENTITY[1],
+    trial: str = IDENTITY[2],
+    project: str = PROJECT,
+    instance: str = INSTANCE,
+    started_at: object = None,
+    finished_at: object = None,
+    include_started: bool = True,
+    include_finished: bool = True,
+) -> None:
+    mapping = _base_mapping(
+        target=target, run=run, trial=trial, project=project, instance=instance
+    )
+    if include_started:
+        mapping["started_at"] = started_at
+    if include_finished:
+        mapping["finished_at"] = finished_at
+    _write_mapping(root / target / trial, mapping)
+
+
+def test_timestamp_helper_normalizes_aware_and_rejects_the_rest() -> None:
+    helper = run_records._timestamp
+
+    assert helper("2026-10-06T08:12:15+00:00") == "2026-10-06T08:12:15+00:00"
+    assert helper("2026-10-06T08:12:15+02:00") == "2026-10-06T08:12:15+02:00"
+    assert helper(datetime(2026, 10, 6, 8, 12, 15, tzinfo=timezone.utc)) == (
+        "2026-10-06T08:12:15+00:00"
+    )
+    # Naive, missing, wrong type or unparseable: no instant at all.
+    assert helper("2026-10-06T08:12:15") is None
+    assert helper(datetime(2026, 10, 6, 8, 12, 15)) is None
+    assert helper(None) is None
+    assert helper("") is None
+    assert helper("not-a-date") is None
+    assert helper(123) is None
+
+
+def test_record_reads_timezone_aware_timestamps(tmp_path: Path) -> None:
+    runs = tmp_path / "runs"
+    _timed_record(
+        runs,
+        started_at="2026-10-06T08:12:15+00:00",
+        finished_at="2026-10-06T10:41:29+02:00",
+    )
+
+    record = run_records.load_run_record_catalog([runs]).records[IDENTITY]
+
+    assert record.started_at == "2026-10-06T08:12:15+00:00"
+    assert record.finished_at == "2026-10-06T10:41:29+02:00"
+
+
+def test_yaml_datetime_timestamp_is_normalized(tmp_path: Path) -> None:
+    runs = tmp_path / "runs"
+    _timed_record(
+        runs,
+        started_at=datetime(2026, 10, 6, 8, 12, 15, tzinfo=timezone.utc),
+        finished_at=datetime(2026, 10, 6, 10, 41, 29, tzinfo=timezone.utc),
+    )
+
+    record = run_records.load_run_record_catalog([runs]).records[IDENTITY]
+
+    assert record.started_at == "2026-10-06T08:12:15+00:00"
+    assert record.finished_at == "2026-10-06T10:41:29+00:00"
+
+
+def test_missing_invalid_and_naive_timestamps_are_null(tmp_path: Path) -> None:
+    runs = tmp_path / "runs"
+    _timed_record(
+        runs,
+        started_at="not-a-date",
+        finished_at=datetime(2026, 10, 6, 10, 41, 29),  # naive
+    )
+
+    snapshot = _adapter(tmp_path, runs=runs).snapshot()
+
+    trial = _trial(snapshot, IDENTITY[2])
+    assert trial["started_at"] is None
+    assert trial["finished_at"] is None
+
+
+def test_absent_timestamp_keys_keep_the_trial(tmp_path: Path) -> None:
+    runs = tmp_path / "runs"
+    _timed_record(runs, include_started=False, include_finished=False)
+
+    snapshot = _adapter(tmp_path, runs=runs).snapshot()
+
+    trial = _trial(snapshot, IDENTITY[2])
+    assert trial["started_at"] is None
+    assert trial["finished_at"] is None
+
+
+def test_materialized_trial_is_enriched_from_its_record(tmp_path: Path) -> None:
+    runs = tmp_path / "runs"
+    _timed_record(
+        runs,
+        started_at="2026-10-06T08:12:15+00:00",
+        finished_at="2026-10-06T10:41:29+00:00",
+    )
+    _store_trial(
+        tmp_path / "store",
+        target=IDENTITY[0],
+        run=IDENTITY[1],
+        trial=IDENTITY[2],
+        verdicts=[_verdict("V-store", "identified")],
+    )
+
+    snapshot = _adapter(tmp_path, runs=runs).snapshot()
+
+    trials = [t for t in snapshot["trials"] if t["trial_id"] == IDENTITY[2]]
+    assert len(trials) == 1
+    trial = trials[0]
+    assert trial["storage_source"] == "materialized"
+    assert trial["started_at"] == "2026-10-06T08:12:15+00:00"
+    assert trial["finished_at"] == "2026-10-06T10:41:29+00:00"
+    # The enrichment never touches the store's own results.
+    assert [v["vuln_id"] for v in trial["verdicts"]] == ["V-store"]
+
+
+def test_unmaterialized_trial_exposes_record_timestamps(tmp_path: Path) -> None:
+    runs = tmp_path / "runs"
+    _timed_record(
+        runs,
+        started_at="2026-10-06T08:12:15+00:00",
+        finished_at="2026-10-06T10:41:29+00:00",
+        instance="other-instance",
+    )
+
+    trial = _trial(_adapter(tmp_path, runs=runs).snapshot(), IDENTITY[2])
+
+    assert trial["storage_source"] == "run_record"
+    assert trial["started_at"] == "2026-10-06T08:12:15+00:00"
+    assert trial["finished_at"] == "2026-10-06T10:41:29+00:00"
+
+
+def test_materialized_trial_with_a_project_mismatch_is_not_enriched(tmp_path: Path) -> None:
+    runs = tmp_path / "runs"
+    _timed_record(runs, project="other-project", started_at="2026-10-06T08:12:15+00:00")
+    _store_trial(
+        tmp_path / "store",
+        target=IDENTITY[0],
+        run=IDENTITY[1],
+        trial=IDENTITY[2],
+        verdicts=[_verdict("V-store", "identified")],
+    )
+
+    trial = _trial(_adapter(tmp_path, runs=runs).snapshot(), IDENTITY[2])
+
+    assert trial["started_at"] is None
+    assert trial["finished_at"] is None
+
+
+def test_materialized_trial_with_an_instance_mismatch_is_not_enriched(
+    tmp_path: Path,
+) -> None:
+    runs = tmp_path / "runs"
+    _timed_record(runs, instance="other-instance", started_at="2026-10-06T08:12:15+00:00")
+    _store_trial(
+        tmp_path / "store",
+        target=IDENTITY[0],
+        run=IDENTITY[1],
+        trial=IDENTITY[2],
+        verdicts=[_verdict("V-store", "identified")],
+    )
+
+    trial = _trial(_adapter(tmp_path, runs=runs).snapshot(), IDENTITY[2])
+
+    assert trial["started_at"] is None
+
+
+def test_ambiguous_record_does_not_enrich_a_materialized_trial(tmp_path: Path) -> None:
+    primary = tmp_path / "runs"
+    legacy = tmp_path / "runs-legacy"
+    _timed_record(primary, started_at="2026-10-06T08:12:15+00:00")
+    _timed_record(legacy, started_at="2026-10-05T08:12:15+00:00")
+    _store_trial(
+        tmp_path / "store",
+        target=IDENTITY[0],
+        run=IDENTITY[1],
+        trial=IDENTITY[2],
+        verdicts=[_verdict("V-store", "identified")],
+    )
+
+    snapshot = _adapter(tmp_path, runs=primary, legacy=legacy).snapshot()
+
+    trials = [t for t in snapshot["trials"] if t["trial_id"] == IDENTITY[2]]
+    assert len(trials) == 1
+    assert trials[0]["started_at"] is None
+    assert snapshot["issues"] == []
+
+
+def test_a_record_without_a_store_copy_is_not_duplicated_by_enrichment(
+    tmp_path: Path,
+) -> None:
+    runs = tmp_path / "runs"
+    _timed_record(runs, started_at="2026-10-06T08:12:15+00:00")
+    _store_trial(
+        tmp_path / "store",
+        target=IDENTITY[0],
+        run=IDENTITY[1],
+        trial=IDENTITY[2],
+        verdicts=[_verdict("V-store", "identified")],
+    )
+
+    snapshot = _adapter(tmp_path, runs=runs).snapshot()
+
+    assert sum(1 for t in snapshot["trials"] if t["trial_id"] == IDENTITY[2]) == 1
 
 
 if __name__ == "__main__":  # pragma: no cover

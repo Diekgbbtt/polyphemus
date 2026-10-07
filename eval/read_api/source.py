@@ -208,6 +208,22 @@ class ArtifactStoreSnapshotSource:
             if identity in materialized:
                 continue
             trials.append(project_run_record(catalog.records[identity]))
+        # Enrich every Trial - materialized included - with the real execution
+        # instants from a unique record that also matches its project and
+        # instance. An ambiguous or mismatched record never associates, and no
+        # other field (results, provenance, identity) is touched.
+        for trial in trials:
+            record = catalog.records.get(
+                (trial["target_id"], trial["target_run_id"], trial["trial_id"])
+            )
+            if record is None:
+                continue
+            if record.project_id != trial.get("project_id"):
+                continue
+            if record.instance_id != trial.get("instance_id"):
+                continue
+            trial["started_at"] = record.started_at
+            trial["finished_at"] = record.finished_at
         snapshot = assemble_snapshot(
             trials, dataset_id=self.dataset_id, dataset_name=self.dataset_name
         )

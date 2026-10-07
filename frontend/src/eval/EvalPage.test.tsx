@@ -20,6 +20,8 @@ const SNAPSHOT: EvalSnapshot = {
       start_phase: "recon",
       terminal: "complete",
       copied_at: "2024-01-01T00:00:00+00:00",
+      started_at: "2024-01-01T00:00:00+00:00",
+      finished_at: "2024-01-01T02:00:00+00:00",
       phases: [{ phase: "recon", status: "complete", run_id: "recon-1" }],
       eval_sha: "demo-sha-a",
       stack_fingerprint: "demo-env-x",
@@ -236,8 +238,8 @@ test("shows the last successful update time, distinct from a Trial's recorded ti
 
   await act(async () => {})
   expect(screen.getByText("Ultimo aggiornamento 09:08:07")).toBeDefined()
-  // The Trial's own recorded materialization time is a different value.
-  expect(screen.getByText(/Salvato il/)).toBeDefined()
+  // The Trial's own recorded execution time is a different value.
+  expect(screen.getByText(/Avviato il/)).toBeDefined()
   expect(screen.queryByText(/Ultimo aggiornamento .*2024/)).toBeNull()
 })
 

@@ -1,5 +1,5 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react"
-import { afterEach, expect, test } from "vitest"
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react"
+import { afterEach, expect, test, vi } from "vitest"
 import { App } from "../App"
 import type { EvalSnapshot, EvalTrial } from "./types"
 
@@ -109,6 +109,7 @@ function goto(path: string) {
 }
 
 afterEach(() => {
+  vi.useRealTimers()
   window.history.pushState({}, "", "/")
 })
 
@@ -128,16 +129,16 @@ function rowFor(trialId: string): HTMLElement {
   return row
 }
 
-test("the Target page orders Trials newest first with an identity tie-break", async () => {
+test("the Target page orders Trials by real start, newest first", async () => {
   routeFetch([
     [
       "/snapshot",
       () =>
         json(
           snapshot([
-            trial({ target_id: "comfyui-1", target_run_id: "run-1", trial_id: "trial-a", copied_at: "2024-01-01T00:00:00+00:00" }),
-            trial({ target_id: "comfyui-1", target_run_id: "run-1", trial_id: "trial-c", copied_at: "2024-01-03T00:00:00+00:00" }),
-            trial({ target_id: "comfyui-1", target_run_id: "run-1", trial_id: "trial-b", copied_at: "2024-01-01T00:00:00+00:00" }),
+            trial({ target_id: "comfyui-1", target_run_id: "run-1", trial_id: "trial-a", started_at: "2024-01-01T00:00:00+00:00" }),
+            trial({ target_id: "comfyui-1", target_run_id: "run-1", trial_id: "trial-c", started_at: "2024-01-03T00:00:00+00:00" }),
+            trial({ target_id: "comfyui-1", target_run_id: "run-1", trial_id: "trial-b", started_at: "2024-01-01T00:00:00+00:00" }),
           ]),
         ),
     ],
@@ -148,6 +149,8 @@ test("the Target page orders Trials newest first with an identity tie-break", as
     expect(screen.getByRole("heading", { name: "comfyui-1" })).toBeDefined(),
   )
   await waitFor(() => expect(rowOrder()).toHaveLength(3))
+  // trial-a and trial-b share a start instant, so the full identity breaks the
+  // tie; trial-c is newest by its real start.
   expect(rowOrder()).toEqual(["trial-c", "trial-a", "trial-b"])
   // The TargetRun grouping (and its anchor) is preserved.
   expect(screen.getByRole("heading", { name: /run-1/ })).toBeDefined()
@@ -206,7 +209,7 @@ test("each index row links to the canonical Trial detail", async () => {
   )
 })
 
-test("a row shows the outcome summary and the saved timestamp", async () => {
+test("a row shows the outcome summary and the execution timestamps", async () => {
   routeFetch([
     [
       "/snapshot",
@@ -218,6 +221,8 @@ test("a row shows the outcome summary and the saved timestamp", async () => {
               target_run_id: "run-1",
               trial_id: "trial-1",
               copied_at: "2024-01-02T00:00:00+00:00",
+              started_at: "2024-01-02T00:00:00+00:00",
+              finished_at: "2024-01-02T02:30:00+00:00",
               verdicts: [
                 { vuln_id: "V1", identified: "identified", confidence: 0.9, matched: { unit: null, fault_class: null, symptom: null }, evidence: [] },
                 { vuln_id: "V2", identified: "missed", confidence: 0, matched: { unit: null, fault_class: null, symptom: null }, evidence: [] },
@@ -233,28 +238,31 @@ test("a row shows the outcome summary and the saved timestamp", async () => {
   await waitFor(() => expect(rowFor("trial-1")).toBeDefined())
   const row = rowFor("trial-1")
   expect(row.textContent).toContain("1 identified / 0 partial / 2 missed")
-  expect(row.textContent).toContain("Salvato il")
-  // The timestamp is a semantic <time> whose machine-readable value is the
-  // stored instant; the visible text is its browser-local rendering.
-  const saved = row.querySelector("time")
-  expect(saved?.getAttribute("dateTime")).toBe("2024-01-02T00:00:00+00:00")
-  expect(saved?.textContent).not.toBe("")
-  expect(saved?.textContent).not.toBe("2024-01-02T00:00:00+00:00")
+  expect(row.textContent).toContain("Avviato il")
+  expect(row.textContent).toContain("Terminato il")
+  // Each instant is a semantic <time> whose machine-readable value is the
+  // recorded one; the visible text is its browser-local rendering with seconds.
+  const times = row.querySelectorAll("time")
+  expect(times).toHaveLength(2)
+  expect(times[0]?.getAttribute("dateTime")).toBe("2024-01-02T00:00:00+00:00")
+  expect(times[1]?.getAttribute("dateTime")).toBe("2024-01-02T02:30:00+00:00")
+  expect(times[0]?.textContent).toMatch(/\d{1,2}:\d{2}:\d{2}/)
+  expect(times[0]?.textContent).not.toBe("2024-01-02T00:00:00+00:00")
 })
 
-test("a row without a timestamp says the date is not available", async () => {
+test("a row without an execution timestamp says the date is not available", async () => {
   routeFetch([
     ["/snapshot", () => json(snapshot([
-      trial({ target_id: "comfyui-1", target_run_id: "run-1", trial_id: "trial-1", copied_at: null }),
+      trial({ target_id: "comfyui-1", target_run_id: "run-1", trial_id: "trial-1", started_at: null, finished_at: null }),
     ]))],
   ])
   goto("/targets/comfyui-1")
 
   await waitFor(() => expect(rowFor("trial-1")).toBeDefined())
-  expect(rowFor("trial-1").textContent).toContain("Data non disponibile")
+  expect(rowFor("trial-1").textContent).toContain("data non disponibile")
 })
 
-test("the Trial detail shows the same saved timestamp", async () => {
+test("the Trial detail shows the same execution timestamps", async () => {
   routeFetch([
     ["/snapshot", () => json(snapshot([
       trial({
@@ -262,6 +270,8 @@ test("the Trial detail shows the same saved timestamp", async () => {
         target_run_id: "run-1",
         trial_id: "trial-1",
         copied_at: "2024-01-02T00:00:00+00:00",
+        started_at: "2024-01-02T00:00:00+00:00",
+        finished_at: "2024-01-02T02:30:00+00:00",
       }),
     ]))],
     ["/resolved-graph", () => json(GRAPH_UNAVAILABLE)],
@@ -273,16 +283,17 @@ test("the Trial detail shows the same saved timestamp", async () => {
     expect(screen.getByRole("region", { name: "Trial trial-1" })).toBeDefined(),
   )
   const section = screen.getByRole("region", { name: "Trial trial-1" })
-  expect(within(section).getByText(/Salvato il/)).toBeDefined()
-  const saved = section.querySelector("time")
-  expect(saved?.getAttribute("dateTime")).toBe("2024-01-02T00:00:00+00:00")
-  expect(saved?.textContent).not.toBe("2024-01-02T00:00:00+00:00")
+  expect(within(section).getByText(/Avviato il/)).toBeDefined()
+  expect(within(section).getByText(/Terminato il/)).toBeDefined()
+  const started = section.querySelector("time")
+  expect(started?.getAttribute("dateTime")).toBe("2024-01-02T00:00:00+00:00")
+  expect(started?.textContent).not.toBe("2024-01-02T00:00:00+00:00")
 })
 
-test("the Trial detail without a timestamp says the date is not available", async () => {
+test("the Trial detail without an execution timestamp says the date is not available", async () => {
   routeFetch([
     ["/snapshot", () => json(snapshot([
-      trial({ target_id: "comfyui-1", target_run_id: "run-1", trial_id: "trial-1", copied_at: null }),
+      trial({ target_id: "comfyui-1", target_run_id: "run-1", trial_id: "trial-1", started_at: null, finished_at: null }),
     ]))],
     ["/resolved-graph", () => json(GRAPH_UNAVAILABLE)],
     ["/resolved-artifacts", () => json(INVENTORY)],
@@ -293,7 +304,7 @@ test("the Trial detail without a timestamp says the date is not available", asyn
     expect(screen.getByRole("region", { name: "Trial trial-1" })).toBeDefined(),
   )
   const section = screen.getByRole("region", { name: "Trial trial-1" })
-  expect(within(section).getByText("Data non disponibile")).toBeDefined()
+  expect(within(section).getAllByText("data non disponibile").length).toBeGreaterThan(0)
 })
 
 const GROUND_TRUTH = {
@@ -403,4 +414,66 @@ test("legacy eval and project Trial URLs preserve the Trial identity", async () 
     expect(screen.getAllByRole("region", { name: "Trial trial-1" }).length).toBeGreaterThan(0),
   )
   expect(window.location.pathname).toBe("/p/proj-1/evals/comfyui-1/run-1/trial-1")
+})
+
+const POLL = 15_000
+
+test("an unmaterialized Trial still shows its real execution dates", async () => {
+  routeFetch([
+    ["/snapshot", () => json(snapshot([
+      trial({
+        target_id: "comfyui-1",
+        target_run_id: "run-1",
+        trial_id: "t-timeout",
+        storage_source: "run_record",
+        copied_at: null,
+        started_at: "2026-10-06T08:12:15+00:00",
+        finished_at: "2026-10-06T10:41:29+00:00",
+      }),
+    ]))],
+  ])
+  goto("/targets/comfyui-1")
+
+  await waitFor(() => expect(rowFor("t-timeout")).toBeDefined())
+  const row = rowFor("t-timeout")
+  const times = row.querySelectorAll("time")
+  expect(times[0]?.getAttribute("dateTime")).toBe("2026-10-06T08:12:15+00:00")
+  expect(times[1]?.getAttribute("dateTime")).toBe("2026-10-06T10:41:29+00:00")
+  // The provenance marker stays separate from the dates.
+  expect(row.textContent).toContain("Non materializzato")
+})
+
+test("a refresh updates the execution dates without duplicating the Trial", async () => {
+  vi.useFakeTimers()
+  const record = (started: string, finished: string) =>
+    trial({
+      target_id: "comfyui-1",
+      target_run_id: "run-1",
+      trial_id: "trial-1",
+      started_at: started,
+      finished_at: finished,
+    })
+  let body = snapshot([record("2024-01-02T00:00:00+00:00", "2024-01-02T01:00:00+00:00")])
+  globalThis.fetch = (async (input: unknown) => {
+    const url = String(input)
+    if (url.endsWith("/snapshot")) return json(body)
+    throw new Error(`unexpected fetch: ${url}`)
+  }) as typeof fetch
+  goto("/targets/comfyui-1")
+
+  await act(async () => {})
+  expect(rowOrder()).toEqual(["trial-1"])
+  expect(rowFor("trial-1").querySelector("time")?.getAttribute("dateTime")).toBe(
+    "2024-01-02T00:00:00+00:00",
+  )
+
+  body = snapshot([record("2024-01-03T00:00:00+00:00", "2024-01-03T01:00:00+00:00")])
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(POLL)
+  })
+
+  expect(rowOrder()).toEqual(["trial-1"])
+  expect(rowFor("trial-1").querySelector("time")?.getAttribute("dateTime")).toBe(
+    "2024-01-03T00:00:00+00:00",
+  )
 })

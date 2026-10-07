@@ -22,6 +22,7 @@ from __future__ import annotations
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 
 import yaml
@@ -79,6 +80,10 @@ class RunRecord:
     phases: tuple[Mapping, ...]
     eval_sha: str | None
     stack_fingerprint: str | None
+    # The producer's real execution instants, normalized to an ISO-8601 string
+    # with an explicit offset. Absent, naive or invalid -> None.
+    started_at: str | None
+    finished_at: str | None
     # The directory the record - and, beside it, any verdicts/diagnoses - lives
     # in. It is internal and never serialized.
     directory: Path = field(repr=False, compare=False)
@@ -270,6 +275,8 @@ def _parse_record(payload: Mapping, directory: Path) -> RunRecord | None:
         phases=tuple(item for item in phases if isinstance(item, Mapping)),
         eval_sha=_safe_id(payload.get("eval_sha")),
         stack_fingerprint=_safe_id(payload.get("stack_fingerprint")),
+        started_at=_timestamp(payload.get("started_at")),
+        finished_at=_timestamp(payload.get("finished_at")),
         directory=directory,
     )
 
@@ -291,6 +298,32 @@ def _resolve_target_run_id(payload: Mapping) -> str | None:
 def _safe_id(value: object) -> str | None:
     """One path-safe, single-segment identifier, or `None`."""
     return value if is_safe_identifier(value) else None
+
+
+def _timestamp(value: object) -> str | None:
+    """A timezone-aware instant as an ISO-8601 string, or `None`.
+
+    The producer records `started_at`/`finished_at` either as an ISO string or
+    as a YAML timestamp (which `yaml.safe_load` returns as a `datetime`). Both
+    are accepted only when the value carries an explicit offset; an absent,
+    naive, wrong-typed or unparseable value has no instant and stays `None`
+    without dropping the Trial.
+    """
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        try:
+            parsed = datetime.fromisoformat(text)
+        except ValueError:
+            return None
+    else:
+        return None
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        return None
+    return parsed.isoformat()
 
 
 def _is_contained(real_root: str, path: Path) -> bool:

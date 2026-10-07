@@ -1,25 +1,9 @@
 import { Link, useParams } from "react-router-dom"
 import { useEvalData } from "../eval/EvalDataProvider"
+import { isMaterialized } from "../eval/trialAvailability"
+import { TrialExecutionTimes, compareTrialsByStartedAt } from "../eval/trialTimes"
 import type { EvalTrial } from "../eval/types"
 import { projectPaths } from "../projectPaths"
-
-// The list's sort key: the captured graph time when the Trial published one,
-// otherwise the materialization time. Missing both sorts last.
-function snapshotTimestamp(trial: EvalTrial): string {
-  return trial.project_graph_summary.captured_at ?? trial.copied_at ?? ""
-}
-
-// Newest snapshot first, then a stable lexical tie-break on the full identity so
-// two Trials that share a trial id (different run or target) never collapse.
-export function compareProjectTrials(a: EvalTrial, b: EvalTrial): number {
-  const left = snapshotTimestamp(a)
-  const right = snapshotTimestamp(b)
-  if (left !== right) return left < right ? 1 : -1
-  for (const key of ["target_id", "target_run_id", "trial_id"] as const) {
-    if (a[key] !== b[key]) return a[key] < b[key] ? -1 : 1
-  }
-  return 0
-}
 
 function outcomeCounts(trial: EvalTrial): { identified: number; partial: number; missed: number } {
   const counts = { identified: 0, partial: 0, missed: 0 }
@@ -37,13 +21,13 @@ export function ProjectEvalsPage() {
   const trials = snapshot.trials
     .filter((trial) => trial.project_id === projectId)
     .slice()
-    .sort(compareProjectTrials)
+    .sort(compareTrialsByStartedAt)
 
   return (
     <div className="eval-page project-evals">
       <header className="eval-header">
         <h1>Eval Trials</h1>
-        <p className="eval-status">Materialized Trials for this project.</p>
+        <p className="eval-status">Eval Trials for this project.</p>
       </header>
 
       {trials.length === 0 && (
@@ -75,7 +59,16 @@ export function ProjectEvalsPage() {
                 <span className="eval-ref">{trial.target_id}</span> /{" "}
                 <span className="eval-ref">{trial.target_run_id}</span>
               </p>
+              <p className="project-eval-times">
+                <TrialExecutionTimes trial={trial} />
+              </p>
               <ul className="eval-chips">
+                {!isMaterialized(trial) && (
+                  <li>
+                    <span className="eval-chip-label">Source</span>
+                    <span className="eval-chip-value">non materializzato</span>
+                  </li>
+                )}
                 <li>
                   <span className="eval-chip-label">Availability</span>
                   <span className="eval-chip-value">{trial.availability}</span>
