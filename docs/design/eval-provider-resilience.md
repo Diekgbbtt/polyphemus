@@ -17,6 +17,12 @@ The opencode-go quota is **dollar-denominated**, not token-denominated (source: 
 
 The gateway's models.dev costs for `opencode-go/deepseek-v4.1-flash` (`input_cost_per_token=0.00000015`, `output_cost_per_token=0.0000006`, `input_cost_per_token_cache_read=0.000000003`) match the off-peak prices exactly. So LiteLLM's spend accounting aligns with opencode-go's quota accounting - the earlier "USD vs tokens" objection is moot.
 
+*Correction (#330 iteration 2, 2026-10-06): live verification falsified this paragraph and the price line above.*
+The models.dev record for `opencode-go/deepseek-v4.1-flash` is `input=0.15`, `output=0.6`, `cache_read=0.003` (per million USD), while opencode-go's **effective off-peak** rate is ~6x lower (`0.025` / `0.10` / `0.003` per million).
+So the models.dev record does NOT match opencode-go's off-peak prices, and LiteLLM's spend accounting did NOT align with the provider's.
+The authored `cache_read` was also inert: the D5 key `input_cost_per_token_cache_read` appears nowhere in litellm 1.96.0, so cached input was priced at 0.
+The fix is the provider-specific cost override (`sync_mapping.PROVIDER_COST_OVERRIDES`, ADR D13 amendment 2026-10-06), which re-authors the deployment's `model_info` cost keys from the effective off-peak rate on every sync, plus the D5 canonical cache-key correction (`cache_read_input_token_cost`).
+
 ### 1.2 Compatibility with the current stack - verdict: HIGH
 
 The design is a small extension of seams that already exist, not a new subsystem:

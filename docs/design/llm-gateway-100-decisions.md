@@ -71,7 +71,7 @@ The four additions:
 | `model_id` | registered `model_name` (the client sends today's `provider:model` string verbatim; the zen-family id strip moves from `build_chat_model` into the mapping layer in gateway mode - the gateway owns id translation) |
 | `context_limit` / `output_limit` | `max_input_tokens` / `max_output_tokens` |
 | `cost_input` / `cost_output` | `input_cost_per_token` / `output_cost_per_token` (the mapping layer performs the per-million -> per-token unit conversion as a pure function, unit-tested) |
-| `cost_cache_read` / `cost_cache_write` | `input_cost_per_token_cache_read` / `input_cost_per_token_cache_write` |
+| `cost_cache_read` / `cost_cache_write` | `cache_read_input_token_cost` / `cache_creation_input_token_cost` (corrected 2026-10-06, #330 iteration 2 - litellm reads these; the earlier `input_cost_per_token_cache_read` / `_cache_write` were inert) |
 | `supports_tool_calling` | `supports_function_calling` (+ `supports_parallel_function_calling` for the crawl `bind_tools` path) |
 | `supports_structured_output`, `supports_reasoning` + effort tiers, `modalities_in`/`modalities_out`, `open_weights` | custom passthrough keys (litellm's `/model/info` returns them unchanged) |
 | `reasoning_in_response` / `reasoning_field` (the reasoning-replay surface, from models.dev `interleaved` + provider `shape`) | custom passthrough keys `reasoning_in_response` (bool) / `reasoning_field` (`reasoning_content` \| `reasoning_details`), asserted per the D11 matrix; Rule 1 provenance applies |
@@ -122,7 +122,7 @@ The gateway is configured with `cache_control_injection_points` (a system-prompt
 
 Three verified facts drove this (litellm prompt-caching docs, the auto-inject tutorial, the tokenroute/openclaw passthrough docs):
 1. **The KV cache lives only at the provider.** Neither the SDK nor the gateway "does" KV caching; they only influence hit rate via byte-identical prefixes, annotations (`cache_control`), and routing hints (`prompt_cache_key`).
-2. **DeepSeek (the zen family) and OpenAI cache automatically server-side** - zero client/gateway work; byte-identical prefix suffices; hits priced via `input_cost_per_token_cache_read` (already mapped in D5).
+2. **DeepSeek (the zen family) and OpenAI cache automatically server-side** - zero client/gateway work; byte-identical prefix suffices; hits priced via `cache_read_input_token_cost` (mapped in D5; key corrected 2026-10-06, #330 iteration 2).
 3. **Auto-inject is the one gateway-side primitive** worth configuring: the gateway itself marks the stable system-prompt prefix with `cache_control` annotations, no client code change. It covers Anthropic-native models if they ever enter the provider set; for the current openai-compatible provider set it is a no-op (automatic).
 
 The response cache (`LITELLM_CACHE_TYPE=redis|in-memory`) stays out - it is the identical-request cache, and litellm's own proxy docs warn against it for multi-turn agentic traffic. A stateful agent loop's requests mutate each turn; the cacheable surface is the **prefix**, not the whole request, and the prefix is already handled by provider-native caching.
@@ -212,6 +212,39 @@ The caps default to opencode-go's dollar-denominated quota (`$12`/5h, `$30`/7d, 
 4. **Budget-exceeded is 429/503 (MEDIUM).** Confirmed above; handled by the companion provider-failure ticket (#329 classifier; #331 stop/flush/resume). The guard prevents most provider 429s; a gateway 429 remains possible at the boundary and is exactly what the provider-failure handling exists to absorb.
 
 **Enforcement substrate.** Budget reads use litellm's cross-pod spend counter (Redis first, then in-memory, then a DB reseed; per-window counters always re-check the authoritative spend-log floor). The single co-located proxy + shared postgres needs no Redis: the in-memory counter serves a single pod and `fail_closed_budget_enforcement` rejects (503) only when both the counter and the DB are unreadable - it never admits on an unverifiable value.
+
+**Amendment (2026-10-06, #330 iteration 2) - provider-specific effective cost override, and a D5 cache-key correction.**
+Iteration 1 priced the guard from the raw models.dev record.
+Live verification showed that record is wrong for the eval's role model: the gateway authored `opencode-go/deepseek-v4.1-flash` at `input_cost_per_token=1.5e-07`, `output_cost_per_token=6e-07`, `cache_read` absent, while opencode-go's effective off-peak rate is ~6x lower (`2.5e-08` / `1.0e-07` / `3e-09`).
+LiteLLM counts spend from the authored deployment `model_info`, so the guard under-counted by ~6x and tripped late (or never).
+The fix is a **provider:model cost-override table** (`sync_mapping.PROVIDER_COST_OVERRIDES`), consulted at the authoring seam on EVERY sync and applied LAST in `capability_to_model_info`, so the override always wins over the models.dev record.
+The seeded entry is opencode-go's **off-peak** rate, the default because ~90% of eval wall-time is off-peak.
+An override is a `model_info` correction on the provider's deployment (the D5 table), never the global litellm cost map - litellm models a provider offering as a deployment (`model_list -> litellm_params`), and only the deployment's `model_info` is re-authored by the sync.
+The override is marked with `cost_source: provider-override` so the pricing provenance is auditable; the capability provenance stays models.dev-sourced (Rule 1 is untouched - the reader gates capability trust on `capability_source`, and cost is not a capability).
+
+**D5 cache-key correction (found during this change).**
+The D5 table mapped `cost_cache_read` / `cost_cache_write` to `input_cost_per_token_cache_read` / `input_cost_per_token_cache_write`.
+The string `input_cost_per_token_cache_read` appears NOWHERE in the pinned litellm 1.96.0 wheel (verified by extracting the wheel and grepping the package).
+The cost path reads `cache_read_input_token_cost` / `cache_creation_input_token_cost` (`litellm/litellm_core_utils/llm_cost_calc/utils.py::_get_token_base_cost`; the router registers a deployment's `model_info` into `litellm.model_cost`, which that function then reads).
+The old keys were therefore INERT: litellm priced every cached input token at 0, so the guard under-counted cached input on top of the ~6x rate error.
+The mapping now authors the canonical keys, so the override's `cache_read` (and every model's cache pricing) actually feeds the guard.
+This is a D5 correction, not an override-only fix.
+
+**Grey points (resolved, with evidence).**
+
+1. **Peak/off-peak.** opencode-go charges 2x at peak (01:00-04:00 and 06:00-10:00 UTC Mon-Fri).
+   The override authors the **off-peak** rate and the existing **conservatism factor** (`k = 0.5`) remains the peak handling.
+   The two compose exactly: counted spend is `tokens * off_peak_rate`, the window is `0.5 * dollar_cap`, and the guard trips when counted spend reaches `0.5 * dollar_cap`, i.e. when the true worst-case (all-peak) spend reaches the dollar cap.
+   Peak-price authoring was rejected: it would over-count off-peak spend by 2x and trip at half the real quota, wasting ~50% of the budget during the ~90% of wall-time that is off-peak.
+2. **Tier fields.** The pinned litellm 1.96.0 **DOES** honor `input_cost_per_token_above_128k_tokens` / `output_cost_per_token_above_128k_tokens` (verified in the 1.96.0 source: `litellm/litellm_core_utils/llm_cost_calc/utils.py::_get_token_base_cost` + `_is_above_128k`; when `prompt_tokens > threshold` it applies the tiered input/output/cache rates to the WHOLE request, not marginally).
+   models.dev **CAN** carry context tiers (`cost.tiers[].tier = {type: "context", size: N}`, observed on `deepinfra` and `perplexity-agent` records), but the sync's data layer does not map them and the `opencode-go/deepseek-v4.1-flash` record carries none.
+   Decision: author **no** tier field - there is no tier data for the target, and authoring a guessed tier would corrupt the guard.
+   A future tier mapping must match litellm's whole-request semantics, not a marginal rate.
+3. **models.dev lifecycle.** The override is keyed by the registered name (`<provider>/<model_id>`), applied in the pure mapping, and re-authored on every sync, so it is idempotent and lands inside the authored `model_info` the convergence diff compares (a divergent record re-pushes once, then the re-run is idle - it never fights the diff).
+   Because the key is the registered name and not the models.dev record, the override survives both a models.dev price change AND a dropped/renamed models.dev record (where the model degrades to the D9 unknown path, which now also applies the override).
+   A configured override whose provider is configured but whose model is no longer on `/v1/models` cannot apply and is surfaced with a loud `cost-override gap` warning - it never disappears silently.
+
+**Spec correction.** `docs/design/eval-provider-resilience.md` §1.1 claimed the models.dev costs for `opencode-go/deepseek-v4.1-flash` "match the off-peak prices exactly"; live verification falsifies that (they are ~6x above the effective off-peak rate, and the models.dev record's `cache_read` was authored under an inert key). The iteration-2 override supersedes that claim; the section is annotated in the same change.
 
 ---
 

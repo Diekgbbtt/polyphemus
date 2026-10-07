@@ -211,7 +211,7 @@ def test_happy_path_known_record_has_full_provenance_and_mapping():
     assert info["max_output_tokens"] == 32768
     assert info["input_cost_per_token"] == 0.00000014
     assert info["output_cost_per_token"] == 0.00000028
-    assert info["input_cost_per_token_cache_read"] == 0.0000000028
+    assert info["cache_read_input_token_cost"] == 0.0000000028
     assert info["reasoning_in_response"] is True
     assert info["reasoning_field"] == "reasoning_content"
     assert info["capability_source"] == "models.dev/opencode/deepseek-v4-flash-free"
@@ -250,6 +250,117 @@ def test_happy_path_unknown_model_registered_with_provenance_only(caplog):
                     "capability_staleness": "unknown"}
     assert any("deepseek-v4-pro" in r.message for r in caplog.records), \
         "the unknown-model gap must be logged (D9)"
+
+
+# ---------------------------------------------------------------------------
+# #330 iteration 2: the provider-specific effective cost override ------------
+# ---------------------------------------------------------------------------
+
+_OVERRIDE_CATALOG = {
+    "providers": {
+        "opencode-go": {
+            "id": "opencode-go",
+            "models": {
+                "deepseek-v4.1-flash": {
+                    "id": "deepseek-v4.1-flash",
+                    "limit": {"context": 1000000, "output": 384000},
+                    "cost": {"input": 0.15, "output": 0.6, "cache_read": 0.003},
+                },
+            },
+        },
+    },
+}
+
+
+def _build_opencode_go_desired(catalog):
+    return S.build_desired(
+        {"opencode-go": {"deepseek-v4.1-flash"}}, catalog,
+        base_urls={"opencode-go": "https://opencode.ai/zen/go/v1"},
+        api_keys={"opencode-go": "oc_sk_key"}, synced_at=SYNCED_AT)
+
+
+def test_build_desired_replaces_the_models_dev_cost_with_the_override():
+    # The models.dev record prices deepseek-v4.1-flash ~6x above opencode-go's
+    # effective off-peak rate; the authored model_info must carry the override
+    # so the budget guard counts the real spend (ADR D13, #330 iteration 2).
+    model = _build_opencode_go_desired(_OVERRIDE_CATALOG)[0]
+    assert model.known is True
+    assert model.model_info["input_cost_per_token"] == 2.5e-08
+    assert model.model_info["output_cost_per_token"] == 1.0e-07
+    assert model.model_info["cache_read_input_token_cost"] == 3e-09
+    assert model.model_info["cost_source"] == M.COST_SOURCE_OVERRIDE
+    # Capabilities stay models.dev-sourced.
+    assert model.model_info["capability_source"] == \
+        "models.dev/opencode-go/deepseek-v4.1-flash"
+
+
+def test_build_desired_cost_override_survives_a_missing_models_dev_record():
+    # Lifecycle: if models.dev drops or renames the record, the model degrades
+    # to the D9 unknown path. The override is keyed by the registered name, not
+    # by the models.dev record's presence, so it MUST still apply - otherwise
+    # the guard silently fails OPEN for the eval's role model.
+    catalog = {"providers": {"opencode-go": {"id": "opencode-go", "models": {}}}}
+    model = _build_opencode_go_desired(catalog)[0]
+    assert model.known is False
+    assert model.model_info["capability_staleness"] == "unknown"
+    assert model.model_info["input_cost_per_token"] == 2.5e-08
+    assert model.model_info["output_cost_per_token"] == 1.0e-07
+    assert model.model_info["cost_source"] == M.COST_SOURCE_OVERRIDE
+
+
+def test_build_desired_warns_when_a_configured_override_has_no_live_model(caplog):
+    # The provider is configured but /v1/models no longer lists the overridden
+    # model: the override cannot apply, so it must not disappear silently.
+    with caplog.at_level("WARNING"):
+        S.build_desired(
+            {"opencode-go": set()},
+            {"providers": {"opencode-go": {"id": "opencode-go", "models": {}}}},
+            base_urls={"opencode-go": "https://opencode.ai/zen/go/v1"},
+            api_keys={"opencode-go": "oc_sk_key"}, synced_at=SYNCED_AT)
+    assert any("cost-override" in r.message for r in caplog.records), \
+        "an unreachable configured cost override must be logged loudly"
+
+
+def _override_run_args(**kw):
+    args = dict(
+        fetch_catalog=lambda: _OVERRIDE_CATALOG,
+        fetch_provider_models=lambda provider, api_key: {"deepseek-v4.1-flash"},
+        gateway=FakeGateway(),
+        providers={"opencode-go": "https://opencode.ai/zen/go/v1"},
+        read_api_key=lambda provider: "oc_sk_key",
+        synced_at=SYNCED_AT,
+    )
+    args.update(kw)
+    return args
+
+
+def test_sync_authors_the_cost_override_then_converges_to_idle():
+    # The override is authored on every sync (a litellm-config-only override is
+    # clobbered by the models.dev re-authoring), and a no-change re-run converges
+    # to a no-op - it never fights the convergence diff.
+    args = _override_run_args()
+    gw = args["gateway"]
+    assert S.run_sync(**args) == S.SYNC_OK
+    _, name, _params, info = next(c for c in gw.calls if c[0] == "add")
+    assert name == "opencode-go/deepseek-v4.1-flash"
+    assert info["input_cost_per_token"] == 2.5e-08
+    assert info["cost_source"] == M.COST_SOURCE_OVERRIDE
+
+    gw2 = FakeGateway(registered=gw.registered, keys=dict(gw._keys))
+    assert S.run_sync(**{**args, "gateway": gw2}) == S.SYNC_OK
+    assert gw2.calls == [], \
+        f"a converged override re-run must be idle (C9), got {gw2.calls}"
+
+
+def test_sync_does_not_flag_the_overridden_model_as_unpriced(caplog):
+    # The override makes the model pricesable, so the guard's pricing-gap
+    # warning (which fires for records with no authored input/output cost) must
+    # NOT fire for it - the budget guard can price the eval's role model.
+    args = _override_run_args()
+    with caplog.at_level("WARNING"):
+        assert S.run_sync(**args) == S.SYNC_OK
+    assert not any("pricing-gap" in r.message for r in caplog.records), \
+        "the overridden model must not be reported as unpriced"
 
 
 def test_happy_path_snapshot_persisted_with_count_and_hash():
