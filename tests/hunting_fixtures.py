@@ -68,6 +68,40 @@ class _ScriptedFake(BaseChatModel):
         return self
 
 
+class _RaisingModel(BaseChatModel):
+    """A model whose generation RAISES the given exception verbatim - the REAL
+    provider seam. The production turn raises an UNTYPED `openai.RateLimitError`
+    / `TimeoutError`, never the harness's `ProviderUnavailableError`, so this
+    fake reproduces the raw raise the #312 verifier observed
+    (`surfer: hunt graph degraded for ... (429 Too Many Requests)`)."""
+
+    exc: BaseException
+
+    def __init__(self, *, exc: BaseException):
+        super().__init__(exc=exc)
+
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+        raise self.exc
+
+    def bind_tools(self, tools, **kwargs):
+        return self
+
+    @property
+    def _llm_type(self) -> str:
+        return "raising-fake"
+
+
+def _openai_rate_limit_error(message: str = "429 Too Many Requests"):
+    """A REAL `openai.RateLimitError` (429), the untyped raise the production
+    hunter turn sees - constructed through the SDK like the gateway does."""
+    import httpx  # noqa: PLC0415
+    import openai  # noqa: PLC0415
+
+    request = httpx.Request("POST", "https://api.example.com/v1/chat/completions")
+    response = httpx.Response(429, request=request)
+    return openai.RateLimitError(message, response=response, body=None)
+
+
 def _hunter_factory(steps, seen=None):
     """A `model_factory` yielding a fresh scripted model per turn, walking the
     script (one build per `arun_session_turn`)."""

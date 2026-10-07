@@ -158,13 +158,15 @@ def enqueue_hunt_config(project_id: str, config, *, hunt_store=None) -> str:
 
 
 def _provider_interrupt_stats(err) -> dict:
-    """The run-row `stats` recorded when a provider-caused pass abort pauses the
-    run (#331). It carries the classifier's own cause (`interrupt_reason`) plus
-    the machine-readable fields the resume policy consumes - the HTTP status and
-    the `quota_exhausted` flag - so a transient throttle (429, resumable) is
-    distinguishable from consumed credits (terminal) after the process that saw
-    the failure is gone. A provider-caused abort from a fake/test seam without a
-    typed error still records an honest generic reason."""
+    """The run-row `stats` recorded when a provider failure pauses the run. It
+    serves both a provider-caused pass abort (#331) and a dispatched
+    hunter/pod child-session provider failure (#312). It carries the
+    classifier's own cause (`interrupt_reason`) plus the machine-readable fields
+    the resume policy consumes - the HTTP status and the `quota_exhausted` flag -
+    so a transient throttle (429, resumable) is distinguishable from consumed
+    credits (terminal) after the process that saw the failure is gone. A
+    provider caused abort from a fake/test seam without a typed error still
+    records an honest generic reason."""
     if err is not None:
         return {
             "interrupted": True,

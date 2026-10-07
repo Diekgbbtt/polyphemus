@@ -83,7 +83,10 @@ from polymerhus.attack.hunting.hunting_tracing import (
     flush_hunting_traces,
     trace_span,
 )
-from polymerhus.app.llm.provider_failure import ProviderUnavailableError
+from polymerhus.app.llm.provider_failure import (
+    ProviderUnavailableError,
+    as_provider_error,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -554,6 +557,21 @@ def build_hunting_agent(
                 # errors keep the O3/C2/C3 fail-open below.
                 raise
             except Exception as exc:  # noqa: BLE001 - O3/C2/C3: degrade, never raise
+                # #312: a REAL provider turn raises a RAW error (an
+                # `openai.RateLimitError` / `TimeoutError` / httpx transport),
+                # never the typed `ProviderUnavailableError`, so the branch above
+                # is dead for the production hunter. Classify the raw raise at
+                # the seam exactly as the pod (`pod.py`) and the orchestrator
+                # abort (`hunt_orchestrator.py`) do, then propagate the typed
+                # error so the run pauses instead of quiescing `complete` with
+                # zero specs (the trial-2 outcome). A genuine non-provider error
+                # keeps the fail-open degrade below.
+                failure = as_provider_error(exc)
+                if failure is not None:
+                    logger.warning(
+                        "hunt %s step hit a provider failure (%s); propagating it "
+                        "instead of degrading", hunt_id, exc)
+                    raise failure from exc
                 logger.warning("hunt %s step degraded (%s)", hunt_id, exc, exc_info=True)
                 feedback.append(f"hunter turn unavailable ({exc})")
                 break
@@ -666,6 +684,15 @@ def build_hunting_agent(
             # and letting the run quiesce `complete` with no typed reason.
             raise
         except Exception as exc:  # noqa: BLE001 - never raise out of dispatch_fn
+            # #312: a raw provider error that escaped the per-turn seam (a lazy
+            # seam resolution, hunt-session setup) is classified here too, so no
+            # untyped provider raise is ever degraded into a spec-less result.
+            failure = as_provider_error(exc)
+            if failure is not None:
+                logger.warning(
+                    "hunt %s hit a provider failure (%s); propagating it instead "
+                    "of degrading", hunt_id, exc)
+                raise failure from exc
             logger.warning("hunt %s degraded (%s)", hunt_id, exc, exc_info=True)
             return DispatchResult(hypothesis_verdict=None,
                                   feedback=f"hunt {hunt_id} degraded: {exc}")

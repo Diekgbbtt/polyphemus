@@ -513,6 +513,57 @@ def test_hunter_provider_failure_interrupts_the_run(tmp_path, monkeypatch):
     assert stats["quota_exhausted"] is True
 
 
+def test_raw_hunter_provider_error_at_the_real_seam_interrupts_the_run(
+        tmp_path, monkeypatch):
+    """#312, end-to-end: the REAL hunter harness (`build_hunting_agent`) is the
+    dispatch seam, and its model raises a RAW `openai.RateLimitError` - never a
+    typed error. The harness classifies the raw raise at its own seam, the
+    surfer records it, and the run pauses as `interrupted` with the provider
+    cause - instead of quiescing `complete` with zero specs (the trial-2
+    outcome). The sibling test above injects the typed error directly; this one
+    drives the production turn, which is where the defect lived."""
+    from langgraph.checkpoint.memory import InMemorySaver  # noqa: PLC0415
+
+    from tests.hunting_fixtures import (  # noqa: PLC0415
+        _RaisingModel,
+        _openai_rate_limit_error,
+    )
+    from polymerhus.attack.hunting.hunting_agent import (  # noqa: PLC0415
+        build_hunting_agent,
+    )
+
+    fake = _FakePg()
+    _patch_pg(monkeypatch, fake)
+
+    def raw_hunter_builder(*, run_id, project_id, hunter_store, **kw):
+        dispatch = build_hunting_agent(
+            run_id=run_id, project_id=project_id, memory_store=hunter_store,
+            model_factory=lambda role_id: _RaisingModel(
+                exc=_openai_rate_limit_error()),
+            checkpointer=InMemorySaver(), middleware=[], observe=False,
+        )
+        return dispatch, None
+
+    tools = _tools(HuntStore(tmp_path))
+    h, r, n = _phase_seams(tools)
+    hid = asyncio.run(hunting_runtime.start_hunting(
+        "rt-project", candidates=[_candidate()], tools=tools,
+        hypothesise_fn=h, ratify_fn=r, note_fn=n,
+        hunt_store=HuntStore(tmp_path),
+        hunter_store=HunterMemoryStore(tmp_path),
+        control=_FakeControl(),
+        hunter_builder=raw_hunter_builder, pod_builder=_noop_pod_builder,
+        tick_interval=0.001,
+    ))
+
+    assert hid == "rt-hunt-0001"
+    _, status, stats = fake.stats_writes[-1]
+    assert status == "interrupted", (
+        "a RAW hunter provider error must pause the run, not let it quiesce complete")
+    assert stats["provider_status"] == 429
+    assert stats["interrupted"] is True
+
+
 def test_build_production_hunting_agent_wires_real_seams(tmp_path):
     """The production default dispatch closure: construction is inert (no I/O,
     no LLM, no network) and returns a callable dispatch plus a reapable
