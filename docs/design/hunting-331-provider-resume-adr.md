@@ -40,7 +40,7 @@ The eval monitor (`eval/orchestrator/monitor.py::decide`) already defers any non
 
 ### The good
 
-- An `interrupted` run is never causeless: the durable cause survives the process, and the eval can tell a transient 429 from consumed credits.
+- An `interrupted` run is never causeless: the durable cause (including the machine-readable `quota_exhausted` flag) survives the process, so the eval resume policy CAN distinguish a transient 429 from consumed credits once it consumes the field. The classification wiring itself (which code resumes, how long to wait, whether to synthesise a consumed-credits code) is deferred to the operator ruling below, so the eval does not yet make the distinction.
 - The abort carries the typed error, so any future consumer (backoff, resume, policy) reads the classifier's own fields instead of re-deriving the class from a boolean.
 - No domain fabrication, no new terminal value, no change to the six-value vocabulary.
 
