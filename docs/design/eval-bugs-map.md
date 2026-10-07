@@ -109,7 +109,7 @@ Confidence: HIGH = code/evidence confirmed; POTENTIAL = needs `diagnosing-bugs`.
 |---|---|---|---|---|
 | EV-7 | tick dispatches assessment/diagnosis synchronously | design-level; blocks the tick | HIGH | #316 (folds #288; OPEN) |
 | EV-8 | the cap terminates the whole trial instead of bounding the hunting phase | design-level; partly addressed by the cap removal | HIGH | #315 |
-| EV-9 | hunt-config/spec schema varies by status | unconfirmed; the `dropped` hypothesis-only shape may be intended | POTENTIAL | #313 |
+| EV-9 | hunt-config/spec schema varies by status | **TRIAGED, INTENDED (not a writer defect)**: the status lifecycle IS the fault-processing tracker, so the persisted schema varies by design - a hunt config is one typed `HuntConfig` (content progressive), a hunter spec is a hypothesis-only `FaultItem` draft while non-`specified` and the typed `TestImplementationSpec` base once `specified`. The contract was under-documented and two consumers read the retired hybrid `SpecItem` shape instead of the typed base: `HuntStore.read_hunter_specs`/`_prior_spec_insight` surfaced dropped/hypothesised drafts as completed `prior_spec` insights and projected absent keys (so a real `specified` spec yielded only `{kind, status}`); `hunter_state._with_specified` derived an EMPTY `spec_id`, collapsing every ratified spec under one key. **Fixed** (2026-10-08, branch `fix/313-hunt-schema`): `read_hunter_specs` surfaces only `specified` records and derives the semantic `<fault>_<strategy>` identity from the file-name stem; `_with_specified` derives it from the typed payload's `fault_keyword`/`strategy_keyword`. Contract pinned in `hunting-store-write-decisions.md` section 10 + the hunting `CONTEXT.md`; regression pins in `tests/attack/test_hunt_store.py` and `tests/attack/test_hunter_state.py`. | RESOLVED (intended, documented) | #313 |
 | EV-10 | hunting yields zero test-specs/pods (trial-2, 75991388) | 11 `ratified` configs consumed, 0 specs authored; consistent with hunter-turn 429 degradation (section 0), not a mover defect | HIGH (429) | #312 |
 | EV-11 | mover cannot consume configs whose System unit id contains `::` | naive `split('::')` in `HuntStore.consume_config` and siblings | HIGH | #279 |
 | EV-12 | recon stop leaves the row `running` for `REAP_TTL_SECONDS`, then flips to `failed` | no distinct `stopped` terminal | HIGH | #287 (closed) |
@@ -138,7 +138,7 @@ Confidence: HIGH = code/evidence confirmed; POTENTIAL = needs `diagnosing-bugs`.
 
 ## 7. Needs `diagnosing-bugs`
 
-1. EV-9 status-varying hunt-config/spec schema (may be intended).
+1. ~~EV-9 status-varying hunt-config/spec schema (may be intended)~~ - resolved: intended, documented, consumers fixed (#313).
 2. EV-4 exposure-family KB predicate authoring (app-side KB artifact).
 3. EV-10 confirm the trial-2 zero-specs attribution (log window may have rotated).
 

@@ -226,8 +226,10 @@ mechanised when that workstream lands.
   spec 6 (the spec body), G4 (the lifecycle). Entry seam: the REST capability.
   Input: a full-depth hunt. Path: each ratified candidate's spec file moves
   hypothesised -> verified -> specified (or dropped with the reason) on ONE
-  produced file. Terminal: the produced spec files carry the complete attribute
-  set (target_identity, verification_symptoms, testing_pattern, assumptions,
-  payload_vector_space, rationale, interpretation_guidance, spec_id) with
-  values adequate to the specification depth, and each file carries the
-  lifecycle status it ended on. Observed: the produced YAML files read back.
+  produced file. Terminal: the produced spec files carry the complete typed
+  base (target_identity, verification_symptoms, testing_pattern, assumptions,
+  payload_vector_space, rationale, interpretation_guidance) with values adequate
+  to the specification depth; the semantic spec id is the file-name stem
+  `<fault>_<strategy>` (#313 - a derived symbol, never a payload field); each
+  file carries the lifecycle status it ended on. Observed: the produced YAML
+  files read back.
