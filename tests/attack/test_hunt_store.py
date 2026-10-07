@@ -499,8 +499,8 @@ def test_failed_config_dump_leaves_no_partial_file(tmp_path, monkeypatch):
 
     assert store.read_configs(PROJECT) == []
     produced = tmp_path / PROJECT / "hunting" / "orchestration" / "hunt_configs" / "produced"
-    assert [p for p in produced.iterdir() if p.name.endswith(".yaml")] == []
-    assert [p for p in produced.iterdir() if p.name.endswith(".tmp")] == []
+    assert list(produced.glob("*.yaml")) == []
+    assert list(produced.glob("*.tmp")) == []
 
 
 # --- I2: per-project write serialisation (not TOCTOU, no lost updates) -------

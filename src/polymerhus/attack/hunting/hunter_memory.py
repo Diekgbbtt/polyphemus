@@ -61,7 +61,11 @@ Degradation (unchanged canon, spec 9): a read failure raises (O4, the
 caller degrades to an empty set and keeps serving), a write failure raises
 (O3, the caller warns and keeps serving), and a corrupt/unparseable file
 raises rather than silently returning [] - the rewrite-on-write paths would
-otherwise destroy history. Never a silent corruption.
+otherwise destroy history. Never a silent corruption. Every file write is
+atomic (#340): the body is rendered in memory and landed through the shared
+`app.atomic_write` primitive (same-directory temp + fsync + `os.replace`), so
+a kill or abort mid-write never leaves a malformed `notes.yaml` and a reader
+always sees either the previous or the new complete file.
 
 This module imports no driver and performs no I/O at import (CODING_STANDARD
 section 6).
@@ -77,6 +81,7 @@ from typing import Literal
 
 import yaml
 
+from polymerhus.app.atomic_write import write_text_atomic
 from polymerhus.app.data_root import DATA_ROOT, project_dir
 
 from .hunt_store import (
@@ -346,10 +351,10 @@ class HunterMemoryStore:
     def _write_records(cls, path: Path, records: list[dict]) -> None:
         # Destination safety net only: the app scaffold owns the fixed topology
         # (ensure_project); a store rooted outside it still needs its own file's
-        # parent to exist.
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("w", encoding="utf-8") as fh:
-            yaml.safe_dump(records, fh, sort_keys=False)
+        # parent to exist. Atomic (#340): render first, then temp + fsync +
+        # os.replace, so an aborted write leaves the previous notes.yaml intact
+        # - never a truncated file every later read rejects.
+        write_text_atomic(path, yaml.safe_dump(records, sort_keys=False))
 
     def _read_spec_file(self, path: Path) -> dict:
         """Read ONE produced/consumed spec file; a corrupt or non-mapping body raises."""
@@ -452,9 +457,7 @@ class HunterMemoryStore:
             if mode == "create" and path.exists():
                 raise DuplicateSpecError(
                     f"hunter store: spec file already exists (novelty gate): {path}")
-            path.parent.mkdir(parents=True, exist_ok=True)
-            with path.open("w", encoding="utf-8") as fh:
-                yaml.safe_dump(spec, fh, sort_keys=False)
+            write_text_atomic(path, yaml.safe_dump(spec, sort_keys=False))
             return path
 
     def read_spec(
