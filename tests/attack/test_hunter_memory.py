@@ -21,6 +21,7 @@ from typing import Literal
 import pytest
 import yaml
 
+from polymerhus.attack.hunting import hunter_memory
 from polymerhus.attack.hunting.hunter_memory import HunterMemoryStore
 
 PROJECT = "proj-1"
@@ -264,3 +265,94 @@ def test_failed_spec_dump_leaves_no_partial_file(tmp_path, monkeypatch):
 
     assert not spec_file.exists()
     assert _tmp_leftovers(spec_file.parent) == []
+
+
+# --- #341: notes.yaml growth is bounded (count + size, value-aware eviction) --
+
+def _append_named(store: HunterMemoryStore, name: str, body: str = "x",
+                  provenance: dict | None = None) -> None:
+    store.write_note(
+        PROJECT, action="append", fault_key=FAULT_KEY, note_name=name,
+        kind="freeform", body=body, provenance=provenance,
+    )
+
+
+def _unbounded_size(monkeypatch) -> None:
+    monkeypatch.setattr(hunter_memory, "HUNTER_NOTES_MAX_BYTES", 10**9)
+
+
+def test_notes_file_is_bounded_by_record_count(tmp_path, monkeypatch):
+    """#341: a long run appends records forever; the store keeps only the
+    newest HUNTER_NOTES_MAX_RECORDS, so the whole-file rewrite stays O(bound)
+    and the file cannot grow without limit. The reader still sees one complete
+    parseable file."""
+    monkeypatch.setattr(hunter_memory, "HUNTER_NOTES_MAX_RECORDS", 3)
+    _unbounded_size(monkeypatch)
+    store = HunterMemoryStore(root_dir=tmp_path)
+    for i in range(6):
+        _append_named(store, f"n{i}")
+    notes = store.read_notes(PROJECT)
+    assert [n["note_name"] for n in notes] == ["n5", "n4", "n3"]
+    raw = yaml.safe_load(_notes_file(tmp_path).read_text(encoding="utf-8"))
+    assert len(raw) == 3
+
+
+def test_notes_eviction_preserves_durable_pod_export_records(tmp_path, monkeypatch):
+    """#341: the durable prior-insight record - the Q16 pod-export stub
+    (`provenance.verdict_stub`, consumed by `HuntStore.read_hunter_notes` into
+    a config's `prior_hunt_insights`) - survives ordinary eviction. The oldest
+    REASONING notes are dropped first; the stub is kept."""
+    monkeypatch.setattr(hunter_memory, "HUNTER_NOTES_MAX_RECORDS", 3)
+    _unbounded_size(monkeypatch)
+    store = HunterMemoryStore(root_dir=tmp_path)
+    _append_named(store, "pod-export:s1", body="stub",
+                  provenance={"verdict_stub": True, "run_id": "r", "source": "s"})
+    for i in range(5):
+        _append_named(store, f"n{i}")
+    names = {n["note_name"] for n in store.read_notes(PROJECT)}
+    assert names == {"pod-export:s1", "n3", "n4"}
+
+
+def test_notes_bound_is_absolute_when_durable_records_alone_exceed_it(tmp_path, monkeypatch):
+    """#341: the bound is absolute - when the protected durable records alone
+    exceed it, the hard ceiling still trims the oldest, so the file can never
+    grow without limit. The newest survive."""
+    monkeypatch.setattr(hunter_memory, "HUNTER_NOTES_MAX_RECORDS", 2)
+    _unbounded_size(monkeypatch)
+    store = HunterMemoryStore(root_dir=tmp_path)
+    for i in range(3):
+        _append_named(store, f"pod-export:s{i}",
+                      provenance={"verdict_stub": True})
+    names = {n["note_name"] for n in store.read_notes(PROJECT)}
+    assert names == {"pod-export:s1", "pod-export:s2"}
+
+
+def test_notes_file_is_bounded_by_serialized_size(tmp_path, monkeypatch):
+    """#341: the count bound alone is not enough when one record body is huge
+    (the observed pod-export stubs carry a full export log). A serialized-size
+    ceiling evicts oldest-first until the file fits, so the rewrite cost is
+    bounded by bytes, not by record count."""
+    monkeypatch.setattr(hunter_memory, "HUNTER_NOTES_MAX_RECORDS", 10**6)
+    monkeypatch.setattr(hunter_memory, "HUNTER_NOTES_MAX_BYTES", 4000)
+    store = HunterMemoryStore(root_dir=tmp_path)
+    for i in range(20):
+        _append_named(store, f"n{i}", body="z" * 500)
+    raw = _notes_file(tmp_path).read_text(encoding="utf-8")
+    assert len(raw.encode("utf-8")) <= 4000
+    kept = yaml.safe_load(raw)
+    assert 1 <= len(kept) < 20
+    assert kept[-1]["note_name"] == "n19"
+
+
+def test_a_single_oversized_record_is_kept_whole(tmp_path, monkeypatch):
+    """#341: a record larger than the whole-file ceiling is never truncated
+    (the write must land); the ceiling bounds the file EXCEPT for that one
+    in-flight record."""
+    monkeypatch.setattr(hunter_memory, "HUNTER_NOTES_MAX_RECORDS", 10**6)
+    monkeypatch.setattr(hunter_memory, "HUNTER_NOTES_MAX_BYTES", 100)
+    store = HunterMemoryStore(root_dir=tmp_path)
+    _append_named(store, "oversized", body="z" * 5000)
+    notes = store.read_notes(PROJECT)
+    assert len(notes) == 1
+    assert notes[0]["note_name"] == "oversized"
+

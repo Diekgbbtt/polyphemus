@@ -88,6 +88,9 @@ _CONFIG_FILE_RE = re.compile(r"_(CWE-\d+)_")
 # (`consume_config`) the mover operates on (tracker #172).
 _CONFIG_DIRECTORIES = ("produced", "consumed")
 
+MEMORY_NOTES_MAX_RECORDS = 2000
+MEMORY_NOTES_MAX_BYTES = 4 * 1024 * 1024
+
 # Per-project write serialisation (I2): write_config is check-then-write and
 # the notes surface is read-modify-write, and the async caller offloads reads
 # to worker threads while writes stay on the loop. A per-project lock covers
@@ -224,6 +227,49 @@ def _prior_spec_insight(spec: dict, spec_id: str | None = None) -> dict:
         if spec.get(key) is not None:
             out[key] = spec[key]
     return out
+
+
+def _rendered_len(body) -> int:
+    """The byte length of the exact YAML rendering a whole-file write lands, so
+    the size bound measures what actually reaches disk."""
+    return len(yaml.safe_dump(body, sort_keys=False).encode("utf-8"))
+
+
+def _notes_body_len(notes: list[dict]) -> int:
+    """The `memory.yaml` file's byte length for a notes list (the `notes:`
+    wrapper included), so the bound measures the whole file."""
+    return _rendered_len({"notes": notes})
+
+
+def retain_bounded_records(records, *, max_records, max_bytes, protected=None,
+                           render=_rendered_len):
+    """Bound a whole-file notes record list (issue #341).
+
+    `records` is oldest-first (the natural append order). The NEWEST records are
+    kept: while the list exceeds `max_records` records or its rendering exceeds
+    `max_bytes` bytes, the OLDEST record is dropped, so the whole-file rewrite
+    cost stays O(bound) instead of growing without limit over a long run.
+    `render` measures the exact body a caller will write (the bare list by
+    default, or the `notes:` wrapper for `memory.yaml`).
+
+    A record for which `protected(record)` is true is dropped only after every
+    unprotected record, so the durable prior-insight records survive ordinary
+    eviction. When the protected records ALONE exceed the bound the hard ceiling
+    still trims the oldest, so the bound is absolute. The newest record is
+    always kept whole - a single record larger than the ceiling is never
+    truncated (the write must land).
+    """
+    kept = list(records)
+    while len(kept) > 1 and (
+        len(kept) > max_records or render(kept) > max_bytes
+    ):
+        drop = next(
+            (i for i, record in enumerate(kept)
+             if not (protected is not None and protected(record))),
+            0,
+        )
+        del kept[drop]
+    return kept
 
 
 class DuplicateConfigError(ValueError):
@@ -558,8 +604,13 @@ class HuntStore:
     def _save_notes(self, project_id: str, notes: list[dict]) -> None:
         """Rewrite `memory.yaml` (the whole-file notes write; a failure raises
         to the caller, which warns and counts - O3). Atomic: the previous file
-        content survives a crash mid-dump (I1)."""
-        self._dump_yaml_atomic(self._memory_file(project_id), {"notes": notes})
+        content survives a crash mid-dump (I1). Bounded (#341): the oldest
+        notes are evicted so the file cannot grow without limit."""
+        retained = retain_bounded_records(
+            notes, max_records=MEMORY_NOTES_MAX_RECORDS,
+            max_bytes=MEMORY_NOTES_MAX_BYTES, render=_notes_body_len,
+        )
+        self._dump_yaml_atomic(self._memory_file(project_id), {"notes": retained})
 
     def read_notes(self, project_id: str, key: str | None = None) -> list[dict]:
         """The notes for a key (a 2-part revival key or a 3-part semantic key)

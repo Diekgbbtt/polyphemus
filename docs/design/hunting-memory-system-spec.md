@@ -249,8 +249,14 @@ The memory + status lifecycle is synergistic in two directions:
   `notes.yaml` and spec files, and the pod's variant/experiment/export/notes files land through the shared
   `app.atomic_write` primitive (same-directory temp + `fsync` + `os.replace`), so an aborted or killed write leaves
   the previous complete file intact and a reader never sees a partial file - the corruption failure mode of EV-29.
-  The unbounded growth of one `notes.yaml` (18 MB under the #338 orphan) is a SEPARATE deferred concern
-  (`docs/design/atomic-write-340-adr.md`).
+- **The whole-file notes stores are bounded (#341).** `memory.yaml` and the hunter `notes.yaml` are whole-file
+  rewrites, so a long run would otherwise grow one file without limit (the observed 18 MB `notes.yaml` under the #338
+  orphan). The ONE bound is `hunt_store.retain_bounded_records`: the newest records are kept and the oldest are
+  evicted until the list fits a documented record count OR serialized-size ceiling, so the rewrite cost is O(bound).
+  The hunter `notes.yaml` protects the durable prior-insight records (the Q16 pod-export stubs, `provenance.verdict_stub`,
+  consumed by `read_hunter_notes` into a config's `prior_hunt_insights`) from ordinary eviction; the bound is absolute
+  and the newest record is always kept whole. The reader contract is unchanged - one complete parseable file at all
+  times. See `docs/design/hunting-memory-growth-341-adr.md`.
 - **The persisted environment state IS the fault-processing tracker** (G10): the created fault configs express
   which faults are done (ratified), in-progress (hypothesised), or left (absent) - `run.md` is removed as
   redundant.

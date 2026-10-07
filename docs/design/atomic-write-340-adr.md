@@ -35,14 +35,13 @@ Resolves #340 (eval-bugs-map EV-29).
 - (a) An aborted/interrupted write leaves the prior file intact and parseable - covered by `tests/attack/test_hunter_memory.py::test_failed_notes_dump_leaves_prior_content_intact` and `::test_aborted_replace_leaves_prior_notes_intact`, and by the pod-store counterparts.
 - (b) A reader never sees a partial file - covered by `test_reader_never_sees_a_partial_notes_file` (the observation hook fires exactly at the rename boundary and records the old complete file).
 - (c) The hunter `notes.yaml` writer routes through the shared primitive - the atomic tests fail against a plain `path.open("w")` rewrite.
-- (d) Unbounded growth (18 MB for one run) - **explicitly deferred**, see below.
+- (d) Unbounded growth (18 MB for one run) - **resolved by the #341 follow-up**, see below.
 
-## Deferred: unbounded `notes.yaml` growth
-The 18 MB growth is a separate, non-corruption defect.
-The orphan itself is fixed at its own layer by #338 (the trial timeout now stops the active run).
-The remaining hazard is that one long run rewrites an ever-growing file with no compaction or record bound.
-Deferring is safe because the atomic write removes the corruption failure mode entirely: growth costs rewrite time and disk, never data loss, and the reader always sees a complete file.
-Compaction or a bounded-record policy is tracked as a follow-up work item (#341), not part of #340.
+## Follow-up: unbounded `notes.yaml` growth (resolved by #341)
+The 18 MB growth was a separate, non-corruption defect, deferred here because the atomic write removes the corruption failure mode entirely.
+It is now RESOLVED by #341: the whole-file notes stores keep a documented record-count and serialized-size bound (`hunt_store.retain_bounded_records`), so the rewrite cost is O(bound) instead of O(n) and a reader always sees a complete file.
+The hunter `notes.yaml` protects the durable prior-insight records (the pod-export stubs) from ordinary eviction.
+See `docs/design/hunting-memory-growth-341-adr.md`.
 
 ## Consequences
 - One construction point for the atomic-write idiom; the three private copies are retired, so the discipline cannot drift per store.

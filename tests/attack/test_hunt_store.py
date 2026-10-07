@@ -12,6 +12,7 @@ orchestrator and the e2e tiers build on.
 import threading
 
 import pytest
+import yaml
 
 from polymerhus.attack.hunting.hunt_store import (
     ConfigIdentityError,
@@ -670,3 +671,43 @@ def test_read_hunter_specs_surfaces_the_typed_specified_spec_only(tmp_path):
     # the evidence trail and the full record are never embedded (I3)
     assert "supports" not in insight and "test" not in insight
     assert "payload_vector_space" not in insight
+
+
+# --- #341: memory.yaml growth is bounded (count + size, oldest-first) --------
+
+def test_memory_yaml_is_bounded_by_record_count(tmp_path, monkeypatch):
+    """#341: the orchestrator's `memory.yaml` is a whole-file rewrite with no
+    bound. A long run must keep only the newest records so the rewrite cost
+    does not grow linearly without bound; the reader still sees a complete
+    parseable file."""
+    from polymerhus.attack.hunting import hunt_store as hs
+
+    monkeypatch.setattr(hs, "MEMORY_NOTES_MAX_RECORDS", 3)
+    monkeypatch.setattr(hs, "MEMORY_NOTES_MAX_BYTES", 10**9)
+    store = HuntStore(tmp_path)
+    key = f"{UNIT}::{CWE}"
+    for i in range(6):
+        store.append_note(PROJECT, key, f"note-{i}")
+    notes = store.read_notes(PROJECT)
+    assert [n["note"] for n in notes] == ["note-3", "note-4", "note-5"]
+    memory = tmp_path / PROJECT / "hunting" / "orchestration" / "memory.yaml"
+    assert len(yaml.safe_load(memory.read_text(encoding="utf-8"))["notes"]) == 3
+
+
+def test_memory_yaml_is_bounded_by_serialized_size(tmp_path, monkeypatch):
+    """#341: the size ceiling evicts oldest-first until the file fits, so one
+    huge note body cannot grow the file without bound."""
+    from polymerhus.attack.hunting import hunt_store as hs
+
+    monkeypatch.setattr(hs, "MEMORY_NOTES_MAX_RECORDS", 10**6)
+    monkeypatch.setattr(hs, "MEMORY_NOTES_MAX_BYTES", 4000)
+    store = HuntStore(tmp_path)
+    key = f"{UNIT}::{CWE}"
+    for i in range(20):
+        store.append_note(PROJECT, key, "z" * 500)
+    memory = tmp_path / PROJECT / "hunting" / "orchestration" / "memory.yaml"
+    raw = memory.read_text(encoding="utf-8")
+    assert len(raw.encode("utf-8")) <= 4000
+    notes = store.read_notes(PROJECT)
+    assert 1 <= len(notes) < 20
+    assert notes[-1]["note"] == "z" * 500
