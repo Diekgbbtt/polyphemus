@@ -158,13 +158,15 @@ def enqueue_hunt_config(project_id: str, config, *, hunt_store=None) -> str:
 
 
 def _provider_interrupt_stats(err) -> dict:
-    """The run-row `stats` recorded when a provider-caused pass abort pauses the
-    run (#331). It carries the classifier's own cause (`interrupt_reason`) plus
-    the machine-readable fields the resume policy consumes - the HTTP status and
-    the `quota_exhausted` flag - so a transient throttle (429, resumable) is
-    distinguishable from consumed credits (terminal) after the process that saw
-    the failure is gone. A provider-caused abort from a fake/test seam without a
-    typed error still records an honest generic reason."""
+    """The run-row `stats` recorded when a provider failure pauses the run. It
+    serves both a provider-caused pass abort (#331) and a dispatched
+    hunter/pod child-session provider failure (#312). It carries the
+    classifier's own cause (`interrupt_reason`) plus the machine-readable fields
+    the resume policy consumes - the HTTP status and the `quota_exhausted` flag -
+    so a transient throttle (429, resumable) is distinguishable from consumed
+    credits (terminal) after the process that saw the failure is gone. A
+    provider caused abort from a fake/test seam without a typed error still
+    records an honest generic reason."""
     if err is not None:
         return {
             "interrupted": True,
@@ -596,6 +598,9 @@ async def start_hunting(
             run_surfer_loop,
             surfer_session_id,
         )
+        from polymerhus.app.llm.provider_failure import (  # noqa: PLC0415
+            ProviderUnavailableError,
+        )
 
         hunting_run_id = run_id
 
@@ -809,6 +814,19 @@ async def start_hunting(
                     hunting_run_id,
                 )
                 status = "failed"
+        except ProviderUnavailableError as exc:
+            # #312/#329: a provider failure in a dispatched HUNTER or POD session
+            # surfaces through the surfer's outcome - pause the run as the
+            # resumable `interrupted` with the provider cause, exactly like a
+            # provider-caused orchestrator abort. A throttle pauses the run; it
+            # never fails it and never lets it quiesce `complete` with zero specs
+            # and no typed reason (the trial-2 outcome).
+            logger.warning(
+                "start_hunting: run %s paused on a child-session provider "
+                "failure; persisting 'interrupted'", hunting_run_id,
+            )
+            status = "interrupted"
+            terminal_stats = _provider_interrupt_stats(exc)
         except Exception:  # noqa: BLE001 - fail-open: land a terminal status
             logger.exception(
                 "start_hunting: run %s degraded; persisting 'failed'",

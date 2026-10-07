@@ -65,3 +65,11 @@ The breaker's bounded backoff is unchanged - a provider throttle is still backed
 - `src/polymerhus/attack/hunting/actors.py` - the actor records its last degrade cause.
 - `src/polymerhus/attack/hunting/hunt_orchestrator.py` - the breaker threads the cause into `HuntOrchestrationDegradedError(provider_cause=...)`.
 - `src/polymerhus/attack/hunting/runtime.py` - a provider-caused abort persists `interrupted`.
+
+## Amendment (#312, 2026-10-08)
+
+The scope of this record was the orchestrator pass and the pod verdict fabrication.
+A re-verification of the `trial-2` zero-spec outcome (ticket #312) found that a provider failure in a dispatched HUNTER session - and the pod's re-raise, which landed in an unawaited scheduled-session future - was still silently swallowed, so the run quiesced `complete` with zero specs and no typed reason.
+The hunter harness (`hunting_agent.py`) re-raises the typed error, `RunDispatchState` carries it to the surfer, and `runtime.start_hunting` maps it to `interrupted` + `stats`, exactly as for the pass abort.
+See `hunting-312-hunter-provider-failure-adr.md`.
+The resume re-scheduling remains the ESCALATED operator decision of #331.

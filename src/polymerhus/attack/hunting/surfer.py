@@ -128,10 +128,15 @@ class RunDispatchState:
     hunter dispatch, before any of its specs can exist); `hunters_in_graph` is
     the set of config keys whose hunter is still running its ReAct graph - the
     mid-graph vs idle-loop distinction the quiesce predicate needs (a
-    mid-graph hunter may still author produced specs)."""
+    mid-graph hunter may still author produced specs). `provider_failure` is
+    the run-local typed provider error a dispatched HUNTER or POD session
+    recorded (#312/#329): a provider failure is infrastructure, so the surfer
+    surfaces it and the run pauses (`interrupted`) instead of quiescing
+    `complete` with zero specs and no typed reason."""
 
     hunter_inboxes: dict[str, AgentInbox] = field(default_factory=dict)
     hunters_in_graph: set[str] = field(default_factory=set)
+    provider_failure: ProviderUnavailableError | None = None
 
 
 @dataclass(frozen=True)
@@ -388,6 +393,7 @@ def build_run_dispatch(
             gate=gate,
             pod_builder=pod_builder,
             pod_store=pod_store,
+            state=state,
         )
 
     return coro_for
@@ -418,6 +424,7 @@ async def run_hunter_session(
         logger.warning("surfer: hunter builder failed for %s (%s)", config_key, exc)
         state.hunters_in_graph.discard(config_key)
         return
+    paused_on_provider_failure = False
     try:
         if gate is not None:
             async with gate:
@@ -426,6 +433,16 @@ async def run_hunter_session(
             await dispatch_fn(config)
     except asyncio.CancelledError:
         raise
+    except ProviderUnavailableError as exc:
+        # #312/#329: a provider failure in the hunt graph is infrastructure, not
+        # a hunt degrade - record it on the run-local state so the surfer
+        # surfaces it and the run pauses (`interrupted`), rather than idling
+        # into a silent `complete` with zero specs and no typed reason (the
+        # trial-2 outcome). The registry is still reaped below.
+        logger.warning(
+            "surfer: hunt %s paused on a provider failure (%s)", config_key, exc)
+        state.provider_failure = state.provider_failure or exc
+        paused_on_provider_failure = True
     except Exception as exc:  # noqa: BLE001 - the harness is fail-open; degrade and idle anyway
         logger.warning("surfer: hunt graph degraded for %s (%s)", config_key, exc)
     finally:
@@ -433,10 +450,11 @@ async def run_hunter_session(
         # quiesce predicate no longer needs to wait on it.
         state.hunters_in_graph.discard(config_key)
 
-    await _run_hunter_idle(
-        project_id=project_id, run_id=run_id, config=config,
-        config_key=config_key, hunter_store=hunter_store, state=state,
-    )
+    if not paused_on_provider_failure:
+        await _run_hunter_idle(
+            project_id=project_id, run_id=run_id, config=config,
+            config_key=config_key, hunter_store=hunter_store, state=state,
+        )
     if registry is not None:
         try:  # noqa: BLE001 - teardown must never raise into the run
             await registry.stop_all()
@@ -573,6 +591,7 @@ async def run_pod_session(
     gate: Any,
     pod_builder: Callable[..., Awaitable[dict]],
     pod_store: Any,
+    state: RunDispatchState | None = None,
 ) -> dict:
     """ONE pod session (ADR Q13 pod id): run the spec through the pod (the
     injected builder; `arun_pod` in production), then record the completed
@@ -596,10 +615,13 @@ async def run_pod_session(
                 spec, run_id=run_id, project_id=project_id,
                 memory_store=pod_store, spec_id=spec_id,
             )
-        except ProviderUnavailableError:
-            # #329: a provider failure is infrastructure, not a pod verdict. Do
-            # not fabricate a domain export and do not persist one - propagate
-            # the typed error so the run records no fabricated verdict.
+        except ProviderUnavailableError as exc:
+            # #329/#312: a provider failure is infrastructure, not a pod verdict.
+            # Do not fabricate a domain export and do not persist one - record it
+            # on the run-local state so the surfer surfaces it and the run pauses
+            # (`interrupted`) rather than quiescing `complete`.
+            if state is not None:
+                state.provider_failure = state.provider_failure or exc
             raise
         except Exception as exc:  # noqa: BLE001 - fail-open: the pod never raises into the run
             logger.warning("surfer: pod %s degraded (%s)", spec_id, exc)
@@ -671,6 +693,12 @@ async def run_surfer_loop(
             control=control, coro_for=coro_for,
         )
         ticks += 1
+        if state.provider_failure is not None:
+            # #312/#329: a dispatched hunter or pod hit a provider failure - the
+            # run pauses (`interrupted`). Surface the typed error to the run
+            # bootstrap so the cause lands on the run row, instead of quiescing
+            # `complete` with zero specs and no typed reason.
+            raise state.provider_failure
         quiesced = (
             last_tick.moved == 0
             and await is_run_quiesced(

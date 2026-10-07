@@ -19,6 +19,8 @@ This tier pins the pure functions the harness relies on:
   ROLES - the `hunting` role joins the LLM role registry keyed by
       `LLM_HUNTING` (Q1).
 """
+import pytest
+
 from polymerhus.attack.hunting.hunting_agent import (
     HypothesisVerdict,
     derive_technological_axis,
@@ -455,3 +457,65 @@ def test_scripted_model_sees_system_skill_first_through_the_real_session():
         assert skill_meta("steel-browser")["description"] in turn_messages[0]
         assert skill not in turn_messages[1]  # the grounding HumanMessage
         assert "You are dispatched to hunt" in turn_messages[1]
+
+
+# --- #312: a RAW provider error at the REAL turn seam pauses the run ----------
+
+def _raw_error_hunt(tmp_path, exc):
+    """Drive the REAL harness turn seam with `model_factory` raising `exc`.
+
+    The store, the five-tool surface, the compiled graph, and the live session
+    edge all ride; only the model raises. Returns the dispatch result when the
+    harness swallows the raise, or raises whatever escapes."""
+    from langgraph.checkpoint.memory import InMemorySaver  # noqa: PLC0415
+
+    from tests.hunting_fixtures import (  # noqa: PLC0415
+        _RaisingModel,
+        _hunt_config,
+        _openai_rate_limit_error,
+        build_memory_store,
+    )
+    from polymerhus.attack.hunting.hunting_agent import (  # noqa: PLC0415
+        build_sync_hunting_agent,
+    )
+
+    dispatch = build_sync_hunting_agent(
+        run_id="run-312", project_id="proj-a",
+        memory_store=build_memory_store(tmp_path),
+        model_factory=lambda role_id: _RaisingModel(exc=exc),
+        checkpointer=InMemorySaver(), middleware=[], observe=False,
+    )
+    return dispatch(_hunt_config())
+
+
+def test_raw_rate_limit_error_at_the_turn_seam_pauses_the_run(tmp_path):
+    """#312: the production hunter turn raises a RAW `openai.RateLimitError`,
+    never the typed `ProviderUnavailableError`. The harness must CLASSIFY it at
+    the seam and propagate the typed error so the run pauses (`interrupted`)
+    instead of degrading to a spec-less result and quiescing `complete` with
+    zero specs - the trial-2 outcome."""
+    from tests.hunting_fixtures import _openai_rate_limit_error  # noqa: PLC0415
+    from polymerhus.app.llm.provider_failure import ProviderUnavailableError
+
+    with pytest.raises(ProviderUnavailableError) as excinfo:
+        _raw_error_hunt(tmp_path, _openai_rate_limit_error())
+    assert excinfo.value.status_code == 429
+
+
+def test_raw_timeout_error_at_the_turn_seam_pauses_the_run(tmp_path):
+    """#312: the same classification seam must type a raw `TimeoutError` (a
+    provider transport failure with no HTTP status)."""
+    from polymerhus.app.llm.provider_failure import ProviderUnavailableError
+
+    with pytest.raises(ProviderUnavailableError):
+        _raw_error_hunt(tmp_path, TimeoutError("read timed out"))
+
+
+def test_non_provider_raw_error_still_degrades_fail_open(tmp_path):
+    """#312: no over-triggering - a genuine non-provider internal error keeps
+    the O3/C2/C3 fail-open degrade (a spec-less DispatchResult), never an
+    untyped raise misclassified as a provider failure."""
+    result = _raw_error_hunt(tmp_path, RuntimeError("hypothesis store exploded"))
+    assert result.hypothesis_verdict is None
+    assert "hunter turn unavailable" in result.feedback
+    assert "hypothesis store exploded" in result.feedback
