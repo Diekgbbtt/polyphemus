@@ -160,7 +160,7 @@ An eval-wide pre-eval data dependency (auth bootstrap, L1 surface, hunting artif
 _Avoid_: prerequisite, checklist
 
 **Hunting cap**:
-REMOVED (2026-10-05): a consumed-config count is not a failure signal, and hard-stopping a run mid-coverage caused the jetlinks-1 tier-0 cap-exhaustion (all 10 configs on tier-0 access-control hypotheses; the validation tier was never scheduled). A trial now settles on the run's own quiesce, the token budget, or the trial deadline.
+REMOVED (2026-10-05): a consumed-config count is not a failure signal, and hard-stopping a run mid-coverage caused the jetlinks-1 tier-0 cap-exhaustion (all 10 configs on tier-0 access-control hypotheses; the validation tier was never scheduled). A trial now settles on the run's own quiesce, the **Token budget**, or the **Trial deadline**.
 _Avoid_: budget, limit
 
 **Token budget**:
@@ -175,6 +175,11 @@ _Avoid_: cost, usage
 **Spend baseline**:
 The project's cumulative `generated_tokens` at the trial's first spend poll; persisted in the trial record (`spend_baseline`) and carried across a resume, so a resumed or seeded trial never re-counts a prior run's spend.
 _Avoid_: cap baseline, offset
+
+**Trial deadline**:
+The per-`Trial` wall-clock bound (`TrialConfig.budget_s`) on any one phase poll. When a poll reaches it the trial stops the active run - recon, analysis, or hunting - exactly as a **Token budget** stop does, then terminates the phase `timeout`. No run is left running for a surfer, because none runs by default.
+The stop is the same `api.stop_run(project_id, run_kind, run_id)` call as the budget stop; only the trial terminal differs (`timeout`, not `stopped`), and the phase record's `stop_run_id` already names the run the stop verb expects.
+_Avoid_: budget, phase cap
 
 **Pre-mined hunting artifacts**:
 Operator-supplied hunt configs and hunter test specs placed before the project run starts, consumed by the pipeline's normal lazy read.

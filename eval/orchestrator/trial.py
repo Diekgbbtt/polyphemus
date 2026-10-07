@@ -743,7 +743,7 @@ class Trial:
             state.project_id,
             api.recon_status(state.project_id, run_id),
             api.RECON_TERMINAL,
-            spend=("recon", run_id),
+            run=("recon", run_id),
         )
         # P8 liveness: a recon run that reports `complete` with no job rows, or
         # with every job failed, is a failed run - never chained into hunting.
@@ -779,7 +779,7 @@ class Trial:
             api.ANALYSIS_TERMINAL,
             # The analysis stop is keyed by the recon run id, the same id the
             # status read uses, not the surrogate `analysis_run_id`.
-            spend=("analysis", state.recon_run_id),
+            run=("analysis", state.recon_run_id),
         )
         return PhaseRecord(
             phase="analysis",
@@ -819,20 +819,31 @@ class Trial:
         status_call: api.ApiCall,
         terminal: frozenset,
         *,
-        spend: tuple[str, str] | None = None,
+        run: tuple[str, str],
     ) -> str:
         deadline = self._clock() + self.config.budget_s
         while True:
             status = api.status_of(self._call(status_call))
             if status in terminal:
                 return status
-            # The token budget is trial-wide: a spend stop ends any phase, so
-            # check it after the terminal and before the wall-clock timeout.
-            if spend is not None and self._check_spend(project_id, *spend):
+            # The token budget and the trial deadline both stop the active run,
+            # so a poll never returns while the run it launched keeps running.
+            if self._check_spend(project_id, *run):
                 return "stopped"
             if self._clock() >= deadline:
+                self._stop_run(project_id, *run)
                 return "timeout"
             self._sleep(self.config.poll_s)
+
+    def _stop_run(self, project_id: str, run_kind: str, run_id: str) -> None:
+        """Stop the active run through the injected API seam.
+
+        A token-budget stop and a trial-deadline stop both stop the run the
+        trial launched. No surfer runs by default and the surfer has no timeout
+        trigger, so leaving the run running would orphan it and let it contend
+        for the agent and provider.
+        """
+        self._call(api.stop_run(project_id, run_kind, run_id))
 
     def _check_spend(self, project_id: str, run_kind: str, run_id: str) -> SpendResult | None:
         """Enforce the trial-wide token budget; a `SpendResult` when it stops.
@@ -856,7 +867,7 @@ class Trial:
         spent = max(0, total - self._spend_baseline)
         if spent < budget:
             return None
-        self._call(api.stop_run(project_id, run_kind, run_id))
+        self._stop_run(project_id, run_kind, run_id)
         # Re-read after the stop: the in-flight work may add tokens past the
         # budget, which is the recorded overshoot.
         final_total = api.usage_generated(self._call(api.usage(project_id)))
@@ -883,6 +894,7 @@ class Trial:
             if self._check_spend(project_id, "hunting", run_id):
                 return PollResult("stopped")
             if self._clock() >= deadline:
+                self._stop_run(project_id, "hunting", run_id)
                 return PollResult("timeout")
             self._sleep(cfg.poll_s)
 
