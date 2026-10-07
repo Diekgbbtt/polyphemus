@@ -17,22 +17,28 @@ probe kinds:
   dependencies are therefore asserted as the platform declares them, and a
   not-yet-started dependent can never be mistaken for a ready one.
 * **http**: probe an HTTP endpoint and read its status. A 5xx answer (including
-  500) or no answer is NOT ready. Two builders produce it: `plan_http_port`
-  probes a published port on the host loopback, and `plan_front_http` probes the
-  target front carrying the synthetic Host. The front is the exact bare-domain
-  path recon uses, and it answers `502` while the published port is still binding
-  (the #325 boot window). Because the compose poll reads a `running` container
-  with no healthcheck as ready, an HTTP probe alone would drop the support-
-  service assertion and a compose poll alone would read a booting app as ready;
-  a **composite** plan pairs both, so neither footgun survives.
+  500) or no answer is NOT ready. Three builders produce it: `plan_http_port`
+  probes a published port on the host loopback, `plan_front_http` probes the
+  target front carrying the synthetic Host, and `plan_service_port` resolves a
+  compose service's own published port and probes it. The front is the exact
+  bare-domain path recon uses, and it answers `502` while the published port is
+  still binding (the #325 boot window). The front root may be served by a
+  different application service than the one the backend runs in (#323), so a
+  multi-service application must probe every application service on its own
+  published port; the front answer alone is not a backend signal. Because the
+  compose poll reads a `running` container with no healthcheck as ready, an HTTP
+  probe alone would drop the support-service assertion and a compose poll alone
+  would read a booting app as ready; a **composite** plan pairs them, so neither
+  footgun survives.
 
 A dataset helper resolves the plan for a target; the default is the compose poll
-when the application declares a healthcheck, and the composite front + compose
-plan otherwise.
+when the application declares a healthcheck, and the composite front +
+application-port + compose plan otherwise.
 """
 from __future__ import annotations
 
 import json
+import shlex
 import time
 from dataclasses import dataclass
 from typing import Callable
@@ -179,6 +185,39 @@ def plan_front_http(host: str, ready_path: str = "/") -> Command:
             f"http://127.0.0.1{_norm_path(ready_path)}",
         ),
         description=f"probe front {host}",
+    )
+
+
+def plan_service_port(
+    project: str,
+    service: str,
+    internal_port: int | str,
+    ready_path: str = "/",
+    *,
+    compose_file: str | None = None,
+) -> Command:
+    """Resolve a compose service's published host port, then probe it over HTTP.
+
+    A challenge publishes its application services on ephemeral host ports
+    (`exposure_mode: host_ports`), so the port is unknown at plan time. `docker
+    compose port` reads the running container's own mapping, so the same probe
+    works for every strategy without a targetctl-specific ports file. The
+    compose file is pinned (like the compose poll) so a compose file in the
+    caller's cwd cannot shadow the target's own services. A service with no
+    resolvable port answers `000`, never ready (#323).
+    """
+    compose = f"-f {shlex.quote(compose_file)} " if compose_file else ""
+    script = (
+        f"p=$(docker compose -p {shlex.quote(project)} {compose}port "
+        f"{shlex.quote(service)} {shlex.quote(str(internal_port))} 2>/dev/null "
+        '| head -n1 | sed "s/.*://"); '
+        '[ -n "$p" ] || { echo 000; exit 0; }; '
+        'curl -sS -o /dev/null -w "%{http_code}" --max-time 10 '
+        f'"http://127.0.0.1:$p{_norm_path(ready_path)}"'
+    )
+    return Command(
+        argv=("sh", "-c", script),
+        description=f"probe app port {service}",
     )
 
 

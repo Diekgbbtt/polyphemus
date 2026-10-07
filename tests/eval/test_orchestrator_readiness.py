@@ -13,6 +13,7 @@ from orchestrator.readiness import (
     parse_compose_health,
     plan_compose_health,
     plan_front_http,
+    plan_service_port,
     wait_probe,
     wait_readiness,
 )
@@ -209,6 +210,59 @@ def test_plan_front_http_probes_the_loopback_with_the_host_header():
     argv = plan_front_http("t-abc.target").argv
     assert "Host: t-abc.target" in argv
     assert "http://127.0.0.1/" in argv
+
+
+def test_plan_service_port_resolves_the_published_port_then_probes_it():
+    """#323: an application service is published on an ephemeral host port; the
+    probe resolves it from the running container and reads its own answer, so a
+    backend reachable only behind the front root is still asserted."""
+    command = plan_service_port("web_jetlinks", "jetlinks", 8848)
+    argv = " ".join(command.argv)
+    assert "docker compose -p web_jetlinks port jetlinks 8848" in argv
+    assert "127.0.0.1:" in argv
+    assert "%{http_code}" in argv
+    assert command.description == "probe app port jetlinks"
+
+
+def test_plan_service_port_pins_the_compose_file_against_the_caller_cwd():
+    """A compose file in the caller's cwd must not shadow the target's own
+    services; the probe pins the resolved compose like the compose poll."""
+    command = plan_service_port(
+        "web_jetlinks", "jetlinks", 8848, compose_file="/bank/jetlinks.yml"
+    )
+    assert "-f /bank/jetlinks.yml" in " ".join(command.argv)
+
+
+def test_wait_readiness_rejects_a_ready_front_while_a_backend_boots(fake_result):
+    """#323: the front `/` answers 200 (served by `ui`) while the `jetlinks`
+    backend answers 000 because its JVM is still booting. A composite plan must
+    not read ready until every application service answers."""
+    plan = ReadinessPlan(
+        probes=(
+            http_probe(plan_front_http("t-abc.target")),
+            http_probe(plan_service_port("web_t", "jetlinks", 8848)),
+            compose_probe("c.yml", "proj"),
+        ),
+        retries=5,
+        interval_s=0,
+    )
+    runner = _runner(
+        [
+            fake_result(stdout="200"),
+            fake_result(stdout="000"),
+            fake_result(stdout="200"),
+            fake_result(stdout="404"),
+            fake_result(stdout=json.dumps([{"Service": "jetlinks", "State": "running"}])),
+        ]
+    )
+    assert wait_readiness(runner, plan, sleep=lambda _s: None)
+    assert [c.description for c in runner.calls] == [
+        "probe front t-abc.target",
+        "probe app port jetlinks",
+        "probe front t-abc.target",
+        "probe app port jetlinks",
+        "compose health proj",
+    ]
 
 
 def test_wait_readiness_compose_times_out(fake_result):

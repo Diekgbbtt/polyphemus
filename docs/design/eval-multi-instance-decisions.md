@@ -304,6 +304,13 @@ The application-serving services come from the challenge's `application_service_
 An unknown named `checker` now fails loud instead of silently falling back to compose health.
 See `docs/design/eval-target-readiness-http-checker-adr.md`.
 
+**Amendment (#323, 2026-10-07).** The composite front + compose plan still read a multi-service application ready too early.
+The jetlinks challenge publishes two application services (`jetlinks:8848`, `ui:80`), and the front conf proxies to the `ui` service alone.
+The `ui` nginx answered `/` with `200` while the `jetlinks` JVM backend behind it answered every `/api/*` with `502` for its boot window, and neither service declared a healthcheck, so the compose poll read both `running`.
+The composite now adds one HTTP probe per application service the challenge publishes in `target_ports`: `plan_service_port` resolves the service's own ephemeral host port with `docker compose -p <project> port <service> <internal_port>` and reads its answer, so the booting backend is never read ready while only a sibling service answers.
+A challenge with no `target_ports` keeps the front + compose composite.
+See `docs/design/eval-target-readiness-http-checker-adr.md`.
+
 ### The synthetic-Host pointing mechanism (assessment)
 
 The synthetic Host `t-<short>.target` reaches a target through three hops, all verified live on the eval host:

@@ -66,9 +66,11 @@ _Avoid_: local tag, built image
 **Readiness checker**:
 The bounded, non-blocking verification that a target is ready after `up`, as a **Readiness plan** of one or more probes that every one of must answer ready: a `docker compose ps -a --format json` poll of the stack's own health, an HTTP probe, or both.
 The compose poll is exhaustive: `-a` lists every service (including one-shot inits and not-yet-started services), and a service is ready only when it is `healthy`, or `running` with no healthcheck, or `exited` with code 0.
-The plan is selected by default from the target's own composition, with no per-target opt-in: a `targetctl`/`compose` target whose application-serving service declares a healthcheck uses the compose poll alone; one whose application declares no healthcheck uses the **composite** plan; a compose-less target probes its published port.
+The plan is selected by default from the target's own composition, with no per-target opt-in: a `targetctl`/`compose` target whose application-serving services declare a healthcheck uses the compose poll alone; one whose application services declare no healthcheck uses the **composite** plan; a compose-less target probes its published port.
 The application-serving services are the challenge's own `application_service_keys` (`challenge.json`), or the compose's built services when that metadata is absent.
-The composite pairs the compose poll with the **Target front** HTTP probe on the host loopback carrying the synthetic Host, so the front's `502` (while the published port is still binding) is never a ready signal and the support services stay asserted.
+The composite pairs the compose poll with the **Target front** HTTP probe on the host loopback carrying the synthetic Host, and with one HTTP probe per application service the challenge publishes in `target_ports`.
+The front probe asserts the bare-domain routing and the front's own upstream, so the front's `502` (while that port is still binding) is never a ready signal.
+Each application-service probe resolves the service's own published host port with `docker compose port` and reads its answer, so a booting backend is never read ready while only a sibling service answers (the #323 multi-service gap), and the support services stay asserted by the compose poll.
 An unknown named `checker` fails loud rather than falling back to compose health; a target may still declare one, and the named `http` checker is composite when a compose is resolvable.
 An HTTP 5xx (500 included) is never a readiness signal.
 It never blocks `up`; the chain then verifies readiness under a bounded window, so a slow or broken healthcheck cannot hang the chain.
@@ -148,6 +150,7 @@ It is the shared host-level `ph-eval-front` nginx container bound to host port 8
 `targetctl`, `image`, and `compose` all use it (D45): no host nginx and no ssh.
 The container is created before the first target and removed after the last.
 When a target's upstream is down or restarting, the front answers `502 Bad Gateway` (the nginx default page); that is EXPECTED front behaviour, not a defect and not route-absence (an absent route answers `404`).
+The front conf proxies every path to ONE published port, so when a challenge publishes several application services the front root may be served by a different service than the application backend (jetlinks' `ui` answers `/` while the `jetlinks` JVM boots).
 A target restart can be self-inflicted: probing a destructive control route (e.g. ComfyUI-Manager's `/api/manager/reboot`, which `os.execv`s the ComfyUI process) closes the upstream for the restart window, during which every path answers `502`.
 The hunting layer treats a front `5xx` as upstream-unavailable and stops probing rather than looping (`attack/hunting/hunting_status.py`, #323, `docs/design/hunting-target-front-availability-adr.md`).
 _Avoid_: proxy, reverse proxy, gateway
