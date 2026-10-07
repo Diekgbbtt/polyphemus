@@ -60,10 +60,9 @@ SCAN_MAX_DEPTH = 32
 # directory entry is never mistaken for one.
 _YAML_SUFFIXES = (".yaml", ".yml")
 
-# Sentinels: a record that exceeded its byte bound, and a payload that could not
-# be read/decoded. Distinct so an oversized file is never confused with a bad one.
+# Sentinel: a record that exceeded its byte bound, distinct from a missing or
+# unreadable one (`None`) so an oversized file is never confused with a bad one.
 _TOO_LARGE = object()
-_INVALID = object()
 
 
 @dataclass(frozen=True)
@@ -165,47 +164,51 @@ def _scan_root(root: str | Path) -> tuple[list[RunRecord], bool, bool]:
     while stack and not exhausted:
         directory, depth = stack.pop()
         try:
-            entries = sorted(os.scandir(directory), key=lambda item: item.name)
+            iterator = os.scandir(directory)
         except OSError:
             continue
         children: list[tuple[Path, int]] = []
-        for entry in entries:
-            if visited >= SCAN_MAX_ENTRIES:
-                limited = True
-                exhausted = True
-                break
-            visited += 1
-            # The bound applies to every entry - file or directory - so a deep
-            # file is skipped at the depth gate, never read and then discarded.
-            # A depth skip is soft: the rest of this directory and its shallower
-            # siblings are still scanned, so one deep branch cannot hide a
-            # valid record beside it.
-            if depth + 1 > SCAN_MAX_DEPTH:
-                limited = True
-                continue
-            try:
-                if entry.is_symlink():
+        # The listing is consumed lazily: the entry budget stops the walk while
+        # `scandir` is still being read, so one huge directory is never
+        # materialized (and sliced) just to be counted.
+        with iterator:
+            for entry in iterator:
+                if visited >= SCAN_MAX_ENTRIES:
+                    limited = True
+                    exhausted = True
+                    break
+                visited += 1
+                # The bound applies to every entry - file or directory - so a
+                # deep file is skipped at the depth gate, never read and then
+                # discarded. A depth skip is soft: the rest of this directory
+                # and its shallower siblings are still scanned, so one deep
+                # branch cannot hide a valid record beside it.
+                if depth + 1 > SCAN_MAX_DEPTH:
+                    limited = True
                     continue
-                if entry.is_dir(follow_symlinks=False):
-                    children.append((Path(entry.path), depth + 1))
+                try:
+                    if entry.is_symlink():
+                        continue
+                    if entry.is_dir(follow_symlinks=False):
+                        children.append((Path(entry.path), depth + 1))
+                        continue
+                    if not entry.is_file(follow_symlinks=False):
+                        continue
+                except OSError:
                     continue
-                if not entry.is_file(follow_symlinks=False):
+                path = Path(entry.path)
+                if path.suffix.lower() not in _YAML_SUFFIXES:
                     continue
-            except OSError:
-                continue
-            path = Path(entry.path)
-            if path.suffix.lower() not in _YAML_SUFFIXES:
-                continue
-            # A record whose real path escaped the root (a symlinked parent) is
-            # never read, so no external tree is ever exposed.
-            if not _is_contained(real_root, path):
-                continue
-            record = _read_record_file(path)
-            if record is _TOO_LARGE:
-                too_large = True
-                continue
-            if record is not None:
-                records.append(record)
+                # A record whose real path escaped the root (a symlinked parent)
+                # is never read, so no external tree is ever exposed.
+                if not _is_contained(real_root, path):
+                    continue
+                record = _read_record_file(path)
+                if record is _TOO_LARGE:
+                    too_large = True
+                    continue
+                if record is not None:
+                    records.append(record)
         for child in reversed(children):
             stack.append(child)
     return records, limited, too_large

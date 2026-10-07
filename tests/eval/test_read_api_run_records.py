@@ -930,5 +930,45 @@ def test_bind_alias_roots_do_not_double_the_scan_budget(
     assert snapshot["issues"] == []
 
 
+def test_entry_budget_stops_enumeration_lazily(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A single directory with far more entries than the budget: the walk must
+    # stop *while* listing it, never materialize the whole listing first.
+    monkeypatch.setattr(run_records, "SCAN_MAX_ENTRIES", 5, raising=False)
+    runs = tmp_path / "runs"
+    _clutter(runs, 200)
+    pulled = {"count": 0}
+    real_scandir = os.scandir
+
+    def counting_scandir(path: object):
+        iterator = real_scandir(path)
+
+        class _Counting:
+            def __enter__(self):
+                iterator.__enter__()
+                return self
+
+            def __exit__(self, *exc: object):
+                return iterator.__exit__(*exc)
+
+            def __iter__(self):
+                return self
+
+            def __next__(self):
+                entry = next(iterator)
+                pulled["count"] += 1
+                return entry
+
+        return _Counting()
+
+    monkeypatch.setattr(run_records.os, "scandir", counting_scandir)
+
+    run_records.load_run_record_catalog([runs])
+
+    assert pulled["count"] <= run_records.SCAN_MAX_ENTRIES + 1
+    assert pulled["count"] < 200
+
+
 if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(pytest.main([__file__]))
