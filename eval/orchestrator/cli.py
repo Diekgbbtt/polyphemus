@@ -696,8 +696,11 @@ def _run_trial(args, setup: EvalSetup, config: OrchestratorConfig, out: TextIO, 
     api_runner = api_factory(args.api)
     engine = trial.Trial(cfg, api_runner=api_runner, runner=runner)
     orchestrator = Orchestrator(setup, config, runner=runner)
+    # Scope the bring-up to this trial's target: a multi-target setup must not
+    # start its whole serial pipeline when one trial runs (the chain's
+    # next-target already brought this target up).
     record = engine.run(
-        bring_up=orchestrator.up,
+        bring_up=lambda: orchestrator.up(target_id=_run.target_id),
         repair=trial.InstanceRepair(paths, runner),
     )
     print(f"trial {record.trial_id}: {record.terminal} (project {record.project_id})", file=out)
