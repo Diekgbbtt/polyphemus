@@ -166,6 +166,14 @@ All three are read at request time. `EVAL_PROJECT_DATA_ROOT` is mounted read-onl
 the read API writes to it. `EVAL_AGENT_BASE_URL` is only ever queried for a Trial whose
 `instance_id` equals `EVAL_INSTANCE_ID`.
 
+The current-graph read is bounded by `EVAL_GRAPH_TIMEOUT_SECONDS` (default `20`; a finite value
+between `1` and `30` seconds — anything else, including `0`, negatives, `NaN`/`Inf` and
+out-of-range values, falls back to the safe default of `20`). A large project's L0/L1 graph can
+take several seconds to assemble, so the bound is generous rather than a hair-trigger; the SPA
+allows a slightly longer wait (45 s) and, on a temporary failure, keeps the last graph it already
+loaded instead of blanking the canvas. A timeout, an agent 404, a 5xx and a transport error are
+reported as distinct, path-free reasons, so an access problem is never presented as “no graph”.
+
 The production overlay `eval/docker-compose.dashboard.real.yml` wires them for the eval server:
 
     EVAL_ARTIFACT_STORE_HOST_PATH=/srv/eval-artifacts \

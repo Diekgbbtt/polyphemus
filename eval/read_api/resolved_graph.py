@@ -14,6 +14,7 @@ body or exception string is ever forwarded. Import performs no I/O.
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -36,9 +37,66 @@ REASON_INVALID = "project_graph_invalid"
 REASON_EMPTY = "project_graph_empty"
 REASON_NO_PROJECT = "project_id_unavailable"
 REASON_NOT_ELIGIBLE = "instance_not_eligible"
+# Distinct, path-free reasons for a current-graph read that failed, so the
+# operator can tell a timeout from a missing project, an HTTP error, a transport
+# error or a malformed payload - never one generic "unavailable".
+REASON_TIMEOUT = "project_graph_timeout"
+REASON_NOT_FOUND = "project_graph_not_found"
+REASON_HTTP_ERROR = "project_graph_http_error"
+REASON_TRANSPORT = "project_graph_transport_error"
+
+# The current-graph read is bounded by a configurable, finite timeout. The
+# default (20 s) comfortably covers the ~4 s these large graphs take; the range
+# keeps a typo from becoming an infinite wait or a hair-trigger cut.
+DEFAULT_TIMEOUT_SECONDS = 20.0
+MIN_TIMEOUT_SECONDS = 1.0
+MAX_TIMEOUT_SECONDS = 30.0
+
+_KNOWN_CLIENT_REASONS = frozenset(
+    {REASON_TIMEOUT, REASON_NOT_FOUND, REASON_HTTP_ERROR, REASON_TRANSPORT, REASON_INVALID}
+)
 
 MAX_GRAPH_BYTES = 32 * 1024 * 1024
-DEFAULT_TIMEOUT_SECONDS = 5.0
+
+
+def resolve_graph_timeout(raw: object) -> float:
+    """The configured read timeout in seconds, or the safe default.
+
+    A missing, empty, non-numeric, non-finite (NaN/Inf), or out-of-range value
+    (< 1 s or > 30 s) falls back to `DEFAULT_TIMEOUT_SECONDS`, so a bad
+    environment variable can never produce an infinite wait or a hair-trigger
+    cut.
+    """
+    if raw is None:
+        return DEFAULT_TIMEOUT_SECONDS
+    text = str(raw).strip()
+    if not text:
+        return DEFAULT_TIMEOUT_SECONDS
+    try:
+        value = float(text)
+    except (TypeError, ValueError):
+        return DEFAULT_TIMEOUT_SECONDS
+    if not math.isfinite(value) or not (MIN_TIMEOUT_SECONDS <= value <= MAX_TIMEOUT_SECONDS):
+        return DEFAULT_TIMEOUT_SECONDS
+    return value
+
+
+def _client_reason(code: str) -> str:
+    """Map a client failure code to a stable resolver reason."""
+    if code == "invalid":  # the historical client code for a bad payload
+        return REASON_INVALID
+    if code in _KNOWN_CLIENT_REASONS:
+        return code
+    return REASON_TRANSPORT
+
+
+def _http_reason(status: object) -> str:
+    return REASON_NOT_FOUND if status == 404 else REASON_HTTP_ERROR
+
+
+def _network_reason(exc: URLError) -> str:
+    """A timeout wrapped in `URLError` is still a timeout, not a transport error."""
+    return REASON_TIMEOUT if isinstance(exc.reason, TimeoutError) else REASON_TRANSPORT
 
 
 class ProjectGraphClientError(RuntimeError):
@@ -116,8 +174,7 @@ def _current_graph(
     try:
         payload = client.get_graph(project_id)
     except ProjectGraphClientError as exc:
-        reason = REASON_INVALID if exc.reason == "invalid" else REASON_UNAVAILABLE
-        return _unavailable(project_id, reason, fallback_reason)
+        return _unavailable(project_id, _client_reason(exc.reason), fallback_reason)
 
     if not isinstance(payload, Mapping):
         return _unavailable(project_id, REASON_INVALID, fallback_reason)
@@ -184,6 +241,11 @@ class HttpProjectGraphClient:
         self._timeout = timeout
         self._opener = opener or urlopen
 
+    @property
+    def timeout(self) -> float:
+        """The configured read timeout in seconds (for wiring assertions)."""
+        return self._timeout
+
     def get_graph(self, project_id: str) -> Mapping[str, object]:
         url = "{}/projects/{}/graph".format(
             self._base_url, quote(project_id, safe="")
@@ -193,33 +255,49 @@ class HttpProjectGraphClient:
             with self._opener(request, timeout=self._timeout) as response:
                 status = getattr(response, "status", 200)
                 if status != 200:
-                    raise ProjectGraphClientError(REASON_UNAVAILABLE)
+                    raise ProjectGraphClientError(_http_reason(status))
                 raw = response.read(MAX_GRAPH_BYTES + 1)
         except ProjectGraphClientError:
             raise
-        except HTTPError:
-            raise ProjectGraphClientError(REASON_UNAVAILABLE)
-        except (URLError, TimeoutError, OSError):
-            raise ProjectGraphClientError(REASON_UNAVAILABLE)
+        except HTTPError as exc:
+            raise ProjectGraphClientError(_http_reason(getattr(exc, "code", None))) from None
+        except URLError as exc:
+            raise ProjectGraphClientError(_network_reason(exc)) from None
+        except TimeoutError:
+            raise ProjectGraphClientError(REASON_TIMEOUT) from None
+        except OSError:
+            raise ProjectGraphClientError(REASON_TRANSPORT) from None
         if len(raw) > MAX_GRAPH_BYTES:
-            raise ProjectGraphClientError("invalid")
+            raise ProjectGraphClientError(REASON_INVALID)
         try:
             payload = json.loads(raw.decode("utf-8"))
         except (UnicodeDecodeError, ValueError):
-            raise ProjectGraphClientError("invalid")
+            raise ProjectGraphClientError(REASON_INVALID) from None
         if not isinstance(payload, Mapping):
-            raise ProjectGraphClientError("invalid")
+            raise ProjectGraphClientError(REASON_INVALID)
         return payload
 
 
 __all__ = [
     "DEFAULT_TIMEOUT_SECONDS",
     "HttpProjectGraphClient",
+    "MAX_TIMEOUT_SECONDS",
+    "MIN_TIMEOUT_SECONDS",
     "PROJECT_STORAGE",
     "ProjectGraphClient",
     "ProjectGraphClientError",
+    "REASON_EMPTY",
+    "REASON_HTTP_ERROR",
+    "REASON_INVALID",
+    "REASON_NOT_ELIGIBLE",
+    "REASON_NOT_FOUND",
+    "REASON_NO_PROJECT",
+    "REASON_TIMEOUT",
+    "REASON_TRANSPORT",
+    "REASON_UNAVAILABLE",
     "ResolvedGraph",
     "TRIAL_SNAPSHOT",
     "graph_response",
+    "resolve_graph_timeout",
     "resolve_graph",
 ]

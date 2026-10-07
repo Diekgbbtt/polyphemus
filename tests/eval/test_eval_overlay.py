@@ -342,6 +342,23 @@ def test_real_dashboard_services_restart_after_daemon_restart(tmp_path: Path) ->
 
 
 @docker
+def test_real_overlay_configures_the_graph_read_timeout(tmp_path: Path) -> None:
+    project = stage(tmp_path, COMPLETE_ENV, with_real=True)
+
+    default = yaml.safe_load(real_render(project).stdout)
+    assert default["services"]["eval-api"]["environment"][
+        "EVAL_GRAPH_TIMEOUT_SECONDS"
+    ] == "20"
+
+    overridden = yaml.safe_load(
+        real_render(project, extra={"EVAL_GRAPH_TIMEOUT_SECONDS": "25"}).stdout
+    )
+    assert overridden["services"]["eval-api"]["environment"][
+        "EVAL_GRAPH_TIMEOUT_SECONDS"
+    ] == "25"
+
+
+@docker
 def test_real_overlay_never_creates_a_missing_host_path(tmp_path: Path) -> None:
     project = stage(tmp_path, COMPLETE_ENV, with_real=True)
 

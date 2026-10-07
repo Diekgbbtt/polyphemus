@@ -32,10 +32,12 @@ from .resolved_artifacts import (
     resolve_inventory,
 )
 from .resolved_graph import (
+    DEFAULT_TIMEOUT_SECONDS,
     HttpProjectGraphClient,
     ProjectGraphClient,
     graph_response,
     resolve_graph,
+    resolve_graph_timeout,
 )
 from orchestrator.files import FileStore
 from orchestrator.project_artifacts import (
@@ -64,6 +66,9 @@ ENV_DATASET_NAME = "EVAL_DATASET_NAME"
 ENV_PROJECT_DATA_ROOT = "EVAL_PROJECT_DATA_ROOT"
 ENV_AGENT_BASE_URL = "EVAL_AGENT_BASE_URL"
 ENV_INSTANCE_ID = "EVAL_INSTANCE_ID"
+# The current-graph read timeout, in seconds; a bad value falls back to the safe
+# default (see `resolved_graph.resolve_graph_timeout`).
+ENV_GRAPH_TIMEOUT = "EVAL_GRAPH_TIMEOUT_SECONDS"
 # The harness's runs root, holding each finished Trial's authoritative record
 # (arbitrary filename). Read-only, and only for the recorded-spend block.
 ENV_RUNS_ROOT = "EVAL_RUNS_ROOT"
@@ -170,6 +175,8 @@ class ArtifactStoreSnapshotSource:
     dataset_name: str = DEFAULT_DATASET_NAME
     project_data_root: str | Path | None = None
     agent_base_url: str | None = None
+    # The bounded timeout for one current-graph read from the agent.
+    graph_timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS
     instance_id: str | None = None
     # The read-only harness runs root the recorded-spend block resolves against;
     # None leaves every Trial's spend `unavailable` (never guessed).
@@ -326,7 +333,9 @@ class ArtifactStoreSnapshotSource:
         if self.graph_client_factory is not None:
             return self.graph_client_factory()
         if self.agent_base_url:
-            return HttpProjectGraphClient(self.agent_base_url)
+            return HttpProjectGraphClient(
+                self.agent_base_url, timeout=self.graph_timeout_seconds
+            )
         return None
 
     def _attach_spend(self, snapshot: Mapping[str, object]) -> None:
@@ -515,6 +524,7 @@ def filesystem_source() -> SnapshotSource:
         dataset_name=os.environ.get(ENV_DATASET_NAME) or DEFAULT_DATASET_NAME,
         project_data_root=os.environ.get(ENV_PROJECT_DATA_ROOT) or None,
         agent_base_url=os.environ.get(ENV_AGENT_BASE_URL) or None,
+        graph_timeout_seconds=resolve_graph_timeout(os.environ.get(ENV_GRAPH_TIMEOUT)),
         instance_id=os.environ.get(ENV_INSTANCE_ID) or None,
         runs_root=os.environ.get(ENV_RUNS_ROOT) or None,
         legacy_runs_root=os.environ.get(ENV_LEGACY_RUNS_ROOT) or None,

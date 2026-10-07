@@ -15,16 +15,36 @@ const SOURCE_LABEL: Record<ResolvedProjectGraph["source"], string> = {
 }
 
 const NO_GRAPH = "No graph available"
+const TIMEOUT_MESSAGE = "Graph read timed out. It retries on the next refresh."
+const NOT_FOUND_MESSAGE = "Project not available in the graph source."
+const LAST_GRAPH_NOTICE = "Graph refresh failed; showing the last loaded graph."
+
+// The SPA waits longer than the server's own read bound (max 30 s) so a
+// slow-but-successful read of a large graph is never cut early by the poller.
+// This is local to the graph; the shared poller default is unchanged.
+const GRAPH_REQUEST_TIMEOUT_MS = 45_000
+
+// Reasons a read failed *temporarily*: the last loaded graph for the SAME Trial
+// is kept on screen (with a notice) instead of blanking the canvas.
+const TEMPORARY_REASONS = new Set([
+  "project_graph_timeout",
+  "project_graph_transport_error",
+  "project_graph_http_error",
+])
 
 type GraphState =
   | { kind: "loading" }
   | { kind: "error"; message: string }
-  | { kind: "unavailable" }
+  | { kind: "empty" }
+  | { kind: "timeout" }
+  | { kind: "notFound" }
+  | { kind: "technical"; reason: string; temporary: boolean }
   | { kind: "ready"; graph: GraphData; label: string; capturedAt: string | null }
 
-// Turn the resolved wire contract into a render state. Only a graph that
-// actually carries nodes is drawn; an empty body and an unavailable contract
-// both become the simple missing state, so an empty canvas is never shown.
+// Turn the resolved wire contract into a render state. A valid but empty graph
+// is a distinct "empty" answer; a timeout, a project missing from the source and
+// a technical failure are each their own state, so an access problem is never
+// shown as "no graph available".
 function readyState(resolved: ResolvedProjectGraph): GraphState {
   if (resolved.status === "available" && resolved.graph.nodes.length > 0) {
     return {
@@ -34,7 +54,20 @@ function readyState(resolved: ResolvedProjectGraph): GraphState {
       capturedAt: resolved.captured_at,
     }
   }
-  return { kind: "unavailable" }
+  if (resolved.status === "available") return { kind: "empty" }
+  switch (resolved.reason) {
+    case "project_graph_empty":
+      return { kind: "empty" }
+    case "project_graph_timeout":
+      return { kind: "timeout" }
+    case "project_graph_not_found":
+      return { kind: "notFound" }
+    case "project_graph_transport_error":
+    case "project_graph_http_error":
+      return { kind: "technical", reason: resolved.reason, temporary: true }
+    default:
+      return { kind: "technical", reason: resolved.reason, temporary: false }
+  }
 }
 
 // Wire-level equality, so a poll that returns the same graph keeps the previous
@@ -72,9 +105,22 @@ export function TrialProjectGraph({
   const identity = `${targetId}\u0000${targetRunId}\u0000${trialId}`
   const frozen = useRef<{ identity: string; resolved: ResolvedProjectGraph } | null>(null)
   const last = useRef<{ identity: string; resolved: ResolvedProjectGraph } | null>(null)
+  // The last graph that actually carried nodes, for THIS identity: a temporary
+  // refresh failure keeps it on screen instead of blanking the canvas.
+  const ready = useRef<{ identity: string; resolved: ResolvedProjectGraph } | null>(null)
+  // The identity THIS render asks for, and the identity the polled data belongs
+  // to. `usePolledResource` keeps its previous value during the first render
+  // with a new key, so without this guard a new Trial would briefly show the
+  // previous Trial's graph - or its error - even when project_id is shared.
+  const renderIdentity = useRef(identity)
+  renderIdentity.current = identity
+  const loadedIdentity = useRef<string | null>(null)
 
   const load = useCallback(
     async (signal: AbortSignal): Promise<ResolvedProjectGraph> => {
+      // Claim this request for `identity` the moment it starts, so a superseded
+      // request never revives the previous Trial.
+      if (renderIdentity.current === identity) loadedIdentity.current = identity
       if (frozen.current && frozen.current.identity === identity) {
         return frozen.current.resolved
       }
@@ -97,32 +143,74 @@ export function TrialProjectGraph({
     key: identity,
     load,
     refreshToken,
+    timeoutMs: GRAPH_REQUEST_TIMEOUT_MS,
   })
 
-  const state: GraphState = resource.loading
+  // Only data that belongs to THIS identity is rendered; anything else is still
+  // loading, so a Trial change never shows the previous graph or error.
+  const owned = loadedIdentity.current === identity
+  const data = owned ? resource.data : null
+  const error = owned ? resource.error : null
+  if (data && data.status === "available" && data.graph.nodes.length > 0) {
+    ready.current = { identity, resolved: data }
+  }
+  const previousReady =
+    ready.current && ready.current.identity === identity ? ready.current.resolved : null
+
+  const state: GraphState = !owned || (resource.loading && data === null)
     ? { kind: "loading" }
-    : resource.data
-      ? readyState(resource.data)
-      : { kind: "error", message: resource.error ?? "unknown" }
+    : data
+      ? readyState(data)
+      : { kind: "error", message: error ?? "unknown" }
+
+  // A temporary failure with a graph already loaded for this identity: keep the
+  // canvas (and its nodes reference) and warn instead of blanking it.
+  const showingLastGraph =
+    previousReady !== null &&
+    (state.kind === "timeout" ||
+      (state.kind === "technical" && state.temporary))
+  const readyGraph: GraphState | null = showingLastGraph && previousReady
+    ? readyState(previousReady)
+    : state
 
   return (
     <section aria-label="Graph" className="project-trial-section">
       <h2>Graph</h2>
       {state.kind === "loading" && <p>Loading graph...</p>}
       {state.kind === "error" && <p role="alert">Graph error: {state.message}</p>}
-      {state.kind === "unavailable" && <p className="eval-status">{NO_GRAPH}</p>}
-      {state.kind === "ready" && (
+      {state.kind === "empty" && <p className="eval-status">{NO_GRAPH}</p>}
+      {state.kind === "timeout" && (
+        <p className="eval-status" role="status">
+          {TIMEOUT_MESSAGE}
+        </p>
+      )}
+      {state.kind === "notFound" && (
+        <p className="eval-status" role="status">
+          {NOT_FOUND_MESSAGE}
+        </p>
+      )}
+      {state.kind === "technical" && (
+        <p className="eval-status" role="status">
+          Graph unavailable ({state.reason}).
+        </p>
+      )}
+      {readyGraph && readyGraph.kind === "ready" && (
         <GraphView
-          data={state.graph}
+          data={readyGraph.graph}
           loading={false}
           error={null}
-          label={state.label}
-          capturedAt={state.capturedAt}
+          label={readyGraph.label}
+          capturedAt={readyGraph.capturedAt}
         />
       )}
-      {resource.data !== null && resource.error !== null && (
+      {showingLastGraph && (
         <p className="eval-status" role="status">
-          Graph refresh failed: {resource.error}. Showing the previous graph.
+          {LAST_GRAPH_NOTICE}
+        </p>
+      )}
+      {data !== null && error !== null && (
+        <p className="eval-status" role="status">
+          Graph refresh failed: {error}. Showing the previous graph.
         </p>
       )}
     </section>

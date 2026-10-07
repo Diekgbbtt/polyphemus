@@ -218,7 +218,8 @@ test("aborts the old request and ignores a late response on a tuple change", asy
 
 test("re-reads a current graph and shows it once it becomes available", async () => {
   vi.useFakeTimers()
-  let body: unknown = unavailable("project_graph_unavailable")
+  // A definitive empty first answer ("No graph available"), then a real graph.
+  let body: unknown = unavailable("project_graph_empty")
   routeFetch([["/resolved-graph", () => json(body)]])
   renderGraph()
 
@@ -291,4 +292,178 @@ test("a changed current graph does replace the previous one", async () => {
     await vi.advanceTimersByTimeAsync(POLL)
   })
   expect(screen.getByTestId("graph-canvas").textContent).toBe("after")
+})
+
+
+// --- distinguishable graph-read outcomes and the last valid graph --------------
+
+test("a first-load timeout is explicit and never 'No graph available'", async () => {
+  routeFetch([["/resolved-graph", () => json(unavailable("project_graph_timeout"))]])
+
+  renderGraph()
+
+  await waitFor(() => expect(screen.getByText(/timed out/i)).toBeDefined())
+  expect(screen.queryByText("No graph available")).toBeNull()
+  expect(screen.queryByTestId("graph-canvas")).toBeNull()
+})
+
+test("a project missing from the source is distinct from an empty graph", async () => {
+  routeFetch([["/resolved-graph", () => json(unavailable("project_graph_not_found"))]])
+
+  renderGraph()
+
+  await waitFor(() =>
+    expect(screen.getByText(/not available in the graph source/i)).toBeDefined(),
+  )
+  expect(screen.queryByText("No graph available")).toBeNull()
+})
+
+test("transport and 5xx failures are technical errors, not 'No graph available'", async () => {
+  for (const reason of ["project_graph_transport_error", "project_graph_http_error"]) {
+    routeFetch([["/resolved-graph", () => json(unavailable(reason))]])
+    const { unmount } = renderGraph()
+    await waitFor(() =>
+      expect(screen.getByText(new RegExp(`Graph unavailable \\(${reason}\\)`))).toBeDefined(),
+    )
+    expect(screen.queryByText("No graph available")).toBeNull()
+    unmount()
+  }
+})
+
+test("waits up to 45s for one graph read, beyond the server's own bound", async () => {
+  vi.useFakeTimers()
+  let resolveRead: ((response: Response) => void) | undefined
+  const pending = new Promise<Response>((resolve) => {
+    resolveRead = resolve
+  })
+  routeFetch([["/resolved-graph", () => pending]])
+  renderGraph()
+
+  await act(async () => {})
+  // Just under the graph timeout the poller must not have given up (the shared
+  // default would have failed at 15s).
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(44_000)
+  })
+  expect(screen.queryByRole("alert")).toBeNull()
+
+  resolveRead?.(json(currentGraph(["slow"])))
+  await act(async () => {})
+  expect(screen.getByTestId("graph-canvas").textContent).toBe("slow")
+})
+
+test("a temporary failure on refresh keeps the last loaded graph", async () => {
+  vi.useFakeTimers()
+  let body: unknown = currentGraph(["kept"])
+  routeFetch([["/resolved-graph", () => json(body)]])
+  renderGraph()
+
+  await act(async () => {})
+  expect(screen.getByTestId("graph-canvas").textContent).toBe("kept")
+  const firstNodes = canvas.nodesSeen[canvas.nodesSeen.length - 1]
+
+  body = unavailable("project_graph_timeout")
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(POLL)
+  })
+
+  expect(screen.getByTestId("graph-canvas").textContent).toBe("kept")
+  expect(screen.getByText(/last loaded graph/i)).toBeDefined()
+  // The same nodes reference: the canvas keeps its zoom and layer state.
+  expect(canvas.nodesSeen[canvas.nodesSeen.length - 1]).toBe(firstNodes)
+})
+
+test("a later successful refresh clears the warning and updates the graph", async () => {
+  vi.useFakeTimers()
+  let body: unknown = currentGraph(["kept"])
+  routeFetch([["/resolved-graph", () => json(body)]])
+  renderGraph()
+  await act(async () => {})
+
+  body = unavailable("project_graph_transport_error")
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(POLL)
+  })
+  expect(screen.getByText(/last loaded graph/i)).toBeDefined()
+
+  body = currentGraph(["recovered"])
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(POLL)
+  })
+  expect(screen.getByTestId("graph-canvas").textContent).toBe("recovered")
+  expect(screen.queryByText(/last loaded graph/i)).toBeNull()
+})
+
+test("a valid empty answer is not masked as a temporary error", async () => {
+  vi.useFakeTimers()
+  let body: unknown = currentGraph(["kept"])
+  routeFetch([["/resolved-graph", () => json(body)]])
+  renderGraph()
+  await act(async () => {})
+  expect(screen.getByTestId("graph-canvas").textContent).toBe("kept")
+
+  body = unavailable("project_graph_empty")
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(POLL)
+  })
+
+  expect(screen.getByText("No graph available")).toBeDefined()
+  expect(screen.queryByTestId("graph-canvas")).toBeNull()
+  expect(screen.queryByText(/last loaded graph/i)).toBeNull()
+})
+
+test("a Trial change never shows the previous Trial's graph", async () => {
+  let resolveSecond: ((response: Response) => void) | undefined
+  const second = new Promise<Response>((resolve) => {
+    resolveSecond = resolve
+  })
+  routeFetch([
+    ["/trial-1/resolved-graph", () => json(currentGraph(["one"]))],
+    ["/trial-2/resolved-graph", () => second],
+  ])
+  const { rerender } = render(
+    <MemoryRouter>
+      <TrialProjectGraph targetId="t" targetRunId="r" trialId="trial-1" />
+    </MemoryRouter>,
+  )
+  await act(async () => {})
+  expect(screen.getByTestId("graph-canvas").textContent).toBe("one")
+
+  rerender(
+    <MemoryRouter>
+      <TrialProjectGraph targetId="t" targetRunId="r" trialId="trial-2" />
+    </MemoryRouter>,
+  )
+  await act(async () => {})
+  // The previous graph and its error are gone; the new Trial is still loading.
+  expect(screen.queryByTestId("graph-canvas")).toBeNull()
+  expect(screen.queryByText("No graph available")).toBeNull()
+  expect(screen.queryByRole("alert")).toBeNull()
+
+  resolveSecond?.(json(currentGraph(["two"])))
+  await act(async () => {})
+  expect(screen.getByTestId("graph-canvas").textContent).toBe("two")
+})
+
+test("a slow read never overlaps the next poll", async () => {
+  vi.useFakeTimers()
+  let resolveRead: ((response: Response) => void) | undefined
+  const pending = new Promise<Response>((resolve) => {
+    resolveRead = resolve
+  })
+  const { calls } = routeFetch([["/resolved-graph", () => pending]])
+  renderGraph()
+
+  await act(async () => {})
+  expect(calls).toHaveLength(1)
+  // A tick while the request is open is skipped, never overlapped.
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(POLL)
+  })
+  expect(calls).toHaveLength(1)
+
+  resolveRead?.(json(currentGraph(["late"])))
+  await act(async () => {})
+  expect(calls).toHaveLength(1)
+  expect(screen.getByTestId("graph-canvas").textContent).toBe("late")
 })

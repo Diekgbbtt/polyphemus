@@ -35,6 +35,8 @@
 #   EVAL_ARTIFACT_STORE_HOST_PATH   -> /srv/eval-artifacts      (materialized store)
 #   EVAL_PROJECT_DATA_ROOT_HOST_PATH-> /srv/eval-project-data   (raw project data)
 #   EVAL_RUNS_ROOT_HOST_PATH        -> /srv/eval-runs           (current records)
+#   EVAL_GRAPH_TIMEOUT_SECONDS      -> the current-graph read timeout (default 20;
+#                                      finite, 1..30 s, else the safe default)
 #
 # Historical records live in a second, OPTIONAL root. New installations do not
 # need it; a host that still holds earlier eval records adds the companion
@@ -75,6 +77,11 @@ services:
       # fallback: only a Trial from this instance may read these sources.
       EVAL_PROJECT_DATA_ROOT: /srv/eval-project-data
       EVAL_AGENT_BASE_URL: http://agent:8080
+      # The current L0/L1 graph read is bounded: a large project (thousands of
+      # nodes) can take several seconds, so the default is 20 s (finite, 1..30;
+      # an invalid value falls back to 20). The SPA allows a slightly longer
+      # wait than the server so a slow-but-successful read is never cut early.
+      EVAL_GRAPH_TIMEOUT_SECONDS: ${EVAL_GRAPH_TIMEOUT_SECONDS:-20}
       EVAL_INSTANCE_ID: ${EVAL_INSTANCE_ID:-eval-server-1}
       # The primary harness runs root holds each finished Trial's authoritative
       # record (arbitrary filename); the recorded-spend block resolves it by full

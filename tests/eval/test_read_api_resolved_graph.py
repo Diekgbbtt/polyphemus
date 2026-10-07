@@ -216,23 +216,23 @@ def test_ineligible_context_never_queries_the_agent(
     assert client.calls == []
 
 
-def test_agent_404_is_unavailable_and_stable(tmp_path: Path) -> None:
+def test_agent_404_is_reported_as_not_found(tmp_path: Path) -> None:
     store = tmp_path / "store"
     _write_v1_trial(store)
-    client = FakeGraphClient(error=resolved.ProjectGraphClientError("http_status"))
+    client = FakeGraphClient(error=resolved.ProjectGraphClientError(resolved.REASON_NOT_FOUND))
     result = resolved.resolve_graph(store, _context(), client=client)
     assert result.status == "unavailable"
-    assert result.reason == "project_graph_unavailable"
+    assert result.reason == resolved.REASON_NOT_FOUND
     assert result.graph is None
 
 
-def test_timeout_is_unavailable(tmp_path: Path) -> None:
+def test_timeout_is_reported_as_a_timeout(tmp_path: Path) -> None:
     store = tmp_path / "store"
     _write_v1_trial(store)
-    client = FakeGraphClient(error=resolved.ProjectGraphClientError("transport"))
+    client = FakeGraphClient(error=resolved.ProjectGraphClientError(resolved.REASON_TIMEOUT))
     result = resolved.resolve_graph(store, _context(), client=client)
     assert result.status == "unavailable"
-    assert result.reason == "project_graph_unavailable"
+    assert result.reason == resolved.REASON_TIMEOUT
 
 
 def test_empty_graph_is_unavailable(tmp_path: Path) -> None:
@@ -286,3 +286,126 @@ def test_corrupt_capture_falls_back_with_stable_reason(tmp_path: Path) -> None:
     assert result.fallback_reason == "project_graph_digest_mismatch"
     assert len(result.graph["nodes"]) == 3
     assert client.calls == [PROJECT_ID]
+
+
+# --- graph read timeout and distinguishable errors ------------------------------
+
+
+class _FakeResponse:
+    """A minimal `urlopen` response: a context manager with a bounded read."""
+
+    def __init__(self, body: bytes, status: int = 200) -> None:
+        self._body = body
+        self.status = status
+
+    def __enter__(self) -> "_FakeResponse":
+        return self
+
+    def __exit__(self, *exc: object) -> bool:
+        return False
+
+    def read(self, count: int = -1) -> bytes:
+        return self._body if count < 0 else self._body[:count]
+
+
+def _opener(response: object = None, error: Exception | None = None):
+    seen: dict[str, object] = {}
+
+    def open_(request: object, timeout: object = None):
+        seen["timeout"] = timeout
+        if error is not None:
+            raise error
+        return response
+
+    return open_, seen
+
+
+def test_graph_timeout_defaults_and_clamps_invalid_values() -> None:
+    parse = resolved.resolve_graph_timeout
+
+    assert resolved.DEFAULT_TIMEOUT_SECONDS == 20.0
+    assert parse(None) == 20.0
+    assert parse("") == 20.0
+    assert parse("1") == 1.0
+    assert parse("30") == 30.0
+    assert parse("7.5") == 7.5
+    for bad in ("0", "-5", "31", "1e9", "nan", "inf", "-inf", "abc", "  "):
+        assert parse(bad) == 20.0, bad
+
+
+def test_http_client_honors_the_configured_timeout_and_reads_a_slow_response() -> None:
+    opener, seen = _opener(_FakeResponse(json.dumps(_graph_payload()).encode()))
+    client = resolved.HttpProjectGraphClient(
+        "http://agent:8080", timeout=20.0, opener=opener
+    )
+
+    payload = client.get_graph(PROJECT_ID)
+
+    assert payload["project_id"] == PROJECT_ID
+    assert seen["timeout"] == 20.0
+    assert client.timeout == 20.0
+
+
+def test_http_client_maps_timeout_404_5xx_transport_and_invalid() -> None:
+    def reason_for(**kwargs: object) -> str:
+        opener, _ = _opener(**kwargs)
+        client = resolved.HttpProjectGraphClient("http://agent:8080", opener=opener)
+        with pytest.raises(resolved.ProjectGraphClientError) as excinfo:
+            client.get_graph(PROJECT_ID)
+        return excinfo.value.reason
+
+    from urllib.error import HTTPError, URLError
+
+    assert reason_for(error=TimeoutError("timed out")) == resolved.REASON_TIMEOUT
+    assert reason_for(error=URLError(TimeoutError("timed out"))) == resolved.REASON_TIMEOUT
+    assert reason_for(error=URLError("connection refused")) == resolved.REASON_TRANSPORT
+    assert (
+        reason_for(error=HTTPError("http://agent:8080/x", 404, "not found", {}, None))
+        == resolved.REASON_NOT_FOUND
+    )
+    assert (
+        reason_for(error=HTTPError("http://agent:8080/x", 503, "unavailable", {}, None))
+        == resolved.REASON_HTTP_ERROR
+    )
+    assert reason_for(response=_FakeResponse(b"{not json")) == resolved.REASON_INVALID
+    assert reason_for(response=_FakeResponse(b"[1, 2, 3]")) == resolved.REASON_INVALID
+
+
+def test_http_client_rejects_an_oversized_body(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(resolved, "MAX_GRAPH_BYTES", 8)
+    opener, _ = _opener(_FakeResponse(b"x" * 9))
+    client = resolved.HttpProjectGraphClient("http://agent:8080", opener=opener)
+
+    with pytest.raises(resolved.ProjectGraphClientError) as excinfo:
+        client.get_graph(PROJECT_ID)
+
+    assert excinfo.value.reason == resolved.REASON_INVALID
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        "REASON_TIMEOUT",
+        "REASON_NOT_FOUND",
+        "REASON_HTTP_ERROR",
+        "REASON_TRANSPORT",
+        "REASON_INVALID",
+    ],
+)
+def test_resolver_preserves_each_client_error_code(
+    tmp_path: Path, code: str
+) -> None:
+    store = tmp_path / "store"
+    _write_v1_trial(store)
+    reason = getattr(resolved, code)
+    client = FakeGraphClient(error=resolved.ProjectGraphClientError(reason))
+
+    result = resolved.resolve_graph(store, _context(), client=client)
+
+    assert result.status == "unavailable"
+    assert result.reason == reason
+    payload = resolved.graph_response(result)
+    assert payload["reason"] == reason
+    # No host path or raw exception text ever reaches the body.
+    assert "/" not in reason
+    assert str(tmp_path) not in repr(payload)

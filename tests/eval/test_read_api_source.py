@@ -529,6 +529,42 @@ def test_filesystem_factory_is_unavailable_without_a_store(
         source.filesystem_source().snapshot()
 
 
+def test_filesystem_factory_reads_the_graph_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("EVAL_GRAPH_TIMEOUT_SECONDS", "12.5")
+    assert source.filesystem_source().graph_timeout_seconds == 12.5
+
+    monkeypatch.setenv("EVAL_GRAPH_TIMEOUT_SECONDS", "30")
+    assert source.filesystem_source().graph_timeout_seconds == 30.0
+
+
+def test_filesystem_factory_defaults_the_graph_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("EVAL_GRAPH_TIMEOUT_SECONDS", raising=False)
+    assert source.filesystem_source().graph_timeout_seconds == 20.0
+
+
+@pytest.mark.parametrize("bad", ["0", "-5", "31", "1e9", "nan", "inf", "abc", ""])
+def test_filesystem_factory_falls_back_on_an_invalid_graph_timeout(
+    monkeypatch: pytest.MonkeyPatch, bad: str
+) -> None:
+    monkeypatch.setenv("EVAL_GRAPH_TIMEOUT_SECONDS", bad)
+    assert source.filesystem_source().graph_timeout_seconds == 20.0
+
+
+def test_adapter_passes_its_graph_timeout_to_the_http_client(tmp_path: Path) -> None:
+    adapter = source.ArtifactStoreSnapshotSource(
+        tmp_path,
+        agent_base_url="http://agent:8080",
+        graph_timeout_seconds=17.0,
+    )
+
+    client = adapter._graph_client()
+
+    assert isinstance(client, source.HttpProjectGraphClient)
+    assert client.timeout == 17.0
+
+
 # --- the production overlay -----------------------------------------------------
 
 # The dashboard overlay must wire the resolved sources the SPA reads: the
@@ -547,6 +583,8 @@ def test_compose_overlay_configures_the_resolved_sources_read_only() -> None:
     assert environment["EVAL_ARTIFACT_STORE"] == "/srv/eval-artifacts"
     assert environment["EVAL_PROJECT_DATA_ROOT"] == "/srv/eval-project-data"
     assert environment["EVAL_AGENT_BASE_URL"] == "http://agent:8080"
+    # The graph read timeout is configurable with a safe default.
+    assert environment["EVAL_GRAPH_TIMEOUT_SECONDS"] == "${EVAL_GRAPH_TIMEOUT_SECONDS:-20}"
     # The instance id may be parametrised, but it must be present.
     assert "EVAL_INSTANCE_ID" in environment
 
