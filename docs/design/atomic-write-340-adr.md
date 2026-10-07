@@ -10,8 +10,8 @@ Resolves #340 (eval-bugs-map EV-29).
 - The observed failure was on the jetlinks-1 project `0022f9ac` after its orphaned run `665ba875` (#338) rewrote `notes.yaml` to 18 MB.
   The file landed malformed (`could not find expected ":" ... while scanning a simple key`) and every later read raised.
   The failure cascaded: `hunt store: unreadable hunter notes` on every read, and `surfer: durable pod-export record failed` - so the Q16 durable pod-export record was lost for the rest of the run.
-- The same whole-file rewrite hazard lived in the orchestrator store (`hunt_store`), the pod memory (`pod/pod_memory.py`), and, in a private copy, the auth store (`app/auth/store.py`) and the skill store (`app/llm/skills.py`).
-  The auth store already wrote atomically (temp file plus `os.replace`, decision D220-6); the other writers did not mirror it.
+- The same non-atomic whole-file rewrite hazard lived in the orchestrator store (`hunt_store`) and the pod memory (`pod/pod_memory.py`).
+  The auth store (`app/auth/store.py`) and the skill store (`app/llm/skills.py`) already wrote atomically (temp file plus `os.replace`, decision D220-6), but through private copies of the idiom; the other writers did not mirror it at all.
 
 ## Decision
 - Introduce ONE shared app primitive, `src/polymerhus/app/atomic_write.py`, with `write_text_atomic(path, text)` and `write_bytes_atomic(path, data)`.
@@ -20,8 +20,9 @@ Resolves #340 (eval-bugs-map EV-29).
   2. writes the body to a sibling temp file in the SAME directory (`.{name}.{uuid8}.tmp`);
   3. `flush` plus `os.fsync` the temp file;
   4. `os.replace`s the temp onto the target (an atomic rename on POSIX);
-  5. unlinks the temp best-effort in a `finally` (a no-op after a successful replace).
-- The `fsync` is deliberate: `os.replace` orders the rename, but it does not force the new bytes to disk, so a power loss could otherwise leave a renamed-but-empty file.
+  5. `fsync`s the parent directory so the rename's entry is itself durable;
+  6. unlinks the temp best-effort in a `finally` (a no-op after a successful replace).
+- Both `fsync`s are deliberate: the file `fsync` forces the new bytes to disk before the rename, and the directory `fsync` forces the rename's entry (the classic ext4 rename-without-dir-fsync zero-length case), so a power loss cannot leave a renamed-but-empty file.
 - Every whole-file writer routes through the primitive:
   - `attack/hunting/hunter_memory.py` - `_write_records` (the `notes.yaml` writer, the ticket's target) and `write_spec`;
   - `attack/hunting/hunt_store.py` - `_dump_yaml_atomic` and `_write_records`;
@@ -41,7 +42,7 @@ The 18 MB growth is a separate, non-corruption defect.
 The orphan itself is fixed at its own layer by #338 (the trial timeout now stops the active run).
 The remaining hazard is that one long run rewrites an ever-growing file with no compaction or record bound.
 Deferring is safe because the atomic write removes the corruption failure mode entirely: growth costs rewrite time and disk, never data loss, and the reader always sees a complete file.
-Compaction or a bounded-record policy is tracked as a follow-up work item, not part of #340.
+Compaction or a bounded-record policy is tracked as a follow-up work item (#341), not part of #340.
 
 ## Consequences
 - One construction point for the atomic-write idiom; the three private copies are retired, so the discipline cannot drift per store.
