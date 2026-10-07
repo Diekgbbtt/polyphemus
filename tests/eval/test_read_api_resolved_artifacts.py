@@ -360,3 +360,115 @@ def test_inventory_and_detail_never_serialize_a_host_path(tmp_path: Path) -> Non
     inventory = _raw_inventory(tmp_path)
     body = resolved.inventory_response(inventory, TARGET, RUN, TRIAL)
     assert str(tmp_path) not in repr(body)
+
+
+# --- nested HuntConfigs through the resolved layer ------------------------------
+
+NESTED_HUNTING_FILES = {
+    "hunting/orchestration/hunt_configs/produced/read/save URL.yaml": b"kind: hunt-config\nside: produced\n",
+    "hunting/orchestration/hunt_configs/produced/role/permission assignment.yaml": b"kind: hunt-config\nside: produced\n",
+    "hunting/orchestration/hunt_configs/consumed/sign/template label.yaml": b"kind: hunt-config\nside: consumed\n",
+}
+
+
+def _nested_raw_inventory(tmp_path: Path) -> resolved.ResolvedInventory:
+    store = tmp_path / "store"
+    _write_v1_trial(store)  # capture unavailable -> raw project storage
+    data_root = tmp_path / "raw"
+    _write_raw(data_root, {**NESTED_HUNTING_FILES, **SKILL_FILES})
+    return resolved.resolve_inventory(store, data_root, _context(), files=FileStore())
+
+
+def test_raw_fallback_exposes_nested_hunt_configs_verbatim(tmp_path: Path) -> None:
+    inventory = _nested_raw_inventory(tmp_path)
+
+    assert inventory.status == "available"
+    assert inventory.source == resolved.PROJECT_STORAGE
+    assert set(NESTED_HUNTING_FILES) <= _paths(inventory)
+    by_path = {entry["relative_path"]: entry for entry in inventory.entries}
+    for path, data in NESTED_HUNTING_FILES.items():
+        entry = by_path[path]
+        assert entry["kind"] == "hunt_config"
+        assert entry["representation"] == "yaml"
+        assert entry["artifact_id"] == hashlib.sha256(path.encode()).hexdigest()
+        assert entry["sha256"] == hashlib.sha256(data).hexdigest()
+
+    body = resolved.inventory_response(inventory, TARGET, RUN, TRIAL)
+    hunt_configs = {group["key"]: group for group in body["groups"]}["hunt-configs"]
+    assert {child["key"] for child in hunt_configs["children"]} == {
+        "hunt-configs/produced",
+        "hunt-configs/consumed",
+    }
+
+
+def test_nested_hunt_configs_for_a_trial_with_no_store_capture(tmp_path: Path) -> None:
+    # A Trial with no store tree at all: the resolved layer reads raw directly.
+    store = tmp_path / "store"
+    data_root = tmp_path / "raw"
+    _write_raw(data_root, NESTED_HUNTING_FILES)
+
+    inventory = resolved.resolve_inventory(
+        store, data_root, _context(), files=FileStore()
+    )
+
+    assert inventory.status == "available"
+    assert inventory.source == resolved.PROJECT_STORAGE
+    assert set(NESTED_HUNTING_FILES) <= _paths(inventory)
+
+
+def test_nested_detail_and_content_round_trip(tmp_path: Path) -> None:
+    inventory = _nested_raw_inventory(tmp_path)
+    entry = next(
+        e for e in inventory.entries if e["relative_path"].endswith("read/save URL.yaml")
+    )
+
+    detail = resolved.detail_response(inventory, TARGET, RUN, TRIAL, entry["artifact_id"])
+    assert detail["entry"] == entry
+    assert f"expected_sha256={entry['sha256']}" in detail["content_url"]
+
+    download = resolved.content_download(
+        inventory, entry["artifact_id"], entry["sha256"]
+    )
+    assert b"".join(download.chunks) == NESTED_HUNTING_FILES[entry["relative_path"]]
+
+
+def test_nested_wrong_expected_digest_is_409(tmp_path: Path) -> None:
+    inventory = _nested_raw_inventory(tmp_path)
+    entry = next(
+        e for e in inventory.entries if e["relative_path"].endswith("read/save URL.yaml")
+    )
+
+    with pytest.raises(artifact_reader.ArtifactLookupError) as excinfo:
+        resolved.content_download(inventory, entry["artifact_id"], "deadbeef")
+
+    assert excinfo.value.code == "artifact_digest_mismatch"
+    assert excinfo.value.status_code == 409
+
+
+def test_captured_v2_inventory_includes_nested_hunt_configs(tmp_path: Path) -> None:
+    store = tmp_path / "store"
+    _write_v2_trial(store, {**HUNTING_FILES, **NESTED_HUNTING_FILES})
+
+    inventory = resolved.resolve_inventory(store, None, _context(), files=FileStore())
+
+    assert inventory.source == resolved.TRIAL_SNAPSHOT
+    assert set(NESTED_HUNTING_FILES) <= _paths(inventory)
+
+
+def test_raw_fallback_rejects_a_nested_symlinked_dir(tmp_path: Path) -> None:
+    store = tmp_path / "store"
+    _write_v1_trial(store)
+    data_root = tmp_path / "raw"
+    project_root = _write_raw(data_root, NESTED_HUNTING_FILES)
+    (tmp_path / "outside").mkdir()
+    (
+        project_root / "hunting/orchestration/hunt_configs/produced/linked"
+    ).symlink_to(tmp_path / "outside", target_is_directory=True)
+
+    inventory = resolved.resolve_inventory(
+        store, data_root, _context(), files=FileStore()
+    )
+
+    assert inventory.status == "unavailable"
+    assert inventory.reason == "artifact_unsafe"
+    assert str(tmp_path) not in repr(inventory)

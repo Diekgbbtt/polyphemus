@@ -347,3 +347,162 @@ def test_artifact_manifest_is_deterministic_and_omits_source_path(tmp_path: Path
     assert paths == sorted(paths)
     for entry in manifest["entries"]:
         assert tuple(entry) == MANIFEST_FIELDS
+
+
+# --- nested HuntConfigs: hunt_configs/{produced,consumed}/** --------------------
+
+# Path fragments the producer really writes: nested directories whose names and
+# file names carry spaces and ordinary punctuation.
+NESTED_FRAGMENTS = (
+    "read/save URL.yaml",
+    "sign/template label.yaml",
+    "role/permission assignment.yaml",
+)
+
+
+def _build_nested_hunt_configs(root: Path) -> Path:
+    project = root / PROJECT_ID
+    for side in ("produced", "consumed"):
+        for fragment in NESTED_FRAGMENTS:
+            _write(
+                project,
+                f"hunting/orchestration/hunt_configs/{side}/{fragment}",
+                f"side: {side}\nfragment: {fragment}\n",
+            )
+    _write(
+        project,
+        "hunting/orchestration/hunt_configs/produced/flat.yaml",
+        "flat: 1\n",
+    )
+    return project
+
+
+def _hunt_config_artifacts(artifacts: tuple[ProjectArtifact, ...]) -> dict[str, ProjectArtifact]:
+    return {a.relative_path: a for a in artifacts if a.kind == "hunt_config"}
+
+
+def test_collects_nested_hunt_configs_on_both_sides(tmp_path: Path) -> None:
+    _build_nested_hunt_configs(tmp_path)
+
+    artifacts = collect_project_artifacts(tmp_path, PROJECT_ID, files=FileStore())
+
+    expected = {
+        f"hunting/orchestration/hunt_configs/{side}/{fragment}"
+        for side in ("produced", "consumed")
+        for fragment in NESTED_FRAGMENTS
+    } | {"hunting/orchestration/hunt_configs/produced/flat.yaml"}
+    found = _hunt_config_artifacts(artifacts)
+    assert set(found) == expected
+    for path, artifact in found.items():
+        assert (artifact.category, artifact.kind) == ("hunting", "hunt_config")
+        assert (artifact.media_type, artifact.representation) == (
+            "application/yaml",
+            "yaml",
+        )
+        assert artifact.artifact_id == hashlib.sha256(path.encode()).hexdigest()
+        assert artifact.sha256 == hashlib.sha256(
+            (tmp_path / PROJECT_ID / path).read_bytes()
+        ).hexdigest()
+
+
+def test_nested_hunt_config_order_is_deterministic(tmp_path: Path) -> None:
+    _build_nested_hunt_configs(tmp_path)
+
+    first = [
+        a.relative_path
+        for a in collect_project_artifacts(tmp_path, PROJECT_ID, files=FileStore())
+    ]
+    second = [
+        a.relative_path
+        for a in collect_project_artifacts(tmp_path, PROJECT_ID, files=FileStore())
+    ]
+
+    assert first == second == sorted(first)
+
+
+def test_same_basename_in_different_nested_dirs_stays_distinct(tmp_path: Path) -> None:
+    project = tmp_path / PROJECT_ID
+    _write(project, "hunting/orchestration/hunt_configs/produced/alpha/config.yaml", "a: 1\n")
+    _write(project, "hunting/orchestration/hunt_configs/produced/beta/config.yaml", "b: 1\n")
+
+    artifacts = collect_project_artifacts(tmp_path, PROJECT_ID, files=FileStore())
+
+    found = _hunt_config_artifacts(artifacts)
+    assert set(found) == {
+        "hunting/orchestration/hunt_configs/produced/alpha/config.yaml",
+        "hunting/orchestration/hunt_configs/produced/beta/config.yaml",
+    }
+    assert len({artifact.artifact_id for artifact in found.values()}) == 2
+
+
+def test_flat_hunt_configs_are_unchanged(tmp_path: Path) -> None:
+    _build_full_project(tmp_path)
+
+    artifacts = collect_project_artifacts(tmp_path, PROJECT_ID, files=FileStore())
+
+    assert set(_hunt_config_artifacts(artifacts)) == {
+        "hunting/orchestration/hunt_configs/produced/hc-1.yaml",
+        "hunting/orchestration/hunt_configs/consumed/hc-2.yaml",
+    }
+
+
+def test_nested_yaml_outside_hunt_configs_is_not_collected(tmp_path: Path) -> None:
+    project = tmp_path / PROJECT_ID
+    # The other hunting families stay flat: only HuntConfig gains recursion.
+    _write(project, "hunting/hunter/test-specs/fault-a/produced/deep/spec.yaml", "s: 1\n")
+    _write(project, "hunting/test-executor-pod/spec-1/variants/deep/v.yaml", "v: 1\n")
+    _write(project, "hunting/test-executor-pod/spec-1/experiment-log/deep/l.yaml", "l: 1\n")
+
+    artifacts = collect_project_artifacts(tmp_path, PROJECT_ID, files=FileStore())
+
+    assert artifacts == ()
+
+
+def test_nested_non_yaml_hunt_config_files_are_ignored(tmp_path: Path) -> None:
+    project = tmp_path / PROJECT_ID
+    _write(project, "hunting/orchestration/hunt_configs/produced/deep/notes.md", "n\n")
+    _write(project, "hunting/orchestration/hunt_configs/consumed/deep/README.txt", "r\n")
+
+    artifacts = collect_project_artifacts(tmp_path, PROJECT_ID, files=FileStore())
+
+    assert artifacts == ()
+
+
+def test_rejects_symlinked_nested_hunt_config_dir(tmp_path: Path) -> None:
+    project = tmp_path / PROJECT_ID
+    produced = project / "hunting/orchestration/hunt_configs/produced"
+    produced.mkdir(parents=True)
+    (tmp_path / "outside").mkdir()
+    (produced / "linked").symlink_to(tmp_path / "outside", target_is_directory=True)
+
+    with pytest.raises(ProjectArtifactError) as excinfo:
+        collect_project_artifacts(tmp_path, PROJECT_ID, files=FileStore())
+
+    assert excinfo.value.failure == "artifact_unsafe"
+    assert str(tmp_path) not in str(excinfo.value)
+
+
+def test_rejects_symlinked_nested_hunt_config_yaml(tmp_path: Path) -> None:
+    deep = tmp_path / PROJECT_ID / "hunting/orchestration/hunt_configs/consumed/deep"
+    deep.mkdir(parents=True)
+    outside = tmp_path / "outside.yaml"
+    outside.write_text("x: 1\n", encoding="utf-8")
+    (deep / "evil.yaml").symlink_to(outside)
+
+    with pytest.raises(ProjectArtifactError) as excinfo:
+        collect_project_artifacts(tmp_path, PROJECT_ID, files=FileStore())
+
+    assert excinfo.value.failure == "artifact_unsafe"
+    assert str(tmp_path) not in str(excinfo.value)
+
+
+def test_rejects_nested_special_hunt_config_file(tmp_path: Path) -> None:
+    deep = tmp_path / PROJECT_ID / "hunting/orchestration/hunt_configs/produced/deep"
+    deep.mkdir(parents=True)
+    os.mkfifo(deep / "pipe.yaml")
+
+    with pytest.raises(ProjectArtifactError) as excinfo:
+        collect_project_artifacts(tmp_path, PROJECT_ID, files=FileStore())
+
+    assert excinfo.value.failure == "artifact_unsafe"
+    assert str(tmp_path) not in str(excinfo.value)

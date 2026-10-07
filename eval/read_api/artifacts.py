@@ -332,11 +332,13 @@ def _allowlist_group(relative_path: str, kind: str) -> tuple[str, ...] | None:
         return None
 
     if kind == "hunt_config":
+        # HuntConfigs may nest below `produced`/`consumed` (any number of safe
+        # segments); the side is always segment 3 and the leaf a `.yaml` file.
         if (
-            len(parts) == 5
+            len(parts) >= 5
             and parts[:3] == ["hunting", "orchestration", "hunt_configs"]
             and parts[3] in ("produced", "consumed")
-            and parts[4].endswith(".yaml")
+            and parts[-1].endswith(".yaml")
         ):
             return ("hunt-configs", parts[3])
     elif kind == "test_spec":

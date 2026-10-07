@@ -723,3 +723,102 @@ def test_strict_endpoint_stays_the_integrity_report_for_incoherent_capture(
     res = _client(store).get(_list_url())
     assert res.status_code == 200
     assert res.json()["status"] == "available"
+
+
+# --- nested HuntConfig allowlist and grouping ----------------------------------
+
+NESTED_HUNT_FILES = {
+    "hunting/orchestration/hunt_configs/produced/read/save URL.yaml": b"kind: hunt-config\n",
+    "hunting/orchestration/hunt_configs/produced/role/permission assignment.yaml": b"kind: hunt-config\n",
+    "hunting/orchestration/hunt_configs/consumed/sign/template label.yaml": b"kind: hunt-config\n",
+}
+
+
+def test_allowlist_accepts_nested_hunt_configs_and_rejects_others() -> None:
+    group = artifact_reader._allowlist_group
+
+    assert group(
+        "hunting/orchestration/hunt_configs/produced/read/save URL.yaml",
+        "hunt_config",
+    ) == ("hunt-configs", "produced")
+    assert group(
+        "hunting/orchestration/hunt_configs/consumed/a/b/c.yaml",
+        "hunt_config",
+    ) == ("hunt-configs", "consumed")
+    # The side is segment 3: a nested directory named `produced` under
+    # `consumed` never flips the group.
+    assert group(
+        "hunting/orchestration/hunt_configs/consumed/produced/x.yaml",
+        "hunt_config",
+    ) == ("hunt-configs", "consumed")
+
+    # A non-.yaml leaf, a foreign side and a mismatched kind stay rejected.
+    assert group("hunting/orchestration/hunt_configs/produced/deep/x.yml", "hunt_config") is None
+    assert group("hunting/orchestration/hunt_configs/produced/deep/noext", "hunt_config") is None
+    assert group("hunting/orchestration/hunt_configs/other/deep/x.yaml", "hunt_config") is None
+    assert group("hunting/orchestration/hunt_configs/produced/x.yaml", "test_spec") is None
+    # Traversal, separators and control characters never become a group.
+    assert group("hunting/orchestration/hunt_configs/produced/../x.yaml", "hunt_config") is None
+    assert group("hunting/orchestration/hunt_configs/produced/deep\\x.yaml", "hunt_config") is None
+    assert group("/hunting/orchestration/hunt_configs/produced/x.yaml", "hunt_config") is None
+
+
+def test_inventory_groups_nested_hunt_configs_under_their_side(tmp_path: Path) -> None:
+    store = tmp_path / "store"
+    _build_trial(store, extra=NESTED_HUNT_FILES)
+
+    body = _client(store).get(_list_url()).json()
+
+    hunt_configs = {group["key"]: group for group in body["groups"]}["hunt-configs"]
+    children = {child["key"]: child for child in hunt_configs["children"]}
+    produced = {e["relative_path"] for e in children["hunt-configs/produced"]["entries"]}
+    consumed = {e["relative_path"] for e in children["hunt-configs/consumed"]["entries"]}
+    assert "hunting/orchestration/hunt_configs/produced/read/save URL.yaml" in produced
+    assert "hunting/orchestration/hunt_configs/produced/role/permission assignment.yaml" in produced
+    assert "hunting/orchestration/hunt_configs/consumed/sign/template label.yaml" in consumed
+    # No nested sub-group was invented: still Produced/Consumed only.
+    assert set(children) == {"hunt-configs/produced", "hunt-configs/consumed"}
+
+
+def test_nested_hunt_config_detail_and_content_round_trip(tmp_path: Path) -> None:
+    store = tmp_path / "store"
+    _build_trial(store, extra=NESTED_HUNT_FILES)
+    relative = "hunting/orchestration/hunt_configs/produced/read/save URL.yaml"
+    artifact_id = _artifact_id(relative)
+
+    detail = _client(store).get(_detail_url(artifact_id)).json()
+    assert detail["entry"]["relative_path"] == relative
+    assert detail["entry"]["artifact_id"] == artifact_id
+
+    res = _client(store).get(_content_url(artifact_id))
+    assert res.status_code == 200
+    assert res.content == NESTED_HUNT_FILES[relative]
+
+
+def test_nested_path_outside_the_tree_is_rejected(tmp_path: Path) -> None:
+    store = tmp_path / "store"
+    _build_trial(store)
+    # Point a hunt_config entry at a path the allowlist does not cover; the id is
+    # kept consistent so only the allowlist can reject it.
+    forged = "hunting/orchestration/hunt_configs/other/deep/x.yaml"
+    _tamper_entry(
+        store,
+        "hunting/orchestration/hunt_configs/produced/prod.yaml",
+        relative_path=forged,
+        artifact_id=_artifact_id(forged),
+    )
+
+    assert _client(store).get(_list_url()).status_code == 409
+
+
+def test_nested_wrong_kind_is_rejected(tmp_path: Path) -> None:
+    store = tmp_path / "store"
+    _build_trial(store, extra=NESTED_HUNT_FILES)
+    # The same nested path labelled a pod export is not a hunt config shape.
+    _tamper_entry(
+        store,
+        "hunting/orchestration/hunt_configs/produced/read/save URL.yaml",
+        kind="pod_export",
+    )
+
+    assert _client(store).get(_list_url()).status_code == 409

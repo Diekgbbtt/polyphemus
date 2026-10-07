@@ -348,6 +348,43 @@ def _collect_yaml_flat(
         register(entry, category, kind)
 
 
+def _collect_hunt_configs(
+    files: FileStore,
+    project_root: Path,
+    directory: Path,
+    register: Callable[[Path, str, str], None],
+) -> None:
+    """Recursively collect `*.yaml` HuntConfigs below one `produced`/`consumed`.
+
+    HuntConfigs are the one hunting family whose side directory may nest. Only
+    this family recurses - every other family keeps `_collect_yaml_flat`. A
+    regular non-YAML file is ignored; a symlink (file or directory) or any
+    special file raises `artifact_unsafe` before it is read.
+    """
+    stack = [directory]
+    while stack:
+        current = stack.pop()
+        if not _enter_dir(files, project_root, current):
+            continue
+        for entry in files.glob(current, "*"):
+            if files.is_symlink(entry):
+                raise ProjectArtifactError(
+                    f"symlink is not allowed: {_relative(project_root, entry)}",
+                    failure="artifact_unsafe",
+                )
+            if files.is_dir(entry):
+                _require_safe_dynamic_segment(entry.name, where="hunt_config")
+                stack.append(entry)
+                continue
+            if not files.is_file(entry):
+                raise ProjectArtifactError(
+                    f"special file is not allowed: {_relative(project_root, entry)}",
+                    failure="artifact_unsafe",
+                )
+            if entry.name.endswith(".yaml"):
+                register(entry, CATEGORY_HUNTING, KIND_HUNT_CONFIG)
+
+
 def _child_dirs(
     files: FileStore,
     project_root: Path,
@@ -379,9 +416,7 @@ def _collect_hunting(
 
     config_root = hunting_root / "orchestration" / "hunt_configs"
     for side in HUNT_CONFIG_SIDES:
-        _collect_yaml_flat(
-            files, project_root, config_root / side, register, CATEGORY_HUNTING, KIND_HUNT_CONFIG
-        )
+        _collect_hunt_configs(files, project_root, config_root / side, register)
 
     specs_root = hunting_root / "hunter" / "test-specs"
     for fault_dir in _child_dirs(files, project_root, specs_root, "fault_key"):
