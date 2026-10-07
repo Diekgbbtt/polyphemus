@@ -505,30 +505,72 @@ def select_branch(overview: Any) -> BranchDirective:
 # --- the missing-data gate (D223-17) -----------------------------------------------
 
 NO_AUTH_MARKER = "no authenticated surface"
-"""The structural no-auth-surface marker: matched case-insensitively inside
-`overview.notes` (the only free-text overview field)."""
+"""The legacy no-auth-surface marker: matched case-insensitively inside
+`overview.notes` (the free-text overview field). Retained for overviews seeded
+before the structural signal; `mechanism: none` is primary (#339)."""
+
+NO_MECHANISM = "none"
+"""The explicit no-mechanism value of `overview.mechanism` (#339): the
+structural no-auth-surface signal, matched case-insensitively after trimming.
+An absent or null mechanism is UNKNOWN, not a positive no-auth statement."""
+
+SURFACE_DECLARING_KEYS = frozenset({
+    "login_endpoint", "defences", "anti-bot", "required_headers",
+    "fingerprinting", "technical_conditions",
+})
+"""The overview fields that declare an authenticated surface when they carry a
+real value (#339). The free-text `notes` and the derived
+`http-client-replayability` fact never declare one; `mechanism` is checked
+separately because an explicit no-mechanism is not a surface."""
 
 GatePath = Literal["run_loop", "no_auth_surface", "missing_credentials"]
 """The gateway's pre-turn gate: run the authn loop, skip it (anonymous), or
 stop the run (missing prerequisite)."""
 
 
+def _declares_mechanism(overview: Mapping[str, Any]) -> bool:
+    """Whether `mechanism` names a real login mechanism: a non-blank string
+    other than the explicit no-mechanism sentinel."""
+    mechanism = overview.get("mechanism")
+    return (
+        isinstance(mechanism, str)
+        and mechanism.strip() != ""
+        and mechanism.strip().lower() != NO_MECHANISM
+    )
+
+
+def _is_explicit_no_mechanism(overview: Mapping[str, Any]) -> bool:
+    """Whether the overview states, structurally, that it has no login
+    mechanism (`mechanism` is the string `none`)."""
+    mechanism = overview.get("mechanism")
+    return isinstance(mechanism, str) and mechanism.strip().lower() == NO_MECHANISM
+
+
 def declares_auth_surface(overview: Any) -> bool:
-    """Whether the overview declares an authenticated surface: any truthy
-    field other than the free-text `notes` (endpoint, mechanism, defence,
-    replayability, headers, fingerprinting, conditions)."""
+    """Whether the overview declares an authenticated surface: a real
+    mechanism, or any truthy surface-declaring field (endpoint, defences,
+    anti-bot, headers, fingerprinting, conditions). The derived
+    `http-client-replayability` fact and the free-text `notes` never declare
+    one, and an explicit `mechanism: none` declares no mechanism (#339)."""
     if not isinstance(overview, Mapping):
         return False
+    if _declares_mechanism(overview):
+        return True
     return any(
         value for key, value in overview.items()
-        if key != "notes" and value not in (None, "", [], {})
+        if key in SURFACE_DECLARING_KEYS and value not in (None, "", [], {})
     )
 
 
 def has_no_auth_marker(overview: Any) -> bool:
-    """Whether the overview carries the structural no-auth-surface marker."""
+    """Whether the overview states there is no authenticated surface. The
+    structural signal is an explicit `mechanism: none`; the legacy free-text
+    marker (`notes` carrying "no authenticated surface") is still honoured for
+    overviews seeded before the structural signal (#339)."""
     if not isinstance(overview, Mapping):
         return False
+    if _is_explicit_no_mechanism(overview):
+        return True
     notes = overview.get("notes")
     return isinstance(notes, str) and NO_AUTH_MARKER in notes.lower()
 
@@ -623,6 +665,8 @@ __all__ = [
     "BRANCH_DIRECTIVES",
     "select_branch",
     "NO_AUTH_MARKER",
+    "NO_MECHANISM",
+    "SURFACE_DECLARING_KEYS",
     "GatePath",
     "declares_auth_surface",
     "has_no_auth_marker",
