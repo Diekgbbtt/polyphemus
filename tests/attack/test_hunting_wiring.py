@@ -190,7 +190,8 @@ class _FakePg:
         self.statuses.append(("running", self.next_id))
         return self.next_id
 
-    def set_hunting_run_status(self, hunting_run_id: str, status: str) -> None:
+    def set_hunting_run_status(self, hunting_run_id: str, status: str, *,
+                               stats: dict | None = None) -> None:
         if self.fail_status:
             raise OSError("pg down (fixture)")
         self.statuses.append((hunting_run_id, status))

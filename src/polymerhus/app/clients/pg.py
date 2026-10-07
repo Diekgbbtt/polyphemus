@@ -87,9 +87,16 @@ _HUNTING_SCHEMA_MIGRATIONS = (
     "  project_id     TEXT NOT NULL,"
     "  status         TEXT NOT NULL,"
     "  started_at     TIMESTAMPTZ,"
-    "  finished_at    TIMESTAMPTZ"
+    "  finished_at    TIMESTAMPTZ,"
+    "  stats          JSONB NOT NULL DEFAULT '{}'::jsonb"
     ")",
     "CREATE INDEX IF NOT EXISTS hunting_runs_project_idx ON hunting_runs (project_id)",
+    # Additive for an already-initialised DB (#331): the run's terminal cause
+    # rides `stats` (the same JSONB discipline as analysis_runs), so an
+    # `interrupted` run records WHY it paused - the transient-throttle vs
+    # consumed-credits distinction the eval consumes.
+    "ALTER TABLE hunting_runs ADD COLUMN IF NOT EXISTS "
+    "stats JSONB NOT NULL DEFAULT '{}'::jsonb",
 )
 
 # Hunting-run statuses (#110). `running` is the only live state; the rest are
@@ -220,16 +227,28 @@ def create_hunting_run(project_id: str) -> str:
     return hunting_run_id
 
 
-def set_hunting_run_status(hunting_run_id: str, status: str) -> None:
-    """Set a hunting run's status, stamping finished_at on a terminal status."""
+def set_hunting_run_status(
+    hunting_run_id: str, status: str, *, stats: dict | None = None
+) -> None:
+    """Set a hunting run's status, stamping finished_at on a terminal status and
+    merging any `stats` (additive JSONB, the same discipline as
+    `set_analysis_run_status`). The `stats` carry an `interrupted` run's cause
+    (#331) - the run row is the durable footprint of the in-memory lifecycle, so
+    the cause must not die with the process that observed it."""
     set_finished = "finished_at = now()" if status in _TERMINAL_HUNTING_STATUSES else ""
     sets = "status = %s"
     if set_finished:
         sets = f"{sets}, {set_finished}"
+    if stats is not None:
+        sets = f"{sets}, stats = COALESCE(stats, '{{}}'::jsonb) || %s::jsonb"
     with psycopg.connect(config.POSTGRES_DSN) as conn, conn.cursor() as cur:
+        params: list = [status]
+        if stats is not None:
+            params.append(json.dumps(stats))
+        params.append(hunting_run_id)
         cur.execute(
             f"UPDATE hunting_runs SET {sets} WHERE hunting_run_id = %s",
-            (status, hunting_run_id),
+            tuple(params),
         )
 
 
@@ -237,8 +256,8 @@ def get_hunting_run(hunting_run_id: str) -> dict | None:
     """The 1:1 read path for a hunting run's lifecycle row."""
     with psycopg.connect(config.POSTGRES_DSN) as conn, conn.cursor() as cur:
         cur.execute(
-            "SELECT hunting_run_id, project_id, status, started_at, finished_at "
-            "FROM hunting_runs WHERE hunting_run_id = %s",
+            "SELECT hunting_run_id, project_id, status, started_at, finished_at, "
+            "COALESCE(stats, '{}'::jsonb) FROM hunting_runs WHERE hunting_run_id = %s",
             (hunting_run_id,),
         )
         row = cur.fetchone()
@@ -246,7 +265,7 @@ def get_hunting_run(hunting_run_id: str) -> dict | None:
             return None
         return {
             "hunting_run_id": row[0], "project_id": row[1], "status": row[2],
-            "started_at": row[3], "finished_at": row[4],
+            "started_at": row[3], "finished_at": row[4], "stats": row[5],
         }
 
 
@@ -254,14 +273,15 @@ def list_hunting_runs(project_id: str) -> list[dict]:
     """All of a project's hunting runs, oldest first."""
     with psycopg.connect(config.POSTGRES_DSN) as conn, conn.cursor() as cur:
         cur.execute(
-            "SELECT hunting_run_id, project_id, status, started_at, finished_at "
-            "FROM hunting_runs WHERE project_id = %s ORDER BY started_at NULLS LAST",
+            "SELECT hunting_run_id, project_id, status, started_at, finished_at, "
+            "COALESCE(stats, '{}'::jsonb) FROM hunting_runs WHERE project_id = %s "
+            "ORDER BY started_at NULLS LAST",
             (project_id,),
         )
         return [
             {
                 "hunting_run_id": r[0], "project_id": r[1], "status": r[2],
-                "started_at": r[3], "finished_at": r[4],
+                "started_at": r[3], "finished_at": r[4], "stats": r[5],
             }
             for r in cur.fetchall()
         ]
@@ -271,12 +291,17 @@ def reconcile_orphaned_hunting_runs() -> int:
     """Startup reconcile (#110): the per-run orchestration actor is in-memory and
     dies with the process, so any hunting run left `running` at boot has no live
     engine behind it. Flip it to `interrupted` - an honest terminal state -
-    stamping when. Idempotent: a second boot finds nothing `running`. Returns the
+    stamping when and why (#331: the cause record, so an interrupted run is never
+    causeless). Idempotent: a second boot finds nothing `running`. Returns the
     number reconciled."""
     with psycopg.connect(config.POSTGRES_DSN) as conn, conn.cursor() as cur:
         cur.execute(
-            "UPDATE hunting_runs SET status='interrupted', finished_at=now() "
-            "WHERE status='running'",
+            "UPDATE hunting_runs SET status='interrupted', finished_at=now(), "
+            "stats = COALESCE(stats, '{}'::jsonb) || jsonb_build_object("
+            "  'interrupted', true,"
+            "  'interrupt_reason', 'process ended mid-run: the in-memory "
+            "orchestration actor did not survive the restart'"
+            ") WHERE status='running'",
         )
         return cur.rowcount
 

@@ -199,14 +199,21 @@ class HuntOrchestrationDegradedError(PhaseAbort):
     `provider_cause` (#329): True when the degrading turns were provider
     failures (429/5xx/timeout/quota). A provider-caused abort is an
     INFRASTRUCTURE pause, not a domain failure, so the runtime persists the
-    resumable terminal `interrupted` instead of `failed`."""
+    resumable terminal `interrupted` instead of `failed`.
+
+    `provider_error` (#331): the typed `ProviderUnavailableError` the abort was
+    classified from, when provider-caused. It carries `status_code` / the
+    `quota_exhausted` flag / `retry_after_s`, so the runtime can record WHY the
+    run was interrupted - the transient-throttle vs consumed-credits distinction
+    the eval needs is not recoverable from the boolean alone."""
 
     def __init__(self, *, phase: str, streak: int, threshold: int,
-                 provider_cause: bool = False) -> None:
+                 provider_cause: bool = False, provider_error=None) -> None:
         self.phase = phase
         self.streak = streak
         self.threshold = threshold
         self.provider_cause = provider_cause
+        self.provider_error = provider_error
         super().__init__(
             f"hunting pass aborted: {streak} consecutive no-decision phase "
             f"turn(s) (last phase {phase!r}, abort threshold {threshold}"
@@ -271,16 +278,17 @@ class DegradedTurnBreaker:
             return
         self.streak += 1
         if self._abort > 0 and self.streak >= self._abort:
-            provider_cause = False
+            provider_error = None
             if cause is not None:
                 from polymerhus.app.llm.provider_failure import (  # noqa: PLC0415
-                    is_provider_unavailable,
+                    as_provider_error,
                 )
 
-                provider_cause = is_provider_unavailable(cause)
+                provider_error = as_provider_error(cause)
             raise HuntOrchestrationDegradedError(
                 phase=phase, streak=self.streak, threshold=self._abort,
-                provider_cause=provider_cause)
+                provider_cause=provider_error is not None,
+                provider_error=provider_error)
 
 # The config status lifecycle (ADR G5/G6): hypothesised -> ratified | dropped.
 # `noted` is a LOOP state, never a config status; `consumed` is tautological in

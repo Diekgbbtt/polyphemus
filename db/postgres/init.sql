@@ -78,7 +78,8 @@ CREATE TABLE IF NOT EXISTS hunting_runs (
     project_id     TEXT NOT NULL,
     status         TEXT NOT NULL,
     started_at     TIMESTAMPTZ,
-    finished_at    TIMESTAMPTZ
+    finished_at    TIMESTAMPTZ,
+    stats          JSONB NOT NULL DEFAULT '{}'::jsonb
 );
 CREATE INDEX IF NOT EXISTS hunting_runs_project_idx ON hunting_runs (project_id);
 ALTER TABLE recon_runs ADD COLUMN IF NOT EXISTS last_heartbeat_at TIMESTAMPTZ;

@@ -52,6 +52,22 @@ class ProviderUnavailableError(RuntimeError):
         self.model = model
         self.quota_exhausted = quota_exhausted
 
+    def interrupt_reason(self) -> str:
+        """A one-line, operator-readable cause carrying the classification the
+        resume policy needs: the HTTP status class and whether the failure was a
+        period-quota exhaustion (terminal) vs a transient throttle (resumable).
+        Recorded on an `interrupted` run so the cause survives past the process
+        and the eval can tell a 429 from consumed credits (#331)."""
+        parts: list[str] = []
+        if self.status_code is not None:
+            parts.append(f"status={self.status_code}")
+        if self.quota_exhausted:
+            parts.append("quota_exhausted=true")
+        if self.retry_after_s is not None:
+            parts.append(f"retry_after_s={self.retry_after_s:g}")
+        detail = ", ".join(parts) if parts else "no status"
+        return f"provider unavailable ({detail})"
+
 
 # Message markers observed live from the opencode-go 429 / LiteLLM gateway
 # (`Go usage limit exceeded`, `Rate limit ... exceeded`, `x-ratelimit-limit`).

@@ -224,9 +224,12 @@ class PhaseRecord:
 
 @dataclass
 class PollResult:
-    """A hunting poll's terminal outcome."""
+    """A hunting poll's terminal outcome. `response` is the terminal run row,
+    when the status read supplied one, so the phase can record the cause of an
+    `interrupted` run (#331)."""
 
     status: str
+    response: Mapping | None = None
 
 
 @dataclass(frozen=True)
@@ -804,6 +807,7 @@ class Trial:
             run_id=run_id,
             stop_run_id=run_id,
             notes=list(gate.notes),
+            failure=_hunting_failure(result),
         )
         return phase, result
 
@@ -867,9 +871,10 @@ class Trial:
         cfg = self.config
         deadline = self._clock() + cfg.budget_s
         while True:
-            status = api.status_of(self._call(api.hunting_status(project_id, run_id)))
+            response = self._call(api.hunting_status(project_id, run_id))
+            status = api.status_of(response)
             if status in api.HUNTING_TERMINAL:
-                return PollResult(status)
+                return PollResult(status, response)
             # Only the trial-wide token budget stops hunting now: the hunt-config
             # cap is REMOVED (2026-10-05). It hard-stopped runs mid-coverage (the
             # jetlinks-1 tier-0 cap-exhaustion) and a consumed-config COUNT is not
@@ -1037,6 +1042,25 @@ def _terminal_of(phase: PhaseRecord, cap: PollResult | None) -> str:
     if cap is not None and cap.status == "stopped":
         return "stopped"
     return phase.status or "complete"
+
+
+def _hunting_failure(result: PollResult) -> str | None:
+    """The hunting phase's failure cause, or None when healthy (#331).
+
+    An `interrupted` hunt is a resumable pause (a provider throttle or a process
+    restart), never a domain failure - but the trial stops at it and must record
+    WHY. The cause rides the run row's `stats.interrupt_reason`, recorded by the
+    app when it landed the `interrupted` terminal; the trial reads it so the
+    surfer's classifier can tell a transient 429 from consumed credits. A status
+    that is neither interrupted nor a failure contributes nothing (the phase's
+    own `status`/`failure` already carry it)."""
+    if result.status != "interrupted":
+        return None
+    stats = (result.response or {}).get("stats") or {}
+    reason = stats.get("interrupt_reason")
+    if reason:
+        return str(reason)
+    return "hunting run interrupted (resumable)"
 
 
 def _default_trial_id(cfg: TrialConfig, now: Callable[[], str]) -> str:

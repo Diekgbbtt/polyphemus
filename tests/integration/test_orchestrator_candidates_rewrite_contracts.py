@@ -146,7 +146,8 @@ def test_integration_c1_bootstrap_schedules_on_shared_loop(tmp_path, monkeypatch
         statuses.append(("create", project_id))
         return "run-c1"
 
-    def fake_set(hunting_run_id: str, status: str) -> None:
+    def fake_set(hunting_run_id: str, status: str, *,
+                 stats: dict | None = None) -> None:
         statuses.append((hunting_run_id, status))
 
     def fake_list(project_id: str) -> list[dict]:

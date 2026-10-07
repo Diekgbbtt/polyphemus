@@ -6,6 +6,8 @@
 
 *Implementation note (#330, 2026-10-06): **Part 1 (the gateway cost guard) has LANDED** (`docs/design/llm-gateway-100-decisions.md`, ADR D13). `sync.run_sync` provisions each provider virtual key with USD `budget_limits` (`5h/7d/30d`) scaled by a conservatism factor (default `0.5`) plus an optional `rpm_limit`, idempotently (the diff ignores litellm's server-set `reset_at`); `gateway/litellm_config.yaml` enables `fail_closed_budget_enforcement: true`. Verified live: a zero-USD window on a virtual key returns 429 at auth before the provider is called. Unpriced models fail open (no `block_requests_for_models_without_pricing` in the pinned 1.96.0); the sync logs every unpriced registered model at bootstrap. Part 2's stop/flush/resume remains #331.*
 
+*Implementation note (#331, 2026-10-06): the slice that records an `interrupted` run's CAUSE and surfaces it to the eval has LANDED (`docs/design/hunting-331-provider-resume-adr.md`): the abort carries the typed `ProviderUnavailableError`, `runtime.start_hunting` stamps `hunting_runs.stats` (`interrupt_reason`/`provider_status`/`quota_exhausted`/`retry_after_s`), the eval trial reads it into the hunting-phase `failure` (fixing the `_phase_hunting` `failure=None` gap), and the monitor is pinned to defer `interrupted` rather than escalate it. The app-layer resume re-scheduling and the 429-vs-consumed-credits policy are ESCALATED operator decisions.*
+
 ## Part 1 - Gateway cost guard (failure A)
 
 ### 1.1 The provider cap, verified

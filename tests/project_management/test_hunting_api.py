@@ -80,7 +80,8 @@ class _FakeHuntingRows:
         }
         return rid
 
-    def set_hunting_run_status(self, hunting_run_id: str, status: str) -> None:
+    def set_hunting_run_status(self, hunting_run_id: str, status: str, *,
+                               stats: dict | None = None) -> None:
         self.status_writes.append((hunting_run_id, status))
         row = self.rows.get(hunting_run_id)
         if row is not None:
