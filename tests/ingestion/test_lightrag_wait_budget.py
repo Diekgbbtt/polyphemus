@@ -328,6 +328,26 @@ def test_from_config_wires_configured_deadline(monkeypatch):
     assert adapter.max_poll_attempts is None
 
 
+def test_from_config_reads_config_through_the_module(monkeypatch):
+    import polymerhus.app.config as config_module
+
+    real_config = config_module.config
+
+    class StubConfig:
+        LIGHTRAG_INGESTION_TIMEOUT_SECONDS = 3600.5
+        LIGHTRAG_POLL_INTERVAL_SECONDS = 0.5
+
+        def __getattr__(self, name):
+            return getattr(real_config, name)
+
+    monkeypatch.setattr(config_module, "config", StubConfig())
+
+    service = IngestionService.from_config()
+
+    assert service.lightrag_adapter.timeout_seconds == 3600.5
+    assert service.lightrag_adapter.poll_interval_seconds == 0.5
+
+
 def test_public_job_error_payload_never_exposes_raw_lightrag_text(monkeypatch, tmp_path):
     import polymerhus.ingestion.service as service_module
 

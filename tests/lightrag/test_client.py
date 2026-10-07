@@ -83,28 +83,22 @@ def test_client_query_requests_references_and_chunk_content(monkeypatch):
 
 
 def test_build_lightrag_clients_uses_distinct_base_and_writeup_urls(monkeypatch):
-    import importlib
-
     import polymerhus.app.config as config_module
     import lightrag.client as client_module
 
-    with monkeypatch.context() as m:
-        m.setenv("LIGHTRAG_BASE_API_URL", "http://base:9621")
-        m.setenv("LIGHTRAG_WRITEUP_API_URL", "http://writeups:9621")
-        m.setenv("LIGHTRAG_API_KEY", "secret")
-        m.setenv("LIGHTRAG_TIMEOUT_SECONDS", "7")
-        importlib.reload(config_module)
+    monkeypatch.setattr(config_module.config, "LIGHTRAG_BASE_API_URL", "http://base:9621")
+    monkeypatch.setattr(config_module.config, "LIGHTRAG_WRITEUP_API_URL", "http://writeups:9621")
+    monkeypatch.setattr(config_module.config, "LIGHTRAG_API_KEY", "secret")
+    monkeypatch.setattr(config_module.config, "LIGHTRAG_TIMEOUT_SECONDS", 7)
 
-        clients = client_module.build_lightrag_clients()
+    clients = client_module.build_lightrag_clients()
 
-        assert clients["base"].base_url == "http://base:9621"
-        assert clients["writeups"].base_url == "http://writeups:9621"
-        assert clients["base"].api_key == "secret"
-        assert clients["writeups"].api_key == "secret"
-        assert clients["base"].timeout == 7
-        assert clients["writeups"].timeout == 7
-
-    importlib.reload(config_module)
+    assert clients["base"].base_url == "http://base:9621"
+    assert clients["writeups"].base_url == "http://writeups:9621"
+    assert clients["base"].api_key == "secret"
+    assert clients["writeups"].api_key == "secret"
+    assert clients["base"].timeout == 7
+    assert clients["writeups"].timeout == 7
 
 
 def test_client_clear_cache_sends_empty_json_body(monkeypatch):
