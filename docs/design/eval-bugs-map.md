@@ -91,6 +91,8 @@ Confidence: HIGH = code/evidence confirmed; POTENTIAL = needs `diagnosing-bugs`.
 | id | failure | diagnosis | conf | ticket |
 |---|---|---|---|---|
 | EV-1 | recon launch 503 `module 'recon' is stopped` -> trial `failed` (080051, 080209) | `drain` settles the module to `stopped`; `resume` only resumes from `paused`, so it no-ops; the recon-entry predicate has no detection/repair | HIGH | #328 (closed) |
+| EV-27 | a trial's wall-clock timeout leaves its active run running (orphaned runs, resource leak, cascading timeouts) | `eval/orchestrator/trial.py::_poll`/`_poll_hunting` return `"timeout"` without `api.stop_run` (the spend path stops; the timeout path does not). On the eval server 2026-10-07 the jetlinks-1 hunting run `665ba875` was still `running` ~8h after its trial timed out, and siyucms-1 `699859a8` ~3h; the leaked runs contended the agent and provider and amplified further timeouts. Healed live by `POST .../hunting/{run}/stop`. | HIGH | #338 (open) |
+| EV-28 | the recon auth gateway fail-closes a no-auth target | `authn_loop.declares_auth_surface` counts `mechanism: "none"` and the derived `http-client-replayability: true` as a declared surface, and `has_no_auth_marker` is a fragile substring on `notes` ("without any authentication surface" does not match "no authenticated surface"), so `classify_gate` returns `missing_credentials` -> `GatewayStop` for comfyui instead of `no_auth_surface`. | HIGH | #339 (open) |
 
 ### Evidence and assessment
 
