@@ -428,7 +428,7 @@ This is the #316 defect.
 
 **Decision.**
 The monitor's dispatch path launches the configured agent command detached and returns at once.
-`BackgroundRunner` (`orchestrator/commands.py`) starts the command with `start_new_session=True`, redirects its stdout and stderr to a per-dispatch log beside the node's destination (`<destination>.dispatch.log`), and never waits.
+`BackgroundRunner` (`orchestrator/commands.py`) starts the command with `start_new_session=True`, redirects its stdout and stderr to a per-node log beside the node's destination (`<destination>.dispatch.log`), and never waits.
 The tick records the attempt and returns, so later ticks advance every other trial.
 
 **What "bounded" means.**
@@ -446,7 +446,7 @@ The log beside the destination records the subagent's output for the operator; i
 The output-file gate is the primary guard: a present, valid file ends the node before any dispatch is considered.
 While the file is absent and the last dispatch is within budget, the tick awaits and does not re-dispatch.
 A re-dispatch can therefore only follow a budget expiry, and the dispatch count caps the overlap at two.
-Both subagents write the same destination under the same write-only contract through an atomic rename (`write_text_atomic`), so a late writer cannot corrupt the file; the validator accepts the file once present and valid.
+Both subagents write the same destination with their own tools: they are external `opencode` commands, not in-process writers, and no atomic-rename wrapper exists on that path today. The validator accepts the first present-and-valid file, so a late first dispatch that finishes after a second can overwrite a newer valid file with older content. That staleness is a named residual risk, not mitigated today; the output-file gate remains the primary guard against double-dispatch.
 
 **Failure observation is weaker, and named.**
 A launch that raises (a missing executable) still propagates and is recorded as an `error` attempt, so the node escalates `dispatcher_process`.
