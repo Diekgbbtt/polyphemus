@@ -7,7 +7,7 @@ import pytest
 
 from orchestrator.dataset import BenchmarkDataset
 from orchestrator.datasets import canonical_tag, parse_built_images
-from orchestrator.datasets.base import DatasetHelper
+from orchestrator.datasets.base import DatasetHelper, parse_target_ports
 from orchestrator.target_config import TargetConfiguration, load_target_configuration
 
 COMPOSE = """\
@@ -121,6 +121,71 @@ def test_app_service_keys_fall_back_to_built_services(tmp_path):
     assert helper.app_service_keys("t", config) == ("wordpress",)
 
 
+MULTI_SERVICE_COMPOSE = """\
+name: pb_jetlinks
+services:
+  jetlinks:
+    build:
+      context: ./setup_files
+    image: pentestbench-jetlinks:2.3.0-synthetic
+  ui:
+    build:
+      context: ./setup_files
+    image: pentestbench-jetlinks-ui:2.3.0
+"""
+
+MULTI_SERVICE_CHALLENGE = (
+    '{"application_service_keys": ["jetlinks", "ui"], '
+    '"target_ports": {"jetlinks": 8848, "ui": 80}}'
+)
+
+
+def test_parse_target_ports_reads_the_published_application_ports():
+    assert parse_target_ports(MULTI_SERVICE_CHALLENGE) == {"jetlinks": 8848, "ui": 80}
+    assert parse_target_ports("not json") == {}
+    assert parse_target_ports('{"application_service_keys": ["a"]}') == {}
+
+
+def test_multi_service_app_probes_each_published_application_service(tmp_path):
+    """#323: the front's `/` is served by `ui` while the `jetlinks` backend
+    boots, so a front-only HTTP probe reads ready too early. Every application
+    service the challenge publishes gets its own published-port probe."""
+    helper = _bank(tmp_path, compose=MULTI_SERVICE_COMPOSE, challenge=MULTI_SERVICE_CHALLENGE)
+    config = TargetConfiguration(target="t", runner="targetctl", compose="c.yml")
+    plan = helper.readiness_plan("t", config, project="web_t", host="t-abc.target")
+
+    assert plan.kind == "composite"
+    commands = plan.commands
+    assert "Host: t-abc.target" in commands[0].argv
+    assert "compose" in " ".join(commands[-1].argv)
+    backends = {
+        command.description: " ".join(command.argv)
+        for command in commands
+        if command.description.startswith("probe app port")
+    }
+    assert set(backends) == {"probe app port jetlinks", "probe app port ui"}, backends
+    jetlinks = backends["probe app port jetlinks"]
+    assert "docker compose -p web_t" in jetlinks
+    assert "-f " in jetlinks
+    assert "port jetlinks 8848" in jetlinks
+    assert "port ui 80" in backends["probe app port ui"]
+
+
+def test_no_target_ports_keeps_the_front_compose_composite(tmp_path):
+    """Without the challenge's published-port metadata the plan cannot resolve a
+    backend port; it keeps the front + compose composite, never dropping the
+    assertion silently."""
+    helper = _bank(
+        tmp_path,
+        compose=MULTI_SERVICE_COMPOSE,
+        challenge='{"application_service_keys": ["jetlinks", "ui"]}',
+    )
+    config = TargetConfiguration(target="t", runner="targetctl", compose="c.yml")
+    plan = helper.readiness_plan("t", config, project="web_t", host="t-abc.target")
+    assert plan.kind == "composite"
+    assert len(plan.commands) == 2
+
+
 def test_helper_defaults_readiness_to_compose_health_when_app_is_healthchecked(tmp_path):
     """A compose whose application service declares a healthcheck can trust the
     compose poll alone."""
@@ -192,6 +257,17 @@ def test_named_http_checker_is_composite_with_the_stack(tmp_path):
     front, compose = plan.commands
     assert "Host: t-abc.target" in front.argv
     assert "compose" in " ".join(compose.argv)
+
+
+def test_named_http_checker_also_probes_each_application_service(tmp_path):
+    """The named `http` checker keeps every application service asserted, not
+    just the front root, for a multi-service no-healthcheck application."""
+    helper = _bank(tmp_path, compose=MULTI_SERVICE_COMPOSE, challenge=MULTI_SERVICE_CHALLENGE)
+    config = TargetConfiguration(
+        target="t", runner="targetctl", compose="c.yml", checker="http"
+    )
+    plan = helper.readiness_plan("t", config, project="web_t", host="t-abc.target")
+    assert "probe app port jetlinks" in [c.description for c in plan.commands]
 
 
 def test_unknown_named_checker_fails_loud(tmp_path):

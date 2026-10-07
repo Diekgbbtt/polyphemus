@@ -9,10 +9,12 @@ symbolic key the store check and reclaim use.
 
 It also owns the default readiness contract and the built-in named checkers
 (`http`): the plan is the compose health poll when the application-serving service
-declares a healthcheck, and the composite front + compose plan otherwise, so a
-slow-boot application can never be declared ready before it answers. A dataset may
-supply its own helper module (`orchestrator/datasets/<id>.py`) to add or override
-named checkers; otherwise the generic helper applies.
+declares a healthcheck, and the composite front + every published application
+port + compose plan otherwise, so a slow-boot application - and a backend behind a
+front root another service serves (#323) - can never be declared ready before it
+answers. A dataset may supply its own helper module
+(`orchestrator/datasets/<id>.py`) to add or override named checkers; otherwise the
+generic helper applies.
 """
 from __future__ import annotations
 
@@ -30,6 +32,7 @@ from orchestrator.readiness import (
     http_probe,
     plan_front_http,
     plan_http_port,
+    plan_service_port,
 )
 from orchestrator.target_config import TargetConfiguration
 
@@ -154,6 +157,34 @@ def parse_application_service_keys(challenge_text: str) -> tuple[str, ...]:
     return tuple(key for key in keys if isinstance(key, str) and key)
 
 
+def parse_target_ports(challenge_text: str) -> dict[str, int]:
+    """The challenge's `target_ports` (service -> published application port).
+
+    This is the target's own statement of which services reach the agent over
+    HTTP and on which container port. A malformed, absent, or non-positive entry
+    is dropped rather than guessed, so the caller keeps the front + compose plan
+    when no port is resolvable.
+    """
+    try:
+        data = json.loads(challenge_text)
+    except (json.JSONDecodeError, TypeError):
+        return {}
+    if not isinstance(data, Mapping):
+        return {}
+    ports = data.get("target_ports")
+    if not isinstance(ports, Mapping):
+        return {}
+    result: dict[str, int] = {}
+    for service, port in ports.items():
+        if not isinstance(service, str) or not service or isinstance(port, bool):
+            continue
+        if isinstance(port, int) and port > 0:
+            result[service] = port
+        elif isinstance(port, str) and port.isdigit() and int(port) > 0:
+            result[service] = int(port)
+    return result
+
+
 def canonical_tag(dataset_id: str, target: str, service: str) -> str:
     """`ph/<dataset>/<target>:<service>`, the symbolic image key for a target."""
     return f"ph/{dataset_id}/{target}:{service}"
@@ -221,6 +252,28 @@ class DatasetHelper:
             return ()
         return tuple(item.service for item in built)
 
+    def app_published_ports(
+        self, target: str, config: TargetConfiguration
+    ) -> tuple[tuple[str, int], ...]:
+        """`(service, port)` for every application service the challenge publishes.
+
+        `target_ports` (`challenge.json`) is the target's own statement of which
+        services reach the agent over HTTP. A missing, malformed, or intersecting-
+        empty mapping yields `()`, so the caller keeps the front + compose plan.
+        """
+        challenge = self.bank_entry(target) / "challenge.json"
+        try:
+            ports = parse_target_ports(challenge.read_text(encoding="utf-8"))
+        except OSError:
+            return ()
+        if not ports:
+            return ()
+        return tuple(
+            (key, ports[key])
+            for key in self.app_service_keys(target, config)
+            if key in ports
+        )
+
     def app_health_declared(self, target: str, config: TargetConfiguration) -> bool:
         """Whether every application-serving service declares a compose healthcheck.
 
@@ -262,9 +315,12 @@ class DatasetHelper:
         * a `targetctl`/`compose` target whose application-serving service
           declares a healthcheck uses the compose poll alone;
         * a `targetctl`/`compose` target whose application declares no
-          healthcheck uses the composite plan - the front HTTP answer AND the
-          compose poll - so the boot window cannot read ready and the support
-          services stay asserted;
+          healthcheck uses the composite plan - the front HTTP answer, one HTTP
+          probe per published application service, AND the compose poll - so the
+          boot window cannot read ready and the support services stay asserted;
+          the front root may be served by a different service than the backend
+          (#323), so each published application service is probed on its own
+          port;
         * a target with no compose (the `image` runner) probes its published
           port.
 
@@ -293,8 +349,13 @@ class DatasetHelper:
                     probes=(compose,), retries=retries, interval_s=interval_s
                 )
             http = self._http_probe(target, config, host=host, port=port)
+            app_ports = self._app_port_probes(
+                target, config, project=project, compose_file=compose_file
+            )
             return ReadinessPlan(
-                probes=(http, compose), retries=retries, interval_s=interval_s
+                probes=(http, *app_ports, compose),
+                retries=retries,
+                interval_s=interval_s,
             )
         # The image runner (and any target with no compose) probes its port.
         return ReadinessPlan(
@@ -315,19 +376,51 @@ class DatasetHelper:
         interval_s: float = DEFAULT_READY_INTERVAL_S,
         compose_file: str | None = None,
     ) -> ReadinessPlan:
-        """The named `http` checker: the HTTP answer plus, when declarable, stack health.
+        """The named `http` checker: the HTTP answers plus, when declarable, stack health.
 
         A target declares it to make the HTTP answer part of readiness explicit.
         When a compose is resolvable the plan is composite, so the application's
         boot window is closed without dropping the support-service assertion
-        (#325 finding 5); a compose-less target gets the HTTP probe alone.
+        (#325 finding 5), and every published application service is probed on
+        its own port (#323); a compose-less target gets the front probe alone.
         """
         http = self._http_probe(target, config, host=host, port=port)
+        app_ports = self._app_port_probes(
+            target, config, project=project, compose_file=compose_file
+        )
         compose = self._compose_probe(
             target, config, project=project, compose_file=compose_file
         )
-        probes: tuple[ReadinessProbe, ...] = (http, compose) if compose else (http,)
+        probes: tuple[ReadinessProbe, ...] = (http, *app_ports)
+        if compose:
+            probes = (*probes, compose)
         return ReadinessPlan(probes=probes, retries=retries, interval_s=interval_s)
+
+    def _app_port_probes(
+        self,
+        target: str,
+        config: TargetConfiguration,
+        *,
+        project: str,
+        compose_file: str | None,
+    ) -> tuple[ReadinessProbe, ...]:
+        """One HTTP probe per published application service (#323).
+
+        The front's `/` may be served by a different service than the backend
+        (jetlinks' `ui` is up while the `jetlinks` JVM boots), so a front probe
+        alone reads ready too early. Each published application service is
+        probed on its OWN port, resolved from the running container at probe
+        time. An empty application or port set yields no probe.
+        """
+        resolved = self._resolved_compose_path(target, config, compose_file)
+        return tuple(
+            http_probe(
+                plan_service_port(
+                    project, service, internal_port, compose_file=resolved
+                )
+            )
+            for service, internal_port in self.app_published_ports(target, config)
+        )
 
     def _http_probe(
         self,
@@ -360,13 +453,28 @@ class DatasetHelper:
         compose_file: str | None,
     ) -> ReadinessProbe | None:
         """The compose-health probe when a compose is resolvable, else None."""
-        if compose_file:
-            resolved = compose_file
-        elif config.compose:
-            resolved = str(self.compose_path(target, config))
-        else:
+        resolved = self._resolved_compose_path(target, config, compose_file)
+        if resolved is None:
             return None
         return compose_probe(resolved, project)
+
+    def _resolved_compose_path(
+        self,
+        target: str,
+        config: TargetConfiguration,
+        compose_file: str | None,
+    ) -> str | None:
+        """The compose the poll and the port probes read, or None when absent.
+
+        `compose_file` is the strategy's effective compose (the targetctl
+        generated copy when services are excluded, D49); absent, the target's
+        own declared compose resolves against its bank entry.
+        """
+        if compose_file:
+            return compose_file
+        if config.compose:
+            return str(self.compose_path(target, config))
+        return None
 
     def _named_checker(self, name: str):
         checker = getattr(self, f"checker_{name}", None)

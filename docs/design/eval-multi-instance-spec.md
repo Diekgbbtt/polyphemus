@@ -94,8 +94,8 @@ The per-dataset helper (`orchestrator/datasets/base.py`) derives the target's im
 Target image provisioning follows the precedence store -> pull -> build: a store hit under the canonical tag is left alone (never pulled, rebuilt, or reclaimed), otherwise a declared pull reference is fetched and bound, otherwise the target's own build produces it and the produced image is bound; a missing image is a hard failure for that target.
 Reclaim of a target's own canonical tags is opt-in per target (`reclaimable`, default false) and happens at teardown and after a failed up.
 Readiness is bounded and non-blocking (`orchestrator/readiness.py`): a plan of one or more probes, every one of which must answer ready.
-The plan defaults from the target's composition: the compose's own health when the application-serving service declares a healthcheck, the composite target front + compose plan when it does not, and a port probe for a compose-less target.
-The front probe is the same bare-domain path recon uses (`docs/design/eval-target-readiness-http-checker-adr.md`).
+The plan defaults from the target's composition: the compose's own health when the application-serving services declare a healthcheck, the composite target front + per-application-service port + compose plan when they do not, and a port probe for a compose-less target.
+The front probe is the same bare-domain path recon uses, and each application service the challenge publishes in `target_ports` is probed on its own port, so a booting backend is never read ready behind a serving front root (`docs/design/eval-target-readiness-http-checker-adr.md`, #323).
 The model, its module seams, and the migration are recorded in `docs/design/eval-dataset-domain-model-impact-map.md` (D47).
 
 ### Restructure
