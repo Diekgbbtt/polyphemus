@@ -77,6 +77,14 @@ function sameResolved(a: ResolvedProjectGraph, b: ResolvedProjectGraph): boolean
   return JSON.stringify(a) === JSON.stringify(b)
 }
 
+// A successful read that definitively confirms there is no graph: an available
+// body with no nodes, or the empty reason. It must invalidate the retained graph
+// so a later temporary failure cannot resurrect a graph the server just denied.
+function confirmsEmpty(resolved: ResolvedProjectGraph): boolean {
+  if (resolved.status === "available") return resolved.graph.nodes.length === 0
+  return resolved.reason === "project_graph_empty"
+}
+
 // The graph section of one Trial.
 //
 // It consumes only the resolved Trial endpoint: the server decides between the
@@ -115,9 +123,13 @@ export function TrialProjectGraph({
   const renderIdentity = useRef(identity)
   renderIdentity.current = identity
   const loadedIdentity = useRef<string | null>(null)
+  // A monotonically increasing generation: a request that has been superseded by
+  // a newer one must not write the caches, even if its promise still settles.
+  const requestGeneration = useRef(0)
 
   const load = useCallback(
     async (signal: AbortSignal): Promise<ResolvedProjectGraph> => {
+      const generation = ++requestGeneration.current
       // Claim this request for `identity` the moment it starts, so a superseded
       // request never revives the previous Trial.
       if (renderIdentity.current === identity) loadedIdentity.current = identity
@@ -125,6 +137,17 @@ export function TrialProjectGraph({
         return frozen.current.resolved
       }
       const resolved = await getResolvedTrialGraph(targetId, targetRunId, trialId, signal)
+      // The poller drops a superseded result, but it cannot undo a cache write:
+      // a late response for an aborted or previous-Trial request must not touch
+      // `frozen`/`last`, or a later poll would replay discarded data or lose the
+      // new Trial's capture.
+      if (
+        signal.aborted ||
+        renderIdentity.current !== identity ||
+        requestGeneration.current !== generation
+      ) {
+        return resolved
+      }
       if (resolved.status === "available" && resolved.source === "trial_snapshot") {
         frozen.current = { identity, resolved }
         last.current = { identity, resolved }
@@ -151,8 +174,13 @@ export function TrialProjectGraph({
   const owned = loadedIdentity.current === identity
   const data = owned ? resource.data : null
   const error = owned ? resource.error : null
-  if (data && data.status === "available" && data.graph.nodes.length > 0) {
-    ready.current = { identity, resolved: data }
+  if (data) {
+    if (data.status === "available" && data.graph.nodes.length > 0) {
+      ready.current = { identity, resolved: data }
+    } else if (confirmsEmpty(data) && ready.current?.identity === identity) {
+      // A successful empty read invalidates the graph retained for THIS Trial.
+      ready.current = null
+    }
   }
   const previousReady =
     ready.current && ready.current.identity === identity ? ready.current.resolved : null

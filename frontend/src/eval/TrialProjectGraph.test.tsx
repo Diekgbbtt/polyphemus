@@ -412,6 +412,31 @@ test("a valid empty answer is not masked as a temporary error", async () => {
   expect(screen.queryByText(/last loaded graph/i)).toBeNull()
 })
 
+test("an available empty graph also invalidates the retained graph", async () => {
+  vi.useFakeTimers()
+  let body: unknown = currentGraph(["kept"])
+  routeFetch([["/resolved-graph", () => json(body)]])
+  renderGraph()
+  await act(async () => {})
+  expect(screen.getByTestId("graph-canvas").textContent).toBe("kept")
+
+  // A successful body that carries no nodes is a definitive empty answer too.
+  body = currentGraph([])
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(POLL)
+  })
+  expect(screen.getByText("No graph available")).toBeDefined()
+  expect(screen.queryByTestId("graph-canvas")).toBeNull()
+
+  // A later temporary failure must not bring the old graph back.
+  body = unavailable("project_graph_timeout")
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(POLL)
+  })
+  expect(screen.queryByTestId("graph-canvas")).toBeNull()
+  expect(screen.queryByText(/last loaded graph/i)).toBeNull()
+})
+
 test("a Trial change never shows the previous Trial's graph", async () => {
   let resolveSecond: ((response: Response) => void) | undefined
   const second = new Promise<Response>((resolve) => {
@@ -466,4 +491,83 @@ test("a slow read never overlaps the next poll", async () => {
   await act(async () => {})
   expect(calls).toHaveLength(1)
   expect(screen.getByTestId("graph-canvas").textContent).toBe("late")
+})
+
+
+// --- superseded responses must never touch the cache ---------------------------
+
+test("a late project-storage response never touches the cache", async () => {
+  vi.useFakeTimers()
+  let resolveOld: ((response: Response) => void) | undefined
+  const old = new Promise<Response>((resolve) => {
+    resolveOld = resolve
+  })
+  const fetcher = vi
+    .fn()
+    .mockImplementationOnce(() => old)
+    .mockImplementation(async () => json(currentGraph(["fresh"])))
+  globalThis.fetch = fetcher as unknown as typeof fetch
+  renderGraph()
+
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(45_000)
+  })
+  expect(screen.getByTestId("graph-canvas").textContent).toBe("fresh")
+  const freshNodes = canvas.nodesSeen[canvas.nodesSeen.length - 1]
+
+  // The superseded request settles late with a different current graph.
+  await act(async () => {
+    resolveOld?.(json(currentGraph(["discarded"])))
+  })
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(POLL)
+  })
+
+  // The discarded body never became `last`, so the unchanged next poll reuses
+  // the retained nodes instead of churning to a new array.
+  expect(screen.getByTestId("graph-canvas").textContent).toBe("fresh")
+  expect(canvas.nodesSeen[canvas.nodesSeen.length - 1]).toBe(freshNodes)
+})
+
+test("a late response from a previous Trial never leaks into the new one", async () => {
+  vi.useFakeTimers()
+  let resolveA: ((response: Response) => void) | undefined
+  const a = new Promise<Response>((resolve) => {
+    resolveA = resolve
+  })
+  const calls: string[] = []
+  globalThis.fetch = vi.fn(async (input: unknown) => {
+    const url = String(input)
+    calls.push(url)
+    return url.includes("/trial-a/resolved-graph")
+      ? a
+      : json(capturedGraph(["b-captured"]))
+  }) as unknown as typeof fetch
+  const { rerender } = render(
+    <MemoryRouter>
+      <TrialProjectGraph targetId="t" targetRunId="r" trialId="trial-a" />
+    </MemoryRouter>,
+  )
+  // A and B share project_id "p1"; the full identity - not the project - gates
+  // the cache.
+  rerender(
+    <MemoryRouter>
+      <TrialProjectGraph targetId="t" targetRunId="r" trialId="trial-b" />
+    </MemoryRouter>,
+  )
+  await act(async () => {})
+  expect(screen.getByTestId("graph-canvas").textContent).toBe("b-captured")
+
+  // A's superseded *capture* response settles late; it must not overwrite B's
+  // frozen capture nor trigger a new request for B.
+  await act(async () => {
+    resolveA?.(json(capturedGraph(["a-late"])))
+  })
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(POLL)
+  })
+
+  expect(screen.getByTestId("graph-canvas").textContent).toBe("b-captured")
+  expect(screen.getByText("Captured with Trial")).toBeDefined()
+  expect(calls.filter((url) => url.includes("/trial-b/resolved-graph"))).toHaveLength(1)
 })
