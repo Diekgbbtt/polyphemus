@@ -32,7 +32,7 @@ On each later tick the monitor reads the destination:
 - **present but rejected, unpaired, or absent past the budget** - the node
   escalates with one named failure recorded on the trial record: `empty_file`
   (no file), `schema_invalid` (rejected), `unpaired` (a `missed`/`partial`
-  verdict with no entry), or `dispatcher_process` (the command raised).
+  verdict with no entry), or `dispatcher_process` (the launch raised).
 
 ## What this node does not do
 

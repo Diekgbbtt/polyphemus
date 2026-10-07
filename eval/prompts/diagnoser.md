@@ -79,6 +79,7 @@ More failure modes are expected, particularly in the analysis layer, but they ar
 `root_cause.combination_of` carries only the additional types; never repeat the primary `type`.
 `diagnosis_overview` and `root_cause.extended_description` must be non-empty.
 Each `evidences` item names a `source` (for example `pod_export`, `experiment_log`, `hunt_config`, `trace`, `code`, `design_doc`), a `ref` (the artifact path or trace/node identifier), and a `note` (what it shows).
+When a `ref` names a persisted artifact path, it is relative to the data root and begins with the `<project_id>/` segment, exactly like the assessment evidence chain.
 
 ## The root-cause space
 

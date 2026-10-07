@@ -859,12 +859,20 @@ PYTHONPATH=eval python3 -m orchestrator monitor <setup.yaml> \
 It sweeps every trial record under the runs root and reports each trial's
 state (`deferred`, `assessment_dispatched`, `awaiting_assessment`,
 `diagnosis_dispatched`, `awaiting_diagnosis`, `complete`, `escalated`).
-A node whose output has not landed is `awaiting`; it is not re-dispatched every
-tick, and a node that stays absent past `--budget-s` is re-dispatched up to
-twice and then escalates with a named failure (`empty_file`, `schema_invalid`,
-`unpaired`, `dispatcher_process`, or `..._no_command`) recorded on the trial
-record. Exit 1 means at least one node escalated. `--dry-run` reports the state
-and dispatches nothing.
+The dispatch is non-blocking (#316, D52): the tick launches the configured agent
+command detached (`BackgroundRunner`) and returns at once, so one tick advances
+every other trial while a subagent runs. Each launch redirects the subagent's
+output to `<destination>.dispatch.log` beside the node's file; the log is
+diagnostic, never an input to the decision.
+The node's output file is the only completion signal. A node whose output has
+not landed is `awaiting`; it is not re-dispatched every tick, and a node that
+stays absent past `--budget-s` is re-dispatched up to twice and then escalates
+with a named failure (`empty_file`, `schema_invalid`, `unpaired`,
+`dispatcher_process`, or `..._no_command`) recorded on the trial record.
+`dispatcher_process` now names a launch that raised; a subagent that starts and
+exits without writing its output is caught by the bound as `empty_file` or
+`schema_invalid`. Exit 1 means at least one node escalated. `--dry-run` reports
+the state and dispatches nothing.
 
 The eval orchestrator agent (`eval/prompts/orchestrator.md`) is the automated
 driver: it calls the `eval_monitor` tool - the custom opencode tool in

@@ -15,7 +15,9 @@ tick-based post-execution control plane (`orchestrator.monitor`): one sweep
 verifies every trial's execution state and advances the workflow one node - a
 successful execution dispatches the assessment, a present `verdicts.yaml`
 dispatches the diagnoser, and a present, paired `diagnoses.yaml` completes the
-trial. `align` (#274) asserts the
+trial. The dispatch is non-blocking: the tick launches the subagent detached
+(`BackgroundRunner`) and returns at once, so one tick advances every other trial
+while a subagent runs (#316, D52). `align` (#274) asserts the
 advance delta the daemon emitted, decides the alignment action through an agent
 turn (`orchestrator.alignment`), executes it, or escalates and writes a hold
 that blocks `up`/`trial` until `alignment resolve` records the operator's
