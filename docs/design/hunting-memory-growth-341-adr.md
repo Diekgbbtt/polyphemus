@@ -39,6 +39,7 @@ Resolves #341 (the growth follow-up deferred by #340 / EV-29).
 - The newest durable prior-insight records survive ordinary eviction, so the orchestrator's `prior_hunt_insights` reads keep finding the recent downstream value.
 - Older reasoning notes and, under the hard ceiling, the oldest durable records are evicted; the trade is deliberate and documented.
 - `hunter_memory` imports the ONE retention primitive from `hunt_store` (the pattern-document module), so the discipline cannot drift per store.
+  Exception (flagged, not fixed here): the unused `ProjectMemoryStore` in `hunt_store.py` still carries an unbounded whole-file writer of the same shape; it is currently never instantiated (dead code), recorded as a maintenance hazard to remove or route through the primitive.
 
 ## Evidence
 - The observed 6.5 MB `notes.yaml` (107 records, 95 durable stubs) compacts to 2.87 MB (80 records, all durable stubs) on the next write under the default bounds.
