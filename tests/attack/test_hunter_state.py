@@ -59,3 +59,30 @@ def test_explicit_spec_id_still_wins_over_the_derived_identity():
     (the derived identity is only a fallback)."""
     state = push_transition({}, "specify", _typed_specified(spec_id="S1"))
     assert state["ratified_specs"][0]["spec_id"] == "S1"
+
+
+def test_derived_identity_sanitises_like_the_file_stem():
+    """#313 - the derived `spec_id` sanitises each keyword the same way the
+    store's file-name stem does (banned separator chars -> `-`), so the
+    in-memory identity equals the persisted stem for any keyword."""
+    state = push_transition(
+        {}, "specify",
+        _typed_specified(fault_keyword="a_b", strategy_keyword="c"),
+    )
+    assert state["ratified_specs"][0]["spec_id"] == "a-b_c"
+
+
+def test_banned_chars_do_not_collide_two_distinct_pairs():
+    """#313 - without sanitisation, `('a_b','c')` and `('a','b_c')` both derived
+    `a_b_c` and collided under one upsert key; the sanitised derivation keeps
+    them distinct, matching the two distinct file stems."""
+    state = push_transition(
+        {}, "specify",
+        _typed_specified(fault_keyword="a_b", strategy_keyword="c"),
+    )
+    state = push_transition(
+        state, "specify",
+        _typed_specified(fault_keyword="a", strategy_keyword="b_c"),
+    )
+    ids = [s["spec_id"] for s in state["ratified_specs"]]
+    assert ids == ["a-b_c", "a_b-c"]
