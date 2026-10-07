@@ -100,6 +100,36 @@ def _seq_factory(*contents):
     return make
 
 
+async def _noop_sleep(seconds: float) -> None:
+    """The unit tier's fake transient-backoff clock (#299): a retry that would
+    sleep for real completes immediately."""
+    return None
+
+
+def _bare_400():
+    """The opencode-go transient-window signature: a 400 whose body only echoes
+    the stripped wire model id."""
+    import httpx
+    import openai
+
+    response = httpx.Response(
+        400, request=httpx.Request("POST", "https://api.example.test/v1"),
+        json={"model": "deepseek-v4.1-flash"})
+    return openai.BadRequestError("Error code: 400", response=response,
+                                  body={"model": "deepseek-v4.1-flash"})
+
+
+def _contract_400():
+    import httpx
+    import openai
+
+    body = {"error": {"message": "MissingSessionID"}}
+    response = httpx.Response(
+        400, request=httpx.Request("POST", "https://api.example.test/v1"),
+        json=body)
+    return openai.BadRequestError("Error code: 400", response=response, body=body)
+
+
 def test_agent_takes_initial_turn_then_listens_and_continues_on_update():
     """The core actor property: after its initial turn the agent stays active, and an
     inbox update drives a SECOND turn on the same thread - so the memory carries
@@ -375,6 +405,7 @@ def test_actor_retries_a_transient_turn_then_serves_the_next(monkeypatch):
 
     from polymerhus.app.llm import actor as llm_actor
     monkeypatch.setattr(llm_actor, "attempt_timeouts", lambda: (0.01, 0.02))
+    monkeypatch.setattr(llm_actor, "_sleep", _noop_sleep)
 
     saver = InMemorySaver()
     inbox = AgentInbox()
@@ -423,6 +454,7 @@ def test_actor_degrades_after_retry_budget_exhaustion_then_serves_the_next(monke
 
     from polymerhus.app.llm import actor as llm_actor
     monkeypatch.setattr(llm_actor, "attempt_timeouts", lambda: (0.01, 0.02))  # 1 retry
+    monkeypatch.setattr(llm_actor, "_sleep", _noop_sleep)
 
     saver = InMemorySaver()
     inbox = AgentInbox()
@@ -537,3 +569,145 @@ def test_actor_non_retryable_raise_degrades_without_retrying(monkeypatch):
     assert first.payload.get("content") is None
     assert builds["n"] == 1            # exactly ONE build for the raising turn: no retry
     assert result.stop_reason == "stop_message"
+
+
+# --- #299: the transient bare-400 ride-out, rotation, and bounded fallback ------
+
+def test_actor_rides_out_a_bare_400_window_with_rotation(monkeypatch):
+    """A short bare-400 window must NOT kill the turn: the actor retries the
+    transient fault, rotating the provider conversation id per attempt (so a
+    pinned bad upstream replica is abandoned) while the checkpointer thread id -
+    and the returned turn's `thread_id` - stay the original, so agent memory is
+    intact."""
+    from polymerhus.app.llm import actor as llm_actor
+    from polymerhus.app.llm.conversation import current_conversation_id
+
+    monkeypatch.setattr(llm_actor, "attempt_timeouts", lambda: (0.01, 0.02, 0.03))
+    monkeypatch.setattr(llm_actor, "_sleep", _noop_sleep)
+    seen: list[str] = []
+    cursor = {"i": 0}
+
+    def factory(role_id):
+        seen.append(current_conversation_id())
+        i = cursor["i"]
+        cursor["i"] = i + 1
+        return _Boom(exc=_bare_400()) if i < 2 else _AsyncFake(content="ok")
+
+    async def _drive():
+        return await run_session_agent(
+            "hunting_orchestrator", "run1:orch", [HumanMessage(content="start")],
+            checkpointer=InMemorySaver(), inbox=AgentInbox(),
+            idle_timeout=0.05, on_message=lambda m, t: None,
+            model_factory=factory, observe=False,
+        )
+
+    result = asyncio.run(_drive())
+    assert result.turns[0].content == "ok"
+    assert seen == ["run1:orch", "run1:orch#r1", "run1:orch#r2"]
+    assert result.turns[0].thread_id == "run1:orch"  # memory key never rotates
+
+
+def test_actor_contract_400_degrades_without_retrying(monkeypatch):
+    """A deterministic contract 400 (MissingSessionID) fail-fasts: no retry is
+    spent on it, so a real client-contract error is not masked as a window."""
+    from polymerhus.app.llm import actor as llm_actor
+    from polymerhus.app.llm.transient import reset_transient_counts
+
+    reset_transient_counts()
+    monkeypatch.setattr(llm_actor, "attempt_timeouts", lambda: (0.01, 0.02, 0.03))
+    monkeypatch.setattr(llm_actor, "_sleep", _noop_sleep)
+    builds = {"n": 0}
+
+    def factory(role_id):
+        builds["n"] += 1
+        return _Boom(exc=_contract_400())
+
+    saver = InMemorySaver()
+    inbox = AgentInbox()
+    replies = AgentInbox()
+    middleware, degraded = build_inbox_delivery(replies, kind="reply", source="actor")
+
+    async def _drive():
+        task = asyncio.ensure_future(run_session_agent(
+            "hunting_orchestrator", "run1:orch", [HumanMessage(content="start")],
+            checkpointer=saver, inbox=inbox,
+            middleware=[middleware], on_turn_degraded=degraded,
+            model_factory=factory, observe=False,
+        ))
+        first = await replies.get()
+        await inbox.post(AgentMessage(kind="stop"))
+        return first, await task
+
+    first, result = asyncio.run(_drive())
+    assert first.payload.get("content") is None   # degraded
+    assert builds["n"] == 1                        # exactly one attempt: no retry
+    assert result.turns == []
+    from polymerhus.app.llm.transient import transient_counts
+
+    assert transient_counts() == {}                # a contract error is not counted transient
+
+
+def test_actor_falls_back_to_the_model_once_on_transient_exhaustion(monkeypatch):
+    """When the transient schedule is exhausted, the bounded fallback model is
+    attempted EXACTLY once (a configured `LLM_FALLBACK_<ROLE>`), and the turn
+    completes on it - the mitigation that keeps a hunt alive across a lane
+    outage without masking a sustained one."""
+    from polymerhus.app.llm import actor as llm_actor
+    from polymerhus.app.llm.session import SessionTurn
+
+    monkeypatch.setattr(llm_actor, "attempt_timeouts", lambda: (0.01,))
+    monkeypatch.setattr(llm_actor, "_sleep", _noop_sleep)
+    monkeypatch.setenv("LLM_FALLBACK_HUNTING_ORCHESTRATOR", "opencode-go:glm-5.2")
+    calls: list[dict] = []
+
+    async def fake_turn(role_id, thread_id, messages, *, model_override=None,
+                        conversation_id=None, **kwargs):
+        calls.append({"model_override": model_override,
+                      "conversation_id": conversation_id})
+        if model_override is None:
+            raise _bare_400()
+        return SessionTurn(content="fallback-ok", messages=[],
+                           thread_id=thread_id)
+
+    monkeypatch.setattr(llm_actor, "arun_session_turn", fake_turn)
+
+    async def _drive():
+        return await run_session_agent(
+            "hunting_orchestrator", "run1:orch", [HumanMessage(content="start")],
+            checkpointer=InMemorySaver(), inbox=AgentInbox(),
+            idle_timeout=0.05, on_message=lambda m, t: None, observe=False,
+        )
+
+    result = asyncio.run(_drive())
+    assert result.turns[0].content == "fallback-ok"
+    assert calls[0]["model_override"] is None
+    assert calls[1]["model_override"] == ("opencode-go", "glm-5.2")
+    assert len(calls) == 2  # primary exhausted + exactly one fallback
+
+
+def test_actor_records_one_transient_counter_per_attempt(monkeypatch):
+    """The structured counter is emitted once per transient attempt, so a
+    recurring window is visible before it kills a run (#299 observability)."""
+    from polymerhus.app.llm import actor as llm_actor
+    from polymerhus.app.llm.transient import reset_transient_counts, transient_counts
+
+    reset_transient_counts()
+    monkeypatch.setattr(llm_actor, "attempt_timeouts", lambda: (0.01, 0.02))
+    monkeypatch.setattr(llm_actor, "_sleep", _noop_sleep)
+    monkeypatch.setenv("LLM_HUNTING_ORCHESTRATOR", "opencode-go:deepseek-v4.1-flash")
+
+    def factory(role_id):
+        return _Boom(exc=_bare_400())
+
+    async def _drive():
+        return await run_session_agent(
+            "hunting_orchestrator", "run1:orch", [HumanMessage(content="start")],
+            checkpointer=InMemorySaver(), inbox=AgentInbox(),
+            idle_timeout=0.05, on_message=lambda m, t: None,
+            model_factory=factory, observe=False,
+        )
+
+    asyncio.run(_drive())
+    counts = transient_counts()
+    assert counts[("hunting_orchestrator", "opencode-go:deepseek-v4.1-flash",
+                   "model")] == 2
