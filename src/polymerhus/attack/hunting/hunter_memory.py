@@ -87,6 +87,7 @@ from polymerhus.app.data_root import DATA_ROOT, project_dir
 from .hunt_store import (
     ProjectMemoryStore,
     parse_config_file_name,
+    retain_bounded_records,
     semantic_key,
     split_semantic_key,
 )
@@ -106,6 +107,9 @@ _NOTE_ACTIONS = ("append", "update", "delete")
 # The closed enum of note kinds (the pattern's #137 Q3), reused verbatim on
 # the hunter's notes so the data contract is the SAME as the pattern's store.
 NOTE_KINDS = ProjectMemoryStore.NOTE_KINDS
+
+HUNTER_NOTES_MAX_RECORDS = 1000
+HUNTER_NOTES_MAX_BYTES = 4 * 1024 * 1024
 
 # The filename-keyword sanitisation banned set (G3): `_` is the separator, so
 # a keyword may not contain it; `:` is poisoned (it appears inside unit ids);
@@ -134,6 +138,15 @@ def _lock_for(project_id: str) -> threading.Lock:
             lock = threading.Lock()
             _PROJECT_LOCKS[project_id] = lock
         return lock
+
+
+def _is_durable_prior_insight(record: dict) -> bool:
+    """The durable prior-insight marker (G3/#202): a Q16 pod-export stub
+    (`provenance.verdict_stub`) is the record `HuntStore.read_hunter_notes`
+    consumes into a config's `prior_hunt_insights`, so it is protected from the
+    ordinary-notes eviction of the `notes.yaml` bound (#341)."""
+    provenance = record.get("provenance")
+    return bool(isinstance(provenance, dict) and provenance.get("verdict_stub"))
 
 
 def config_key_from_fault_key(fault_key: str) -> str:
@@ -354,7 +367,13 @@ class HunterMemoryStore:
         # parent to exist. Atomic (#340): render first, then temp + fsync +
         # os.replace, so an aborted write leaves the previous notes.yaml intact
         # - never a truncated file every later read rejects.
-        write_text_atomic(path, yaml.safe_dump(records, sort_keys=False))
+        retained = retain_bounded_records(
+            records,
+            max_records=HUNTER_NOTES_MAX_RECORDS,
+            max_bytes=HUNTER_NOTES_MAX_BYTES,
+            protected=_is_durable_prior_insight,
+        )
+        write_text_atomic(path, yaml.safe_dump(retained, sort_keys=False))
 
     def _read_spec_file(self, path: Path) -> dict:
         """Read ONE produced/consumed spec file; a corrupt or non-mapping body raises."""
