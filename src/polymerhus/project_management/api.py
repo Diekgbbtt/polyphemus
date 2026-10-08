@@ -158,13 +158,15 @@ def get_app_state(project_id: str | None = None) -> dict:
 @router.get("/projects/{project_id}/usage")
 def get_project_usage(project_id: str) -> dict:
     """The project's cumulative token spend as a two-axis typed surface, read
-    straight from the process-wide usage ledger: `context_tokens` (`cached` +
+    from the process-wide usage ledger: `context_tokens` (`cached` +
     `uncached`) and `generated_tokens` (`reasoning` + `visible`), plus the raw
     scalar `total_tokens`, the trial-budget scalar `capped_tokens` (generated +
     uncached = `total_tokens - cached`), and a per-agent breakdown. Read-only, NO
-    database access: an unknown/empty project returns zeros/empty and is never
-    validated into a 404, so the eval harness queries only its own project and
-    the ledger is the single source."""
+    database access: the ledger read-throughs its durable per-project record
+    (#326), so a stopped, restarted, or drained project still reports its spend,
+    while an unknown/empty project returns zeros/empty and is never validated
+    into a 404 - the eval harness queries only its own project and the ledger is
+    the single source."""
     from polymerhus.app.llm.usage import usage_ledger
 
     return usage_ledger().snapshot(project_id)
@@ -436,6 +438,10 @@ async def stop_recon(project_id: str, run_id: str) -> dict:
         runtime.cancel_run("recon", run_id)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=404, detail="no running recon for that run_id") from exc
+    # #326: flush the project's durable usage record at the stop boundary.
+    from polymerhus.app.llm.usage import usage_ledger  # noqa: PLC0415
+
+    await asyncio.to_thread(usage_ledger().flush, project_id)
     return {"run_id": run_id, "stopping": True}
 
 
@@ -469,6 +475,10 @@ async def stop_analysis_run(project_id: str, run_id: str) -> dict:
     from polymerhus.analysis.lifecycle import stop_analysis
 
     await stop_analysis(run_id)
+    # #326: flush the project's durable usage record at the stop boundary.
+    from polymerhus.app.llm.usage import usage_ledger  # noqa: PLC0415
+
+    await asyncio.to_thread(usage_ledger().flush, project_id)
     return {"run_id": run_id, "stopped": True}
 
 
@@ -672,6 +682,10 @@ async def stop_hunting_run(project_id: str, hunting_run_id: str) -> dict:
         raise HTTPException(status_code=404, detail="no hunting run for that hunting_run_id")
 
     await hunting_runtime.stop_hunting(hunting_run_id)
+    # #326: flush the project's durable usage record at the stop boundary.
+    from polymerhus.app.llm.usage import usage_ledger  # noqa: PLC0415
+
+    await asyncio.to_thread(usage_ledger().flush, project_id)
     return {"hunting_run_id": hunting_run_id, "stopping": True}
 
 
@@ -1049,6 +1063,10 @@ def drain_module(project_id: str, module: str) -> dict:
     if handle is None:
         raise HTTPException(status_code=404, detail="unknown module")
     runtime.drain(module)
+    # #326: flush every in-memory project's usage at the drain boundary.
+    from polymerhus.app.llm.usage import usage_ledger  # noqa: PLC0415
+
+    usage_ledger().flush_all()
     last = handle.last_flush
     if last is None:
         last = FlushResult.degraded("never-flushed")

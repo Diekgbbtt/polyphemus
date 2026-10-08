@@ -86,6 +86,52 @@ def test_usage_for_an_empty_project_returns_zeros_and_never_404s():
     }
 
 
+def test_usage_endpoint_serves_the_durable_snapshot_after_a_restart(monkeypatch, tmp_path):
+    # #326: a fresh process (here a fresh ledger over the same durable store)
+    # must serve the project's accumulated surface and per-agent breakdown, not
+    # zeros.
+    import polymerhus.app.llm.usage as usage_module
+    from polymerhus.app.llm.usage import UsageLedger, UsageStore
+
+    store = UsageStore(root=tmp_path)
+    UsageLedger(store=store).record("proj-1", "comfy-gen", {
+        "input_tokens": 10, "output_tokens": 5, "total_tokens": 15,
+    })
+    restarted = UsageLedger(store=UsageStore(root=tmp_path))
+    monkeypatch.setattr(usage_module, "usage_ledger", lambda: restarted)
+
+    body = client.get("/projects/proj-1/usage").json()
+
+    assert body["total_tokens"] == 15
+    assert body["calls"] == 1
+    assert body["by_agent"]["comfy-gen"]["total_tokens"] == 15
+
+
+def test_recon_stop_flushes_the_project_usage_at_the_boundary(monkeypatch):
+    # #326: the stop verb flushes the project's durable usage record.
+    import polymerhus.app.llm.usage as usage_module
+    import polymerhus.app.runtime as runtime_module
+
+    class _Runtime:
+        def cancel_run(self, module, run_id):
+            pass
+
+    monkeypatch.setattr(runtime_module, "get_active_runtime", lambda: _Runtime())
+
+    flushed: list[str] = []
+
+    class _Ledger:
+        def flush(self, project_id):
+            flushed.append(project_id)
+
+    monkeypatch.setattr(usage_module, "usage_ledger", lambda: _Ledger())
+
+    resp = client.post("/projects/proj-1/recon/run-1/stop")
+
+    assert resp.status_code == 200
+    assert flushed == ["proj-1"]
+
+
 def test_usage_endpoint_excludes_the_unscoped_bucket():
     usage_ledger().record(None, "assigner",
                           {"input_tokens": 7, "output_tokens": 1,

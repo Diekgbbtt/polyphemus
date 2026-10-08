@@ -68,6 +68,11 @@ async def _startup():
     # Create the shared `<codebase_root>/data/` root at boot; each project's
     # scaffold lands at project creation. Idempotent and fail-safe.
     ensure_data_root()
+    # #326: back the process-wide usage ledger with its durable per-project
+    # store, so a project's spend and per-agent breakdown survive a restart,
+    # stop, or drain rather than dying with the process.
+    from polymerhus.app.llm.usage import UsageStore, usage_ledger  # noqa: PLC0415
+    usage_ledger().attach_store(UsageStore())
     # #234: the fault-KB catalogue is the ONE provisioned artifact in the data
     # root (`data/hunting/fault-kb.yaml`, copied by the image build). Verify it
     # at boot so a broken image fails loudly here instead of hunting KB-less.
@@ -154,6 +159,14 @@ async def _shutdown():
     runtime = getattr(app.state, "runtime", None)
     if runtime is not None:
         runtime.shutdown()
+    # #326: persist every in-memory project's token spend before teardown, so a
+    # shutdown boundary never loses a project's usage (the write-through path
+    # already keeps it current; this is the explicit boundary flush).
+    from polymerhus.app.llm.usage import usage_ledger  # noqa: PLC0415
+    try:
+        usage_ledger().flush_all()
+    except Exception:  # noqa: BLE001 - fail-open: never raise into teardown
+        logger.warning("shutdown usage-ledger flush raised (fail-open)", exc_info=True)
     # #211 TD-6: the guaranteed single bulk flush for the non-runtime teardown
     # path - every live index, including any whose module never registered on the
     # runtime - runs here, strictly BEFORE the pool closes below.
