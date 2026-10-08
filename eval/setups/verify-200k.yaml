@@ -1,0 +1,39 @@
+# Ephemeral verification EvalSetup: one target, a very low token budget, run to
+# verify the recent eval-health fixes (the trial-timeout run stop #338, the
+# token-budget stop, the no-orphan guarantee, and the post-execution control
+# plane) on the jumped system version.
+#
+# One target (comfyui, the most self-contained challenge). The trial-wide token
+# budget is 200,000 generated tokens (reasoning + visible output only). The
+# short wall-clock deadline is passed by the driver (`EVAL_BUDGET_S`), not here.
+#
+# Mirror of eval/setups/webexploitbench-8.yaml for a single target; the
+# target_run_id namespaces the artifact store so this never clobbers a real run.
+
+schema_version: 1
+
+artifact_store: /srv/eval-artifacts
+
+datasets:
+  - webexploitbench
+
+work_items:
+  - name: auth-bootstrap
+    status: incomplete
+    required: false
+  - name: l1-surface
+    status: complete
+  - name: hunting-artifacts
+    status: complete
+
+instances:
+  - instance_id: eval-server-1
+    env_file: eval-server-1/.env
+    targets:
+      - target_key: webexploitbench/comfyui
+        target_id: comfyui-1
+        target_run_id: verify-200k
+        token_budget: 200000
+        target_config:
+          operator_kb: /root/eval-dd/data/comfyui/operator_kb.md
+          data_dir: /root/eval-dd/data/comfyui
