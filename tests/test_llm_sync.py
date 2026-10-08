@@ -280,13 +280,12 @@ def _build_opencode_go_desired(catalog):
 
 
 def test_build_desired_replaces_the_models_dev_cost_with_the_override():
-    # The models.dev record prices deepseek-v4.1-flash ~6x above opencode-go's
-    # effective off-peak rate; the authored model_info must carry the override
-    # so the budget guard counts the real spend (ADR D13, #330 iteration 2).
+    # The override authors the provider's real rate (the models.dev opencode-go
+    # record) so the budget guard counts the real spend (ADR D13, #330 / EV-34).
     model = _build_opencode_go_desired(_OVERRIDE_CATALOG)[0]
     assert model.known is True
-    assert model.model_info["input_cost_per_token"] == 2.5e-08
-    assert model.model_info["output_cost_per_token"] == 1.0e-07
+    assert model.model_info["input_cost_per_token"] == 1.5e-07
+    assert model.model_info["output_cost_per_token"] == 6.0e-07
     assert model.model_info["cache_read_input_token_cost"] == 3e-09
     assert model.model_info["cost_source"] == M.COST_SOURCE_OVERRIDE
     # Capabilities stay models.dev-sourced.
@@ -303,8 +302,8 @@ def test_build_desired_cost_override_survives_a_missing_models_dev_record():
     model = _build_opencode_go_desired(catalog)[0]
     assert model.known is False
     assert model.model_info["capability_staleness"] == "unknown"
-    assert model.model_info["input_cost_per_token"] == 2.5e-08
-    assert model.model_info["output_cost_per_token"] == 1.0e-07
+    assert model.model_info["input_cost_per_token"] == 1.5e-07
+    assert model.model_info["output_cost_per_token"] == 6.0e-07
     assert model.model_info["cost_source"] == M.COST_SOURCE_OVERRIDE
 
 
@@ -343,7 +342,7 @@ def test_sync_authors_the_cost_override_then_converges_to_idle():
     assert S.run_sync(**args) == S.SYNC_OK
     _, name, _params, info = next(c for c in gw.calls if c[0] == "add")
     assert name == "opencode-go/deepseek-v4.1-flash"
-    assert info["input_cost_per_token"] == 2.5e-08
+    assert info["input_cost_per_token"] == 1.5e-07
     assert info["cost_source"] == M.COST_SOURCE_OVERRIDE
 
     gw2 = FakeGateway(registered=gw.registered, keys=dict(gw._keys))
@@ -1004,14 +1003,13 @@ def test_gateway_client_unparseable_info_raises_sync_push_error():
 #
 # LiteLLM's native virtual-key `budget_limits` (USD, from the sync's existing
 # models.dev per-token costs) mirror opencode-go's dollar-denominated cap
-# ($12/5h, $30/7d, $60/30d). A conservatism factor k (default 0.5) scales each
-# cap: LiteLLM counts spend at the OFF-PEAK models.dev price while opencode-go
-# charges 2x at peak (01-04, 06-10 UTC Mon-Fri), so the guard must trip at half
-# the dollar cap to trip before the provider does. See ADR D13.
+# ($30/7d weekly - the dominant, first-binding boundary - and $60/30d monthly;
+# no 5h cap). The conservatism factor k (default 1.0) is a pure safety margin;
+# with the override authoring the provider's real rate, LiteLLM's spend count
+# matches the charge and the guard trips at the real cap. See ADR D13.
 # ---------------------------------------------------------------------------
 
 _BUDGET_ENV = (
-    "LLM_GATEWAY_BUDGET_5H_USD",
     "LLM_GATEWAY_BUDGET_7D_USD",
     "LLM_GATEWAY_BUDGET_30D_USD",
     "LLM_GATEWAY_BUDGET_CONSERVATISM_FACTOR",
@@ -1024,26 +1022,23 @@ def _clear_budget_env(monkeypatch):
         monkeypatch.delenv(name, raising=False)
 
 
-def test_budget_plan_default_is_conservative(monkeypatch):
+def test_budget_plan_default_is_the_real_provider_caps(monkeypatch):
     _clear_budget_env(monkeypatch)
     plan = S.gateway_budget_plan()
     assert plan.budget_limits == (
-        {"budget_duration": "5h", "max_budget": 6.0},
-        {"budget_duration": "7d", "max_budget": 15.0},
-        {"budget_duration": "30d", "max_budget": 30.0},
+        {"budget_duration": "7d", "max_budget": 30.0},
+        {"budget_duration": "30d", "max_budget": 60.0},
     )
     assert plan.rpm_limit is None
 
 
 def test_budget_plan_reads_env_overrides(monkeypatch):
-    monkeypatch.setenv("LLM_GATEWAY_BUDGET_5H_USD", "20")
     monkeypatch.setenv("LLM_GATEWAY_BUDGET_7D_USD", "40")
     monkeypatch.setenv("LLM_GATEWAY_BUDGET_30D_USD", "80")
     monkeypatch.setenv("LLM_GATEWAY_BUDGET_CONSERVATISM_FACTOR", "0.25")
     monkeypatch.setenv("LLM_GATEWAY_KEY_RPM_LIMIT", "30")
     plan = S.gateway_budget_plan()
     assert plan.budget_limits == (
-        {"budget_duration": "5h", "max_budget": 5.0},
         {"budget_duration": "7d", "max_budget": 10.0},
         {"budget_duration": "30d", "max_budget": 20.0},
     )
@@ -1066,7 +1061,7 @@ def test_budget_plan_rejects_a_nonpositive_rpm(monkeypatch):
 
 def test_budget_plan_rejects_a_non_numeric_cap(monkeypatch):
     _clear_budget_env(monkeypatch)
-    monkeypatch.setenv("LLM_GATEWAY_BUDGET_5H_USD", "lots")
+    monkeypatch.setenv("LLM_GATEWAY_BUDGET_7D_USD", "lots")
     with pytest.raises(S.SyncConfigError):
         S.gateway_budget_plan()
 
@@ -1139,7 +1134,7 @@ def test_gateway_client_ensure_virtual_key_adds_budget_to_an_unbudgeted_key():
 
 
 def test_sync_provisions_virtual_keys_with_the_budget_plan(monkeypatch):
-    monkeypatch.setenv("LLM_GATEWAY_BUDGET_CONSERVATISM_FACTOR", "0.5")
+    monkeypatch.setenv("LLM_GATEWAY_BUDGET_CONSERVATISM_FACTOR", "1.0")
     monkeypatch.delenv("LLM_GATEWAY_KEY_RPM_LIMIT", raising=False)
     gw = FakeGateway()
     rc = S.run_sync(**_default_run_args(gateway=gw))
@@ -1147,14 +1142,13 @@ def test_sync_provisions_virtual_keys_with_the_budget_plan(monkeypatch):
     key_calls = [c for c in gw.calls if c[0] == "key"]
     assert key_calls, "the sync must provision a virtual key per provider"
     for _kind, _key, _scope, budget, rpm in key_calls:
-        assert budget == [{"budget_duration": "5h", "max_budget": 6.0},
-                          {"budget_duration": "7d", "max_budget": 15.0},
-                          {"budget_duration": "30d", "max_budget": 30.0}]
+        assert budget == [{"budget_duration": "7d", "max_budget": 30.0},
+                          {"budget_duration": "30d", "max_budget": 60.0}]
         assert rpm is None
 
 
 def test_budget_change_converges_then_is_a_noop(monkeypatch):
-    monkeypatch.setenv("LLM_GATEWAY_BUDGET_CONSERVATISM_FACTOR", "0.5")
+    monkeypatch.setenv("LLM_GATEWAY_BUDGET_CONSERVATISM_FACTOR", "1.0")
     monkeypatch.delenv("LLM_GATEWAY_KEY_RPM_LIMIT", raising=False)
     gw = FakeGateway()
     assert S.run_sync(**_default_run_args(gateway=gw)) == S.SYNC_OK
@@ -1162,11 +1156,11 @@ def test_budget_change_converges_then_is_a_noop(monkeypatch):
     # Changing the conservatism factor re-budgets BOTH provider keys exactly
     # once (a key update), not on every subsequent run.
     gw2 = FakeGateway(registered=gw.registered, keys=dict(gw._keys))
-    monkeypatch.setenv("LLM_GATEWAY_BUDGET_CONSERVATISM_FACTOR", "0.25")
+    monkeypatch.setenv("LLM_GATEWAY_BUDGET_CONSERVATISM_FACTOR", "0.5")
     assert S.run_sync(**_default_run_args(gateway=gw2)) == S.SYNC_OK
     key_calls = [c for c in gw2.calls if c[0] == "key"]
     assert len(key_calls) == 2, f"both provider keys must re-budget once, got {gw2.calls}"
-    assert key_calls[0][3][0] == {"budget_duration": "5h", "max_budget": 3.0}
+    assert key_calls[0][3][0] == {"budget_duration": "7d", "max_budget": 15.0}
 
     gw3 = FakeGateway(registered=gw2.registered, keys=dict(gw2._keys))
     assert S.run_sync(**_default_run_args(gateway=gw3)) == S.SYNC_OK

@@ -70,8 +70,8 @@ def test_sync_registers_the_override_cost_in_model_info():
     assert _run(recorder) == S.SYNC_OK
 
     info = _registered_info(recorder)
-    assert info["input_cost_per_token"] == 2.5e-08
-    assert info["output_cost_per_token"] == 1.0e-07
+    assert info["input_cost_per_token"] == 1.5e-07
+    assert info["output_cost_per_token"] == 6.0e-07
     assert info["cache_read_input_token_cost"] == 3e-09
     assert info["cost_source"] == M.COST_SOURCE_OVERRIDE
     # The capability provenance stays models.dev-sourced (Rule 1).
@@ -94,14 +94,14 @@ def test_sync_override_survives_a_missing_models_dev_record():
     assert _run(recorder, catalog=empty) == S.SYNC_OK
     info = _registered_info(recorder)
     assert info["capability_staleness"] == "unknown"
-    assert info["input_cost_per_token"] == 2.5e-08
+    assert info["input_cost_per_token"] == 1.5e-07
     assert info["cost_source"] == M.COST_SOURCE_OVERRIDE
 
 
 def test_litellm_cost_engine_prices_the_authored_model_info():
     """The budget guard's USD math is litellm's cost engine. The authored
-    `model_info` must price at the override rate, ~6x below models.dev, and the
-    cache-read key must be the one litellm reads."""
+    `model_info` must price at the provider's real rate (the models.dev Go
+    record), and the cache-read key must be the one litellm reads."""
     litellm = pytest.importorskip("litellm")  # noqa: F841 - agent image only
     from litellm.cost_calculator import cost_per_token
     from litellm.litellm_core_utils.llm_cost_calc.utils import _get_token_base_cost
@@ -122,8 +122,8 @@ def test_litellm_cost_engine_prices_the_authored_model_info():
             "cache_read_input_token_cost": info["cache_read_input_token_cost"],
         },
     )
-    assert prompt_cost == pytest.approx(1_000_000 * 2.5e-08)
-    assert completion_cost == pytest.approx(1_000_000 * 1.0e-07)
+    assert prompt_cost == pytest.approx(1_000_000 * 1.5e-07)
+    assert completion_cost == pytest.approx(1_000_000 * 6.0e-07)
 
     # The deployment model_info path: litellm's base-cost function reads the
     # authored canonical keys directly (the proxy registers model_info into
@@ -132,6 +132,6 @@ def test_litellm_cost_engine_prices_the_authored_model_info():
      _cache_creation_1hr, cache_read) = _get_token_base_cost(
         model_info=dict(info),
         usage=Usage(prompt_tokens=1, completion_tokens=1))
-    assert prompt_base == pytest.approx(2.5e-08)
-    assert completion_base == pytest.approx(1.0e-07)
+    assert prompt_base == pytest.approx(1.5e-07)
+    assert completion_base == pytest.approx(6.0e-07)
     assert cache_read == pytest.approx(3e-09)

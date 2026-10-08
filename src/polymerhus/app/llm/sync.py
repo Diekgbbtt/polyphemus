@@ -174,24 +174,28 @@ def _now_iso() -> str:
 # --- The cost guard: the virtual-key USD budget plan (#330, ADR D13) ---------
 #
 # LiteLLM's native virtual-key `budget_limits` (USD) mirror opencode-go's
-# dollar-denominated cap. A conservatism factor `k` (default 0.5) scales each
-# cap: LiteLLM counts spend at the effective OFF-PEAK price the sync authors
-# (the provider-specific cost override, #330 iteration 2) while opencode-go
-# charges 2x at peak (01-04, 06-10 UTC Mon-Fri), so the counted budget must be
-# half the dollar cap for the guard to trip before the provider 429s. The
-# provider caps and `k` are env-tunable; an unusable override is a config lie
-# and raises `SyncConfigError` (hard, cold stop). `rpm_limit` is optional.
+# dollar-denominated cap. The provider's real caps are $30/week and $60/month;
+# there is NO 5h cap, and the weekly is the dominant, first-binding boundary.
+# The sync authors the provider's effective per-token cost into `model_info`
+# (the provider cost override), so LiteLLM's spend count matches what the
+# provider charges and the guard trips at the real cap. The conservatism factor
+# `k` (default 1.0) is a pure safety margin for the provider-rolling vs
+# litellm-calendar window mismatch - it no longer compensates a pricing
+# undercount (2026-10-09 correction, #330 / EV-34: the retired off-peak override
+# under-counted ~4.3x and the provider's weekly cap tripped first). The provider
+# caps and `k` are env-tunable; an unusable override is a config lie and raises
+# `SyncConfigError` (hard, cold stop). `rpm_limit` is optional.
 
-DEFAULT_BUDGET_5H_USD = 12.0
 DEFAULT_BUDGET_7D_USD = 30.0
 DEFAULT_BUDGET_30D_USD = 60.0
-DEFAULT_BUDGET_CONSERVATISM_FACTOR = 0.5
+DEFAULT_BUDGET_CONSERVATISM_FACTOR = 1.0
 
 # (LiteLLM budget window, env name of the provider cap, default cap USD). The
-# window strings are litellm `budget_duration` values; all three are windows of
-# the SAME virtual key (litellm checks each independently).
+# window strings are litellm `budget_duration` values; both are windows of the
+# SAME virtual key (litellm checks each independently). The dominant weekly cap
+# binds first; the monthly is a looser backstop. The retired `5h` window was not
+# a real provider boundary and would have bound spuriously (2026-10-09).
 _BUDGET_WINDOWS: tuple[tuple[str, str, float], ...] = (
-    ("5h", "LLM_GATEWAY_BUDGET_5H_USD", DEFAULT_BUDGET_5H_USD),
     ("7d", "LLM_GATEWAY_BUDGET_7D_USD", DEFAULT_BUDGET_7D_USD),
     ("30d", "LLM_GATEWAY_BUDGET_30D_USD", DEFAULT_BUDGET_30D_USD),
 )

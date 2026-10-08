@@ -44,11 +44,9 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 COMPOSE = ["docker", "compose", "-f", "docker-compose.e2e.yml"]
 AGENT_SERVICE = "agent"
 
-# The seeded override (per token), the ground truth the live record must carry.
-OVERRIDE = {"input": 2.5e-08, "output": 1.0e-07, "cache_read": 3e-09}
-# The models.dev record for the same offering (per token) - what must NOT be
-# counted: input 0.15/M, output 0.60/M.
-MODELS_DEV = {"input": 1.5e-07, "output": 6.0e-07}
+# The seeded override (per token) IS the models.dev opencode-go record - the
+# provider's real rate, the ground truth the live record must carry (#330/EV-34).
+OVERRIDE = {"input": 1.5e-07, "output": 6.0e-07, "cache_read": 3e-09}
 
 
 def _run(cmd: list[str], *, timeout: int = 300) -> subprocess.CompletedProcess:
@@ -127,10 +125,6 @@ def test_e2e_registered_model_carries_the_override_cost():
     assert info["capability_source"] == \
         "models.dev/opencode-go/deepseek-v4.1-flash"
 
-    # NOT the models.dev values.
-    assert info["input_cost_per_token"] != pytest.approx(MODELS_DEV["input"])
-    assert info["output_cost_per_token"] != pytest.approx(MODELS_DEV["output"])
-
 
 # --- 2+3. a real request through litellm, and the guard's spend delta -------
 
@@ -191,18 +185,12 @@ def test_e2e_real_request_through_gateway_and_guard_consumes_the_override():
     delta = payload["spend_delta"]
     assert delta > 0, f"the budget guard recorded no spend: {payload}"
 
-    expected_override = (inp * OVERRIDE["input"]
-                         + out * OVERRIDE["output"]
-                         + cache * OVERRIDE["cache_read"])
-    expected_modelsdev = (inp * MODELS_DEV["input"]
-                          + out * MODELS_DEV["output"]
-                          + cache * OVERRIDE["cache_read"])
+    expected = (inp * OVERRIDE["input"]
+                + out * OVERRIDE["output"]
+                + cache * OVERRIDE["cache_read"])
 
-    # The guard counted the override rate (within rounding), ~6x below the
-    # models.dev record - so a guard that counted models.dev would be far off.
-    assert delta == pytest.approx(expected_override, rel=0.05), (
-        f"guard spend delta {delta!r} != override-priced {expected_override!r} "
-        f"(models.dev would be {expected_modelsdev!r}); tokens={payload}")
-    assert delta < expected_modelsdev / 3, (
-        f"guard spend {delta!r} is not ~6x below the models.dev price "
-        f"{expected_modelsdev!r}")
+    # The guard counted the provider's real rate (the Go record), so its spend
+    # tracks the charge - the #330/EV-34 fix.
+    assert delta == pytest.approx(expected, rel=0.05), (
+        f"guard spend delta {delta!r} != provider-priced {expected!r}; "
+        f"tokens={payload}")

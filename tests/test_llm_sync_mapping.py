@@ -433,25 +433,25 @@ def test_capability_record_from_resolved_authors_thinking_surface():
 # #330 iteration 2: provider-specific effective cost override ----------------
 # ---------------------------------------------------------------------------
 #
-# models.dev carries the registry price for a provider offering; the provider's
-# effective per-token rate can differ (opencode-go's off-peak rate for
-# deepseek-v4.1-flash is ~6x below the models.dev record). LiteLLM prices a
-# provider offering as a deployment and reads the authored `model_info` cost
-# keys, so the override is consulted at the authoring seam on EVERY sync. This
-# is the red-capable seam: on `dev` the authored record carries models.dev's
-# ~6x-higher cost.
+# models.dev carries the registry price for a provider offering; a provider's
+# effective per-token rate can differ from it. LiteLLM prices a provider offering
+# as a deployment and reads the authored `model_info` cost keys, so the override
+# is consulted at the authoring seam on EVERY sync. Corrected 2026-10-09
+# (#330 / EV-34): the override is the models.dev opencode-go record itself, not a
+# ~6x-lower "off-peak" rate - the haircut under-counted the guard ~4.3x and the
+# provider's weekly cap tripped first.
 
-def test_provider_cost_override_is_seeded_with_the_off_peak_default():
-    # The ticket's off-peak values, PER TOKEN (model_info's unit): $0.025 / $0.10
-    # / $0.003 per million tokens.
+def test_provider_cost_override_is_seeded_with_the_go_record():
+    # The models.dev opencode-go record, PER TOKEN (model_info's unit):
+    # $0.15 / $0.60 / $0.003 per million tokens.
     assert M.cost_override("opencode-go", "deepseek-v4.1-flash") == {
-        "input": 2.5e-08, "output": 1.0e-07, "cache_read": 3e-09}
+        "input": 1.5e-07, "output": 6.0e-07, "cache_read": 3e-09}
     # No override for a sibling offering - the table is exact, not per-provider.
     assert M.cost_override("opencode-go", "deepseek-v4-flash") is None
     assert M.cost_override("opencode", "deepseek-v4.1-flash") is None
 
 
-def test_capability_to_model_info_replaces_the_models_dev_cost_with_the_override():
+def test_capability_to_model_info_authors_the_go_record_cost():
     rec = M.CapabilityRecord(
         model_id="deepseek-v4.1-flash",
         provider="opencode-go",
@@ -459,14 +459,14 @@ def test_capability_to_model_info_replaces_the_models_dev_cost_with_the_override
         output_limit=384000,
         cost_input=1.5e-07,    # models.dev: $0.15 / 1M
         cost_output=6e-07,     # models.dev: $0.60 / 1M
-        cost_cache_read=None,  # models.dev carries no cache_read for this record
+        cost_cache_read=None,  # models.dev record carried no cache_read at seed time
         source="models.dev/opencode-go/deepseek-v4.1-flash",
         synced_at="2026-10-06T00:00:00+00:00",
         staleness="fresh",
     )
     info = M.capability_to_model_info(rec)
-    assert info["input_cost_per_token"] == 2.5e-08
-    assert info["output_cost_per_token"] == 1.0e-07
+    assert info["input_cost_per_token"] == 1.5e-07
+    assert info["output_cost_per_token"] == 6.0e-07
     assert info["cache_read_input_token_cost"] == 3e-09
     # The override is an operator pricing correction: its provenance is marked,
     # while the capability provenance stays models.dev-sourced (Rule 1).
@@ -474,11 +474,11 @@ def test_capability_to_model_info_replaces_the_models_dev_cost_with_the_override
     assert info["capability_source"] == "models.dev/opencode-go/deepseek-v4.1-flash"
 
 
-def test_budget_guard_usd_math_reads_the_override_not_models_dev():
+def test_budget_guard_usd_math_matches_the_provider_rate():
     # The cost guard's USD math is LiteLLM's spend count over the authored
     # `model_info` cost keys. For a 1M-input / 1M-output request the authored
-    # record must therefore price at the effective override, ~6x below the
-    # models.dev record, or the guard under-counts and trips late (or never).
+    # record must price at the provider's real rate (the Go record), or the guard
+    # under-counts and trips late - the #330 / EV-34 failure.
     rec = M.CapabilityRecord(
         model_id="deepseek-v4.1-flash",
         provider="opencode-go",
@@ -491,9 +491,10 @@ def test_budget_guard_usd_math_reads_the_override_not_models_dev():
     info = M.capability_to_model_info(rec)
     usd = (1_000_000 * info["input_cost_per_token"]
            + 1_000_000 * info["output_cost_per_token"])
-    assert usd == pytest.approx(0.025 + 0.10)
+    assert usd == pytest.approx(0.15 + 0.60)
+    # The guard must NOT under-count the provider's real charge.
     models_dev_usd = 1_000_000 * 1.5e-07 + 1_000_000 * 6e-07
-    assert usd < models_dev_usd / 5
+    assert usd == pytest.approx(models_dev_usd)
 
 
 def test_capability_to_model_info_without_an_override_keeps_models_dev_cost():
