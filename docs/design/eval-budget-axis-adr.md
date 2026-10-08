@@ -2,6 +2,17 @@
 
 *Status: decided (operator ruling, 2026-10-08). Implemented by #347. Supersedes the "generated tokens only" budget axis recorded in `eval/CONTEXT.md` and `app/CONTEXT.md`.*
 
+## Relationship to prior decisions
+
+This ruling **reverses** the axis choice in `docs/design/eval-token-budget-and-no-config-cap-adr.md` (Accepted 2026-10-05, decision 2), which changed the budget from `capped_tokens` to `generated_tokens` so that "the budget is a pure output-spend bound; input volume (including re-reads) can never trip it".
+That ADR remains live for its other decisions (the hunt-config cap removal and its `token_budget` values).
+Its **axis decision is superseded by this ADR.**
+It also supersedes the corresponding note in `docs/design/eval-token-tracking-spec.md` (lines 108-110) and restores that spec's *original* `capped_tokens` design (its "Token spend" / "Token budget" / "Spend baseline" / "Capped tokens" glossary entries), with one change of rationale.
+
+The prior rationale treated **all** input as free.
+This ADR accepts that distinction but draws it correctly: **cached** input is free to serve (KV already materialised), while **uncached** input is real prefill compute and must be charged.
+So the correct axis is not "generated only" (ignores prefill) nor "total" (charges cache reads), but exactly `generated + uncached`.
+
 ## Context
 
 The eval enforces a per-trial **token budget**.
