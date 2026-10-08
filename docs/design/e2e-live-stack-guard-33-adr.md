@@ -47,8 +47,8 @@ Accepted (2026-10-08).
 
 ## Known adjacent gap (flagged, not fixed here)
 - Several root-level unit-tree tests still bring up live services and are not covered by `--ignore=tests/e2e`: `tests/test_stack_smoke.py`, `tests/test_agent_health.py`, `tests/test_kali_mcp.py`, `tests/test_neo4j_schema.py`, `tests/test_postgres_schema.py`, `tests/test_steel_exec_live.py`.
-  They are pre-existing and tracked in `STATE.md` (the five docker-down failures).
-  Moving them into `tests/e2e/` (or the integration tier) so the path-based live tier covers them is a recommended follow-up, out of #33's single-test scope.
+  They are pre-existing: five of them (`test_agent_health`, `test_kali_mcp`, `test_neo4j_schema`, `test_postgres_schema`, `test_stack_smoke`) are the docker-down failures recorded in `STATE.md`; `test_steel_exec_live.py` is not among them.
+  Moving them into `tests/e2e/` (or the integration tier) so the path-based live tier covers them is a recommended follow-up, out of #33's single-test scope, filed as #344.
 
 ## References
 - #33.
