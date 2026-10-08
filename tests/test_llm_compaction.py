@@ -851,6 +851,65 @@ def test_call_does_not_proceed_while_a_pass_is_pending():
     assert turn2_input[-1].content == "continue"
 
 
+# --- #348: a non-converging compaction must stop rewriting the trail ----------
+
+def _varying_summariser(seen: list | None = None):
+    """A fake summariser whose output VARIES per call (as a real LLM's does), so a
+    needless re-summarisation is observable as a changed running-summary message."""
+    counter = {"n": 0}
+
+    def fake(messages, budget):
+        counter["n"] += 1
+        text = f"RUNNING-SUMMARY-{counter['n']}"
+        if seen is not None:
+            seen.append(text)
+        return S.SummaryUpdate(objective=text, resume_point="resume")
+
+    fake.counter = counter
+    return fake
+
+
+def test_non_converging_compaction_stops_after_the_cap():
+    """#348: a thread compaction cannot bring under budget (an oversized tool result
+    pinned in the exempt replay tail) must STOP regenerating the running summary
+    after the consecutive-pass cap. Each successful-but-non-converging pass
+    otherwise rewrites the synthetic summary - the FIRST message of the compacted
+    trail - so the request prefix changes and the provider prefix cache never hits
+    (the job_orchestrator 30-calls-cached=0 shape). A pass that leaves the thread
+    over budget is NOT converging and must count toward the cap like a failure."""
+    window = C.CompactionWindow(context_limit=1000, threshold=0.9)
+    summaries: list = []
+    ledger = C.UsageLedger(window)
+    mgr = C.CompactionManager(
+        window, ledger, store=T.InMemoryToolOutputStore(),
+        summariser=_varying_summariser(summaries),
+        profile=CapabilityProfile(reasoning_in_response=True))
+    thread = "run348:job_orchestrator"
+    # A tool group whose result dwarfs the budget pins the exempt tail over budget:
+    # the pass can fold the small region but can never reach the budget, so it
+    # re-fires on every call and regenerates the summary each time.
+    big = ToolMessage(content="Z" * 200_000, tool_call_id="big")
+    trail = [
+        HumanMessage(content="go", id="h0"),
+        AIMessage(content="reason-0", id="a0"),
+        AIMessage(content="reason-1", id="a1"),
+        AIMessage(content="call-big", id="abig",
+                  tool_calls=[{"id": "big", "name": "terminal", "args": {}}]),
+        big,
+    ]
+    for i in range(C.CONSECUTIVE_PASS_CAP + 3):
+        ledger.update(thread, trail)  # the after_model ledger measurement
+        mgr.spawn(thread, trail)
+        update = mgr.ensure_under_budget(thread, trail)
+        if update is not None:
+            trail = [m for m in update["messages"] if m.type != "remove"]
+        trail = trail + [HumanMessage(content=f"new-{i}", id=f"n{i}")]
+
+    # The futile re-compaction loop is bounded: only a handful of summaries are made.
+    assert len(summaries) <= C.CONSECUTIVE_PASS_CAP + 1, summaries
+    assert mgr.is_escalated(thread) is True
+
+
 # --- slice E: the manager state machine (no live model) -----------------------
 
 def test_manager_spawns_pending_awaits_and_applies():
@@ -859,7 +918,11 @@ def test_manager_spawns_pending_awaits_and_applies():
     pending slot and keeping the streak at 0."""
     window = C.CompactionWindow(context_limit=1000, threshold=0.9)
     ledger = C.UsageLedger(window)
-    trail = [HumanMessage(content="q"), AIMessage(content="r1", usage_metadata=_usage(1000))]
+    # Graph-assigned ids (as the channel trail carries): the barrier's fresh-delta
+    # split must see both messages as measured, so the applied summary is the whole
+    # staged trail and the pass CONVERGES (streak resets) - the production shape.
+    trail = [HumanMessage(content="q", id="q1"),
+             AIMessage(content="r1", id="r1", usage_metadata=_usage(1000))]
     ledger.update("thr", trail)
     mgr = C.CompactionManager(
         window, ledger, store=T.InMemoryToolOutputStore(),
@@ -922,7 +985,8 @@ def test_manager_cap_stops_auto_spawn_and_a_later_trigger_resets():
     budget) resets the streak, so a new over-budget episode re-arms the mechanism."""
     window = C.CompactionWindow(context_limit=1000, threshold=0.9)
     ledger = C.UsageLedger(window)
-    trail = [HumanMessage(content="q"), AIMessage(content="r1", usage_metadata=_usage(1000))]
+    trail = [HumanMessage(content="q", id="q1"),
+             AIMessage(content="r1", id="r1", usage_metadata=_usage(1000))]
     ledger.update("thr", trail)
 
     def terminal(messages, budget):
@@ -944,7 +1008,8 @@ def test_manager_cap_stops_auto_spawn_and_a_later_trigger_resets():
     assert mgr.is_escalated("thr") is False
 
     mgr.summariser = _good_summariser()
-    new_trail = [HumanMessage(content="q"), AIMessage(content="r2", usage_metadata=_usage(1000))]
+    new_trail = [HumanMessage(content="q", id="q2"),
+                 AIMessage(content="r2", id="r2", usage_metadata=_usage(1000))]
     ledger.update("thr", new_trail)  # a NEW over-budget episode
     assert mgr.spawn("thr", new_trail) is not None  # re-armed
     assert mgr.ensure_under_budget("thr", new_trail) is not None  # the new pass applies
