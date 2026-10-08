@@ -762,6 +762,10 @@ EVAL_ASSESS_COMMAND='opencode run --agent eval-assessor --dir <canonical-checkou
 `opencode run` takes the prompt as a message; the role agent reads the contract
 file named in `{prompt}` itself, so the launcher never has to know opencode's
 flags beyond `--agent` and `--dir`.
+The four dispatched role agents (`eval-assessor`, `eval-diagnoser`,
+`eval-aligner`, `eval-surfer`) ship tracked under `.opencode/agent/`, so `--dir`
+must be the checkout that contains them; an agent that is not in the checkout is
+a missing one ("agent ... not found" at dispatch).
 
 The prompt tells the subagent to read the trial record, the ground truth
 (`python3 eval/gt.py <dir> --json`), and the persisted evidence under the data
