@@ -83,10 +83,16 @@ def trace_generation(call: str, *, input=None, output=None, run_id: str | None =
 
 def flush_analyser_traces() -> None:
     """Flush pending spans (a run worker may exit before the background exporter fires).
-    `flush`, never `shutdown` - the client is a process-wide singleton later runs reuse."""
-    try:
-        from langfuse import get_client
 
-        get_client().flush()
+    Delegates to the ONE delivery primitive `flush_observation_delivery`, which
+    sweeps the cached handler - bound to the same process-wide client the
+    analyser's own `get_client()` resolves - so the flush's outcome is truthful
+    (an exporter drop is visible, #235). `flush`, never `shutdown`; fail-open."""
+    try:
+        from polymerhus.app.observability.langfuse_tracing import (
+            flush_observation_delivery,
+        )
+
+        flush_observation_delivery()
     except Exception:
         logger.debug("flush_analyser_traces failed", exc_info=True)
