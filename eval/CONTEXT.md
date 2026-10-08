@@ -257,7 +257,10 @@ Each detached HEAD is fast-forwarded; a move that reaches only some worktrees is
 _Avoid_: sync, pull
 
 **Delivery plane**:
-The GitHub Actions CD controller's responsibility: fast-forwarding the eval server's canonical `dev` checkout from `origin/dev` on every push to `dev`; it never touches `eval` or instance worktrees, and it never fetches on the daemon's behalf.
+The GitHub Actions CD controller's responsibility: fast-forwarding the eval server's canonical `dev` checkout from `origin/dev` on every push to `dev`.
+It first converges the checkout's `origin` onto the configured origin, repointing a checkout that was cloned from another URL (a leftover bundle, a moved mirror) rather than fetching that other `dev` and reporting a no-op fast-forward as a successful delivery.
+A genuine `dev` divergence still fails loudly and leaves the working tree untouched.
+It never touches `eval` or instance worktrees, and it never fetches on the daemon's behalf.
 _Avoid_: deployment, CD, release
 
 **Idle proxy**:
