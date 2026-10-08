@@ -2,6 +2,10 @@
 
 ## Status
 Accepted (2026-10-05).
+**Decision 2 (the budget axis) is SUPERSEDED** by `eval-budget-axis-adr.md`
+(#347, 2026-10-08): the budget now counts `capped_tokens` (generated output plus
+uncached input), not generated output alone. The hunt-config-cap removal
+(decision 1) and the setup structure stand.
 
 ## Context
 - The jetlinks-1 trial was hard-stopped at its 10-config hunt cap while still

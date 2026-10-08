@@ -20,11 +20,11 @@ folds in cache_read and cache_creation; langchain_openai sets
 Two scalars ride the surface: `total_tokens` = context + generated (the raw
 total, cache included), and `capped_tokens` = generated + uncached =
 `total_tokens - cached` (generated output plus the fresh input it read,
-excluding cache reads). The trial token budget counts `generated_tokens`
-(reasoning + visible) ONLY (2026-10-05), so neither cached nor uncached input
-can consume it - only what the model wrote. The axes are recorded per call so a
-mostly-cache-read context is visible rather than folded into one opaque input
-number (ticket F16).
+excluding cache reads). The trial token budget counts `capped_tokens`
+(generated + uncached input) - the real compute - and never cached input the
+model re-read (#347), so cache reuse does not consume the budget. The axes are
+recorded per call so a mostly-cache-read context is visible rather than folded
+into one opaque input number (ticket F16).
 
 The ledger is keyed by `(project_id, agent)`. A missing/blank project id records
 under the `"unscoped"` sentinel bucket, which a project snapshot never returns:
@@ -97,8 +97,8 @@ def _axis_totals(usage: Mapping) -> dict[str, int]:
     is INCLUSIVE of cache_read, so `uncached = input_tokens - cache_read`; no
     component is negative, and `total_tokens` (context + generated) stays the
     faithful raw total. `capped_tokens` = generated + uncached = total - cached is
-    the new-token axis (retained for callers); the trial budget now counts
-    `generated` (reasoning + visible) only.
+    the trial budget axis (new output plus fresh input, excluding cache reads,
+    #347); it is not the generated-only output axis.
 
     A provider whose `input_tokens` EXCLUDES cache_read (it is not a subset) is
     detected only in the unambiguous case `cache_read > input_tokens`; then the

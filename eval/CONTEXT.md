@@ -164,16 +164,16 @@ REMOVED (2026-10-05): a consumed-config count is not a failure signal, and hard-
 _Avoid_: budget, limit
 
 **Token budget**:
-The per-`Target`-declared bound on a `Trial`'s token spend, enforced trial-wide: every phase poll reads the project's cumulative **generated-token** spend from the app usage surface (`generated_tokens` - reasoning + visible output), and when the spend over the trial's baseline reaches the budget the trial stops the active run and terminates `stopped`.
-Counting generated tokens only (never input, cached or not) means context the model re-read never consumes the budget for new work.
+The per-`Target`-declared bound on a `Trial`'s token spend, enforced trial-wide: every phase poll reads the project's cumulative **capped-token** spend from the app usage surface (`capped_tokens` - generated output plus uncached input = `total_tokens - cached`), and when the spend over the trial's baseline reaches the budget the trial stops the active run and terminates `stopped`.
+Counting capped tokens - new output plus uncached input, never cached input - measures the inference power a run induces and rewards cache reuse, so context the model re-reads from cache never consumes the budget (ADR `eval-budget-axis-adr.md`, #347).
 _Avoid_: cap, limit
 
 **Token spend**:
-The generated tokens a `Trial`'s project produced, measured as the delta between the project's cumulative `generated_tokens` on the app usage surface (`GET /projects/{id}/usage`) and the trial's spend baseline.
+The capped tokens a `Trial`'s project produced, measured as the delta between the project's cumulative `capped_tokens` on the app usage surface (`GET /projects/{id}/usage`) and the trial's spend baseline.
 _Avoid_: cost, usage
 
 **Spend baseline**:
-The project's cumulative `generated_tokens` at the trial's first spend poll; persisted in the trial record (`spend_baseline`) and carried across a resume, so a resumed or seeded trial never re-counts a prior run's spend.
+The project's cumulative `capped_tokens` at the trial's first spend poll; persisted in the trial record (`spend_baseline`) and carried across a resume, so a resumed or seeded trial never re-counts a prior run's spend.
 _Avoid_: cap baseline, offset
 
 **Trial deadline**:

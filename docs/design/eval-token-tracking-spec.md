@@ -105,9 +105,10 @@ A provider whose `input_tokens` EXCLUDES cache_read is NOT fully supported: the 
 
 ### Eval side
 
-> NOTE (2026-10-05): the token-budget AXIS below (`capped_tokens`) is superseded by `eval-token-budget-and-no-config-cap-adr.md`.
-> The budget now counts `generated_tokens` (reasoning + visible output) via `api.usage_generated`; input, cached or not, never consumes it.
-> The `capped_tokens` text is retained as the original design record.
+> NOTE (2026-10-08): the token budget counts `capped_tokens` (generated +
+> uncached input, `total_tokens - cached`); the 2026-10-05 "generated only"
+> supersession is itself superseded by `eval-budget-axis-adr.md` (#347).
+> The `capped_tokens` axis below is the live budget axis once more.
 
 - **Declaration**: `TargetRun.token_budget: int | None = None`; YAML key `token_budget` added to the target-run allow-list and validated as `int | None` (bool rejected).
 - **Config**: `TrialConfig.token_budget: int | None = None`; `TrialConfig.spend_baseline: int | None = None` (carried across a resume).
