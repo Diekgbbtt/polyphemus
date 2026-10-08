@@ -553,7 +553,7 @@ The scope keys on the bare host; the probe keeps the authority.
 **Alternatives rejected.**
 Normalizing only in `host_in_scope` leaves the URL-named root `Domain`, the broken promotion key, and the port-leaking `apex_registrable` (which still starves jsluice). Adding a fourth key to the `parse_scope` descriptor churns the pinned `==` descriptor contract and conflates the scope key with the probe transport; a separate `seed_probe_target` keeps the two concerns apart.
 
-**Regression contract for authority-free seeds (must not change).** For a bare domain, `*.domain`, or a bare IP, `parse_scope` returns byte-identical descriptors and `seed_probe_target` equals the bare `seed_host`; a scheme/port-bearing IPv4 is now (correctly) host mode.
+**Regression contract for authority-free seeds (must not change).** For a bare domain, `*.domain`, or a bare IP (no trailing dot), `parse_scope` returns byte-identical descriptors and `seed_probe_target` equals the bare `seed_host`; a scheme/port-bearing IPv4 and a malformed trailing-dot IPv4 (e.g. `1.2.3.4.`) are now (correctly) host mode.
 
 ## D-SVCLINK - the web-origin subgraph is disconnected from the network-service subgraph (NEW work item, DEFERRED, 2026-07-26)
 
