@@ -58,6 +58,7 @@ The endpoint therefore keeps its contract of never erroring and never validating
 - A project's spend survives process death, so the eval token budget can no longer reset after a restart.
 - The endpoint stays database-free; durability rides the existing data-root bind mount.
 - The store is always reached under the ledger's single process-wide lock, so no second lock layer is introduced.
+- Known risk (verifier-flagged, not measured): the write-through path holds the global ledger lock across a full YAML dump plus file and parent-dir `fsync` on every model call, so concurrent agents' recording serialises behind disk I/O. The cost is asserted negligible but not benchmarked; a hot-path benchmark under the eval's concurrency is a follow-up if recording latency proves material.
 - The superseded `docs/design/eval-token-tracking-spec.md` "Out of Scope: Persisting the ledger" bullet is corrected in the same change.
 
 ## References
