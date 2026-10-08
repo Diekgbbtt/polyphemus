@@ -34,6 +34,12 @@ The profiling pass is enrichment only: it fills gaps (methods/parameters/headers
 **API scope** (kiterunner):
 The evidence-derived API-root prefix a fuzzer is scoped to, computed by `api_scope.derive_scan_targets` from a host's `restapi` Endpoint paths (last api-noun cut, versions left as fuzz-space, parent-dir fallback). Not a naming classifier - the gate is the content-type `profile`; the noun set only picks the cut depth.
 
+**Webpack chunk map** (#185):
+The static `{<chunk-id>: "<content-hash>"}` object the webpack runtime bundle carries, naming the lazy-loaded code-split chunks a SPA fetches only at route navigation.
+It is resolved by the `webpack_chunks` Job, which fetches the crawled `.js`/`.mjs` bundles (the same consumption set and batch seam as jsluice), mints each resolved `<bundle-dir>/<id>.<hash>.js` chunk as an Endpoint (`source="webpack"`), and sits in its own phase before jsluice so the following jsluice pass scans the chunk bodies - the browser is never needed because the map is static JSON.
+_Avoid_: treating chunk resolution as a crawl (no JS executes); reading the map in katana (it does not fetch and parse the runtime).
+_Deferred_: the shell's `defaults.baseURL="/api"` prefix on the chunks' relative API literals is a separate concern (`recon-webpack-chunk-map-185-adr.md`).
+
 **Parameter / Header**:
 Parameter nodes are the input-carrying atoms that hang off an Endpoint; they, not the Endpoint, express that a user-controllable input reaches a sink.
 Header nodes as minted today are RESPONSE headers (httpx `-irh` / katana `response.headers`), hung off their BaseURL via `HAS_HEADER` with `direction="response"` - observed surface, never replayed into requests.
@@ -113,7 +119,7 @@ _Avoid_: task, step.
 **Consumption set**:
 The deliberately-derived input set a Job is fanned out over - WHAT a job probes, as opposed to the probe itself.
 Declared per job by `JobSpec.consumption` and derived by the single composed `batching.derive_consumption_set` pipeline (malformed-path exclusion via the curator gate's predicate, route-cluster dedup to one representative per `(baseurl, method, path-template)`, restapi-first ordering, then pack into pod inputs).
-The `pack` stage is the pod-shape choice: `none` (raw 1:1), `one_pod` (the whole set in one pod, #208), `scan_targets` (kiterunner API-root prefixes), or `batches` - the endpoint-reduce seam (first-party filter, exact-URL dedup, fingerprinted-basename dedup) that distributes the survivors across `<= MAX_PODS` batch pods. jsluice and arjun both ride `batches` (#37): arjun's pod count is bounded rather than one pod per endpoint.
+The `pack` stage is the pod-shape choice: `none` (raw 1:1), `one_pod` (the whole set in one pod, #208), `scan_targets` (kiterunner API-root prefixes), or `batches` - the endpoint-reduce seam (first-party filter, exact-URL dedup, fingerprinted-basename dedup) that distributes the survivors across `<= MAX_PODS` batch pods. jsluice, webpack_chunks (#185) and arjun (#37) all ride `batches`: arjun's pod count is bounded rather than one pod per endpoint.
 Profile preference inside a consumption set is ORDERING only, never exclusion: a `webapp` endpoint is still probed, after `restapi` ones - the reprofile probe (with its request-shape adaptation, #208) decides what each endpoint IS.
 `MAX_JOB_ASSETS` is a ceiling over the deliberately-ordered set, not a relevance filter; a derivation failure degrades to the blunt capped 1:1 with a loud warning (fail-open), never a raised exception.
 _Avoid_: input population (the raw read-back before derivation), truncation (the pre-#37 blunt cap).

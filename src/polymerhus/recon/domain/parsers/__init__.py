@@ -8,6 +8,7 @@ from polymerhus.recon.domain.parsers.whois_parser import parse as parse_whois
 from polymerhus.recon.domain.parsers.naabu_parser import parse as parse_naabu
 from polymerhus.recon.domain.parsers.katana_parser import parse as parse_katana
 from polymerhus.recon.domain.parsers.jsluice_parser import parse as parse_jsluice
+from polymerhus.recon.domain.parsers.webpack_chunks_parser import parse as parse_webpack_chunks
 from polymerhus.recon.domain.parsers.passive_url_parser import parse_gau, parse_paramspider
 from polymerhus.recon.domain.parsers.active_param_parser import parse_arjun, parse_ffuf, parse_kiterunner
 from polymerhus.recon.domain.parsers.graphql_parser import parse as parse_graphql_cop
@@ -30,6 +31,9 @@ PARSERS: dict[str, Callable[[str], list[AssetDelta]]] = {
     "naabu": parse_naabu,
     "katana": parse_katana,
     "jsluice": parse_jsluice,
+    # #185: the webpack chunk-map resolver mints lazy-chunk Endpoints ahead of
+    # jsluice, so jsluice scans the chunk bodies it would otherwise never see.
+    "webpack_chunks": parse_webpack_chunks,
     "gau": parse_gau,
     "paramspider": parse_paramspider,
     "arjun": parse_arjun,
