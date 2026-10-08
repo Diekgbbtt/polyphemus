@@ -26,9 +26,13 @@ It exposes `take_dropped_spans()`, which reads AND resets the count under the sa
 When handlers disagree the most severe cause wins (`ok` < `no-client` < `exporter-failed` < `flush-raised`).
 
 **Flush-window semantics.** The counter is read-and-reset, not reset-then-read.
-Reading after the drain means the value covers every batch the retry budget exhausted during the flush and any drop since the previous delivery read, so a drop during the window can never be reported as `delivered`.
+Reading after the drain means the value covers every batch the retry budget exhausted during the flush and any drop since the previous delivery read, so a drop that a COMPLETED flush recorded can never be reported as `delivered`.
 Read and reset share one lock with the increment, so a drop that races the read is counted by exactly one side and can never be lost.
 The cost is conservatism: a background drop between two flushes is attributed to the next flush, which is the honest direction (the result can over-report a drop, never under-report one).
+
+**Residual (the slow-timeout class).** The drain's underlying `force_flush` uses the OTel default 30s window, while a single export attempt may block up to `_DEFAULT_EXPORT_TIMEOUT_S` (60s) before its retry budget exhausts.
+A drop recorded only AFTER `force_flush` returns is therefore attributed to the NEXT flush, or missed by a FINAL run-end flush that has no successor.
+The proven #226 case (`No connection adapters`, an immediate exporter failure) is covered; the slow-timeout class is a known residual, filed as #345, and is not claimed closed here.
 
 **Multi-batch.** A single flush may drain many queued batches; the wrapper applies its retry budget per batch, and the counter sums every dropped batch in the window, so one clean batch cannot mask a dropped sibling.
 

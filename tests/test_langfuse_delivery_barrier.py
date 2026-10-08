@@ -203,6 +203,18 @@ def test_one_bad_handler_does_not_abort_the_remaining_flushes():
     assert result.dropped == 1
 
 
+def test_empty_borrow_list_is_an_inert_unconfigured_result():
+    result = lt.flush_observation_delivery([])
+    assert result.to_dict() == {"delivered": 0, "pending": 0, "dropped": 0,
+                                "cause": "unconfigured"}
+
+
+def test_handler_without_a_flushable_client_is_pending_never_attempted():
+    result = lt.flush_observation_delivery([SimpleNamespace()])
+    assert result.pending == 1
+    assert result.delivered == 0
+    assert result.cause == "no-client"
+
 
 class _NoopCallbacks(BaseCallbackHandler):
     """Stand-in for a borrowed Langfuse handler: satisfies the callback
