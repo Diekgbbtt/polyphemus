@@ -46,6 +46,8 @@ consumer is never touched and still drains what was already pushed. The handler
 is a thin adapter over `RuntimeManager.cancel_run`; the Run row's first-class
 `stopped` terminal is written by Recon's pipeline cancellation path (#287),
 never here. Project-management requests the stop; Recon owns the Run terminal.
+The cancellation unit is the Run, never a single Job (Recon owns that ruling);
+the in-flight pod/tool teardown is a separate concern (#76).
 _Avoid_: writing the run status in the HTTP adapter (the terminal belongs to the
 pipeline).
 

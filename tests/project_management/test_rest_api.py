@@ -249,6 +249,35 @@ def test_get_recon_status_returns_registry_shape(monkeypatch):
     assert body["stats"]["advance_blocked_s_max"] == 0.001
 
 
+def test_post_recon_stop_cancels_the_run_via_the_runtime(monkeypatch):
+    """#113: the operator cancel face routes to `RuntimeManager.cancel_run` for
+    the Run (the cancellation unit, never a Job). The `stopped` terminal is
+    Recon's - written by the pipeline cancellation path (#287) - so this adapter
+    only acknowledges the cancel."""
+    import polymerhus.app.llm.usage as usage_module
+    import polymerhus.app.runtime as runtime_module
+
+    cancelled: list[tuple[str, str]] = []
+
+    class _Runtime:
+        def cancel_run(self, module, run_id):
+            cancelled.append((module, run_id))
+
+    monkeypatch.setattr(runtime_module, "get_active_runtime", lambda: _Runtime())
+
+    class _Ledger:
+        def flush(self, project_id):
+            pass
+
+    monkeypatch.setattr(usage_module, "usage_ledger", lambda: _Ledger())
+
+    resp = client.post("/projects/p1/recon/run-1/stop")
+
+    assert resp.status_code == 200
+    assert resp.json() == {"run_id": "run-1", "stopping": True}
+    assert cancelled == [("recon", "run-1")]
+
+
 def test_post_recon_with_removed_gau_job_returns_error(monkeypatch):
     """gau is withdrawn from the pipeline (D-gau): the agent app must reject a
     run that lists it, and must never launch. Mirrors the operator's manual

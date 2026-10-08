@@ -81,10 +81,30 @@ Accepted (2026-10-06).
   `tests/eval/test_orchestrator_trial.py` (a `stopped` recon terminal stops the
   trial), and `tests/eval/test_orchestrator_api.py` (the vocabulary).
 
+## Amendment (2026-10-08, #113): the Run is the operator cancellation unit
+
+- Context: ticket #113 asked for an operator-facing job/run cancel path.
+  The operator-facing face already exists: `POST /projects/{id}/recon/{run_id}/stop` is a thin adapter over `RuntimeManager.cancel_run` (`project_management/api.py`), the run row reaches the first-class `stopped` terminal promptly via the pipeline cancellation path (#287), and already-curated data is preserved because `curate()` persists per pod incrementally.
+  The eval trial already calls the same stop endpoint on timeout (#338).
+- Decision: the operator cancellation unit is the **Run**, never an individual **Job**.
+  A per-job cancel is deliberately not provided.
+  A run's jobs run sequentially within a phase behind a phase barrier, so the in-flight job is the only thing a stop can be waiting on.
+  Job selection is a launch-time concern already served by the `jobs` subset on `POST /recon`, and the operator's stop intent is run-scoped (the ticket's own example is a whole run judged to be noisy).
+  A per-job cancel would add a second lifecycle verb and a job-level terminal vocabulary for no operator use case.
+- Residual, explicitly out of this surface's scope: the run-level stop does not promptly tear down the in-flight pod/tool.
+  `run_job` awaits `asyncio.to_thread(graph.invoke, ...)` (`recon/control/job_agent.py`); cancelling the pipeline task cancels that await immediately but the worker thread keeps running the pod graph and the tool to `EXEC_TIMEOUT_S`, including up to `MAX_POD_ITERS` retries.
+  That exec-kill and output-suppression is workflow ticket #76 ("suppress killed-job output on teardown", D3), the sibling teardown-audit fix under the same audit; it is a separate change, not part of the operator cancel surface.
+- The run-level stop therefore satisfies #113's API action, data-preservation, and run-terminal criteria.
+  #113's pod-teardown criterion is owned by #76.
+
 ## References
 - #287 (this bug), #328 (the sibling recon-module `stopped` state), #75 (recon /
-  analysis decoupling and the stop semantics), #121 (the module runtime manager).
+  analysis decoupling and the stop semantics), #121 (the module runtime manager),
+  #113 (the operator cancel surface; this amendment), #76 (the killed-job
+  exec-kill and output-suppression residual), #338 (the eval trial stops on
+  timeout).
 - `src/polymerhus/recon/control/pipeline.py`; `src/polymerhus/app/clients/pg.py`;
   `src/polymerhus/project_management/api.py`; `docs/design/recon-pipeline-design.md`;
-  `src/polymerhus/recon/CONTEXT.md` (Run terminal);
-  `src/polymerhus/project_management/CONTEXT.md` (Recon stop).
+  `src/polymerhus/recon/CONTEXT.md` (Run terminal, Run cancellation);
+  `src/polymerhus/project_management/CONTEXT.md` (Recon stop);
+  `docs/design/teardown-checkpoint-flush-211-spec.md` (#76 sibling).
