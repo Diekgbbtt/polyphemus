@@ -388,28 +388,36 @@ def test_the_budget_counts_capped_tokens_not_the_cache_heavy_raw_total(tmp_path)
     # stays flat and the budget never advances. Counting the raw total would stop
     # the trial on re-read context - the defect #347 fixes.
     class CacheHeavyApi(FakeApi):
-        def __init__(self, routes, capped_seq):
+        def __init__(self, routes, capped_seq, raw_seq):
             super().__init__(routes)
             self._capped = list(capped_seq)
+            self._raw = list(raw_seq)
             self.usage_calls = 0
 
         def __call__(self, call):
             if call.path.endswith("/usage"):
                 self.usage_calls += 1
                 capped = self._capped.pop(0)
+                raw = self._raw.pop(0)
                 self.calls.append(call)
                 return {
                     "project_id": "pid",
-                    "total_tokens": 50_000_000,
+                    "total_tokens": raw,
                     "capped_tokens": capped,
-                    "context_tokens": {"cached": 49_999_990, "uncached": capped},
+                    "context_tokens": {"cached": raw - capped, "uncached": capped},
                     "generated_tokens": {"reasoning": 0, "visible": 0},
                     "calls": 1,
                     "by_agent": {},
                 }
             return super().__call__(call)
 
-    api_runner = CacheHeavyApi(_usage_routes(), capped_seq=[10, 10, 10])
+    # The RAW total grows far past the budget on cache reads while `capped_tokens`
+    # stays flat: a raw-total budget would stop here, the capped budget must not.
+    api_runner = CacheHeavyApi(
+        _usage_routes(),
+        capped_seq=[10, 10, 10],
+        raw_seq=[50_000_000, 60_000_000, 70_000_000],
+    )
     t = _trial(tmp_path, api_runner, project_id="pid", token_budget=500)
 
     # Baseline capped 10 (raw 50M ignored); capped stays 10 -> spent 0 < 500.
