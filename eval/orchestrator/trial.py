@@ -331,6 +331,11 @@ class TrialRecord:
     spend_overshoot: int | None = None
     spend_baseline: int | None = None
     spend_by_agent: dict | None = None
+    # #346: the terminal usage snapshot (the full two-axis surface, the raw total,
+    # and the capped budget axis), read at every terminal so a failed or timed-out
+    # trial still carries its token usage even when no budget stop populated
+    # `spent_tokens`. Additive, default None, so older records load.
+    usage: dict | None = None
     notes: list[str] = field(default_factory=list)
     trial_dir: str | None = None
     # #273: the target-run grouping level of the artifact store (defaults to
@@ -903,6 +908,43 @@ class Trial:
 
     # --- record ---------------------------------------------------------------
 
+    def _terminal_spend(
+        self, project_id: str
+    ) -> tuple[SpendResult | None, dict | None]:
+        """The trial's spend at terminal, and its full usage snapshot (#346).
+
+        A budget stop already produced a `SpendResult` (`self._spend`) and is
+        returned as-is (with no extra usage read, so the budget path is
+        unchanged). Otherwise the project's cumulative usage is read once here,
+        so a failed or timed-out trial still records what it spent: `spent` is
+        the capped-axis delta over the carried baseline and `usage` is the raw
+        two-axis surface. Fail-open: an unreadable usage surface yields
+        `(None, None)` and never breaks the terminal record."""
+        if self._spend is not None:
+            return self._spend, None
+        resp = self._read_usage(project_id)
+        if not resp:
+            return None, None
+        baseline = self._spend_baseline or 0
+        return (
+            SpendResult(
+                spent=max(0, api.usage_capped(resp) - baseline),
+                overshoot=0,
+                by_agent=api.usage_by_agent(resp),
+            ),
+            dict(resp),
+        )
+
+    def _read_usage(self, project_id: str) -> dict:
+        """Read the project usage snapshot for the terminal record, fail-open.
+
+        The terminal record is written even when the app usage surface is
+        unreachable, so this never raises into `_finish`."""
+        try:
+            return self._call(api.usage(project_id)) or {}
+        except Exception:  # noqa: BLE001 - the terminal record must still write
+            return {}
+
     def _finish(
         self,
         started: str,
@@ -919,6 +961,7 @@ class Trial:
         aggregated = intervention + list(notes) + [
             note for phase in phases for note in phase.notes
         ]
+        spend, usage = self._terminal_spend(project_id)
         record = TrialRecord(
             trial_id=trial_id,
             instance_id=cfg.instance_id,
@@ -930,10 +973,11 @@ class Trial:
             started_at=started,
             finished_at=self._now(),
             token_budget=cfg.token_budget,
-            spent_tokens=self._spend.spent if self._spend else None,
-            spend_overshoot=self._spend.overshoot if self._spend else None,
+            spent_tokens=spend.spent if spend else None,
+            spend_overshoot=spend.overshoot if spend else None,
             spend_baseline=self._spend_baseline,
-            spend_by_agent=self._spend.by_agent if self._spend else None,
+            spend_by_agent=spend.by_agent if spend else None,
+            usage=usage,
             notes=aggregated,
             trial_dir=str(trial_dir),
             target_run_id=cfg.target_run_id or cfg.instance_id,

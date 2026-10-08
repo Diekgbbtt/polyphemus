@@ -113,6 +113,7 @@ A provider whose `input_tokens` EXCLUDES cache_read is NOT fully supported: the 
 - **Declaration**: `TargetRun.token_budget: int | None = None`; YAML key `token_budget` added to the target-run allow-list and validated as `int | None` (bool rejected).
 - **Config**: `TrialConfig.token_budget: int | None = None`; `TrialConfig.spend_baseline: int | None = None` (carried across a resume).
 - **Record**: `TrialRecord` gains `token_budget`, `spent_tokens`, `spend_overshoot`, `spend_baseline`, `spend_by_agent`.
+  Since #346 the record also carries `usage` (the terminal usage snapshot) and `spent_tokens`/`spend_by_agent` are populated at **every** terminal, not only on a budget stop: `_finish` calls `_terminal_spend`, which reuses a budget stop's `SpendResult` when present and otherwise reads the usage surface once (fail-open) so a failed or timed-out trial is never unaccounted.
 - **API builders/parsers** (`eval/orchestrator/api.py`): `usage(project_id)` -> `GET /projects/{id}/usage`; `stop_run(project_id, run_kind, run_id)` generalizing the three stop paths; parsers `usage_total(response)`, `usage_capped(response)`, and `usage_by_agent(response)`.
 - **Enforcement** (`eval/orchestrator/trial.py`): `Trial._check_spend(project_id, run_kind, run_id) -> SpendResult | None`.
   It reads the usage endpoint's `capped_tokens` (via `usage_capped`), snapshots `spend_baseline` on the first check, and when `capped - baseline >= token_budget` calls `stop_run` and returns a `SpendResult` carrying `spent`, `overshoot`, `by_agent`.
