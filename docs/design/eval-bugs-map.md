@@ -1,6 +1,6 @@
 # Eval-system bugs map
 
-*Status: working map (2026-10-05). The failure register for the eval harness and its evidence chain, cleaned of closed-ticket noise, deduplicated by root cause, and stripped of the infra/dependency and scaffolded-data-layer families. Each live entry carries a diagnosis and a confidence. Low-confidence entries are marked POTENTIAL and route through the `diagnosing-bugs` flow.*
+*Status: working map (2026-10-08). The failure register for the eval harness and its evidence chain, cleaned of closed-ticket noise, deduplicated by root cause, and stripped of the infra/dependency and scaffolded-data-layer families. Each live entry carries a diagnosis and a confidence. Low-confidence entries are marked POTENTIAL and route through the `diagnosing-bugs` flow. Section 12 regroups the register by hunting sub-unit.*
 
 Provenance: operator session 2026-10-05; live trial records under `/opt/eval-platform-model/eval/runs/`, the instance data root `/opt/polymerhus-dev/eval/instances/eval-server-1/data/`, the agent log (`docker logs ph-dd131acc-agent-1`), the polymerhus API (`/app-state`, `/projects/{id}/{graph,usage}`), and the comfyui ground-truth kill chains under `/root/WebExploitBench/comfyui/vulnerability/comfyui-00N/report/report.md`.
 
@@ -214,3 +214,28 @@ Provider chat calls are separately gated by opencode workspace Privacy settings:
 
 ### Resolution (#335, 2026-10-06)
 Option (a), realised as a deterministic derivation so no state or new env var is needed: `providers.gateway_virtual_key(provider, api_key)` returns `sk-ph-<sha256(provider NUL api_key)>`. The sync mints exactly that key per provider (`sync.py::run_sync` -> `ensure_virtual_key`), scoped to the provider's registered models, and `build_chat_model` presents exactly that key as its gateway bearer when `LLM_GATEWAY_URL` is set. The provider credential still lands in each model's `litellm_params.api_key` (the gateway's upstream custody; the #193 rotation path is unchanged) and `API_KEY_<PROVIDER>` stays required as the derivation seed. `ensure_virtual_key` now refuses a non-`sk-` key at the write boundary, `key_info`/`ensure_virtual_key` idempotency is preserved (C9), and the skip warning prints `_key_env(provider)` (`API_KEY_OPENCODE_GO`, not the dash form). Recorded as the ADR D3 amendment in `llm-gateway-100-decisions.md`.
+
+## 12. Hunting module granularity
+
+The register above groups failures by symptom family (provider/lifecycle/assessment/contract/test). This section regroups the SAME entries - plus two hunting-specific gaps surfaced here - by the hunting module's **internal sub-unit**, so a reader can see which sub-unit owns each failure and the exact seam.
+
+Sub-unit vocabulary: `src/polymerhus/attack/hunting/CONTEXT.md`. App-module seam: `docs/design/hunting-module-runtime-seam.md`. The hunting module pipeline is: run bootstrap -> run-scoped inbox surfer (mover) -> hunt-orchestrator pass -> hunter (per ratified config) -> test-executor pod (per specified spec) -> stores; the pod export feeds back into the hunter's memory (Q16).
+
+| # | sub-unit | code seam | failure entries | status |
+|---|---|---|---|---|
+| H1 | run bootstrap + runtime seam | `runtime.py::start_hunting` / `stop_hunting` / `flush_hunting_checkpointer` | EV-27 (#338 - the orphan-on-timeout lives in the eval poll, but the module's stop/flush is what it invokes) | #338 fixed |
+| H2 | run-scoped inbox surfer + mover | `surfer.py::run_surfer_loop` / `build_run_dispatch`, `mover.py::deduce_delivery` / `run_delivery_tick` | EV-10 (#312 - the surfer now surfaces a child-session `ProviderUnavailableError`, so the run pauses `interrupted`, not quiesce-`complete` with zero specs) | #312 fixed |
+| H3 | hunt-orchestrator pass (actor + graph engine) | `hunt_orchestrator.py`, `orchestrator_graph.py`, `actors.py::HuntOrchestratorActor` + `DegradedTurnBreaker` | EV-21 (429 abort -> run `failed`), EV-9 (memory.yaml consumer shape), EV-29/#340 (hunt_configs + memory.yaml atomic), the #341 growth bound | fixed |
+| H4 | hunting agent (hunter) | `hunting_agent.py`, `hunter_graph.py`, `hunter_state.py`, `hunter_memory.py`, `hunter_tools.py` | EV-10/#312 (raw provider raise classified at BOTH catch points), EV-9 (`read_hunter_specs` / `_with_specified`), EV-29/#340 (notes.yaml + spec atomic), the #341 notes bound | fixed |
+| H5 | test-executor pod (runner + triager + surfer) | `pod/pod.py`, `pod/graph.py`, `pod/agents.py`, `pod/harness.py`, `pod/pod_memory.py`, `hunting_status.py` | EV-21 (a pod raise fabricates `technical-infeasibility`), EV-25/#304 (the triager laundered a degraded KB into `space-exhausted`), EV-13/#323 (a front 5xx = upstream-unavailable, not route-absence) | EV-21 partial (#329/#331), #304 fixed, #323 fixed |
+| H6 | whole-file stores | `hunt_store.py::HuntStore`, `hunter_memory.py::HunterMemoryStore`, `pod/pod_memory.py::PodMemoryStore` | EV-11/#279 (the semantic-key split), EV-29/#340 (atomic), the #341 bounds | fixed |
+| H7 | hunt-phase budget | `eval/orchestrator/trial.py` (outside the module, but it bounds the hunting phase) | EV-8/#315 (the cap terminates the whole trial, not the hunting phase) | #315 design (operator-gated) |
+
+**Cross-cutting app-layer seam.** The shared actor runtime (`app/llm/actor.py`, #186) sits UNDER H2/H3/H4: a raising turn retries the retryable class, then degrades to a no-decision reply and the actor survives. A **transient bare-400** on that seam degrades an actor turn - **#299** (in flight, held) is the hunting orchestrator's exposure to it, not only recon's triager.
+
+**Hunting gaps surfaced by this regrouping (POTENTIAL, route through `diagnosing-bugs`):**
+
+- **H-G1** - no dedicated entry for a **quiesce mis-settle**: the run reaching terminal `complete` while dispatchable work remains. Covered indirectly by EV-10 / #312 (the quiesce predicate now also reads `RunDispatchState.provider_failure`); confirm no non-provider path can mis-settle.
+- **H-G2** - the pod triager never touches the target (D84-27), so its interpretation is evidence-only; a triager mis-classification that is NOT KB-degradation (EV-25) is unregistered. Watch on the next hunting eval run.
+
+Both are observed, not diagnosed; they authorise no code change by themselves.
