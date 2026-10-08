@@ -253,7 +253,7 @@ The long-standing `test_pipeline_e2e_httpx_to_arjun_prop_dependent_target` failu
 
 **Green baseline 2026-07-22:** host `tests/` = **892 passed, 37 skipped, 0 failed** (no known-failure carve-out remains); in-network `tests/integration` = **41 passed, 0 skipped** (was 32 passed / 8 skipped from the host, and those 8 skips were bogus).
 
-**Open, flagged not fixed:** the test container is Python 3.11 vs the host venv's 3.13 (in-network-only CI would drop 3.13 coverage); and `tests/e2e/test_stack_smoke.py` runs `docker compose up -d --build`, rebuilding the stack as a side effect of a plain test run.
+**Open, flagged not fixed:** the test container is Python 3.11 vs the host venv's 3.13 (in-network-only CI would drop 3.13 coverage); and `tests/test_stack_smoke.py` runs `docker compose up -d --build`, rebuilding the stack as a side effect of a plain test run.
 
 ## Post-recon curation + L1 remediation (2026-07-19) - MVP fence DOWN, 6/7 areas APPROVED
 

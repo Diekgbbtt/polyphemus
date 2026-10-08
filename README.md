@@ -23,7 +23,9 @@ Tests are tiered. Full reference: `docs/design/testing-strategy.md`.
 
     # UNIT tier - needs nothing running. Must never touch a real database
     # (enforced: tests/conftest.py raises on any live Neo4j access).
-    .venv/bin/python -m pytest tests/ -q
+    # --ignore keeps the live tier out: tests/e2e/ and tests/integration/ are
+    # live. The #33 degraded-backend e2e is additionally opt-in (PH_E2E_LIVE=1).
+    .venv/bin/python -m pytest tests/ -q --ignore=tests/e2e --ignore=tests/integration
 
     # INTEGRATION / E2E tier - run INSIDE the compose network, so it resolves
     # `neo4j` by service DNS exactly as the agent does.
@@ -35,9 +37,10 @@ Tests are tiered. Full reference: `docs/design/testing-strategy.md`.
 Expected (2026-07-22): unit tier 892 passed / 37 skipped / 0 failed; in-network
 integration 41 passed / 0 skipped.
 
-Note `tests/e2e/test_stack_smoke.py` runs `docker compose up -d --build`, so a
+Note `tests/test_stack_smoke.py` runs `docker compose up -d --build`, so a
 plain suite run rebuilds your stack - do not run it concurrently with an
-in-network run.
+in-network run. The unit command's `--ignore=tests/e2e` does not reach this
+root-level live test; relocating it into `tests/e2e/` is a tracked follow-up.
 
 `tests/e2e/` covers real work + failure paths: a live jsluice URL-extraction run,
 idempotent neo4j MERGE, pgvector cosine search, checkpoint persistence, and the
