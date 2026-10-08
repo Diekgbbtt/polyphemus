@@ -148,7 +148,7 @@ The counter is deliberately in-process: the durable export is the log aggregatio
 
 ## Impact map (as built)
 
-- `src/polymerhus/app/llm/transient.py` (new) - `classify_error(outcome, provider, model)` with the D-1 lane-signature matcher (`_is_transient_lane_400`, `_wire_model_id`), `body_shape`, `jittered_backoff`, `rotate_conversation`, `record_transient`, the counter, and the env readers.
+- `src/polymerhus/app/llm/transient.py` (new) - `classify_error(exc, *, provider=None, model=None)` with the D-1 lane-signature matcher (`_is_transient_lane_400`, `_wire_model_id`), `body_shape`, `jittered_backoff`, `rotate_conversation`, `record_transient`, the counter, and the env readers.
 - `src/polymerhus/app/llm/provider_failure.py` - public `status_code`, the shared status reader.
 - `src/polymerhus/app/llm/actor.py` - `_lane_identity`; `_is_retryable` delegates to `classify_error` with the role's lane identity; `_turn` gains jittered backoff, rotation, the transient record, and the bounded fallback; `_sleep` wait seam.
 - `src/polymerhus/app/llm/providers.py` - `resolve_fallback`; `invoke_with_escalating_timeout` gains backoff, rotation, lane identity via `model`, `max_attempts`, and the D-1-gated `fallback` callable; `_sleep` wait seam.
