@@ -502,8 +502,8 @@ def _available_types_by_phase(subset: set[str] | None = None) -> list[tuple[list
     phase_jobs is filtered to `subset` when provided.
 
     `Subdomain` is seeded alongside the `Domain` root because
-    `pipeline._inject_seed_host` unconditionally injects the scope's seed host
-    into any `Subdomain`-consuming job's input set (httpx/naabu/
+    `pipeline._inject_seed_host` unconditionally injects the scope's probe
+    target into any `Subdomain`-consuming job's input set (httpx/naabu/
     subdomain_takeover) regardless of whether a discovery job (subfinder/
     amass/dnsx) is in the selected subset - so a subset that runs httpx
     without subfinder is valid at runtime and must not be rejected here.
@@ -521,7 +521,7 @@ def _available_types_by_phase(subset: set[str] | None = None) -> list[tuple[list
 def validate_job_subset(subset: list[str]) -> None:
     """Raise ValueError if any selected job's `consumes` type is not produced
     by an earlier selected job (and is not the pre-seeded Domain root, nor
-    "Subdomain" - always satisfied by the seed host `pipeline._inject_seed_host`
+    "Subdomain" - always satisfied by the probe target `pipeline._inject_seed_host`
     injects into every Subdomain-consuming job)."""
     unknown = [j for j in subset if j not in JOBS]
     if unknown:

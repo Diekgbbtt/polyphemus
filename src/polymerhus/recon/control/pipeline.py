@@ -56,6 +56,7 @@ from polymerhus.recon.control.scope import (
     HOST_MODE_SUPPRESSED,
     parse_scope,
     resolve_seed,
+    seed_probe_target,
 )
 from polymerhus.recon.domain.types import AssetDelta
 
@@ -221,8 +222,8 @@ def _services_to_probe_targets(input_assets: list[dict]) -> list[dict]:
     return targets
 
 
-def _inject_seed_host(input_assets: list[dict], scope: dict) -> list[dict]:
-    """Ensure the scope's seed host is in a Subdomain-consuming job's input set.
+def _inject_seed_host(input_assets: list[dict], seed_target: str) -> list[dict]:
+    """Ensure the scope's probe target is in a Subdomain-consuming job's input set.
 
     D11/D14: the primary host (the apex in wildcard mode, the exact host in
     exact mode) must be HTTP-probed / port-scanned even when subdomain discovery
@@ -230,13 +231,16 @@ def _inject_seed_host(input_assets: list[dict], scope: dict) -> list[dict]:
     in exact mode discovery is suppressed entirely. Prepending (not appending)
     guarantees the seed host survives the per-job MAX_JOB_ASSETS budget cap the
     orchestrator applies to a large discovered-subdomain population (MAX_PODS is
-    now the concurrency ceiling, not an asset cap - see job_agent)."""
-    seed_host = scope.get("seed_host")
-    if not seed_host:
+    now the concurrency ceiling, not an asset cap - see job_agent).
+
+    `seed_target` is the authority-bearing probe target (`seed_probe_target`) so
+    a Seed with a scheme and/or port reaches the seeded service (D-SEEDNORM):
+    `http://app.example.com:8443`, not the bare host the scope gate keys on."""
+    if not seed_target:
         return input_assets
-    if any(asset.get("name") == seed_host for asset in input_assets):
+    if any(asset.get("name") == seed_target for asset in input_assets):
         return input_assets
-    return [{"name": seed_host}, *input_assets]
+    return [{"name": seed_target}, *input_assets]
 
 
 def _seed_domain_host(scope: dict) -> list[dict]:
@@ -417,6 +421,10 @@ async def run_pipeline(
         validate_job_subset(job_subset)
 
     scope = parse_scope(resolve_seed(settings))
+    # D-SEEDNORM: the scope's bare host is the gate/root identity; the probe
+    # target preserves a scheme/port-bearing Seed's authority so the probes
+    # still reach the seeded service.
+    probe_target = seed_probe_target(resolve_seed(settings))
     # D14: suppress subdomain discovery when the target is an exact host (and
     # additionally the passive harvesters in host mode, D-HS S2). The gate is
     # applied to the resolved plan (not re-validated) - the seed-host injection
@@ -510,7 +518,17 @@ async def run_pipeline(
                 job = JOBS[name]
                 try:
                     if phase_idx == 0:
-                        input_assets = seed_assets(settings)
+                        # A phase-0 Domain consumer (subfinder/whois, and the
+                        # exact-mode Domain root) seeds from `seed_assets`. When
+                        # the gated/subset plan opens on a Subdomain consumer
+                        # (e.g. the `httpx,...` subset, D-SEEDNORM), it seeds the
+                        # authority-bearing probe target instead - the same
+                        # injection every later-phase Subdomain consumer gets.
+                        input_assets = (
+                            _inject_seed_host([], probe_target)
+                            if job.consumes == "Subdomain"
+                            else seed_assets(settings)
+                        )
                     elif job.consumes_where is not None:
                         input_assets = await asyncio.to_thread(
                             read_assets, job.consumes, project_id, job.consumes_where
@@ -525,7 +543,7 @@ async def run_pipeline(
                         # takeover reach the apex (wildcard) or the single exact
                         # host (exact, where discovery produced nothing).
                         if job.consumes == "Subdomain":
-                            input_assets = _inject_seed_host(input_assets, scope)
+                            input_assets = _inject_seed_host(input_assets, probe_target)
                         # A later-phase Domain-consuming passive harvester
                         # (paramspider) must run EXACTLY ONE pod against the
                         # scope's canonical host - never per-subdomain, never
@@ -598,16 +616,13 @@ async def run_pipeline(
                         # orchestrator's - the pipeline only supplies the one
                         # datum the reduction needs (the target's registrable
                         # apex, for the first-party filter), and only to the
-                        # batched job that consumes it. The job agent's preprocess
-                        # reads extra["apex_registrable"] and batches. In host mode
-                        # the IP itself is the first-party key (registrable_domain
-                        # on an IP is garbage).
+                        # batched job that consumes it. `scope["apex"]` is the
+                        # registrable apex for a domain seed and the IP itself
+                        # for a bare-IP seed (D-HS), and it is already normalized
+                        # for a scheme/port-bearing Seed (D-SEEDNORM) - unlike
+                        # `registrable_domain(seed)`, which would leak the port.
                         if job.batch:
-                            from polymerhus.recon.domain.parsers._urls import registrable_domain
-                            extra["apex_registrable"] = (
-                                scope["seed_host"] if scope["mode"] == "host"
-                                else registrable_domain(seed)
-                            )
+                            extra["apex_registrable"] = scope["apex"]
 
                     await asyncio.to_thread(
                         registry.upsert_job, run_id, phase_idx, name, "in_progress"

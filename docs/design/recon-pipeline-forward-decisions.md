@@ -526,6 +526,35 @@ naabu names services by port number, so an HTTP service on a non-standard port c
 
 **Status:** built + unit-green on `host-seeding`; the full grounding is `docs/design/host-seeding-spec.md` and `docs/design/host-seeding-assertions.md`. Integration (I) and e2e (E) tiers pend a real target.
 
+## D-SEEDNORM - a Seed's authority (scheme/port) is stripped for scope, kept for the probe (FIXED, #184, 2026-10-08)
+
+**The symptom.**
+A recon run seeded with `http://host:port` (or any scheme/port-bearing seed) completed with `httpx=success` but produced zero assets: the graph held only the seeded `Domain` node, and every downstream consumer (katana, jsluice, httpx_reprofile, arjun) was `skipped` for missing inputs.
+Observed live twice on a target seeded `http://dj-viscon-workshop-1.vsos.ethz.ch:49575`.
+
+**Root cause (category error in `parse_scope`).**
+`parse_scope` treated the raw seed string as a hostname: for `http://host:49575` it set `seed_host` to the raw URL and computed `apex = registrable_domain(raw) = "ethz.ch:49575"` (the port leaked into the apex).
+`seed_host` then served as the curator `scope_domain`, and `host_in_scope` normalized only the ASSET side (`_host_of_url` strips scheme and port) - not the scope side - so `host != "http://host:49575"` for every minted BaseURL/Endpoint and `filter_deltas` dropped all of them.
+The same raw string also flowed into the deterministic engagement root (`Domain{name: "http://host:49575"}`), the seed-root promotion key, and `apex_registrable = registrable_domain(seed)` (`ethz.ch:49575`, which breaks the batched jsluice first-party filter).
+
+**Decision.**
+The scope keys on the bare host; the probe keeps the authority.
+- `parse_scope` strips the authority (scheme, userinfo, path/query/fragment, numeric port) before its host math, so `seed_host` is always a bare hostname (the scope key, the graph identity, and the promotion key) and `apex` is computed from it.
+- A new pure `seed_probe_target` derives the authority-bearing probe target from the same seed (scheme and port preserved, host normalized identically), and the pipeline injects THAT into every `Subdomain`-consuming probe via `_inject_seed_host`, so the seeded service's port is still reached.
+- `host_in_scope` additionally normalizes the SCOPE side, reusing `_host_of_url` (widened to accept a bare host or `host:port`, which `urlparse` would otherwise read as a path). Both sides now compare on bare hosts - defense in depth for any caller that passes an authority-bearing scope, and the pinned regression rows.
+- `apex_registrable` reads `scope["apex"]` (already normalized) instead of `registrable_domain(raw seed)`.
+
+**Which side(s) to normalize: both.** `parse_scope` is the single boundary that turns a raw Seed into the scope descriptor, so the category error is fixed there (root cause); `host_in_scope` is the scope gate, so it is made robust to an authority-bearing scope string (the ticket's regression rows pin this seam).
+
+**Domain/Subdomain names carry no authority.** They are bare hostnames; the authority lives only on the probe target. This deliberately refines the ticket's suggested fix (which kept the authority on Domain/Subdomain names): a URL in a `Domain` name is an L0 identity error, and it also poisoned the promotion key and `apex_registrable`. "Probes keep hitting the right port" is preserved by `seed_probe_target`, not by the graph node names.
+
+**Subdomain/sibling semantics unchanged.** An exact scope admits the host itself and its subdomains and excludes siblings (same parent, different host); only the comparison inputs are normalized.
+
+**Alternatives rejected.**
+Normalizing only in `host_in_scope` leaves the URL-named root `Domain`, the broken promotion key, and the port-leaking `apex_registrable` (which still starves jsluice). Adding a fourth key to the `parse_scope` descriptor churns the pinned `==` descriptor contract and conflates the scope key with the probe transport; a separate `seed_probe_target` keeps the two concerns apart.
+
+**Regression contract for authority-free seeds (must not change).** For a bare domain, `*.domain`, or a bare IP (no trailing dot), `parse_scope` returns byte-identical descriptors and `seed_probe_target` equals the bare `seed_host`; a scheme/port-bearing IPv4 and a malformed trailing-dot IPv4 (e.g. `1.2.3.4.`) are now (correctly) host mode.
+
 ## D-SVCLINK - the web-origin subgraph is disconnected from the network-service subgraph (NEW work item, DEFERRED, 2026-07-26)
 
 **The gap (e2e-surfaced).**

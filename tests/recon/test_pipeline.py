@@ -596,6 +596,34 @@ def test_exact_mode_seeds_single_host_into_httpx_and_naabu():
     assert seen_inputs["whois"] == [{"name": "app.t.com"}]
 
 
+def test_scheme_port_seed_probes_authority_and_scopes_bare_host():
+    """#184 / D-SEEDNORM: a scheme/port Seed is probed with its authority (the
+    port must be reached) while the curator scope gate and the graph identity
+    key on the bare host (so the assets its own probe mints are admitted)."""
+    seen_inputs = {}
+    seen_extra = {}
+
+    async def run_job(job, input_assets, *, run_id, phase, extra):
+        seen_inputs[job.tool] = input_assets
+        seen_extra[job.tool] = extra
+        return [PodExport(input_asset={}, verdict="success")]
+
+    asyncio.run(
+        pipeline.run_pipeline(
+            "proj1",
+            run_id="run1",
+            job_subset=["httpx"],
+            run_job=run_job,
+            load_settings=make_load_settings({"target_seed": "http://app.t.com:8443"}),
+            registry=FakeRegistry(),
+            read_assets=make_read_assets(),
+        )
+    )
+
+    assert seen_inputs["httpx"][0] == {"name": "http://app.t.com:8443"}
+    assert seen_extra["httpx"]["scope_domain"] == "app.t.com"
+
+
 def test_seed_domain_host_exact_mode_is_single_in_scope_host():
     """D14/D19: a later-phase Domain-consuming harvester must run EXACTLY ONE pod
     against the in-scope exact host - one host, never fanned out per discovered

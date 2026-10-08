@@ -51,7 +51,7 @@ A Project whose `target_seed` is a bare IPv4 (e.g. `93.184.216.34`) launches a r
 The pipeline is already host-string-agnostic below one narrow layer.
 The following are reused verbatim and must not regress:
 
-- `_inject_seed_host` (`src/polymerhus/recon/control/pipeline.py:74`) injects `{name: seed_host}` into every `Subdomain`-consuming job (naabu/httpx/subdomain_takeover); the string may be a host or an IP.
+- `_inject_seed_host` (`src/polymerhus/recon/control/pipeline.py`) injects `{name: seed_target}` into every `Subdomain`-consuming job (naabu/httpx/subdomain_takeover); `seed_target` is the authority-bearing probe target (`seed_probe_target`, D-SEEDNORM) - a bare host/IP for an authority-free seed, and `scheme://host:port` for a scheme/port-bearing one.
 - `fill_template` (`src/polymerhus/recon/domain/pod.py:88`) resolves `{target}` from `name`/`url`/`address`, a bare string.
 - `httpx -u {target}` and `naabu -host {target}` accept an IP verbatim; httpx mints `BaseURL` directly from the injected seed host (`httpx_parser`), and the crawl chain (`katana`/`ffuf`/`jsluice`/`steel_crawl`/`arjun`/`kiterunner`) chains off `BaseURL`.
 - Scope filter admits the seed itself: `host_in_scope(host, scope)` is true on `host == scope` (`src/polymerhus/recon/domain/noise_filter.py:223`), and `_host_of_url` strips the port, so `http://<ip>:8080` -> host `<ip>` -> in scope.
@@ -125,7 +125,7 @@ The curate call site (`pipeline.py:337`) passes `mode` (or a `seed_root_type`) a
 
 ### S4. Seed injection and passive harvesters in host mode
 
-- `_inject_seed_host` is reused unchanged: in host mode the IP is injected into naabu/httpx/subdomain_takeover (all `consumes="Subdomain"`), so both run against the IP.
+- `_inject_seed_host` is reused (its second parameter is now the probe-target string, D-SEEDNORM; for an authority-free seed it is the bare host): in host mode the IP is injected into naabu/httpx/subdomain_takeover (all `consumes="Subdomain"`), so both run against the IP.
 - `_seed_domain_host` (later-phase Domain consumer, paramspider) is moot because paramspider is suppressed by S2 in host mode.
 - `apex_registrable` for batched jsluice (`pipeline.py:348`): in host mode pass the IP itself (not `registrable_domain(ip)`, which is garbage) as the first-party key.
 
