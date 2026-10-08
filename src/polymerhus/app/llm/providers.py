@@ -173,7 +173,8 @@ def attempt_timeouts() -> tuple[float, ...]:
 
 def invoke_with_escalating_timeout(call, *, conversation_id: str | None = None,
                                    model: str | None = None,
-                                   max_attempts: int | None = None):
+                                   max_attempts: int | None = None,
+                                   fallback: "Callable[[], object] | None" = None):
     """Drive one logical LLM call across the escalating budget schedule.
 
     `call(read_timeout_s: float)` performs a SINGLE attempt bounded by the given
@@ -192,16 +193,27 @@ def invoke_with_escalating_timeout(call, *, conversation_id: str | None = None,
     The whole point is that budget GROWS per attempt, so a legitimately slow
     reasoning call is not guillotined at a fixed ceiling.
 
-    #299: a raise the shared classifier calls TRANSIENT (the opencode-go bare
-    400, plus transport/timeout/5xx/429) is retried with a jittered temporal
-    backoff between attempts AND a rotated conversation id per attempt, so the
-    seam rides out a short upstream window instead of re-firing inside it with
-    the same session. A non-transient raise keeps today's immediate escalation
+    #299: a raise the shared classifier calls TRANSIENT (the exact opencode-go
+    deepseek single-model-echo 400, plus transport/timeout/5xx/429) is retried
+    with a jittered temporal backoff between attempts AND a rotated conversation
+    id per attempt, so the seam rides out a short upstream window instead of
+    re-firing inside it with the same session. The lane identity for the
+    classifier rides the `model` label (`<provider>:<model>`); a bare model id
+    (or none) leaves the lane leg unmatched, so the classifier never branches on
+    a model id alone. A non-transient raise keeps today's immediate escalation
     (no window wait it would not outlast). `conversation_id` overrides the
     ambient id base (default None = the ambient/process-stable id); attempt 0
     keeps the base, later attempts append `#r<attempt>`. `max_attempts` bounds
-    the schedule (the bounded fallback uses 1)."""
+    the schedule (the bounded fallback uses 1).
+
+    `fallback` (#299, D-1) is the bounded alternate-model invocation the caller
+    wires. It fires ONLY when the schedule is exhausted on a TRANSIENT fault (the
+    opencode-go window) or on an all-None unmet-generation run - never on a
+    deterministic `contract`/`fatal` raise, so a client-contract 400 (or an empty
+    /foreign 400) can never arm it. None (the default) disables it, so existing
+    callers are unchanged."""
     from polymerhus.app.llm.conversation import conversation_scope, current_conversation_id
+    from polymerhus.app.llm.provider_failure import status_code
     from polymerhus.app.llm.transient import (
         classify_error,
         jittered_backoff,
@@ -209,6 +221,12 @@ def invoke_with_escalating_timeout(call, *, conversation_id: str | None = None,
         body_shape as _body_shape,
         rotate_conversation,
     )
+
+    # The D-1 lane identity for the 400 classifier: `model` is the caller's
+    # `<provider>:<model>` label. A label without a provider (or none) yields
+    # (None, None), so a bare model id never matches the transient signature.
+    provider_label, model_id = ((model.split(":", 1) if ":" in model else (None, None))
+                                if model else (None, None))
 
     schedule = attempt_timeouts()
     if max_attempts is not None:
@@ -225,21 +243,21 @@ def invoke_with_escalating_timeout(call, *, conversation_id: str | None = None,
             last_exc = exc
             logger.warning("llm attempt %d/%d (budget %.0fs) raised: %s",
                            attempt, len(schedule), budget, exc)
-            kind = classify_error(exc)
+            kind = classify_error(exc, provider=provider_label, model=model_id)
             if kind == "transient":
-                from polymerhus.app.llm.provider_failure import status_code
-
                 record_transient(role="one_shot", model=model or "unknown",
                                  conversation_id=rotated, attempt=attempt,
                                  status=status_code(exc), body_shape=_body_shape(exc))
                 if attempt < len(schedule):
                     _sleep(jittered_backoff(attempt))
-            elif kind == "contract":
-                # A recognisable actionable 400 fails fast: retrying it wastes the
-                # whole schedule on a deterministic client error. A `fatal` raise
-                # (e.g. a transient structured-parse failure) keeps today's
-                # immediate escalation.
-                logger.warning("llm attempt %d/%d hit a contract error; not retrying: %s",
+            elif kind == "contract" or status_code(exc) == 400:
+                # A deterministic HTTP 400 - a recognisable contract error, an
+                # empty body, a foreign-model echo, or an unrecognised envelope -
+                # fails fast: retrying it wastes the whole schedule on a client
+                # error and it must never arm the fallback (D-1). A non-400
+                # `fatal` raise (e.g. a transient structured-parse failure) keeps
+                # today's immediate escalation.
+                logger.warning("llm attempt %d/%d hit a deterministic 400; not retrying: %s",
                                attempt, len(schedule), exc)
                 break
             continue
@@ -250,6 +268,14 @@ def invoke_with_escalating_timeout(call, *, conversation_id: str | None = None,
     if last_exc is not None:
         logger.warning("llm exhausted the escalating schedule; last error: %s (fail-closed to None)",
                        last_exc)
+    # The bounded fallback (D-1) is armed ONLY for a transient exhaustion, or an
+    # all-None unmet-generation run (last_exc is None). A deterministic
+    # contract/fatal raise - an empty/foreign/contract 400, an application error -
+    # never arms it.
+    if fallback is not None and (
+            last_exc is None
+            or classify_error(last_exc, provider=provider_label, model=model_id) == "transient"):
+        return fallback()
     return None
 
 

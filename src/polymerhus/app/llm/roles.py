@@ -194,18 +194,22 @@ def invoke_role(role, messages, *, schema=None, temperature: float = 0):
         # to the pydantic instance via model_validate).
         return structured_result_for(parsed, schema, method)
 
-    result = invoke_with_escalating_timeout(call, model=f"{provider}:{model}")
-    if result is not None:
-        return result
-    # #299: the bounded model fallback - after the primary schedule is exhausted
-    # on a transient fault (or an unmet generation), try the configured fallback
-    # model EXACTLY once, so a lane outage does not silently drop the extraction
-    # (#285). Unconfigured => None, behaviour unchanged.
+    # #299: the bounded model fallback - the seam arms it ONLY after the primary
+    # schedule is exhausted on a transient fault (the opencode-go window) or an
+    # unmet generation; a deterministic `contract`/`fatal` 400 never arms it
+    # (operator ruling D-1). The fallback model is tried EXACTLY once, so a lane
+    # outage does not silently drop the extraction (#285) without masking a
+    # sustained one. Unconfigured => None, behaviour unchanged.
     fallback = resolve_fallback(role)
-    if fallback is None:
-        return None
-    logger.warning("one-shot %s exhausted the primary schedule; attempting fallback "
-                   "%s:%s once", role, fallback[0], fallback[1])
+
+    def fallback_call():
+        assert fallback is not None
+        logger.warning("one-shot %s exhausted the primary schedule; attempting fallback "
+                       "%s:%s once", role, fallback[0], fallback[1])
+        return invoke_with_escalating_timeout(
+            lambda budget: call(budget, model_override=fallback),
+            model=f"{fallback[0]}:{fallback[1]}", max_attempts=1)
+
     return invoke_with_escalating_timeout(
-        lambda budget: call(budget, model_override=fallback),
-        model=f"{fallback[0]}:{fallback[1]}", max_attempts=1)
+        call, model=f"{provider}:{model}",
+        fallback=fallback_call if fallback is not None else None)

@@ -130,6 +130,16 @@ def _contract_400():
     return openai.BadRequestError("Error code: 400", response=response, body=body)
 
 
+def _bad_request(body):
+    import httpx
+    import openai
+
+    response = httpx.Response(
+        400, request=httpx.Request("POST", "https://api.example.test/v1"),
+        json=body if body is not None else None)
+    return openai.BadRequestError("Error code: 400", response=response, body=body)
+
+
 def test_agent_takes_initial_turn_then_listens_and_continues_on_update():
     """The core actor property: after its initial turn the agent stays active, and an
     inbox update drives a SECOND turn on the same thread - so the memory carries
@@ -582,6 +592,7 @@ def test_actor_rides_out_a_bare_400_window_with_rotation(monkeypatch):
     from polymerhus.app.llm import actor as llm_actor
     from polymerhus.app.llm.conversation import current_conversation_id
 
+    monkeypatch.setenv("LLM_HUNTING_ORCHESTRATOR", "opencode-go:deepseek-v4.1-flash")
     monkeypatch.setattr(llm_actor, "attempt_timeouts", lambda: (0.01, 0.02, 0.03))
     monkeypatch.setattr(llm_actor, "_sleep", _noop_sleep)
     seen: list[str] = []
@@ -655,6 +666,7 @@ def test_actor_falls_back_to_the_model_once_on_transient_exhaustion(monkeypatch)
     from polymerhus.app.llm import actor as llm_actor
     from polymerhus.app.llm.session import SessionTurn
 
+    monkeypatch.setenv("LLM_HUNTING_ORCHESTRATOR", "opencode-go:deepseek-v4.1-flash")
     monkeypatch.setattr(llm_actor, "attempt_timeouts", lambda: (0.01,))
     monkeypatch.setattr(llm_actor, "_sleep", _noop_sleep)
     monkeypatch.setenv("LLM_FALLBACK_HUNTING_ORCHESTRATOR", "opencode-go:glm-5.2")
@@ -683,6 +695,42 @@ def test_actor_falls_back_to_the_model_once_on_transient_exhaustion(monkeypatch)
     assert calls[0]["model_override"] is None
     assert calls[1]["model_override"] == ("opencode-go", "glm-5.2")
     assert len(calls) == 2  # primary exhausted + exactly one fallback
+
+
+@pytest.mark.parametrize("body", [
+    None,                                              # empty 400
+    {"model": "something-else"},                       # foreign-model echo
+    {"error": {"message": "x"},
+     "model": "deepseek-v4.1-flash"},                  # multi-key envelope
+])
+def test_actor_does_not_retry_or_fall_back_on_a_non_lane_400(monkeypatch, body):
+    """D-1: an empty 400, a foreign-model echo, and a multi-key envelope are not
+    the lane signature, so the actor neither spends the schedule on them nor fires
+    the configured fallback - a deterministic client error stays deterministic."""
+    from polymerhus.app.llm import actor as llm_actor
+
+    monkeypatch.setenv("LLM_HUNTING_ORCHESTRATOR", "opencode-go:deepseek-v4.1-flash")
+    monkeypatch.setenv("LLM_FALLBACK_HUNTING_ORCHESTRATOR", "opencode-go:glm-5.2")
+    monkeypatch.setattr(llm_actor, "attempt_timeouts", lambda: (0.01, 0.02, 0.03))
+    monkeypatch.setattr(llm_actor, "_sleep", _noop_sleep)
+    calls: list[dict] = []
+
+    async def fake_turn(role_id, thread_id, messages, *, model_override=None,
+                        conversation_id=None, **kwargs):
+        calls.append({"model_override": model_override})
+        raise _bad_request(body)
+
+    monkeypatch.setattr(llm_actor, "arun_session_turn", fake_turn)
+
+    async def _drive():
+        return await run_session_agent(
+            "hunting_orchestrator", "run1:orch", [HumanMessage(content="start")],
+            checkpointer=InMemorySaver(), inbox=AgentInbox(),
+            idle_timeout=0.05, on_message=lambda m, t: None, observe=False)
+
+    result = asyncio.run(_drive())
+    assert result.turns == []
+    assert calls == [{"model_override": None}]  # one attempt: no retry, no fallback
 
 
 def test_actor_records_one_transient_counter_per_attempt(monkeypatch):

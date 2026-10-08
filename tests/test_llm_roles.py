@@ -492,3 +492,52 @@ def test_invoke_role_without_a_fallback_fail_closes_to_none(monkeypatch):
     monkeypatch.setattr(roles, "build_chat_model",
                         lambda provider, model, **kw: _FlakyFreeText(model))
     assert roles.invoke_role("triager", []) is None
+
+
+# --- #299 D-1: a non-lane 400 neither retries nor arms the fallback -----------
+
+
+class _NonLane400:
+    """A `build_chat_model` stand-in that raises a 400 which is NOT the exact
+    opencode-go deepseek lane signature (an empty body, a foreign model echo, or
+    a multi-key envelope), for every call."""
+
+    def __init__(self, body):
+        self._body = body
+
+    def invoke(self, messages):
+        import httpx
+        import openai
+
+        response = httpx.Response(
+            400, request=httpx.Request("POST", "https://x.test/v1"),
+            json=self._body if self._body is not None else None)
+        raise openai.BadRequestError("Error code: 400", response=response,
+                                     body=self._body)
+
+
+def test_invoke_role_does_not_retry_or_fall_back_on_a_non_lane_400(monkeypatch):
+    """D-1: an empty 400, a foreign-model echo, and a multi-key envelope are NOT
+    the lane signature, so the one-shot seam does not arm the configured fallback
+    (and does not spend the schedule pretending they are a window)."""
+    from polymerhus.app.llm import providers as P
+
+    monkeypatch.setenv("LLM_TRIAGER", "opencode-go:deepseek-v4.1-flash")
+    monkeypatch.setenv("LLM_FALLBACK_TRIAGER", "opencode-go:glm-5.2")
+    monkeypatch.setenv("LLM_ATTEMPT_TIMEOUTS_S", "1, 2, 3")
+    monkeypatch.setattr(P, "_sleep", lambda _s: None)
+    built: list[str] = []
+
+    def fake_build(provider, model, **kwargs):
+        built.append(model)
+        return _NonLane400(body)
+
+    monkeypatch.setattr(roles, "build_chat_model", fake_build)
+    for body in (None,                                  # empty 400
+                 {"model": "something-else"},           # foreign model echo
+                 {"error": {"message": "x"},
+                  "model": "deepseek-v4.1-flash"}):     # multi-key envelope
+        built.clear()
+        assert roles.invoke_role("triager", []) is None
+        # one attempt, no retry, and no fallback build
+        assert built == ["deepseek-v4.1-flash"]

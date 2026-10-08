@@ -32,20 +32,65 @@ def _status_error(status: int, body=None) -> openai.APIStatusError:
     return openai.APIStatusError("boom", response=response, body=body)
 
 
-# --- the classification -------------------------------------------------------
+# --- the classification (operator ruling D-1) ---------------------------------
+#
+# Only the EXACT opencode-go deepseek single-model-echo 400 is transient: a 400
+# whose parsed body is an object whose ONLY key is `model`, whose value equals
+# the configured deepseek wire id, raised for the opencode-go lane. Everything
+# else - an empty 400, a foreign-model echo, a multi-key envelope - stays
+# contract/fatal and never arms the fallback.
 
-def test_an_empty_bare_400_is_transient():
-    assert T.classify_error(_bad_request(None)) == "transient"
-    assert T.classify_error(_bad_request("")) == "transient"
-    assert T.classify_error(_bad_request({})) == "transient"
+_LANE = {"provider": "opencode-go", "model": "deepseek-v4.1-flash"}
 
 
-def test_a_model_echo_400_is_transient():
-    """The reproduced signature: the body only echoes the stripped wire model id."""
+def test_the_deepseek_single_model_echo_400_is_transient():
+    """The reproduced signature (D-1): the body's ONLY key is `model`, its value
+    EQUALS the configured deepseek wire id, and the raise is the opencode-go lane."""
     assert T.classify_error(
-        _bad_request({"model": "deepseek-v4.1-flash"})) == "transient"
+        _bad_request({"model": "deepseek-v4.1-flash"}),
+        **_LANE) == "transient"
     assert T.classify_error(
-        _bad_request({"model": "deepseek-v4-flash"})) == "transient"
+        _bad_request({"model": "deepseek-v4-flash"}),
+        provider="opencode-go", model="deepseek-v4-flash") == "transient"
+    # the operator's provider-prefixed config strips to the same wire id
+    assert T.classify_error(
+        _bad_request({"model": "deepseek-v4.1-flash"}),
+        provider="opencode-go", model="opencode-go/deepseek-v4.1-flash") == "transient"
+
+
+def test_an_empty_400_is_not_transient():
+    """An empty 400 is indistinguishable from a bare contract error from any
+    provider, so D-1 refuses to branch on it."""
+    assert T.classify_error(_bad_request(None), **_LANE) == "fatal"
+    assert T.classify_error(_bad_request(""), **_LANE) == "fatal"
+    assert T.classify_error(_bad_request({}), **_LANE) == "fatal"
+
+
+def test_a_foreign_model_echo_400_is_not_transient():
+    """A single-key `model` body whose value is NOT the configured deepseek wire
+    id is not the lane signature."""
+    assert T.classify_error(_bad_request({"model": "something-else"}),
+                            **_LANE) == "fatal"
+    assert T.classify_error(_bad_request({"model": "glm-5.2"}), **_LANE) == "fatal"
+
+
+def test_a_model_echo_400_from_another_provider_is_not_transient():
+    """The model id alone never branches: the same body from another provider (or
+    with no provider identity) is fatal."""
+    assert T.classify_error(
+        _bad_request({"model": "deepseek-v4.1-flash"}),
+        provider="openrouter", model="deepseek-v4.1-flash") == "fatal"
+    assert T.classify_error(
+        _bad_request({"model": "deepseek-v4.1-flash"}),
+        model="deepseek-v4.1-flash") == "fatal"
+
+
+def test_an_error_and_model_400_is_not_transient():
+    """Any extra key (`error`/`message`/...) makes the body a contract/unrecognised
+    envelope, never the single-key lane signature."""
+    assert T.classify_error(
+        _bad_request({"error": {"message": "x"}, "model": "deepseek-v4.1-flash"}),
+        **_LANE) == "fatal"
 
 
 def test_a_recognisable_contract_400_is_contract():

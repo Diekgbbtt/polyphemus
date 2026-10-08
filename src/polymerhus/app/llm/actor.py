@@ -181,17 +181,31 @@ async def _coerce(value):
     return await value if inspect.isawaitable(value) else value
 
 
-def _is_retryable(exc: BaseException) -> bool:
+def _lane_identity(role_id: str) -> tuple[str | None, str | None]:
+    """The `(provider, model)` a role's turn routes to, resolved lazily and
+    fail-open: an unset/unresolvable role config yields `(None, None)`, so the
+    D-1 lane leg of the bare-400 signature can never match on a model id alone."""
+    try:
+        from polymerhus.app.llm.providers import resolve_role
+
+        return resolve_role(role_id)
+    except Exception:  # noqa: BLE001 - an unresolved role never blocks a retry
+        return None, None
+
+
+def _is_retryable(exc: BaseException, *, role_id: str | None = None) -> bool:
     """Classify a turn raise as retryable: the shared transient classifier (#299),
     which is the transport/timeout/5xx/429 class (#186, via the
-    `provider_failure` classifier #329) PLUS the opencode-go bare-400 window.
-    A raise that matches none of these is non-transient (a contract 400 or a
-    genuine application error) and degrades immediately rather than burning the
+    `provider_failure` classifier #329) PLUS the EXACT opencode-go deepseek
+    single-model-echo 400 (operator ruling D-1). A raise that matches none of
+    these is non-transient (a contract 400, an empty/foreign 400, or a genuine
+    application error) and degrades immediately rather than burning the
     escalating budget. Lazy import keeps this module's import I/O- and
     env-var-free (CODING_STANDARD section 6)."""
     from polymerhus.app.llm.transient import classify_error
 
-    return classify_error(exc) == "transient"
+    provider, model = _lane_identity(role_id) if role_id is not None else (None, None)
+    return classify_error(exc, provider=provider, model=model) == "transient"
 
 
 def _model_label(role_id: str) -> str:
@@ -311,7 +325,7 @@ async def run_session_agent(
                 raise
             except Exception as exc:  # noqa: BLE001 - the isolation boundary
                 last_exc = exc
-                if not _is_retryable(exc):
+                if not _is_retryable(exc, role_id=role_id):
                     break  # contract/fatal: stop now
                 record_transient(role=role_id, model=_model_label(role_id),
                                  conversation_id=rotated, attempt=attempt,
