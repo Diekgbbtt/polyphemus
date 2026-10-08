@@ -187,6 +187,25 @@ def neo4j_live():
                 pass
 
 
+@pytest.fixture(autouse=True)
+def _isolate_usage_ledger(request):
+    """Unit tier: start every test with a memory-only process-wide usage ledger.
+
+    `main._startup` attaches the real per-project file store to the singleton
+    (`usage_ledger()`), so a `tests/app` wiring test that runs the lifespan
+    would otherwise leak that store to every later unit test - which then reads
+    a prior test's records back in and writes the real data root. Live tiers
+    manage their own ledger state."""
+    if request.node.get_closest_marker("live_neo4j"):
+        yield
+        return
+    from polymerhus.app.llm.usage import usage_ledger
+
+    usage_ledger().reset()
+    yield
+    usage_ledger().reset()
+
+
 def wait_for(fn, timeout=120, interval=2):
     """Poll fn() until truthy or non-raising; re-raise last error on timeout."""
     deadline = time.time() + timeout

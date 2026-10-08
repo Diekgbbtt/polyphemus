@@ -55,6 +55,7 @@ Tokens only. Cost is out of scope.
     Each entry holds the two-axis typed surface (`context_tokens` = `cached` + `uncached`; `generated_tokens` = `reasoning` + `visible`), the scalars `total_tokens` (raw) and `capped_tokens` (the budget axis), and `calls` (F16, below).
     Methods: `record(project_id, agent, usage)` (fail-open), `snapshot(project_id)` returning the project's aggregated surface plus a per-agent breakdown, and `reset()` (tests).
     Missing/None `project_id` records under an `"unscoped"` bucket that the project endpoint never returns.
+    Since #326 it optionally takes a `UsageStore` (the production singleton is wired to one at app startup): `record` write-throughs and `snapshot` read-throughs the project's durable record, and `flush`/`flush_all` persist at a boundary. A ledger with no store is pure in-memory (tests).
   - `TokenUsageMiddleware(AgentMiddleware)`: records each model call's usage in `wrap_model_call`/`awrap_model_call` by reading `response.result`'s `usage_metadata`; `after_model` is the documented fallback if the streamed path does not surface usage in `wrap_model_call`.
     Reads identity from `langgraph.config.get_config()`: `metadata["role_id"]` and `metadata["usage_scope"]`.
     Fail-open: any read/record error is logged and swallowed, never raised into the turn.
@@ -66,6 +67,7 @@ Tokens only. Cost is out of scope.
 - **App API**: `GET /projects/{project_id}/usage` in `src/polymerhus/project_management/api.py`, beside `GET /app-state`.
   Read-only, no database access: returns `{"project_id", "context_tokens", "generated_tokens", "total_tokens", "capped_tokens", "calls", "by_agent": {agent: {...}}}`; an unknown/empty project returns zeros.
   It never validates project existence (no DB), so the eval queries only its own project.
+  Since #326 it reads through the durable per-project `UsageStore` on first use, so a stopped, restarted, or drained project still reports its accumulated spend; it remains database-free.
 
 ### Token surface representation (F16, 2026-10-04)
 
@@ -102,6 +104,10 @@ If a tier-prefixed payload ever arrives, the axes still total correctly (an unre
 A provider whose `input_tokens` EXCLUDES cache_read is NOT fully supported: the code detects only the unambiguous signature `cache_read > input_tokens`, where it keeps both (conservative, never drops cache_read); the ambiguous case undercounts the cached portion and is documented, not overclaimed.
 
 ### Eval side
+
+> NOTE (2026-10-05): the token-budget AXIS below (`capped_tokens`) is superseded by `eval-token-budget-and-no-config-cap-adr.md`.
+> The budget now counts `generated_tokens` (reasoning + visible output) via `api.usage_generated`; input, cached or not, never consumes it.
+> The `capped_tokens` text is retained as the original design record.
 
 - **Declaration**: `TargetRun.token_budget: int | None = None`; YAML key `token_budget` added to the target-run allow-list and validated as `int | None` (bool rejected).
 - **Config**: `TrialConfig.token_budget: int | None = None`; `TrialConfig.spend_baseline: int | None = None` (carried across a resume).
@@ -146,7 +152,7 @@ A provider whose `input_tokens` EXCLUDES cache_read is NOT fully supported: the 
 - **Cost.** Only token amounts; no pricing.
 - **One-shot calls.** `invoke_role` calls stay untracked (recorded design lack).
 - **The gateway aggregate.** LiteLLM spend logs and Langfuse metrics are not used; the client ledger is the single source.
-- **Persisting the ledger.** It is process-wide and in-memory; it dies with the app process.
+- **Persisting the ledger.** SUPERSEDED by #326 (2026-10-08): the ledger is no longer purely in-memory. It write-throughs each project's cumulative entries to a durable per-project file (`UsageStore`, `<data_root>/<project_id>/usage/usage.yaml`) and read-throughs them on first use, so a project's spend survives a restart, stop, or drain. See `docs/design/usage-ledger-durability-326-adr.md`.
 - **The database.** The usage endpoint does not read Postgres.
 
 ## Further Notes
