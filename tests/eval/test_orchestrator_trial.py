@@ -349,18 +349,21 @@ def test_an_interrupted_hunting_run_records_its_provider_cause(tmp_path) -> None
 
 
 class SnapshotUsageApi(FakeApi):
-    """A `FakeApi` serving one full usage snapshot on the usage route."""
+    """A `FakeApi` serving one fixed usage payload on the usage route.
 
-    def __init__(self, routes: dict | None, snapshot: dict):
+    The payload is served verbatim, so a test can also serve a malformed one
+    (a list or a scalar) to prove the terminal read is fail-open."""
+
+    def __init__(self, routes: dict | None, snapshot):
         super().__init__(routes)
-        self._snapshot = dict(snapshot)
+        self._snapshot = snapshot
         self.usage_calls = 0
 
     def __call__(self, call):
         if call.path.endswith("/usage"):
             self.usage_calls += 1
             self.calls.append(call)
-            return dict(self._snapshot)
+            return self._snapshot
         return super().__call__(call)
 
 
@@ -387,12 +390,37 @@ def test_a_timed_out_trial_records_its_terminal_usage(tmp_path) -> None:
     # The usage surface was read at the terminal even with no budget configured.
     assert api_runner.usage_calls == 1
     assert record.spent_tokens == 4200
+    # A non-budget terminal records no overshoot (there was no budget stop).
+    assert record.spend_overshoot is None
     assert record.spend_by_agent == {"recon": {"capped_tokens": 4200}}
     assert record.usage is not None
     assert record.usage["total_tokens"] == 5000
     written = yaml.safe_load(Path(record.trial_dir, "trial.yaml").read_text())
     assert written["spent_tokens"] == 4200
     assert written["usage"]["capped_tokens"] == 4200
+
+
+def test_a_non_mapping_usage_payload_never_breaks_the_record(tmp_path) -> None:
+    # #346 review finding: the terminal read must fail open even when the usage
+    # route returns a non-object payload, so the record still writes.
+    class ListUsageApi(FakeApi):
+        def __call__(self, call):
+            if call.path.endswith("/usage"):
+                self.calls.append(call)
+                return [1, 2, 3]  # not a Mapping
+            return super().__call__(call)
+
+    api_runner = ListUsageApi(_usage_routes())
+
+    record = _trial(
+        tmp_path, api_runner, start_phase="hunting", project_id="pid"
+    ).run()
+
+    assert record.terminal == "timeout"
+    assert record.spent_tokens is None
+    assert record.usage is None
+    written = yaml.safe_load(Path(record.trial_dir, "trial.yaml").read_text())
+    assert written["spent_tokens"] is None
 
 
 # --- the trial-wide token budget ----------------------------------------------

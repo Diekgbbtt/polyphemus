@@ -170,6 +170,8 @@ _Avoid_: cap, limit
 
 **Token spend**:
 The capped tokens a `Trial`'s project produced, measured as the delta between the project's cumulative `capped_tokens` on the app usage surface (`GET /projects/{id}/usage`) and the trial's spend baseline.
+Since #346 the trial record carries the spend on **every** terminal (a `stopped` budget stop, a `timeout`, or a `failed`), plus a `usage` snapshot of the full two-axis surface when the terminal is not a budget stop, so a failed or timed-out trial is never left unaccounted.
+With no configured budget no baseline is snapshotted, so `spent_tokens` is the project's cumulative capped tokens (the trial's own spend on a fresh project).
 _Avoid_: cost, usage
 
 **Spend baseline**:

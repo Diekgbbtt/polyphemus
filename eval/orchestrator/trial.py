@@ -910,40 +910,49 @@ class Trial:
 
     def _terminal_spend(
         self, project_id: str
-    ) -> tuple[SpendResult | None, dict | None]:
-        """The trial's spend at terminal, and its full usage snapshot (#346).
+    ) -> tuple[int | None, int | None, dict | None, dict | None]:
+        """The trial's spend at terminal, and its usage snapshot (#346).
 
-        A budget stop already produced a `SpendResult` (`self._spend`) and is
-        returned as-is (with no extra usage read, so the budget path is
-        unchanged). Otherwise the project's cumulative usage is read once here,
-        so a failed or timed-out trial still records what it spent: `spent` is
-        the capped-axis delta over the carried baseline and `usage` is the raw
-        two-axis surface. Fail-open: an unreadable usage surface yields
-        `(None, None)` and never breaks the terminal record."""
+        Returns `(spent, overshoot, by_agent, usage)`:
+        - a budget stop already produced a `SpendResult` (`self._spend`), reused
+          as-is; `usage` stays None because the stop already records the spend,
+          the overshoot, and the per-agent breakdown;
+        - otherwise the usage surface is read once so a failed or timed-out trial
+          still records what it spent. `spent` is the capped-axis delta over the
+          carried baseline; with no configured budget no baseline was snapshotted,
+          so `spent` is the project's cumulative capped tokens (the trial's own
+          spend on a fresh project). `overshoot` stays None (there was no stop).
+        Fail-open: a transport or parse failure yields all-None and never breaks
+        the terminal record."""
         if self._spend is not None:
-            return self._spend, None
-        resp = self._read_usage(project_id)
-        if not resp:
-            return None, None
+            return (
+                self._spend.spent,
+                self._spend.overshoot,
+                self._spend.by_agent,
+                None,
+            )
+        snap = self._terminal_usage(project_id)
+        if snap is None:
+            return None, None, None, None
         baseline = self._spend_baseline or 0
-        return (
-            SpendResult(
-                spent=max(0, api.usage_capped(resp) - baseline),
-                overshoot=0,
-                by_agent=api.usage_by_agent(resp),
-            ),
-            dict(resp),
-        )
+        return max(0, snap["capped"] - baseline), None, snap["by_agent"], snap["raw"]
 
-    def _read_usage(self, project_id: str) -> dict:
-        """Read the project usage snapshot for the terminal record, fail-open.
+    def _terminal_usage(self, project_id: str) -> dict | None:
+        """Read and parse the project usage snapshot for the terminal record.
 
-        The terminal record is written even when the app usage surface is
-        unreachable, so this never raises into `_finish`."""
+        Fail-open: a transport error, a non-mapping payload, or any parse error
+        yields None, so the terminal record is still written (#346)."""
         try:
-            return self._call(api.usage(project_id)) or {}
+            resp = self._call(api.usage(project_id))
+            if not isinstance(resp, Mapping):
+                return None
+            return {
+                "capped": api.usage_capped(resp),
+                "by_agent": api.usage_by_agent(resp),
+                "raw": dict(resp),
+            }
         except Exception:  # noqa: BLE001 - the terminal record must still write
-            return {}
+            return None
 
     def _finish(
         self,
@@ -961,7 +970,7 @@ class Trial:
         aggregated = intervention + list(notes) + [
             note for phase in phases for note in phase.notes
         ]
-        spend, usage = self._terminal_spend(project_id)
+        spent, overshoot, by_agent, usage = self._terminal_spend(project_id)
         record = TrialRecord(
             trial_id=trial_id,
             instance_id=cfg.instance_id,
@@ -973,10 +982,10 @@ class Trial:
             started_at=started,
             finished_at=self._now(),
             token_budget=cfg.token_budget,
-            spent_tokens=spend.spent if spend else None,
-            spend_overshoot=spend.overshoot if spend else None,
+            spent_tokens=spent,
+            spend_overshoot=overshoot,
             spend_baseline=self._spend_baseline,
-            spend_by_agent=spend.by_agent if spend else None,
+            spend_by_agent=by_agent,
             usage=usage,
             notes=aggregated,
             trial_dir=str(trial_dir),
