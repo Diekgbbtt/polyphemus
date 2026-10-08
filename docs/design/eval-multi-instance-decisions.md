@@ -515,3 +515,31 @@ Evidence (eval server 2026-10-07): the jetlinks-1 hunting run `665ba875` was sti
 - A hunting wall-clock timeout issues `POST /projects/{id}/hunting/{run}/stop` (`test_a_wall_clock_timeout_stops_the_hunting_run`).
 - An analysis wall-clock timeout issues `POST /projects/{id}/analysis/{recon_run}/stop`, the recon run id the stop verb is keyed by (`test_a_wall_clock_timeout_stops_the_analysis_run_by_recon_id`).
 - A below-budget poll with a malformed usage payload still times out and stops the run once, and records no spend stop (`test_a_malformed_usage_payload_never_falsely_stops`).
+
+## Round-13 decision (the opencode dispatch contract and the role agents, #297, 2026-10-08)
+
+### D55 - The dispatch command uses the real opencode interface, and the role agents ship tracked under `.opencode/agent/`
+*2026-10-08.* OPERATOR.md 2.9/2.10/2.12/2.13 and E2E-SCAFFOLD.md documented the agent dispatch as `opencode run --prompt {prompt} --trial {trial_record} --ground-truth {ground_truth} --data-root {data_root} --out {destination}`. The real `opencode run` (1.18.x) accepts none of those flags: it takes the prompt as a positional message, selects an agent with `--agent <role>`, and scopes agent discovery to a directory with `--dir <path>`. A command copied from the example therefore died on its first token, so no trial could ever be assessed or diagnosed.
+Separately, the four role agents the harness selects (`eval-assessor`, `eval-diagnoser`, `eval-aligner`, `eval-surfer`) were not present: the root `.gitignore` ignored `.opencode/*`, so the agent source added for #297 was dropped from the tree.
+
+**Decision.**
+The dispatch command is `opencode run --agent <role> --dir <literal-checkout> "<message>"`.
+The orchestrator substitutes its documented placeholders (`{prompt}`, `{trial_record}`, `{ground_truth}`, `{data_root}`, `{destination}`, `{trace_id}`, ...) into the message with Python `str.format`, then `shlex`-splits the line and executes it directly, with no shell, so `--dir` must be a literal path.
+Every command line uses only flags the installed CLI has; the path travels in the message, and the role agent reads its contract file itself.
+
+Each dispatched role ships as a project opencode agent under `.opencode/agent/<role>.md`, `mode: all`, `model: opencode-go/deepseek-v4.1-flash`, naming its `eval/prompts/*.md` contract.
+The agent source is TRACKED, never gitignored: `opencode run --agent <role> --dir <checkout>` resolves a project agent at `<checkout>/.opencode/agent/<role>.md`, so an ignored agent is a missing one.
+
+**Why tracked, not "eval-only, therefore ignored".**
+`.opencode` configures the eval runtime, never the stack, and that intent is preserved by two existing guards: `.dockerignore` keeps it out of the agent image, and the advance manifest's `IGNORED_PREFIXES` (`.opencode`) excludes it from version alignment.
+Neither guard requires the source to be untracked; to reach the eval server's canonical checkout, the agents must be committed.
+The blanket `.opencode/*` ignore (commit `417389d`) superseded the tracked layout without relocating the source anywhere, so the eval server had no agents. Only the per-machine install state (`node_modules`, `package.json`, lockfiles) stays ignored.
+
+**Driver agent out of scope.**
+This decision covers the four dispatched subagent roles. The `eval-orchestrator` primary agent, its `opencode.json`, and the `eval-monitor.ts` plugin were dropped by the same `417389d` ignore and are not restored here; that is the agentic-driver provisioning concern (#288/#289) and is raised as a follow-up.
+
+**Falsification checks.**
+- Each role agent names its `eval/prompts/*.md` contract, carries `mode: all`, and pins `model: opencode-go/deepseek-v4.1-flash` (`tests/eval/test_opencode_agents.py`).
+- Every role's named contract prompt exists on disk.
+- The agent source is not gitignored (`git check-ignore --no-index -q .opencode/agent/<role>.md` exits non-zero).
+- Every documented dispatch line in OPERATOR.md, E2E-SCAFFOLD.md, and `run-webexploitbench-8.sh` uses only flags in the real `opencode run` set and names a declared role.

@@ -219,6 +219,13 @@ One step of the post-execution workflow (`execution`, `assessment`, `diagnosis`)
 Each node has its own prompt under `eval/prompts/` (`orchestrator.md` for the graph, `assessor-workflow.md` and `diagnoser-workflow.md` for the two dispatched nodes), distinct from the subagent role prompt it dispatches.
 _Avoid_: stage, step, phase
 
+**Role agent**:
+The opencode agent under `.opencode/agent/<role>.md` that the harness selects with `opencode run --agent <role> --dir <checkout> "<message>"`; `opencode run` takes the prompt as a message and resolves a project agent at `<checkout>/.opencode/agent/<role>.md`.
+It carries `mode: all` and the eval model (`opencode-go/deepseek-v4.1-flash`), and its body names the `eval/prompts/*.md` contract it reads.
+The four dispatched roles are `eval-assessor`, `eval-diagnoser`, `eval-aligner`, and `eval-surfer`.
+Their source is TRACKED in the repo so it reaches the eval server's canonical checkout; only the per-machine install state (`node_modules`, lockfiles) is ignored - an agent that is gitignored is a missing one.
+_Avoid_: subagent config, prompt file
+
 **Assessment attempt**:
 One dispatch or verification step of the assessment subagent, recorded on the trial record with its outcome and, on escalation, a named failure.
 _Avoid_: retry, poll
