@@ -882,6 +882,10 @@ The eval orchestrator agent (`eval/prompts/orchestrator.md`) is the automated
 driver: it calls the `eval_monitor` tool - the custom opencode tool in
 `.opencode/plugin/eval-monitor.ts` - once per tick, and stops when every trial
 is `complete`, `deferred`, or `escalated`.
+The primary agent (`.opencode/agent/eval-orchestrator.md`), the project config
+(`.opencode/opencode.json`), and the plugin ship tracked under `.opencode/`,
+like the four role agents (D56): the config and plugin name checkout-relative
+paths, so only a committed copy reaches the eval server.
 The per-node prompts are `eval/prompts/assessor-workflow.md` and
 `eval/prompts/diagnoser-workflow.md`; the subagent role prompts they dispatch
 are `eval/prompts/assessment.md` and `eval/prompts/diagnoser.md`.

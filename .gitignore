@@ -41,12 +41,14 @@ docs/.DS_Store
 # worktrees (never nest those in a commit); the lock is per-machine runtime.
 .claude/*
 .agents/*
-# The eval harness's opencode role agents and monitor plugin configure the eval
-# runtime, never the stack: `.dockerignore` keeps them out of the image and the
-# advance manifest excludes them from alignment. Their SOURCE is tracked, though
-# (`opencode run --dir <checkout> --agent <role>` resolves an agent at
-# `<checkout>/.opencode/agent/<role>.md`, so an ignored agent is a missing one);
-# only the per-machine install state is ignored.
+# The eval harness's opencode agents, driver config, and monitor plugin
+# configure the eval runtime, never the stack: `.dockerignore` keeps them out of
+# the image and the advance manifest excludes them from alignment. Their SOURCE
+# is tracked, though (`opencode run --dir <checkout> --agent <role>` resolves an
+# agent at `<checkout>/.opencode/agent/<role>.md`, and the driver's
+# `opencode.json` and `plugin/eval-monitor.ts` are resolved from the same
+# checkout, so an ignored file is a missing one); only the per-machine install
+# state is ignored.
 .opencode/node_modules/
 .opencode/package.json
 .opencode/package-lock.json

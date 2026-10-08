@@ -536,11 +536,34 @@ The agent source is TRACKED, never gitignored: `opencode run --agent <role> --di
 Neither guard requires the source to be untracked; to reach the eval server's canonical checkout, the agents must be committed.
 The blanket `.opencode/*` ignore (commit `417389d`) superseded the tracked layout without relocating the source anywhere, so the eval server had no agents. Only the per-machine install state (`node_modules`, `package.json`, lockfiles) stays ignored.
 
-**Driver agent out of scope.**
-This decision covers the four dispatched subagent roles. The `eval-orchestrator` primary agent, its `opencode.json`, and the `eval-monitor.ts` plugin were dropped by the same `417389d` ignore and are not restored here; that is the agentic-driver provisioning concern (#288/#289) and is raised as a follow-up.
+**Driver agent out of scope here; restored by D56.**
+This decision covers the four dispatched subagent roles. The `eval-orchestrator` primary agent, its `opencode.json`, and the `eval-monitor.ts` plugin were dropped by the same `417389d` ignore and are not restored here; that is the agentic-driver provisioning concern (#288/#289), raised as a follow-up and resolved by D56, which tracks all three.
 
 **Falsification checks.**
 - Each role agent names its `eval/prompts/*.md` contract, carries `mode: all`, and pins `model: opencode-go/deepseek-v4.1-flash` (`tests/eval/test_opencode_agents.py`).
 - Every role's named contract prompt exists on disk.
 - The agent source is not gitignored (`git check-ignore --no-index -q .opencode/agent/<role>.md` exits non-zero).
 - Every documented dispatch line in OPERATOR.md, E2E-SCAFFOLD.md, and `run-webexploitbench-8.sh` uses only flags in the real `opencode run` set and names a declared role.
+
+## Round-14 decision (the eval driver config and monitor plugin, #342, 2026-10-08)
+
+### D56 - The eval-orchestrator primary agent, its project config, and the monitor plugin ship tracked under `.opencode/`
+*2026-10-08.* Commit `417389d` replaced the tracked `.opencode/` layout with a blanket `.opencode/*` ignore, dropping five agent files, the project config, and the monitor plugin in one stroke. #297 (D55) restored the four dispatched role agents and narrowed the ignore, but deliberately left the driver side out of scope, naming it the agentic-driver provisioning concern (#288/#289). The `eval-orchestrator` primary agent, `.opencode/opencode.json`, and `.opencode/plugin/eval-monitor.ts` therefore stayed absent: on a fresh checkout `eval/prompts/orchestrator.md` and OPERATOR.md 2.11 described an `eval_monitor` tool with no definition, and the monitor dispatch path could not load.
+
+**The grey point.** Should the driver config and plugin be TRACKED eval-harness source, like the four role agents, or PROVISIONED eval-server state with a documented bring-up step?
+
+**Decision. Tracked, by the same argument as D55.**
+`.opencode/opencode.json` names the orchestrator prompt (`instructions: ["eval/prompts/orchestrator.md"]`) and the plugin (`plugin: ["./plugin/eval-monitor.ts"]`) by path relative to the checkout, and `opencode run --dir <checkout>` resolves a project config, plugin, and agent from `<checkout>/.opencode/`. A provisioned copy would have to place the same three files at the same relative paths on the eval server, drift from the repo, and need a bring-up step that can silently fail, which is strictly worse than committing the source. The plugin defines the `eval_monitor` and `next_target` tools the orchestrator prompt names, so it is the definition behind a documented contract, not per-machine state.
+
+**The eval-only intent still holds.**
+`.opencode` configures the eval runtime, never the stack. Two guards already enforce that and do not require the source to be untracked: `.dockerignore` excludes `.opencode` from the agent image, and `eval/advance/manifest.py` `IGNORED_PREFIXES` excludes it from version alignment. Only the per-machine install state (`node_modules/`, `package.json`, `package-lock.json`, `bun.lock`) stays ignored, exactly as D55 narrowed it; no further `.gitignore` or `.dockerignore` edit is needed.
+
+**Amends D55.**
+D55's "Driver agent out of scope" paragraph is superseded: the driver side is restored, not deferred.
+
+**Falsification checks.**
+- The primary agent ships with `mode: primary`, pins `model: opencode-go/deepseek-v4.1-flash`, names `eval/prompts/orchestrator.md`, and names the `eval_monitor` tool (`test_driver_agent_ships_as_primary_and_names_its_contract_prompt`).
+- `.opencode/opencode.json` loads that prompt as instructions and names `./plugin/eval-monitor.ts` (`test_opencode_config_loads_the_orchestrator_prompt_and_the_monitor_plugin`).
+- The plugin defines both the `eval_monitor` and `next_target` tools and shells the `orchestrator monitor` tick (`test_monitor_plugin_defines_the_eval_monitor_tool`).
+- `eval/prompts/orchestrator.md` names the monitor tool a definition now backs (`test_the_orchestrator_prompt_names_a_definition_that_exists`).
+- None of the three paths is gitignored (`test_driver_source_is_not_gitignored`).

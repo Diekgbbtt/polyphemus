@@ -1,4 +1,4 @@
-"""The eval harness's opencode role agents and dispatch-command contract (#297).
+"""The eval harness's opencode agents, driver config, and dispatch contract.
 
 The subagent commands (OPERATOR.md 2.9/2.10/2.12/2.13, E2E-SCAFFOLD.md step 3,
 `run-webexploitbench-8.sh`) run `opencode run --agent <role> --dir <checkout>`
@@ -14,9 +14,18 @@ actually dispatch:
    (`--agent`, `--dir`, ...). The pre-#297 examples used `--prompt`, `--trial`,
    `--out` and friends, which `opencode run` rejects, so the dispatch died on the
    first line.
+
+The primary `eval-orchestrator` agent, the project config that loads its
+instructions, and the `eval-monitor.ts` plugin that defines its `eval_monitor`
+and `next_target` tools are the same kind of tracked eval-harness source (#342,
+D56): `.opencode/opencode.json` names the orchestrator prompt and the plugin by
+relative path inside the checkout, so the driver only loads when the source is
+committed. `eval/prompts/orchestrator.md` describes an `eval_monitor` tool with no
+definition unless the plugin ships.
 """
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 from pathlib import Path
@@ -33,6 +42,16 @@ ROLES = {
 }
 
 EVAL_MODEL = "opencode-go/deepseek-v4.1-flash"
+
+# The driver side of the harness: the primary orchestrator agent, the project
+# config that loads its instructions, and the plugin that defines its tools.
+DRIVER_AGENT = AGENT_DIR / "eval-orchestrator.md"
+OPENCODE_CONFIG = REPO_ROOT / ".opencode" / "opencode.json"
+MONITOR_PLUGIN = REPO_ROOT / ".opencode" / "plugin" / "eval-monitor.ts"
+ORCHESTRATOR_PROMPT = REPO_ROOT / "eval" / "prompts" / "orchestrator.md"
+
+# The custom tool `eval/prompts/orchestrator.md` names; the plugin must define it.
+MONITOR_TOOL = "eval_monitor"
 
 # The flags the installed `opencode run` accepts (`opencode run --help`, 1.18.x).
 REAL_RUN_FLAGS = frozenset(
@@ -109,6 +128,42 @@ def test_every_role_contract_prompt_exists() -> None:
 def test_role_agent_source_is_not_gitignored() -> None:
     for role in ROLES:
         rel = f".opencode/agent/{role}.md"
+        result = subprocess.run(
+            ["git", "-C", str(REPO_ROOT), "check-ignore", "--no-index", "-q", rel],
+            capture_output=True,
+        )
+        assert result.returncode == 1, f"{rel} must not be gitignored"
+
+
+def test_driver_agent_ships_as_primary_and_names_its_contract_prompt() -> None:
+    text = DRIVER_AGENT.read_text(encoding="utf-8")
+    assert "mode: primary" in text
+    assert f"model: {EVAL_MODEL}" in text
+    assert "eval/prompts/orchestrator.md" in text
+    assert MONITOR_TOOL in text
+
+
+def test_opencode_config_loads_the_orchestrator_prompt_and_the_monitor_plugin() -> None:
+    config = json.loads(OPENCODE_CONFIG.read_text(encoding="utf-8"))
+    assert "eval/prompts/orchestrator.md" in config["instructions"]
+    assert "./plugin/eval-monitor.ts" in config["plugin"]
+
+
+def test_monitor_plugin_defines_the_eval_monitor_tool() -> None:
+    text = MONITOR_PLUGIN.read_text(encoding="utf-8")
+    assert MONITOR_TOOL in text, "the plugin must define the eval_monitor tool"
+    assert "next_target" in text, "the plugin must define the next_target tool"
+    assert "orchestrator" in text and "monitor" in text, "the tool must shell the CLI tick"
+
+
+def test_the_orchestrator_prompt_names_a_definition_that_exists() -> None:
+    assert ORCHESTRATOR_PROMPT.is_file(), "driver contract prompt missing"
+    assert MONITOR_TOOL in ORCHESTRATOR_PROMPT.read_text(encoding="utf-8")
+
+
+def test_driver_source_is_not_gitignored() -> None:
+    for path in (DRIVER_AGENT, OPENCODE_CONFIG, MONITOR_PLUGIN):
+        rel = path.relative_to(REPO_ROOT).as_posix()
         result = subprocess.run(
             ["git", "-C", str(REPO_ROOT), "check-ignore", "--no-index", "-q", rel],
             capture_output=True,
