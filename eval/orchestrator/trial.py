@@ -331,6 +331,11 @@ class TrialRecord:
     spend_overshoot: int | None = None
     spend_baseline: int | None = None
     spend_by_agent: dict | None = None
+    # #346: the terminal usage snapshot (the full two-axis surface, the raw total,
+    # and the capped budget axis), read at every terminal so a failed or timed-out
+    # trial still carries its token usage even when no budget stop populated
+    # `spent_tokens`. Additive, default None, so older records load.
+    usage: dict | None = None
     notes: list[str] = field(default_factory=list)
     trial_dir: str | None = None
     # #273: the target-run grouping level of the artifact store (defaults to
@@ -903,6 +908,52 @@ class Trial:
 
     # --- record ---------------------------------------------------------------
 
+    def _terminal_spend(
+        self, project_id: str
+    ) -> tuple[int | None, int | None, dict | None, dict | None]:
+        """The trial's spend at terminal, and its usage snapshot (#346).
+
+        Returns `(spent, overshoot, by_agent, usage)`:
+        - a budget stop already produced a `SpendResult` (`self._spend`), reused
+          as-is; `usage` stays None because the stop already records the spend,
+          the overshoot, and the per-agent breakdown;
+        - otherwise the usage surface is read once so a failed or timed-out trial
+          still records what it spent. `spent` is the capped-axis delta over the
+          carried baseline; with no configured budget no baseline was snapshotted,
+          so `spent` is the project's cumulative capped tokens (the trial's own
+          spend on a fresh project). `overshoot` stays None (there was no stop).
+        Fail-open: a transport or parse failure yields all-None and never breaks
+        the terminal record."""
+        if self._spend is not None:
+            return (
+                self._spend.spent,
+                self._spend.overshoot,
+                self._spend.by_agent,
+                None,
+            )
+        snap = self._terminal_usage(project_id)
+        if snap is None:
+            return None, None, None, None
+        baseline = self._spend_baseline or 0
+        return max(0, snap["capped"] - baseline), None, snap["by_agent"], snap["raw"]
+
+    def _terminal_usage(self, project_id: str) -> dict | None:
+        """Read and parse the project usage snapshot for the terminal record.
+
+        Fail-open: a transport error, a non-mapping payload, or any parse error
+        yields None, so the terminal record is still written (#346)."""
+        try:
+            resp = self._call(api.usage(project_id))
+            if not isinstance(resp, Mapping):
+                return None
+            return {
+                "capped": api.usage_capped(resp),
+                "by_agent": api.usage_by_agent(resp),
+                "raw": dict(resp),
+            }
+        except Exception:  # noqa: BLE001 - the terminal record must still write
+            return None
+
     def _finish(
         self,
         started: str,
@@ -919,6 +970,7 @@ class Trial:
         aggregated = intervention + list(notes) + [
             note for phase in phases for note in phase.notes
         ]
+        spent, overshoot, by_agent, usage = self._terminal_spend(project_id)
         record = TrialRecord(
             trial_id=trial_id,
             instance_id=cfg.instance_id,
@@ -930,10 +982,11 @@ class Trial:
             started_at=started,
             finished_at=self._now(),
             token_budget=cfg.token_budget,
-            spent_tokens=self._spend.spent if self._spend else None,
-            spend_overshoot=self._spend.overshoot if self._spend else None,
+            spent_tokens=spent,
+            spend_overshoot=overshoot,
             spend_baseline=self._spend_baseline,
-            spend_by_agent=self._spend.by_agent if self._spend else None,
+            spend_by_agent=by_agent,
+            usage=usage,
             notes=aggregated,
             trial_dir=str(trial_dir),
             target_run_id=cfg.target_run_id or cfg.instance_id,
