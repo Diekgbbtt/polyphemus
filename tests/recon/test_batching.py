@@ -210,6 +210,18 @@ def test_build_batch_command_dispatches_arjun():
     assert "arjun -i /work/s3/arjun_urls.txt" in cmd
 
 
+def test_build_webpack_chunks_command_embeds_runner_and_quoted_urls():
+    urls = ["https://h/static/js/manifest.847c.js", "https://h/a b.js"]
+    cmd = build_batch_command(JOBS["webpack_chunks"], urls)
+    assert cmd.startswith("echo ")
+    assert "| base64 -d | python3 - " in cmd
+    blob = cmd.split("echo ", 1)[1].split(" |", 1)[0]
+    decoded = base64.b64decode(blob).decode()
+    assert "def scan_bundles(" in decoded
+    assert "https://h/static/js/manifest.847c.js" in cmd
+    assert "'https://h/a b.js'" in cmd
+
+
 def test_build_batch_command_unknown_tool_raises():
     import pytest
 

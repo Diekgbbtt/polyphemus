@@ -13,7 +13,7 @@ The system reached a sound real-target end-to-end validation run (memory `recon-
 
 ## 1. Scope
 
-**Built and validated (this document's primary subject):** an autonomous reconnaissance pipeline that runs 16 scheduled recon jobs against a target domain across 11 phases, optionally in an authenticated context, builds a Layer-0 descriptive attack-surface graph in Neo4j, and attaches natural-language `Observation` nodes to broad anchors.
+**Built and validated (this document's primary subject):** an autonomous reconnaissance pipeline that runs 17 scheduled recon jobs against a target domain across 12 phases, optionally in an authenticated context, builds a Layer-0 descriptive attack-surface graph in Neo4j, and attaches natural-language `Observation` nodes to broad anchors.
 Single project (`project_id`) tenancy.
 A REST API launches and polls runs and writes settings; no web frontend.
 
@@ -44,7 +44,7 @@ flowchart LR
     end
     subgraph KALIC[kali container]
         MCP["fastmcp server<br/>execute_command -> stdout/stderr/returncode<br/>per-session /work/{session_id}"]
-        TOOLS["subfinder / amass / whois / dnsx / puredns / subzy /<br/>naabu / httpx / gau / paramspider / katana / ffuf /<br/>kr / jsluice / graphql-cop / arjun"]
+        TOOLS["subfinder / amass / whois / dnsx / puredns / subzy /<br/>naabu / httpx / gau / paramspider / katana / ffuf /<br/>kr / webpack_chunks / jsluice / graphql-cop / arjun"]
         MCP --> TOOLS
     end
     subgraph STEELC[steel.dev cloud browser]
@@ -209,7 +209,7 @@ Every `Observation`'s Neo4j `id` is a deterministic SHA1 of `macro_kind|evidence
 
 ### 4.2 The job registry & phase DAG (`src/polymerhus/recon/control/jobs.py`)
 
-18 `JobSpec` entries in `JOBS` (`jobs.py:18-429`), of which 16 are scheduled, grouped into 11 ordered `PHASES` (`jobs.py:444-486`):
+19 `JobSpec` entries in `JOBS` (`jobs.py:18-473`), of which 17 are scheduled, grouped into 12 ordered `PHASES` (`jobs.py:474-526`):
 
 ```
 Phase 0:  subfinder, whois                             (consumes Domain)
@@ -218,15 +218,16 @@ Phase 2:  naabu                                        (consumes Subdomain)
 Phase 3:  httpx                                        (consumes Subdomain)
 Phase 4:  httpx_services                               (consumes Service; host-mode only)
 Phase 5:  katana, ffuf, steel_crawl                    (consumes BaseURL)
-Phase 6:  jsluice                                      (consumes Endpoint)
-Phase 7:  httpx_reprofile                              (consumes Endpoint)
-Phase 8:  kiterunner                                   (consumes Endpoint)
-Phase 9:  arjun                                        (consumes Endpoint)
-Phase 10: graphql-cop                                  (consumes Endpoint)
+Phase 6:  webpack_chunks                               (consumes Endpoint)
+Phase 7:  jsluice                                      (consumes Endpoint)
+Phase 8:  httpx_reprofile                              (consumes Endpoint)
+Phase 9:  kiterunner                                   (consumes Endpoint)
+Phase 10: arjun                                        (consumes Endpoint)
+Phase 11: graphql-cop                                  (consumes Endpoint)
 ```
 
 `amass` and `paramspider` remain `JOBS` entries but are withdrawn from `PHASES` (so they never schedule); `gau` was removed outright.
-`validate_job_subset` (`jobs.py:512-529`) statically checks that every selected job's `consumes` type is either the seeded `Domain` root or produced by an earlier-phase selected job, walking `_available_types_by_phase` (`jobs.py:489-509`) - this is the check behind the REST API's 400 on a `jobs` subset that breaks a dependency (`src/polymerhus/project_management/api.py`).
+`validate_job_subset` (`jobs.py:552-569`) statically checks that every selected job's `consumes` type is either the seeded `Domain` root or produced by an earlier-phase selected job, walking `_available_types_by_phase` (`jobs.py:529-550`) - this is the check behind the REST API's 400 on a `jobs` subset that breaks a dependency (`src/polymerhus/project_management/api.py`).
 
 Command templates fill placeholders `{target}`, `{domain}`, `{baseurl}`, `{session}`, `{auth_flags}` via `fill_template`.
 Format-affecting flags (`-json`, `-jsonl`, `-oJ`) are baked into the template - the configurator never chooses them, because the deterministic parser depends on the exact shape.
@@ -237,8 +238,8 @@ The live `JOBS` registry includes `kiterunner`, `paramspider`, `graphql-cop`, `s
 
 ### 4.3 Parser contract (`stdout -> list[AssetDelta]`)
 
-`src/polymerhus/recon/domain/parsers/__init__.py::get_parser(tool: str)` resolves a `PARSERS` dict keyed by tool name (`parsers/__init__.py:17-41`, `get_parser` at `:44-45`) to a `Callable[[str], list[AssetDelta]]`.
-17 deterministic parse functions exist across 12 parser modules: one per Kali binary (the three httpx-family keys `httpx`/`httpx_reprofile`/`httpx_services` share `parse_httpx`) plus `parse_steel_crawl` for the crawl manifest.
+`src/polymerhus/recon/domain/parsers/__init__.py::get_parser(tool: str)` resolves a `PARSERS` dict keyed by tool name (`parsers/__init__.py:18-45`, `get_parser` at `:48-49`) to a `Callable[[str], list[AssetDelta]]`.
+18 deterministic parse functions exist across 13 parser modules: one per Kali binary (the three httpx-family keys `httpx`/`httpx_reprofile`/`httpx_services` share `parse_httpx`), plus `parse_steel_crawl` for the crawl manifest and `parse_webpack_chunks` for the #185 chunk-map resolver.
 Two parser modules additionally expose `parse_findings(stdout) -> list[dict]` - a deterministic, non-LLM finding source: `graphql_parser` and `takeover_parser` (wired at `pod.py:104,443-447`).
 Parsers whose signature declares `target_url` (introspected via `inspect.signature`, `pod.py:153-163`) receive the pod's `input_asset` URL/baseurl/name (`_input_asset_url`, `pod.py:115-124`); others are called with `stdout` alone - this signature-aware dispatch means adding a new findings-capable tool never requires touching `pod.py`'s call sites.
 
@@ -589,6 +590,6 @@ The taxonomy's conceptual model (job/tool/skill as three axes, `JobSpec.skill` a
 | `agent-context-architecture.md` | Superseded | The four-memory-tier model (§9.2), the `asset_context` gap diagnosis (§9.1), the anchor-allowlist bug (§4.1, §7.4; since closed by D8 re-anchoring) - all folded in; its proposed `build_asset_context` is now scoped as designed-not-built L2 (§9.4) per the newer `context-scaffolding-three-levels.md` correction |
 | `context-memory-end-to-end.md` | Superseded | L1/L2/L3 data contracts and core-function signatures - folded into §9 as explicitly unbuilt; the operator-validation items (V1-V7) preserved by reference |
 | `context-scaffolding-three-levels.md` | Superseded | The L1/L2/L3 decomposition rationale and the resolved grey points (A1-A5) - folded into §9; this doc's correction of `agent-context-architecture.md`'s single-builder proposal is preserved (§9.3-9.5 reflect the three-scaffold shape, not the one-hop heuristic) |
-| `jobs-tools-skills-taxonomy.md` | Superseded | The job/tool/skill conceptual model and the job table (now 18 `JOBS` entries / 16 scheduled) - folded into §4.2, §10.2, with the `skills/` layout status corrected to "partially realized" |
+| `jobs-tools-skills-taxonomy.md` | Superseded | The job/tool/skill conceptual model and the job table (now 19 `JOBS` entries / 17 scheduled) - folded into §4.2, §10.2, with the `skills/` layout status corrected to "partially realized" |
 
 All five superseded documents remain in `docs/design/` for historical trace (git history + design-conversation record) but are no longer updated or treated as authoritative; this document and `recon-pipeline-forward-decisions.md` are the two live design references for the recon pipeline going forward.

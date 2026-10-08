@@ -40,6 +40,7 @@ from polymerhus.recon.domain.types import ConsumptionOptions, JobSpec
 # This file is recon/control/batching.py; the runner lives at recon/scripts/,
 # so it is parents[1] (recon) / "scripts".
 _RUNNER = Path(__file__).resolve().parents[1] / "scripts" / "jsluice_scan.py"
+_WEBPACK_RUNNER = Path(__file__).resolve().parents[1] / "scripts" / "webpack_chunks.py"
 
 # Fingerprint definition MIRRORS D15's `src/polymerhus/recon/domain/noise_filter.py` rule (that
 # stream is on a separate unmerged branch, so the regex/marker set is replicated
@@ -184,6 +185,16 @@ def build_jsluice_command(urls: list[str]) -> str:
     return cmd.rstrip()
 
 
+def build_webpack_chunks_command(urls: list[str]) -> str:
+    """Self-contained pod command: base64-embed `scripts/webpack_chunks.py` and
+    run it over the batch's bundle URLs (shell-quoted argv). One script per pod,
+    mirroring `build_jsluice_command` - no Kali-image rebuild to ship it."""
+    script_b64 = base64.b64encode(_WEBPACK_RUNNER.read_bytes()).decode()
+    args = " ".join(shlex.quote(u) for u in urls)
+    cmd = f"echo {script_b64} | base64 -d | python3 - {args}"
+    return cmd.rstrip()
+
+
 def build_arjun_command(
     urls: list[str], *, session_id: str, extra: dict | None = None
 ) -> str:
@@ -224,6 +235,8 @@ def build_batch_command(
     projection for tools that need a file (`-i`) or request auth (arjun)."""
     if job.tool == "jsluice":
         return build_jsluice_command(batch)
+    if job.tool == "webpack_chunks":
+        return build_webpack_chunks_command(batch)
     if job.tool == "arjun":
         return build_arjun_command(batch, session_id=session_id, extra=extra)
     raise ValueError(f"no batch command builder registered for tool {job.tool!r}")

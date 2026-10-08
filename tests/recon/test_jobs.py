@@ -469,3 +469,35 @@ def test_validate_job_subset_httpx_reprofile_needs_a_baseurl_producer():
     with pytest.raises(ValueError):
         validate_job_subset(["httpx_reprofile"])
     validate_job_subset(["subfinder", "httpx", "httpx_reprofile"])
+
+
+# --- #185: webpack code-splitting chunk-map resolver ------------------------
+
+def test_webpack_chunks_consumes_js_endpoints_and_is_batched():
+    # #185: the resolver fetches the crawled JS bundles, extracts the webpack
+    # runtime's chunk map, and mints the resolved chunk URLs as Endpoints. It
+    # rides the same batch seam and path selector as jsluice (bundles are the
+    # input), with an empty command_template because the per-pod command is
+    # built from the batch by build_batch_command.
+    job = JOBS["webpack_chunks"]
+    assert job.tool == "webpack_chunks"
+    assert job.consumes == "Endpoint"
+    assert job.command_template == ""
+    assert job.batch is True
+    assert job.consumes_where is not None
+    assert job.consumes_where.field == "path"
+    assert job.consumes_where.op == "ends_with"
+    assert set(job.consumes_where.values) == {".js", ".mjs"}
+
+
+def test_webpack_chunks_runs_after_the_crawlers_and_before_jsluice():
+    # jsluice must scan the chunk Endpoints the resolver mints, so the resolver
+    # sits in a LATER phase than the crawler that mints the `.js` bundles it
+    # consumes, and an EARLIER phase than jsluice (the phase barrier resolves
+    # each job's inputs before it runs).
+    webpack_idx = next(i for i, p in enumerate(PHASES) if "webpack_chunks" in p)
+    katana_idx = next(i for i, p in enumerate(PHASES) if "katana" in p)
+    jsluice_idx = next(i for i, p in enumerate(PHASES) if "jsluice" in p)
+    assert webpack_idx > katana_idx
+    assert jsluice_idx > webpack_idx
+    assert "webpack_chunks" in JOBS

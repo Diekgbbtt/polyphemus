@@ -339,6 +339,27 @@ JOBS: dict[str, JobSpec] = {
         consumption=ConsumptionOptions(pack="batches"),
         use_auth=False,
     ),
+    "webpack_chunks": JobSpec(
+        tool="webpack_chunks",
+        skill="js_secret_scan",
+        # Batched: the per-pod command is built from the pod's bundle batch by
+        # polymerhus.recon.control.batching.build_webpack_chunks_command
+        # (fetch + chunk-map extraction), NOT from this template. Left empty
+        # because a batched job never routes through fill_template.
+        command_template="",
+        produces=["Endpoint"],
+        # #185: resolve webpack code-splitting chunk maps. It consumes the JS
+        # bundle Endpoints the crawler mints (the manifest/runtime bundle carries
+        # the static `{id: hash}` chunk map), fetches each, resolves the lazy
+        # chunk URLs, and mints them as Endpoints so the following jsluice phase
+        # scans the chunk bodies (and their relative API literals) it would
+        # otherwise never see. Same path selector and batch seam as jsluice - the
+        # bundles are the input.
+        consumes="Endpoint",
+        consumes_where=AssetSelector(field="path", op="ends_with", values=[".js", ".mjs"]),
+        consumption=ConsumptionOptions(pack="batches"),
+        use_auth=False,
+    ),
     "graphql-cop": JobSpec(
         tool="graphql-cop",
         skill="graphql_audit",
@@ -466,11 +487,21 @@ PHASES: list[list[str]] = [
     # they now run after the reprofile pass so they can gate on the JS-derived
     # API surface, not just httpx's originals.
     ["katana", "ffuf", "steel_crawl"],
+    # #185 webpack chunk-map resolver. It consumes the `.js`/`.mjs` Endpoints
+    # the crawler mints (the manifest/runtime bundle carries the static
+    # `{id: hash}` chunk map), resolves the lazy chunk URLs, and mints them as
+    # Endpoints. It MUST sit after the crawler (its bundle producer) and BEFORE
+    # jsluice, so the phase barrier resolves jsluice's inputs AFTER the chunk
+    # Endpoints exist - otherwise jsluice never scans the chunk bodies and the
+    # lazy-loaded API surface stays invisible (the #185 defect).
+    ["webpack_chunks"],
     # jsluice consumes the `.js`/`.mjs` Endpoints the phase-4 crawler (katana)
     # produces, so it MUST run in a later phase than it - the phase
     # barrier resolves a job's inputs before any same-phase job runs, so keeping
     # jsluice in phase 4 would feed it only httpx's endpoints, not katana's
-    # bundles (the D17 defect). Its own recovered Endpoints then reach arjun.
+    # bundles (the D17 defect). #185: it now also sees the lazy-chunk Endpoints
+    # webpack_chunks minted in the phase just before it. Its own recovered
+    # Endpoints then reach arjun.
     ["jsluice"],
     # Reprofile pass (D27): re-probe every BaseURL a crawler minted without a
     # `profile` - katana/ffuf endpoints and the JS-derived API hosts jsluice
