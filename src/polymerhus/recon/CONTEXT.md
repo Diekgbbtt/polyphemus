@@ -61,11 +61,13 @@ _Avoid_: engagement, target (target is the thing under test, not the record).
 
 **Seed** (`target_seed`):
 The single string that names what a Project probes, seed-type-agnostic (D-HS): a domain (`example.com`, `*.example.com`) or a bare IPv4 (`93.184.216.34`).
+A Seed may carry a scheme and/or port (`http://app.example.com:8443`); the scope keys on the bare host, so the authority is stripped for scope and identity while the probe target keeps it (`seed_probe_target`, D-SEEDNORM).
 `resolve_seed` reads it, falling back to the deprecated `target_domain` alias so already-persisted projects still launch.
 _Avoid_: target_domain (the legacy, domain-only name).
 
 **Scope mode**:
 The shape `parse_scope` gives a seed, driving which jobs run: `wildcard` (a zone, discovery runs), `exact` (one host, discovery suppressed), or `host` (a bare IP - discovery and the passive harvesters suppressed, the IP probed directly).
+`seed_host` is always a bare hostname (the scope key and graph identity), even for a scheme/port-bearing Seed; the authority-reaching probe target is `seed_probe_target` (D-SEEDNORM).
 An IP's engagement root is an `IP` node, never a `Domain`; the whole web-discovery chain then unfolds from httpx's `BaseURL`s exactly as for a domain (D-HS).
 _Avoid_: treating a mode as an asset type (it is a routing decision, not an L0 label).
 

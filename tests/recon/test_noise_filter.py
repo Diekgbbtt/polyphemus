@@ -273,6 +273,13 @@ def test_filter_drops_static_endpoint_missing_url_prop():
     ("notexample.com", "example.com", False),
     ("app.example.com", "app.example.com", True), # exact-mode seed host
     ("api.example.com", "app.example.com", False),# sibling is out of an exact scope
+    # #184 / D-SEEDNORM: a scope carrying a scheme and/or port compares on its
+    # bare host, so a seeded authority admits the assets its own probe mints.
+    ("app.example.com", "http://app.example.com:8443", True),
+    ("api.app.example.com", "http://app.example.com:8443", True),
+    ("app.example.com", "https://app.example.com", True),
+    ("app.example.com", "app.example.com:8443", True),
+    ("api.example.com", "http://app.example.com:8443", False),
 ])
 def test_host_in_scope(host, scope, expected):
     assert host_in_scope(host, scope) is expected

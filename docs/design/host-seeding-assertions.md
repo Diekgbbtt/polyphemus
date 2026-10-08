@@ -40,7 +40,7 @@ Legend for identity: `IP{address}`, `Subdomain{name}`, `Domain{name}`, `Service{
 
 ## D. Seed injection and first-party key (host mode)
 
-- **D1 (U).** `_inject_seed_host(input_assets, {mode: host, seed_host: <ip>})` prepends `{name: <ip>}` when absent, and is a no-op when already present (idempotent, unchanged behaviour with an IP string).
+- **D1 (U).** `_inject_seed_host(input_assets, "<ip>")` prepends `{name: "<ip>"}` when absent, and is a no-op when already present (idempotent; the second parameter is the probe-target string, D-SEEDNORM).
 - **D2 (U).** In host mode a batched job's `apex_registrable` extra equals the IP itself, not `registrable_domain(<ip>)` (which would be `216.34`).
 
 ## E. Part A end-to-end (IP on default ports)

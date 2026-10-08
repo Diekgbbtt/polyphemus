@@ -353,6 +353,13 @@ def _netloc_host(netloc: str) -> str:
 def _host_of_url(url: str) -> str:
     if not isinstance(url, str) or not url:
         return ""
+    # A bare host / `host:port` (no scheme) is read as a PATH by urlparse, so
+    # handle it directly. The asset side always passes a URL; the scope side
+    # (host_in_scope, D-SEEDNORM) may pass a bare host or a `host:port`.
+    if "://" not in url:
+        return _netloc_host(
+            url.split("/", 1)[0].split("?", 1)[0].split("#", 1)[0]
+        )
     try:
         return _netloc_host(urlparse(url).netloc)
     except ValueError:
@@ -365,9 +372,15 @@ def host_in_scope(host: str, scope_domain: str) -> bool:
     The scope domain is the seeded target (D14): the exact host in exact mode,
     the registrable apex in wildcard mode. Both admit the domain itself (the
     apex is in scope and is explicitly probed, D11) and any subdomain of it.
+
+    Both sides are normalized to a bare host, exactly like the asset side
+    (`_host_of_url`): a scope carrying a scheme and/or port (D-SEEDNORM) - e.g.
+    `http://app.example.com:8443` - compares on `app.example.com`, so a seeded
+    authority admits the BaseURLs its own probe mints rather than dropping
+    every one of them.
     """
-    host = (host or "").lower().rstrip(".")
-    scope = (scope_domain or "").lower().rstrip(".")
+    host = _host_of_url((host or "").strip())
+    scope = _host_of_url((scope_domain or "").strip())
     if not host or not scope:
         return False
     return host == scope or host.endswith("." + scope)
