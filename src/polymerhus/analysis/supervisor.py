@@ -272,11 +272,18 @@ def _initial_state(
 
 def _flush_langfuse() -> None:
     """Flush pending Langfuse spans at run end so an outage/timeout does not drop a
-    run's trace (the #18 recipe; `flush()` not `shutdown()` - the client is a
-    process-wide singleton reused by later runs). Fail-open."""
+    run's trace (the #18 recipe; `flush`, never `shutdown` - the client is a
+    process-wide singleton reused by later runs). Delegates to the ONE delivery
+    primitive `flush_observation_delivery`, which sweeps the cached handler bound
+    to the same process-wide client the supervisor's own `get_client()` resolves,
+    so the flush's outcome is truthful (an exporter drop is visible, #235).
+    Fail-open."""
     try:
-        from langfuse import get_client
-        get_client().flush()
+        from polymerhus.app.observability.langfuse_tracing import (
+            flush_observation_delivery,
+        )
+
+        flush_observation_delivery()
     except Exception:  # tracing is best-effort; never fail a run on it
         pass
 

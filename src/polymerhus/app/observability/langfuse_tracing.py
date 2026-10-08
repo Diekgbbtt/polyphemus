@@ -128,6 +128,15 @@ class RetryingSpanExporter:
     once retries are exhausted this returns `SpanExportResult.FAILURE` -
     exactly today's drop behavior - rather than raising and disrupting the
     background export thread.
+
+    Outcome record (#235): a permanent drop (retry budget exhausted) is the
+    one failure the flush path cannot see - `BatchSpanProcessor` never retries
+    a FAILURE batch, so the spans are gone for good and a queue drain reports
+    success anyway. The wrapper therefore keeps a monotonic count of the spans
+    in every batch it dropped (`_dropped_spans`, guarded by `_drop_lock`) and
+    exposes it through `take_dropped_spans()`, which reads AND resets the
+    count. The delivery primitive reads it after draining, so a drop during
+    the flush window can never be reported as `delivered`.
     """
 
     def __init__(
@@ -142,6 +151,38 @@ class RetryingSpanExporter:
         self._max_retries = max(0, max_retries)
         self._backoff_base_s = max(0.0, backoff_base_s)
         self._sleep = sleep
+        self._drop_lock = threading.Lock()
+        self._dropped_spans = 0
+
+    def _record_drop(self, span_count: int) -> None:
+        """Add a dropped batch's span count to the monotonic drop counter.
+
+        A batch with an unknown or non-positive length is counted as one span
+        so a drop is never recorded as a no-op. Fail-open: the counter update
+        never raises into the export thread."""
+        try:
+            increment = span_count if span_count > 0 else 1
+            with self._drop_lock:
+                self._dropped_spans += increment
+        except Exception:  # noqa: BLE001 - recording an outcome must not raise
+            logger.debug("langfuse drop-counter update raised", exc_info=True)
+
+    def take_dropped_spans(self) -> int:
+        """Return the spans dropped since the previous call, then reset to 0.
+
+        The delivery primitive calls this AFTER draining (`flush()`), so the
+        value covers every batch the retry budget exhausted during that drain
+        (and any drop since the previous read). Read and reset share one lock
+        with `_record_drop`, so a drop that races the read is counted by
+        exactly one side - it can never be lost. Thread-safe, never raises."""
+        try:
+            with self._drop_lock:
+                dropped = self._dropped_spans
+                self._dropped_spans = 0
+                return dropped
+        except Exception:  # noqa: BLE001 - fail-open
+            logger.debug("langfuse drop-counter read raised", exc_info=True)
+            return 0
 
     def export(self, spans):
         from opentelemetry.sdk.trace.export import SpanExportResult
@@ -160,11 +201,13 @@ class RetryingSpanExporter:
                 return result
 
             if attempt >= self._max_retries:
+                span_count = len(spans) if hasattr(spans, "__len__") else -1
+                self._record_drop(span_count)
                 logger.warning(
                     "langfuse span export failed after %d attempt(s); dropping "
                     "batch (span_count=%d, at-least-once retry budget exhausted)",
                     attempt + 1,
-                    len(spans) if hasattr(spans, "__len__") else -1,
+                    span_count,
                 )
                 return SpanExportResult.FAILURE
 
@@ -717,12 +760,24 @@ def reset_cache() -> None:
 @dataclasses.dataclass
 class DeliveryResult:
     """The outcome of one observation-delivery drain (H1): how many borrowed
-    handlers had their owned client flushed (`delivered`), how many had no
-    flushable client (`pending` - deferred, never attempted), how many raised
-    mid-flush (`dropped`). Closed `cause` vocabulary: "ok" (all delivered),
-    "unconfigured" (no handlers - tracing off, inert by design),
-    "no-client" (a handler without a flushable owned client),
-    "flush-raised" (a client's flush raised - degraded). Never raises."""
+    handlers were delivered (`delivered`), how many had no flushable client
+    (`pending` - deferred, never attempted), how many dropped (`dropped`).
+
+    Truthful semantics (#235). `delivered` means MORE than "the queue drained":
+    the flush returned AND the in-effect exporter recorded no dropped spans in
+    the delivery window. `dropped` means the queue drained but the retrying
+    exporter exhausted its retry budget on a batch, OR the client's `flush()`
+    itself raised. A drop can therefore never be reported as `delivered`,
+    whether it happened during this flush or since the previous delivery read.
+
+    Closed `cause` vocabulary:
+      - "ok" - every handler delivered (queue drained, no exporter drop);
+      - "unconfigured" - no handlers (tracing off, inert by design);
+      - "no-client" - a handler without a flushable owned client;
+      - "exporter-failed" - the flush drained but the exporter dropped >= 1
+        span in the window (exporter outcome, never silently `delivered`);
+      - "flush-raised" - a client's `flush()` raised (degraded).
+    When handlers disagree the most severe cause wins. Never raises."""
 
     delivered: int
     pending: int
@@ -738,6 +793,38 @@ class DeliveryResult:
         }
 
 
+# Severity order for combining per-handler causes into one result: a higher
+# rank wins, so an exporter drop is not hidden behind a later healthy handler.
+_CAUSE_SEVERITY = {"ok": 0, "no-client": 1, "exporter-failed": 2, "flush-raised": 3}
+
+
+def _worse_cause(current: str | None, candidate: str) -> str:
+    """Return whichever of two causes is more severe (never raises)."""
+    if _CAUSE_SEVERITY.get(candidate, 0) > _CAUSE_SEVERITY.get(current or "ok", 0):
+        return candidate
+    return current or "ok"
+
+
+def _take_exporter_drops(client: Any) -> int:
+    """Read-and-reset the in-effect exporter's dropped-span count, fail-open.
+
+    Resolves the exporter actually installed on the client's resource manager
+    (the same `_active_span_exporter` seam the wrapper-in-effect check uses),
+    because that - not a private registry - is the exporter that really
+    exports. Returns 0 when no retrying exporter is in effect (the SDK default
+    bypasses the wrapper, so no outcome is recordable) or the accessor raises;
+    a missing outcome is never a fabricated drop."""
+    exporter = _active_span_exporter(client)
+    take: Any = getattr(exporter, "take_dropped_spans", None)
+    if take is None:
+        return 0
+    try:
+        return int(take())
+    except Exception:  # noqa: BLE001 - fail-open: a drop-counter read never raises
+        logger.debug("langfuse exporter drop-counter read raised", exc_info=True)
+        return 0
+
+
 def flush_observation_delivery(callbacks: list | None = None) -> DeliveryResult:
     """Forced, blocking drain of the Langfuse background exporter (H1).
 
@@ -746,7 +833,24 @@ def flush_observation_delivery(callbacks: list | None = None) -> DeliveryResult:
     the process-wide singleton keyed by public key means a new construction
     may not carry the configured exporter). Pass the exact list the caller
     borrowed (`config["callbacks"]`); None sweeps the cached handler (the
-    teardown fallback where no turn context exists). Fail-open: never raises.
+    teardown fallback where no turn context exists, and the one primitive the
+    per-module run-end flushes delegate to).
+
+    A handler is `delivered` only when its `flush()` drained AND the in-effect
+    `RetryingSpanExporter` recorded no dropped spans in the window: the
+    counter is read-and-reset AFTER the drain, so a batch whose retry budget
+    was exhausted (a `BatchSpanProcessor` never retries a FAILURE batch) is
+    reported as `dropped` with cause "exporter-failed" instead of the old
+    misleading `delivered`. Because the counter accumulates until read, a drop
+    during the window - or any drop since the previous delivery read - is
+    surfaced; reading after the drain (rather than resetting before it) means
+    a concurrent drop can never be lost.
+
+    When tracing was enabled through `get_langfuse_callbacks`, a module that
+    flushes via the SDK's own `get_client()` reaches the SAME client here: the
+    handler is bound to that public key and both resolve the one process-wide
+    resource manager, so the exporter and its outcome are shared. Fail-open:
+    never raises, and delivery is never fatal - only the RESULT is truthful.
     """
     handlers = list(callbacks) if callbacks is not None else get_langfuse_callbacks()
     if not handlers:
@@ -761,15 +865,25 @@ def flush_observation_delivery(callbacks: list | None = None) -> DeliveryResult:
         flush = getattr(client, "flush", None)
         if not callable(flush):
             pending += 1
-            cause = "no-client"
+            cause = _worse_cause(cause, "no-client")
             continue
         try:
             flush()
-            delivered += 1
         except Exception:  # noqa: BLE001 - fail-open: delivery never breaks a run
             dropped += 1
-            cause = "flush-raised"
+            cause = _worse_cause(cause, "flush-raised")
             logger.warning("observation delivery flush raised (fail-open, dropped)",
                            exc_info=True)
+            continue
+        exporter_drops = _take_exporter_drops(client)
+        if exporter_drops:
+            dropped += 1
+            cause = _worse_cause(cause, "exporter-failed")
+            logger.warning(
+                "observation delivery flush drained but the exporter dropped "
+                "%d span(s) (fail-open, cause=exporter-failed)", exporter_drops,
+            )
+        else:
+            delivered += 1
     return DeliveryResult(delivered=delivered, pending=pending,
                           dropped=dropped, cause=cause)

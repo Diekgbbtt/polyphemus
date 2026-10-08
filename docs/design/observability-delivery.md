@@ -8,7 +8,8 @@
 ## Status
 
 * `#225 (closed): streamed generations recorded usage 0/0/0 because `stream_options.include_usage` never reached the wire; fixed at the single construction seam (`build_chat_model` passes `stream_usage=True`).`
-* `H1 (this spec, to build): finished observations are lost when the process dies before the background exporter fires; fixed by a forced client flush at turn end (primary) and teardown (fallback).`
+* `H1 (this spec, built): finished observations are lost when the process dies before the background exporter fires; fixed by a forced client flush at turn end (primary) and teardown (fallback).`
+* `#235 (closed, amends D1): the barrier reported `delivered` on a queue drain even when the retrying exporter dropped the batch (`No connection adapters` proven live). The result is now sourced from the exporter outcome, not the drain; see the delivery-truth ADR (`docs/design/observability-delivery-truth-235-adr.md`) and the amended D1 below.`
 * `#226 (open, referenced not absorbed): handler-path spans never land (custom exporter/mask suspect) and recon observations carry empty session/tags (contextvars-across-threads suspect); the bisect owns those questions.`
 
 ## Seam inventory (aligned to code)
@@ -29,7 +30,9 @@
 
 ## Decision D1: the forced delivery barrier
 
-* New primitive `flush_observation_delivery(callbacks=None) -> DeliveryResult` in `langfuse_tracing.py`: settle-defensive sweep of still-open runs (normally empty - both terminal paths detach), then a blocking `flush()` on each borrowed handler's OWN client (never a fresh client: the singleton hazard means a new one may not carry the configured exporter), returning `{delivered, pending, dropped, cause}` with the closed cause vocabulary (`ok`, `unconfigured`, `no-client`, `flush-raised`), never raising.`
+* New primitive `flush_observation_delivery(callbacks=None) -> DeliveryResult` in `langfuse_tracing.py`: settle-defensive sweep of still-open runs (normally empty - both terminal paths detach), then a blocking `flush()` on each borrowed handler's OWN client (never a fresh client: the singleton hazard means a new one may not carry the configured exporter), returning `{delivered, pending, dropped, cause}` with the closed cause vocabulary (`ok`, `unconfigured`, `no-client`, `exporter-failed`, `flush-raised`), never raising.`
+  * **Amended #235: `delivered` is sourced from the exporter outcome, not the queue drain.** The barrier is `delivered` only when the flush drained AND the in-effect `RetryingSpanExporter` recorded no dropped spans in the delivery window; a batch whose retry budget was exhausted (or a raising `flush()` itself) is `dropped` with cause `exporter-failed` / `flush-raised`. The wrapper keeps a monotonic dropped-span counter (`take_dropped_spans()`, read-and-reset) and the primitive reads it AFTER the drain, so a drop during the window - or any drop since the previous delivery read - can never be reported as `delivered`.`
+  * **All module run-end flushes route through this ONE primitive** (analyser tracing, analysis supervisor, analysis bootstrap, hunting tracing, orchestrator tracing), so no parallel `get_client().flush()` delivery path remains and every site shares the same truthful outcome. A module's SDK `get_client()` and the cached handler resolve the same process-wide client keyed by public key, so the primitive reaches that module's exporter.`
 * Primary site: end of `run_session_turn` / `arun_session_turn`, flushing exactly the callback list the turn borrowed (the same list it put in `config` - no global lookup on the hot path).`
 * Fallback site: the teardown walk, sweeping the cached handler where no turn context exists (mirrors the #211 bulk-flush fallback shape).`
 * Bounded in practice, documented as residual risk: the drain is one blocking exporter flush (the same blocking class as the turn's own model calls, so the sync turn calls it directly); async callers ride `asyncio.to_thread` so the loop never blocks (mirroring the #211 off-loop flush shape), with no `wait_for` guillotine (a cancelled drain would leave delivery state ambiguous - worse than slow).`
@@ -49,4 +52,5 @@
 ## Test strategy
 
 * Unit tier at the new seam with fakes (fake handler exposing an owned fake client recording `flush()` calls; raising/empty/timeout arms pinning the degraded results; turn-level test asserting the barrier receives exactly the borrowed list) - no live Langfuse by construction, mirroring the recipe's test canon.`
+* **#235 exporter-outcome arms** (`tests/test_langfuse_delivery_barrier.py`, fake exporter, no network): success (`delivered`/`ok`), a dropping exporter (`dropped`/`exporter-failed`, never `delivered`), a multi-batch flush window with one dropped batch, read-and-reset isolation across flushes, and the fail-open never-raises contract for a raising `flush()`, a raising exporter read, and both together.`
 * Live tier: the H1 two-arm loop (control `os._exit` without flush vs barrier `os._exit` after flush, trace-id-direct read-back) is the regression proof for delivery; the marked-stream probe is the proof for usage.`

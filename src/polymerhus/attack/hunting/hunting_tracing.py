@@ -45,11 +45,15 @@ def trace_span(name: str, *, input=None, output=None, run_id: str | None = None,
 
 def flush_hunting_traces() -> None:
     """Flush pending spans (a run worker may exit before the background exporter
-    fires). `flush`, never `shutdown` - the client is a process-wide singleton
-    later runs reuse."""
+    fires). Delegates to the ONE delivery primitive `flush_observation_delivery`,
+    which sweeps the cached handler bound to the same process-wide client the
+    hunt's own `get_client()` resolves, so the flush's outcome is truthful (an
+    exporter drop is visible, #235). `flush`, never `shutdown`; fail-open."""
     try:
-        from langfuse import get_client
+        from polymerhus.app.observability.langfuse_tracing import (
+            flush_observation_delivery,
+        )
 
-        get_client().flush()
+        flush_observation_delivery()
     except Exception:
         logger.debug("flush_hunting_traces failed", exc_info=True)

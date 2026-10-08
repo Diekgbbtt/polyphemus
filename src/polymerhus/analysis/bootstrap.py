@@ -480,12 +480,19 @@ def _score_breadth(services_written: int) -> None:
 
 def _flush_traces() -> None:
     """Flush before returning: a bootstrap is short-lived and may run in a request
-    worker that exits before the background exporter fires (`flush`, never `shutdown`
-    - the client is a process-wide singleton later runs reuse)."""
-    try:
-        from langfuse import get_client
+    worker that exits before the background exporter fires (`flush`, never
+    `shutdown` - the client is a process-wide singleton later runs reuse).
 
-        get_client().flush()
+    Delegates to the ONE delivery primitive `flush_observation_delivery`, which
+    sweeps the cached handler bound to the same process-wide client the
+    bootstrap's own `get_client()` resolves, so the flush's outcome is truthful
+    (an exporter drop is visible, #235). Fail-open."""
+    try:
+        from polymerhus.app.observability.langfuse_tracing import (
+            flush_observation_delivery,
+        )
+
+        flush_observation_delivery()
     except Exception:
         logger.debug("bootstrap: Langfuse flush failed", exc_info=True)
 

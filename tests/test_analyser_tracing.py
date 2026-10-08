@@ -108,11 +108,14 @@ def test_step_helpers_without_run_id_keep_ambient_behaviour(monkeypatch):
     assert [c[0] for c in calls] == ["update", "observation", "update"]
 
 
-def test_flush_delegates_to_client(monkeypatch):
+def test_flush_delegates_to_the_one_delivery_primitive(monkeypatch):
+    from polymerhus.app.observability import langfuse_tracing as lt
+
     calls = []
-    monkeypatch.setitem(sys.modules, "langfuse", _fake_langfuse(calls))
+    monkeypatch.setattr(lt, "flush_observation_delivery",
+                        lambda *a, **k: calls.append((a, k)))
     analyser_tracing.flush_analyser_traces()
-    assert ("flush", {}) in calls
+    assert calls == [((), {})]
 
 
 def test_all_helpers_fail_open_when_langfuse_raises(monkeypatch):

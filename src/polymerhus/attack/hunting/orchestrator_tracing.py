@@ -37,10 +37,17 @@ def trace_gate_step(name: str, *, input=None, output=None, run_id: str | None = 
 
 
 def flush_orchestrator_traces() -> None:
-    """Flush the current client's pending observations."""
-    try:
-        from langfuse import get_client
+    """Flush the current client's pending observations.
 
-        get_client().flush()
+    Delegates to the ONE delivery primitive `flush_observation_delivery`, which
+    sweeps the cached handler bound to the same process-wide client the
+    orchestrator's own `get_client()` resolves, so the flush's outcome is
+    truthful (an exporter drop is visible, #235). Fail-open."""
+    try:
+        from polymerhus.app.observability.langfuse_tracing import (
+            flush_observation_delivery,
+        )
+
+        flush_observation_delivery()
     except Exception:  # noqa: BLE001
         logger.debug("flush_orchestrator_traces failed", exc_info=True)
