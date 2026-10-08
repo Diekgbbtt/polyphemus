@@ -49,7 +49,10 @@ Live tests reaching Neo4j through the config-backed `neo4j_client` are handled t
 
 **Unit tier** - the default; needs nothing running:
 
-    .venv/bin/python -m pytest tests/ -q
+    .venv/bin/python -m pytest tests/ -q --ignore=tests/e2e --ignore=tests/integration
+
+The `--ignore` flags keep the live tier (`tests/e2e/`, `tests/integration/`) out of the unit command.
+The degraded-backend e2e (`tests/e2e/test_health_degraded.py`) is additionally opt-in: it skips unless `PH_E2E_LIVE=1`, because it brings up and degrades a live compose stack.
 
 **Integration / E2E tier** - run INSIDE the compose network, which is the sanctioned path:
 
@@ -65,7 +68,7 @@ Running the live tiers from the host also works (Bolt is published), and `neo4j_
 
 ## 5. Two known hazards when running the suite
 
-- **`tests/e2e/test_stack_smoke.py` runs `docker compose up -d --build`.** A plain suite run therefore rebuilds and restarts your stack. Do not run the host suite and an in-network run concurrently - the restart will make the concurrent run's Postgres-gated tests skip, which looks like a regression and is not.
+- **`tests/test_stack_smoke.py` runs `docker compose up -d --build`.** A plain suite run therefore rebuilds and restarts your stack. Do not run the host suite and an in-network run concurrently - the restart will make the concurrent run's Postgres-gated tests skip, which looks like a regression and is not. The `--ignore=tests/e2e` on the unit command does not reach this root-level live test; relocating it into `tests/e2e/` is tracked as a follow-up (#33 notes).
 - **Python version divergence.** The test container is Python **3.11**; the host venv is **3.13**. The tier passes on both, but CI running only in-network would silently stop covering 3.13.
 
 ## 6. The failure modes this design exists to prevent
