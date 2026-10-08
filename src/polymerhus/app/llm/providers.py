@@ -1,6 +1,7 @@
 import hashlib
 import logging
 import os
+import time
 from dataclasses import dataclass
 from typing import Callable, Literal, Sequence
 
@@ -13,6 +14,13 @@ from pydantic import PrivateAttr
 from polymerhus.app.llm.conversation import current_conversation_id
 
 logger = logging.getLogger(__name__)
+
+# The transient-backoff wait seam (#299): a module-level indirection so the unit
+# tier injects a fake clock (the actor uses its own async `_sleep`). Production
+# is `time.sleep`; a retry that must ride out a real upstream window genuinely
+# waits.
+_sleep = time.sleep
+
 
 class LLMConfigError(RuntimeError):
     """Raised at bootstrap when an agent role references a provider/model
@@ -163,7 +171,10 @@ def attempt_timeouts() -> tuple[float, ...]:
     return tuple(out)
 
 
-def invoke_with_escalating_timeout(call):
+def invoke_with_escalating_timeout(call, *, conversation_id: str | None = None,
+                                   model: str | None = None,
+                                   max_attempts: int | None = None,
+                                   fallback: "Callable[[], object] | None" = None):
     """Drive one logical LLM call across the escalating budget schedule.
 
     `call(read_timeout_s: float)` performs a SINGLE attempt bounded by the given
@@ -180,25 +191,93 @@ def invoke_with_escalating_timeout(call):
       caller. The last error is logged so exhaustion is never silent.
 
     The whole point is that budget GROWS per attempt, so a legitimately slow
-    reasoning call is not guillotined at a fixed ceiling."""
+    reasoning call is not guillotined at a fixed ceiling.
+
+    #299: a raise the shared classifier calls TRANSIENT (the exact opencode-go
+    deepseek single-model-echo 400, plus transport/timeout/5xx/429) is retried
+    with a jittered temporal backoff between attempts AND a rotated conversation
+    id per attempt, so the seam rides out a short upstream window instead of
+    re-firing inside it with the same session. The lane identity for the
+    classifier rides the `model` label (`<provider>:<model>`); a bare model id
+    (or none) leaves the lane leg unmatched, so the classifier never branches on
+    a model id alone. A non-transient raise keeps today's immediate escalation
+    (no window wait it would not outlast). `conversation_id` overrides the
+    ambient id base (default None = the ambient/process-stable id); attempt 0
+    keeps the base, later attempts append `#r<attempt>`. `max_attempts` bounds
+    the schedule (the bounded fallback uses 1).
+
+    `fallback` (#299, D-1) is the bounded alternate-model invocation the caller
+    wires. It fires ONLY when the schedule is exhausted on a TRANSIENT fault (the
+    opencode-go window) or on an all-None unmet-generation run - never on a
+    deterministic `contract`/`fatal` raise, so a client-contract 400 (or an empty
+    /foreign 400) can never arm it. None (the default) disables it, so existing
+    callers are unchanged."""
+    from polymerhus.app.llm.conversation import conversation_scope, current_conversation_id
+    from polymerhus.app.llm.provider_failure import status_code
+    from polymerhus.app.llm.transient import (
+        classify_error,
+        jittered_backoff,
+        record_transient,
+        body_shape as _body_shape,
+        rotate_conversation,
+    )
+
+    # The D-1 lane identity for the 400 classifier: `model` is the caller's
+    # `<provider>:<model>` label. A label without a provider (or none) yields
+    # (None, None), so a bare model id never matches the transient signature.
+    provider_label, model_id = ((model.split(":", 1) if ":" in model else (None, None))
+                                if model else (None, None))
+
     schedule = attempt_timeouts()
+    if max_attempts is not None:
+        schedule = schedule[:max(1, max_attempts)]
+    base = conversation_id if conversation_id is not None else current_conversation_id()
     last_exc: Exception | None = None
-    for i, budget in enumerate(schedule, 1):
+    for i, budget in enumerate(schedule):
+        attempt = i + 1
+        rotated = rotate_conversation(base, i)
         try:
-            result = call(budget)
+            with conversation_scope(rotated):
+                result = call(budget)
         except Exception as exc:  # transport / timeout / transient parse - escalate
             last_exc = exc
             logger.warning("llm attempt %d/%d (budget %.0fs) raised: %s",
-                           i, len(schedule), budget, exc)
+                           attempt, len(schedule), budget, exc)
+            kind = classify_error(exc, provider=provider_label, model=model_id)
+            if kind == "transient":
+                record_transient(role="one_shot", model=model or "unknown",
+                                 conversation_id=rotated, attempt=attempt,
+                                 status=status_code(exc), body_shape=_body_shape(exc))
+                if attempt < len(schedule):
+                    _sleep(jittered_backoff(attempt))
+            elif kind == "contract" or status_code(exc) == 400:
+                # A deterministic HTTP 400 - a recognisable contract error, an
+                # empty body, a foreign-model echo, or an unrecognised envelope -
+                # fails fast: retrying it wastes the whole schedule on a client
+                # error and it must never arm the fallback (D-1). A non-400
+                # `fatal` raise (e.g. a transient structured-parse failure) keeps
+                # today's immediate escalation.
+                logger.warning("llm attempt %d/%d hit a deterministic 400; not retrying: %s",
+                               attempt, len(schedule), exc)
+                break
             continue
         if result is not None:
             return result
         logger.warning("llm attempt %d/%d (budget %.0fs) returned no result; escalating",
-                       i, len(schedule), budget)
+                       attempt, len(schedule), budget)
     if last_exc is not None:
         logger.warning("llm exhausted the escalating schedule; last error: %s (fail-closed to None)",
                        last_exc)
+    # The bounded fallback (D-1) is armed ONLY for a transient exhaustion, or an
+    # all-None unmet-generation run (last_exc is None). A deterministic
+    # contract/fatal raise - an empty/foreign/contract 400, an application error -
+    # never arms it.
+    if fallback is not None and (
+            last_exc is None
+            or classify_error(last_exc, provider=provider_label, model=model_id) == "transient"):
+        return fallback()
     return None
+
 
 
 PROVIDERS: dict[str, str] = {
@@ -477,6 +556,37 @@ def resolve_role(role: str) -> tuple[str, str]:
         )
     provider, model = raw.split(":", 1)
     return provider.strip(), model.strip()
+
+
+def _fallback_model_key(role: str) -> str:
+    """The per-role fallback env var name, `LLM_FALLBACK_<ROLE>` (uppercased,
+    hyphen->underscore), mirroring the provider `_key_env` convention."""
+    return f"LLM_FALLBACK_{role.upper().replace('-', '_')}"
+
+
+def resolve_fallback(role: str) -> tuple[str, str] | None:
+    """The bounded fallback model for a role, or None when disabled (#299).
+
+    Resolution order: the per-role `LLM_FALLBACK_<ROLE>` then the global
+    `LLM_FALLBACK_MODEL`; both carry `<provider>:<model>` (the same shape
+    `resolve_role` reads). It is used ONLY after the primary escalating schedule
+    is exhausted on a transient fault, and exactly once, so it mitigates a lane
+    outage without masking a sustained one. An unconfigured environment returns
+    None, so behaviour is unchanged. A malformed value is a config lie, but this
+    reads mid-retry, so it fails open (loud warning, None) rather than convert a
+    recoverable turn into a hard failure."""
+    for key in (_fallback_model_key(role), "LLM_FALLBACK_MODEL"):
+        raw = os.environ.get(key)
+        if raw is None or raw.strip() == "":
+            continue
+        if ":" not in raw:
+            logger.warning("%s must be '<provider>:<model>' (got %r); ignoring",
+                           key, raw)
+            return None
+        provider, model = raw.split(":", 1)
+        return provider.strip(), model.strip()
+    return None
+
 
 def _is_forced_tool_choice(tool_choice) -> bool:
     """Whether a `bind_tools` `tool_choice` FORCES a tool call (A6): `"any"`,

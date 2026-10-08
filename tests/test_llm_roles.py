@@ -402,3 +402,142 @@ def test_union_schema_is_refused_loudly_on_the_one_shot_seam():
     with _pytest.raises(ValueError, match="union"):
         roles.structured_output_for(llm, _Closed | _OpenDict, "json_schema")
     assert llm.wso_calls == []
+
+
+# ---------------------------------------------------------------------------
+# #299: the bounded model fallback after a transient exhaustion
+# ---------------------------------------------------------------------------
+
+def _bare_400():
+    import httpx
+    import openai
+
+    response = httpx.Response(
+        400, request=httpx.Request("POST", "https://x.test/v1"),
+        json={"model": "deepseek-v4.1-flash"})
+    return openai.BadRequestError("Error code: 400", response=response,
+                                  body={"model": "deepseek-v4.1-flash"})
+
+
+class _FlakyFreeText:
+    """A free-text `build_chat_model` stand-in: the primary model raises the
+    transient bare-400 every call; any other model answers."""
+
+    def __init__(self, model):
+        self.model = model
+
+    def invoke(self, messages):
+        if self.model == "deepseek-v4.1-flash":
+            raise _bare_400()
+        from langchain_core.messages import AIMessage
+
+        return AIMessage(content="fallback-ok")
+
+
+def test_chat_model_for_model_override_wins_over_the_role(monkeypatch):
+    seen = {}
+
+    def fake_build(provider, model, **kwargs):
+        seen.update(provider=provider, model=model, kwargs=kwargs)
+        return object()
+
+    monkeypatch.setattr(roles, "build_chat_model", fake_build)
+    roles.chat_model_for("triager", model_override=("opencode-go", "glm-5.2"))
+    assert seen["provider"] == "opencode-go"
+    assert seen["model"] == "glm-5.2"
+
+
+def test_chat_model_for_without_override_resolves_the_role(monkeypatch):
+    monkeypatch.setenv("LLM_TRIAGER", "openrouter:some/model")
+    seen = {}
+
+    def fake_build(provider, model, **kwargs):
+        seen.update(provider=provider, model=model)
+        return object()
+
+    monkeypatch.setattr(roles, "build_chat_model", fake_build)
+    roles.chat_model_for("triager")
+    assert (seen["provider"], seen["model"]) == ("openrouter", "some/model")
+
+
+def test_invoke_role_uses_the_fallback_once_after_transient_exhaustion(monkeypatch):
+    """With `LLM_FALLBACK_<ROLE>` set and the primary schedule exhausted on a
+    transient bare-400, the fallback model is attempted exactly once and its
+    result returned - so a short window does not drop the extraction (#285)."""
+    from polymerhus.app.llm import providers as P
+
+    monkeypatch.setenv("LLM_TRIAGER", "opencode-go:deepseek-v4.1-flash")
+    monkeypatch.setenv("LLM_FALLBACK_TRIAGER", "opencode-go:glm-5.2")
+    monkeypatch.setenv("LLM_ATTEMPT_TIMEOUTS_S", "1")
+    monkeypatch.setattr(P, "_sleep", lambda _s: None)
+    built: list[str] = []
+
+    def fake_build(provider, model, **kwargs):
+        built.append(model)
+        return _FlakyFreeText(model)
+
+    monkeypatch.setattr(roles, "build_chat_model", fake_build)
+    assert roles.invoke_role("triager", []) == "fallback-ok"
+    assert built == ["deepseek-v4.1-flash", "glm-5.2"]
+
+
+def test_invoke_role_without_a_fallback_fail_closes_to_none(monkeypatch):
+    from polymerhus.app.llm import providers as P
+
+    monkeypatch.setenv("LLM_TRIAGER", "opencode-go:deepseek-v4.1-flash")
+    monkeypatch.delenv("LLM_FALLBACK_TRIAGER", raising=False)
+    monkeypatch.delenv("LLM_FALLBACK_MODEL", raising=False)
+    monkeypatch.setenv("LLM_ATTEMPT_TIMEOUTS_S", "1")
+    monkeypatch.setattr(P, "_sleep", lambda _s: None)
+    monkeypatch.setattr(roles, "build_chat_model",
+                        lambda provider, model, **kw: _FlakyFreeText(model))
+    assert roles.invoke_role("triager", []) is None
+
+
+# --- #299 D-1: a non-lane 400 neither retries nor arms the fallback -----------
+
+
+class _NonLane400:
+    """A `build_chat_model` stand-in that raises a 400 which is NOT the exact
+    opencode-go deepseek lane signature (an empty body, a foreign model echo, or
+    a multi-key envelope), for every call."""
+
+    def __init__(self, body):
+        self._body = body
+
+    def invoke(self, messages):
+        import httpx
+        import openai
+
+        response = httpx.Response(
+            400, request=httpx.Request("POST", "https://x.test/v1"),
+            json=self._body if self._body is not None else None)
+        raise openai.BadRequestError("Error code: 400", response=response,
+                                     body=self._body)
+
+
+def test_invoke_role_does_not_retry_or_fall_back_on_a_non_lane_400(monkeypatch):
+    """D-1: an empty 400, a foreign-model echo, and a multi-key envelope are NOT
+    the lane signature, so the one-shot seam does not arm the configured fallback
+    (and does not spend the schedule pretending they are a window)."""
+    from polymerhus.app.llm import providers as P
+
+    monkeypatch.setenv("LLM_TRIAGER", "opencode-go:deepseek-v4.1-flash")
+    monkeypatch.setenv("LLM_FALLBACK_TRIAGER", "opencode-go:glm-5.2")
+    monkeypatch.setenv("LLM_ATTEMPT_TIMEOUTS_S", "1, 2, 3")
+    monkeypatch.setattr(P, "_sleep", lambda _s: None)
+    built: list[str] = []
+
+    def fake_build(provider, model, **kwargs):
+        built.append(model)
+        return _NonLane400(body)
+
+    monkeypatch.setattr(roles, "build_chat_model", fake_build)
+    for body in (None,                                  # empty 400
+                 {"model": "something-else"},           # foreign model echo
+                 {"error": {"message": "x"},
+                  "model": "deepseek-v4.1-flash"}):     # multi-key envelope
+        built.clear()
+        assert roles.invoke_role("triager", []) is None
+        # one attempt, no retry, and no fallback build
+        assert built == ["deepseek-v4.1-flash"]

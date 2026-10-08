@@ -320,6 +320,7 @@ def test_escalating_invoke_grows_the_budget_and_returns_first_success(monkeypatc
     """A slow-but-healthy call that misses the first budget succeeds on a later,
     larger one - and the budget handed to each attempt strictly grows."""
     monkeypatch.setenv("LLM_ATTEMPT_TIMEOUTS_S", "1, 2, 4")
+    monkeypatch.setattr(P, "_sleep", lambda _s: None)  # no real backoff wait
     seen: list[float] = []
 
     def call(budget):
@@ -336,6 +337,7 @@ def test_escalating_invoke_fail_closes_to_none_after_all_attempts_raise(monkeypa
     (the caller's established empty-step signal) - it never re-raises to crash the
     caller, and never hangs."""
     monkeypatch.setenv("LLM_ATTEMPT_TIMEOUTS_S", "1, 2")
+    monkeypatch.setattr(P, "_sleep", lambda _s: None)  # no real backoff wait
     budgets: list[float] = []
 
     def call(budget):
@@ -945,3 +947,126 @@ def test_a6_build_chat_model_passes_relax_flag_from_profile(monkeypatch):
     monkeypatch.setattr(P, "ReasoningPreservingChatOpenAI", spy)
     P.build_chat_model("openai", "gpt-4o")
     assert seen.get("relax_forced_tool_choice") is True
+
+
+# --- #299: the one-shot seam rides out a transient window ---------------------
+
+def test_escalating_invoke_backs_off_and_rotates_the_conversation(monkeypatch):
+    """A transient raise is retried under the escalating budget with a jittered,
+    temporal backoff between attempts AND a rotated conversation id per attempt,
+    so the one-shot seam rides out the opencode-go window instead of re-firing
+    inside it with the same session."""
+    from polymerhus.app.llm.conversation import current_conversation_id
+
+    monkeypatch.setenv("LLM_ATTEMPT_TIMEOUTS_S", "1, 2, 3")
+    monkeypatch.setenv("LLM_TRANSIENT_JITTER", "0")
+    sleeps: list[float] = []
+    monkeypatch.setattr(P, "_sleep", lambda s: sleeps.append(s))
+    base = current_conversation_id()
+    seen: list[str] = []
+
+    def call(budget):
+        seen.append(current_conversation_id())
+        if budget < 3:
+            raise TimeoutError("window")
+        return "ok"
+
+    assert P.invoke_with_escalating_timeout(call) == "ok"
+    assert seen[0] == base                 # attempt 0 keeps the ambient id
+    assert seen[1] == f"{base}#r1"         # each retry rotates
+    assert seen[2] == f"{base}#r2"
+    assert sleeps == [2.0, 4.0]            # jittered transient backoff, jitter=0
+
+
+def test_escalating_invoke_does_not_sleep_on_a_non_transient_raise(monkeypatch):
+    """A non-transient raise keeps today's immediate escalation: the transient
+    backoff is reserved for the transient class, so a parse/fatal retry is not
+    delayed by a window wait it will not outlast."""
+    monkeypatch.setenv("LLM_ATTEMPT_TIMEOUTS_S", "1, 2")
+    sleeps: list[float] = []
+    monkeypatch.setattr(P, "_sleep", lambda s: sleeps.append(s))
+
+    def call(budget):
+        raise ValueError("a non-transient parse error still escalates as today")
+
+    assert P.invoke_with_escalating_timeout(call) is None
+    assert sleeps == []
+
+
+def test_escalating_invoke_fail_fasts_on_a_contract_400(monkeypatch):
+    """A recognisable actionable 400 is not a window: the one-shot seam stops at
+    the first attempt, so a deterministic client error is never masked by the
+    transient ride-out."""
+    import httpx
+    import openai
+
+    monkeypatch.setenv("LLM_ATTEMPT_TIMEOUTS_S", "1, 2, 3")
+    monkeypatch.setattr(P, "_sleep", lambda _s: None)
+    attempts: list[float] = []
+
+    def call(budget):
+        attempts.append(budget)
+        body = {"error": {"message": "MissingSessionID"}}
+        response = httpx.Response(
+            400, request=httpx.Request("POST", "https://x.test/v1"), json=body)
+        raise openai.BadRequestError("Error code: 400", response=response, body=body)
+
+    assert P.invoke_with_escalating_timeout(call) is None
+    assert attempts == [1.0]  # one attempt, no retry
+
+
+def test_escalating_invoke_max_attempts_bounds_the_fallback(monkeypatch):
+    """The bounded fallback: `max_attempts` caps the schedule so a fallback model
+    is tried exactly once, never a whole second schedule."""
+    monkeypatch.setenv("LLM_ATTEMPT_TIMEOUTS_S", "1, 2, 3, 4")
+    monkeypatch.setattr(P, "_sleep", lambda _s: None)
+    budgets: list[float] = []
+
+    def call(budget):
+        budgets.append(budget)
+        raise TimeoutError("down")
+
+    assert P.invoke_with_escalating_timeout(call, max_attempts=1) is None
+    assert budgets == [1.0]
+
+
+# --- #299: the bounded fallback model resolution ------------------------------
+
+def test_resolve_fallback_prefers_the_per_role_override(monkeypatch):
+    monkeypatch.setenv("LLM_FALLBACK_TRIAGER", "opencode-go:glm-5.2")
+    monkeypatch.setenv("LLM_FALLBACK_MODEL", "opencode-go:deepseek-v4-pro")
+    assert P.resolve_fallback("triager") == ("opencode-go", "glm-5.2")
+
+
+def test_resolve_fallback_falls_through_to_the_global(monkeypatch):
+    monkeypatch.delenv("LLM_FALLBACK_TRIAGER", raising=False)
+    monkeypatch.setenv("LLM_FALLBACK_MODEL", "opencode-go:glm-5.2")
+    assert P.resolve_fallback("triager") == ("opencode-go", "glm-5.2")
+
+
+def test_resolve_fallback_unset_is_none(monkeypatch):
+    monkeypatch.delenv("LLM_FALLBACK_TRIAGER", raising=False)
+    monkeypatch.delenv("LLM_FALLBACK_MODEL", raising=False)
+    assert P.resolve_fallback("triager") is None
+
+
+def test_resolve_fallback_malformed_is_none_and_loud(monkeypatch, caplog):
+    monkeypatch.setenv("LLM_FALLBACK_TRIAGER", "not-a-provider-model")
+    with caplog.at_level("WARNING"):
+        assert P.resolve_fallback("triager") is None
+    assert any("LLM_FALLBACK_TRIAGER" in r.getMessage() for r in caplog.records)
+
+
+# --- #299: the shared status reader is public ---------------------------------
+
+def test_status_code_reads_the_typed_error(monkeypatch):
+    import openai
+
+    from polymerhus.app.llm.provider_failure import status_code
+    import httpx
+
+    response = httpx.Response(
+        400, request=httpx.Request("POST", "https://x.test/v1"))
+    exc = openai.BadRequestError("Error code: 400", response=response, body=None)
+    assert status_code(exc) == 400
+    assert status_code(ValueError("nope")) is None

@@ -65,10 +65,16 @@ from typing import Any, Awaitable, Callable, Sequence
 
 from langchain_core.messages import BaseMessage
 
-from polymerhus.app.llm.providers import attempt_timeouts
+from polymerhus.app.llm.providers import attempt_timeouts, resolve_fallback
 from polymerhus.app.llm.session import SessionTurn, arun_session_turn
 
 logger = logging.getLogger(__name__)
+
+
+async def _sleep(seconds: float) -> None:
+    """The transient-backoff wait (#299). Off the loop, so a retry that must ride
+    out a real upstream window genuinely waits; the unit tier injects a no-op."""
+    await asyncio.sleep(seconds)
 
 
 class _Stop:
@@ -175,17 +181,43 @@ async def _coerce(value):
     return await value if inspect.isawaitable(value) else value
 
 
-def _is_retryable(exc: BaseException) -> bool:
-    """Classify a turn raise as retryable: the transport/timeout/5xx/429 class
-    (#186). Delegates to the shared `app/llm/provider_failure` classifier (#329)
-    so the actor's retry budget and the provider-failure classification can never
-    drift; a raise that matches none of the known classes is non-provider (a
-    genuine application error degrades immediately rather than burning the
-    escalating budget). Lazy import keeps this module's import I/O- and
-    env-var-free (CODING_STANDARD section 6)."""
-    from polymerhus.app.llm.provider_failure import is_provider_unavailable
+def _lane_identity(role_id: str) -> tuple[str | None, str | None]:
+    """The `(provider, model)` a role's turn routes to, resolved lazily and
+    fail-open: an unset/unresolvable role config yields `(None, None)`, so the
+    D-1 lane leg of the bare-400 signature can never match on a model id alone."""
+    try:
+        from polymerhus.app.llm.providers import resolve_role
 
-    return is_provider_unavailable(exc)
+        return resolve_role(role_id)
+    except Exception:  # noqa: BLE001 - an unresolved role never blocks a retry
+        return None, None
+
+
+def _is_retryable(exc: BaseException, *, role_id: str | None = None) -> bool:
+    """Classify a turn raise as retryable: the shared transient classifier (#299),
+    which is the transport/timeout/5xx/429 class (#186, via the
+    `provider_failure` classifier #329) PLUS the EXACT opencode-go deepseek
+    single-model-echo 400 (operator ruling D-1). A raise that matches none of
+    these is non-transient (a contract 400, an empty/foreign 400, or a genuine
+    application error) and degrades immediately rather than burning the
+    escalating budget. Lazy import keeps this module's import I/O- and
+    env-var-free (CODING_STANDARD section 6)."""
+    from polymerhus.app.llm.transient import classify_error
+
+    provider, model = _lane_identity(role_id) if role_id is not None else (None, None)
+    return classify_error(exc, provider=provider, model=model) == "transient"
+
+
+def _model_label(role_id: str) -> str:
+    """The `provider:model` label for a role's transient record, resolved
+    lazily and fail-open (an unset role config falls back to the role id)."""
+    try:
+        from polymerhus.app.llm.providers import resolve_role
+
+        provider, model = resolve_role(role_id)
+        return f"{provider}:{model}"
+    except Exception:  # noqa: BLE001 - a label never breaks a retry
+        return role_id
 
 
 async def run_session_agent(
@@ -240,51 +272,95 @@ async def run_session_agent(
     )
 
     async def _run_turn_attempt(messages: Sequence[BaseMessage], *,
-                                read_timeout_s: float | None = None) -> SessionTurn:
+                                read_timeout_s: float | None = None,
+                                conversation_id: str | None = None,
+                                model_override: tuple[str, str] | None = None) -> SessionTurn:
         return await arun_session_turn(
             role_id, thread_id, list(messages), read_timeout_s=read_timeout_s,
+            conversation_id=conversation_id, model_override=model_override,
             **turn_kwargs,
         )
 
     async def _turn(messages: Sequence[BaseMessage]) -> SessionTurn | None:
         """Take ONE turn on the thread, isolated against a raising LLM (#186):
-        retry the retryable class (transport/timeout/5xx/429) under the bounded
-        escalating per-attempt budget, then DEGRADE - wake the parent with a
-        no-decision reply via `on_turn_degraded` - so the actor task survives
-        for the next turn. A `CancelledError` is re-raised first (a task
-        cancellation is the natural retirement, never a degrade). The retry
-        re-invokes `arun_session_turn` with the SAME `new_messages`; langgraph
-        commits only successful super-steps and `add_messages` dedups by message
-        id, so the committed trail stays idempotent across the attempts."""
-        try:
-            turn = await _run_turn_attempt(messages)
-            result.turns.append(turn)
-            return turn
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:  # noqa: BLE001 - the isolation boundary
-            last_exc = exc
-            if _is_retryable(exc):
-                for budget in attempt_timeouts()[1:]:
-                    try:
-                        turn = await _run_turn_attempt(messages, read_timeout_s=budget)
-                        result.turns.append(turn)
-                        return turn
-                    except asyncio.CancelledError:
-                        raise
-                    except Exception as rexc:  # noqa: BLE001 - classify, then continue
-                        last_exc = rexc
-                        if not _is_retryable(rexc):
-                            break
-            # retry budget exhausted (or a non-retryable raise): degrade. The
-            # turn never happened - it is NOT appended to `result.turns` - and
-            # the actor survives; the parent is woken so its fail-open fires
-            # per-turn, never through a dead-task race.
-            logger.warning("actor turn degraded on %s/%s: %s (the actor survives)",
-                           role_id, thread_id, last_exc)
-            if on_turn_degraded is not None:
-                await _coerce(on_turn_degraded(thread_id, last_exc))
-            return None
+        retry the TRANSIENT class (transport/timeout/5xx/429, and the #299
+        opencode-go bare-400 window) under the bounded escalating per-attempt
+        budget, then DEGRADE - wake the parent with a no-decision reply via
+        `on_turn_degraded` - so the actor task survives for the next turn. A
+        `CancelledError` is re-raised first (a task cancellation is the natural
+        retirement, never a degrade).
+
+        #299: each transient retry sleeps a jittered temporal backoff (to ride
+        out a short upstream window rather than re-fire inside it) and rotates
+        the provider conversation id (`<thread_id>#r<attempt>`, abandoning a
+        pinned bad upstream replica) while the checkpointer keeps `thread_id`,
+        so agent memory is never forked. A contract/fatal raise degrades
+        immediately. On schedule exhaustion a configured fallback model is
+        attempted EXACTLY once. The retry re-invokes `arun_session_turn` with
+        the SAME `new_messages`; langgraph commits only successful super-steps
+        and `add_messages` dedups by message id, so the committed trail stays
+        idempotent across the attempts."""
+        from polymerhus.app.llm.provider_failure import status_code
+        from polymerhus.app.llm.transient import (
+            jittered_backoff,
+            record_transient,
+            body_shape as _body_shape,
+            rotate_conversation,
+        )
+
+        schedule = attempt_timeouts()
+        attempt = 0
+        last_exc: Exception | None = None
+        while attempt < len(schedule):
+            rotated = rotate_conversation(thread_id, attempt)
+            try:
+                turn = await _run_turn_attempt(
+                    messages,
+                    read_timeout_s=(None if attempt == 0 else schedule[attempt]),
+                    conversation_id=rotated,
+                )
+                result.turns.append(turn)
+                return turn
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - the isolation boundary
+                last_exc = exc
+                if not _is_retryable(exc, role_id=role_id):
+                    break  # contract/fatal: stop now
+                record_transient(role=role_id, model=_model_label(role_id),
+                                 conversation_id=rotated, attempt=attempt,
+                                 status=status_code(exc), body_shape=_body_shape(exc))
+                attempt += 1
+                if attempt < len(schedule):
+                    await _sleep(jittered_backoff(attempt))
+        else:
+            # The whole transient schedule was exhausted: a configured fallback
+            # model is attempted EXACTLY once, so a lane outage is mitigated
+            # without masking a sustained one.
+            fallback = resolve_fallback(role_id)
+            if fallback is not None:
+                try:
+                    turn = await _run_turn_attempt(
+                        messages, read_timeout_s=schedule[-1],
+                        conversation_id=rotate_conversation(thread_id, len(schedule)),
+                        model_override=fallback,
+                    )
+                    result.turns.append(turn)
+                    return turn
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:  # noqa: BLE001 - classify, then degrade
+                    last_exc = exc
+        # retry budget exhausted (or a non-transient raise): degrade. The
+        # turn never happened - it is NOT appended to `result.turns` - and
+        # the actor survives; the parent is woken so its fail-open fires
+        # per-turn, never through a dead-task race.
+        logger.warning("actor turn degraded on %s/%s: %s (the actor survives)",
+                       role_id, thread_id, last_exc)
+        if on_turn_degraded is not None:
+            degrade_cause = last_exc or RuntimeError("actor turn degraded without a cause")
+            await _coerce(on_turn_degraded(thread_id, degrade_cause))
+        return None
 
     last_turn: SessionTurn | None = None
     if initial_messages:

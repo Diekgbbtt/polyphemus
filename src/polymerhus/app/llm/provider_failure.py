@@ -8,8 +8,10 @@ it outright, and the test-executor pod can refuse to write a fabricated domain
 verdict.
 
 The classifier is shared, not duplicated. `app/llm/actor.py::_is_retryable`
-delegates here, so the actor retry budget and the failure classification can
-never drift; the pod, the pod triager, and the hunting runtime consume the same
+delegates to the transient classifier (#299, `app/llm/transient.py`), which
+calls `is_provider_unavailable` here for the transport/timeout/5xx/429 class, so
+the actor retry budget and the failure classification can never drift; the pod,
+the pod triager, and the hunting runtime consume the same
 `is_provider_unavailable` / `as_provider_error` pair.
 
 Import discipline (CODING_STANDARD section 6): the module top imports stdlib
@@ -120,6 +122,13 @@ def _status_code(exc: BaseException) -> int | None:
     return status if isinstance(status, int) else None
 
 
+def status_code(exc: BaseException) -> int | None:
+    """The raise's HTTP status, public: the shared reader the transient-upstream
+    classifier (#299) reuses, so a bare-400 is detected by the same status
+    reading the provider-failure classifier uses."""
+    return _status_code(exc)
+
+
 def retry_after_seconds(exc: BaseException) -> float | None:
     """The provider's `Retry-After` hint in seconds, when present and parseable.
     Accepts both the numeric delta-seconds form and an HTTP-date. Fail-open:
@@ -158,9 +167,11 @@ def _is_quota_exhausted(exc: BaseException) -> bool:
 
 def is_provider_unavailable(exc: BaseException) -> bool:
     """Classify a raise as a provider/LLM failure (transport/timeout/5xx/429/
-    quota). This is the shared successor of the actor's private `_is_retryable`
-    (#186), extended with duck-typed status and a last-resort message scan so a
-    provider failure is never mistaken for a domain error.
+    quota). This is the shared source of the transport/timeout/5xx/429 class the
+    transient classifier (#299) reads; it was the successor of the actor's
+    private `_is_retryable` (#186), extended with duck-typed status and a
+    last-resort message scan so a provider failure is never mistaken for a
+    domain error.
 
     A raise matching none of the known classes is NON-provider: a genuine
     application error must not be retried as if the provider were down."""

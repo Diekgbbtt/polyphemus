@@ -13,6 +13,7 @@ from polymerhus.app.llm.negotiation import (
 from polymerhus.app.llm.providers import (
     build_chat_model,
     invoke_with_escalating_timeout,
+    resolve_fallback,
     resolve_role,
     thinking_for,
 )
@@ -77,7 +78,8 @@ def structured_result_for(parsed: Any, schema: Any, method: Method) -> Any:
 
 
 def chat_model_for(role: str, *, temperature: float = 0, max_retries: int | None = None,
-                   read_timeout: float | None = None):
+                   read_timeout: float | None = None,
+                   model_override: tuple[str, str] | None = None):
     """Build the ChatOpenAI configured for an agent role. Multi-turn agents
     (crawl, tool-loops) use this and keep the client's per-turn retry; the agent's
     own iteration/job budget is the outer bound. Single-shot role callers should
@@ -88,9 +90,14 @@ def chat_model_for(role: str, *, temperature: float = 0, max_retries: int | None
     attempt grants the call more wall-clock than the last. `None` keeps the
     standing `request_timeout()` default (#32).
 
+    `model_override` (#299) is an explicit `(provider, model)` used INSTEAD of the
+    role's configured model - the bounded fallback the actor/one-shot seams use
+    after a transient exhaustion. `None` resolves the role as before, so the
+    default path is unchanged.
+
     The role's declared `thinking` baseline (#94) rides along, so a session/stateful
     agent built off this factory reasons at its configured effort."""
-    provider, model = resolve_role(role)
+    provider, model = model_override if model_override is not None else resolve_role(role)
     return build_chat_model(provider, model, temperature=temperature,
                             max_retries=max_retries, thinking=thinking_for(role),
                             read_timeout=read_timeout)
@@ -169,8 +176,9 @@ def invoke_role(role, messages, *, schema=None, temperature: float = 0):
                            "using the semantic default", provider, model, exc)
             method = _SEMANTIC_DEFAULT
 
-    def call(budget):
-        llm = build_chat_model(provider, model, temperature=temperature,
+    def call(budget, model_override=None):
+        p, m = model_override if model_override is not None else (provider, model)
+        llm = build_chat_model(p, m, temperature=temperature,
                                read_timeout=budget, max_retries=0,
                                thinking=thinking_for(role))
         if schema is None:
@@ -186,4 +194,22 @@ def invoke_role(role, messages, *, schema=None, temperature: float = 0):
         # to the pydantic instance via model_validate).
         return structured_result_for(parsed, schema, method)
 
-    return invoke_with_escalating_timeout(call)
+    # #299: the bounded model fallback - the seam arms it ONLY after the primary
+    # schedule is exhausted on a transient fault (the opencode-go window) or an
+    # unmet generation; a deterministic `contract`/`fatal` 400 never arms it
+    # (operator ruling D-1). The fallback model is tried EXACTLY once, so a lane
+    # outage does not silently drop the extraction (#285) without masking a
+    # sustained one. Unconfigured => None, behaviour unchanged.
+    fallback = resolve_fallback(role)
+
+    def fallback_call():
+        assert fallback is not None
+        logger.warning("one-shot %s exhausted the primary schedule; attempting fallback "
+                       "%s:%s once", role, fallback[0], fallback[1])
+        return invoke_with_escalating_timeout(
+            lambda budget: call(budget, model_override=fallback),
+            model=f"{fallback[0]}:{fallback[1]}", max_attempts=1)
+
+    return invoke_with_escalating_timeout(
+        call, model=f"{provider}:{model}",
+        fallback=fallback_call if fallback is not None else None)

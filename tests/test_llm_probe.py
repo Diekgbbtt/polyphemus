@@ -164,7 +164,7 @@ def test_probe_off_escalating_axis_cold_start_only():
                     with patch.object(R, "invoke_with_escalating_timeout") as mock_escalating:
                         # The same probed winner retries across the escalating attempts -
                         # the probe never re-runs mid-session (A2 cadence).
-                        def escalating_side_effect(call):
+                        def escalating_side_effect(call, **kwargs):
                             invoke_counts["call"] += 1
                             r1 = call(300)
                             invoke_counts["call"] += 1
@@ -200,7 +200,7 @@ def test_probe_fail_open_all_rungs_miss_still_starts_session():
                     mock_struct.invoke.return_value = {"label": "x"}
                     mock_llm.with_structured_output.return_value = mock_struct
                     mock_build.return_value = mock_llm
-                    with patch.object(R, "invoke_with_escalating_timeout", side_effect=lambda c: c(300)):
+                    with patch.object(R, "invoke_with_escalating_timeout", side_effect=lambda c, **kw: c(300)):
                         result = R.invoke_role("triager", [{"role": "user", "content": "hi"}], schema=_Good)
                         # Should still return a result (not raise) - fail-open via semantic default
                         assert result is not None
@@ -468,7 +468,7 @@ def test_roles_probe_uses_parse_validation_for_wrong_shape_json_mode():
                 return m
 
             with patch.object(R, "build_chat_model", side_effect=fake_build):
-                with patch.object(R, "invoke_with_escalating_timeout", side_effect=lambda c: c(300)):
+                with patch.object(R, "invoke_with_escalating_timeout", side_effect=lambda c, **kw: c(300)):
                     result = R.invoke_role("triager", [{"role": "user", "content": "hi"}], schema=_Good)
                     # Should have probed past wrong-shape json_schema to function_calling
                     assert result is not None

@@ -1015,3 +1015,84 @@ def test_union_schema_never_builds_providerstrategy(monkeypatch):
     rf = S.structured_response_format("triager", _Gate | _Note, tools_bound=False)
     assert isinstance(rf, ToolStrategy)
     assert len(rf.schema_specs) == 2
+
+
+# --- #299: conversation rotation and the bounded model override ----------------
+
+def test_the_turn_binds_an_explicit_conversation_id_but_keeps_the_thread(monkeypatch):
+    """#299: `conversation_id` overrides ONLY the provider conversation primitive
+    (opencode-go `x-opencode-session`), so a retry abandons a pinned bad replica;
+    the checkpointer's `thread_id` - and the returned `SessionTurn.thread_id` -
+    stay the original, so agent memory is never forked."""
+    from polymerhus.app.llm import session as S
+
+    class _FakeAgent:
+        def stream(self, *args, **kwargs):
+            yield from ()
+
+        async def astream(self, *args, **kwargs):
+            return
+            yield
+
+    seen: list[str] = []
+    real_scope = S.conversation_scope
+
+    def _spy(conversation_id):
+        seen.append(conversation_id)
+        return real_scope(conversation_id)
+
+    monkeypatch.setattr(S, "_build_agent", lambda *a, **k: _FakeAgent())
+    monkeypatch.setattr(S, "conversation_scope", _spy)
+
+    sync_turn = run_session_turn("triager", "run-3:triager", [], checkpointer=None,
+                                 observe=False, conversation_id="run-3:triager#r2")
+    async_turn = asyncio.run(arun_session_turn(
+        "triager", "run-3:triager", [], checkpointer=None, observe=False,
+        conversation_id="run-3:triager#r2"))
+    assert seen == ["run-3:triager#r2", "run-3:triager#r2"]
+    assert sync_turn.thread_id == "run-3:triager"   # memory key unchanged
+    assert async_turn.thread_id == "run-3:triager"
+
+
+def test_the_turn_forwards_a_model_override_to_the_agent_builder(monkeypatch):
+    """#299: the bounded fallback passes an explicit `(provider, model)` through
+    the session seam to the agent builder, which builds the override model
+    instead of the role's configured one."""
+    from polymerhus.app.llm import session as S
+
+    class _FakeAgent:
+        def stream(self, *args, **kwargs):
+            yield from ()
+
+    captured: dict = {}
+
+    def fake_build(role_id, **kwargs):
+        captured.update(kwargs)
+        return _FakeAgent()
+
+    monkeypatch.setattr(S, "_build_agent", fake_build)
+    run_session_turn("triager", "t", [], checkpointer=None, observe=False,
+                     model_override=("opencode-go", "glm-5.2"))
+    assert captured["model_override"] == ("opencode-go", "glm-5.2")
+
+
+def test_the_override_model_factory_builds_the_override(monkeypatch):
+    """The override factory resolves the SAME role (its thinking baseline) but the
+    override provider/model, so a fallback reasons at the role's configured
+    effort."""
+    from polymerhus.app.llm import roles
+    from polymerhus.app.llm import session as S
+
+    seen: dict = {}
+
+    def fake_chat_model_for(role, **kwargs):
+        seen.update(role=role, **kwargs)
+        return object()
+
+    monkeypatch.setattr(roles, "chat_model_for", fake_chat_model_for)
+    S._override_model_factory("hunting_orchestrator", ("opencode-go", "glm-5.2"),
+                              read_timeout_s=42.0)
+    assert seen["role"] == "hunting_orchestrator"
+    assert seen["model_override"] == ("opencode-go", "glm-5.2")
+    assert seen["read_timeout"] == 42.0
+    assert seen["max_retries"] == 0

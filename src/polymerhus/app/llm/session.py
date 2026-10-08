@@ -95,6 +95,17 @@ def _budgeted_model_factory(role_id: str, *, read_timeout_s: float) -> Any:
     return chat_model_for(role_id, read_timeout=read_timeout_s, max_retries=0)
 
 
+def _override_model_factory(role_id: str, model_override: tuple[str, str], *,
+                            read_timeout_s: float | None) -> Any:
+    """Build an explicit `(provider, model)` for a role's turn (#299) - the bounded
+    fallback: the role's own `thinking` baseline rides along, but the model comes
+    from the override, so a fallback lane reasons at the configured effort."""
+    from polymerhus.app.llm.roles import chat_model_for
+
+    return chat_model_for(role_id, read_timeout=read_timeout_s, max_retries=0,
+                          model_override=model_override)
+
+
 def _observe_config(config: dict, role_id: str, thread_id: str,
                     extra_tags: Sequence[str] | None = None) -> dict:
     """Attach Langfuse callbacks + honest per-role_id/thread attribution (the #18
@@ -176,6 +187,7 @@ def _build_agent(
     checkpointer,
     model_factory: ModelFactory | None,
     read_timeout_s: float | None = None,
+    model_override: tuple[str, str] | None = None,
 ):
     """Build the `create_agent` tool-calling agent shared by the sync/async turns.
 
@@ -193,6 +205,9 @@ def _build_agent(
 
     if model_factory is not None:
         model = model_factory(role_id)
+    elif model_override is not None:
+        model = _override_model_factory(role_id, model_override,
+                                        read_timeout_s=read_timeout_s)
     elif read_timeout_s is not None:
         model = _budgeted_model_factory(role_id, read_timeout_s=read_timeout_s)
     else:
@@ -486,6 +501,8 @@ def run_session_turn(
     extra_tags: Sequence[str] | None = None,
     usage_scope: str | None = None,
     context: dict | None = None,
+    conversation_id: str | None = None,
+    model_override: tuple[str, str] | None = None,
 ) -> SessionTurn:
     """Run one resumable, tool-calling turn of a session-mode role (sync).
 
@@ -517,13 +534,17 @@ def run_session_turn(
     thread_id = _as_thread_id(thread_id)
     # D12: the conversation scope - every client built inside the turn (the
     # turn's own, and any a middleware builds, e.g. the summariser) binds the
-    # thread id as the provider's conversation request primitive.
-    with conversation_scope(thread_id):
+    # thread id as the provider's conversation request primitive. #299: an
+    # explicit `conversation_id` overrides ONLY this primitive (a rotated
+    # session for a retry); the checkpointer still keys on `thread_id`.
+    conversation = conversation_id if conversation_id is not None else thread_id
+    with conversation_scope(conversation):
         profile = _resolve_reasoning_profile(role_id)
         agent = _build_agent(
             role_id, tools=tools, response_format=response_format, system_prompt=system_prompt,
             middleware=middleware, store=store, checkpointer=checkpointer,
             model_factory=model_factory, read_timeout_s=read_timeout_s,
+            model_override=model_override,
         )
         config = _turn_config(role_id, thread_id, observe, extra_tags=extra_tags,
                               usage_scope=usage_scope)
@@ -584,6 +605,8 @@ async def arun_session_turn(
     extra_tags: Sequence[str] | None = None,
     usage_scope: str | None = None,
     context: dict | None = None,
+    conversation_id: str | None = None,
+    model_override: tuple[str, str] | None = None,
 ) -> SessionTurn:
     """Async-native turn (`astream`) - the entry point an async-native PARENT
     coordinator uses (ratified #94: the hunt-orchestrator first), so it can spawn
@@ -609,12 +632,16 @@ async def arun_session_turn(
     thread_id = _as_thread_id(thread_id)
     # D12: the conversation scope - the async turn binds the same thread id the
     # sync turn does, so both entry points emit identical request primitives.
-    with conversation_scope(thread_id):
+    # #299: an explicit `conversation_id` overrides ONLY this primitive (a
+    # rotated session for a retry); the checkpointer still keys on `thread_id`.
+    conversation = conversation_id if conversation_id is not None else thread_id
+    with conversation_scope(conversation):
         profile = _resolve_reasoning_profile(role_id)
         agent = _build_agent(
             role_id, tools=tools, response_format=response_format, system_prompt=system_prompt,
             middleware=middleware, store=store, checkpointer=checkpointer,
             model_factory=model_factory, read_timeout_s=read_timeout_s,
+            model_override=model_override,
         )
         config = _turn_config(role_id, thread_id, observe, extra_tags=extra_tags,
                               usage_scope=usage_scope)
