@@ -414,27 +414,30 @@ def capability_record_from_resolved(provider: str, model_id: str,
 # Provider-specific effective cost override (#330 iteration 2, ADR D13) ------
 # ---------------------------------------------------------------------------
 #
-# models.dev carries the REGISTRY price for a provider offering; the provider's
-# effective per-token rate can differ (opencode-go's off-peak rate for
-# deepseek-v4.1-flash is ~6x below the models.dev record). LiteLLM prices a
-# provider offering as a deployment and reads the authored `model_info` cost
-# keys, so the budget guard's USD math counts what this table authors. The
-# table is consulted at the authoring seam on EVERY sync: a litellm-config-only
-# override would be clobbered by the next sync's models.dev re-authoring.
+# models.dev carries the REGISTRY price for a provider offering; a provider's
+# effective per-token rate can differ from it. LiteLLM prices a provider
+# offering as a deployment and reads the authored `model_info` cost keys, so the
+# budget guard's USD math counts what this table authors. The table is consulted
+# at the authoring seam on EVERY sync: a litellm-config-only override would be
+# clobbered by the next sync's models.dev re-authoring.
 #
 # Values are PER-TOKEN USD - the unit `model_info` carries (models.dev's
 # per-million `cost.*` is converted by `per_million_to_per_token`). The seeded
-# entry is opencode-go's OFF-PEAK rate, the default because ~90% of eval
-# wall-time is off-peak; the existing conservatism factor (ADR D13) sizes the
-# budget for the 2x peak.
+# entry is opencode-go's models.dev record for deepseek-v4.1-flash
+# ($0.15 / $0.60 / $0.003 per 1M), which the provider bills - there is NO
+# separate off-peak rate. Corrected 2026-10-09 (#330 / EV-34): an earlier ~6x
+# "off-peak" haircut under-counted the guard's USD ~4.3x, so the provider's
+# weekly cap tripped before the guard did. The entry still exists because the
+# sync re-authors cost on every sync, so it must survive a models.dev price
+# change and a dropped record (the D9 unknown path).
 
 COST_SOURCE_KEY = "cost_source"
 COST_SOURCE_OVERRIDE = "provider-override"
 
 PROVIDER_COST_OVERRIDES: dict[str, dict[str, float]] = {
     "opencode-go/deepseek-v4.1-flash": {
-        "input": 2.5e-08,      # $0.025 / 1M
-        "output": 1.0e-07,     # $0.10 / 1M
+        "input": 1.5e-07,      # $0.15 / 1M (models.dev opencode-go record)
+        "output": 6.0e-07,     # $0.60 / 1M
         "cache_read": 3e-09,   # $0.003 / 1M
     },
 }

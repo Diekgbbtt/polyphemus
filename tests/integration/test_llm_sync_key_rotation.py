@@ -216,7 +216,7 @@ def test_budget_windows_are_provisioned_and_converge(monkeypatch):
     # #330: every minted virtual key carries the USD cost-guard windows from
     # the plan, and a no-change re-run converges (no key write) because the
     # diff ignores litellm's server-set `reset_at`.
-    for name in ("LLM_GATEWAY_BUDGET_5H_USD", "LLM_GATEWAY_BUDGET_7D_USD",
+    for name in ("LLM_GATEWAY_BUDGET_7D_USD",
                  "LLM_GATEWAY_BUDGET_30D_USD",
                  "LLM_GATEWAY_BUDGET_CONSERVATISM_FACTOR",
                  "LLM_GATEWAY_KEY_RPM_LIMIT"):
@@ -230,7 +230,7 @@ def test_budget_windows_are_provisioned_and_converge(monkeypatch):
     for virtual_key in recorder.virtual_keys.values():
         windows = {w["budget_duration"]: w["max_budget"]
                    for w in virtual_key["budget_limits"]}
-        assert windows == {"5h": 6.0, "7d": 15.0, "30d": 30.0}, windows
+        assert windows == {"7d": 30.0, "30d": 60.0}, windows
 
     writes = len(recorder.calls)
     assert _run(recorder, keys) == S.SYNC_OK
