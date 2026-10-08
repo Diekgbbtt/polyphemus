@@ -85,6 +85,19 @@ A `stopped` run is deliberately distinct from a crash, so the status surface and
 _Avoid_: reading a stop as `complete`; letting the reaper's `failed` stand in
 for a deliberate stop.
 
+**Run cancellation**:
+An operator's deliberate stop of a live run, addressed to the Run, never to an
+individual Job - the run is the cancellation unit.
+`POST /projects/{id}/recon/{run_id}/stop` requests it; the pipeline's
+cancellation path settles the run to the `stopped` terminal promptly (#287), and
+data already curated up to the stop is preserved (curate persists per pod).
+A per-job cancel is deliberately not provided: a run's jobs run sequentially
+behind a phase barrier, so the in-flight job is the only thing a stop waits on,
+and job selection is a launch-time concern (the `jobs` subset).
+Tearing down the in-flight pod/tool (the exec-kill and output suppression) is a
+separate concern owned by #76.
+_Avoid_: a per-job cancel; a manual process kill.
+
 **Phase**:
 An ordered stage of the phase plan whose jobs run before the next stage begins; each phase seeds the next from the assets the prior phase produced.
 _Avoid_: stage, round.

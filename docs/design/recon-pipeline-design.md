@@ -325,6 +325,8 @@ This supersedes the former `method="function_calling"` requirement: the open `Ob
 No `GraphRecursionError`/recursion-cap handling exists in the live code for the pod's retry loop beyond `MAX_POD_ITERS` gating the `gate` function's own routing (`pod.py:397-410`) - LangGraph's `recursion_limit` is not explicitly configured anywhere in `pod.py`/`job_agent.py`/`pipeline.py`, so it runs on LangGraph's library default.
 Correction against `recon-mvp-design.md` §10.6, which lists a `GraphRecursionError -> pod error` row as if the pipeline set an explicit `recursion_limit`: no such configuration exists in the current code.
 
+The operator cancellation unit is the Run, never a single Job (#113, `recon-stop-terminal-adr.md` amendment 2026-10-08): `POST /projects/{id}/recon/{run_id}/stop` cancels the run through `RuntimeManager.cancel_run`, the run reaches `stopped` promptly (#287), and already-curated data survives. Tearing down the in-flight pod/tool is a separate concern owned by #76, so the run-level stop leaves the pod's worker thread running to its own `EXEC_TIMEOUT_S` (including `MAX_POD_ITERS` retries) - the `run_job` offload (`job_agent.py`) is not cancelled by the task cancel.
+
 ---
 
 ## 7. Sequence diagrams - non-happy paths
