@@ -4,8 +4,11 @@
 # plane) on the jumped system version.
 #
 # One target (comfyui, the most self-contained challenge). The trial-wide token
-# budget is 200,000 generated tokens (reasoning + visible output only). The
-# short wall-clock deadline is passed by the driver (`EVAL_BUDGET_S`), not here.
+# budget is 2,700,000 capped tokens (new output + uncached input; cache reads
+# never consume it): the old 200,000 generated budget scaled by the observed
+# capped:generated ratio (~13.5x; #347), so it still trips quickly at the same
+# point of the run. The short wall-clock deadline is passed by the driver
+# (`EVAL_BUDGET_S`), not here.
 #
 # Mirror of eval/setups/webexploitbench-8.yaml for a single target; the
 # target_run_id namespaces the artifact store so this never clobbers a real run.
@@ -33,7 +36,7 @@ instances:
       - target_key: webexploitbench/comfyui
         target_id: comfyui-1
         target_run_id: verify-200k
-        token_budget: 200000
+        token_budget: 2700000
         target_config:
           operator_kb: /root/eval-dd/data/comfyui/operator_kb.md
           data_dir: /root/eval-dd/data/comfyui

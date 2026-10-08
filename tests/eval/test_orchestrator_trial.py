@@ -79,11 +79,14 @@ class SeqListFileStore(FileStore):
 
 
 class SeqUsageApi(FakeApi):
-    """A `FakeApi` whose usage route pops a scripted token total per call.
+    """A `FakeApi` whose usage route pops a scripted capped-token total per call.
 
     The token-budget poll reads the usage endpoint once per check, plus one
-    re-read after a stop for the overshoot, so scripting the totals models the
-    baseline snapshot, the consumption, and the in-flight overshoot.
+    re-read after a stop for the overshoot, so scripting the capped totals models
+    the baseline snapshot, the consumption, and the in-flight overshoot. The
+    scripted value is the `capped_tokens` budget axis (new output + uncached
+    input); the raw `total_tokens` is set equal to it so a scripted total also
+    reads as a saturated cache-free payload.
     """
 
     def __init__(self, routes: dict | None = None, totals=()):
@@ -100,6 +103,7 @@ class SeqUsageApi(FakeApi):
                 "project_id": "pid",
                 "total_tokens": total,
                 "generated_tokens": total,
+                "capped_tokens": total,
                 "calls": 1,
                 "by_agent": {"recon": {"total_tokens": total}},
             }
@@ -378,37 +382,83 @@ def test_the_spend_check_returns_a_spend_result_on_a_stop(tmp_path) -> None:
     assert result.overshoot == 200
 
 
-def test_the_budget_counts_generated_tokens_not_the_cache_heavy_raw_total(tmp_path) -> None:
-    # The raw total is over budget from the first read, but it is almost all
-    # re-read input, so the GENERATED axis decides the stop. Counting the raw
-    # total would stop the trial at ~zero new tokens - the half-occupancy bug.
-    class RawHeavyApi(FakeApi):
-        def __init__(self, routes, generated_seq):
+def test_the_budget_counts_capped_tokens_not_the_cache_heavy_raw_total(tmp_path) -> None:
+    # A cache-heavy payload: the raw total is far over budget and grows, but it
+    # is almost all cache reads, so `capped_tokens` (new output + uncached input)
+    # stays flat and the budget never advances. Counting the raw total would stop
+    # the trial on re-read context - the defect #347 fixes.
+    class CacheHeavyApi(FakeApi):
+        def __init__(self, routes, capped_seq, raw_seq):
             super().__init__(routes)
-            self._generated = list(generated_seq)
+            self._capped = list(capped_seq)
+            self._raw = list(raw_seq)
             self.usage_calls = 0
 
         def __call__(self, call):
             if call.path.endswith("/usage"):
                 self.usage_calls += 1
-                generated = self._generated.pop(0)
+                capped = self._capped.pop(0)
+                raw = self._raw.pop(0)
                 self.calls.append(call)
                 return {
                     "project_id": "pid",
-                    "total_tokens": 50_000_000,
-                    "generated_tokens": generated,
+                    "total_tokens": raw,
+                    "capped_tokens": capped,
+                    "context_tokens": {"cached": raw - capped, "uncached": capped},
+                    "generated_tokens": {"reasoning": 0, "visible": 0},
                     "calls": 1,
                     "by_agent": {},
                 }
             return super().__call__(call)
 
-    api_runner = RawHeavyApi(_usage_routes(), generated_seq=[10, 100])
+    # The RAW total grows far past the budget on cache reads while `capped_tokens`
+    # stays flat: a raw-total budget would stop here, the capped budget must not.
+    api_runner = CacheHeavyApi(
+        _usage_routes(),
+        capped_seq=[10, 10, 10],
+        raw_seq=[50_000_000, 60_000_000, 70_000_000],
+    )
     t = _trial(tmp_path, api_runner, project_id="pid", token_budget=500)
 
-    # Baseline capped 10 (raw 50M ignored), then capped 100 -> spent 90 < 500.
+    # Baseline capped 10 (raw 50M ignored); capped stays 10 -> spent 0 < 500.
+    assert t._check_spend("pid", "hunting", "h1") is None
     assert t._check_spend("pid", "hunting", "h1") is None
     assert t._check_spend("pid", "hunting", "h1") is None
     assert not any(c.path.endswith("/stop") for c in api_runner.calls)
+
+
+def test_uncached_input_advances_the_budget(tmp_path) -> None:
+    # The complement: fresh (uncached) input is real compute, so `capped_tokens`
+    # grows and the budget trips.
+    class UncachedApi(FakeApi):
+        def __init__(self, routes, capped_seq):
+            super().__init__(routes)
+            self._capped = list(capped_seq)
+
+        def __call__(self, call):
+            if call.path.endswith("/usage"):
+                capped = self._capped.pop(0)
+                self.calls.append(call)
+                return {
+                    "project_id": "pid",
+                    "total_tokens": capped,
+                    "capped_tokens": capped,
+                    "context_tokens": {"cached": 0, "uncached": capped},
+                    "generated_tokens": {"reasoning": 0, "visible": 0},
+                    "calls": 1,
+                    "by_agent": {},
+                }
+            return super().__call__(call)
+
+    api_runner = UncachedApi(_usage_routes(), capped_seq=[10, 600, 600])
+    t = _trial(tmp_path, api_runner, project_id="pid", token_budget=500)
+
+    assert t._check_spend("pid", "hunting", "h1") is None
+    result = t._check_spend("pid", "hunting", "h1")
+
+    assert isinstance(result, trial.SpendResult)
+    assert result.spent == 590
+    assert any(c.path.endswith("/stop") for c in api_runner.calls)
 
 
 def test_token_budget_stops_the_run_and_records_the_spend(tmp_path) -> None:
@@ -579,7 +629,7 @@ def test_a_malformed_usage_payload_never_falsely_stops(tmp_path) -> None:
     # the trial times out rather than falsely tripping the budget.
     api_runner = FakeApi(
         {
-            "GET /projects/pid/usage": {"generated_tokens": "not-an-int", "by_agent": "oops"},
+            "GET /projects/pid/usage": {"capped_tokens": "not-an-int", "by_agent": "oops"},
             "GET /projects/pid/hunting/h1": {"status": "running"},
             "POST /projects/pid/hunting/h1/stop": {"stopping": True},
             "POST /projects/pid/hunting": {"hunting_run_id": "h1"},

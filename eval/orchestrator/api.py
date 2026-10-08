@@ -308,14 +308,15 @@ def usage_total(response: Mapping) -> int:
 
 
 def usage_generated(response: Mapping) -> int:
-    """The project's cumulative GENERATED-token total, the trial budget axis.
+    """The project's cumulative GENERATED-token total (the output axis).
 
     The usage surface reports `generated_tokens` as a two-axis mapping
     (`{"reasoning": N, "visible": M}`, the `reasoning` + `visible` output split),
     so the scalar is their sum; a plain int is also accepted for robustness.
-    It counts only what the model WROTE, so re-read context (cached or uncached
-    input) never consumes the budget. A malformed or absent value reads as zero
-    (advisory), mirroring `usage_total`."""
+    It counts only what the model WROTE, so it excludes all input. The trial
+    budget does NOT use this axis; it counts `usage_capped` (generated +
+    uncached input). A malformed or absent value reads as zero (advisory),
+    mirroring `usage_total`."""
     value = (response or {}).get("generated_tokens")
     if isinstance(value, Mapping):
         total = 0
@@ -330,9 +331,10 @@ def usage_generated(response: Mapping) -> int:
 
 
 def usage_capped(response: Mapping) -> int:
-    """The project's cumulative capped-token total - generated output plus
-    uncached input, i.e. `total_tokens - cached`. Retained for callers that
-    still want the combined axis; the trial budget now counts `usage_generated`."""
+    """The project's cumulative capped-token total, the trial budget axis:
+    new output plus uncached input, i.e. `generated_tokens + uncached` =
+    `total_tokens - cached`. Cached input never counts. A malformed or absent
+    value reads as zero (advisory), mirroring `usage_total`."""
     value = (response or {}).get("capped_tokens")
     if isinstance(value, bool) or not isinstance(value, int):
         return 0
