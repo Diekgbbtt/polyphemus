@@ -1,0 +1,5 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "instructions": ["eval/prompts/orchestrator.md"],
+  "plugin": ["./plugin/eval-monitor.ts"]
+}

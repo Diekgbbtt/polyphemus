@@ -226,6 +226,13 @@ The four dispatched roles are `eval-assessor`, `eval-diagnoser`, `eval-aligner`,
 Their source is TRACKED in the repo so it reaches the eval server's canonical checkout; only the per-machine install state (`node_modules`, lockfiles) is ignored - an agent that is gitignored is a missing one.
 _Avoid_: subagent config, prompt file
 
+**Eval orchestrator agent**:
+The primary opencode agent (`.opencode/agent/eval-orchestrator.md`, `mode: primary`) that drives one `EvalSetup` through the `next_target` and `eval_monitor` tools; its workflow prompt is `eval/prompts/orchestrator.md`, which the tracked `.opencode/opencode.json` loads as instructions.
+The two tools are the custom tools defined by the tracked `.opencode/plugin/eval-monitor.ts`, so the **Tick control plane**'s one CLI tick is what the agent actually calls.
+Like the **Role agent** source, the orchestrator agent, its config, and its plugin are TRACKED repo source: the config and plugin name paths relative to the checkout, so only a commit reaches the eval server, and a gitignored plugin is an `eval_monitor` tool that cannot load.
+`.dockerignore` and the advance manifest keep the three out of the stack image and version alignment.
+_Avoid_: driver, primary agent, main agent
+
 **Assessment attempt**:
 One dispatch or verification step of the assessment subagent, recorded on the trial record with its outcome and, on escalation, a named failure.
 _Avoid_: retry, poll
