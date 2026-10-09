@@ -429,6 +429,7 @@ def test_trial_outcome_prints_the_token_spend(monkeypatch) -> None:
         token_budget=500,
         spent_tokens=600,
         spend_overshoot=100,
+        token_spectrum=None,
     )
 
     class _FakeTrial:
@@ -457,3 +458,62 @@ def test_trial_outcome_prints_the_token_spend(monkeypatch) -> None:
 
     assert code == 0
     assert "spend 600 tokens (overshoot 100)" in out.getvalue()
+
+
+def test_trial_outcome_prints_the_per_agent_token_spectrum(monkeypatch) -> None:
+    # #349: the terminal prints each agent's flat spectrum after the spend line.
+    record = SimpleNamespace(
+        trial_id="t1",
+        terminal="stopped",
+        project_id="pid",
+        phases=[
+            SimpleNamespace(
+                phase="hunting", status="stopped", failure=None, blocks=[], notes=[]
+            )
+        ],
+        token_budget=500,
+        spent_tokens=600,
+        spend_overshoot=100,
+        token_spectrum={
+            "mechanism_typist": {
+                "visible": 100,
+                "reasoning": 900,
+                "cached_input": 19000,
+                "uncached_input": 43100,
+                "generated": 1000,
+                "total": 62100,
+                "capped": 44100,
+                "calls": 24,
+            }
+        },
+    )
+
+    class _FakeTrial:
+        def __init__(self, cfg, **kwargs) -> None:
+            pass
+
+        def run(self, **kwargs) -> object:
+            return record
+
+    monkeypatch.setattr(cli, "_trial_config", lambda *a, **k: (None, None, None))
+    monkeypatch.setattr(cli.trial, "Trial", _FakeTrial)
+    monkeypatch.setattr(
+        cli, "Orchestrator", lambda *a, **k: SimpleNamespace(up=lambda: None)
+    )
+    out, err = io.StringIO(), io.StringIO()
+
+    code = cli._run_trial(
+        SimpleNamespace(dry_run=False, api="http://api"),
+        object(),
+        cli.OrchestratorConfig(repo=Path("/repo"), instances_root=Path("/instances")),
+        out,
+        err,
+        lambda: object(),
+        lambda base: object(),
+    )
+
+    assert code == 0
+    line = out.getvalue()
+    assert "spectrum mechanism_typist:" in line
+    assert "cached_input 19000" in line
+    assert "uncached_input 43100" in line

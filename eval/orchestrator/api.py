@@ -347,6 +347,79 @@ def usage_by_agent(response: Mapping) -> dict:
     return dict(value) if isinstance(value, Mapping) else {}
 
 
+# The flat per-agent token spectrum (#349): the eval record's first-class
+# schema. Each entry is a typed, non-negative surface decoded from the durable
+# ledger's nested `by_agent` (`_entry_surface` in `app/llm/usage.py`). The
+# order is the schema contract.
+SPECTRUM_FIELDS = (
+    "visible",
+    "reasoning",
+    "cached_input",
+    "uncached_input",
+    "generated",
+    "total",
+    "capped",
+    "calls",
+)
+
+
+def _spectrum_int(mapping: Mapping | None, key: str) -> int:
+    """A non-negative int from a mapping, or 0 when absent/malformed (a bool is
+    rejected, never treated as 0/1, mirroring `usage_total`)."""
+    value = (mapping or {}).get(key)
+    if isinstance(value, bool) or not isinstance(value, int):
+        return 0
+    return max(0, value)
+
+
+def usage_spectrum(response: Mapping) -> dict:
+    """The project's per-agent token spectrum, decoded from a usage response.
+
+    One flat typed entry per agent - `{visible, reasoning, cached_input,
+    uncached_input, generated, total, capped, calls}` - projected from the
+    durable ledger's own cumulative `by_agent` surface (#326). The values are
+    the ledger's per-agent totals, NEVER a re-derivation from traces or spend
+    logs; `generated = reasoning + visible` is the ledger's own output split
+    summed, and `cached_input`/`uncached_input` are the ledger's context split.
+    An absent/malformed agent entry reads as zeros (advisory), so the terminal
+    record is always writable and the spectrum is readable from the trial file
+    alone (#349)."""
+    by_agent = usage_by_agent(response)
+    spectrum: dict[str, dict[str, int]] = {}
+    for agent, entry in by_agent.items():
+        if not isinstance(agent, str) or not isinstance(entry, Mapping):
+            continue
+        context = entry.get("context_tokens")
+        generated = entry.get("generated_tokens")
+        context = context if isinstance(context, Mapping) else {}
+        generated = generated if isinstance(generated, Mapping) else {}
+        reasoning = _spectrum_int(generated, "reasoning")
+        visible = _spectrum_int(generated, "visible")
+        spectrum[agent] = {
+            "visible": visible,
+            "reasoning": reasoning,
+            "cached_input": _spectrum_int(context, "cached"),
+            "uncached_input": _spectrum_int(context, "uncached"),
+            "generated": reasoning + visible,
+            "total": _spectrum_int(entry, "total_tokens"),
+            "capped": _spectrum_int(entry, "capped_tokens"),
+            "calls": _spectrum_int(entry, "calls"),
+        }
+    return spectrum
+
+
+def spectrum_by_agent(by_agent: Mapping | None) -> dict:
+    """Decode an already-read `by_agent` breakdown into the flat token spectrum.
+
+    The trial's terminal reads `by_agent` once (at a budget stop or at the
+    terminal usage snapshot); this projects that same mapping, so the record
+    never re-reads or re-derives it. An absent/malformed breakdown reads empty.
+    """
+    if not isinstance(by_agent, Mapping):
+        return {}
+    return usage_spectrum({"by_agent": by_agent})
+
+
 def recon_terminal(status: str | None) -> bool:
     return status in RECON_TERMINAL
 

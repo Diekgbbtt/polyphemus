@@ -719,6 +719,18 @@ def _run_trial(args, setup: EvalSetup, config: OrchestratorConfig, out: TextIO, 
             f"(overshoot {record.spend_overshoot})",
             file=out,
         )
+    # #349: the per-agent token spectrum, read from the durable ledger, so the
+    # operator sees the cached/uncached split without leaving the terminal.
+    for agent, spectrum in (record.token_spectrum or {}).items():
+        print(
+            f"  spectrum {agent}: visible {spectrum['visible']} "
+            f"reasoning {spectrum['reasoning']} "
+            f"cached_input {spectrum['cached_input']} "
+            f"uncached_input {spectrum['uncached_input']} "
+            f"generated {spectrum['generated']} total {spectrum['total']} "
+            f"capped {spectrum['capped']} calls {spectrum['calls']}",
+            file=out,
+        )
     # I2: a failed or timed-out run is a handled failure (the record is written
     # and printed), so exit non-zero instead of reporting success.
     return 1 if record.terminal in ("failed", "timeout") else 0
