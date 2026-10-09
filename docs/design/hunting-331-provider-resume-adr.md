@@ -54,6 +54,13 @@ The ticket is design-gated and two #331 edges need an operator decision; they ar
 
 The `#329` slice's `retry_after_s`-driven backoff and the eval monitor's execution-state introspection script remain #331/#330 and are not part of this change.
 
+## Amendment (#331 stop-only re-scope, 2026-10-09)
+
+The ticket was re-scoped to STOP-ONLY; the resume remains deferred.
+The STOP half of ESCALATED item 2 has now LANDED: `attack/hunting/runtime.py::stop_hunting_for_provider_failure` is the ONE app-layer handler that, on a provider failure, cancels every live component session of the run (the surfer included), drains it, flushes the threads, and stamps `interrupted` with the recorded cause - so the terminal no longer races a live session (the #331 verifier finding).
+The eval monitor's deferral of an `interrupted` execution is now explicit.
+The RESUME half stays ESCALATED, and the derivability of the resume decision from the stamped attributes alone is proven in `docs/design/331-stop-only-resume-assessment-adr.md` (decision table: `quota_exhausted=false` -> resumable after `retry_after_s`; `quota_exhausted=true` -> terminal; missing/unknown -> do-not-resume).
+
 ## Amendment (#312, 2026-10-08)
 
 Decision 2 (an `interrupted` run records its cause in `hunting_runs.stats`) was scoped to a provider-caused ORCHESTRATOR pass abort.

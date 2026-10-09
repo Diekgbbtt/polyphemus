@@ -72,6 +72,19 @@ def test_blocked_and_timeout_are_deferred():
     assert decide(view(terminal="timeout")).state == monitor.STATE_DEFERRED
 
 
+def test_interrupted_execution_is_deferred_never_escalated():
+    """#331: a provider-paused run lands the resumable terminal `interrupted`.
+    The monitor must DEFER it to the surfer - never escalate it, never dispatch
+    the assessment - and the recorded reason stays on the trial record so the
+    resume decision is repeatable."""
+    d = decide(view(terminal="interrupted"))
+    assert d.state == monitor.STATE_DEFERRED
+    assert d.action is None
+    assert d.node == monitor.NODE_ASSESSMENT
+    assert "interrupted" in d.detail
+    assert "resumable" in d.detail
+
+
 def test_capped_hunting_stop_is_a_success():
     assert decide(view(terminal="stopped")).state == monitor.STATE_ASSESSMENT_DISPATCHED
 

@@ -29,6 +29,15 @@ from typing import Sequence
 # a failed run is never assessed (the surfer loop owns recovery).
 SUCCESS_TERMINALS = frozenset({"complete", "stopped"})
 
+# A provider-paused execution (#331): the run stopped with the resumable
+# terminal `interrupted` and its cause is recorded on the trial record's phase
+# failure (`stats.interrupt_reason` + `provider_status` + `quota_exhausted` +
+# `retry_after_s`). It is DEFERRED like a failure - the surfer loop owns
+# recovery, never the assessment - and it is NEVER escalated: the decision to
+# resume is derivable from the stamped attributes alone
+# (`docs/design/331-stop-only-resume-assessment-adr.md`).
+INTERRUPTED_TERMINAL = "interrupted"
+
 # The two dispatched nodes, after execution.
 NODE_ASSESSMENT = "assessment"
 NODE_DIAGNOSIS = "diagnosis"
@@ -126,8 +135,24 @@ def decide(
     diagnosis is required); a present, paired diagnosis completes the trial.
     A node whose output is absent is dispatched once, then awaited, then
     re-dispatched up to `MAX_DISPATCHES` and finally escalated with a named
-    cause. A non-successful execution is `deferred` and never advanced.
+    cause. A non-successful execution is `deferred` and never advanced; an
+    `interrupted` execution (a provider-paused run, #331) is deferred too and is
+    NEVER escalated - its resumable decision rides the recorded cause.
     """
+    if view.terminal == INTERRUPTED_TERMINAL:
+        return TrialDecision(
+            trial_dir=view.trial_dir,
+            target_id=view.target_id,
+            terminal=view.terminal,
+            node=NODE_ASSESSMENT,
+            state=STATE_DEFERRED,
+            action=None,
+            detail=(
+                "execution terminal 'interrupted' is a resumable provider pause; "
+                "the surfer owns recovery and the recorded reason is on the trial "
+                "record"
+            ),
+        )
     if view.terminal not in SUCCESS_TERMINALS:
         return TrialDecision(
             trial_dir=view.trial_dir,

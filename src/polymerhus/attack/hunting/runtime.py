@@ -184,6 +184,118 @@ def _provider_interrupt_stats(err) -> dict:
     }
 
 
+async def stop_hunting_for_provider_failure(
+    control,
+    hunting_run_id: str,
+    *,
+    error=None,
+    tick_interval: float | None = None,
+    drain_timeout: float = 30.0,
+) -> None:
+    """The ONE app-layer provider-failure handler for a hunting run (#331,
+    stop-only).
+
+    On a provider failure this handler STOPS the run's affected sessions with
+    the shared runtime's per-session `cancel_run` primitive (reached through the
+    control plane's `cancel_session`), FLUSHES their threads through the shared
+    run-scoped chokepoint (`flush_run_scoped`), and stamps the run the resumable
+    terminal `interrupted` - never `failed` - with the accurate cause
+    (`_provider_interrupt_stats`: `interrupt_reason` + `provider_status` +
+    `quota_exhausted` + `retry_after_s`).
+
+    Per agent type (ADR Q13 session id): the orchestrator pass, every hunter and
+    every pod are RUNNING LLM agents and are hard-cancelled. The surfer mover has
+    no LLM, but it WOULD keep dispatching hunters and pods, so it is cancelled
+    with them - the whole run stops rather than leaving a live dispatcher behind
+    (the first #331 slice stamped `interrupted` and raced the still-live surfer).
+    `hold_session` is the runtime's PAUSE verb, used by the per-session API for a
+    resumable in-process pause; the stop-only path deliberately does not hold,
+    because it terminalizes the run. The resume ticket reintroduces the hold for
+    the types it keeps (see `docs/design/331-stop-only-resume-assessment-adr.md`).
+
+    DRAIN before stamping: cancellation is delivered only at a session's next
+    await, so the handler waits until no component session of the run remains
+    live before the terminal lands. Fail-open: every leg (cancel, drain, reap,
+    flush, stamp) is guarded, so a provider failure always lands a terminal and
+    never raises through the control plane.
+    """
+    from polymerhus.app.clients import pg  # noqa: PLC0415
+    from polymerhus.attack.hunting.hunt_orchestrator import (  # noqa: PLC0415
+        _reap_orchestrator,
+    )
+    from polymerhus.attack.hunting import surfer as surfer_mod  # noqa: PLC0415
+    from polymerhus.attack.hunting.surfer import is_run_session_id  # noqa: PLC0415
+    from polymerhus.app.llm.checkpoints import flush_run_scoped  # noqa: PLC0415
+
+    interval = (
+        surfer_mod.DEFAULT_SURFER_TICK_INTERVAL
+        if tick_interval is None else tick_interval
+    )
+
+    # STOP: per-session cancel on every live COMPONENT session of the run. The
+    # filter mirrors `_wait_no_run_sessions`: only the ADR Q13 component sessions
+    # (`hunting:<run_id>:orchestrator|surfer|hunt:...|pod:...`) are cancelled -
+    # never the run's outer bootstrap marker (`run_id` / `hunting:<run_id>`),
+    # which is the task RUNNING this handler (cancelling it would abort mid-stamp).
+    component_prefix = f"hunting:{hunting_run_id}:"
+    for session_id in list(control.live_session_ids()):
+        if not (
+            is_run_session_id(session_id, hunting_run_id)
+            and session_id.startswith(component_prefix)
+        ):
+            continue
+        try:
+            control.cancel_session(session_id)
+        except Exception:  # noqa: BLE001 - already settled is a safe no-op
+            logger.warning(
+                "stop_hunting_for_provider_failure: no live session %s to "
+                "cancel (no-op)", session_id,
+            )
+
+    # DRAIN: cancellation is async, so wait until the run's sessions settle.
+    try:
+        await asyncio.wait_for(
+            _wait_no_run_sessions(control, hunting_run_id, interval),
+            timeout=drain_timeout,
+        )
+    except Exception:  # noqa: BLE001 - fail-open: the drain is best-effort
+        logger.warning(
+            "stop_hunting_for_provider_failure: session drain for %s did not "
+            "settle within %ss (fail-open)", hunting_run_id, drain_timeout,
+        )
+
+    # Reap the run's orchestration actor so it cannot hot-loop after the pause.
+    try:
+        await _reap_orchestrator(hunting_run_id)
+    except Exception:  # noqa: BLE001 - teardown must never raise
+        logger.warning(
+            "stop_hunting_for_provider_failure: actor reap failed for %s "
+            "(fail-open)", hunting_run_id,
+        )
+
+    # FLUSH: archive the run's committed threads before the terminal lands, so
+    # the pre-failure checkpoint is durable for the (future) resume.
+    try:
+        await flush_run_scoped("hunting", hunting_run_id)
+    except Exception:  # noqa: BLE001 - fail-open: never block the terminal
+        logger.warning(
+            "stop_hunting_for_provider_failure: flush failed for %s (fail-open)",
+            hunting_run_id,
+        )
+
+    # STAMP the resumable terminal with the accurate provider cause.
+    try:
+        await asyncio.to_thread(
+            pg.set_hunting_run_status, hunting_run_id, "interrupted",
+            stats=_provider_interrupt_stats(error),
+        )
+    except Exception:  # noqa: BLE001 - fail-open
+        logger.warning(
+            "stop_hunting_for_provider_failure: could not persist 'interrupted' "
+            "for %s (fail-open)", hunting_run_id,
+        )
+
+
 def resume_pod_session(runtime, session_id: str) -> None:
     """The pod-ONLY launch seam (T5, ADR #169 Q4/Q6, identity-based refactor
     2026-08-25 operator ruling): RESUME ONE held/paused pod session by posting
@@ -754,7 +866,6 @@ async def start_hunting(
             )
 
         status = None
-        terminal_stats: dict | None = None
         try:
             orchestrator_id = orchestrator_session_id(hunting_run_id)
             surfer_id = surfer_session_id(hunting_run_id)
@@ -803,11 +914,16 @@ async def start_hunting(
                     "start_hunting: run %s aborted on provider degradation; "
                     "persisting 'interrupted'", hunting_run_id,
                 )
-                status = "interrupted"
-                # #331: record WHY on the run row - the cause survives past this
-                # process, so the eval can distinguish a transient throttle
-                # (resumable) from consumed credits (terminal).
-                terminal_stats = _provider_interrupt_stats(exc.provider_error)
+                # #331 stop-only: the ONE app-layer handler stops the run's
+                # sessions (the surfer included) and drains them BEFORE the
+                # terminal lands, flushes the threads, and stamps `interrupted`
+                # with the recorded cause. `status` stays None so the `finally`
+                # does not re-stamp over it.
+                await stop_hunting_for_provider_failure(
+                    control, hunting_run_id,
+                    error=exc.provider_error, tick_interval=tick_interval,
+                )
+                status = None
             else:
                 logger.exception(
                     "start_hunting: run %s degraded; persisting 'failed'",
@@ -816,17 +932,19 @@ async def start_hunting(
                 status = "failed"
         except ProviderUnavailableError as exc:
             # #312/#329: a provider failure in a dispatched HUNTER or POD session
-            # surfaces through the surfer's outcome - pause the run as the
-            # resumable `interrupted` with the provider cause, exactly like a
-            # provider-caused orchestrator abort. A throttle pauses the run; it
-            # never fails it and never lets it quiesce `complete` with zero specs
-            # and no typed reason (the trial-2 outcome).
+            # surfaces through the surfer's outcome - the same stop/flush/stamp
+            # handler pauses the run as the resumable `interrupted` with the
+            # provider cause. A throttle pauses the run; it never fails it and
+            # never lets it quiesce `complete` with zero specs and no typed reason
+            # (the trial-2 outcome).
             logger.warning(
                 "start_hunting: run %s paused on a child-session provider "
                 "failure; persisting 'interrupted'", hunting_run_id,
             )
-            status = "interrupted"
-            terminal_stats = _provider_interrupt_stats(exc)
+            await stop_hunting_for_provider_failure(
+                control, hunting_run_id, error=exc, tick_interval=tick_interval,
+            )
+            status = None
         except Exception:  # noqa: BLE001 - fail-open: land a terminal status
             logger.exception(
                 "start_hunting: run %s degraded; persisting 'failed'",
@@ -854,7 +972,6 @@ async def start_hunting(
                 try:
                     await asyncio.to_thread(
                         pg.set_hunting_run_status, hunting_run_id, status,
-                        stats=terminal_stats,
                     )
                 except Exception:  # noqa: BLE001 - fail-open
                     logger.warning(

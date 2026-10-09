@@ -10,6 +10,8 @@
 
 *Implementation note (#312, 2026-10-08): the re-verification of the `trial-2` zero-spec outcome found the hunter and pod sessions were NOT covered by the #329/#331 slices - a provider failure in a dispatched hunter was swallowed by the harness and the run quiesced `complete` with zero specs and no cause. The hunter harness now propagates the typed error, `RunDispatchState` carries a child-session failure to the surfer, and `start_hunting` maps it to the same `interrupted` + `stats` terminal (`docs/design/hunting-312-hunter-provider-failure-adr.md`). This is the per-agent-type terminal-marking half of Part 2.2; the stop/flush/resume re-scheduling remains ESCALATED.*
 
+*Implementation note (#331 STOP-ONLY re-scope, 2026-10-09): the ticket was re-scoped to STOPPING only, because the resume was ruled underspecified (no bounded resume-window policy, no idempotency contract against the at-least-once produced/consumed markers, no health signal - see `docs/design/331-stop-only-resume-assessment-adr.md`). The STOP leg of Part 2.2 now LANDS: `attack/hunting/runtime.py::stop_hunting_for_provider_failure` is the ONE app-layer handler that cancels every live component session of the run (the surfer included, so it cannot keep dispatching), drains, flushes the threads, and stamps the resumable terminal `interrupted` with the accurate `stats` cause - it never stamps `failed`. The eval monitor defers an `interrupted` execution and never escalates it. The resume IMPLEMENTATION (re-scheduling the flushed sessions) and the 429-vs-consumed-credits policy remain the future ticket's.*
+
 ## Part 1 - Gateway cost guard (failure A)
 
 ### 1.1 The provider cap, verified

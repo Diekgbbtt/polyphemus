@@ -72,6 +72,11 @@ Two acceptance criteria are operator-gated:
 - **AC2: (b)** - the operator verb is the floor, the eval driver auto-resumes with backoff so long unattended runs recover; idempotency rides the existing one-live-run-per-project guard.
 - **AC4: (a)** - pause on `429`/`5xx`/timeout; fail on a `403` (a hard denial is not a transient throttle). Record the class on the run row `stats` (already built by `#331`).
 
+**Re-scope update (2026-10-09).** `#331` was re-scoped to STOP-ONLY.
+The stop/flush/stamp leg has landed (`stop_hunting_for_provider_failure`), and the eval monitor defers an `interrupted` run rather than escalating it.
+The resume (AC2) is deferred to a future ticket because it is underspecified: there is no bounded resume-window policy, no idempotency contract against the at-least-once produced/consumed markers, and no health signal.
+The resume decision is proven derivable from the stamped attributes alone - `quota_exhausted=false` -> resumable after `retry_after_s`; `quota_exhausted=true` -> terminal; missing/unknown -> do-not-resume (`docs/design/331-stop-only-resume-assessment-adr.md`).
+
 ## D-4. #330 Part 2 - the gateway fail-over / throttle policy
 
 ### Context
