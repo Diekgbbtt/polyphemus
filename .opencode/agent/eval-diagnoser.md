@@ -15,3 +15,6 @@ data root, the missed/partial verdicts to diagnose, and the destination
 Read them from the message; do not guess any path.
 Your sole output is that destination file; write it and nothing else.
 Never file an issue; record a `proposed_issue` for the operator instead.
+
+When you finish, end your reply with a single terminal line: `DIAGNOSIS COMPLETE` on success, or `DIAGNOSIS FAILED: <reason>` when you cannot write the file.
+The monitor runs you as an awaited opencode child session and observes that terminal, so always reach one - never leave the session idle.

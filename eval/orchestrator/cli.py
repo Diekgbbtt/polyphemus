@@ -29,7 +29,7 @@ from orchestrator.dataset import (
 from orchestrator.datasets import helper_for
 from orchestrator.target_config import load_target_configuration
 from orchestrator.targets import build_strategy
-from orchestrator.commands import BackgroundRunner, LocalRunner
+from orchestrator.commands import LocalRunner
 from orchestrator.files import FileStore
 from orchestrator.instances import InstanceError
 from orchestrator.orchestrator import (
@@ -214,20 +214,45 @@ def _parser() -> argparse.ArgumentParser:
     _assessment_args(close_parser)
     _diagnosis_args(close_parser)
 
-    # --- the tick control plane (#289) ----------------------------------------
+    # --- the tick control plane (#289, #350) ----------------------------------
+    # The monitor is the plugin's pure plan engine: it never dispatches; the
+    # plugin's native opencode child dispatch performs each action and reports
+    # the terminal back through `--results`.
     monitor_parser = sub.add_parser(
         "monitor",
-        help="one tick of the post-execution workflow control plane",
+        help="plan the post-execution workflow (JSON) and apply native child results",
     )
     _common_args(monitor_parser)
-    _assessment_args(monitor_parser)
-    _diagnosis_args(monitor_parser)
+    _paths_args(monitor_parser)
     monitor_parser.add_argument(
         "--budget-s",
         type=float,
         default=float(os.environ.get("EVAL_MONITOR_BUDGET_S", 3600.0)),
         help="the wait between a node's dispatch and its re-dispatch/escalation "
         "decision",
+    )
+    monitor_parser.add_argument(
+        "--provider-backoff-s",
+        type=float,
+        default=float(
+            os.environ.get(
+                "EVAL_PROVIDER_BACKOFF_S", monitor.DEFAULT_PROVIDER_BACKOFF_S
+            )
+        ),
+        help="the longer wait after a subagent dies on the provider quota/rate "
+        "limit, so an exhausted window is never hot-looped",
+    )
+    monitor_parser.add_argument(
+        "--plan",
+        action="store_true",
+        help="emit the read-only JSON plan (the default; accepted so the plugin's "
+        "explicit plan call parses)",
+    )
+    monitor_parser.add_argument(
+        "--results",
+        default=os.environ.get("EVAL_MONITOR_RESULTS"),
+        help="a JSON file of native child terminal results to apply before "
+        "re-planning; without it the tick is read-only",
     )
 
     # --- the target chain (multi-target scaffold) -----------------------------
@@ -1233,6 +1258,127 @@ def _monitor_trial(args, run: TargetRun, trial_dir: Path, files: FileStore):
     return _MonitorContext(view, payload, assessment_request, diagnosis_request)
 
 
+# The tracked opencode role agent per node; the plugin dispatches it as an
+# awaited opencode child session (never a detached `opencode run`).
+ROLE_FOR_NODE = {
+    monitor.NODE_ASSESSMENT: assessment.ROLE,
+    monitor.NODE_DIAGNOSIS: diagnosis.ROLE,
+}
+# The terminal outcomes the native dispatcher reports for one child, mapped onto
+# the attempt-outcome vocabulary the tick already understands.
+MANAGED_OUTCOMES = {
+    "success": "dispatched",
+    "failure": "error",
+    "no-output": "error",
+    "timeout": "timeout",
+    "provider": subagents.PROVIDER_OUTCOME,
+}
+
+
+def _monitor_contexts(args, setup: EvalSetup, files: FileStore) -> dict[str, _MonitorContext]:
+    """Every readable trial's tick context, keyed by its record path."""
+    contexts: dict[str, _MonitorContext] = {}
+    for instance in setup.instances:
+        for run in instance.targets:
+            for trial_dir in files.list_dirs(Path(args.runs_root) / run.target_id):
+                record_path = trial_dir / "trial.yaml"
+                if not files.exists(record_path):
+                    continue
+                context = _monitor_trial(args, run, trial_dir, files)
+                if context is not None:
+                    contexts[str(record_path)] = context
+    return contexts
+
+
+def _monitor_action(context: _MonitorContext, decision: monitor.TrialDecision) -> dict:
+    """One trial's plan entry: its decision plus the dispatch request it needs."""
+    # An already-escalated node reports `escalate` with no cause; there is
+    # nothing left to apply, so it carries no action.
+    action_name = decision.action
+    if action_name == monitor.ESCALATE and decision.cause is None:
+        action_name = None
+    action: dict = {
+        "trial_record": str(context.view.trial_dir / "trial.yaml"),
+        "trial_dir": str(context.view.trial_dir),
+        "target_id": context.view.target_id,
+        "node": decision.node,
+        "state": decision.state,
+        "action": action_name,
+        "cause": decision.cause,
+        "detail": decision.detail,
+    }
+    if action_name is None:
+        return action
+    if decision.action == monitor.DISPATCH:
+        request = (
+            context.assessment_request
+            if decision.node == monitor.NODE_ASSESSMENT
+            else context.diagnosis_request
+        )
+        action["role"] = ROLE_FOR_NODE.get(decision.node)
+        if request is not None:
+            action["destination"] = str(request.destination)
+            action["message"] = (
+                assessment.launch_message(request)
+                if decision.node == monitor.NODE_ASSESSMENT
+                else diagnosis.launch_message(request)
+            )
+    return action
+
+
+def _managed_outcome(outcome: str | None, detail: str | None) -> str:
+    """Map a child's terminal onto the trial record's attempt vocabulary."""
+    if outcome == subagents.PROVIDER_OUTCOME or subagents.is_provider_quota(detail):
+        return subagents.PROVIDER_OUTCOME
+    return MANAGED_OUTCOMES.get(outcome or "", "error")
+
+
+def _apply_monitor_result(
+    context: _MonitorContext, result: dict, files: FileStore
+) -> None:
+    """Apply one native child's terminal (or an escalation) to the trial record."""
+    record_path = context.view.trial_dir / "trial.yaml"
+    node = result.get("node")
+    if result.get("escalate"):
+        cause = str(result.get("cause") or "unknown")
+        if node == monitor.NODE_DIAGNOSIS:
+            _escalate_diagnosis(context, cause, files)
+        else:
+            _escalate_assessment(context, cause, files)
+        return
+    outcome = _managed_outcome(result.get("outcome"), result.get("detail"))
+    detail = result.get("detail")
+    now = subagents.utcnow()
+    if node == monitor.NODE_DIAGNOSIS:
+        attempts = list(_prior_diagnosis_attempts(context.payload))
+        attempts.append(
+            trial.DiagnosisAttempt(len(attempts) + 1, outcome, detail, now)
+        )
+        request = context.diagnosis_request
+        destination = (
+            request.destination
+            if request is not None
+            else context.view.trial_dir / diagnosis.DIAGNOSES_FILENAME
+        )
+        diagnosis.record_diagnosis(
+            record_path,
+            trial.DiagnosisRecord("dispatched", attempts, str(destination)),
+            files=files,
+        )
+        return
+    attempts = list(_prior_attempts(context.payload))
+    attempts.append(
+        trial.AssessmentAttempt(len(attempts) + 1, outcome, detail, now)
+    )
+    assessment.record_assessment(
+        record_path,
+        trial.AssessmentRecord(
+            "dispatched", attempts, str(context.assessment_request.destination)
+        ),
+        files=files,
+    )
+
+
 def _escalate_assessment(context: _MonitorContext, cause: str, files: FileStore) -> str:
     failure = f"assessment_{cause}"
     record = trial.AssessmentRecord(
@@ -1267,149 +1413,55 @@ def _escalate_diagnosis(context: _MonitorContext, cause: str, files: FileStore) 
     return failure
 
 
-def _assessment_error_record(
-    context: _MonitorContext, exc: BaseException
-) -> trial.AssessmentRecord:
-    """Record a raised assessment command as an `error` attempt.
-
-    A command that raises is a dispatch failure, not a missing output: the
-    attempt is appended (so the next tick re-dispatches within the bound and
-    the eventual escalation names `dispatcher_process`), never escalated here.
-    """
-    attempts = list(_prior_attempts(context.payload))
-    attempts.append(
-        trial.AssessmentAttempt(
-            len(attempts) + 1, "error", str(exc), subagents.utcnow()
-        )
-    )
-    return trial.AssessmentRecord(
-        "dispatched", attempts, str(context.assessment_request.destination)
-    )
-
-
-def _diagnosis_error_record(
-    context: _MonitorContext, exc: BaseException
-) -> trial.DiagnosisRecord:
-    """Record a raised diagnoser command as an `error` attempt (see above)."""
-    attempts = list(_prior_diagnosis_attempts(context.payload))
-    attempts.append(
-        trial.DiagnosisAttempt(
-            len(attempts) + 1, "error", str(exc), subagents.utcnow()
-        )
-    )
-    request = context.diagnosis_request
-    destination = (
-        request.destination
-        if request is not None
-        else context.view.trial_dir / diagnosis.DIAGNOSES_FILENAME
-    )
-    return trial.DiagnosisRecord("dispatched", attempts, str(destination))
-
-
-def _apply_monitor(
-    args,
-    context: _MonitorContext,
-    decision: monitor.TrialDecision,
-    *,
-    files: FileStore,
-    runner_factory: RunnerFactory,
-    dispatch_factory: DispatchFactory | None,
-    diagnose_dispatch_factory: DiagnoseDispatchFactory | None,
-) -> str | None:
-    """Apply one tick's decision: dispatch a node, or record its escalation.
-
-    Returns the named failure when the tick escalated the node (including a
-    dispatch that could not construct its command), else None.
-    """
-    record_path = context.view.trial_dir / "trial.yaml"
-    if decision.action == monitor.DISPATCH and decision.node == monitor.NODE_ASSESSMENT:
-        try:
-            dispatcher = _make_dispatcher(args, runner_factory, dispatch_factory)
-        except assessment.AssessmentError:
-            return _escalate_assessment(context, "no_command", files)
-        try:
-            record = assessment.dispatch(
-                context.assessment_request,
-                dispatcher=dispatcher,
-                prior=_prior_attempts(context.payload),
-            )
-        except Exception as exc:  # noqa: BLE001 - the dispatcher outcome is arbitrary
-            record = _assessment_error_record(context, exc)
-        assessment.record_assessment(record_path, record, files=files)
-        return None
-    if decision.action == monitor.DISPATCH and decision.node == monitor.NODE_DIAGNOSIS:
-        try:
-            dispatcher = _make_diagnosis_dispatcher(
-                args, runner_factory, diagnose_dispatch_factory
-            )
-        except diagnosis.DiagnosisError:
-            return _escalate_diagnosis(context, "no_command", files)
-        try:
-            record = diagnosis.dispatch(
-                context.diagnosis_request,
-                dispatcher=dispatcher,
-                prior=_prior_diagnosis_attempts(context.payload),
-            )
-        except Exception as exc:  # noqa: BLE001 - the dispatcher outcome is arbitrary
-            record = _diagnosis_error_record(context, exc)
-        diagnosis.record_diagnosis(record_path, record, files=files)
-        return None
-    if decision.action == monitor.ESCALATE:
-        if decision.cause is None:
-            # Already escalated on a prior tick: leave its named failure intact.
-            return None
-        if decision.node == monitor.NODE_ASSESSMENT:
-            return _escalate_assessment(context, decision.cause, files)
-        return _escalate_diagnosis(context, decision.cause, files)
-    return None
-
-
 def _run_monitor(
     args,
     setup: EvalSetup,
     out: TextIO,
     err: TextIO,
-    runner_factory: RunnerFactory,
-    dispatch_factory: DispatchFactory | None,
-    diagnose_dispatch_factory: DiagnoseDispatchFactory | None,
+    files: FileStore,
+    results: Sequence[dict] | None,
 ) -> int:
-    """One sweep of the control plane: verify state and advance one node per trial."""
-    files = FileStore()
+    """The tick plan engine (#350): apply any child results, then re-plan.
+
+    This verb never dispatches. The plugin's native opencode child dispatch
+    performs each `dispatch` action and reports its terminal back through
+    `--results`; this engine persists the attempt and returns the next plan, so
+    the assessment and the diagnosis advance synchronously within one tool call.
+    The plan is JSON on stdout; the human lines go to stderr.
+    """
+    contexts = _monitor_contexts(args, setup, files)
+    for result in results or ():
+        context = contexts.get(str(result.get("trial_record") or ""))
+        if context is not None:
+            _apply_monitor_result(context, result, files)
+    if results:
+        contexts = _monitor_contexts(args, setup, files)
+
     now = subagents.utcnow()
+    actions = []
     tally: dict[str, int] = {}
-    escalated = 0
-    for instance in setup.instances:
-        for run in instance.targets:
-            for trial_dir in files.list_dirs(Path(args.runs_root) / run.target_id):
-                if not files.exists(trial_dir / "trial.yaml"):
-                    continue
-                context = _monitor_trial(args, run, trial_dir, files)
-                if context is None:
-                    continue
-                decision = monitor.decide(context.view, now=now, budget_s=args.budget_s)
-                tally[decision.state] = tally.get(decision.state, 0) + 1
-                label = f"{run.target_id}/{trial_dir.name}"
-                if args.dry_run:
-                    print(f"{label}: {decision.state} ({decision.node})", file=out)
-                    continue
-                failure = _apply_monitor(
-                    args,
-                    context,
-                    decision,
-                    files=files,
-                    runner_factory=runner_factory,
-                    dispatch_factory=dispatch_factory,
-                    diagnose_dispatch_factory=diagnose_dispatch_factory,
-                )
-                detail = f": {decision.detail}" if decision.detail else ""
-                print(f"{label}: {decision.state} ({decision.node}){detail}", file=out)
-                if failure is not None or decision.state == monitor.STATE_ESCALATED:
-                    escalated += 1
-                    note = failure or decision.detail or "already escalated"
-                    print(f"monitor: {label}: escalated: {note}", file=err)
-    summary = ", ".join(f"{state}={count}" for state, count in sorted(tally.items()))
-    print(f"monitor tick: {summary or 'no trials'}", file=out)
-    return 1 if escalated else 0
+    for context in contexts.values():
+        decision = monitor.decide(
+            context.view,
+            now=now,
+            budget_s=args.budget_s,
+            provider_backoff_s=args.provider_backoff_s,
+        )
+        tally[decision.state] = tally.get(decision.state, 0) + 1
+        action = _monitor_action(context, decision)
+        actions.append(action)
+        label = f"{context.view.target_id}/{context.view.trial_dir.name}"
+        detail = f": {decision.detail}" if decision.detail else ""
+        print(f"{label}: {decision.state} ({decision.node}){detail}", file=err)
+        if decision.state == monitor.STATE_ESCALATED:
+            print(f"monitor: {label}: escalated: {decision.detail or 'already'}", file=err)
+    report = {
+        "actions": actions,
+        "tally": tally,
+        "escalated": tally.get(monitor.STATE_ESCALATED, 0),
+    }
+    print(json.dumps(report), file=out)
+    return 1 if report["escalated"] else 0
 
 
 # --- the target chain (multi-target scaffold) ---------------------------------
@@ -1935,7 +1987,6 @@ def main(
     argv: list[str] | None = None,
     *,
     runner_factory: RunnerFactory = LocalRunner,
-    monitor_runner_factory: RunnerFactory = BackgroundRunner,
     api_factory: ApiFactory | None = None,
     dispatch_factory: DispatchFactory | None = None,
     diagnose_dispatch_factory: DiagnoseDispatchFactory | None = None,
@@ -1996,10 +2047,10 @@ def main(
                 diagnose_dispatch_factory,
             )
         if args.verb == "monitor":
-            return _run_monitor(
-                args, setup, out, err, monitor_runner_factory, dispatch_factory,
-                diagnose_dispatch_factory,
-            )
+            results = None
+            if getattr(args, "results", None):
+                results = json.loads(Path(args.results).read_text(encoding="utf-8"))
+            return _run_monitor(args, setup, out, err, FileStore(), results)
         if args.verb == "next-target":
             return _run_next_target(args, setup, config, out, err, runner_factory)
 

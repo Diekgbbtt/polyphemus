@@ -156,6 +156,40 @@ def test_monitor_plugin_defines_the_eval_monitor_tool() -> None:
     assert "orchestrator" in text and "monitor" in text, "the tool must shell the CLI tick"
 
 
+def test_monitor_plugin_dispatches_awaited_native_child_sessions() -> None:
+    """#350: the monitor dispatches role agents as bounded, awaited opencode
+    child sessions via the injected SDK client - never a detached process."""
+    text = MONITOR_PLUGIN.read_text(encoding="utf-8")
+    assert "session.create" in text, "the child session must be created"
+    assert "session.prompt" in text, "the child must be prompted and awaited"
+    assert "session.abort" in text, "a timed-out or prior child must be aborted"
+    assert "activeChildren" in text, "a re-dispatch must kill the prior child"
+    assert "Popen" not in text, "no detached process may remain"
+    assert "start_new_session" not in text, "no detached process group may remain"
+    # The plan/apply protocol with the Python plan engine.
+    assert "--plan" in text
+    assert "--results" in text
+
+
+def test_monitor_plugin_serializes_errors_without_losing_the_message() -> None:
+    """#350 follow-up: `JSON.stringify(new Error(...))` is "{}", which would hide
+    the provider-quota phrase (e.g. `Go usage limit exceeded`) and defeat the
+    backoff. The plugin must render an Error as `name: message`."""
+    text = MONITOR_PLUGIN.read_text(encoding="utf-8")
+    assert "serializeError" in text
+    assert "instanceof Error" in text
+    assert "JSON.stringify(info.error)" not in text
+    assert "JSON.stringify(response.error)" not in text
+    assert "readFileSync" not in text
+
+
+def test_role_agents_signal_a_terminal() -> None:
+    for role, token in (("eval-assessor", "ASSESSMENT"), ("eval-diagnoser", "DIAGNOSIS")):
+        text = _agent_text(role)
+        assert f"{token} COMPLETE" in text, f"{role} must signal success"
+        assert f"{token} FAILED" in text, f"{role} must signal failure"
+
+
 def test_the_orchestrator_prompt_names_a_definition_that_exists() -> None:
     assert ORCHESTRATOR_PROMPT.is_file(), "driver contract prompt missing"
     assert MONITOR_TOOL in ORCHESTRATOR_PROMPT.read_text(encoding="utf-8")

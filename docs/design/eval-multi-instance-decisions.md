@@ -22,7 +22,7 @@
 
 ### D6 - Asynchronous assessment; no polling
 *2026-09-25.* On execution completion the orchestrator dispatches a background subagent that writes `verdicts.yaml` into the trial directory. The orchestrator does not poll for it; the presence check is the workflow phase of D15.
-*Amended 2026-10-09 by D52.* "No polling" is now literal: the dispatch launches the subagent detached and the tick returns at once, so the presence check is the only completion signal.
+*Amended 2026-10-09 by D57 (superseding D52).* The dispatch is no longer detached: the monitor runs the assessment and the diagnosis as awaited, bounded native opencode child sessions and advances on the child's terminal, so the presence check confirms the terminal rather than being its only signal. See D57.
 
 ### D7 - Durability: bind mount + active continuous sync
 *2026-09-25.* The instance data root is host-backed by a docker bind mount plus an active continuous sync to a durable artifact store.
@@ -158,7 +158,7 @@ One-way sync (D12) removes conflict classes; residual risks are lag, backlog gro
 
 ### R5 - Silent assessment failure without polling
 D15's presence phase (check, re-dispatch twice, then self-repair) is the mitigation; a dead subagent is caught at eval-close rather than immediately.
-*Amended 2026-10-09 by D52.* The presence check is now the monitor's per-tick node state (not only eval-close), with the same two-dispatch bound before a named escalation; a detached subagent that exits without writing its output is caught by that bound.
+*Amended 2026-10-09 by D57 (superseding D52).* The presence check is now the monitor's per-tick node state (not only eval-close), with the same two-dispatch bound before a named escalation; a child that exits without writing its output is caught by that bound, and a child that dies on the provider's own quota backs off instead of escalating immediately.
 
 ### R6 - Unscoped API endpoints within an instance
 Module pause/resume/drain, run stop/status, session verbs, `GET /runs`, LightRAG and ingestion are unscoped. Per-instance stacks mitigate cross-instance leakage; the endpoints stay unsafe for multiple projects in one instance.
@@ -423,11 +423,19 @@ The chain's `next-target` remains the per-target bring-up the driver calls first
 
 ### D52 - The post-execution dispatch launches the subagent detached; the tick never blocks
 *2026-10-09.* Amends D6 and R5; the presence check stays D15's.
+**SUPERSEDED by D57** (`docs/design/eval-orchestrator-subagent-lifecycle-adr.md`).
+D52 assumed every subagent terminates and that the output file is the only
+completion signal. A hung subagent (opencode `1.18.34` `run` does not exit after
+a fatal provider error) neither writes, nor exits, nor raises, and the detached
+`BackgroundRunner` leaked it forever. D57 replaces the detached process with a
+bounded, awaited native opencode child session and removes `BackgroundRunner`.
+The non-blocking property is deliberately traded for bounded reliability.
 The monitor tick (`orchestrator monitor`, #289) dispatched the assessment and diagnoser subagents through the synchronous `LocalRunner` (`subprocess.run`), so one tick blocked for the whole subagent run and could not advance other trials.
 The workflow prompts already promised a non-blocking dispatch; the code did not.
 This is the #316 defect.
 
 **Decision.**
+*(Superseded by D57: the dispatch is now an awaited, bounded native opencode child session, not a detached process.)*
 The monitor's dispatch path launches the configured agent command detached and returns at once.
 `BackgroundRunner` (`orchestrator/commands.py`) starts the command with `start_new_session=True`, redirects its stdout and stderr to a per-node log beside the node's destination (`<destination>.dispatch.log`), and never waits.
 The tick records the attempt and returns, so later ticks advance every other trial.
@@ -438,6 +446,7 @@ Within the budget the node is `awaiting`; past it the node re-dispatches up to t
 At most two subagents are launched per node, so a hung first dispatch costs one extra launch, never a pile-up.
 
 **How completion is observed.**
+*(Superseded by D57: the awaited child's terminal is the completion signal, and the output file confirms it.)*
 The node's output file is the contract and the only completion signal: `verdicts.yaml` for the assessment, `diagnoses.yaml` for the diagnosis.
 A later tick reads the file, validates it, advances the node, and never dispatches again.
 The detached process is not polled, so it may write the file long after the tick that launched it has exited.
@@ -460,6 +469,7 @@ The surfer owns failed, blocked, and interrupted executions; the monitor defers 
 The assessment and diagnosis nodes' failures surface on the trial record through the monitor's own escalation, not through the surfer.
 
 **Scope.**
+*(Superseded by D57: the monitor uses native child dispatch and `BackgroundRunner` is removed; the manual `assess`/`diagnose` and `close-verify` verbs run through the now-bounded synchronous `LocalRunner`.)*
 Only the `monitor` verb uses the non-blocking runner (`cli.main(monitor_runner_factory=BackgroundRunner)`).
 The manual `assess`/`diagnose` verbs and `close-verify` keep the synchronous runner, because an operator invokes them only when the trial's output already exists (`assess`/`diagnose` record one dispatch and return) or when the close phase checks within the invocation.
 
@@ -472,6 +482,7 @@ An exit-status sidecar would let the node name `dispatcher_process` sooner, but 
 The dispatch bound already resolves a crashed subagent; the sidecar is future hardening if the escalation latency proves costly.
 
 **Falsification checks.**
+*(Superseded by D57: these detached-dispatch checks no longer exist; D57's ADR names its own.)*
 - `BackgroundRunner` returns before a sleeping command finishes (`test_background_runner_returns_before_a_sleeping_command_finishes`).
 - A monitor tick whose dispatch is `sleep 5` returns in well under the sleep (`test_monitor_tick_returns_without_waiting_for_the_subagent`).
 - The monitor records the dispatch and advances the node through the injected runner (`test_monitor_dispatches_through_the_injected_runner`).

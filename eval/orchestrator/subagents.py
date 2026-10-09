@@ -27,6 +27,32 @@ Record = TypeVar("Record")
 Attempt = TypeVar("Attempt")
 Decision = TypeVar("Decision")
 
+# The attempt outcome recorded when a subagent dies on the provider's own
+# quota/rate limit (#350). It is a distinct outcome, not a generic error, so the
+# tick can back the node off far longer than a normal budget instead of
+# hot-looping a new dispatch against an exhausted window (EV-21/#330/#331).
+PROVIDER_OUTCOME = "provider"
+# The lower-cased substrings that mark a fatal provider-quota death in the
+# child's terminal detail. They name the eval relay's own quota signature
+# (`AI_APICallError: Go usage limit exceeded`) and its vendor-prefixed spelling,
+# plus the OpenAI-compatible insufficient-quota code. Generic words such as
+# "quota", "rate limit", or "429" are deliberately excluded: they occur in many
+# non-quota failures, and matching one would arm a spurious 5h provider backoff.
+PROVIDER_QUOTA_MARKERS = (
+    "usage limit exceeded",
+    "go usage limit",
+    "insufficient_quota",
+    "insufficient quota",
+)
+
+
+def is_provider_quota(detail: str | None) -> bool:
+    """True when a subagent failure names the provider's own quota/rate limit."""
+    if not detail:
+        return False
+    text = detail.lower()
+    return any(marker in text for marker in PROVIDER_QUOTA_MARKERS)
+
 # The request fields both subagents share; the caller adds its own.
 COMMON_FIELDS = (
     "prompt",
@@ -252,7 +278,12 @@ def dispatch(
     make_attempt: Callable[[int, str, str | None, str], Attempt],
     make_record: Callable[[str, "list[Attempt]", str], Record],
 ) -> Record:
-    """Fire-and-forget dispatch; record one `dispatched` attempt (D6)."""
+    """Run the dispatcher once and record one `dispatched` attempt (D6).
+
+    The dispatch is synchronous: the injected dispatcher runs the bounded
+    command and raises on a non-zero exit, so a hung or provider-killed command
+    is recorded as an `error` attempt rather than blocking the caller.
+    """
     now = now or utcnow
     dispatcher(request)
     attempts = list(prior)

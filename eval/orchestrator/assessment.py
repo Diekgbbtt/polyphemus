@@ -1,9 +1,11 @@
 """The background assessment and the eval-close verification phase (#271).
 
-Dispatch is fire-and-forget (D6): the orchestrator hands the configured agent
-command the prompt file, the trial record, the ground truth, the data root, and
-the destination `verdicts.yaml`, then returns without polling. The agent writes
-that file and nothing else; the prompt states the contract.
+The manual `assess` verb runs the configured agent command synchronously through
+the bounded runner (D6), handing it the prompt file, the trial record, the
+ground truth, the data root, and the destination `verdicts.yaml`. The monitor
+instead runs the assessor as an awaited native opencode child session (#350,
+D57). In both paths the agent writes that file and nothing else; the prompt
+states the contract.
 
 The eval-close phase (N16/D15) checks presence and schema for every trial,
 re-dispatches at most twice, then micro-diagnoses a persistent failure: a
@@ -28,6 +30,12 @@ from orchestrator.files import FileStore
 
 # `eval/orchestrator/assessment.py` -> `eval/prompts/assessment.md`.
 ASSESSMENT_PROMPT = Path(__file__).parents[1] / "prompts" / "assessment.md"
+
+# The tracked opencode role agent the monitor's native child dispatch selects
+# (`.opencode/agent/eval-assessor.md`). The dispatch is an awaited opencode child
+# session; the child signals its terminal by writing the destination file and by
+# returning; a provider death terminates it non-zero instead of hanging (#350).
+ROLE = "eval-assessor"
 
 # Two dispatches before the micro-diagnosis (D15: "re-dispatches twice").
 MAX_DISPATCHES = 2
@@ -91,6 +99,27 @@ def plan_dispatch(
     )
 
 
+def launch_message(request: AssessmentRequest) -> str:
+    """The message the monitor's native child dispatch hands the assessor.
+
+    The role agent reads its contract from `eval/prompts/assessment.md`; the
+    message names the four paths it must use and the terminal line it replies so
+    the dispatcher can observe a terminal even before the file lands.
+    """
+    trace = request.trace_id or "(none)"
+    return (
+        "Assess one completed polymerhus eval trial.\n"
+        f"- trial record: {request.trial_record}\n"
+        f"- ground truth: {request.ground_truth}\n"
+        f"- data root: {request.data_root}\n"
+        f"- destination: {request.destination}\n"
+        f"- trace id: {trace}\n"
+        "Read eval/prompts/assessment.md and follow it exactly. "
+        "Write only the destination file. When done, reply with a single "
+        "terminal line: `ASSESSMENT COMPLETE` or `ASSESSMENT FAILED: <reason>`."
+    )
+
+
 class CommandDispatcher(subagents.CommandDispatcher):
     """The production seam: run the configured agent command line once."""
 
@@ -108,7 +137,7 @@ def dispatch(
     prior: Sequence[trial.AssessmentAttempt] = (),
     now: Callable[[], str] | None = None,
 ) -> trial.AssessmentRecord:
-    """Fire-and-forget dispatch; return the recorded attempt (D6)."""
+    """Run the dispatcher once; return the recorded attempt (D6)."""
     return subagents.dispatch(
         request,
         dispatcher=dispatcher,

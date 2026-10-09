@@ -204,16 +204,18 @@ The eval-close phase that checks every trial's `verdicts.yaml` presence and sche
 _Avoid_: final check, audit
 
 **Tick control plane**:
-The eval orchestrator's post-execution workflow driver (#289): one tick verifies every trial's execution state and advances a single node, from a successful execution to the background assessment and then to the diagnosis.
-It is one CLI tick (`orchestrator monitor`) wrapped as the `eval_monitor` custom tool, and it is the only automated path that dispatches the assessment and diagnoser subagents (the manual `assess`/`diagnose` verbs remain); a failed, blocked, or timed-out execution is deferred to the surfer loop.
+The eval orchestrator's post-execution workflow driver (#289, #350): one tick verifies every trial's execution state and moves the workflow forward, from a successful execution to the assessment and then to the diagnosis.
+It is the `eval_monitor` custom tool over the `orchestrator monitor` plan engine, and it is the only automated path that dispatches the assessment and diagnoser subagents (the manual `assess`/`diagnose` verbs remain); a failed, blocked, or timed-out execution is deferred to the surfer loop.
+The workflow is reordered so each orchestrator iteration configures, launches, and health-checks the next target (`next_target`) before it assesses and diagnoses the previous trial.
 An `interrupted` execution (a provider-paused hunt, #331) is likewise deferred, never escalated - it is resumable, and its hunting-phase failure carries the recorded provider cause so the surfer can tell a transient throttle from consumed credits.
-The dispatch is non-blocking (#316, D52): the tick launches the configured agent command detached (`BackgroundRunner`) and returns at once, so one tick can advance every other trial while a subagent runs.
-The node's output file is the only completion signal; a detached subagent that never writes it is re-dispatched within the bounded count and budget and then escalated with a named failure.
-Each launch redirects the subagent's output to a dispatch log beside the node's destination (`<destination>.dispatch.log`); the log is diagnostic, never an input to the tick decision.
+The tick is a pure plan engine (`orchestrator monitor`): it emits, as JSON, each trial's state and the next action, and never dispatches.
+The plugin performs each action as an awaited, bounded native opencode child session (D57, superseding D52's detached launch) and reports the terminal back, so the assessor and the diagnoser run synchronously within one tool call and a fatal provider error yields a non-zero terminal, never a hang.
+The node's output file is the completion signal; a node that never writes it is re-dispatched within the bounded count and budget and then escalated with a named failure, and a node that dies on the provider's own quota backs off for the longer provider window instead of hot-looping.
 _Avoid_: monitor loop, watcher, scheduler
 
 **Dispatch log**:
-The per-launch output sink `<destination>.dispatch.log` beside an assessment or diagnosis node's destination file, written by the detached `BackgroundRunner` so a background subagent outlives the tick that launched it.
+The per-launch output sink `<destination>.dispatch.log` beside an assessment or diagnosis node's destination file, written by the synchronous `LocalRunner` when a manual `assess`/`diagnose` dispatch runs (the monitor's native child dispatch has no such log).
+It is diagnostic, never an input to the tick decision.
 _Avoid_: stdout, agent log
 
 **Workflow node**:
@@ -222,15 +224,16 @@ Each node has its own prompt under `eval/prompts/` (`orchestrator.md` for the gr
 _Avoid_: stage, step, phase
 
 **Role agent**:
-The opencode agent under `.opencode/agent/<role>.md` that the harness selects with `opencode run --agent <role> --dir <checkout> "<message>"`; `opencode run` takes the prompt as a message and resolves a project agent at `<checkout>/.opencode/agent/<role>.md`.
+The opencode agent under `.opencode/agent/<role>.md` that the harness selects by role id. The monitor runs the assessor and the diagnoser as awaited native opencode child sessions (`client.session.prompt({agent: <role>})`, D57); the aligner and the surfer, and the manual `assess`/`diagnose` verbs, are selected with `opencode run --agent <role> --dir <checkout> "<message>"`.
 It carries `mode: all` and the eval model (`opencode-go/deepseek-v4.1-flash`), and its body names the `eval/prompts/*.md` contract it reads.
+Each role ends its reply with an explicit terminal line (`... COMPLETE` / `... FAILED: <reason>`).
 The four dispatched roles are `eval-assessor`, `eval-diagnoser`, `eval-aligner`, and `eval-surfer`.
 Their source is TRACKED in the repo so it reaches the eval server's canonical checkout; only the per-machine install state (`node_modules`, lockfiles) is ignored - an agent that is gitignored is a missing one.
 _Avoid_: subagent config, prompt file
 
 **Eval orchestrator agent**:
 The primary opencode agent (`.opencode/agent/eval-orchestrator.md`, `mode: primary`) that drives one `EvalSetup` through the `next_target` and `eval_monitor` tools; its workflow prompt is `eval/prompts/orchestrator.md`, which the tracked `.opencode/opencode.json` loads as instructions.
-The two tools are the custom tools defined by the tracked `.opencode/plugin/eval-monitor.ts`, so the **Tick control plane**'s one CLI tick is what the agent actually calls.
+The two tools are the custom tools defined by the tracked `.opencode/plugin/eval-monitor.ts`; `eval_monitor` drives the plan engine and performs the native child dispatch, and `next_target` shells the chain verb.
 Like the **Role agent** source, the orchestrator agent, its config, and its plugin are TRACKED repo source: the config and plugin name paths relative to the checkout, so only a commit reaches the eval server, and a gitignored plugin is an `eval_monitor` tool that cannot load.
 `.dockerignore` and the advance manifest keep the three out of the stack image and version alignment.
 _Avoid_: driver, primary agent, main agent

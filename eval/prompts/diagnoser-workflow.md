@@ -9,19 +9,22 @@ This prompt is the node; the subagent it dispatches has its own role prompt at
 ## What happens at this node
 
 The monitor computes the required vulns - the ids of every `missed` and
-`partial` verdict - and dispatches the diagnoser subagent once, handing it the
-role prompt, the trial record, the verdicts, the ground truth, the data root,
-the destination `diagnoses.yaml`, and the comma-separated vuln ids the dispatch
-must cover.
-The dispatch is fire-and-forget: the monitor does not block waiting for the
-subagent.
+`partial` verdict - and runs the diagnoser as an **awaited opencode child
+session** - the `eval-diagnoser` role agent, selected by the plugin's native
+child dispatch - handing it the trial record, the verdicts, the ground truth,
+the data root, the destination `diagnoses.yaml`, and the comma-separated vuln
+ids the dispatch must cover.
+The dispatch is bounded: the child is aborted if it exceeds the wait budget, and
+a fatal provider error terminates it non-zero instead of hanging.
+The monitor waits for the child's terminal, then verifies the file, so the
+assessment and the diagnosis run synchronously in one tick.
 
 A trial whose every verdict is `identified` requires no diagnosis and never
 reaches this node: it is `complete` straight from the assessment node.
 
-## What the tick verifies
+## What the monitor verifies
 
-On each later tick the monitor reads the destination:
+Immediately after the child returns, the monitor reads the destination:
 
 - **present, schema-valid, and paired** - one entry per `missed`/`partial`
   verdict, each carrying the trial record's `eval_sha` and `stack_fingerprint`,

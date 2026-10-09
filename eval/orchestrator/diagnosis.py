@@ -9,12 +9,12 @@ issue-bank issue or a proposed issue - never both, and never a filed issue
 from the trial record - never invented: a row whose identity does not match the
 record, or a record with no identity at all, is refused (D32/#276 AC2).
 
-The diagnoser is dispatched through the same fire-and-forget seam as the
-assessment (#271/D6): the orchestrator hands the configured command the prompt
-file, the trial record, the verdicts, the ground truth, the data root, and the
-destination, then returns without polling. The eval-close phase checks the file
-is present, valid, and paired (an entry for every `missed`/`partial`), with the
-same bounded re-dispatch plus escalation as #271.
+The diagnoser is dispatched through the same seam as the assessment (#271/D6):
+the manual `diagnose` verb runs the configured command synchronously through the
+bounded runner, and the monitor runs it as an awaited native opencode child
+session (#350, D57). The eval-close phase checks the file is present, valid, and
+paired (an entry for every `missed`/`partial`), with the same bounded
+re-dispatch plus escalation as #271.
 
 The root-cause space is deliberately wider than code: `kb_coverage_gap` and
 `skill_defect` name defects in the persisted data layer, beside the
@@ -45,6 +45,10 @@ from orchestrator.files import FileStore
 
 # `eval/orchestrator/diagnosis.py` -> `eval/prompts/diagnoser.md`.
 DIAGNOSER_PROMPT = Path(__file__).parents[1] / "prompts" / "diagnoser.md"
+
+# The tracked opencode role agent the monitor's native child dispatch selects
+# (`.opencode/agent/eval-diagnoser.md`), the diagnosis twin of the assessor.
+ROLE = "eval-diagnoser"
 
 # The background launch's output sink, beside the node's destination file.
 DISPATCH_LOG_SUFFIX = ".dispatch.log"
@@ -402,10 +406,10 @@ class DiagnosisRequest:
     trace_id: str | None = None
 
 
-# The dispatch seam, reusing #271's fire-and-forget shape (D6) parameterized on
-# this request: run the configured agent command with the request. The real
-# implementation runs the configured command line (OPERATOR.md); tests inject a
-# fake.
+# The dispatch seam, reusing #271's shape (D6) parameterized on this request:
+# run the configured agent command with the request through the bounded
+# synchronous runner. The real implementation runs the configured command line
+# (OPERATOR.md); tests inject a fake.
 SubagentDispatcher = Callable[[DiagnosisRequest], None]
 
 
@@ -437,6 +441,31 @@ def plan_dispatch(
     )
 
 
+def launch_message(request: DiagnosisRequest) -> str:
+    """The message the monitor's native child dispatch hands the diagnoser.
+
+    The role agent reads its contract from `eval/prompts/diagnoser.md`; the
+    message names every path and the missed/partial vuln ids the dispatch must
+    cover, plus the terminal line it replies so the dispatcher can observe a
+    terminal even before the file lands.
+    """
+    trace = request.trace_id or "(none)"
+    return (
+        "Diagnose one assessed polymerhus eval trial.\n"
+        f"- trial record: {request.trial_record}\n"
+        f"- verdicts: {request.verdicts}\n"
+        f"- ground truth: {request.ground_truth}\n"
+        f"- data root: {request.data_root}\n"
+        f"- destination: {request.destination}\n"
+        f"- vulns: {','.join(request.vulns)}\n"
+        f"- trace id: {trace}\n"
+        "Read eval/prompts/diagnoser.md and follow it exactly. "
+        "Write only the destination file; never file an issue. When done, reply "
+        "with a single terminal line: `DIAGNOSIS COMPLETE` or "
+        "`DIAGNOSIS FAILED: <reason>`."
+    )
+
+
 class CommandDispatcher(subagents.CommandDispatcher):
     """The production seam: run the configured agent command line once."""
 
@@ -454,7 +483,7 @@ def dispatch(
     prior: Sequence[trial.DiagnosisAttempt] = (),
     now: Callable[[], str] | None = None,
 ) -> trial.DiagnosisRecord:
-    """Fire-and-forget dispatch; return the recorded attempt (D6)."""
+    """Run the dispatcher once; return the recorded attempt (D6)."""
     return subagents.dispatch(
         request,
         dispatcher=dispatcher,

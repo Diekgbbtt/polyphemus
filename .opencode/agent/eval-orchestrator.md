@@ -1,5 +1,5 @@
 ---
-description: Drives an eval run end to end. Use when supervising a multi-instance eval: advance the target chain with the next_target tool (reclaim the previous image, pull the next, bring it up, check health), then verify each trial's execution state and dispatch the assessment then the diagnoser through the eval_monitor tool until the run converges.
+description: Drives an eval run end to end. Each iteration, configure, launch, and health-check the next target first with the next_target tool (reclaim the previous image, pull the next, bring it up, check health), then run the previous trial's synchronous assessment and diagnosis through the eval_monitor tool until the run converges.
 mode: primary
 model: opencode-go/deepseek-v4.1-flash
 ---

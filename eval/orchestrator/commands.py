@@ -8,6 +8,7 @@ and plan mode never constructs one.
 from __future__ import annotations
 
 import os
+import signal
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -24,8 +25,9 @@ class Command:
     `.env` from the instance worktree). `env` is the command's environment
     overlay (the trial's L1 scaffold needs `PYTHONPATH=src`), merged over the
     inherited environment by the runner.
-    `log_path` is where a background launch redirects the child's output; a
-    synchronous `LocalRunner` ignores it.
+    `log_path` is where the runner tees the child's captured output so a
+    dispatch leaves a diagnostic log beside its destination; it is never an
+    input to a decision.
     """
 
     argv: tuple[str, ...]
@@ -59,68 +61,98 @@ class CommandResult:
 CommandRunner = Callable[[Command], CommandResult]
 
 
-class LocalRunner:
-    """The thin production runner: `subprocess.run`, captured, with stdin."""
-
-    def __call__(self, command: Command) -> CommandResult:
-        env = None
-        if command.env:
-            env = {**os.environ, **command.env}
-        proc = subprocess.run(
-            list(command.argv),
-            input=command.stdin,
-            cwd=command.cwd,
-            env=env,
-            capture_output=True,
-            text=True,
-        )
-        return CommandResult(proc.returncode, proc.stdout, proc.stderr)
-
+# The wall-clock bound on any one synchronous command (#350). A subagent that
+# hangs (a fatal provider error leaves `opencode run` idle forever) must become a
+# non-zero result, never a blocked caller.
+DEFAULT_COMMAND_TIMEOUT_S = float(os.environ.get("EVAL_COMMAND_TIMEOUT_S", 7200.0))
+# How long SIGTERM is given before the process group is SIGKILLed.
+KILL_GRACE_S = 10.0
+# The exit code a timed-out command reports (the shell's convention, 128+16).
+TIMEOUT_RETURNCODE = 124
 
 Spawn = Callable[..., subprocess.Popen]
 
 
-class BackgroundRunner:
-    """Launch a command detached and return at once; never wait for it.
+def _kill_process_group(proc: subprocess.Popen) -> None:
+    """Terminate and reap the command's whole process group.
 
-    The assessor/diagnoser dispatch is fire-and-forget: a tick must not block
-    while the subagent runs, so it can advance other trials. This runner starts
-    the command in a new session (so the child outlives the tick) with its
-    output redirected to `command.log_path` (a stable sink; inheriting the
-    tick's pipes would signal the detached child when the tick exits), and
-    returns a synthetic success without waiting.
+    The child runs in its own session (`start_new_session=True`), so killing its
+    group reaches anything it spawned. SIGTERM first, a bounded grace, then
+    SIGKILL, then `wait()` so the child is reaped rather than left a zombie.
+    """
+    try:
+        pgid = os.getpgid(proc.pid)
+    except ProcessLookupError:
+        proc.wait()
+        return
+    try:
+        os.killpg(pgid, signal.SIGTERM)
+    except (ProcessLookupError, PermissionError):
+        pass
+    try:
+        proc.wait(timeout=KILL_GRACE_S)
+        return
+    except subprocess.TimeoutExpired:
+        pass
+    try:
+        os.killpg(pgid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass
+    proc.wait()
 
-    Completion is observed out of band by the node's output file, and a launch
-    that raises (a missing executable) propagates to the caller's error path.
+
+class LocalRunner:
+    """The thin production runner: a bounded, process-group-isolated subprocess.
+
+    The command runs in its own session so a wall-clock timeout can kill the
+    whole process group (the subagent and anything it spawned) and reap it. A
+    timeout returns a non-zero `CommandResult` (never a hang), so a stuck caller
+    such as `close-verify` returns and records an escalation. Captured stdout
+    and stderr are teed to `command.log_path` when one is set.
     """
 
-    def __init__(self, *, spawn: Spawn = subprocess.Popen) -> None:
+    def __init__(
+        self, *, timeout_s: float | None = None, spawn: Spawn = subprocess.Popen
+    ) -> None:
+        self._timeout_s = DEFAULT_COMMAND_TIMEOUT_S if timeout_s is None else timeout_s
         self._spawn = spawn
 
     def __call__(self, command: Command) -> CommandResult:
         env = None
         if command.env:
             env = {**os.environ, **command.env}
-        log = command.log_path
-        handle = None
-        if log is not None:
-            target = Path(log)
-            target.parent.mkdir(parents=True, exist_ok=True)
-            handle = open(target, "ab")
+        proc = self._spawn(
+            list(command.argv),
+            stdin=subprocess.PIPE if command.stdin is not None else subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            cwd=command.cwd,
+            env=env,
+            text=True,
+            start_new_session=True,
+        )
         try:
-            self._spawn(
-                list(command.argv),
-                stdin=subprocess.DEVNULL,
-                stdout=handle if handle is not None else subprocess.DEVNULL,
-                stderr=subprocess.STDOUT if handle is not None else subprocess.DEVNULL,
-                cwd=command.cwd,
-                env=env,
-                start_new_session=True,
+            stdout, stderr = proc.communicate(
+                input=command.stdin, timeout=self._timeout_s
             )
-        finally:
-            if handle is not None:
-                handle.close()
-        return CommandResult(0)
+            result = CommandResult(proc.returncode, stdout or "", stderr or "")
+        except subprocess.TimeoutExpired:
+            _kill_process_group(proc)
+            stdout, stderr = proc.communicate()
+            detail = f"\ntimeout after {self._timeout_s}s"
+            result = CommandResult(
+                TIMEOUT_RETURNCODE, stdout or "", (stderr or "") + detail
+            )
+        self._tee_log(command, result)
+        return result
+
+    @staticmethod
+    def _tee_log(command: Command, result: CommandResult) -> None:
+        if command.log_path is None:
+            return
+        target = Path(command.log_path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(result.stdout + result.stderr, encoding="utf-8")
 
 
 def require_ok(result: CommandResult, command: Command, *, error: type[Exception]) -> CommandResult:
