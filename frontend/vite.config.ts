@@ -16,6 +16,7 @@ export default defineConfig({
     proxy: {
       "/projects": { target: AGENT_TARGET, changeOrigin: true },
       "/runs": { target: AGENT_TARGET, changeOrigin: true },
+      "/app-state": { target: AGENT_TARGET, changeOrigin: true },
       "/eval-api": { target: EVAL_TARGET, changeOrigin: true, rewrite: (p) => p.replace(/^\/eval-api/, "") },
     },
   },

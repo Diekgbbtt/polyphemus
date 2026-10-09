@@ -1,7 +1,7 @@
 import { Link } from "react-router-dom"
 import { projectPaths } from "../projectPaths"
 
-export type GlobalSection = "projects" | "evaluations"
+export type GlobalSection = "projects" | "live" | "evaluations"
 
 // The site-wide entry points. Both the project shells and the eval shell render
 // it, so a user can always move between the catalog and the evaluations - even
@@ -12,6 +12,9 @@ export function GlobalNav({ active }: { active?: GlobalSection }) {
     <nav className="global-nav" aria-label="Global">
       <Link to="/" aria-current={active === "projects" ? "page" : undefined}>
         Projects
+      </Link>
+      <Link to="/live" aria-current={active === "live" ? "page" : undefined}>
+        Live
       </Link>
       <Link to="/eval" aria-current={active === "evaluations" ? "page" : undefined}>
         Evaluations

@@ -372,3 +372,207 @@ button:focus-visible,
   color: var(--muted);
   font-size: 0.8rem;
 }
+
+/* --- the global live board (/live) ------------------------------------------- */
+
+.live-page {
+  max-width: 72rem;
+  margin: 0 auto;
+  padding: 2.5rem 1.25rem 4rem;
+  min-height: 100vh;
+}
+
+.live-header {
+  display: grid;
+  gap: 0.5rem;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.live-header h1 {
+  margin: 0;
+  font-size: 1.6rem;
+}
+
+.live-intro {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.live-status,
+.live-empty {
+  color: var(--muted);
+}
+
+/* A failed app-state read is a page-level notice; the per-project failures below
+   stay local to their own row. */
+.live-notice {
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--accent);
+  border-radius: 10px;
+  padding: 0.75rem 1rem;
+  background: var(--surface);
+  color: var(--text);
+  margin: 0 0 1rem;
+}
+
+.live-notice--error {
+  border-left-color: #f28b82;
+}
+
+.live-projects {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 1rem;
+}
+
+.live-project {
+  display: grid;
+  gap: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1rem 1.1rem;
+  background: var(--surface);
+}
+
+.live-project-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.35rem 1.5rem;
+}
+
+.live-project-name {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 600;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.35rem 0.75rem;
+}
+
+.live-project-id {
+  color: var(--muted);
+  font-size: 13px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow-wrap: anywhere;
+}
+
+.live-run-group {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.live-run-group-title {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.live-run-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.25rem;
+}
+
+.live-run {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.35rem 0.9rem;
+  font-size: 13px;
+}
+
+.live-run-id {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--text);
+}
+
+.live-run-status {
+  color: var(--muted);
+}
+
+.live-run-phase {
+  color: var(--muted);
+}
+
+/* Liveness is always spelled out; the colour only reinforces the word, so a
+   stalled recon run is never hidden. */
+.live-run-liveness {
+  font-weight: 600;
+}
+
+.live-run-liveness[data-liveness="live"] {
+  color: #81c995;
+}
+
+.live-run-liveness[data-liveness="stalled"] {
+  color: #f2b880;
+}
+
+.live-usage {
+  display: grid;
+  gap: 0.4rem;
+  border-top: 1px solid var(--border);
+  padding-top: 0.75rem;
+}
+
+.live-usage-title {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.live-usage-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 2rem;
+  margin: 0;
+}
+
+.live-usage-stats div {
+  display: grid;
+  gap: 0.1rem;
+}
+
+.live-usage-stats dt {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.live-usage-stats dd {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.live-usage-loading,
+.live-usage-error,
+.live-usage-stale {
+  margin: 0;
+  font-size: 13px;
+}
+
+.live-usage-loading,
+.live-usage-stale {
+  color: var(--muted);
+}
+
+.live-usage-error {
+  color: #f28b82;
+}

@@ -31,3 +31,24 @@ export interface ProjectUsage extends UsageTokens {
   project_id: string
   by_agent: Record<string, UsageTokens>
 }
+
+// The analysis run in its only live state (`draining`). Distinct from recon:
+// it carries no liveness/jobs - the ledger row alone marks it in flight.
+export interface AnalysisRun {
+  analysis_run_id: string; run_id: string; project_id: string
+  status: string; started_at: string | null
+}
+
+// The hunting run in its only live state (`running`).
+export interface HuntingRun {
+  hunting_run_id: string; project_id: string; status: string
+  started_at: string | null; finished_at: string | null
+}
+
+// One project's slice of `GET /app-state`. `in_flight` is derived by the BFF
+// from the three run lists, so the client never recomputes it.
+export interface ProjectState {
+  project_id: string; project_name: string | null; in_flight: boolean
+  recon: RunningRun[]; analysis: AnalysisRun[]; hunting: HuntingRun[]
+}
+export interface AppState { idle: boolean; projects: ProjectState[] }

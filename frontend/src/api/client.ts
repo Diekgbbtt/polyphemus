@@ -1,4 +1,4 @@
-import type { Project, GraphData, ProjectUsage, RunsResponse } from "./types"
+import type { Project, GraphData, ProjectUsage, RunsResponse, AppState } from "./types"
 
 const BASE = import.meta.env.VITE_AGENT_BASE_URL ?? ""
 
@@ -36,5 +36,9 @@ export async function getProjectUsage(
   projectId: string,
   signal?: AbortSignal,
 ): Promise<ProjectUsage> {
-  return getJSON<ProjectUsage>(`/projects/${projectId}/usage`, signal)
+  return getJSON<ProjectUsage>(`/projects/${encodeURIComponent(projectId)}/usage`, signal)
+}
+
+export async function getAppState(signal?: AbortSignal): Promise<AppState> {
+  return getJSON<AppState>("/app-state", signal)
 }

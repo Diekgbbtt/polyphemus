@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate, useParams } from "react-router-
 import { ProjectsPage } from "./pages/ProjectsPage"
 import { GraphPage } from "./pages/GraphPage"
 import { RunsPage } from "./pages/RunsPage"
+import { LivePage } from "./pages/LivePage"
 import { ProjectEvalLayout } from "./pages/ProjectEvalLayout"
 import { ProjectEvalsPage } from "./pages/ProjectEvalsPage"
 import { ProjectTrialPage } from "./pages/ProjectTrialPage"
@@ -34,6 +35,7 @@ export function AppRoutes() {
   return (
     <Routes>
       <Route path="/" element={<ProjectsPage />} />
+      <Route path="/live" element={<LivePage />} />
       {/* `/p` is the legacy bare project path: the catalog now owns `/`. */}
       <Route path="/p" element={<Navigate to="/" replace />} />
       <Route path="/p/:projectId" element={<GraphPage />} />
