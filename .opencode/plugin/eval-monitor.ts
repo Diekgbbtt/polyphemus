@@ -27,7 +27,7 @@
 
 import type { Plugin } from "@opencode-ai/plugin"
 import { tool } from "@opencode-ai/plugin"
-import { existsSync, readFileSync, writeFileSync } from "node:fs"
+import { existsSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -45,6 +45,22 @@ const RESULT_SUCCESS = "success"
 const RESULT_FAILURE = "failure"
 const RESULT_NO_OUTPUT = "no-output"
 const RESULT_TIMEOUT = "timeout"
+
+// Serialize an unknown error-ish value to a string that keeps its message.
+// A plain API error body JSON-stringifies; an Error (or any non-plain object)
+// is rendered as `${name}: ${message}` because `JSON.stringify(new Error(x))`
+// is "{}" and would hide the provider-quota phrase the 5h backoff keys on.
+const serializeError = (value: unknown): string => {
+  if (value === null || value === undefined) return ""
+  if (typeof value === "string") return value
+  if (value instanceof Error) return `${value.name}: ${value.message}`
+  try {
+    const json = JSON.stringify(value)
+    return json === undefined || json === "{}" ? String(value) : json
+  } catch {
+    return String(value)
+  }
+}
 
 export const EvalMonitor: Plugin = async ({ $, directory, client }) => {
   // The live child session per trial record, so a re-dispatch aborts the prior
@@ -101,7 +117,10 @@ export const EvalMonitor: Plugin = async ({ $, directory, client }) => {
         body: { title: `eval ${role} ${action.target_id ?? ""}` },
       })
       if (created.error || !created.data) {
-        return { outcome: RESULT_FAILURE, detail: JSON.stringify(created.error ?? "session create failed") }
+        return {
+          outcome: RESULT_FAILURE,
+          detail: serializeError(created.error) || "session create failed",
+        }
       }
       childID = created.data.id as string
       activeChildren.set(key, childID)
@@ -125,11 +144,11 @@ export const EvalMonitor: Plugin = async ({ $, directory, client }) => {
       }
 
       if (response.error) {
-        return { outcome: RESULT_FAILURE, detail: JSON.stringify(response.error) }
+        return { outcome: RESULT_FAILURE, detail: serializeError(response.error) }
       }
       const info = response.data?.info
       if (info?.error) {
-        return { outcome: RESULT_FAILURE, detail: JSON.stringify(info.error) }
+        return { outcome: RESULT_FAILURE, detail: serializeError(info.error) }
       }
       if (action.destination && existsSync(action.destination)) {
         return { outcome: RESULT_SUCCESS, detail: "" }
@@ -143,7 +162,7 @@ export const EvalMonitor: Plugin = async ({ $, directory, client }) => {
       if (String(error?.message) === "__child_timeout__") {
         return { outcome: RESULT_TIMEOUT, detail: `child exceeded ${budgetS ?? 3600}s` }
       }
-      return { outcome: RESULT_FAILURE, detail: String(error?.message ?? error) }
+      return { outcome: RESULT_FAILURE, detail: serializeError(error) }
     } finally {
       activeChildren.delete(key)
     }

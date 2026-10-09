@@ -224,9 +224,9 @@ Each node has its own prompt under `eval/prompts/` (`orchestrator.md` for the gr
 _Avoid_: stage, step, phase
 
 **Role agent**:
-The opencode agent under `.opencode/agent/<role>.md` that the harness selects with `opencode run --agent <role> --dir <checkout> "<message>"`; `opencode run` takes the prompt as a message and resolves a project agent at `<checkout>/.opencode/agent/<role>.md`.
+The opencode agent under `.opencode/agent/<role>.md` that the harness selects by role id. The monitor runs the assessor and the diagnoser as awaited native opencode child sessions (`client.session.prompt({agent: <role>})`, D57); the aligner and the surfer, and the manual `assess`/`diagnose` verbs, are selected with `opencode run --agent <role> --dir <checkout> "<message>"`.
 It carries `mode: all` and the eval model (`opencode-go/deepseek-v4.1-flash`), and its body names the `eval/prompts/*.md` contract it reads.
-The monitor dispatches the assessor and the diagnoser as awaited native opencode child sessions selected by role id (D57); each role ends its reply with an explicit terminal line (`... COMPLETE` / `... FAILED: <reason>`).
+Each role ends its reply with an explicit terminal line (`... COMPLETE` / `... FAILED: <reason>`).
 The four dispatched roles are `eval-assessor`, `eval-diagnoser`, `eval-aligner`, and `eval-surfer`.
 Their source is TRACKED in the repo so it reaches the eval server's canonical checkout; only the per-machine install state (`node_modules`, lockfiles) is ignored - an agent that is gitignored is a missing one.
 _Avoid_: subagent config, prompt file

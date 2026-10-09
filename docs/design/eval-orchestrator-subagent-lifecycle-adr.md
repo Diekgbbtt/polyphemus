@@ -117,8 +117,9 @@ next target's bring-up.
   error, and the plugin aborts it past the bound.
 - The assessor -> diagnoser flow is synchronous; a trial converges in one tick
   when the provider cooperates.
-- The Python state machine (`orchestrator/monitor.py`) is unchanged and stays
-  the single, unit-tested source of truth; only the dispatch primitive moved.
+- The Python state machine (`orchestrator/monitor.py`) stays the single,
+  unit-tested source of truth; it gains one branch, the provider-quota backoff
+  (`DEFAULT_PROVIDER_BACKOFF_S`), and only the dispatch primitive moved.
 - Residual risk: the native child-session dispatch depends on the opencode
   server's awaited `prompt` settling on a provider error.
   The diagnosis observed the session's own error handling does settle (the hang

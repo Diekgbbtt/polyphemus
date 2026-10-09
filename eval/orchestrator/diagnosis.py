@@ -406,10 +406,10 @@ class DiagnosisRequest:
     trace_id: str | None = None
 
 
-# The dispatch seam, reusing #271's fire-and-forget shape (D6) parameterized on
-# this request: run the configured agent command with the request. The real
-# implementation runs the configured command line (OPERATOR.md); tests inject a
-# fake.
+# The dispatch seam, reusing #271's shape (D6) parameterized on this request:
+# run the configured agent command with the request through the bounded
+# synchronous runner. The real implementation runs the configured command line
+# (OPERATOR.md); tests inject a fake.
 SubagentDispatcher = Callable[[DiagnosisRequest], None]
 
 

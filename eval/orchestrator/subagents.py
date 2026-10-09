@@ -32,18 +32,17 @@ Decision = TypeVar("Decision")
 # tick can back the node off far longer than a normal budget instead of
 # hot-looping a new dispatch against an exhausted window (EV-21/#330/#331).
 PROVIDER_OUTCOME = "provider"
-# The lower-cased substrings that mark a fatal provider-quota/rate-limit death
-# in the child's terminal detail. The eval relay (opencode-go) reports
-# "Go usage limit exceeded" as an `AI_APICallError`; the others cover the
-# neighbouring 429/limit spellings the same relay emits.
+# The lower-cased substrings that mark a fatal provider-quota death in the
+# child's terminal detail. They name the eval relay's own quota signature
+# (`AI_APICallError: Go usage limit exceeded`) and its vendor-prefixed spelling,
+# plus the OpenAI-compatible insufficient-quota code. Generic words such as
+# "quota", "rate limit", or "429" are deliberately excluded: they occur in many
+# non-quota failures, and matching one would arm a spurious 5h provider backoff.
 PROVIDER_QUOTA_MARKERS = (
     "usage limit exceeded",
-    "usage limit",
-    "rate limit",
-    "quota",
-    "429",
-    "ai_apicallerror",
-    "ai_retryerror",
+    "go usage limit",
+    "insufficient_quota",
+    "insufficient quota",
 )
 
 

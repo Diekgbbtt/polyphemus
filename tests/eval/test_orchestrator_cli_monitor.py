@@ -270,6 +270,21 @@ def test_a_provider_death_records_the_provider_outcome_and_backs_off(tmp_path) -
     assert "provider-quota" in action["detail"]
 
 
+def test_only_the_real_quota_signature_arms_the_provider_backoff() -> None:
+    from orchestrator import subagents
+
+    assert subagents.is_provider_quota("AI_APICallError: Go usage limit exceeded")
+    assert subagents.is_provider_quota(
+        "AI_RetryError: Failed after 3 attempts. Last error: Go usage limit exceeded"
+    )
+    assert subagents.is_provider_quota('{"code": "insufficient_quota"}')
+    # Generic words alone must NOT arm a 5h backoff.
+    assert not subagents.is_provider_quota("request failed with status 429")
+    assert not subagents.is_provider_quota("no quota left on the target database")
+    assert not subagents.is_provider_quota("rate limit headers were missing")
+    assert not subagents.is_provider_quota("AI_APICallError: invalid api key")
+
+
 def test_an_escalation_result_writes_the_named_failure_once(tmp_path) -> None:
     setup = _write_setup(tmp_path, _setup_payload())
     _write_trial(tmp_path)

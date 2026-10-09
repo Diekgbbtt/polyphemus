@@ -776,7 +776,7 @@ trial record - never invented.
 | Primitive | Contract |
 |---|---|
 | `PYTHONPATH=eval python3 -m orchestrator trial <setup.yaml> <instance> <target> [--eval-sha S] [--stack-fingerprint F] [--trace-id T]` | Run one trial; the SHA and fingerprint are stamped into `trial.yaml` (D32/D37), as is the Langfuse trace id when given, so the assessment can copy them and substitute `{trace_id}`. |
-| `PYTHONPATH=eval python3 -m orchestrator assess <setup.yaml> --trial <trial-dir>` | Dispatch the background assessment subagent for one trial (fire-and-forget, D6). `--dry-run` prints the rendered command. |
+| `PYTHONPATH=eval python3 -m orchestrator assess <setup.yaml> --trial <trial-dir>` | Run the configured assessment command once for one trial through the bounded synchronous runner (D6, #350). `--dry-run` prints the rendered command. |
 | `PYTHONPATH=eval python3 -m orchestrator close-verify <setup.yaml>` | The eval-close phase (D15): check `verdicts.yaml` presence and schema for every trial under the runs root; re-dispatch missing/invalid trials twice, then micro-diagnose - a bounded configuration-layer re-dispatch (D28) or a named escalation. `--dry-run` lists the trials. |
 
 Every dispatch and verification attempt is recorded under `assessment` in

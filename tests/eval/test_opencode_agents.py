@@ -171,6 +171,18 @@ def test_monitor_plugin_dispatches_awaited_native_child_sessions() -> None:
     assert "--results" in text
 
 
+def test_monitor_plugin_serializes_errors_without_losing_the_message() -> None:
+    """#350 follow-up: `JSON.stringify(new Error(...))` is "{}", which would hide
+    the provider-quota phrase (e.g. `Go usage limit exceeded`) and defeat the
+    backoff. The plugin must render an Error as `name: message`."""
+    text = MONITOR_PLUGIN.read_text(encoding="utf-8")
+    assert "serializeError" in text
+    assert "instanceof Error" in text
+    assert "JSON.stringify(info.error)" not in text
+    assert "JSON.stringify(response.error)" not in text
+    assert "readFileSync" not in text
+
+
 def test_role_agents_signal_a_terminal() -> None:
     for role, token in (("eval-assessor", "ASSESSMENT"), ("eval-diagnoser", "DIAGNOSIS")):
         text = _agent_text(role)
