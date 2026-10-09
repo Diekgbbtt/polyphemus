@@ -317,8 +317,10 @@ test("list to detail navigation keeps one /snapshot request", async () => {
     expect(screen.getByRole("heading", { name: /Trial trial-1/ })).toBeDefined(),
   )
   expect(calls.filter((url) => url.endsWith("/snapshot"))).toHaveLength(1)
-  // The workspace reads the resolved endpoints, never the live agent graph.
-  expect(calls.some((url) => url.includes("/projects/"))).toBe(false)
+  // The workspace reads the resolved endpoints and the project's cumulative
+  // usage ledger, but never the live agent graph.
+  expect(calls.some((url) => url.includes("/graph"))).toBe(false)
+  expect(calls.some((url) => url.includes("/usage"))).toBe(true)
   expect(calls.some((url) => url.includes("/resolved-graph"))).toBe(true)
   expect(calls.some((url) => url.includes("/resolved-artifacts"))).toBe(true)
 })

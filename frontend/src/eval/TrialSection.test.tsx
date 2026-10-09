@@ -2,7 +2,18 @@ import { render, screen, waitFor, within } from "@testing-library/react"
 import { MemoryRouter } from "react-router-dom"
 import { EvalDataProvider } from "./EvalDataProvider"
 import { TrialSection } from "./TrialSection"
-import type { EvalSnapshot, EvalTrial, TrialSpend } from "./types"
+import type { ProjectUsage } from "../api/types"
+import type { EvalSnapshot, EvalTrial, EvalVerdict } from "./types"
+
+function verdict(identified: EvalVerdict["identified"]): EvalVerdict {
+  return {
+    vuln_id: `${identified}-1`,
+    identified,
+    confidence: 0.5,
+    matched: { unit: "unit", fault_class: "CWE-1", symptom: "symptom" },
+    evidence: [],
+  }
+}
 
 function trial(overrides: Partial<EvalTrial> = {}): EvalTrial {
   return {
@@ -48,13 +59,35 @@ function snapshot(trials: EvalTrial[]): EvalSnapshot {
   }
 }
 
-function stubEvalFetch(body: EvalSnapshot): void {
+const USAGE: ProjectUsage = {
+  project_id: "proj-a",
+  context_tokens: { cached: 200, uncached: 100 },
+  generated_tokens: { reasoning: 50, visible: 150 },
+  total_tokens: 500,
+  capped_tokens: 300,
+  calls: 7,
+  by_agent: {
+    recon: {
+      context_tokens: { cached: 200, uncached: 100 },
+      generated_tokens: { reasoning: 50, visible: 150 },
+      total_tokens: 500,
+      capped_tokens: 300,
+      calls: 7,
+    },
+  },
+}
+
+// The eval snapshot and the project usage are separate sources: a route that
+// does not name the other endpoints reads as a safely-unavailable section.
+function stubEvalFetch(body: EvalSnapshot, usage: unknown = USAGE): void {
   globalThis.fetch = (async (input: RequestInfo | URL) => {
     const url = String(input)
     if (url.endsWith("/snapshot")) {
       return new Response(JSON.stringify(body), { status: 200 })
     }
-    // Every other section is a separate, safely-unavailable source.
+    if (url.includes("/usage")) {
+      return new Response(JSON.stringify(usage), { status: 200 })
+    }
     return new Response(
       JSON.stringify({
         status: "unavailable",
@@ -70,9 +103,8 @@ function stubEvalFetch(body: EvalSnapshot): void {
   }) as typeof fetch
 }
 
-function renderTrial(spend: TrialSpend | undefined) {
-  const record = trial(spend === undefined ? {} : { spend })
-  stubEvalFetch(snapshot([record]))
+function renderTrial(record: EvalTrial, usage: unknown = USAGE) {
+  stubEvalFetch(snapshot([record]), usage)
   render(
     <MemoryRouter>
       <EvalDataProvider>
@@ -82,72 +114,43 @@ function renderTrial(spend: TrialSpend | undefined) {
   )
 }
 
-function spendCell(field: "spent" | "overshoot"): HTMLElement {
-  const cell = document.querySelector(`[data-spend="${field}"]`)
-  if (!cell) throw new Error(`no spend cell ${field}`)
-  return cell as HTMLElement
-}
+test("keeps the identified / partial / missed outcome beside the project tokens", async () => {
+  renderTrial(
+    trial({
+      verdicts: [verdict("identified"), verdict("partial"), verdict("missed")],
+    }),
+  )
 
-test("shows recorded consumption, overshoot and the per-agent breakdown", async () => {
-  renderTrial({
-    status: "available",
-    spent_tokens: 500,
-    spend_overshoot: 200,
-    spend_by_agent: { recon: { total_tokens: 1500, calls: 4 } },
-    reason: null,
-  })
+  await waitFor(() => expect(screen.getByText("1 identified / 1 partial / 1 missed")).toBeDefined())
+  // The project's cumulative total sits in the same summary row.
+  await waitFor(() => expect(screen.getByText("Project tokens")).toBeDefined())
+  const chip = screen.getByText("Project tokens").closest("li")!
+  expect(chip.querySelector("[data-project-tokens]")?.textContent).toBe("500")
+})
 
-  await waitFor(() => expect(spendCell("spent").textContent).toBe("500"))
-  // The overshoot is reported separately and never folded into the total.
-  expect(spendCell("spent").textContent).not.toBe("700")
-  expect(spendCell("overshoot").textContent).toBe("200")
+test("the per-agent breakdown is expandable and states the project scope", async () => {
+  renderTrial(trial({ verdicts: [verdict("identified")] }))
+
+  const summary = await screen.findByText("Usage by agent")
+  expect(summary.closest("details")?.hasAttribute("open")).toBe(false)
+
   const row = screen.getByRole("row", { name: /recon/ })
-  expect(within(row).getByText("1500")).toBeDefined()
+  expect(within(row).getByText("500")).toBeDefined()
+  expect(within(row).getByText("200")).toBeDefined()
+  expect(within(row).getByText("100")).toBeDefined()
+  expect(within(row).getByText("50")).toBeDefined()
+  expect(within(row).getByText("150")).toBeDefined()
+  expect(within(row).getByText("7")).toBeDefined()
+  expect(screen.getByText(/cumulative tokens for this project since the backend started/i)).toBeDefined()
 })
 
-test("zero is a value, not a missing field", async () => {
-  renderTrial({
-    status: "available",
-    spent_tokens: 0,
-    spend_overshoot: 0,
-    spend_by_agent: null,
-    reason: null,
-  })
+test("the trial no longer renders a recorded-spend block", async () => {
+  renderTrial(trial({ verdicts: [verdict("identified")] }))
 
-  await waitFor(() => expect(spendCell("spent").textContent).toBe("0"))
-  expect(spendCell("overshoot").textContent).toBe("0")
-})
-
-test("a missing field is shown as Unavailable while zero stays zero", async () => {
-  renderTrial({
-    status: "available",
-    spent_tokens: null,
-    spend_overshoot: 0,
-    spend_by_agent: null,
-    reason: null,
-  })
-
-  await waitFor(() => expect(spendCell("spent").textContent).toBe("Unavailable"))
-  expect(spendCell("overshoot").textContent).toBe("0")
-})
-
-test("an unavailable spend block is Unavailable", async () => {
-  renderTrial({
-    status: "unavailable",
-    spent_tokens: null,
-    spend_overshoot: null,
-    spend_by_agent: null,
-    reason: "spend_record_not_found",
-  })
-
-  await waitFor(() => expect(spendCell("spent").textContent).toBe("Unavailable"))
-  expect(spendCell("overshoot").textContent).toBe("Unavailable")
-})
-
-test("a trial with no spend block at all is Unavailable", async () => {
-  renderTrial(undefined)
-
-  await waitFor(() => expect(spendCell("spent").textContent).toBe("Unavailable"))
+  await waitFor(() => expect(screen.getByText("Project tokens")).toBeDefined())
+  expect(screen.queryByText(/Recorded spend/i)).toBeNull()
+  expect(screen.queryByText(/Recorded breakdown/i)).toBeNull()
+  expect(document.querySelector("[data-spend]")).toBeNull()
 })
 
 test("the workspace polls the resolved inventory exactly once", async () => {
@@ -158,6 +161,9 @@ test("the workspace polls the resolved inventory exactly once", async () => {
     calls.push(url)
     if (url.endsWith("/snapshot")) {
       return new Response(JSON.stringify(snapshot([record])), { status: 200 })
+    }
+    if (url.includes("/usage")) {
+      return new Response(JSON.stringify(USAGE), { status: 200 })
     }
     if (url.endsWith("/resolved-artifacts")) {
       return new Response(

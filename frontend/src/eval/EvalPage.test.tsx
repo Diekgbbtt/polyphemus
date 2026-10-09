@@ -399,11 +399,7 @@ function stubTrialDetail(getBody: () => unknown): void {
   }) as typeof fetch
 }
 
-function spendCellText(): string {
-  return (document.querySelector('[data-spend="spent"]') as HTMLElement).textContent ?? ""
-}
-
-test("a later snapshot updates the open Trial's results and recorded spend in place", async () => {
+test("a later snapshot updates the open Trial's results in place", async () => {
   vi.useFakeTimers()
   const record = {
     ...SNAPSHOT.trials[0],
@@ -417,13 +413,6 @@ test("a later snapshot updates the open Trial's results and recorded spend in pl
       },
     ],
     diagnoses: [],
-    spend: {
-      status: "available" as const,
-      spent_tokens: 100,
-      spend_overshoot: 0,
-      spend_by_agent: null,
-      reason: null,
-    },
   }
   let body: unknown = { ...SNAPSHOT, trials: [record] }
   stubTrialDetail(() => body)
@@ -432,15 +421,18 @@ test("a later snapshot updates the open Trial's results and recorded spend in pl
 
   await act(async () => {})
   expect(screen.getByText("1 identified / 0 partial / 0 missed")).toBeDefined()
-  expect(spendCellText()).toBe("100")
 
-  body = { ...SNAPSHOT, trials: [{ ...record, verdicts: [{ ...record.verdicts[0], identified: "missed" }], spend: { ...record.spend, spent_tokens: 250 } }] }
+  body = {
+    ...SNAPSHOT,
+    trials: [
+      { ...record, verdicts: [{ ...record.verdicts[0], identified: "missed" }] },
+    ],
+  }
   await act(async () => {
     await vi.advanceTimersByTimeAsync(POLL)
   })
 
   expect(screen.getByText("0 identified / 0 partial / 1 missed")).toBeDefined()
-  expect(spendCellText()).toBe("250")
 })
 
 test("the manual Refresh also re-reads the open Trial's graph and inventory", async () => {

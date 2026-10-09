@@ -3,6 +3,7 @@ import { targetPaths } from "../projectPaths"
 import { EvalBreadcrumbs, evalPaths } from "./EvalBreadcrumbs"
 import { useEvalData } from "./EvalDataProvider"
 import { useOperatorGroundTruth } from "./operatorGroundTruth"
+import { ProjectUsageSummary } from "./ProjectUsageSummary"
 import { ResolvedArtifactsProvider } from "./ResolvedArtifactsProvider"
 import { ResolvedArtifactsSection } from "./ResolvedArtifactsSection"
 import { TrialProjectGraph } from "./TrialProjectGraph"
@@ -36,67 +37,6 @@ function phasesLabel(trial: EvalTrial): string {
     .map((phase) => (phase.phase ? `${phase.phase} ${phase.status}` : ""))
     .filter(Boolean)
   return phases.length > 0 ? phases.join(" → ") : "—"
-}
-
-// The one "not available" string the recorded-spend block uses; a missing field
-// and an unavailable association read the same to an operator.
-const SPEND_MISSING = "Unavailable"
-
-// One Trial's RECORDED spend, read from the harness's authoritative record.
-//
-// This is distinct from the live runs page: the live page shows the app's
-// cumulative, per-project, in-memory usage; this block shows what the finished
-// Trial actually recorded against its budget. `spent_tokens` is the recorded
-// consumption, `spend_overshoot` is the tokens spent past the bound (reported
-// separately and never added to the total), and `spend_by_agent` is the
-// recorded breakdown. Zero is shown as zero; a missing field is "Unavailable",
-// so the two are never confused.
-function RecordedSpend({ trial }: { trial: EvalTrial }) {
-  const spend = trial.spend
-  const available = spend?.status === "available"
-  const value = (raw: number | null | undefined): string =>
-    available && typeof raw === "number" ? String(raw) : SPEND_MISSING
-  const agents = available && spend?.spend_by_agent ? Object.entries(spend.spend_by_agent) : []
-
-  return (
-    <section className="eval-spend" aria-label="Recorded spend">
-      <h2>Recorded spend</h2>
-      <dl className="eval-spend-totals">
-        <div>
-          <dt>Recorded spend</dt>
-          <dd data-spend="spent">{value(spend?.spent_tokens)}</dd>
-        </div>
-        <div>
-          <dt>Budget overshoot</dt>
-          <dd data-spend="overshoot">{value(spend?.spend_overshoot)}</dd>
-        </div>
-      </dl>
-      {agents.length > 0 ? (
-        <table className="eval-spend-agents">
-          <caption>Recorded breakdown</caption>
-          <thead>
-            <tr>
-              <th scope="col">Agent</th>
-              <th scope="col">Token</th>
-            </tr>
-          </thead>
-          <tbody>
-            {agents
-              .slice()
-              .sort(([a], [b]) => a.localeCompare(b))
-              .map(([agent, entry]) => (
-                <tr key={agent}>
-                  <th scope="row">{agent}</th>
-                  <td>{entry.total_tokens ?? SPEND_MISSING}</td>
-                </tr>
-              ))}
-          </tbody>
-        </table>
-      ) : (
-        <p className="eval-spend-unavailable">Recorded breakdown: {SPEND_MISSING}</p>
-      )}
-    </section>
-  )
 }
 
 // The materialized-artifact index. It lists the four files the store wrote and
@@ -205,6 +145,9 @@ export function TrialSection({
                 : "Results unavailable"}
             </span>
           </li>
+          {/* The project's cumulative token ledger, beside the outcome counts.
+              It is not the Trial's spend: it is polled per project. */}
+          <ProjectUsageSummary projectId={trial.project_id} />
         </ul>
         <p className="trial-phases">
           <span className="eval-chip-label">Phases</span> {phasesLabel(trial)}
@@ -246,7 +189,6 @@ export function TrialSection({
         </section>
       )}
 
-      <RecordedSpend trial={trial} />
       {/* One resolved-inventory poll feeds both the verdict evidence links and
           the artifact list, so the two never fetch the same endpoint twice. */}
       <ResolvedArtifactsProvider
