@@ -107,3 +107,13 @@ Work authority lives in `loop-constraints.md`: only the operator starts work, so
 - When a matching issue exists, record the closest one (the first, best-match hit) in `closest_issue` with a `rationale` explaining why it is the closest.
 - When none exists, **or when the issue bank is unavailable** (the search errors, the token is missing, the network is down), write a `proposed_issue` block for the operator to file.
 - Record exactly one of the two; never both, and never neither. Every row must carry one, so a bank you cannot reach still yields a proposal.
+
+## Termination
+
+You run as an awaited opencode child session, and the monitor waits for your
+terminal.
+When the destination is written, end your reply with the single line
+`DIAGNOSIS COMPLETE`.
+When you cannot write it, end with `DIAGNOSIS FAILED: <reason>`.
+Always reach one of the two terminals; never leave the session idle, because the
+monitor aborts a child that outlives its wait budget.

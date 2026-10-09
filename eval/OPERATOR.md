@@ -826,7 +826,7 @@ EVAL_GITHUB_TOKEN=... python3 -m orchestrator issue-search "hunter test explorat
 
 | Primitive | Contract |
 |---|---|
-| `PYTHONPATH=eval python3 -m orchestrator diagnose <setup.yaml> --trial <trial-dir>` | Dispatch the background diagnoser subagent for one trial (fire-and-forget, D18). It refuses loudly when the trial has no `verdicts.yaml`; `--dry-run` prints the rendered command without dispatching. |
+| `PYTHONPATH=eval python3 -m orchestrator diagnose <setup.yaml> --trial <trial-dir>` | Run the configured diagnoser command once for one trial through the bounded synchronous runner (D18, #350). It refuses loudly when the trial has no `verdicts.yaml`; `--dry-run` prints the rendered command without dispatching. |
 | `PYTHONPATH=eval python3 -m orchestrator issue-search "<query>" [--repo owner/name] [--limit N]` | The read-only issue-bank search (D22). It never files; a `proposed_issue` is for the operator. |
 | `PYTHONPATH=eval python3 -m orchestrator close-verify <setup.yaml>` | Also checks `diagnoses.yaml` presence, schema, and pairing once the verdicts are present: every `missed`/`partial` needs exactly one entry. Missing/invalid/unpaired diagnoses are re-dispatched twice, then micro-diagnosed like the assessment check. |
 
@@ -852,31 +852,34 @@ A trial whose execution is not a success (terminal `failed`, `timeout`, or
 `blocked`) is `deferred`: the surfer loop owns recovery and a failed run is
 never assessed.
 
-The control plane is one CLI tick:
+The control plane is the `monitor` plan engine (#350):
 
 ```
 PYTHONPATH=eval python3 -m orchestrator monitor <setup.yaml> \
-  --data-root "$EVAL_DATA_ROOT" --ground-truth <dir> \
-  --command "$EVAL_ASSESS_COMMAND" --diagnose-command "$EVAL_DIAGNOSE_COMMAND"
+  --data-root "$EVAL_DATA_ROOT" --ground-truth <dir> --plan
 ```
 
-It sweeps every trial record under the runs root and reports each trial's
-state (`deferred`, `assessment_dispatched`, `awaiting_assessment`,
-`diagnosis_dispatched`, `awaiting_diagnosis`, `complete`, `escalated`).
-The dispatch is non-blocking (#316, D52): the tick launches the configured agent
-command detached (`BackgroundRunner`) and returns at once, so one tick advances
-every other trial while a subagent runs. Each launch redirects the subagent's
-output to `<destination>.dispatch.log` beside the node's file; the log is
-diagnostic, never an input to the decision.
-The node's output file is the only completion signal. A node whose output has
-not landed is `awaiting`; it is not re-dispatched every tick, and a node that
-stays absent past `--budget-s` is re-dispatched up to twice and then escalates
-with a named failure (`empty_file`, `schema_invalid`, `unpaired`,
-`dispatcher_process`, or `..._no_command`) recorded on the trial record.
-`dispatcher_process` now names a launch that raised; a subagent that starts and
-exits without writing its output is caught by the bound as `empty_file` or
-`schema_invalid`. Exit 1 means at least one node escalated. `--dry-run` reports
-the state and dispatches nothing.
+It sweeps every trial record under the runs root and emits, as JSON, each
+trial's state (`deferred`, `assessment_dispatched`, `awaiting_assessment`,
+`diagnosis_dispatched`, `awaiting_diagnosis`, `complete`, `escalated`) and the
+next `dispatch` action (the role agent, the launch message, the destination) or
+`escalate` action (the named cause).
+The engine never dispatches; the plugin performs each action as an **awaited
+opencode child session** - the native primitive, never a detached `opencode
+run` - bounded by a wall-clock timeout and aborted on expiry, then reports the
+terminal back through `--results`, which persists the attempt and re-plans. So
+the assessor and the diagnoser run synchronously within the one tool call, and a
+fatal provider error yields a non-zero terminal instead of a hang.
+A node whose output has not landed is `awaiting`; it is not re-dispatched every
+tick, and a node that stays absent past `--budget-s` is re-dispatched up to twice
+and then escalates with a named failure (`empty_file`, `schema_invalid`,
+`unpaired`, or `dispatcher_process`) recorded on the trial record - a timeout or
+a provider death is a `dispatcher_process` terminal, not a missing file.
+After a provider quota/rate-limit death the node backs off for
+`--provider-backoff-s` (default 5h) instead of hot-looping the exhausted window.
+Exit 1 means at least one node escalated.
+Every synchronous command (`assess`, `diagnose`, `close-verify`) runs under the
+same bounded, process-group-killed `LocalRunner`.
 
 The eval orchestrator agent (`eval/prompts/orchestrator.md`) is the automated
 driver: it calls the `eval_monitor` tool - the custom opencode tool in

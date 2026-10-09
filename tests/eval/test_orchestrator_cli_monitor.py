@@ -1,20 +1,19 @@
-"""The `monitor` CLI verb (#289) - one tick of the post-execution control plane.
+"""The `monitor` CLI verb (#289, #350) - the tick plan engine.
 
-One sweep verifies each trial's execution state and advances one workflow node:
-a successful execution dispatches the assessment subagent, a present
-`verdicts.yaml` dispatches the diagnoser for its `missed`/`partial` verdicts,
-and a present, paired `diagnoses.yaml` completes the trial. A failed execution
-is deferred (the surfer owns recovery) and never assessed. The dispatcher
-factories are parameters so a test can prove dry-run dispatches nothing.
+The monitor never dispatches: it reports, per trial, the next workflow action
+as JSON (a `dispatch` with the role agent, the launch message, and the
+destination; or an `escalate` with a named cause), and applies the native child
+terminals the plugin reports back through `--results` before re-planning. This
+is the deterministic half of the synchronous assessor -> diagnoser flow.
 """
 from __future__ import annotations
 
-import time
+import io
+import json
 
 import yaml
 
 from orchestrator import cli
-from orchestrator.commands import CommandResult
 
 SHA = "eval-sha-1"
 FP = "fp-1"
@@ -29,10 +28,7 @@ def _setup_payload(target: str = "comfyui") -> dict:
             {
                 "instance_id": "arm-a",
                 "targets": [
-                    {
-                        "target_key": f"webexploitbench/{target}",
-                        "target_id": target,
-                    }
+                    {"target_key": f"webexploitbench/{target}", "target_id": target}
                 ],
             }
         ],
@@ -45,8 +41,12 @@ def _write_setup(tmp_path, payload) -> str:
     return str(path)
 
 
-def _write_trial(tmp_path, *, terminal: str = "complete", assessment=None, diagnosis=None) -> str:
-    trial_dir = tmp_path / "runs" / "comfyui" / "trial-1"
+def _trial_dir(tmp_path):
+    return tmp_path / "runs" / "comfyui" / "trial-1"
+
+
+def _write_trial(tmp_path, *, terminal: str = "complete", assessment=None, diagnosis=None) -> None:
+    trial_dir = _trial_dir(tmp_path)
     trial_dir.mkdir(parents=True, exist_ok=True)
     payload = {
         "trial_id": "trial-1",
@@ -66,11 +66,10 @@ def _write_trial(tmp_path, *, terminal: str = "complete", assessment=None, diagn
     if diagnosis is not None:
         payload["diagnosis"] = diagnosis
     (trial_dir / "trial.yaml").write_text(yaml.safe_dump(payload), encoding="utf-8")
-    return str(trial_dir)
 
 
 def _write_verdicts(tmp_path, *, identified: str = "missed") -> None:
-    path = tmp_path / "runs" / "comfyui" / "trial-1" / "verdicts.yaml"
+    path = _trial_dir(tmp_path) / "verdicts.yaml"
     rows = [
         {
             "vuln_id": "comfyui-001",
@@ -84,29 +83,29 @@ def _write_verdicts(tmp_path, *, identified: str = "missed") -> None:
     path.write_text(yaml.safe_dump(rows), encoding="utf-8")
 
 
-class FakeDispatcher:
-    def __init__(self):
-        self.requests = []
-
-    def __call__(self, request):
-        self.requests.append(request)
-
-
-def _explode(*_args, **_kwargs):
-    raise AssertionError("must not construct a dispatcher")
-
-
-def _diag_argv() -> list[str]:
-    return [
-        "--command",
-        "agent assess {prompt} {destination}",
-        "--diagnose-command",
-        "agent diagnose {prompt} {destination} {vulns}",
+def _write_diagnoses(tmp_path) -> None:
+    path = _trial_dir(tmp_path) / "diagnoses.yaml"
+    rows = [
+        {
+            "vuln": "comfyui-001",
+            "failure_mode": "surface_gap",
+            "root_cause": {"type": "missing_component", "extended_description": "x"},
+            "diagnosis_overview": "x",
+            "evidences": [],
+            "proposed_issue": {"title": "t", "body": "b", "labels": []},
+            "eval_sha": SHA,
+            "stack_fingerprint": FP,
+        }
     ]
+    path.write_text(yaml.safe_dump(rows), encoding="utf-8")
 
 
-def _base_args(tmp_path, setup, *extra, with_commands: bool = True) -> list[str]:
-    args = [
+def _trial_payload(tmp_path) -> dict:
+    return yaml.safe_load((_trial_dir(tmp_path) / "trial.yaml").read_text())
+
+
+def _run(tmp_path, setup, *, results=None) -> tuple[int, dict, str]:
+    argv = [
         "monitor",
         setup,
         "--ground-truth",
@@ -116,159 +115,73 @@ def _base_args(tmp_path, setup, *extra, with_commands: bool = True) -> list[str]
         "--runs-root",
         str(tmp_path / "runs"),
     ]
-    if with_commands:
-        args += _diag_argv()
-    return args + list(extra)
+    if results is not None:
+        results_path = tmp_path / "results.json"
+        results_path.write_text(json.dumps(results), encoding="utf-8")
+        argv += ["--results", str(results_path)]
+    out, err = io.StringIO(), io.StringIO()
+    code = cli.main(argv, stdout=out, stderr=err)
+    report = json.loads(out.getvalue().strip().splitlines()[-1])
+    return code, report, err.getvalue()
 
 
-def test_monitor_dry_run_lists_trials_and_constructs_no_dispatcher(tmp_path, capsys) -> None:
+def _one(report: dict) -> dict:
+    assert len(report["actions"]) == 1
+    return report["actions"][0]
+
+
+# --- the plan (read-only) ------------------------------------------------------
+
+
+def test_plan_lists_a_successful_trial_and_dispatches_nothing(tmp_path) -> None:
     setup = _write_setup(tmp_path, _setup_payload())
     _write_trial(tmp_path)
 
-    code = cli.main(
-        _base_args(tmp_path, setup, "--dry-run"),
-        runner_factory=_explode,
-        dispatch_factory=_explode,
-        diagnose_dispatch_factory=_explode,
-    )
-
-    out = capsys.readouterr().out
-    assert code == 0
-    assert "trial-1" in out
-    assert "assessment_dispatched" in out
-
-
-def test_monitor_dispatches_assessment_for_a_successful_trial(tmp_path, capsys) -> None:
-    setup = _write_setup(tmp_path, _setup_payload())
-    _write_trial(tmp_path)
-    fake = FakeDispatcher()
-
-    code = cli.main(
-        _base_args(tmp_path, setup),
-        runner_factory=_explode,
-        dispatch_factory=lambda _argv: fake,
-        diagnose_dispatch_factory=_explode,
-    )
+    code, report, _ = _run(tmp_path, setup)
 
     assert code == 0
-    assert len(fake.requests) == 1
-    payload = yaml.safe_load(
-        (tmp_path / "runs" / "comfyui" / "trial-1" / "trial.yaml").read_text()
-    )
-    assert payload["assessment"]["status"] == "dispatched"
+    action = _one(report)
+    assert action["action"] == "dispatch"
+    assert action["node"] == "assessment"
+    assert action["role"] == "eval-assessor"
+    assert action["destination"].endswith("verdicts.yaml")
+    assert "trial record" in action["message"]
+    assert "verdicts.yaml" in action["message"]
+    # The plan is read-only: it never writes the trial record.
+    assert "assessment" not in _trial_payload(tmp_path)
 
 
-def test_monitor_defers_a_failed_execution(tmp_path, capsys) -> None:
+def test_plan_defers_a_failed_execution(tmp_path) -> None:
     setup = _write_setup(tmp_path, _setup_payload())
     _write_trial(tmp_path, terminal="failed")
-    fake = FakeDispatcher()
 
-    code = cli.main(
-        _base_args(tmp_path, setup),
-        runner_factory=_explode,
-        dispatch_factory=lambda _argv: fake,
-        diagnose_dispatch_factory=_explode,
-    )
-
-    out = capsys.readouterr().out
-    assert code == 0
-    assert "deferred" in out
-    assert fake.requests == []
+    _, report, _ = _run(tmp_path, setup)
+    action = _one(report)
+    assert action["action"] is None
+    assert action["state"] == "deferred"
 
 
-def test_monitor_defers_an_interrupted_execution(tmp_path, capsys) -> None:
-    """#331: a provider-paused hunt lands the trial terminal `interrupted`
-    (resumable). The monitor must defer it to the surfer, never escalate it as a
-    terminal failure - the run is not assessed and no subagent is dispatched."""
+def test_plan_defers_an_interrupted_execution(tmp_path) -> None:
     setup = _write_setup(tmp_path, _setup_payload())
     _write_trial(tmp_path, terminal="interrupted")
-    fake = FakeDispatcher()
-
-    code = cli.main(
-        _base_args(tmp_path, setup),
-        runner_factory=_explode,
-        dispatch_factory=lambda _argv: fake,
-        diagnose_dispatch_factory=_explode,
-    )
-
-    out = capsys.readouterr().out
-    assert code == 0
-    assert "deferred" in out
-    assert "escalated" not in out
-    assert fake.requests == []
+    _, report, _ = _run(tmp_path, setup)
+    assert _one(report)["state"] == "deferred"
 
 
-def test_monitor_awaits_a_recent_dispatch_instead_of_resent(tmp_path) -> None:
-    setup = _write_setup(tmp_path, _setup_payload())
-    _write_trial(tmp_path)
-    fake = FakeDispatcher()
-
-    args = _base_args(tmp_path, setup)
-    cli.main(
-        args,
-        runner_factory=_explode,
-        dispatch_factory=lambda _argv: fake,
-        diagnose_dispatch_factory=_explode,
-    )
-    code = cli.main(
-        args,
-        runner_factory=_explode,
-        dispatch_factory=lambda _argv: fake,
-        diagnose_dispatch_factory=_explode,
-    )
-
-    assert code == 0
-    assert len(fake.requests) == 1  # the second tick awaits, never re-dispatches
-
-
-def test_monitor_dispatches_diagnosis_once_verdicts_are_present(tmp_path, capsys) -> None:
+def test_plan_dispatches_diagnosis_for_missed_verdicts(tmp_path) -> None:
     setup = _write_setup(tmp_path, _setup_payload())
     _write_trial(tmp_path, assessment={"status": "present", "attempts": []})
     _write_verdicts(tmp_path, identified="missed")
-    assess = FakeDispatcher()
-    diagnose = FakeDispatcher()
 
-    code = cli.main(
-        _base_args(tmp_path, setup),
-        runner_factory=_explode,
-        dispatch_factory=lambda _argv: assess,
-        diagnose_dispatch_factory=lambda _argv: diagnose,
-    )
-
-    assert code == 0
-    assert assess.requests == []
-    assert len(diagnose.requests) == 1
-    assert diagnose.requests[0].vulns == ("comfyui-001",)
-    payload = yaml.safe_load(
-        (tmp_path / "runs" / "comfyui" / "trial-1" / "trial.yaml").read_text()
-    )
-    assert payload["diagnosis"]["status"] == "dispatched"
+    _, report, _ = _run(tmp_path, setup)
+    action = _one(report)
+    assert action["node"] == "diagnosis"
+    assert action["role"] == "eval-diagnoser"
+    assert "comfyui-001" in action["message"]
+    assert action["destination"].endswith("diagnoses.yaml")
 
 
-def test_monitor_records_a_raised_dispatch_as_an_error_attempt(tmp_path, capsys) -> None:
-    setup = _write_setup(tmp_path, _setup_payload())
-    _write_trial(tmp_path)
-
-    class Boom:
-        def __call__(self, request):
-            raise RuntimeError("agent command failed")
-
-    code = cli.main(
-        _base_args(tmp_path, setup),
-        runner_factory=_explode,
-        dispatch_factory=lambda _argv: Boom(),
-        diagnose_dispatch_factory=_explode,
-    )
-
-    assert code == 0
-    payload = yaml.safe_load(
-        (tmp_path / "runs" / "comfyui" / "trial-1" / "trial.yaml").read_text()
-    )
-    assert payload["assessment"]["status"] == "dispatched"
-    assert payload["assessment"]["attempts"][-1]["outcome"] == "error"
-
-
-def test_monitor_escalates_dispatcher_process_after_the_bound(tmp_path, capsys) -> None:
+def test_plan_escalates_after_the_bound(tmp_path) -> None:
     setup = _write_setup(tmp_path, _setup_payload())
     old = "2026-01-01T00:00:00+00:00"
     _write_trial(
@@ -281,128 +194,120 @@ def test_monitor_escalates_dispatcher_process_after_the_bound(tmp_path, capsys) 
             ],
         },
     )
-
-    code = cli.main(
-        _base_args(tmp_path, setup),
-        runner_factory=_explode,
-        dispatch_factory=_explode,
-        diagnose_dispatch_factory=_explode,
-    )
-
-    err = capsys.readouterr().err
+    code, report, _ = _run(tmp_path, setup)
+    action = _one(report)
+    assert action["action"] == "escalate"
+    assert action["cause"] == "dispatcher_process"
     assert code == 1
-    assert "assessment_dispatcher_process" in err
-    payload = yaml.safe_load(
-        (tmp_path / "runs" / "comfyui" / "trial-1" / "trial.yaml").read_text()
-    )
-    assert payload["assessment"]["failure"] == "assessment_dispatcher_process"
 
 
-def test_monitor_does_not_clobber_an_existing_escalation(tmp_path, capsys) -> None:
+# --- applying the native child terminals ---------------------------------------
+
+
+def test_assessment_success_advances_straight_to_diagnosis(tmp_path) -> None:
     setup = _write_setup(tmp_path, _setup_payload())
-    old = "2026-01-01T00:00:00+00:00"
+    _write_trial(tmp_path)
+    _write_verdicts(tmp_path, identified="missed")
+
+    _, report, _ = _run(
+        tmp_path,
+        setup,
+        results=[{"trial_record": str(_trial_dir(tmp_path) / "trial.yaml"), "node": "assessment", "outcome": "success"}],
+    )
+
+    action = _one(report)
+    assert action["node"] == "diagnosis"
+    payload = _trial_payload(tmp_path)
+    assert payload["assessment"]["status"] == "dispatched"
+    assert payload["assessment"]["attempts"][-1]["outcome"] == "dispatched"
+
+
+def test_a_failure_records_an_error_attempt_and_awaits(tmp_path) -> None:
+    setup = _write_setup(tmp_path, _setup_payload())
+    _write_trial(tmp_path)
+
+    _, report, _ = _run(
+        tmp_path,
+        setup,
+        results=[
+            {
+                "trial_record": str(_trial_dir(tmp_path) / "trial.yaml"),
+                "node": "assessment",
+                "outcome": "failure",
+                "detail": "boom",
+            }
+        ],
+    )
+
+    payload = _trial_payload(tmp_path)
+    assert payload["assessment"]["attempts"][-1]["outcome"] == "error"
+    action = _one(report)
+    assert action["action"] == "await"
+    assert action["state"] == "awaiting_assessment"
+
+
+def test_a_provider_death_records_the_provider_outcome_and_backs_off(tmp_path) -> None:
+    setup = _write_setup(tmp_path, _setup_payload())
+    _write_trial(tmp_path)
+
+    _, report, _ = _run(
+        tmp_path,
+        setup,
+        results=[
+            {
+                "trial_record": str(_trial_dir(tmp_path) / "trial.yaml"),
+                "node": "assessment",
+                "outcome": "failure",
+                "detail": "AI_APICallError: Go usage limit exceeded",
+            }
+        ],
+    )
+
+    payload = _trial_payload(tmp_path)
+    assert payload["assessment"]["attempts"][-1]["outcome"] == "provider"
+    action = _one(report)
+    assert action["action"] == "await"
+    assert "provider-quota" in action["detail"]
+
+
+def test_an_escalation_result_writes_the_named_failure_once(tmp_path) -> None:
+    setup = _write_setup(tmp_path, _setup_payload())
+    _write_trial(tmp_path)
+
+    code, report, _ = _run(
+        tmp_path,
+        setup,
+        results=[
+            {
+                "trial_record": str(_trial_dir(tmp_path) / "trial.yaml"),
+                "node": "assessment",
+                "escalate": True,
+                "cause": "empty_file",
+            }
+        ],
+    )
+
+    payload = _trial_payload(tmp_path)
+    assert payload["assessment"]["status"] == "escalated"
+    assert payload["assessment"]["failure"] == "assessment_empty_file"
+    action = _one(report)
+    assert action["action"] is None  # already escalated, nothing left to apply
+    assert action["state"] == "escalated"
+    assert code == 1
+
+
+def test_a_paired_diagnosis_completes_the_trial(tmp_path) -> None:
+    setup = _write_setup(tmp_path, _setup_payload())
     _write_trial(
         tmp_path,
-        assessment={
-            "status": "escalated",
-            "failure": "assessment_empty_file",
-            "attempts": [{"attempt": 1, "outcome": "dispatched", "at": old}],
-        },
+        assessment={"status": "present", "attempts": []},
+        diagnosis={"status": "present", "attempts": []},
     )
+    _write_verdicts(tmp_path, identified="missed")
+    _write_diagnoses(tmp_path)
 
-    code = cli.main(
-        _base_args(tmp_path, setup),
-        runner_factory=_explode,
-        dispatch_factory=_explode,
-        diagnose_dispatch_factory=_explode,
-    )
-
-    assert code == 1
-    payload = yaml.safe_load(
-        (tmp_path / "runs" / "comfyui" / "trial-1" / "trial.yaml").read_text()
-    )
-    assert payload["assessment"]["failure"] == "assessment_empty_file"
-
-
-def test_monitor_escalates_assessment_no_command(tmp_path, capsys) -> None:
-    setup = _write_setup(tmp_path, _setup_payload())
-    _write_trial(tmp_path)
-
-    code = cli.main(
-        _base_args(tmp_path, setup, with_commands=False),
-        runner_factory=_explode,
-        dispatch_factory=_explode,
-        diagnose_dispatch_factory=_explode,
-    )
-
-    err = capsys.readouterr().err
-    assert code == 1
-    assert "assessment_no_command" in err
-    payload = yaml.safe_load(
-        (tmp_path / "runs" / "comfyui" / "trial-1" / "trial.yaml").read_text()
-    )
-    assert payload["assessment"]["status"] == "escalated"
-
-
-# --- the non-blocking dispatch (#316) ------------------------------------------
-
-
-def test_monitor_dispatches_through_the_injected_runner(tmp_path) -> None:
-    setup = _write_setup(tmp_path, _setup_payload())
-    _write_trial(tmp_path)
-
-    class RecordingRunner:
-        def __init__(self):
-            self.commands = []
-
-        def __call__(self, command):
-            self.commands.append(command)
-            return CommandResult(0)
-
-    runner = RecordingRunner()
-
-    code = cli.main(
-        _base_args(tmp_path, setup),
-        monitor_runner_factory=lambda: runner,
-        dispatch_factory=None,
-        diagnose_dispatch_factory=None,
-    )
-
+    code, report, _ = _run(tmp_path, setup)
+    action = _one(report)
+    assert action["state"] == "complete"
+    assert action["action"] is None
     assert code == 0
-    assert len(runner.commands) == 1
-    assert runner.commands[0].description.startswith("assess ")
-    assert runner.commands[0].log_path is not None
-    payload = yaml.safe_load(
-        (tmp_path / "runs" / "comfyui" / "trial-1" / "trial.yaml").read_text()
-    )
-    assert payload["assessment"]["status"] == "dispatched"
-
-
-def test_monitor_tick_returns_without_waiting_for_the_subagent(tmp_path) -> None:
-    setup = _write_setup(tmp_path, _setup_payload())
-    _write_trial(tmp_path)
-    args = [
-        "monitor",
-        setup,
-        "--ground-truth",
-        str(tmp_path / "gt" / "comfyui"),
-        "--data-root",
-        str(tmp_path / "data"),
-        "--runs-root",
-        str(tmp_path / "runs"),
-        "--command",
-        "sleep 5",
-    ]
-
-    start = time.monotonic()
-    code = cli.main(args)
-    elapsed = time.monotonic() - start
-
-    assert code == 0
-    # The synchronous runner would block for the whole sleep; the background
-    # launcher returns as soon as the subagent is started.
-    assert elapsed < 2.0
-    payload = yaml.safe_load(
-        (tmp_path / "runs" / "comfyui" / "trial-1" / "trial.yaml").read_text()
-    )
-    assert payload["assessment"]["status"] == "dispatched"

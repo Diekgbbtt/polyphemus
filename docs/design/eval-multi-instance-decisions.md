@@ -423,6 +423,13 @@ The chain's `next-target` remains the per-target bring-up the driver calls first
 
 ### D52 - The post-execution dispatch launches the subagent detached; the tick never blocks
 *2026-10-09.* Amends D6 and R5; the presence check stays D15's.
+**SUPERSEDED by D57** (`docs/design/eval-orchestrator-subagent-lifecycle-adr.md`).
+D52 assumed every subagent terminates and that the output file is the only
+completion signal. A hung subagent (opencode `1.18.34` `run` does not exit after
+a fatal provider error) neither writes, nor exits, nor raises, and the detached
+`BackgroundRunner` leaked it forever. D57 replaces the detached process with a
+bounded, awaited native opencode child session and removes `BackgroundRunner`.
+The non-blocking property is deliberately traded for bounded reliability.
 The monitor tick (`orchestrator monitor`, #289) dispatched the assessment and diagnoser subagents through the synchronous `LocalRunner` (`subprocess.run`), so one tick blocked for the whole subagent run and could not advance other trials.
 The workflow prompts already promised a non-blocking dispatch; the code did not.
 This is the #316 defect.

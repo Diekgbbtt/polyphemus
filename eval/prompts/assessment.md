@@ -59,3 +59,13 @@ A `missed` verdict may omit `evidence_chain`.
 
 The `reasoning` references are optional and currently unproduced: no production observability reader is wired (designed-not-built, CODING_STANDARD section 12).
 Supply them only when trace reasoning observations were actually provided to you; otherwise omit the key entirely and never fabricate a `decision_node` or `observation_ref`.
+
+## Termination
+
+You run as an awaited opencode child session, and the monitor waits for your
+terminal.
+When the destination is written, end your reply with the single line
+`ASSESSMENT COMPLETE`.
+When you cannot write it, end with `ASSESSMENT FAILED: <reason>`.
+Always reach one of the two terminals; never leave the session idle, because the
+monitor aborts a child that outlives its wait budget.

@@ -126,6 +126,39 @@ def test_an_already_escalated_node_stays_escalated():
     assert d.action == monitor.ESCALATE
 
 
+# --- the provider-quota backoff (#350) -----------------------------------------
+
+
+def test_a_provider_death_is_awaited_past_the_normal_budget():
+    # OLD is three hours ago: past the 1h budget, but well inside the 5h
+    # provider backoff, so the node must NOT re-dispatch into a dead window.
+    d = decide(view(a_attempts=(attempt(OLD, outcome=monitor.PROVIDER_OUTCOME),)))
+    assert d.state == monitor.STATE_AWAITING_ASSESSMENT
+    assert d.action == monitor.AWAIT
+    assert "provider-quota" in d.detail
+
+
+def test_a_provider_backoff_expires_then_re_dispatches():
+    long_ago = "2026-10-01T00:00:00+00:00"  # 12h before NOW, past the backoff
+    d = decide(view(a_attempts=(attempt(long_ago, outcome=monitor.PROVIDER_OUTCOME),)))
+    assert d.state == monitor.STATE_ASSESSMENT_DISPATCHED
+    assert d.action == monitor.DISPATCH
+
+
+def test_an_exhausted_provider_node_escalates_dispatcher_process():
+    d = decide(
+        view(
+            a_state="missing",
+            a_attempts=(
+                attempt("2026-10-01T00:00:00+00:00", outcome=monitor.PROVIDER_OUTCOME),
+                attempt("2026-10-01T00:00:00+00:00", outcome=monitor.PROVIDER_OUTCOME),
+            ),
+        )
+    )
+    assert d.state == monitor.STATE_ESCALATED
+    assert d.cause == "dispatcher_process"
+
+
 # --- the diagnosis node --------------------------------------------------------
 
 

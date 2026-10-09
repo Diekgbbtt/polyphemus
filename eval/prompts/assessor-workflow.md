@@ -8,26 +8,32 @@ This prompt is the node; the subagent it dispatches has its own role prompt at
 
 ## What happens at this node
 
-The monitor dispatches the assessment subagent once, handing it the role prompt,
-the trial record, the ground truth, the data root, and the destination
-`verdicts.yaml` in the trial directory.
-The dispatch is fire-and-forget: the monitor does not block waiting for the
-subagent.
+The monitor runs the assessor as an **awaited opencode child session** - the
+`eval-assessor` role agent, selected by the plugin's native child dispatch -
+handing it the trial record, the ground truth, the data root, and the
+destination `verdicts.yaml` in the trial directory.
+The dispatch is bounded: the child is aborted if it exceeds the wait budget, and
+a fatal provider error terminates it non-zero instead of hanging.
+The monitor waits for the child's terminal, then verifies the file, so the node
+is synchronous.
 
-## What the tick verifies
+## What the monitor verifies
 
-On each later tick the monitor reads the destination:
+Immediately after the child returns, the monitor reads the destination:
 
 - **present and schema-valid** - every row carries the trial record's `eval_sha`
   and `stack_fingerprint`, and every `identified`/`partial` row carries an
   evidence chain whose paths are relative to the data root, begin with the
   `<project_id>/` segment, and resolve on disk - the node is done and the trial
-  moves to the diagnosis node.
+  moves to the diagnosis node in the same tick.
 - **absent** - the node is `awaiting`; the monitor re-dispatches within its
-  bounded count and budget.
+  bounded count and budget on a later tick.
 - **present but rejected, or absent past the budget** - the node escalates with
   one named failure recorded on the trial record: `empty_file` (no file),
-  `schema_invalid` (rejected), or `dispatcher_process` (the launch raised).
+  `schema_invalid` (rejected), or `dispatcher_process` (the child died, whether
+  on a launch failure, a timeout, or the provider's own quota).
+- **a provider-quota death** - the node backs off for the longer provider window
+  instead of hot-looping a new child against the exhausted quota.
 
 ## What this node does not do
 
