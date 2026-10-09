@@ -1147,18 +1147,29 @@ class CompactionManager:
         re-trigger a redundant pass."""
         staged = list(result.messages) + list(delta or ())
         self._existing[thread_id] = result.report.new_summary
-        with self._lock:
-            self._streak[thread_id] = 0
-            was_escalated = self._escalated.pop(thread_id, False)
-            entry = self.ledger.entry(thread_id)
-            if entry is not None:
-                entry.escalated = False
-        if was_escalated:
-            logger.info("compaction: thread %s recovered after a successful pass", thread_id)
         try:
             self.ledger.update(thread_id, staged)
-        except Exception:  # noqa: BLE001 - the barrier applies even if re-measurement fails
+        except Exception as exc:  # noqa: BLE001 - the barrier applies even if re-measurement fails
             logger.debug("compaction ledger re-measurement failed; ignoring", exc_info=True)
+        # #348: a pass that leaves the thread over budget did NOT converge (an
+        # oversized tool body pinned in the exempt replay tail, a small window the
+        # fold cannot clear). It must count toward the consecutive-pass cap (D6) -
+        # NOT reset the streak - or the pass re-fires on every subsequent call and
+        # regenerates the volatile running-summary message each time: the summary is
+        # the first message of the compacted trail, so the request prefix changes and
+        # the provider prefix cache never hits again (the observed job_orchestrator
+        # 30-calls-cached=0 shape). Only a pass that reaches the budget is a recovery.
+        entry = self.ledger.entry(thread_id)
+        if entry is not None and entry.over_budget:
+            self._note_failure(thread_id)
+        else:
+            with self._lock:
+                was_escalated = self._escalated.pop(thread_id, False)
+                if entry is not None:
+                    entry.escalated = False
+                self._streak[thread_id] = 0
+            if was_escalated:
+                logger.info("compaction: thread %s recovered after a converging pass", thread_id)
         logger.info(
             "compaction: thread %s applied a compacted trail (reclaimed %d tokens)",
             thread_id, result.report.reclaimed_tokens)
