@@ -103,6 +103,22 @@ The corrected axis read does NOT read `input_token_details.cache_creation` at al
 If a tier-prefixed payload ever arrives, the axes still total correctly (an unread `cache_read` folds into `uncached`); only the cached/uncached split is coarsened. A tier-aware read is a follow-up if a live run shows it.
 A provider whose `input_tokens` EXCLUDES cache_read is NOT fully supported: the code detects only the unambiguous signature `cache_read > input_tokens`, where it keeps both (conservative, never drops cache_read); the ambiguous case undercounts the cached portion and is documented, not overclaimed.
 
+### The omitted-cache-detail count (N5, 2026-10-10)
+
+The two axes are read from `usage_metadata` detail fields, and a provider is free to omit them.
+When they are absent the ledger records a 0, which is indistinguishable from "the provider measured no cache activity".
+That ambiguity is fatal to the measurement the surface exists for: a reported 0% cached share is the evidence that decides whether a session is cache-healthy, and it cannot double as both "measured a miss" and "never measured".
+
+**Decided representation (operator-ratified):** `cache_detail_omitted`, a COUNT of the entry's calls whose cache detail the provider did not report at all.
+It rides the same two places as `calls`: the per-agent breakdown entry and the project aggregate.
+
+- **A count, not a flag.** `cache_detail_omitted == 1` out of 800 calls means one call was silent; `cache_detail_omitted == calls` means the cached axis says NOTHING about that entry.
+- **It is NOT an axis.** Deliberately excluded from `_AXIS_FIELDS` in `app/llm/usage.py`, so `total_tokens` and `capped_tokens` never move. A reporting gap is not spend.
+- **It gates the reading, not the number.** A cached fraction read against a `cache_detail_omitted == calls` entry is unaudited, and the operator must treat it as unknown rather than as a measured miss.
+- **Companion guard on the ratio**: `tests/test_llm_usage.py` asserts `cache_detail_omitted + 1 == calls` on a mixed payload, so the count is exercised rather than merely declared.
+
+Surfaced on `GET /projects/{project_id}/usage` alongside the axes; no eval-side reader consumes it yet, so no budget calculation changes.
+
 ### Eval side
 
 > NOTE (2026-10-08): the token budget counts `capped_tokens` (generated +

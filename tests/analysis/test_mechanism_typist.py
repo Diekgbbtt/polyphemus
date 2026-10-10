@@ -52,7 +52,7 @@ class _Recorder:
         self.edges = edges if edges is not None else L1DeltaBatch(
             system_edges=[SystemEdgeProposal(service_slug="checkout", kind="RESTApi", rel="EXPOSED_VIA")])
 
-    def __call__(self, messages, *, schema=None):
+    def __call__(self, messages, *, schema=None, system_prompt=None):
         content = messages[-1].content
         if schema is None:
             self.calls.append("reflect")
@@ -121,7 +121,7 @@ def test_N2_three_call_sequence_in_order():
 
 
 def test_N3_reflection_exhaustion_fails_closed():
-    def invoke(messages, *, schema=None):
+    def invoke(messages, *, schema=None, system_prompt=None):
         return None if schema is None else L1DeltaBatch(systems=[SystemProposal(kind="RESTApi")])
 
     out = type_mechanisms(_service_chunk(), invoke_fn=invoke)
@@ -129,7 +129,7 @@ def test_N3_reflection_exhaustion_fails_closed():
 
 
 def test_N4_systems_exhaustion_soft_passthrough_no_systems():
-    def invoke(messages, *, schema=None):
+    def invoke(messages, *, schema=None, system_prompt=None):
         if schema is None:
             return "prose"
         return None  # both structured calls exhaust
@@ -138,7 +138,7 @@ def test_N4_systems_exhaustion_soft_passthrough_no_systems():
 
 
 def test_N4_linking_exhaustion_keeps_systems_drops_edges():
-    def invoke(messages, *, schema=None):
+    def invoke(messages, *, schema=None, system_prompt=None):
         if schema is None:
             return "prose"
         if "EXTRACT SYSTEMS" in messages[-1].content:
@@ -169,7 +169,7 @@ def test_N6_extend_prompt_shows_existing_description_and_demands_enrichment():
     cannot compound and would clobber."""
     captured = {}
 
-    def invoke(messages, *, schema=None):
+    def invoke(messages, *, schema=None, system_prompt=None):
         if schema is None:
             return "prose"
         if "EXTRACT SYSTEMS" in messages[-1].content:
@@ -189,7 +189,7 @@ def test_co_produced_systems_from_linking_are_captured_not_discarded():
     Those co-produced Systems (with their descriptions) MUST be captured by the merge,
     never discarded - else the graph gets edge-materialised bare Systems with no
     description (the discriminative attribute)."""
-    def invoke(messages, *, schema=None):
+    def invoke(messages, *, schema=None, system_prompt=None):
         if schema is None:
             return "prose naming a REST API"
         if "EXTRACT SYSTEMS" in messages[-1].content:
@@ -208,7 +208,7 @@ def test_co_produced_systems_from_linking_are_captured_not_discarded():
 def test_N8_observations_feed_reflection_only():
     captured = {}
 
-    def invoke(messages, *, schema=None):
+    def invoke(messages, *, schema=None, system_prompt=None):
         content = messages[-1].content
         if schema is None:
             captured["reflect"] = content
@@ -235,7 +235,7 @@ def test_baseurl_anchored_observation_reaches_its_endpoint_insight():
     every time - a feature that can never have anything to say."""
     captured = {}
 
-    def invoke(messages, *, schema=None):
+    def invoke(messages, *, schema=None, system_prompt=None):
         if schema is None:
             captured["reflect"] = messages[-1].content
         return "prose" if schema is None else L1DeltaBatch()
@@ -262,7 +262,7 @@ def test_response_evidence_props_reach_reflection_not_path_alone():
     plumbing (profile/source) so the surface stays no-noise."""
     captured = {}
 
-    def invoke(messages, *, schema=None):
+    def invoke(messages, *, schema=None, system_prompt=None):
         if schema is None:
             captured["reflect"] = messages[-1].content
         return "prose" if schema is None else L1DeltaBatch()
@@ -449,3 +449,59 @@ def test_read_service_aggregations_shape():
                 {"slug": None, "labels": ["Endpoint"], "props": {"path": "/y"}}]  # slug-less dropped
     rows = read_service_aggregations("p", read_fn=fake_read)
     assert rows == [{"slug": "checkout", "labels": ["Endpoint"], "props": {"path": "/x"}}]
+
+
+# --- the converged turn shape (#187, converged-agent-turn ADR) -----------------
+#
+# The role prompt is bound ONCE as the agent's ephemeral leading block and NEVER
+# enters the checkpointed trail, and the reflection prose is not re-embedded into
+# the later prompts. Both are what make the per-call request a stable append-only
+# prefix instead of a prefix that re-stacks the prompt and triplicates the prose.
+
+def test_the_typist_puts_no_role_prompt_in_the_messages():
+    """Every call of the 3-call chain forwards ONLY its per-call task: the
+    `technical-system.md` skill rides the `system_prompt=` binding, not a
+    `SystemMessage` in the forwarded list."""
+    from langchain_core.messages import SystemMessage
+    from polymerhus.analysis.mechanism_typist import _load_skill
+
+    class _Rec:
+        def __init__(self):
+            self.msgs = []
+
+        def __call__(self, messages, *, schema=None, system_prompt=None):
+            self.msgs.append(list(messages))
+            return "prose" if schema is None else L1DeltaBatch()
+
+    rec = _Rec()
+    type_mechanisms(_service_chunk(), invoke_fn=rec)
+
+    assert len(rec.msgs) == 3, "the 3-call chain is unchanged"
+    for messages in rec.msgs:
+        assert not any(isinstance(m, SystemMessage) for m in messages), (
+            "no role prompt in the forwarded trail (it rides system_prompt=)")
+        assert messages[0].content != _load_skill(), "the prompt is not message[0]"
+
+
+def test_the_typist_does_not_reembed_the_reflection_prose():
+    """The prose is triplicated today: once as an assistant message and once inside
+    each of the two structured prompts. With a stable prefix that is fresh-input
+    inflation on every structured call, so the prompts must reference the reflection
+    WITHOUT re-embedding it."""
+    class _Rec:
+        def __init__(self):
+            self.prompts = []
+
+        def __call__(self, messages, *, schema=None, system_prompt=None):
+            if schema is None:
+                return "UNIQUE-PROSE-MARKER-xyzzy"
+            self.prompts.append(messages[-1].content)
+            return L1DeltaBatch()
+
+    rec = _Rec()
+    type_mechanisms(_service_chunk(), invoke_fn=rec)
+
+    assert len(rec.prompts) == 2
+    for prompt in rec.prompts:
+        assert "UNIQUE-PROSE-MARKER-xyzzy" not in prompt, (
+            "the reflection prose must not be re-embedded into a later prompt")

@@ -966,3 +966,116 @@ def test_async_entry_awaits_coroutine_shaped_checkpointer_and_publishes_readabil
     asyncio.run(_run([AIMessage(content="a2")], [HumanMessage(content="again")]))
     assert "reasoning_readability" not in captured[0]
     assert captured[1]["reasoning_readability"] == "replayed"
+
+# --- the replay moves to the agent layer (converged-agent-turn ADR) ----------
+#
+# The re-persist of a turn's reasoning is a STATE-SHAPE concern: the assistant
+# message in the thread must carry its reasoning for the next turn's prefix to be
+# byte-identical. It therefore belongs beside the other model-shape concerns
+# (usage, parsing-recovery, compaction) in the agent layer as an `after_model`
+# middleware, not in the session thread control layer that reached for
+# `agent.update_state` after the turn.
+
+def test_every_agent_carries_the_reasoning_replay_middleware(monkeypatch):
+    """The ONE construction seam installs the replay middleware for EVERY
+    stateful agent (analysis proposers included), so no agent module keeps its
+    own bespoke reasoning re-persist logic."""
+    from polymerhus.app.llm import reasoning as RM
+
+    seen = []
+    real_factory = RM.reasoning_replay_middleware
+    monkeypatch.setattr(RM, "reasoning_replay_middleware",
+                        lambda profile: seen.append(profile) or real_factory(profile))
+
+    _pin_profile(monkeypatch, PROFILE_CONTENT)
+    saver = InMemorySaver()
+    S.run_session_turn("triager", "run1:triager", [HumanMessage(content="hi")],
+                       checkpointer=saver, model_factory=_scripted_factory(
+                           AIMessage(content="a1", additional_kwargs={
+                               "reasoning_content": "r"})),
+                       observe=False)
+
+    assert seen == [PROFILE_CONTENT], (
+        "the seam installed the replay middleware with THIS turn's profile")
+
+
+def test_the_replay_middleware_reattaches_reasoning_into_the_thread(monkeypatch):
+    """The middleware's contract, exercised directly rather than through a whole
+    turn: the state carries the model's output, and the hook returns the
+    re-attached assistant message so the next turn restores the replay-ready
+    prefix (the same outcome `agent.update_state` produced in the seam)."""
+    from polymerhus.app.llm.reasoning import ReasoningReplayMiddleware
+
+    _pin_profile(monkeypatch, PROFILE_CONTENT)
+    mw = ReasoningReplayMiddleware(profile=PROFILE_CONTENT)
+    owner = AIMessage(id="msg-1", content="a1",
+                      additional_kwargs={"reasoning_content": REASONING_CONTENT_SENTINEL})
+    state = {"messages": [HumanMessage(content="hi"), owner]}
+
+    update = mw.after_model(state)
+
+    assert update is not None, "the re-attached message is returned as a state update"
+    updated = update["messages"]
+    assert len(updated) == 1 and isinstance(updated[0], AIMessage)
+    assert updated[0].additional_kwargs["reasoning_content"] == REASONING_CONTENT_SENTINEL
+    assert updated[0].content == "a1"
+    # byte-identical prefix: the reasoning lands on the SAME message (its id), so
+    # the `add_messages` reducer replaces it in place rather than appending a copy
+    assert updated[0].id == owner.id
+
+
+def test_the_replay_middleware_is_a_noop_when_nothing_parses(monkeypatch):
+    """A turn with no parseable reasoning returns no state update: the trail is
+    already replay-ready and touching it would churn the checkpoint for nothing."""
+    from polymerhus.app.llm.reasoning import ReasoningReplayMiddleware
+
+    _pin_profile(monkeypatch, PROFILE_CONTENT)
+    mw = ReasoningReplayMiddleware(profile=PROFILE_CONTENT)
+    state = {"messages": [HumanMessage(content="hi"),
+                          AIMessage(id="m2", content="a1")]}
+    assert mw.after_model(state) is None
+
+    # an unknown profile (D5 rule 1) likewise no-ops - no parse is attempted
+    mw_unknown = ReasoningReplayMiddleware(profile=None)
+    state2 = {"messages": [AIMessage(id="m3", content="a1",
+                                     additional_kwargs={"reasoning_content": "r"})]}
+    assert mw_unknown.after_model(state2) is None
+
+
+def test_the_replay_middleware_is_fail_open(monkeypatch):
+    """A malformed state never breaks the turn: the hook returns None and logs."""
+    from polymerhus.app.llm.reasoning import ReasoningReplayMiddleware
+
+    _pin_profile(monkeypatch, PROFILE_CONTENT)
+    mw = ReasoningReplayMiddleware(profile=PROFILE_CONTENT)
+    assert mw.after_model({"messages": "not-a-list"}) is None
+    assert mw.after_model({}) is None
+
+
+def test_the_replay_still_lands_on_the_checkpointed_thread(monkeypatch):
+    """End-to-end through the seam: the reasoning the middleware re-attaches is
+    what a later turn restores, which is the property the whole replay exists
+    for. (The previous seam-level `agent.update_state` call produced the same
+    persisted shape; the responsibility merely moved into the agent.)"""
+    _pin_profile(monkeypatch, PROFILE_CONTENT)
+    saver = InMemorySaver()
+    S.run_session_turn("triager", "run1:triager", [HumanMessage(content="hi")],
+                       checkpointer=saver, model_factory=_scripted_factory(
+                           AIMessage(content="a1", additional_kwargs={
+                               "reasoning_content": REASONING_CONTENT_SENTINEL})),
+                       observe=False)
+    persisted = _thread_messages(saver, "run1:triager")
+    assert persisted[-1].additional_kwargs["reasoning_content"] == REASONING_CONTENT_SENTINEL
+
+
+def test_the_session_seam_no_longer_repersists_after_the_turn():
+    """The old seam-level `agent.update_state` re-persist is GONE: the session
+    control layer builds the agent and streams it, and the agent layer owns the
+    state. An in-place `update_state` here would be a SECOND writer on the same
+    state, which is exactly what this refactor removes."""
+    import inspect
+
+    for entry in (S.run_session_turn, S.arun_session_turn):
+        src = inspect.getsource(entry)
+        assert "update_state" not in src, (
+            "the session seam must not reach for agent.update_state to re-persist")

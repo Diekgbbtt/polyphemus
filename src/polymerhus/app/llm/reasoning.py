@@ -53,6 +53,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
+from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import AIMessage, BaseMessage
 
 from polymerhus.app.llm.capability import CapabilityProfile
@@ -393,7 +394,7 @@ def reasoning_readability_metadata(messages: list) -> dict:
         parsed = _value(kwargs.get(SURFACE_REASONING_CONTENT), SURFACE_REASONING_CONTENT)
     else:
         provider_fields = kwargs.get(PROVIDER_SPECIFIC_FIELDS)
-        if isinstance(provider_fields, dict):
+        if provider_fields is not None:
             parsed = _value(provider_fields.get(SURFACE_REASONING_DETAILS),
                             SURFACE_REASONING_DETAILS)
     if parsed is None:
@@ -403,3 +404,78 @@ def reasoning_readability_metadata(messages: list) -> dict:
         "reasoning_surface": parsed.surface,
         "reasoning_encrypted": parsed.encrypted,
     }
+
+
+# --- the replay's agent-layer home (converged-agent-turn ADR) ---------------
+
+class ReasoningReplayMiddleware(AgentMiddleware):
+    """`after_model`: re-attach the reasoning the model just emitted.
+
+    The re-persist of a turn's reasoning is a STATE-SHAPE concern, so it lives in
+    the agent layer beside the other model-shape concerns (`usage`,
+    parsing-recovery, compaction) and is installed by the ONE construction seam
+    (`session._build_agent`). Every stateful agent - the analysis proposers, the
+    pod/hunting roles, the recon actors - gets it from that seam, so no agent
+    module keeps its own bespoke re-persist.
+
+    The hook reads the turn's trail, re-attaches reasoning to every assistant
+    message that carried parseable reasoning, and returns ONLY the messages that
+    changed as a state update. They keep their identity, so the graph's
+    `add_messages` reducer REPLACES them in place rather than appending
+    duplicates - the same persisted shape the old seam-level `agent.update_state`
+    produced, written by the agent instead of by its control layer.
+
+    Fail-open throughout: an unknown profile (D5 Rule 1), a profile that expects
+    no reasoning, a malformed state, or any parse/re-attach error returns None
+    and never raises into the turn.
+
+    The `profile` is resolved at TURN CONSTRUCTION by the caller and held here
+    (D6/D7: off the #73 retry/timeout axis, resolve-and-hold)."""
+
+    def __init__(self, profile: CapabilityProfile | None) -> None:
+        self._profile = profile
+
+    def after_model(self, state, runtime=None):
+        profile = self._profile
+        try:
+            # A profile that expects no reasoning short-circuits silently; an
+            # UNKNOWN profile (D5 Rule 1) is delegated to the pure core, which
+            # logs the gap - the seam's old behaviour, preserved.
+            if profile is not None and not profile.reasoning_in_response:
+                return None
+            messages = state.get("messages") if isinstance(state, dict) else None
+            if not isinstance(messages, list):
+                return None
+            replacement, report = replay_assistant_reasoning(
+                list(messages), profile)
+            if replacement is None:
+                return None
+            # Only the messages that actually CHANGED ride the update: the
+            # graph's `add_messages` reducer replaces by id, so re-sending
+            # unchanged messages would churn the checkpoint for nothing.
+            changed = [new for new, old in zip(replacement, messages)
+                       if new is not old]
+            if not changed:
+                return None
+            _log_replay(report)
+            return {"messages": changed}
+        except Exception:  # noqa: BLE001 - replay never breaks a turn
+            logger.warning("reasoning replay after_model failed; the turn is "
+                           "unaffected", exc_info=True)
+            return None
+
+
+def reasoning_replay_middleware(profile: CapabilityProfile | None):
+    """Build the reasoning-replay `AgentMiddleware` for one agent construction."""
+    return ReasoningReplayMiddleware(profile)
+
+
+def _log_replay(report: dict) -> None:
+    """The per-turn replay observability line (CACHE-TRACK + the D11 grey-point
+    heuristic). Descriptive, non-blocking, fail-open - never gating, never on the
+    #73 retry/timeout axis (D7)."""
+    logger.info(
+        "llm-response: reasoning replay (agent layer) readability=%s surface=%s "
+        "encrypted=%s cached_tokens=%s heuristic=%s",
+        report.get("readability"), report.get("surface"), report.get("encrypted"),
+        report.get("cached_tokens"), report.get("heuristic"))

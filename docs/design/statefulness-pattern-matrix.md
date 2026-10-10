@@ -33,9 +33,9 @@ and the thread identity (how concurrent instances avoid collision).
 | Agent | Execution | Statefulness | Invocation | Thread identity | File:line |
 |---|---|---|---|---|---|
 | `supervisor` | StateGraph (async `ainvoke`) | **StateGraph (no checkpointer)** - in-memory, the deterministic-pipeline pattern | `compiled.ainvoke(state, config)` | `run_id` (one graph per run) | `supervisor.py:322-330` |
-| `assigner` | sync leaf | checkpointer (create_agent) | `stateful_turn("assigner", address, ...)` | `AnalysisSession(run_id, "assigner")` | `assigner.py:593` |
-| `mechanism_typist` | sync leaf | checkpointer (create_agent) | `stateful_turn("mechanism_typist", address, ...)` | `AnalysisSession(run_id, "mechanism_typist")` | `mechanism_typist.py:413` |
-| `data_modeller` | sync leaf | checkpointer (create_agent) | `stateful_turn("data_modeller", address, ...)` | `AnalysisSession(run_id, "data_modeller")` | `data_modeller.py:704` |
+| `assigner` | sync leaf | checkpointer (create_agent) | `stateful_turn("assigner", address, ...)` - shared seam `analysis/proposer_turn.py` | `AnalysisSession(run_id, "assigner")` | `proposer_turn.py:77` |
+| `mechanism_typist` | sync leaf | checkpointer (create_agent) | `stateful_turn("mechanism_typist", address, ...)` - shared seam `analysis/proposer_turn.py` | `AnalysisSession(run_id, "mechanism_typist")` | `proposer_turn.py:77` |
+| `data_modeller` | sync leaf | checkpointer (create_agent) | `stateful_turn("data_modeller", address, ...)` - shared seam `analysis/proposer_turn.py` | `AnalysisSession(run_id, "data_modeller")` | `proposer_turn.py:77` |
 | `bootstrapper` | sync leaf | invoke_role | `invoke_role("analyser", ...)` | N/A (one-shot) | `bootstrap.py:911,950` |
 | `anatomy` | sync leaf | invoke_role | `invoke_role("analyser", ...)` | N/A (one-shot) | `anatomy.py:183` |
 | `curation` | sync leaf | invoke_role | `invoke_role("analyser", ...)` | N/A (one-shot) | `curation.py:237` |
@@ -117,7 +117,7 @@ path is used.
 
 ### OUTLIER-5: Analysis proposers are sync leaves despite being checkpointer-backed
 
-**Location**: `assigner.py:593`, `mechanism_typist.py:413`, `data_modeller.py:704`
+**Location**: `proposer_turn.py:77` (the shared seam the three rows above call)
 
 The analysis proposers run `stateful_turn` which calls `run_session_turn` which
 calls `create_agent` (a compiled LangGraph graph) with a checkpointer. Each turn
@@ -129,6 +129,46 @@ mechanism_typist -> data_modeller per chunk) and are dispatched sequentially by 
 supervisor. Making them async actors would add concurrency that the data flow does
 not support. The `stateful_turn` pattern gives them session memory (chunk N+1
 resumes from chunk N's reasoning) without the overhead of a persistent actor loop.
+
+#### The shape the converged seam fixes (OUTLIER-5 sub-item, `converged-agent-turn-adr.md`)
+
+**Location**: `proposer_turn.py:77`, `proposer_turn.py:113`
+
+The three proposers are structurally identical in how a turn is built, so #187
+converged them onto one seam. That seam also changed HOW the role prompt reaches
+the model, and this is the part that generalises past analysis.
+
+The wrong shape (pre-convergence, still the shape of every other consumer here):
+the proposer built `[SystemMessage(skill), ...HumanMessage(task)]` as the turn's
+messages, so the prompt was a TRAIL message. Every call added another copy at a
+shifting position, which produced the observed input growth: `mechanism_typist`
+fits a **quadratic** in the call count (curvature +3,263/call², SSE 3.7e7 vs
+9.3e10 linear) while `assigner` is flat at ~4.7K, because the re-add cost scales
+with the prompt's size.
+
+The converged shape: the prompt rides the `system_prompt=` binding of
+`create_agent`. The factory prepends it ephemerally at each model invocation and
+**never writes it into the checkpoint state**, so the trail carries only the human
+task and the model's answers, and the request prefix is a byte-identical leading
+block on every call. This is what makes a cached prefix reusable at all: a
+provider caches a prefix, not a multiset of remembered messages.
+
+**The rule this establishes, for any new session-backed consumer**: bind the role
+prompt through `system_prompt=` on the agent factory; do NOT re-add it as a
+`SystemMessage` in the per-call messages. The two are not equivalent - one is
+cache-stable and one is not.
+
+**One correction to the seeding, not a fix**: seeding the compaction window from
+the first request's input tokens made the prompt bill once per run. It did NOT fix
+the growth - the prompt still stacked, it was just cheaper. This is why the
+convergence is the fix and the seeding is an optimisation.
+
+**The two legs, one prompt** (`proposer_turn.py:77` and `proposer_turn.py:113`):
+`session_invoke_fn` is the production leg and binds through `system_prompt=`;
+`prepend_prompt` is the one-shot legacy leg and heads a message list with a
+`SystemMessage` instead. Both put the prompt at the SAME position - the head - so
+moving a call site between the legs changes nothing about what the model sees, and
+a provider's cache survives the move.
 
 ## Summary: which pattern to use when
 
@@ -149,7 +189,7 @@ parameter, never agent-logic changes.
 
 | Consumer | Seam | Builder |
 |---|---|---|
-| `assigner` / `mechanism_typist` / `data_modeller` (analysis) | `stateful_invoke_fn` builds one middleware per run, passed through `stateful_turn` | `compaction.build_role_compaction_middleware(role_id)` |
+| `assigner` / `mechanism_typist` / `data_modeller` (analysis) | the shared `analysis/proposer_turn.py` seam builds one middleware per run, passed through `stateful_turn` | `compaction.build_role_compaction_middleware(role_id)` (`proposer_turn.py:94`) |
 | `triager` (recon pod) | the pod-graph node's ContextVar path passes a process-wide per-role middleware through `stateful_turn` (manager keyed by `thread_id`, so re-witnesses share state). The `configurator` node is deterministic and holds no session, so it is not compacted | `compaction.cached_role_compaction_middleware(role_id)` (`pod.py:762`) |
 | `ReconOrchestratorActor` / `HuntOrchestratorActor` / `HuntingHunterActor` | `_ensure_started` appends the middleware to `run_session_agent` (`compaction=None` auto-wires, `False` disables) | `compaction.build_role_compaction_middleware(role_id)` |
 

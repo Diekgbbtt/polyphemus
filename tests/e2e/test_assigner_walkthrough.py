@@ -96,15 +96,20 @@ def test_E1_katana_delta_through_admission_to_assignment():
     # --- assignment
     seen = {}
 
-    def invoke(messages):
+    def invoke(messages, *, schema=L1DeltaBatch, system_prompt=None):
         seen["messages"] = messages
+        seen["system_prompt"] = system_prompt
         return _proposal()
 
     out = assign(chunk, invoke_fn=invoke, inventory=INVENTORY,
                  existing_slugs=frozenset(INVENTORY["services"]), bar=0.75)
 
+    # The role prompt rides the stateful seam's `system_prompt=` binding, so the
+    # forwarded trail is the per-call task ALONE (never a re-added SystemMessage):
+    # the request's leading block is stable across the run's chunks.
+    assert seen["system_prompt"] and "assigner" in seen["system_prompt"].lower()
     # the prompt carried the admitted Endpoints and nothing else from the chunk
-    user = seen["messages"][1].content
+    user = seen["messages"][0].content
     assert "/orders/42" in user and "/ship/7" in user
     for leaked in ("name': 'q", "X-Api", "tok", "s.a"):
         assert leaked not in user
@@ -141,7 +146,7 @@ def test_E2_assigner_through_the_supervisor_reports_written():
         return _Export()
 
     body = make_assigner_body(
-        invoke_fn=lambda messages: _proposal(),
+        invoke_fn=lambda messages, *, schema=None, system_prompt=None: _proposal(),
         inventory_fn=lambda project_id: INVENTORY,
         bar=0.75,
     )

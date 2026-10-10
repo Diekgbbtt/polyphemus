@@ -262,15 +262,19 @@ def _scripted_typing_model(summarise_state):
     class _TypistModel(BaseChatModel):
         def _generate(self, messages, stop=None, run_manager=None, **kwargs):
             humans = [str(m.content or "") for m in messages if isinstance(m, HumanMessage)]
-            joined = " ".join(humans)
-            if any(h.startswith("Prior running summary:") for h in humans):
+            # Route on THIS call's task (the LAST human message), never on the whole
+            # trail: the trail carries the earlier calls' prompts too, so substring-
+            # matching the join makes the LINKING call answer the SYSTEMS branch the
+            # moment compaction has not folded the systems prompt away yet.
+            task = humans[-1] if humans else ""
+            if task.startswith("Prior running summary:"):
                 summarise_state["passes"] = summarise_state.get("passes", 0) + 1
                 args = summarise_args()
                 return ChatResult(generations=[ChatGeneration(message=AIMessage(
                     content="",
                     tool_calls=[{"name": "SummaryUpdate", "args": args,
                                  "id": "sum", "type": "tool_call"}]))])
-            if "TASK - EXTRACT SYSTEMS" in joined:
+            if "TASK - EXTRACT SYSTEMS" in task:
                 # #99 negotiation: a no-tools structured session turn on the
                 # unknown profile resolves ProviderStrategy (json_schema), so the
                 # fake must return content-JSON, NOT tool_calls - the Provider
@@ -285,7 +289,7 @@ def _scripted_typing_model(summarise_state):
                 ]})
                 return ChatResult(generations=[ChatGeneration(
                     message=AIMessage(content=systems_json))])
-            if "TASK - LINK SERVICES" in joined:
+            if "TASK - LINK SERVICES" in task:
                 edges_json = json.dumps({"system_edges": [
                     {"service_slug": "account", "kind": "RESTApi", "rel": "EXPOSED_VIA"},
                     {"service_slug": "account", "kind": "IdentificationSystem", "rel": "IDENTIFIED_BY"},

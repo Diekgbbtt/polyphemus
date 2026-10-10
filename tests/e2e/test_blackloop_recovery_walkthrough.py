@@ -118,7 +118,7 @@ def test_blackloop_cut_recovery_e2e(monkeypatch):
     import polymerhus.app.llm.providers as P
     import polymerhus.app.llm.roles as R
 
-    monkeypatch.setenv("LLM_MODEL_ANALYSER", "opencode:gpt-test")
+    monkeypatch.setenv("LLM_ANALYSER", "opencode:gpt-test")
     monkeypatch.delenv("LLM_GATEWAY_URL", raising=False)
     monkeypatch.setenv("LLM_COMPACTION_THRESHOLD", "0.5")
     monkeypatch.setattr(P, "build_chat_model", _summariser_spy)
@@ -201,7 +201,7 @@ def test_phantom_usage_thread_converges_under_budget_e2e(monkeypatch):
     import polymerhus.app.llm.providers as P
     import polymerhus.app.llm.roles as R
 
-    monkeypatch.setenv("LLM_MODEL_ANALYSER", "opencode:gpt-test")
+    monkeypatch.setenv("LLM_ANALYSER", "opencode:gpt-test")
     monkeypatch.delenv("LLM_GATEWAY_URL", raising=False)
     monkeypatch.setenv("LLM_COMPACTION_THRESHOLD", "0.5")
     monkeypatch.setattr(P, "build_chat_model", _summariser_spy)

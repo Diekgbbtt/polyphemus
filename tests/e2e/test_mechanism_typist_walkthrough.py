@@ -41,7 +41,7 @@ _FIXTURE_AGGREGATIONS = [
 _FIXTURE_INVENTORY = {"services": ["checkout", "account"], "systems": [], "system_descriptions": {}}
 
 
-def _scripted_invoke(messages, *, schema=None):
+def _scripted_invoke(messages, *, schema=None, system_prompt=None):
     """The proposer's LLM, scripted to the fixture: reflection prose, then the two
     structured extractions (systems, then linking). Routed by prompt marker so a
     bounded_retry re-call of a step is stable."""

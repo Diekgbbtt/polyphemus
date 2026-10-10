@@ -56,12 +56,27 @@ _UNSCOPED = "unscoped"
 """The bucket for a record with no project id (None/blank). Never returned by a
 project snapshot."""
 
-_ENTRY_FIELDS = ("cached", "uncached", "reasoning", "visible", "total_tokens",
-                 "capped_tokens", "calls")
-"""Every field of one ledger entry. `calls` is the count; the rest accumulate."""
+_AXIS_FIELDS = ("cached", "uncached", "reasoning", "visible", "total_tokens",
+                "capped_tokens")
+"""The ACCUMULATING (non-count) fields of one ledger entry."""
 
-_AXIS_FIELDS = _ENTRY_FIELDS[:-1]
-"""The accumulated (non-count) fields of one ledger entry."""
+CACHE_DETAIL_OMITTED_FIELD = "cache_detail_omitted"
+"""The count of calls whose cache detail the provider never reported (N5).
+
+`input_token_details` being ABSENT is not the same statement as
+`cache_read: 0`: the first is the provider's silence about caching (an
+OpenAI-compatible relay may drop the whole map), the second is the provider
+reporting a measured miss. Collapsing the two into a zero makes a reported
+0% cache share unreadable - the exact defect behind the `mechanism_typist`
+cache-hostility diagnosis (43 of 46 live calls carried the detail as null and
+were all recorded as cache reads of zero). It is a COUNT, so it never joins
+`_AXIS_FIELDS` and never moves `total_tokens` / `capped_tokens`."""
+
+_ENTRY_FIELDS = _AXIS_FIELDS + ("calls", CACHE_DETAIL_OMITTED_FIELD)
+"""Every field of one ledger entry. `calls` is the call count and
+`cache_detail_omitted` counts the calls whose cache detail the provider never
+reported (N5) - both are counts, and neither is an ACCUMULATING axis, so
+`_AXIS_FIELDS` deliberately excludes them."""
 
 
 def _empty_entry() -> dict[str, int]:
@@ -88,6 +103,13 @@ def _detail_int(usage: Mapping, detail_key: str, field: str) -> int:
     return _int_field(details, field)
 
 
+def _cache_read_omitted(usage: Mapping) -> int:
+    """1 when the provider OMITTED the cache detail entirely, 0 when it reported
+    one (N5). Silence about caching is not a measured cache miss."""
+    details = usage.get("input_token_details")
+    return 0 if isinstance(details, Mapping) else 1
+
+
 def _axis_totals(usage: Mapping) -> dict[str, int]:
     """One call's two-axis token decomposition (the ratified representation).
 
@@ -103,7 +125,11 @@ def _axis_totals(usage: Mapping) -> dict[str, int]:
     A provider whose `input_tokens` EXCLUDES cache_read (it is not a subset) is
     detected only in the unambiguous case `cache_read > input_tokens`; then the
     cache_read is kept separate rather than clamped away. The ambiguous exclusive
-    case is a documented non-goal (see the spec's provider-normalization caveats)."""
+    case is a documented non-goal (see the spec's provider-normalization caveats).
+
+    `cache_detail_omitted` (N5) records that this call carried NO
+    `input_token_details` at all, so a reported 0% cached share stays readable as
+    "the provider did not say" rather than as "the provider measured a miss"."""
     input_tokens = _int_field(usage, "input_tokens")
     output_tokens = _int_field(usage, "output_tokens")
     cache_read = _detail_int(usage, "input_token_details", "cache_read")
@@ -128,12 +154,18 @@ def _axis_totals(usage: Mapping) -> dict[str, int]:
         "visible": visible,
         "total_tokens": cached + uncached + generated,
         "capped_tokens": generated + uncached,
+        CACHE_DETAIL_OMITTED_FIELD: _cache_read_omitted(usage),
     }
 
 
 def _entry_surface(entry: Mapping) -> dict[str, Any]:
     """One ledger entry's public two-axis shape (nested context/generated plus the
-    scalar raw total, the capped budget axis, and the call count)."""
+    scalar raw total, the capped budget axis, and the two counts).
+
+    `cache_detail_omitted` (N5) is how many of the `calls` carried no cache detail
+    at all, so a reported 0% cached share is readable as "the provider did not
+    say" instead of "the provider measured a miss". `cache_detail_omitted ==
+    calls` means the cached axis says nothing about this entry."""
     return {
         "context_tokens": {"cached": entry["cached"],
                            "uncached": entry["uncached"]},
@@ -142,6 +174,7 @@ def _entry_surface(entry: Mapping) -> dict[str, Any]:
         "total_tokens": entry["total_tokens"],
         "capped_tokens": entry["capped_tokens"],
         "calls": entry["calls"],
+        CACHE_DETAIL_OMITTED_FIELD: entry[CACHE_DETAIL_OMITTED_FIELD],
     }
 
 
@@ -308,6 +341,7 @@ class UsageLedger:
                 for field in _AXIS_FIELDS:
                     entry[field] += totals[field]
                 entry["calls"] += 1
+                entry[CACHE_DETAIL_OMITTED_FIELD] += totals[CACHE_DETAIL_OMITTED_FIELD]
                 if project_id:
                     self._persist(project_id)
         except Exception:  # noqa: BLE001 - fail-open: never break the turn
@@ -319,7 +353,8 @@ class UsageLedger:
         The `"unscoped"` bucket is never included; an unknown project returns
         zeros/empty. With a store attached, the durable floor is read through on
         first use."""
-        totals = {"cached": 0, "uncached": 0, "reasoning": 0, "visible": 0}
+        totals = {"cached": 0, "uncached": 0, "reasoning": 0, "visible": 0,
+                  CACHE_DETAIL_OMITTED_FIELD: 0}
         total_tokens = 0
         capped_tokens = 0
         calls = 0
@@ -344,6 +379,7 @@ class UsageLedger:
             "total_tokens": total_tokens,
             "capped_tokens": capped_tokens,
             "calls": calls,
+            CACHE_DETAIL_OMITTED_FIELD: totals[CACHE_DETAIL_OMITTED_FIELD],
             "by_agent": by_agent,
         }
 
