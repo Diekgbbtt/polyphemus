@@ -96,14 +96,19 @@ class SessionAddress(Protocol):
 class AnalysisSession:
     """An analysis proposer's session. The proposers run SERIALIZED (the supervisor's
     chunk-major schedule holds `ANALYSER_PASS_SEMAPHORE`, one graph per run), so run +
-    role is already unique - there is NO instance discriminator by design."""
+    role is already unique while a chunk's turns are in flight. `batch` (default None)
+    is the OPTIONAL per-streamed-chunk discriminator: when set it scopes the session to
+    one chunk's turn chain, so the next chunk starts a fresh context instead of
+    re-reading the run-long trail. Absent it the address is the documented `run:role`
+    the observability/runtime contract expects."""
 
     run_id: str
     role_id: str
+    batch: str | None = None
 
     @property
     def thread_id(self) -> str:
-        return _compose(self.run_id, role_id=self.role_id)
+        return _compose(self.run_id, self.batch, role_id=self.role_id)
 
 
 @dataclass(frozen=True)

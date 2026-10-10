@@ -132,8 +132,12 @@ def test_the_proposers_carry_no_skill_surface(monkeypatch):
 
         assert seen["role_id"] == role
         # Complete by construction: no skill tool to call, no context for an index
-        # to render from, and no index middleware on the chain at all.
-        assert seen["tools"] is None, f"{role} must bind no skill tool"
+        # to render from, and no index middleware on the chain at all. The
+        # constant-shape fix may bind the role's OWN structured-output tool on a
+        # prose turn; it is never a skill tool.
+        tool_names = {getattr(t, "name", "") for t in (seen["tools"] or ())}
+        assert "load_skill" not in tool_names, f"{role} must bind no skill tool"
+        assert tool_names <= {"L1DeltaBatch"}, f"{role} binds only its own structured tool"
         assert seen["context"] is None, f"{role} must carry no skill context"
         assert "_skill_index" not in {
             type(mw).__name__ for mw in seen["middleware"] or ()

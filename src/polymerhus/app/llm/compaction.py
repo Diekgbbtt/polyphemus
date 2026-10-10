@@ -34,8 +34,10 @@ The load-bearing principles (ADR `docs/design/context-compaction-95-decisions.md
 - **Window (D2)**: `resolve_capability(provider, model).context_limit` (gateway ->
   env -> 150k conservative default), resolved once at client construction and held;
   the bound is `threshold * context_limit`; `output_limit` is not load-bearing.
-- **Threshold (D2)**: a builder parameter reading the `LLM_COMPACTION_THRESHOLD`
-  env override, default 0.90; an unusable value fails fast (LLMConfigError).
+- **Threshold (D2)**: `resolve_threshold` reads an explicit builder param, then a
+  per-agent env override `LLM_COMPACTION_THRESHOLD_<ROLE_ID_UPPER>`, then the
+  global `LLM_COMPACTION_THRESHOLD`, then the role's declared default
+  (`providers.Role`), else 0.90; an unusable value fails fast (LLMConfigError).
 - **Occupancy (D3)**: the provider's own `usage_metadata`, per model step:
   `input_tokens` (INCLUSIVE of `input_token_details.cache_read` on the pinned
   LiteLLM/langchain-openai path, where `prompt_tokens = fresh + cache_read`), plus
@@ -91,6 +93,10 @@ logger = logging.getLogger(__name__)
 # parameter is not given. Unusable values fail fast (LLMConfigError) - a config
 # lie, mirroring the `LLM_ROLE_MODEL_CONTEXT_LIMIT` precedent (capability.py).
 COMPACTION_THRESHOLD_ENV = "LLM_COMPACTION_THRESHOLD"
+# The per-agent threshold env-var prefix: `LLM_COMPACTION_THRESHOLD_<ROLE_ID_UPPER>`
+# (e.g. `LLM_COMPACTION_THRESHOLD_DATA_MODELLER`). It wins over the global so one
+# role's budget can be tuned without moving every other role's.
+COMPACTION_THRESHOLD_ROLE_ENV_PREFIX = "LLM_COMPACTION_THRESHOLD_"
 DEFAULT_THRESHOLD = 0.90
 
 # The conservative window default (D6 of the gateway ADR, imported from the
@@ -129,11 +135,65 @@ def _threshold_from_env() -> float | None:
     return value
 
 
-def _threshold_error(raw) -> Exception:
+def role_threshold_env_name(role_id: str) -> str:
+    """The per-agent threshold env var name for a role,
+    `LLM_COMPACTION_THRESHOLD_<ROLE_ID_UPPER>` (hyphen->underscore, mirroring the
+    provider `_key_env` / fallback `_fallback_model_key` conventions)."""
+    return f"{COMPACTION_THRESHOLD_ROLE_ENV_PREFIX}{role_id.upper().replace('-', '_')}"
+
+
+def _threshold_from_role_env(role_id: str | None) -> float | None:
+    """The per-agent threshold override, or None when unset. Same fail-fast
+    validation as the global override - an unusable value is a config lie."""
+    if role_id is None:
+        return None
+    raw = os.environ.get(role_threshold_env_name(role_id))
+    if raw is None or raw.strip() == "":
+        return None
+    try:
+        value = float(raw.strip())
+    except ValueError:
+        raise _threshold_error(raw, role_id=role_id) from None
+    if not (0.0 < value <= 1.0):
+        raise _threshold_error(raw, role_id=role_id)
+    return value
+
+
+def role_default_threshold(role_id: str | None) -> float | None:
+    """The role's declared compaction threshold (`providers.Role`), or None when the
+    role is unregistered or declares none."""
+    if role_id is None:
+        return None
+    from polymerhus.app.llm.providers import role_record
+
+    record = role_record(role_id)
+    return record.compaction_threshold if record is not None else None
+
+
+def resolve_threshold(role_id: str | None, *, threshold: float | None = None) -> float:
+    """Resolve the effective compaction threshold for a role (D2):
+    an explicit builder param > the per-agent env > the global env > the role's
+    declared default > the module 0.90 default. An unusable env value fails fast."""
+    if threshold is not None:
+        return threshold
+    role_override = _threshold_from_role_env(role_id)
+    if role_override is not None:
+        return role_override
+    global_override = _threshold_from_env()
+    if global_override is not None:
+        return global_override
+    declared = role_default_threshold(role_id)
+    if declared is not None:
+        return declared
+    return DEFAULT_THRESHOLD
+
+
+def _threshold_error(raw, *, role_id: str | None = None) -> Exception:
     from polymerhus.app.llm.providers import LLMConfigError
 
+    name = role_threshold_env_name(role_id) if role_id is not None else COMPACTION_THRESHOLD_ENV
     return LLMConfigError(
-        f"{COMPACTION_THRESHOLD_ENV} must be a number in (0, 1] "
+        f"{name} must be a number in (0, 1] "
         f"(got {raw!r})"
     )
 
@@ -148,8 +208,10 @@ def resolve_window(
     The context limit comes from the capability reader (`resolve_capability`),
     resolved once here and held by the client; ANY failure (unset role env vars,
     a degraded reader) falls back to the conservative 150k default, logged - the
-    session must always start. The threshold is the builder param, else the env
-    override, else the 0.90 default; an unusable env value fails fast."""
+    session must always start. The threshold resolves via `resolve_threshold`:
+    the builder param, else the per-agent env var
+    (`LLM_COMPACTION_THRESHOLD_<ROLE_ID_UPPER>`), else the global env override,
+    else the role's declared default, else 0.90; an unusable env value fails fast."""
     limit = DEFAULT_CONTEXT_LIMIT
     if role_id is not None:
         try:
@@ -164,7 +226,7 @@ def resolve_window(
                 "using the conservative default (%d)",
                 role_id, exc, DEFAULT_CONTEXT_LIMIT)
             limit = DEFAULT_CONTEXT_LIMIT
-    threshold = threshold if threshold is not None else _threshold_from_env() or DEFAULT_THRESHOLD
+    threshold = resolve_threshold(role_id, threshold=threshold)
     return CompactionWindow(context_limit=limit, threshold=threshold)
 
 

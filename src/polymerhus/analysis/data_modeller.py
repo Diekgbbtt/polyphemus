@@ -736,38 +736,44 @@ def model_data(
     system_prompt = _system_prompt()
     candidates = owning_services(admitted, aggregations or [])
 
-    try:
-        prose = invoke_fn(
-            [HumanMessage(content=_reflection_prompt(chunk, inventory, candidates))],
-            schema=None, system_prompt=system_prompt,
-        )
-    except Exception:  # fail-open: LLM error -> empty outcome, never crash (DPL-DEC fail-open)
-        logger.warning("data_modeller: reflection invoke failed; degrading to empty outcome", exc_info=True)
-        return DataPlaneOutcome()
-    admitted_counts: dict[str, int] = defaultdict(int)
-    for a in admitted:
-        admitted_counts[a.type] += 1
-    candidate_slugs = {slug for slugs in candidates.values() for slug in slugs}
+    # Per-batch memory: the reflection and extraction of ONE chunk share a session
+    # (the batch scope), so the reflection's reasoning is the extraction's context;
+    # the next chunk opens a fresh thread. The scope is inert for the one-shot leg.
+    from polymerhus.analysis.proposer_turn import proposer_batch
 
-    if not prose:
-        logger.warning("data_modeller: reflection exhausted; fail-closed to empty outcome")
-        return DataPlaneOutcome(stats=DataPlaneStats(
-            admitted_parameters=admitted_counts.get("Parameter", 0),
-            admitted_headers=admitted_counts.get("Header", 0),
-            admitted_secrets=admitted_counts.get("Secret", 0),
-            observations_attached=len(chunk.observations),
-            candidate_services=len(candidate_slugs),
-            reflection_exhausted=True,
-        ))
+    with proposer_batch(chunk.chunk_id):
+        try:
+            prose = invoke_fn(
+                [HumanMessage(content=_reflection_prompt(chunk, inventory, candidates))],
+                schema=None, system_prompt=system_prompt,
+            )
+        except Exception:  # fail-open: LLM error -> empty outcome, never crash (DPL-DEC fail-open)
+            logger.warning("data_modeller: reflection invoke failed; degrading to empty outcome", exc_info=True)
+            return DataPlaneOutcome()
+        admitted_counts: dict[str, int] = defaultdict(int)
+        for a in admitted:
+            admitted_counts[a.type] += 1
+        candidate_slugs = {slug for slugs in candidates.values() for slug in slugs}
 
-    try:
-        raw = invoke_fn(
-            [HumanMessage(content=_extraction_prompt(inventory, candidates))],
-            schema=L1DeltaBatch, system_prompt=system_prompt,
-        )
-    except Exception:  # fail-open: extraction LLM error -> empty outcome, never crash
-        logger.warning("data_modeller: extraction invoke failed; degrading to empty outcome", exc_info=True)
-        return DataPlaneOutcome()
+        if not prose:
+            logger.warning("data_modeller: reflection exhausted; fail-closed to empty outcome")
+            return DataPlaneOutcome(stats=DataPlaneStats(
+                admitted_parameters=admitted_counts.get("Parameter", 0),
+                admitted_headers=admitted_counts.get("Header", 0),
+                admitted_secrets=admitted_counts.get("Secret", 0),
+                observations_attached=len(chunk.observations),
+                candidate_services=len(candidate_slugs),
+                reflection_exhausted=True,
+            ))
+
+        try:
+            raw = invoke_fn(
+                [HumanMessage(content=_extraction_prompt(inventory, candidates))],
+                schema=L1DeltaBatch, system_prompt=system_prompt,
+            )
+        except Exception:  # fail-open: extraction LLM error -> empty outcome, never crash
+            logger.warning("data_modeller: extraction invoke failed; degrading to empty outcome", exc_info=True)
+            return DataPlaneOutcome()
     extraction_exhausted = raw is None
     raw = raw or L1DeltaBatch()
 
