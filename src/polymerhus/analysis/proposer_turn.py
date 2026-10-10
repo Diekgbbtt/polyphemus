@@ -30,7 +30,9 @@ section 6); the prompts and the checkpointer resolve on call.
 """
 from __future__ import annotations
 
-from typing import Any, Sequence
+import contextlib
+import contextvars
+from typing import Any, Iterator, Sequence
 
 from langchain_core.messages import BaseMessage, SystemMessage
 
@@ -39,6 +41,31 @@ from langchain_core.messages import BaseMessage, SystemMessage
 # schema is part of its output contract: the assigner is permanently structured,
 # while the reflection-driven proposers alternate prose and structured turns.
 _NO_SCHEMA = object()
+
+# The per-streamed-chunk memory scope (the per-batch discriminator). A proposer body
+# opens it around its invoke chain, so every turn of ONE chunk addresses the same
+# session (within-chunk memory is kept) while the next chunk addresses a FRESH thread
+# (`AnalysisSession(run, role, batch=...)`). It is a ContextVar, the repo's established
+# scoped-ambient pattern (`conversation_scope`, `module_context`), so the invoke
+# contract `(messages, *, schema, system_prompt)` is unchanged.
+_BATCH: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "proposer-batch", default=None)
+
+
+@contextlib.contextmanager
+def proposer_batch(batch_id: str | None) -> Iterator[None]:
+    """Scope the turns of ONE streamed chunk as the session batch. A None batch is a
+    no-op scope, so a caller that sets none keeps the `run:role` thread."""
+    token = _BATCH.set(batch_id)
+    try:
+        yield
+    finally:
+        _BATCH.reset(token)
+
+
+def current_batch() -> str | None:
+    """The batch id of the innermost active `proposer_batch` scope, or None."""
+    return _BATCH.get()
 
 
 def _role_prompt(role_id: str) -> str:
@@ -74,6 +101,53 @@ def _role_default_schema(role_id: str) -> Any:
     return None
 
 
+def _role_structured_schema(role_id: str) -> Any:
+    """The schema a role's STRUCTURED turns use, or None for a role with no structured
+    contract. Distinct from `_role_default_schema`, which is None for the
+    reflection-driven proposers: their prose turns are deliberate, but they still
+    share this one structured tool so the request shape never toggles."""
+    if role_id in ("assigner", "mechanism_typist", "data_modeller"):
+        from polymerhus.analysis.analyser_types import L1DeltaBatch
+
+        return L1DeltaBatch
+    return None
+
+
+def _prose_tools(role_id: str) -> tuple:
+    """The role's structured tool, bound on a PROSE turn so the tool set is constant
+    across the role's calls (the cache-shape rule).
+
+    The structured turn supplies the SAME tool through `response_format`; binding it
+    again there would duplicate it, so only a prose turn (`schema is None`) gets it
+    here. The tool is the exact tool the ToolStrategy path builds when the role's
+    negotiated structured-output method is ToolStrategy (the A6 voluntary rung); a
+    ProviderStrategy method carries no tool, so this returns (). The tool is made
+    inert - the reflection prompt forbids a call, and a stray call then costs one
+    benign tool message instead of a ToolNode error. Fail-open: an unbuildable shape
+    binds nothing (the session always starts)."""
+    schema = _role_structured_schema(role_id)
+    if schema is None:
+        return ()
+    try:
+        from langchain.agents.structured_output import ToolStrategy
+        from langchain_core.tools import StructuredTool
+
+        from polymerhus.app.llm.session import structured_response_format
+
+        fmt = structured_response_format(role_id, schema, tools_bound=False)
+        if not isinstance(fmt, ToolStrategy):
+            return ()
+        spec = fmt.schema_specs[0]
+        return (StructuredTool(
+            name=spec.name,
+            description=spec.description,
+            args_schema=spec.json_schema,
+            func=lambda **_: "structured output is only produced on the extraction turn",
+        ),)
+    except Exception:  # noqa: BLE001 - fail-open: an unbuildable tool binds nothing
+        return ()
+
+
 def session_invoke_fn(role_id: str, run_id: str, checkpointer, project_id: str | None = None):
     """The stateful production seam: a callable `(messages, *, schema)` that runs
     one turn of `role_id` on its own per-run session, resuming from its checkpoint.
@@ -84,13 +158,21 @@ def session_invoke_fn(role_id: str, run_id: str, checkpointer, project_id: str |
     per-module `stateful_invoke_fn`s returned, so every proposer body and its
     contract tier are unchanged.
 
+    Two cross-call invariants ride this ONE seam:
+
+    - **Constant request shape**: a prose turn still binds the role's structured tool
+      via `tools=`, so the tool set never toggles between a role's reflection and
+      extraction turns (the shape that defeated the provider prefix cache).
+    - **Per-batch memory**: the thread is `AnalysisSession(run, role, batch)` where
+      `batch` is the innermost `proposer_batch` scope the body opened (the streamed
+      chunk id) - or None (the `run:role` thread) when none is set.
+
     Structurally sync: the supervisor dispatches the proposers sequentially under
     `ANALYSER_PASS_SEMAPHORE`, so a turn never needs an async entry point."""
     from polymerhus.app.llm import compaction as C  # noqa: PLC0415
     from polymerhus.app.llm.session import stateful_turn  # noqa: PLC0415
     from polymerhus.app.llm.session_address import AnalysisSession  # noqa: PLC0415
 
-    address = AnalysisSession(run_id, role_id)
     middleware = [C.build_role_compaction_middleware(role_id)]
 
     def invoke(messages: Sequence[BaseMessage], *, schema: Any = _NO_SCHEMA,
@@ -99,13 +181,23 @@ def session_invoke_fn(role_id: str, run_id: str, checkpointer, project_id: str |
         # skill), so a role whose prompt varies by mode still gets the right one.
         # Absent one, the role's OWN default prompt applies - a proposer therefore
         # can never be built with another proposer's prompt by accident.
+        resolved_schema = (_role_default_schema(role_id)
+                           if schema is _NO_SCHEMA else schema)
+        # Constant shape: a prose turn binds the role's structured tool so the tool
+        # set never toggles; the structured turn supplies it via `response_format`.
+        # Only a non-empty set is forwarded, so the structured calls stay byte-identical
+        # to the pre-change requests.
+        tools = () if resolved_schema is not None else _prose_tools(role_id)
+        address = AnalysisSession(run_id, role_id, batch=current_batch())
+        kwargs: dict[str, Any] = {}
+        if tools:
+            kwargs["tools"] = tools
         return stateful_turn(role_id, address, messages,
                              checkpointer=checkpointer,
-                             schema=(_role_default_schema(role_id)
-                                     if schema is _NO_SCHEMA else schema),
+                             schema=resolved_schema,
                              system_prompt=system_prompt or _role_prompt(role_id),
                              middleware=middleware, extra_tags=[run_id],
-                             usage_scope=project_id)
+                             usage_scope=project_id, **kwargs)
 
     return invoke
 

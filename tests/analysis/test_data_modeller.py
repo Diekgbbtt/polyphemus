@@ -277,6 +277,22 @@ def test_owning_services_header_joins_baseurl_only():
 
 # --- make_data_modeller_body / model_data: valid-empty + degradation (C13/C14) --
 
+def test_model_data_scopes_its_invokes_by_the_chunk_batch():
+    """Per-batch memory: the body sets the streamed chunk id as the session batch
+    around BOTH turns, so the reflection and extraction share one context and the
+    next chunk (a new batch) starts fresh."""
+    from polymerhus.analysis.proposer_turn import current_batch
+
+    seen: list[str | None] = []
+
+    def invoke_fn(messages, *, schema=None, system_prompt=None):
+        seen.append(current_batch())
+        return "reflected" if schema is None else L1DeltaBatch()
+
+    model_data(_chunk([_param("a")]), invoke_fn=invoke_fn, inventory={}, aggregations=[])
+    assert seen == ["stream:0", "stream:0"]
+
+
 def test_empty_admission_no_llm_call():
     calls = {"n": 0}
 

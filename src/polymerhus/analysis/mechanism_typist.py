@@ -476,39 +476,45 @@ def type_mechanisms(
     # checkpointed trail. The legacy one-shot seam prepends it itself.
     skill = _load_skill()
 
-    # Call 1 - REFLECTION (reason). Exhaustion => fail-closed (whole step empty).
-    # The escalating retry lives inside invoke_fn (invoke_role) now; a None return
-    # is the exhausted-generation fail-closed signal, exactly as before.
-    prose = invoke_fn(
-        [HumanMessage(content=_reflection_prompt(chunk, inventory))],
-        schema=None, system_prompt=skill,
-    )
-    if not prose:
-        logger.warning("mechanism_typist: reflection exhausted; fail-closed to empty batch")
-        return L1DeltaBatch()
+    # Per-batch memory: the three calls of ONE chunk share a session (the batch
+    # scope), so the reflection's reasoning is the extraction's context; the next
+    # chunk opens a fresh thread. The scope is inert for the one-shot legacy seam.
+    from polymerhus.analysis.proposer_turn import proposer_batch
 
-    # #9/#18: attach the reflection prose to the run-correlated trace (explicit
-    # run correlation - the supervisor no longer opens an agent span, so the
-    # ambient update would go nowhere). Otherwise the WHY behind each System
-    # proposal - the hypothesis-driven reason call - is built, consumed by
-    # extraction, and discarded, leaving nothing to evaluate the thought
-    # process against. Fail-open no-op untraced.
-    from polymerhus.app.observability import trace_reasoning
-    trace_reasoning(prose, call="typist-reflection", run_id=run_id, tags=tags)
+    with proposer_batch(chunk.chunk_id):
+        # Call 1 - REFLECTION (reason). Exhaustion => fail-closed (whole step empty).
+        # The escalating retry lives inside invoke_fn (invoke_role) now; a None return
+        # is the exhausted-generation fail-closed signal, exactly as before.
+        prose = invoke_fn(
+            [HumanMessage(content=_reflection_prompt(chunk, inventory))],
+            schema=None, system_prompt=skill,
+        )
+        if not prose:
+            logger.warning("mechanism_typist: reflection exhausted; fail-closed to empty batch")
+            return L1DeltaBatch()
 
-    # Call 2 - SYSTEMS EXTRACTION (extract). Soft pass-through on exhaustion.
-    systems_batch = invoke_fn(
-        [HumanMessage(content=_systems_prompt(inventory))],
-        schema=L1DeltaBatch, system_prompt=skill,
-    ) or L1DeltaBatch()
+        # #9/#18: attach the reflection prose to the run-correlated trace (explicit
+        # run correlation - the supervisor no longer opens an agent span, so the
+        # ambient update would go nowhere). Otherwise the WHY behind each System
+        # proposal - the hypothesis-driven reason call - is built, consumed by
+        # extraction, and discarded, leaving nothing to evaluate the thought
+        # process against. Fail-open no-op untraced.
+        from polymerhus.app.observability import trace_reasoning
+        trace_reasoning(prose, call="typist-reflection", run_id=run_id, tags=tags)
 
-    # Call 3 - SERVICES LINKING (extract). Soft pass-through on exhaustion.
-    all_services = frozenset((inventory or {}).get("services") or [])
-    primary, secondary, owned = partition_services(chunk.assets, aggregations or [], all_services)
-    link_batch = invoke_fn(
-        [HumanMessage(content=_linking_prompt(systems_batch, primary, secondary, owned, inventory))],
-        schema=L1DeltaBatch, system_prompt=skill,
-    ) or L1DeltaBatch()
+        # Call 2 - SYSTEMS EXTRACTION (extract). Soft pass-through on exhaustion.
+        systems_batch = invoke_fn(
+            [HumanMessage(content=_systems_prompt(inventory))],
+            schema=L1DeltaBatch, system_prompt=skill,
+        ) or L1DeltaBatch()
+
+        # Call 3 - SERVICES LINKING (extract). Soft pass-through on exhaustion.
+        all_services = frozenset((inventory or {}).get("services") or [])
+        primary, secondary, owned = partition_services(chunk.assets, aggregations or [], all_services)
+        link_batch = invoke_fn(
+            [HumanMessage(content=_linking_prompt(systems_batch, primary, secondary, owned, inventory))],
+            schema=L1DeltaBatch, system_prompt=skill,
+        ) or L1DeltaBatch()
 
     # #18/observability: persist the typist's STRUCTURED output (systems + edges, with each
     # system's kind/discriminator) alongside its reflection prose - otherwise the WHAT it

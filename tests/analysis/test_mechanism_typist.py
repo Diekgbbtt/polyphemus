@@ -112,6 +112,22 @@ def test_N7_partition_primary_secondary_and_asset_less_excluded():
 
 # --- the 3-call chain (N2 order, N3 fail-closed, N4 soft pass-through) ---------
 
+def test_the_three_calls_share_the_chunk_batch_scope():
+    """Per-batch memory: the 3-call chain runs under ONE batch scope (the chunk id),
+    so reflection + extraction + linking share a context and the next chunk resets."""
+    from polymerhus.analysis.proposer_turn import current_batch
+
+    seen: list[str | None] = []
+
+    class _ScopeRecorder(_Recorder):
+        def __call__(self, messages, *, schema=None, system_prompt=None):
+            seen.append(current_batch())
+            return super().__call__(messages, schema=schema, system_prompt=system_prompt)
+
+    type_mechanisms(_service_chunk(), invoke_fn=_ScopeRecorder())
+    assert seen == ["c", "c", "c"]
+
+
 def test_N2_three_call_sequence_in_order():
     rec = _Recorder()
     out = type_mechanisms(_service_chunk(), invoke_fn=rec)

@@ -147,7 +147,11 @@ def test_the_stateful_leg_carries_each_roles_own_prompt(monkeypatch):
 def test_the_stateful_leg_carries_no_skill_surface(monkeypatch):
     """Operator ruling (2026-09-17), preserved: the analysis proposers interact
     with LOCAL context only, so they bind no skill tool, no skill context, and no
-    L1 skill-index middleware - their turns carry structure, not skills."""
+    L1 skill-index middleware - their turns carry structure, not skills.
+
+    The cross-call constant-shape fix binds the role's OWN structured-output tool on
+    a prose turn; that is not a skill tool, and the assertion below pins exactly
+    that (only the role's structured tool may be bound, never `load_skill`)."""
     from polymerhus.analysis import proposer_turn
     from polymerhus.app.llm import compaction as C
     import polymerhus.app.llm.session as S
@@ -170,7 +174,9 @@ def test_the_stateful_leg_carries_no_skill_surface(monkeypatch):
     proposer_turn.session_invoke_fn("mechanism_typist", "runX", object())(
         [HumanMessage(content="m")], schema=None)
 
-    assert "tools" not in bound, "no tool binding at all (the default empty set applies)"
+    tool_names = {getattr(t, "name", "") for t in bound.get("tools") or ()}
+    assert "load_skill" not in tool_names, "no skill tool"
+    assert tool_names <= {"L1DeltaBatch"}, "only the role's own structured-output tool"
     assert "context" not in bound or bound.get("context") is None
     assert "_skill_index" not in {type(m).__name__ for m in bound["middleware"] or ()}
     assert roles == ["mechanism_typist"], "one middleware per turn, for its OWN role"
@@ -404,5 +410,179 @@ def test_the_stateful_leg_is_read_through_the_real_seam(monkeypatch):
     invoke([HumanMessage(content="the task")], schema=None)
     assert model._seen, "the real seam reached the model"
     assert model._seen[0][0].content == "P"
+
+
+# --- per-batch memory: each streamed chunk starts a FRESH context -------------
+
+def test_per_batch_scope_gives_each_chunk_a_fresh_thread(monkeypatch):
+    """Change 2, end to end through the REAL seam: two chunks on one run, each
+    scoped by `proposer_batch`, persist to two DISTINCT threads, and chunk N+1's
+    first request carries none of chunk N's messages - the fresh-context guarantee
+    that stops the vertical growth under a single run-long thread."""
+    from polymerhus.app.llm.session import read_session_memory
+    from polymerhus.analysis.proposer_turn import proposer_batch, session_invoke_fn
+
+    model = _RecordingModel()
+    monkeypatch.setattr(
+        "polymerhus.app.llm.session._default_model_factory", lambda role_id: model)
+    monkeypatch.setattr(
+        "polymerhus.analysis.proposer_turn._role_prompt", lambda role_id: "PROMPT")
+
+    saver = InMemorySaver()
+    invoke = session_invoke_fn("mechanism_typist", "runbatch", saver)
+    with proposer_batch("chunk-1"):
+        invoke([HumanMessage(content="chunk 1 reflection")], schema=None)
+    with proposer_batch("chunk-2"):
+        invoke([HumanMessage(content="chunk 2 reflection")], schema=None)
+
+    # Two distinct, independently persisted threads.
+    first = read_session_memory(saver, "runbatch:chunk-1:mechanism_typist")
+    second = read_session_memory(saver, "runbatch:chunk-2:mechanism_typist")
+    assert first is not None and second is not None
+    assert first.messages and second.messages
+
+    # Chunk 2's request is its OWN trail: none of chunk 1's messages ride it.
+    contents = [getattr(m, "content", "") for m in model._seen[-1]]
+    assert "chunk 2 reflection" in contents
+    assert "chunk 1 reflection" not in contents
+
+
+def test_no_batch_scope_keeps_the_run_role_thread(monkeypatch):
+    """Back-compat: an unscoped invoke (the existing callers) keeps the documented
+    `run:role` thread - the per-batch discriminator is additive, never a forced
+    rename of the observability/runtime contract."""
+    seam = _CapturingSeam()
+    _patch_stateful_turn(monkeypatch, seam)
+    invoke = session_invoke_fn("data_modeller", "runX", object())
+    invoke([HumanMessage(content="m")], schema=None)
+    assert seam.seen[-1]["thread_id"] == "runX:data_modeller"
+
+
+# --- the constant request shape (the cache fix) -------------------------------
+
+class _ToolRecordingModel(BaseChatModel):
+    """Records every `bind_tools` call (the tool set + tool_choice the agent binds
+    per model call) and answers a REFLECTION turn with prose, a STRUCTURED turn with
+    the structured-output tool call (the shape the deployed lane produces), so a test
+    can assert the request SHAPE across a role's turns through the REAL seam."""
+
+    def __init__(self):
+        super().__init__()
+        self._bound: list[tuple] = []
+
+    def bind_tools(self, tools, **kwargs):
+        self._bound.append((list(tools), dict(kwargs)))
+        return self
+
+    @staticmethod
+    def _is_reflection(messages) -> bool:
+        last = messages[-1] if messages else None
+        content = getattr(last, "content", "")
+        return isinstance(content, str) and "reflect" in content.lower()
+
+    @staticmethod
+    def _tool_call():
+        return {"name": "L1DeltaBatch", "args": {}, "id": "call-1", "type": "tool_call"}
+
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+        if self._is_reflection(messages):
+            reply = AIMessage(content="prose answer")
+        else:
+            reply = AIMessage(content="", tool_calls=[self._tool_call()])
+        return ChatResult(generations=[ChatGeneration(message=reply)])
+
+    def _stream(self, messages, stop=None, run_manager=None, **kwargs):
+        if self._is_reflection(messages):
+            yield ChatGenerationChunk(message=AIMessageChunk(content="prose answer"))
+        else:
+            yield ChatGenerationChunk(message=AIMessageChunk(
+                content="",
+                tool_call_chunks=[{"name": "L1DeltaBatch", "args": "{}",
+                                   "id": "call-1", "index": 0,
+                                   "type": "tool_call_chunk"}],
+            ))
+
+    @property
+    def _llm_type(self) -> str:
+        return "tool-recording"
+
+
+def _force_voluntary_rung(monkeypatch):
+    """Pin the A6 voluntary rung (ToolStrategy) for the test: a known capability
+    profile that lacks native structured output but can call tools and refuses a
+    forced choice - the shape the deployed opencode-go lane negotiates."""
+    import polymerhus.app.llm.capability as cap
+    import polymerhus.app.llm.providers as providers
+    import polymerhus.app.llm.session as S
+    from polymerhus.app.llm.capability import CapabilityProfile
+
+    profile = CapabilityProfile(
+        supports_structured_output=False,
+        supports_tool_calling=True,
+        supports_forced_tool_choice=False,
+    )
+    monkeypatch.setattr(providers, "resolve_role", lambda role: ("provider", "model"))
+    # `session` imported the reader by value at import (`from ... import`), so its
+    # own module binding must be patched too - the seam reads THAT one.
+    monkeypatch.setattr(cap, "resolve_capability", lambda p, m: profile)
+    monkeypatch.setattr(S, "resolve_capability", lambda p, m: profile)
+
+
+def test_a_roles_tool_set_is_constant_across_reflection_and_extraction(monkeypatch):
+    """Change 1, end to end through the REAL seam: the tool set bound on a role's
+    PROSE (reflection) turn is byte-identical to the one bound on its STRUCTURED
+    (extraction) turn, so the request shape - and the provider prefix - never
+    toggles. The prose turn still returns prose."""
+    from langchain_core.utils.function_calling import convert_to_openai_tool
+
+    from polymerhus.analysis.analyser_types import L1DeltaBatch
+    from polymerhus.analysis.proposer_turn import proposer_batch, session_invoke_fn
+
+    _force_voluntary_rung(monkeypatch)
+    model = _ToolRecordingModel()
+    monkeypatch.setattr(
+        "polymerhus.app.llm.session._default_model_factory", lambda role_id: model)
+    monkeypatch.setattr(
+        "polymerhus.analysis.proposer_turn._role_prompt", lambda role_id: "PROMPT")
+
+    invoke = session_invoke_fn("data_modeller", "runshape", InMemorySaver())
+    with proposer_batch("c1"):
+        prose = invoke([HumanMessage(content="reflection")], schema=None)
+        invoke([HumanMessage(content="extraction")], schema=L1DeltaBatch)
+
+    assert prose == "prose answer", "the prose turn still returns prose"
+    assert len(model._bound) == 2, "one bind per turn"
+    (reflect_tools, _reflect_kwargs), (extract_tools, _extract_kwargs) = model._bound
+    assert reflect_tools, "the prose turn binds the structured tool"
+    assert [t.name for t in reflect_tools] == [t.name for t in extract_tools]
+    # Byte-identical tool DEFINITIONS - what the provider's prefix cache sees.
+    assert [convert_to_openai_tool(t) for t in reflect_tools] == [
+        convert_to_openai_tool(t) for t in extract_tools]
+
+
+def test_the_constant_shape_covers_the_whole_mechanism_typist_chain(monkeypatch):
+    """The same rule over the typist's 3-call chain (P,S,S): all three turns bind
+    the same tool set, so the S,S pair keeps caching AND the P->S transition now
+    shares the shape too."""
+    from polymerhus.analysis.analyser_types import L1DeltaBatch
+    from polymerhus.analysis.proposer_turn import proposer_batch, session_invoke_fn
+
+    _force_voluntary_rung(monkeypatch)
+    model = _ToolRecordingModel()
+    monkeypatch.setattr(
+        "polymerhus.app.llm.session._default_model_factory", lambda role_id: model)
+    monkeypatch.setattr(
+        "polymerhus.analysis.proposer_turn._role_prompt", lambda role_id: "PROMPT")
+
+    invoke = session_invoke_fn("mechanism_typist", "runshape", InMemorySaver())
+    with proposer_batch("c1"):
+        invoke([HumanMessage(content="reflect")], schema=None)
+        invoke([HumanMessage(content="extract")], schema=L1DeltaBatch)
+        invoke([HumanMessage(content="link")], schema=L1DeltaBatch)
+
+    tool_sets = [tuple(t.name for t in tools) for tools, _ in model._bound]
+    assert tool_sets == [tool_sets[0]] * 3, "the tool set never toggles across the chain"
+
+
 
 

@@ -452,12 +452,20 @@ ThinkingLevel = Literal["off", "minimal", "low", "medium", "high", "xhigh"]
 @dataclass(frozen=True)
 class Role:
     """One LLM role record: cognitive-job identity + model selector + turn mode +
-    thinking baseline."""
+    thinking baseline + the role's own compaction threshold.
+
+    `compaction_threshold` is the RELATIVE decimal of the model window past which
+    the role's context is compacted (slice D2 of #95). It is a per-role DEFAULT:
+    an unset value falls through to the module-wide 0.90, while a set value lets a
+    role whose per-batch context is small (the analysis proposers) compact far
+    earlier than a long-horizon tool agent. Resolution precedence is documented in
+    `compaction.resolve_window`: per-agent env > global env > this default > 0.90."""
 
     role_id: str
     model_key: str
     agent_mode: AgentMode = "one_shot"
     thinking: ThinkingLevel = "off"
+    compaction_threshold: float | None = None
 
 
 # Roles validated at APP BOOT (`validate_llm_config`, from `app/main.py`). The
@@ -484,8 +492,8 @@ ROLES: tuple[Role, ...] = (
     Role("crawler",          "LLM_CRAWLER",          "session"),
     Role("bootstrapper",     "LLM_ANALYSER",         "one_shot"),
     Role("assigner",         "LLM_ANALYSER",         "session",  "medium"),
-    Role("mechanism_typist", "LLM_ANALYSER",         "session",  "medium"),
-    Role("data_modeller",    "LLM_ANALYSER",         "session",  "medium"),
+    Role("mechanism_typist", "LLM_ANALYSER",         "session",  "medium", 0.08),
+    Role("data_modeller",    "LLM_ANALYSER",         "session",  "medium", 0.016),
     Role("anatomy",          "LLM_ANALYSER",         "one_shot"),
     Role("curation",         "LLM_ANALYSER",         "one_shot"),
     Role("sweep",            "LLM_ANALYSER",         "one_shot"),

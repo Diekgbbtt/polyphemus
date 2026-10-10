@@ -25,6 +25,18 @@ def test_analysis_session_is_run_and_role_only():
     assert AnalysisSession("run1", "assigner").thread_id == "run1:assigner"
 
 
+def test_analysis_session_batch_discriminator_is_per_streamed_chunk():
+    """The per-batch memory scope: a proposer's thread may carry a `batch`
+    discriminator (the streamed chunk id) so each chunk starts a FRESH context while
+    the turns within one chunk share memory. With no batch the address is unchanged,
+    so the observability/runtime `run:role` contract is preserved."""
+    a = AnalysisSession("run1", "data_modeller", batch="job-1:0")
+    b = AnalysisSession("run1", "data_modeller", batch="job-1:1")
+    assert a.thread_id != b.thread_id
+    assert a.thread_id == "run1:job-1_0:data_modeller"  # ':' inside the batch escaped
+    assert AnalysisSession("run1", "data_modeller").thread_id == "run1:data_modeller"
+
+
 def test_pod_sessions_disambiguate_concurrent_same_role_instances():
     """The whole point: two pods running the SAME role in the SAME run get DISTINCT
     thread ids via their (phase, tool, asset), so the checkpointer never routes one pod's

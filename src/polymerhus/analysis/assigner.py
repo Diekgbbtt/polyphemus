@@ -523,10 +523,16 @@ def assign(
     # never accumulates in the checkpointed trail. The legacy one-shot seam prepends
     # it into its message list instead.
     system_prompt = _system_prompt(mode)
+    # Per-batch memory: the chunk id scopes this turn to its own session (the
+    # supervisor dispatches one chunk at a time), so the next chunk starts fresh.
+    # The scope is inert for the one-shot legacy seam.
+    from polymerhus.analysis.proposer_turn import proposer_batch
+
     try:
-        raw = invoke_fn([
-            HumanMessage(content=_user_prompt(l0_slice, inventory)),
-        ], schema=L1DeltaBatch, system_prompt=system_prompt)
+        with proposer_batch(chunk.chunk_id):
+            raw = invoke_fn([
+                HumanMessage(content=_user_prompt(l0_slice, inventory)),
+            ], schema=L1DeltaBatch, system_prompt=system_prompt)
     except Exception:  # LLM error -> fail-open to no assignment, never crash
         logger.warning("assigner: invoke failed; degrading to empty outcome", exc_info=True)
         return AssignmentOutcome()
