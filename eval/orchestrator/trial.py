@@ -16,7 +16,7 @@ import time
 from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, Mapping, Protocol, Sequence
+from typing import Callable, Mapping, Protocol
 
 from orchestrator import api, instances, predicates, routing, subagents
 from orchestrator.commands import Command, CommandRunner, require_ok
@@ -336,6 +336,12 @@ class TrialRecord:
     # trial still carries its token usage even when no budget stop populated
     # `spent_tokens`. Additive, default None, so older records load.
     usage: dict | None = None
+    # #349: the per-agent token spectrum - one flat typed entry per agent with
+    # {visible, reasoning, cached_input, uncached_input, generated, total,
+    # capped, calls} - decoded from the durable usage ledger (`GET
+    # /projects/{id}/usage` `by_agent`, #326), never re-derived from traces.
+    # Additive, default None, so older records load.
+    token_spectrum: dict | None = None
     notes: list[str] = field(default_factory=list)
     trial_dir: str | None = None
     # #273: the target-run grouping level of the artifact store (defaults to
@@ -971,6 +977,13 @@ class Trial:
             note for phase in phases for note in phase.notes
         ]
         spent, overshoot, by_agent, usage = self._terminal_spend(project_id)
+        # #349: the per-agent token spectrum is a flat projection of the SAME
+        # `by_agent` read the spend used - a budget stop or the terminal usage
+        # snapshot - so it is never re-read or re-derived. None only when the
+        # usage surface was unreachable (fail-open terminal).
+        token_spectrum = (
+            api.spectrum_by_agent(by_agent) if by_agent is not None else None
+        )
         record = TrialRecord(
             trial_id=trial_id,
             instance_id=cfg.instance_id,
@@ -987,6 +1000,7 @@ class Trial:
             spend_baseline=self._spend_baseline,
             spend_by_agent=by_agent,
             usage=usage,
+            token_spectrum=token_spectrum,
             notes=aggregated,
             trial_dir=str(trial_dir),
             target_run_id=cfg.target_run_id or cfg.instance_id,

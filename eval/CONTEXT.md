@@ -174,6 +174,13 @@ Since #346 the trial record carries the spend on **every** terminal (a `stopped`
 With no configured budget no baseline is snapshotted, so `spent_tokens` is the project's cumulative capped tokens (the trial's own spend on a fresh project).
 _Avoid_: cost, usage
 
+**Token spectrum**:
+The per-agent token split a `Trial` records in its outcome artifact, first-class since #349: one flat typed entry per agent with `visible`, `reasoning`, `cached_input`, `uncached_input`, `generated`, `total`, `capped`, and `calls`.
+It is decoded from the durable usage ledger's own per-agent `by_agent` surface (`GET /projects/{id}/usage`, #326) at the terminal - the same read the spend accounting used, at a budget stop or the terminal snapshot - and is never re-derived from traces or spend logs.
+`generated` is the ledger's output split summed (`reasoning + visible`), `cached_input`/`uncached_input` are its context split, and `total`/`capped`/`calls` are the ledger's scalars.
+It makes a trial's cached/uncached spectrum readable from the trial file (`trial.yaml`) alone, so the budget axis (`capped_tokens`, #347) and a cache regression (EV-33 / #348) are explainable at the trial level.
+_Avoid_: breakdown, usage split
+
 **Spend baseline**:
 The project's cumulative `capped_tokens` at the trial's first spend poll; persisted in the trial record (`spend_baseline`) and carried across a resume, so a resumed or seeded trial never re-counts a prior run's spend.
 _Avoid_: cap baseline, offset

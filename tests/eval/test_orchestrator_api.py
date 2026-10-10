@@ -119,6 +119,126 @@ def test_usage_parsers_read_the_wire_shapes() -> None:
     assert api.usage_by_agent(response) == by_agent
 
 
+def test_usage_spectrum_decodes_the_ledger_per_agent_surface() -> None:
+    # #349: the trial record's flat per-agent spectrum is the durable ledger's
+    # own cumulative `by_agent` surface, decoded - never re-derived from traces.
+    response = {
+        "by_agent": {
+            "mechanism_typist": {
+                "context_tokens": {"cached": 19_000_000, "uncached": 43_100_000},
+                "generated_tokens": {"reasoning": 900_000, "visible": 100_000},
+                "total_tokens": 62_100_000,
+                "capped_tokens": 44_100_000,
+                "calls": 24,
+            },
+            "job_orchestrator": {
+                "context_tokens": {"cached": 0, "uncached": 7_350_000},
+                "generated_tokens": {"reasoning": 0, "visible": 250_000},
+                "total_tokens": 7_600_000,
+                "capped_tokens": 7_600_000,
+                "calls": 30,
+            },
+        }
+    }
+
+    spectrum = api.usage_spectrum(response)
+
+    assert spectrum == {
+        "mechanism_typist": {
+            "visible": 100_000,
+            "reasoning": 900_000,
+            "cached_input": 19_000_000,
+            "uncached_input": 43_100_000,
+            "generated": 1_000_000,
+            "total": 62_100_000,
+            "capped": 44_100_000,
+            "calls": 24,
+        },
+        "job_orchestrator": {
+            "visible": 250_000,
+            "reasoning": 0,
+            "cached_input": 0,
+            "uncached_input": 7_350_000,
+            "generated": 250_000,
+            "total": 7_600_000,
+            "capped": 7_600_000,
+            "calls": 30,
+        },
+    }
+
+
+def test_usage_spectrum_pins_the_schema_and_fails_open() -> None:
+    # The acceptance contract (#349): one entry per agent with exactly these
+    # eight keys, in this order, every one a non-negative int.
+    response = {"by_agent": {"recon": {"capped_tokens": 4200}}}
+    spectrum = api.usage_spectrum(response)
+    assert list(spectrum["recon"]) == [
+        "visible",
+        "reasoning",
+        "cached_input",
+        "uncached_input",
+        "generated",
+        "total",
+        "capped",
+        "calls",
+    ]
+    assert spectrum["recon"] == {
+        "visible": 0,
+        "reasoning": 0,
+        "cached_input": 0,
+        "uncached_input": 0,
+        "generated": 0,
+        "total": 0,
+        "capped": 4200,
+        "calls": 0,
+    }
+    # Fail-open: absent/malformed response, a non-mapping agent, or a malformed
+    # nested map degrades to empty/zeros, never a raise.
+    assert api.usage_spectrum({}) == {}
+    assert api.usage_spectrum(None) == {}
+    assert api.usage_spectrum({"by_agent": {"recon": "nope"}}) == {}
+    assert api.usage_spectrum(
+        {"by_agent": {"recon": {"context_tokens": "x", "generated_tokens": None}}}
+    ) == {
+        "recon": {
+            "visible": 0,
+            "reasoning": 0,
+            "cached_input": 0,
+            "uncached_input": 0,
+            "generated": 0,
+            "total": 0,
+            "capped": 0,
+            "calls": 0,
+        }
+    }
+
+
+def test_usage_spectrum_ignores_negative_and_bool_fields() -> None:
+    # A malformed count is never trusted: a bool is not an int, and a negative
+    # value reads as zero (the spectrum is a non-negative surface).
+    response = {
+        "by_agent": {
+            "recon": {
+                "context_tokens": {"cached": -5, "uncached": True},
+                "generated_tokens": {"reasoning": 10, "visible": -1},
+                "total_tokens": 50,
+                "capped_tokens": 20,
+                "calls": 2,
+            }
+        }
+    }
+    assert api.usage_spectrum(response)["recon"] == {
+        "visible": 0,
+        "reasoning": 10,
+        "cached_input": 0,
+        "uncached_input": 0,
+        "generated": 10,
+        "total": 50,
+        "capped": 20,
+        "calls": 2,
+    }
+
+
 def test_usage_parsers_default_when_absent_or_malformed() -> None:
     assert api.usage_total({}) == 0
     assert api.usage_total({"total_tokens": "many"}) == 0

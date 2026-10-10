@@ -7,7 +7,6 @@ the decisions through the seams.
 """
 from __future__ import annotations
 
-from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -421,6 +420,134 @@ def test_a_non_mapping_usage_payload_never_breaks_the_record(tmp_path) -> None:
     assert record.usage is None
     written = yaml.safe_load(Path(record.trial_dir, "trial.yaml").read_text())
     assert written["spent_tokens"] is None
+
+
+# --- the per-agent token spectrum (#349) --------------------------------------
+
+
+class RichUsageApi(FakeApi):
+    """A `FakeApi` serving one rich two-axis `by_agent` surface, popping the
+    capped totals so a budget stop can be scripted."""
+
+    def __init__(self, routes: dict | None, by_agent: dict, totals=()):
+        super().__init__(routes)
+        self._by_agent = by_agent
+        self._totals = list(totals)
+        self.usage_calls = 0
+
+    def __call__(self, call):
+        if call.path.endswith("/usage"):
+            self.usage_calls += 1
+            total = self._totals.pop(0) if self._totals else 0
+            self.calls.append(call)
+            return {
+                "project_id": "pid",
+                "total_tokens": total,
+                "capped_tokens": total,
+                "by_agent": self._by_agent,
+            }
+        return super().__call__(call)
+
+
+_TYPIST_SURFACE = {
+    "context_tokens": {"cached": 19_000_000, "uncached": 43_100_000},
+    "generated_tokens": {"reasoning": 900_000, "visible": 100_000},
+    "total_tokens": 62_100_000,
+    "capped_tokens": 44_100_000,
+    "calls": 24,
+}
+
+
+def test_a_trial_records_the_per_agent_token_spectrum(tmp_path) -> None:
+    # #349: the terminal record carries the flat per-agent token spectrum,
+    # decoded from the durable ledger's `by_agent` surface, so a trial's
+    # cached/uncached split is readable from the trial file alone.
+    snapshot = {
+        "project_id": "pid",
+        "total_tokens": 62_100_000,
+        "capped_tokens": 44_100_000,
+        "context_tokens": {"cached": 19_000_000, "uncached": 43_100_000},
+        "generated_tokens": {"reasoning": 900_000, "visible": 100_000},
+        "calls": 24,
+        "by_agent": {"mechanism_typist": _TYPIST_SURFACE},
+    }
+    api_runner = SnapshotUsageApi(_usage_routes(), snapshot)
+
+    record = _trial(
+        tmp_path, api_runner, start_phase="hunting", project_id="pid"
+    ).run()
+
+    expected = {
+        "visible": 100_000,
+        "reasoning": 900_000,
+        "cached_input": 19_000_000,
+        "uncached_input": 43_100_000,
+        "generated": 1_000_000,
+        "total": 62_100_000,
+        "capped": 44_100_000,
+        "calls": 24,
+    }
+    assert record.token_spectrum == {"mechanism_typist": expected}
+    written = yaml.safe_load(Path(record.trial_dir, "trial.yaml").read_text())
+    assert written["token_spectrum"]["mechanism_typist"] == expected
+    # The schema order is stable (sort_keys=False), so a consumer reads the
+    # spectrum from the file without re-deriving it.
+    assert list(written["token_spectrum"]["mechanism_typist"]) == list(expected)
+
+
+def test_a_budget_stop_records_the_spectrum_from_the_stop_read(tmp_path) -> None:
+    # A budget stop reads the usage surface at the stop and stores no raw
+    # `usage` snapshot, so the spectrum must ride that same read - never a
+    # second source and never a re-derivation.
+    api_runner = RichUsageApi(
+        _usage_routes(), {"mechanism_typist": _TYPIST_SURFACE}, totals=[1500, 1700]
+    )
+    t = _trial(
+        tmp_path,
+        api_runner,
+        start_phase="hunting",
+        project_id="pid",
+        token_budget=500,
+        spend_baseline=1000,
+    )
+
+    record = t.run()
+
+    assert record.terminal == "stopped"
+    assert record.usage is None
+    assert record.spent_tokens == 500
+    assert record.token_spectrum == {
+        "mechanism_typist": {
+            "visible": 100_000,
+            "reasoning": 900_000,
+            "cached_input": 19_000_000,
+            "uncached_input": 43_100_000,
+            "generated": 1_000_000,
+            "total": 62_100_000,
+            "capped": 44_100_000,
+            "calls": 24,
+        }
+    }
+
+
+def test_a_failed_usage_read_leaves_the_spectrum_absent(tmp_path) -> None:
+    # Fail-open: when the terminal usage read fails, the record still writes and
+    # the spectrum is None (never a fabricated zero entry).
+    class ListUsageApi(FakeApi):
+        def __call__(self, call):
+            if call.path.endswith("/usage"):
+                self.calls.append(call)
+                return [1, 2, 3]
+            return super().__call__(call)
+
+    record = _trial(
+        tmp_path, ListUsageApi(_usage_routes()), start_phase="hunting", project_id="pid"
+    ).run()
+
+    assert record.terminal == "timeout"
+    assert record.token_spectrum is None
+    written = yaml.safe_load(Path(record.trial_dir, "trial.yaml").read_text())
+    assert written["token_spectrum"] is None
 
 
 # --- the trial-wide token budget ----------------------------------------------
