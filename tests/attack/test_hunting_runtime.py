@@ -472,6 +472,77 @@ def test_provider_caused_pass_abort_records_the_cause_on_the_run(monkeypatch):
     assert "quota" in stats["interrupt_reason"].lower()
 
 
+def test_provider_abort_stops_the_runs_sessions_before_the_terminal(monkeypatch):
+    """#331 stop-only: on a provider-caused abort the handler STOPS the run's
+    affected sessions (per-session `cancel_run`, reached through the shared
+    control plane: the orchestrator pass, the surfer mover so it cannot keep
+    dispatching, every hunter/pod), DRAINS them, and only then stamps
+    `interrupted`. Before this stop leg the `interrupted` stamp raced a still-live
+    surfer session (the #331 verifier finding)."""
+    from polymerhus.app.llm.provider_failure import ProviderUnavailableError
+    from polymerhus.attack.hunting.hunt_orchestrator import HuntOrchestrationDegradedError
+
+    fake = _FakePg()
+    _patch_pg(monkeypatch, fake)
+
+    cancelled: list[str] = []
+    live_at_interrupt: list[set[str]] = []
+
+    class _RecordingControl(_FakeControl):
+        def live_session_ids(self):
+            # Include the run's OUTER bootstrap markers the real registry holds
+            # (session id = the run's own registry name) so the test proves the
+            # handler never cancels the task running it.
+            return super().live_session_ids() | {
+                "rt-hunt-0001", "hunting:rt-hunt-0001",
+            }
+
+        def cancel_session(self, session_id):
+            cancelled.append(session_id)
+            super().cancel_session(session_id)
+
+    control = _RecordingControl()
+
+    original = fake.set_hunting_run_status
+
+    def recording_status(hid, status, *, stats=None):
+        if status == "interrupted":
+            live_at_interrupt.append({
+                sid for sid in control.live_session_ids()
+                if sid.startswith(f"hunting:{hid}:")
+            })
+        return original(hid, status, stats=stats)
+
+    monkeypatch.setattr(
+        "polymerhus.app.clients.pg.set_hunting_run_status", recording_status)
+
+    async def provider_abort(*args, **kwargs):
+        raise HuntOrchestrationDegradedError(
+            phase="hypothesise", streak=5, threshold=5, provider_cause=True,
+            provider_error=ProviderUnavailableError(
+                "Go usage limit exceeded", status_code=429, quota_exhausted=True))
+
+    monkeypatch.setattr(
+        "polymerhus.attack.hunting.hunt_orchestrator.arun_orchestration",
+        provider_abort)
+
+    asyncio.run(hunting_runtime.start_hunting(
+        "rt-project", candidates=[_candidate()],
+        control=control, tick_interval=0.001,
+    ))
+
+    hid = "rt-hunt-0001"
+    assert f"hunting:{hid}:surfer" in cancelled, (
+        "the surfer session must be stopped so it cannot keep dispatching")
+    assert hid not in cancelled, (
+        "the run's outer bootstrap marker must never be cancelled")
+    assert f"hunting:{hid}" not in cancelled, (
+        "the run's outer bootstrap marker must never be cancelled")
+    assert live_at_interrupt, "the interrupted terminal must be stamped"
+    assert live_at_interrupt[-1] == set(), (
+        "no run session may be live when the interrupted terminal lands")
+
+
 def test_hunter_provider_failure_interrupts_the_run(tmp_path, monkeypatch):
     """#312: a provider failure inside a dispatched HUNTER - after the pass has
     ratified and the surfer consumed the configs - must pause the run as the
