@@ -299,7 +299,7 @@ Its ontological commitments:
 - It is part of a **module**, and the module is its container and its coarse switch: the module's lifecycle state and gate sit above the agents', and a module taken down takes every agent sub-module with it (the hierarchy is one-directional).
 - Its lifecycle state reuses the module's own vocabulary - there is one lifecycle language, not two - and its reachable states are the reversible ones (`running` and `paused`); the terminal states belong to the module's drain and shutdown.
 - It is **distinct from the session**: the session is one thread of reasoning memory; the agent sub-module is the addressable agent that owns one or many such threads. A hunter sub-module may run one thread per ratified config; a pod sub-module one per specified spec.
-- It is **addressed by the pipeline role, not by a run**: the same agent sub-module serves every run's threads of that role, and a run is one execution of the pipeline over that module.
+- It is **addressed per run by the pipeline role**: a run is one execution of the pipeline over the module, and each role (orchestrator, hunter, pod) is addressable within that run, keyed `hunting:{run_id}:agent-submodules:{role}`; the same role under another run is a distinct handle, reaped at its run's terminal path (ADR `#317` section 4 "Granularity: per (run, role)").
 
 _Status_: ratified; built by `#317` (the per-role gate/state on the runtime manager, the surfer's per-role dispatch enforcement, and the app module REST surface).
 

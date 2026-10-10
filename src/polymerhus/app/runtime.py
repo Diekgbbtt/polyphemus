@@ -496,19 +496,50 @@ class RuntimeManager:
             self._agent_submodules[address] = sub
             return sub
 
+    def _get_agent_submodule(
+        self, module: str, run_id: str, role: str
+    ) -> AgentSubmoduleHandle | None:
+        """The live handle for `(module, run_id, role)`, or None. The lock-guarded
+        READ-side counterpart of `register_agent_submodule`: it never mutates the
+        registry, so a read can never resurrect a reaped role."""
+        address = agent_submodule_address(module, run_id, role)
+        with self._agent_lock:
+            return self._agent_submodules.get(address)
+
     def agent_submodule_state(self, module: str, run_id: str, role: str) -> ModuleState:
-        return self.register_agent_submodule(module, run_id, role).state
+        """The role's current state - a PURE read (#317). It never registers a
+        handle, so a read can never resurrect a role the run terminal reaped
+        (handles never outlive the run). A declared role with no live handle
+        reads `RUNNING` (the in-memory boot default); an undeclared role is a
+        named refusal."""
+        handle = self.handle(module)
+        if role not in handle.agent_roles:
+            raise UnknownAgentSubmoduleRole(
+                f"unknown agent sub-module role {role!r} for module {module!r}"
+            )
+        sub = self._get_agent_submodule(module, run_id, role)
+        return sub.state if sub is not None else ModuleState.RUNNING
 
     def agent_submodule_states(
         self, module: str, run_id: str
     ) -> dict[str, ModuleState]:
         """Every declared role of the module with its current state, keyed by
-        role - the roles + states read surface (registers any missing role)."""
+        role - the roles + states read surface. A PURE read: it registers
+        nothing, so it never resurrects a reaped handle; a role with no live
+        handle reads its declared default `RUNNING`."""
         handle = self.handle(module)
-        return {
-            role: self.register_agent_submodule(module, run_id, role).state
-            for role in handle.agent_roles
-        }
+        states: dict[str, ModuleState] = {}
+        for role in handle.agent_roles:
+            sub = self._get_agent_submodule(module, run_id, role)
+            states[role] = sub.state if sub is not None else ModuleState.RUNNING
+        return states
+
+    def agent_submodule_running(self, module: str, run_id: str, role: str) -> bool:
+        """Whether the role is currently `RUNNING` (#317) - the dispatch
+        decision's convenience over `agent_submodule_state`. A declared role
+        with no live handle is `RUNNING` (fail-open: an unregistered role never
+        wedges a run)."""
+        return self.agent_submodule_state(module, run_id, role) is ModuleState.RUNNING
 
     def agent_submodule_gate(self, module: str, run_id: str, role: str) -> ModuleGate:
         return self.register_agent_submodule(module, run_id, role).gate

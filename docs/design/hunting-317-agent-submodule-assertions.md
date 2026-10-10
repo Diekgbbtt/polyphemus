@@ -17,10 +17,11 @@
 - **C7 - the hierarchy holds.** With the MODULE `PAUSED`, a role whose own state is `RUNNING` still does not pass its gate (the module gate dominates); after module `resume` it passes. Delivery semantic: ordering.
 - **C8 - a module drain settles the role gates.** After `drain("hunting")`, the module reaches `STOPPED` and the run's role handles are reaped; no role gate admits. Delivery semantic: success.
 - **C9 - state is in-memory and resets up.** A freshly started manager (no prior calls) reports every hunting role `RUNNING`. Delivery semantic: success.
+- **C19 - the role state read is pure.** After the run terminal (or a module drain) reaped the role handles, `agent_submodule_states` / `agent_submodule_state` report the declared roles (a missing handle reads `RUNNING` default) and create NO new handle - the registry stays empty. Delivery semantic: success.
 
 ### The surfer dispatch seam
 
-- **C10 - a down hunter denies hunter dispatch.** Given a produced RATIFIED config at the surfer dispatch seam with the hunter role `PAUSED` -> the dispatch builder yields no coroutine; the mover records it refused and leaves the config in `produced/` (at-least-once). Delivery semantic: degradation.
+- **C10 - a down hunter denies hunter dispatch.** Given a produced RATIFIED config at the surfer dispatch seam with the hunter role `PAUSED` -> the dispatch builder yields no coroutine; the mover records it refused and leaves the config in `produced/` (at-least-once); `run_work_remaining` stays true and `is_run_quiesced` is false, so the run cannot reach `complete` while the role is down (the E1 predicate, asserted without Docker). Delivery semantic: degradation.
 - **C11 - a down pod denies pod dispatch.** Given a produced SPECIFIED spec with the pod role `PAUSED` -> no coroutine; the spec stays in `produced/`. Delivery semantic: degradation.
 - **C12 - an up role dispatches and acquires the role gate.** With the hunter role `RUNNING`, the produced ratified config yields one hunter session, and that session holds the hunter role gate around its active stretch (a concurrently `PAUSED` role holds it). Delivery semantic: success.
 
@@ -29,8 +30,8 @@
 - **C13 - start/stop are idempotent over HTTP.** `POST .../agent-submodules/hunter/stop` twice -> `200` twice, and `GET .../agent-submodules` reports `hunter: paused` once. `POST .../start` -> `200`, `running`. Delivery semantic: duplicate-idempotent.
 - **C14 - the role listing shape.** `GET /projects/{id}/hunting/{run_id}/agent-submodules` -> exactly the three roles `orchestrator`, `hunter`, `pod`, each with its current state. Delivery semantic: success.
 - **C15 - the thread listing shape.** `GET /projects/{id}/hunting/{run_id}/threads` on a live run -> every live thread of the run as `{thread_id, role, held}`, including the surfer and the bootstrap threads; a non-role thread reports its derived role or `infra`. Delivery semantic: success; empty-valid when no run.
-- **C16 - unknown run / role / thread fail clearly.** `POST .../agent-submodules/sorcerer/stop` -> `404` (or `422`) with a named error and no state change; `POST` on an unknown `run_id` -> `404`; `POST .../threads/{unknown}/stop` -> `404`. Delivery semantic: malformed.
-- **C17 - thread stop / resume idempotency.** A live thread `POST .../threads/{id}/stop` -> `held=true`; a second `stop` -> `200`, still held (one effect); `POST .../resume` -> `held=false`; a `resume` on a not-held thread -> `200`, no-op. Delivery semantic: duplicate-idempotent.
+- **C16 - unknown run / role / thread fail clearly.** `POST .../agent-submodules/sorcerer/stop` -> `404` (or `422`) with a named error and no state change; `POST` on an unknown `run_id` -> `404`; `POST .../threads/{unknown}/stop` -> `404`; `POST .../threads/{unknown}/resume` -> `404` (the resume path checks registration, so an unknown-unregistered thread is never answered `200 resumed`). Delivery semantic: malformed.
+- **C17 - thread stop / resume idempotency.** A live thread `POST .../threads/{id}/stop` -> `held=true`; a second `stop` -> `200`, still held (one effect); `POST .../resume` -> `held=false`; a `resume` on a registered-but-not-held thread -> `200`, no-op. Delivery semantic: duplicate-idempotent.
 - **C18 - no active runtime degrades cleanly.** With no active runtime, the agent-sub-module endpoints -> `503`, never an unhandled error. Delivery semantic: degradation.
 
 ## Walkthrough predicates (end-to-end)

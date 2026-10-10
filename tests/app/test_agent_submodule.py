@@ -12,6 +12,8 @@ public verbs on a REAL `asyncio.Runner` worker thread (never a mocked loop):
   releases it (two concurrent holds resume together);
 - the module gate dominates the role gate (module pause holds every role);
 - a module drain settles the role handles with the module;
+- the role state read is PURE (it never registers a handle, so it cannot
+  resurrect a reaped role);
 - role state is in-memory and resets up on a fresh process (a fresh manager).
 
 No live LLM / database (unit tier, CODING_STANDARD sections 6, 10).
@@ -202,6 +204,31 @@ def test_module_drain_reaps_the_role_handles(runtime):
 
     assert runtime.state("hunting") is ModuleState.STOPPED
     with runtime._agent_lock:  # noqa: SLF001 - registry emptiness is the claim
+        assert runtime._agent_submodules == {}
+
+
+# --- S2: the role state read is PURE (never resurrects a reaped handle) -------
+
+def test_reap_then_read_does_not_recreate_handles(runtime):
+    """A read must never register: after the run terminal reaps the role handles
+    a subsequent state read reports the declared roles but does not put a handle
+    back in the registry (spec lines 71-73: handles never outlive the run)."""
+    runtime.register_module("hunting")
+    for role in ("orchestrator", "hunter", "pod"):
+        runtime.register_agent_submodule("hunting", "r1", role)
+    runtime.reap_agent_submodules("hunting", "r1")
+    with runtime._agent_lock:  # noqa: SLF001
+        assert runtime._agent_submodules == {}
+
+    states = runtime.agent_submodule_states("hunting", "r1")
+    assert states == {
+        "orchestrator": ModuleState.RUNNING,
+        "hunter": ModuleState.RUNNING,
+        "pod": ModuleState.RUNNING,
+    }
+    assert runtime.agent_submodule_state("hunting", "r1", "hunter") is ModuleState.RUNNING
+
+    with runtime._agent_lock:  # noqa: SLF001 - the reads left the registry empty
         assert runtime._agent_submodules == {}
 
 

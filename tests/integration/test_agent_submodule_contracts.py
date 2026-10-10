@@ -1,10 +1,10 @@
-"""Integration tier: the agent sub-module contract predicates C1-C18 (#317).
+"""Integration tier: the agent sub-module contract predicates C1-C19 (#317).
 
 Mechanises the contract predicate catalogue in
 `docs/design/hunting-317-agent-submodule-assertions.md`. Three seams:
 
-- the runtime manager's agent-sub-module verbs + role gate (C1-C9) on a REAL
-  `RuntimeManager` worker loop;
+- the runtime manager's agent-sub-module verbs + role gate (C1-C9, C19) on a
+  REAL `RuntimeManager` worker loop;
 - the surfer's dispatch builder (C5/C10-C12) via the REAL `build_run_dispatch`
   on temp-root production stores with fakes kept at the agent-seam builders and
   the role reads;
@@ -42,6 +42,8 @@ from polymerhus.attack.hunting.mover import (
 from polymerhus.attack.hunting.surfer import (
     RunDispatchState,
     build_run_dispatch,
+    is_run_quiesced,
+    run_work_remaining,
 )
 
 RUN = "run-as-int"
@@ -203,6 +205,27 @@ def test_C9_state_is_in_memory_and_resets_up():
         rm.shutdown()
 
 
+def test_C19_the_role_state_read_is_pure(runtime):
+    # After the run terminal reaped the role handles, a state read reports the
+    # declared roles (a missing handle reads the RUNNING default) and creates NO
+    # new handle: the registry stays empty (handles never outlive the run).
+    for role in ROLES:
+        runtime.register_agent_submodule("hunting", RUN, role)
+    runtime.reap_agent_submodules("hunting", RUN)
+    with runtime._agent_lock:  # noqa: SLF001 - reaped
+        assert runtime._agent_submodules == {}
+
+    assert runtime.agent_submodule_states("hunting", RUN) == {
+        r: ModuleState.RUNNING for r in ROLES
+    }
+    assert runtime.agent_submodule_state(
+        "hunting", RUN, "hunter") is ModuleState.RUNNING
+    assert runtime.agent_submodule_running("hunting", RUN, "hunter") is True
+
+    with runtime._agent_lock:  # noqa: SLF001 - the reads left it empty
+        assert runtime._agent_submodules == {}
+
+
 # =========================================================================
 # C5/C10-C12: the surfer dispatch seam
 # =========================================================================
@@ -281,6 +304,15 @@ def test_C10_a_down_hunter_denies_hunter_dispatch(tmp_path):
     assert control.calls == []
     assert report.refused == 1 and report.moved == 0
     assert [k for k, _ in hunt.read_produced_configs("p")] == [CONFIG_KEY]
+    # S6/E1 lower tier: while the hunter role is down its refused config is
+    # still DISPATCHABLE work, so the quiesce predicate stays False and the run
+    # can never reach `complete` (the E1 "run stays running" claim, without
+    # Docker).
+    assert run_work_remaining("p", hunt_store=hunt, hunter_store=hunter) is True
+    assert asyncio.run(is_run_quiesced(
+        "p", RUN, hunt_store=hunt, hunter_store=hunter,
+        control=control, state=RunDispatchState(),
+    )) is False
 
 
 def test_C11_a_down_pod_denies_pod_dispatch(tmp_path):
@@ -442,6 +474,10 @@ def test_C16_unknown_run_role_thread_fail_clearly(client):
     unknown_thread = client.post(
         f"/projects/p1/hunting/{RUN}/threads/hunting:{RUN}:hunt:nope/stop")
     assert unknown_thread.status_code == 404
+
+    unknown_resume = client.post(
+        f"/projects/p1/hunting/{RUN}/threads/hunting:{RUN}:hunt:nope/resume")
+    assert unknown_resume.status_code == 404
 
 
 def test_C17_thread_stop_resume_idempotency(client, api_runtime):

@@ -1077,6 +1077,18 @@ async def _thread_verb(project_id: str, hunting_run_id: str, thread_id: str,
             detail=f"no thread {thread_id!r} of hunting run {hunting_run_id}",
         )
     runtime = _runtime_or_503()
+    # Registration is checked EXPLICITLY (as the pod-resume seam does): the
+    # shared `resume_session` verb is a documented no-op for a never-registered
+    # run and NEVER raises, so without this an unknown-unregistered thread would
+    # be answered `200 resumed` (a fabricated success). Stop/`hold_session`
+    # raises on its own, but both verbs must 404 an unknown-unregistered thread.
+    if thread_id not in runtime.run_ids("hunting"):
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"no live thread {thread_id!r} of hunting run {hunting_run_id}"
+            ),
+        )
     try:
         if stop:
             runtime.hold_session("hunting", thread_id)

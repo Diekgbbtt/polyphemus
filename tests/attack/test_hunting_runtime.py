@@ -865,10 +865,16 @@ class _FakeRoleManager:
     The bootstrap reads roles through `_app_runtime()`, not the injected control
     plane, so this fakes only the manager's role surface."""
 
+    class _Handle:
+        agent_roles = ("orchestrator", "hunter", "pod")
+
     def __init__(self, paused=()):
         self.paused = set(paused)
         self.registered: list[tuple[str, str, str]] = []
         self.reaped: list[tuple[str, str | None]] = []
+
+    def handle(self, module):
+        return self._Handle()
 
     def register_agent_submodule(self, module, run_id, role):
         self.registered.append((module, run_id, role))
@@ -877,6 +883,9 @@ class _FakeRoleManager:
     def agent_submodule_state(self, module, run_id, role):
         from polymerhus.app.runtime import ModuleState
         return ModuleState.PAUSED if role in self.paused else ModuleState.RUNNING
+
+    def agent_submodule_running(self, module, run_id, role):
+        return role not in self.paused
 
     def reap_agent_submodules(self, module, run_id=None):
         self.reaped.append((module, run_id))
@@ -939,3 +948,25 @@ def test_orchestrator_pass_not_launched_when_its_role_is_stopped(monkeypatch):
     assert manager.reaped == [("hunting", "rt-hunt-0001")]
     # the surfer ran on the empty produced set and quiesced the run.
     assert fake.statuses[-1] == ("rt-hunt-0001", "complete")
+
+
+def test_surfer_not_started_when_the_orchestrator_is_refused(monkeypatch):
+    """S3: when the orchestrator session is REFUSED by admission (not merely its
+    role paused), the bootstrap fails the run WITHOUT starting the surfer - the
+    pre-change rule, so a run never carries a surfer with no orchestrator."""
+    fake = _FakePg()
+    _patch_pg(monkeypatch, fake)
+    manager = _FakeRoleManager()
+    monkeypatch.setattr(hunting_runtime, "_app_runtime", lambda: manager)
+    control = _FakeControl(refuse={"hunting:rt-hunt-0001:orchestrator"})
+
+    asyncio.run(hunting_runtime.start_hunting(
+        "rt-project", candidates=[_candidate()],
+        control=control,
+        hunter_builder=_noop_hunter_builder, pod_builder=_noop_pod_builder,
+        tick_interval=0.001,
+    ))
+
+    # only the orchestrator session was attempted; the surfer was NOT started.
+    assert control.started == ["hunting:rt-hunt-0001:orchestrator"]
+    assert fake.statuses[-1] == ("rt-hunt-0001", "failed")

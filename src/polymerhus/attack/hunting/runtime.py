@@ -689,13 +689,23 @@ async def start_hunting(
         )
 
         # Register the run's agent sub-modules (#317) on the shared manager -
-        # the three agent roles, each with its own state + gate, keyed per run.
-        # Idempotent and state-preserving: an operator stop that landed before
-        # the boot is not reset. Fail-open when no manager is active (the
+        # each declared role with its own state + gate, keyed per run. The role
+        # vocabulary is read from the single source (the module handle's
+        # declared `agent_roles`, seeded from `app.runtime`), never re-listed
+        # here. Idempotent and state-preserving: an operator stop that landed
+        # before the boot is not reset. Fail-open when no manager is active (the
         # module-runtime-only production path always has one).
         manager = _app_runtime()
         if manager is not None:
-            for role in ("orchestrator", "hunter", "pod"):
+            try:
+                declared_roles = manager.handle("hunting").agent_roles
+            except Exception as exc:  # noqa: BLE001 - fail-open: no role handles
+                logger.warning(
+                    "start_hunting: could not resolve the declared hunting roles "
+                    "(%s); no role handles registered (fail-open)", exc,
+                )
+                declared_roles = ()
+            for role in declared_roles:
                 try:
                     manager.register_agent_submodule(
                         "hunting", hunting_run_id, role)
@@ -781,9 +791,8 @@ async def start_hunting(
             if manager is None:
                 return True
             try:
-                from polymerhus.app.runtime import ModuleState  # noqa: PLC0415
-                return manager.agent_submodule_state(
-                    "hunting", hunting_run_id, role) is ModuleState.RUNNING
+                return manager.agent_submodule_running(
+                    "hunting", hunting_run_id, role)
             except Exception:  # noqa: BLE001 - fail-open: treat the role as up
                 return True
 
@@ -793,6 +802,9 @@ async def start_hunting(
             # #317: the orchestrator pass is gated on the orchestrator role
             # state. A stopped orchestrator role does not launch the pass (the
             # run still runs its surfer, so pre-produced configs can dispatch).
+            # An orchestrator session REFUSED by admission is different: the
+            # pre-change rule holds - the run fails and the surfer is NOT
+            # started (a surfer with no orchestrator is never spun up).
             orchestrator_outcome = None
             if _role_running("orchestrator"):
                 orchestrator_outcome = control.start_session(
@@ -808,30 +820,31 @@ async def start_hunting(
                     "start_hunting: orchestrator role paused; pass for run %s "
                     "not scheduled", hunting_run_id,
                 )
-            surfer_outcome = control.start_session(surfer_id, _surfer_loop())
-            if surfer_outcome is None:
-                # Without the surfer no dispatch can ever happen: the run
-                # can never reach quiesce, so it must fail now.
-                logger.warning(
-                    "start_hunting: surfer session %s not admitted; "
-                    "run degrades to 'failed'", surfer_id,
-                )
-                if orchestrator_outcome is not None:
-                    control.cancel_session(orchestrator_id)
-                status = "failed"
-            elif status is None:
-                await _await_session_outcome(orchestrator_outcome)
-                await _await_session_outcome(surfer_outcome)
-                # Quiesce is proven: the surfer settled only when the
-                # orchestrator was done, produced held no dispatchable
-                # item, no pod was live, and no hunter was mid-graph.
-                # Settle the remaining idle hunters and wait for every
-                # run session to leave the registry (ADR "Run lifecycle":
-                # terminal only when ALL component sessions have settled).
-                post_settle(state)
-                await _wait_no_run_sessions(control, hunting_run_id,
-                                            tick_interval)
-                status = "complete"
+            if status is None:
+                surfer_outcome = control.start_session(surfer_id, _surfer_loop())
+                if surfer_outcome is None:
+                    # Without the surfer no dispatch can ever happen: the run
+                    # can never reach quiesce, so it must fail now.
+                    logger.warning(
+                        "start_hunting: surfer session %s not admitted; "
+                        "run degrades to 'failed'", surfer_id,
+                    )
+                    if orchestrator_outcome is not None:
+                        control.cancel_session(orchestrator_id)
+                    status = "failed"
+                else:
+                    await _await_session_outcome(orchestrator_outcome)
+                    await _await_session_outcome(surfer_outcome)
+                    # Quiesce is proven: the surfer settled only when the
+                    # orchestrator was done, produced held no dispatchable
+                    # item, no pod was live, and no hunter was mid-graph.
+                    # Settle the remaining idle hunters and wait for every
+                    # run session to leave the registry (ADR "Run lifecycle":
+                    # terminal only when ALL component sessions have settled).
+                    post_settle(state)
+                    await _wait_no_run_sessions(control, hunting_run_id,
+                                                tick_interval)
+                    status = "complete"
         except asyncio.CancelledError:
             status = None  # external stop: stop_hunting stamps 'stopped'
             raise

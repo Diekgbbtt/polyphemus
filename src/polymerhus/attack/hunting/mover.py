@@ -58,7 +58,7 @@ from typing import AbstractSet, Any, Callable, Mapping, Protocol, Sequence
 
 from polymerhus.attack.hunting.hunt_store import HuntStore
 from polymerhus.attack.hunting.hunter_memory import HunterMemoryStore
-from polymerhus.app.runtime import ModuleAdmissionRefused, ModuleState
+from polymerhus.app.runtime import ModuleAdmissionRefused
 
 logger = logging.getLogger(__name__)
 
@@ -366,10 +366,7 @@ class RuntimeControlPlane:
         if manager is None:
             return True
         try:
-            return (
-                manager.agent_submodule_state(self._module, run_id, role)
-                is ModuleState.RUNNING
-            )
+            return manager.agent_submodule_running(self._module, run_id, role)
         except Exception as exc:  # noqa: BLE001 - fail-open: treat the role as up
             logger.warning(
                 "mover: role state read (%s/%s) failed (%s); treating as "

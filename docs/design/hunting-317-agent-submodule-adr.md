@@ -72,6 +72,7 @@ The run stays `running`, not wedged.
 The role state lives on the runtime manager beside the module state.
 A process start is a fresh control plane: every role starts `RUNNING`.
 Nothing about the role state is persisted, and it is never restored.
+Reading a role's state is PURE: a read never registers a handle, so a state read can never resurrect a role the run terminal reaped (decision 4 - handles are keyed per run and reaped at the run terminal); a declared role with no live handle reads its default `RUNNING`.
 
 ### 9. Threads keep their own stop/resume
 
@@ -135,7 +136,7 @@ It loses the one-verb whole-module control (`pause` / `drain`) that the run life
 
 ## Impact map (planned)
 
-- `src/polymerhus/app/runtime.py` - an agent-sub-module handle (`ModuleState` + `ModuleGate`) registry on the manager; `AgentSubmoduleRole`/address helpers; `agent_submodule_state`/`start_agent_submodule`/`stop_agent_submodule`.
+- `src/polymerhus/app/runtime.py` - an `AgentSubmoduleHandle` (`ModuleState` + `ModuleGate`) registry on the manager; the `agent_submodule_address` helper and the `UnknownAgentSubmoduleRole` refusal; the verbs `register_agent_submodule`/`start_agent_submodule`/`stop_agent_submodule`/`reap_agent_submodules`; and the PURE reads `agent_submodule_state`/`agent_submodule_states`/`agent_submodule_running` (a read never registers).
 - `src/polymerhus/attack/hunting/surfer.py` - `build_run_dispatch` consults the role state per item (through the control plane's `role_running`); each role session acquires its own role gate (through the control plane's `role_gate`).
 - `src/polymerhus/attack/hunting/mover.py` - the control-plane seam gains the role-state/role-gate reads (`role_running` / `role_gate`), so the surfer reads a role through the same control plane it dispatches through (no reason in the pure deduction).
 - `src/polymerhus/attack/hunting/runtime.py` - the bootstrap gates the orchestrator launch on the orchestrator role state; the role gates are registered for the run.

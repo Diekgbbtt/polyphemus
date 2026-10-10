@@ -65,11 +65,13 @@ Single-thread stop and resume reuse the existing per-session verbs.
 - The surfer's dispatch decision is the single enforcement point. It consults the target role's state: a role that is not `running` makes the dispatch builder answer "no coroutine", which is the mover's existing refusal rule (the item stays produced and is retried next tick, at-least-once, never dropped).
 - Each dispatched role session acquires its OWN role gate around its active stretch, so a `down` role holds its in-flight threads at the next unit boundary.
 - The orchestrator, dispatched directly by the run bootstrap rather than by the surfer, is gated at its launch point by the orchestrator role's state.
+- The run bootstrap starts the surfer only after the orchestrator pass is admitted: an orchestrator session REFUSED by admission fails the run and the surfer is never spun up without it. A stopped orchestrator role is different - it is a deliberate pause, so the pass is not launched but the surfer still runs, letting already-produced configs dispatch.
 
 ### Granularity and registration
 
 - Role gates are keyed per run: `hunting:{run_id}:agent-submodules:{role}`.
 - The role handles are registered when a run boots and reaped at the run's terminal path, so they never outlive the run.
+- Reading a role's state is PURE: a read never registers a handle, so a state read can never resurrect a role the run terminal reaped. Only the run boot (and an explicit operator stop/start before the boot) creates a handle; a declared role with no live handle reads its default `running`.
 - State is in-memory and resets to `running` on process start; it is never persisted or restored.
 
 ### Quiesce
