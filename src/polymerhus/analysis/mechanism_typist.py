@@ -326,11 +326,15 @@ def _reflection_prompt(chunk: Chunk, inventory: dict | None) -> str:
     )
 
 
-def _systems_prompt(inventory: dict | None) -> str:
+def _systems_prompt() -> str:
     from polymerhus.analysis.l1_curator import vocabulary_prompt
 
+    # The reflection `user` (the preceding turn, already in the trail) is the SINGLE
+    # carrier of the currently-defined Systems, so this extraction `user` carries ONLY
+    # its own instruction - re-sending the inventory block would duplicate the harness
+    # entities on every structured call (the measured cache/occupancy defect). The
+    # vocabulary_prompt is the role's output contract, not a harness entity.
     return (
-        f"{_defined_systems_block(inventory)}\n\n"
         f"{vocabulary_prompt()}\n\n"
         # The reflection above is NOT re-embedded here: it rides the thread as the
         # assistant message this call follows, and re-embedding it would send the
@@ -346,8 +350,8 @@ def _systems_prompt(inventory: dict | None) -> str:
         "`description` prop in `props` - a brief adversarially-oriented NL characterisation "
         "of that mechanism. You MUST return at least one system whenever your reflection "
         "named a mechanism; an empty `systems` list is a wrong answer here. For a System "
-        "already listed above, REUSE its exact key and output an ENRICHED description (fold "
-        "your new insight in - never blank it, never merely restate). "
+        "already listed in the reflection above, REUSE its exact key and output an ENRICHED "
+        "description (fold your new insight in - never blank it, never merely restate). "
         # WebPresentation is PER (service, page-cluster), not a singleton (#53): the
         # downstream agent must locate the exact page a service is exposed on.
         "SPECIAL CASE - WebPresentation: emit ONE per (owning service, page cluster) from the "
@@ -360,20 +364,19 @@ def _systems_prompt(inventory: dict | None) -> str:
 
 
 def _linking_prompt(systems_batch: L1DeltaBatch, primary: list[str],
-                    secondary: list[str], owned: dict[str, list[str]],
-                    inventory: dict | None) -> str:
+                    secondary: list[str], owned: dict[str, list[str]]) -> str:
     proposed = sorted({s.kind if s.discriminator == _SINGLETON else f"{s.kind}:{s.discriminator}"
                        for s in systems_batch.systems})
-    defined = (inventory or {}).get("systems") or []
     prim_lines = "\n".join(
         f"  - {slug} (owns: {', '.join(owned.get(slug, [])) or 'surface in this chunk'})"
         for slug in primary) or "  (none)"
     return (
         # The reflection rides the thread above as an assistant message; the systems it
-        # drove are the structured call that follows. Re-embedding either here would
-        # send the same content twice on every call (N2).
-        "SYSTEMS now available to link (proposed this step + already defined): "
-        f"{sorted(set(proposed) | set(defined))}\n\n"
+        # drove are the structured call that follows. The currently-defined Systems are
+        # carried by the reflection, so this linking `user` does NOT restate that
+        # inventory - only the Systems proposed this step, which are its own input.
+        "SYSTEMS proposed this step (link to THESE and to the ones in your reflection): "
+        f"{proposed}\n\n"
         "PRIMARY services (they aggregate this chunk's assets - link Systems to THESE first):\n"
         f"{prim_lines}\n"
         f"SECONDARY services (other asset-bearing services): {secondary or '(none)'}\n\n"
@@ -504,7 +507,7 @@ def type_mechanisms(
 
         # Call 2 - SYSTEMS EXTRACTION (extract). Soft pass-through on exhaustion.
         systems_batch = invoke_fn(
-            [HumanMessage(content=_systems_prompt(inventory))],
+            [HumanMessage(content=_systems_prompt())],
             schema=L1DeltaBatch, system_prompt=skill,
         ) or L1DeltaBatch()
 
@@ -512,7 +515,7 @@ def type_mechanisms(
         all_services = frozenset((inventory or {}).get("services") or [])
         primary, secondary, owned = partition_services(chunk.assets, aggregations or [], all_services)
         link_batch = invoke_fn(
-            [HumanMessage(content=_linking_prompt(systems_batch, primary, secondary, owned, inventory))],
+            [HumanMessage(content=_linking_prompt(systems_batch, primary, secondary, owned))],
             schema=L1DeltaBatch, system_prompt=skill,
         ) or L1DeltaBatch()
 

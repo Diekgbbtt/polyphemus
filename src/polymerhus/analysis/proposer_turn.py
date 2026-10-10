@@ -119,31 +119,27 @@ def _prose_tools(role_id: str) -> tuple:
 
     The structured turn supplies the SAME tool through `response_format`; binding it
     again there would duplicate it, so only a prose turn (`schema is None`) gets it
-    here. The tool is the exact tool the ToolStrategy path builds when the role's
-    negotiated structured-output method is ToolStrategy (the A6 voluntary rung); a
-    ProviderStrategy method carries no tool, so this returns (). The tool is made
-    inert - the reflection prompt forbids a call, and a stray call then costs one
-    benign tool message instead of a ToolNode error. Fail-open: an unbuildable shape
-    binds nothing (the session always starts)."""
+    here. The tool is the EXACT tool the ToolStrategy path builds when the role's
+    negotiated structured-output method is ToolStrategy (the A6 voluntary rung) - the
+    agent factory's own `OutputToolBinding.from_schema_spec` derivation, not a
+    hand-built look-alike - so the serialized `tools=` payload is byte-identical
+    between the prose and structured turns. A ProviderStrategy method carries no
+    tool, so this returns (). Fail-open: an unbuildable shape binds nothing (the
+    session always starts)."""
     schema = _role_structured_schema(role_id)
     if schema is None:
         return ()
     try:
-        from langchain.agents.structured_output import ToolStrategy
-        from langchain_core.tools import StructuredTool
+        from langchain.agents.structured_output import OutputToolBinding, ToolStrategy
 
         from polymerhus.app.llm.session import structured_response_format
 
         fmt = structured_response_format(role_id, schema, tools_bound=False)
         if not isinstance(fmt, ToolStrategy):
             return ()
-        spec = fmt.schema_specs[0]
-        return (StructuredTool(
-            name=spec.name,
-            description=spec.description,
-            args_schema=spec.json_schema,
-            func=lambda **_: "structured output is only produced on the extraction turn",
-        ),)
+        # The SAME derivation `create_agent` runs for the structured turn
+        # (`OutputToolBinding.from_schema_spec`), so the two turns cannot drift.
+        return (OutputToolBinding.from_schema_spec(fmt.schema_specs[0]).tool,)
     except Exception:  # noqa: BLE001 - fail-open: an unbuildable tool binds nothing
         return ()
 

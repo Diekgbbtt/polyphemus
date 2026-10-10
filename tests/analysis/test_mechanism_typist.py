@@ -180,23 +180,51 @@ def test_N5_end_to_end_emits_only_valid_vocabulary():
 
 
 def test_N6_extend_prompt_shows_existing_description_and_demands_enrichment():
-    """Compounding (grilled #9 Q7): the extraction prompt must surface the currently-
-    defined System WITH its description AND instruct enrich-never-blank, or the model
-    cannot compound and would clobber."""
+    """Compounding (grilled #9 Q7): the currently-defined System WITH its
+    description is carried ONCE, in the reflection `user` (Change 2), and the
+    systems extraction directs enrich-never-blank against it - never re-sending the
+    inventory block on the extraction turn."""
     captured = {}
 
     def invoke(messages, *, schema=None, system_prompt=None):
+        content = messages[-1].content
         if schema is None:
+            captured["reflection"] = content
             return "prose"
-        if "EXTRACT SYSTEMS" in messages[-1].content:
-            captured["systems_prompt"] = messages[-1].content
+        if "EXTRACT SYSTEMS" in content:
+            captured["systems_prompt"] = content
         return L1DeltaBatch()
     inventory = {"services": [], "systems": ["AuthenticationMechanism"],
                  "system_descriptions": {"AuthenticationMechanism": "bearer-token auth"}}
     type_mechanisms(_service_chunk(), invoke_fn=invoke, inventory=inventory)
+    reflection = captured["reflection"]
     p = captured["systems_prompt"]
-    assert "bearer-token auth" in p            # the existing description is shown
+    assert "bearer-token auth" in reflection        # carried once, in the reflection
+    assert "CURRENTLY-DEFINED SYSTEMS" in reflection
+    assert "bearer-token auth" not in p             # NOT re-injected on extraction
+    assert "CURRENTLY-DEFINED SYSTEMS" not in p
     assert "ENRICHED" in p and "never blank" in p  # enrich-not-clobber is directed
+
+
+def test_linking_prompt_does_not_reinject_the_defined_systems_inventory():
+    """Change 2: the linking `user` carries only its own instruction. The
+    currently-defined Systems already sit in the reflection, so the linking turn
+    must not restate that inventory."""
+    captured = {}
+
+    def invoke(messages, *, schema=None, system_prompt=None):
+        content = messages[-1].content
+        if schema is None:
+            return "prose"
+        if "LINK SERVICES" in content:
+            captured["link"] = content
+        return L1DeltaBatch()
+    inventory = {"services": ["checkout"], "systems": ["AuthenticationMechanism"],
+                 "system_descriptions": {"AuthenticationMechanism": "bearer-token auth"}}
+    type_mechanisms(_service_chunk(), invoke_fn=invoke, inventory=inventory)
+    link = captured["link"]
+    assert "AuthenticationMechanism" not in link
+    assert "PRIMARY services" in link
 
 
 def test_co_produced_systems_from_linking_are_captured_not_discarded():
