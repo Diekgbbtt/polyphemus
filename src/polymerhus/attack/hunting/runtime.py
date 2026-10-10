@@ -688,6 +688,24 @@ async def start_hunting(
             if tick_interval is None else tick_interval
         )
 
+        # Register the run's agent sub-modules (#317) on the shared manager -
+        # the three agent roles, each with its own state + gate, keyed per run.
+        # Idempotent and state-preserving: an operator stop that landed before
+        # the boot is not reset. Fail-open when no manager is active (the
+        # module-runtime-only production path always has one).
+        manager = _app_runtime()
+        if manager is not None:
+            for role in ("orchestrator", "hunter", "pod"):
+                try:
+                    manager.register_agent_submodule(
+                        "hunting", hunting_run_id, role)
+                except Exception as exc:  # noqa: BLE001 - fail-open: no role handle
+                    logger.warning(
+                        "start_hunting: could not register role %s for run %s "
+                        "(%s); role ungated (fail-open)",
+                        role, hunting_run_id, exc,
+                    )
+
         state = RunDispatchState()
         coro_for = build_run_dispatch(
             project_id=project_id,
@@ -699,6 +717,7 @@ async def start_hunting(
             gate=gate,
             hunter_builder=hunter_builder or _default_hunter_builder,
             pod_builder=pod_builder if pod_builder is not None else _default_pod_builder,
+            control=control,
         )
 
         async def _orchestrator_pass():
@@ -755,41 +774,64 @@ async def start_hunting(
 
         status = None
         terminal_stats: dict | None = None
+
+        def _role_running(role: str) -> bool:
+            """True when the run's agent sub-module for `role` is `RUNNING`
+            (#317); fail-open True with no manager bound."""
+            if manager is None:
+                return True
+            try:
+                from polymerhus.app.runtime import ModuleState  # noqa: PLC0415
+                return manager.agent_submodule_state(
+                    "hunting", hunting_run_id, role) is ModuleState.RUNNING
+            except Exception:  # noqa: BLE001 - fail-open: treat the role as up
+                return True
+
         try:
             orchestrator_id = orchestrator_session_id(hunting_run_id)
             surfer_id = surfer_session_id(hunting_run_id)
-            orchestrator_outcome = control.start_session(
-                orchestrator_id, _orchestrator_pass())
-            if orchestrator_outcome is None:
-                logger.warning(
-                    "start_hunting: orchestrator session %s not admitted; "
-                    "run degrades to 'failed'", orchestrator_id,
-                )
-                status = "failed"
-            else:
-                surfer_outcome = control.start_session(surfer_id, _surfer_loop())
-                if surfer_outcome is None:
-                    # Without the surfer no dispatch can ever happen: the run
-                    # can never reach quiesce, so it must fail now.
+            # #317: the orchestrator pass is gated on the orchestrator role
+            # state. A stopped orchestrator role does not launch the pass (the
+            # run still runs its surfer, so pre-produced configs can dispatch).
+            orchestrator_outcome = None
+            if _role_running("orchestrator"):
+                orchestrator_outcome = control.start_session(
+                    orchestrator_id, _orchestrator_pass())
+                if orchestrator_outcome is None:
                     logger.warning(
-                        "start_hunting: surfer session %s not admitted; "
-                        "run degrades to 'failed'", surfer_id,
+                        "start_hunting: orchestrator session %s not admitted; "
+                        "run degrades to 'failed'", orchestrator_id,
                     )
-                    control.cancel_session(orchestrator_id)
                     status = "failed"
-                else:
-                    await _await_session_outcome(orchestrator_outcome)
-                    await _await_session_outcome(surfer_outcome)
-                    # Quiesce is proven: the surfer settled only when the
-                    # orchestrator was done, produced held no dispatchable
-                    # item, no pod was live, and no hunter was mid-graph.
-                    # Settle the remaining idle hunters and wait for every
-                    # run session to leave the registry (ADR "Run lifecycle":
-                    # terminal only when ALL component sessions have settled).
-                    post_settle(state)
-                    await _wait_no_run_sessions(control, hunting_run_id,
-                                                tick_interval)
-                    status = "complete"
+            else:
+                logger.warning(
+                    "start_hunting: orchestrator role paused; pass for run %s "
+                    "not scheduled", hunting_run_id,
+                )
+            surfer_outcome = control.start_session(surfer_id, _surfer_loop())
+            if surfer_outcome is None:
+                # Without the surfer no dispatch can ever happen: the run
+                # can never reach quiesce, so it must fail now.
+                logger.warning(
+                    "start_hunting: surfer session %s not admitted; "
+                    "run degrades to 'failed'", surfer_id,
+                )
+                if orchestrator_outcome is not None:
+                    control.cancel_session(orchestrator_id)
+                status = "failed"
+            elif status is None:
+                await _await_session_outcome(orchestrator_outcome)
+                await _await_session_outcome(surfer_outcome)
+                # Quiesce is proven: the surfer settled only when the
+                # orchestrator was done, produced held no dispatchable
+                # item, no pod was live, and no hunter was mid-graph.
+                # Settle the remaining idle hunters and wait for every
+                # run session to leave the registry (ADR "Run lifecycle":
+                # terminal only when ALL component sessions have settled).
+                post_settle(state)
+                await _wait_no_run_sessions(control, hunting_run_id,
+                                            tick_interval)
+                status = "complete"
         except asyncio.CancelledError:
             status = None  # external stop: stop_hunting stamps 'stopped'
             raise
@@ -841,6 +883,16 @@ async def start_hunting(
                     "start_hunting: actor reap failed for %s (fail-open)",
                     hunting_run_id,
                 )
+            # #317: the run terminal reaps the run's agent sub-modules, so no
+            # role handle outlives its run.
+            if manager is not None:
+                try:
+                    manager.reap_agent_submodules("hunting", hunting_run_id)
+                except Exception:  # noqa: BLE001 - teardown must never raise
+                    logger.warning(
+                        "start_hunting: role reap failed for %s (fail-open)",
+                        hunting_run_id,
+                    )
             # Run-terminal flush through the SHARED run-scoped chokepoint (#211,
             # TD-1/TD-6, C12): the whole-index hook stays registered for the module
             # drain/shutdown walk; this terminal archives ONLY this run's threads
@@ -939,6 +991,16 @@ async def stop_hunting(hunting_run_id: str) -> None:
             logger.warning(
                 "stop_hunting: actor reap failed for %s (fail-open)", hunting_run_id
             )
+        # #317: the run stop reaps the run's agent sub-modules with it.
+        stop_manager = _app_runtime()
+        if stop_manager is not None:
+            try:
+                stop_manager.reap_agent_submodules("hunting", hunting_run_id)
+            except Exception:  # noqa: BLE001 - fail-open
+                logger.warning(
+                    "stop_hunting: role reap failed for %s (fail-open)",
+                    hunting_run_id,
+                )
         try:
             await asyncio.to_thread(pg.set_hunting_run_status, hunting_run_id, "stopped")
         except Exception:  # noqa: BLE001 - fail-open

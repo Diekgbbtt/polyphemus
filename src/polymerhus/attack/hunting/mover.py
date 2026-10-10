@@ -58,7 +58,7 @@ from typing import AbstractSet, Any, Callable, Mapping, Protocol, Sequence
 
 from polymerhus.attack.hunting.hunt_store import HuntStore
 from polymerhus.attack.hunting.hunter_memory import HunterMemoryStore
-from polymerhus.app.runtime import ModuleAdmissionRefused
+from polymerhus.app.runtime import ModuleAdmissionRefused, ModuleState
 
 logger = logging.getLogger(__name__)
 
@@ -264,6 +264,18 @@ class DispatchControlPlane(Protocol):
         builds acquire the same gate the control plane's admission uses."""
         ...
 
+    def role_gate(self, run_id: str, role: str) -> Any:
+        """The run's per-role agent-sub-module gate (#317), or None when no
+        manager is bound. Acquired by a dispatched role session around its
+        active stretch so a stopped role holds its in-flight threads."""
+        ...
+
+    def role_running(self, run_id: str, role: str) -> bool:
+        """True when the run's agent-sub-module for `role` is `RUNNING` (#317).
+        The surfer's dispatch builder refuses (answers no coroutine) for a role
+        that is not running. Fail-open True when no manager is bound."""
+        ...
+
     def start_session(self, session_id: str, coro: Any) -> Any:
         """Schedule a run SESSION (the orchestrator pass, the run-scoped
         surfer) under its Q13 session id and return an awaitable of its
@@ -330,6 +342,40 @@ class RuntimeControlPlane:
                 "sessions run ungated (fail-open)", self._module, exc,
             )
             return None
+
+    def role_gate(self, run_id: str, role: str) -> Any:
+        """The run's agent-sub-module gate for `role` (#317), or None when no
+        manager is bound (fail-open: the session runs ungated)."""
+        manager = self._manager()
+        if manager is None:
+            return None
+        try:
+            return manager.agent_submodule_gate(self._module, run_id, role)
+        except Exception as exc:  # noqa: BLE001 - fail-open: no role gate
+            logger.warning(
+                "mover: role gate read (%s/%s) failed (%s); session runs "
+                "ungated (fail-open)", run_id, role, exc,
+            )
+            return None
+
+    def role_running(self, run_id: str, role: str) -> bool:
+        """True when the run's agent-sub-module for `role` is `RUNNING` (#317).
+        Fail-open True when no manager is bound or the read fails, so a manager-less
+        mover never wedges a run."""
+        manager = self._manager()
+        if manager is None:
+            return True
+        try:
+            return (
+                manager.agent_submodule_state(self._module, run_id, role)
+                is ModuleState.RUNNING
+            )
+        except Exception as exc:  # noqa: BLE001 - fail-open: treat the role as up
+            logger.warning(
+                "mover: role state read (%s/%s) failed (%s); treating as "
+                "running (fail-open)", run_id, role, exc,
+            )
+            return True
 
     def dispatch(self, session_id: str, coro: Any) -> bool:
         manager = self._manager()

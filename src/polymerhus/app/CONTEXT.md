@@ -11,7 +11,7 @@ It is explicitly not a bounded-context glossary: the meaning of what these modul
 - `auth/` - the per-project shared auth store and its agent tool (`store.py`, `tool.py`, `records.py`); the operator seed face is a thin adapter over the same seam (`project_management/api.py`).
 - `atomic_write.py` - the ONE construction point for the atomic whole-file write idiom: `write_text_atomic` / `write_bytes_atomic` write a caller-rendered body to a same-directory temp file (`flush` + `fsync`) and `os.replace` it onto the target, so a reader sees either the previous or the new complete file, never a truncated one (#340).
 - `data_root.py` - the one layout owner for the app-owned data root (`<repo>/data/`): every store resolves its bucket through `project_dir`, so no module hand-builds a path.
-- `runtime.py` - the module runtime/registry: run holds and the session lifecycle.
+- `runtime.py` - the module runtime/registry: module lifecycle state and gates, run holds and the session lifecycle, and the per-agent-sub-module lifecycle (one `ModuleState` + `ModuleGate` per agent role, layering under the module gate; see `docs/design/hunting-317-agent-submodule-adr.md`).
 - `observability/` - Langfuse callbacks and tracing: the enabled gate + resolved base URL (`langfuse_tracing.py`), the handler seam, the ONE observation-delivery primitive (`flush_observation_delivery`) and its exporter-outcome result (`RetryingSpanExporter`), and the analyser step records.
 - `gateway_entrypoint.py` - the container entrypoint: proxy first, health poll, sync, then the agent ASGI.
 - `clients/`, `config.py`, `logging_config.py`, `main.py` - the HTTP/ASGI shell and process configuration.

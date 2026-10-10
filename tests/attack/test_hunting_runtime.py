@@ -854,3 +854,88 @@ def test_hunting_run_terminal_invokes_exactly_one_run_scoped_flush(tmp_path, mon
 
     assert hid == "rt-hunt-0001"
     assert calls == [("hunting", "rt-hunt-0001")]
+
+
+# --- #317: agent sub-modules on the run bootstrap -----------------------------
+
+
+class _FakeRoleManager:
+    """A role-read stand-in for the runtime manager (#317) used by the run
+    bootstrap: records registration/reap and reports a configured role state.
+    The bootstrap reads roles through `_app_runtime()`, not the injected control
+    plane, so this fakes only the manager's role surface."""
+
+    def __init__(self, paused=()):
+        self.paused = set(paused)
+        self.registered: list[tuple[str, str, str]] = []
+        self.reaped: list[tuple[str, str | None]] = []
+
+    def register_agent_submodule(self, module, run_id, role):
+        self.registered.append((module, run_id, role))
+        return object()
+
+    def agent_submodule_state(self, module, run_id, role):
+        from polymerhus.app.runtime import ModuleState
+        return ModuleState.PAUSED if role in self.paused else ModuleState.RUNNING
+
+    def reap_agent_submodules(self, module, run_id=None):
+        self.reaped.append((module, run_id))
+
+
+def test_run_bootstrap_registers_and_reaps_the_agent_submodules(monkeypatch):
+    """#317: the bootstrap registers the run's three roles on boot and reaps
+    them at the run terminal; the orchestrator pass launches when its role is up."""
+    fake = _FakePg()
+    _patch_pg(monkeypatch, fake)
+    manager = _FakeRoleManager()
+    monkeypatch.setattr(hunting_runtime, "_app_runtime", lambda: manager)
+
+    launched: list[str] = []
+
+    async def capturing_orchestrator(project_id, run_id, candidates, tools, **kw):
+        launched.append(run_id)
+        return OrchestratorReport(pairs_processed=0)
+
+    asyncio.run(hunting_runtime.start_hunting(
+        "rt-project", candidates=[_candidate()],
+        orchestrator_fn=capturing_orchestrator,
+        control=_FakeControl(),
+        hunter_builder=_noop_hunter_builder, pod_builder=_noop_pod_builder,
+        tick_interval=0.001,
+    ))
+
+    assert manager.registered == [
+        ("hunting", "rt-hunt-0001", "orchestrator"),
+        ("hunting", "rt-hunt-0001", "hunter"),
+        ("hunting", "rt-hunt-0001", "pod"),
+    ]
+    assert launched == ["rt-hunt-0001"]
+    assert manager.reaped == [("hunting", "rt-hunt-0001")]
+
+
+def test_orchestrator_pass_not_launched_when_its_role_is_stopped(monkeypatch):
+    """#317: with the orchestrator role `PAUSED`, the bootstrap does NOT launch
+    the pass (the surfer still runs, so pre-produced configs can dispatch)."""
+    fake = _FakePg()
+    _patch_pg(monkeypatch, fake)
+    manager = _FakeRoleManager(paused={"orchestrator"})
+    monkeypatch.setattr(hunting_runtime, "_app_runtime", lambda: manager)
+
+    launched: list[str] = []
+
+    async def capturing_orchestrator(project_id, run_id, candidates, tools, **kw):
+        launched.append(run_id)
+        return OrchestratorReport(pairs_processed=0)
+
+    asyncio.run(hunting_runtime.start_hunting(
+        "rt-project", candidates=[_candidate()],
+        orchestrator_fn=capturing_orchestrator,
+        control=_FakeControl(),
+        hunter_builder=_noop_hunter_builder, pod_builder=_noop_pod_builder,
+        tick_interval=0.001,
+    ))
+
+    assert launched == []                       # the pass was gated off
+    assert manager.reaped == [("hunting", "rt-hunt-0001")]
+    # the surfer ran on the empty produced set and quiesced the run.
+    assert fake.statuses[-1] == ("rt-hunt-0001", "complete")

@@ -89,6 +89,48 @@ SURFER_SESSION_SEGMENT = "surfer"
 DEFAULT_SURFER_TICK_INTERVAL = 0.2
 
 
+class _NullGate:
+    """A no-op async context manager for an absent gate: a session always has
+    something to acquire when the module gate or a role gate resolves to None
+    (a fake control plane, or a manager-less mover)."""
+
+    async def __aenter__(self) -> "_NullGate":
+        return self
+
+    async def __aexit__(self, *exc: Any) -> None:
+        return None
+
+
+_NULL_GATE = _NullGate()
+
+
+def _gate_or_null(gate: Any) -> Any:
+    return gate if gate is not None else _NULL_GATE
+
+
+def derive_thread_role(session_id: str) -> str:
+    """The agent role a live session id belongs to (#317), derived from the
+    segment after `hunting:<run_id>:`:
+
+    - `orchestrator` -> `orchestrator`
+    - `hunt:...` -> `hunter`
+    - `pod:...` -> `pod`
+    - `surfer`, the outer run bootstrap (`hunting:<run_id>` / the bare run id),
+      or any other segment -> `infra` (runtime infrastructure, never an agent
+      sub-module)."""
+    parts = session_id.split(":", 2)
+    if len(parts) < 3:
+        return "infra"
+    segment = parts[2]
+    if segment == "orchestrator":
+        return "orchestrator"
+    if segment.startswith("hunt:"):
+        return "hunter"
+    if segment.startswith("pod:"):
+        return "pod"
+    return "infra"
+
+
 def surfer_session_id(run_id: str) -> str:
     """The run-scoped surfer session id (the Q13 scheme, extended by the first
     free segment): `hunting:<run_id>:surfer`."""
@@ -308,6 +350,7 @@ def build_run_dispatch(
     gate: Any,
     hunter_builder: Callable[..., tuple[Callable[[Any], Awaitable[Any]], Any]],
     pod_builder: Callable[..., Awaitable[dict]],
+    control: Any = None,
 ) -> Callable[[ProducedItem], Any]:
     """Build the mover's `coro_for` seam for ONE run (ADR #169 Q11/Q13, spec
     #169 "The inbox surfer semantics"): the produced family member -> the
@@ -335,7 +378,46 @@ def build_run_dispatch(
 
     The session coroutines are gate-bounded (Q15): the hunting dispatch gate is
     acquired around each session's active stretch, so the shared width caps
-    concurrent hunting work no matter how many configs fan out."""
+    concurrent hunting work no matter how many configs fan out.
+
+    #317 role enforcement: the builder consults the target role's agent
+    sub-module state via `control.role_running(run_id, role)` - a role that is
+    not `RUNNING` makes the builder answer `None` (the mover's refused rule:
+    the item stays produced, at-least-once). The role gate
+    (`control.role_gate(run_id, role)`) is passed to the session so its active
+    stretch is held at the next unit boundary when the role is stopped. With no
+    `control` (or a control lacking the reads) the roles are treated as running
+    and the role gate is absent - the pre-#317 behaviour."""
+    def _role_running(role: str) -> bool:
+        if control is None:
+            return True
+        reader = getattr(control, "role_running", None)
+        if reader is None:
+            return True
+        try:
+            return bool(reader(run_id, role))
+        except Exception as exc:  # noqa: BLE001 - fail-open: treat the role as up
+            logger.warning(
+                "surfer: role state read for %s/%s failed (%s); treating as "
+                "running (fail-open)", run_id, role, exc,
+            )
+            return True
+
+    def _role_gate(role: str) -> Any:
+        if control is None:
+            return None
+        reader = getattr(control, "role_gate", None)
+        if reader is None:
+            return None
+        try:
+            return reader(run_id, role)
+        except Exception as exc:  # noqa: BLE001 - fail-open: no role gate
+            logger.warning(
+                "surfer: role gate read for %s/%s failed (%s); session runs "
+                "ungated (fail-open)", run_id, role, exc,
+            )
+            return None
+
     def coro_for(item: ProducedItem) -> Any:
         if isinstance(item, HuntConfigItem):
             return _config_dispatch(item)
@@ -354,6 +436,9 @@ def build_run_dispatch(
         config = _ratified_config(hunt_store, project_id, item.config_key)
         if config is None:
             return None
+        # #317: a stopped hunter role refuses new hunter dispatch (at-least-once).
+        if not _role_running("hunter"):
+            return None
         inbox = AgentInbox()
         state.hunter_inboxes[item.config_key] = inbox
         state.hunters_in_graph.add(item.config_key)
@@ -365,12 +450,16 @@ def build_run_dispatch(
             hunter_store=hunter_store,
             state=state,
             gate=gate,
+            role_gate=_role_gate("hunter"),
             hunter_builder=hunter_builder,
         )
 
     def _spec_dispatch(item: TestSpecItem) -> Any:
         body = _read_spec_body(hunter_store, project_id, item)
         if not body or body.get("status") != "specified":
+            return None
+        # #317: a stopped pod role refuses new pod dispatch (at-least-once).
+        if not _role_running("pod"):
             return None
         # The spec's OWN persisted status gates the pod dispatch - NEVER the
         # liveness of a chain-adjacent parent (identity-based refactor,
@@ -391,6 +480,7 @@ def build_run_dispatch(
             inbox=inbox,
             hunter_store=hunter_store,
             gate=gate,
+            role_gate=_role_gate("pod"),
             pod_builder=pod_builder,
             pod_store=pod_store,
             state=state,
@@ -409,11 +499,17 @@ async def run_hunter_session(
     state: RunDispatchState,
     gate: Any,
     hunter_builder: Callable[..., tuple[Callable[[Any], Awaitable[Any]], Any]],
+    role_gate: Any = None,
 ) -> None:
     """ONE hunter session (ADR Q13 hunter id): the build-to-END ReAct graph on
     the hunt's thread, gate-bounded (Q15), then the IDLE LOOP over the run's
     inbox (ADR "Agent idle state", verdict handling stubbed - Q16). The
-    dispatch coroutine the mover schedules when a ratified config dispatches."""
+    dispatch coroutine the mover schedules when a ratified config dispatches.
+
+    #317: the session acquires the MODULE gate (Q15 width bound) AND its OWN
+    hunter role gate around the active stretch, so a stopped hunter role holds
+    its in-flight threads at the next unit boundary (the module gate dominates
+    via the role gate's parent)."""
     registry: Any = None
     try:
         dispatch_fn, registry = hunter_builder(
@@ -426,11 +522,9 @@ async def run_hunter_session(
         return
     paused_on_provider_failure = False
     try:
-        if gate is not None:
-            async with gate:
+        async with _gate_or_null(gate):
+            async with _gate_or_null(role_gate):
                 await dispatch_fn(config)
-        else:
-            await dispatch_fn(config)
     except asyncio.CancelledError:
         raise
     except ProviderUnavailableError as exc:
@@ -592,6 +686,7 @@ async def run_pod_session(
     pod_builder: Callable[..., Awaitable[dict]],
     pod_store: Any,
     state: RunDispatchState | None = None,
+    role_gate: Any = None,
 ) -> dict:
     """ONE pod session (ADR Q13 pod id): run the spec through the pod (the
     injected builder; `arun_pod` in production), then record the completed
@@ -631,11 +726,9 @@ async def run_pod_session(
                 "error": str(exc),
             }
 
-    if gate is not None:
-        async with gate:
+    async with _gate_or_null(gate):
+        async with _gate_or_null(role_gate):
             export = await _run()
-    else:
-        export = await _run()
 
     source = pod_session_id(run_id, fault_key, spec_id)
     # The DURABLE parent-keyed record: authored at pod completion, keyed by the
@@ -718,6 +811,7 @@ __all__ = [
     "SurferReport",
     "SURFER_SESSION_SEGMENT",
     "build_run_dispatch",
+    "derive_thread_role",
     "is_hunter_session_id",
     "is_pod_session_id",
     "is_run_quiesced",
