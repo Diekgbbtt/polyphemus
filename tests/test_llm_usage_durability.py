@@ -136,7 +136,8 @@ def test_store_round_trips_the_per_agent_entries(tmp_path):
     store = UsageStore(root=tmp_path)
     entries = {
         "assigner": {"cached": 1, "uncached": 2, "reasoning": 3, "visible": 4,
-                     "total_tokens": 10, "capped_tokens": 9, "calls": 1},
+                     "total_tokens": 10, "capped_tokens": 9, "calls": 1,
+                     "cache_detail_omitted": 0},
     }
 
     store.write("proj-1", entries)

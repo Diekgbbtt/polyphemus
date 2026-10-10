@@ -560,18 +560,19 @@ def _reflection_prompt(chunk: Chunk, inventory: dict | None, candidates: dict) -
     )
 
 
-def _extraction_prompt(prose: str, inventory: dict | None, candidates: dict) -> str:
+def _extraction_prompt(inventory: dict | None, candidates: dict) -> str:
     return (
         f"{_known_items_block(inventory)}\n\n"
         "CANDIDATE OWNING SERVICES (copy `data_flows.service_slug` VERBATIM from these):\n"
         f"{_candidates_render(candidates)}\n\n"
-        "Your reflection:\n"
-        f"{prose}\n\n"
+        # The reflection rides the thread as the assistant message this call follows;
+        # re-embedding it would send the same prose twice on the structured call (N3).
         # POSITIVE framing (DPL-DEC-18): the legacy single data call returned ZERO
         # data_items under a "leave the other lists EMPTY" litany; state what to
         # FILL and that empty is wrong when a record was verified.
-        "TASK - EXTRACT THE DATA PLANE. Your reflection above verified specific "
-        "business records, their surface sites, and their flows. Fill FOUR lists: "
+        "TASK - EXTRACT THE DATA PLANE FROM YOUR REFLECTION. The assistant message "
+        "immediately above is your reflection: use it - do not ask for it again and do "
+        "not restate it. Fill FOUR lists: "
         "`data_items`, `surfaces_at`, `data_flows`, `data_relationships` for every "
         "record your reflection verified - an empty result here is wrong whenever "
         "your reflection named a record. For a record already listed above, REUSE "
@@ -675,44 +676,39 @@ def _system_prompt() -> str:
 
 # --- the injected LLM seam (typist's shape: prose | structured) ----------------
 
-def _default_invoke_fn(messages, *, schema=None):
+def _default_invoke_fn(messages, *, schema=None, system_prompt=None):
     """The legacy stateless call, retained for callers/tests on the one-shot seam: the
     analyser-role model behind the #73 escalating retry. `schema=None` returns free-text
-    (the reflection call); a pydantic `schema` returns structured output. Production now
-    uses `stateful_invoke_fn`."""
+    (the reflection call); a pydantic `schema` returns structured output. The role prompt
+    is prepended here, exactly where the stateful seam's `system_prompt=` binding puts
+    it. Production now uses `stateful_invoke_fn`."""
+    from langchain_core.messages import HumanMessage, SystemMessage
+
+    from polymerhus.analysis.proposer_turn import prepend_prompt
     from polymerhus.app.llm.roles import invoke_role
 
-    return invoke_role("analyser", messages, schema=schema)
+    return invoke_role("analyser", prepend_prompt(messages, system_prompt), schema=schema)
 
 
 def stateful_invoke_fn(run_id: str, checkpointer, project_id: str | None = None):
     """The STATEFUL data-modeller call (#94): the `data_modeller` role runs as a session
     resuming from its OWN per-run checkpoint (`AnalysisSession(run_id, "data_modeller")`, distinct from every other agent's), so its call chain and
-    every chunk append to ONE growing context. Structured turns go through `ToolStrategy`
-    (#44-safe); a `schema=None` turn returns prose. Same `(messages, *, schema)` shape as
+    every chunk append to ONE growing context. Structured turns are #44-safe;
+    a `schema=None` turn returns prose. Same `(messages, *, schema)` shape as
     `_default_invoke_fn`. Structurally sync (sequential dispatch).
+
+    The role prompt is bound ONCE as the agent's ephemeral leading block (the
+    converged seam, `proposer_turn.session_invoke_fn`), so it is the stable prefix of
+    every request and never accumulates in the checkpointed trail.
 
     Context-window compaction (#95 H/D9): the run's turns run COMPACTED - the
     analysis-side compaction middleware is built once per run and passed through
     `stateful_turn`, so an over-budget thread spawns out-of-band running-summary
     passes that the next turn's barrier awaits. Built fail-open: a missing role
     config degrades the profile/window, never the session."""
-    from polymerhus.app.llm.session import stateful_turn
-    from polymerhus.app.llm.session_address import AnalysisSession
+    from polymerhus.analysis.proposer_turn import session_invoke_fn
 
-    address = AnalysisSession(run_id, "data_modeller")
-
-    from polymerhus.app.llm import compaction as C  # noqa: PLC0415
-
-    middleware = [C.build_role_compaction_middleware("data_modeller")]
-
-    def invoke(messages, *, schema=None):
-        return stateful_turn("data_modeller", address, messages,
-                             checkpointer=checkpointer, schema=schema,
-                             middleware=middleware, extra_tags=[run_id],
-                             usage_scope=project_id)
-
-    return invoke
+    return session_invoke_fn("data_modeller", run_id, checkpointer, project_id)
 
 
 # --- the two-call proposer body (section 3/7.1) ---------------------------------
@@ -730,7 +726,7 @@ def model_data(
     Fail-open on any exception - never crashes the caller. An empty admission is a
     VALID empty result with NO LLM call (DPL-DEC precision-first: nothing to model
     is not a judgment to make)."""
-    from langchain_core.messages import HumanMessage, SystemMessage
+    from langchain_core.messages import HumanMessage
 
     admitted = admit_for_role(chunk, ROLE)
     if not admitted:
@@ -742,9 +738,8 @@ def model_data(
 
     try:
         prose = invoke_fn(
-            [SystemMessage(content=system_prompt),
-             HumanMessage(content=_reflection_prompt(chunk, inventory, candidates))],
-            schema=None,
+            [HumanMessage(content=_reflection_prompt(chunk, inventory, candidates))],
+            schema=None, system_prompt=system_prompt,
         )
     except Exception:  # fail-open: LLM error -> empty outcome, never crash (DPL-DEC fail-open)
         logger.warning("data_modeller: reflection invoke failed; degrading to empty outcome", exc_info=True)
@@ -767,9 +762,8 @@ def model_data(
 
     try:
         raw = invoke_fn(
-            [SystemMessage(content=system_prompt),
-             HumanMessage(content=_extraction_prompt(prose, inventory, candidates))],
-            schema=L1DeltaBatch,
+            [HumanMessage(content=_extraction_prompt(inventory, candidates))],
+            schema=L1DeltaBatch, system_prompt=system_prompt,
         )
     except Exception:  # fail-open: extraction LLM error -> empty outcome, never crash
         logger.warning("data_modeller: extraction invoke failed; degrading to empty outcome", exc_info=True)

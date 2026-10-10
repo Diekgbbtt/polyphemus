@@ -326,20 +326,22 @@ def _reflection_prompt(chunk: Chunk, inventory: dict | None) -> str:
     )
 
 
-def _systems_prompt(prose: str, inventory: dict | None) -> str:
+def _systems_prompt(inventory: dict | None) -> str:
     from polymerhus.analysis.l1_curator import vocabulary_prompt
 
     return (
         f"{_defined_systems_block(inventory)}\n\n"
         f"{vocabulary_prompt()}\n\n"
-        "Your reflection:\n"
-        f"{prose}\n\n"
+        # The reflection above is NOT re-embedded here: it rides the thread as the
+        # assistant message this call follows, and re-embedding it would send the
+        # same prose twice on every structured call (the N2 prose triplication).
         # POSITIVE framing (mirrors pod.py's data-modelling fix): a negative "leave
         # X, Y, Z EMPTY" litany makes a weaker model anchor on the empties and return
         # an all-empty batch (observed live: reflection named 5 mechanisms, extraction
         # returned 0 systems). State what to FILL, and that empty is wrong.
-        "TASK - EXTRACT SYSTEMS. Your reflection above named the cross-cutting mechanisms "
-        "this surface evidences. Propose ONE `systems` entry for EACH mechanism you "
+        "TASK - EXTRACT SYSTEMS FROM YOUR REFLECTION. The assistant message "
+        "immediately above is your reflection: use it - do not ask for it again and "
+        "do not restate it. Propose ONE `systems` entry for EACH mechanism you "
         "identified: a known `kind` (+ `discriminator`, default __singleton__) with a "
         "`description` prop in `props` - a brief adversarially-oriented NL characterisation "
         "of that mechanism. You MUST return at least one system whenever your reflection "
@@ -357,7 +359,7 @@ def _systems_prompt(prose: str, inventory: dict | None) -> str:
     )
 
 
-def _linking_prompt(prose: str, systems_batch: L1DeltaBatch, primary: list[str],
+def _linking_prompt(systems_batch: L1DeltaBatch, primary: list[str],
                     secondary: list[str], owned: dict[str, list[str]],
                     inventory: dict | None) -> str:
     proposed = sorted({s.kind if s.discriminator == _SINGLETON else f"{s.kind}:{s.discriminator}"
@@ -367,15 +369,16 @@ def _linking_prompt(prose: str, systems_batch: L1DeltaBatch, primary: list[str],
         f"  - {slug} (owns: {', '.join(owned.get(slug, [])) or 'surface in this chunk'})"
         for slug in primary) or "  (none)"
     return (
-        "Your reflection:\n"
-        f"{prose}\n\n"
-        f"Systems now available to link (proposed this step + already defined): "
+        # The reflection rides the thread above as an assistant message; the systems it
+        # drove are the structured call that follows. Re-embedding either here would
+        # send the same content twice on every call (N2).
+        "SYSTEMS now available to link (proposed this step + already defined): "
         f"{sorted(set(proposed) | set(defined))}\n\n"
         "PRIMARY services (they aggregate this chunk's assets - link Systems to THESE first):\n"
         f"{prim_lines}\n"
         f"SECONDARY services (other asset-bearing services): {secondary or '(none)'}\n\n"
-        "TASK - LINK SERVICES (system_edges ONLY). Propose `system_edges`: connect each "
-        "touched System to the Service(s) it overlays, choosing the exact edge label "
+        "TASK - LINK SERVICES (system_edges ONLY). Connect each System above to the "
+        "Service(s) it overlays, choosing the exact edge label "
         "(EXPOSED_VIA a REST/GraphQL API OR a WebPresentation page-cluster - copy its "
         "'<service>::<cluster>' discriminator VERBATIM so the edge hits the right node; "
         "FRONTED_BY / PROTECTED_BY / ROUTED_BY a perimeter; "
@@ -387,14 +390,18 @@ def _linking_prompt(prose: str, systems_batch: L1DeltaBatch, primary: list[str],
 
 # --- the injected LLM seam ----------------------------------------------------
 
-def _default_invoke_fn(messages, *, schema=None):
+def _default_invoke_fn(messages, *, schema=None, system_prompt=None):
     """The legacy stateless call, retained for callers/tests on the one-shot seam: the
     analyser-role model behind the #73 escalating retry. `schema=None` returns free-text
     (the reflection call); a pydantic `schema` returns structured output. Production now
-    uses `stateful_invoke_fn`."""
+    uses `session_invoke_fn`, which binds the same prompt as the agent's leading block
+    instead of a trail message."""
+    from langchain_core.messages import HumanMessage, SystemMessage
+
+    from polymerhus.analysis.proposer_turn import prepend_prompt
     from polymerhus.app.llm.roles import invoke_role
 
-    return invoke_role("analyser", messages, schema=schema)
+    return invoke_role("analyser", prepend_prompt(messages, system_prompt), schema=schema)
 
 
 def stateful_invoke_fn(run_id: str, checkpointer, project_id: str | None = None):
@@ -405,27 +412,18 @@ def stateful_invoke_fn(run_id: str, checkpointer, project_id: str | None = None)
     `(messages, *, schema)` shape as `_default_invoke_fn`. Structurally sync (sequential
     dispatch under `ANALYSER_PASS_SEMAPHORE`).
 
+    The role prompt is bound ONCE as the agent's ephemeral leading block (the
+    converged seam, `proposer_turn.session_invoke_fn`), so it is the stable prefix of
+    every request and never accumulates in the checkpointed trail.
+
     Context-window compaction (#95 D9): the run's turns run COMPACTED - the
     analysis-side compaction middleware is built once per run and passed through
     `stateful_turn`, so an over-budget thread spawns out-of-band running-summary
     passes that the next turn's barrier awaits. Built fail-open: a missing role
     config degrades the profile/window, never the session."""
-    from polymerhus.app.llm.session import stateful_turn
-    from polymerhus.app.llm.session_address import AnalysisSession
+    from polymerhus.analysis.proposer_turn import session_invoke_fn
 
-    address = AnalysisSession(run_id, "mechanism_typist")
-
-    from polymerhus.app.llm import compaction as C  # noqa: PLC0415
-
-    middleware = [C.build_role_compaction_middleware("mechanism_typist")]
-
-    def invoke(messages, *, schema=None):
-        return stateful_turn("mechanism_typist", address, messages,
-                             checkpointer=checkpointer, schema=schema,
-                             middleware=middleware, extra_tags=[run_id],
-                             usage_scope=project_id)
-
-    return invoke
+    return session_invoke_fn("mechanism_typist", run_id, checkpointer, project_id)
 
 
 # The mechanism-typist role prompt (`prompts/technical-system.md`), memoized on
@@ -468,19 +466,22 @@ def type_mechanisms(
     testable). FAIL-CLOSED on reflection exhaustion (empty batch); SOFT pass-through on
     a later step's exhaustion (write what earlier steps produced). Fail-open on any
     exception - never crashes the caller."""
-    from langchain_core.messages import HumanMessage, SystemMessage
+    from langchain_core.messages import HumanMessage
 
     if not chunk.assets:  # empty delta -> nothing to type (valid empty)
         return L1DeltaBatch()
     invoke_fn = invoke_fn or _default_invoke_fn
+    # The skill rides the stateful seam's `system_prompt=` binding (the converged
+    # seam), so it is the leading prefix of every request and never enters the
+    # checkpointed trail. The legacy one-shot seam prepends it itself.
     skill = _load_skill()
 
     # Call 1 - REFLECTION (reason). Exhaustion => fail-closed (whole step empty).
     # The escalating retry lives inside invoke_fn (invoke_role) now; a None return
     # is the exhausted-generation fail-closed signal, exactly as before.
     prose = invoke_fn(
-        [SystemMessage(content=skill), HumanMessage(content=_reflection_prompt(chunk, inventory))],
-        schema=None,
+        [HumanMessage(content=_reflection_prompt(chunk, inventory))],
+        schema=None, system_prompt=skill,
     )
     if not prose:
         logger.warning("mechanism_typist: reflection exhausted; fail-closed to empty batch")
@@ -497,17 +498,16 @@ def type_mechanisms(
 
     # Call 2 - SYSTEMS EXTRACTION (extract). Soft pass-through on exhaustion.
     systems_batch = invoke_fn(
-        [SystemMessage(content=skill), HumanMessage(content=_systems_prompt(prose, inventory))],
-        schema=L1DeltaBatch,
+        [HumanMessage(content=_systems_prompt(inventory))],
+        schema=L1DeltaBatch, system_prompt=skill,
     ) or L1DeltaBatch()
 
     # Call 3 - SERVICES LINKING (extract). Soft pass-through on exhaustion.
     all_services = frozenset((inventory or {}).get("services") or [])
     primary, secondary, owned = partition_services(chunk.assets, aggregations or [], all_services)
     link_batch = invoke_fn(
-        [SystemMessage(content=skill),
-         HumanMessage(content=_linking_prompt(prose, systems_batch, primary, secondary, owned, inventory))],
-        schema=L1DeltaBatch,
+        [HumanMessage(content=_linking_prompt(systems_batch, primary, secondary, owned, inventory))],
+        schema=L1DeltaBatch, system_prompt=skill,
     ) or L1DeltaBatch()
 
     # #18/observability: persist the typist's STRUCTURED output (systems + edges, with each

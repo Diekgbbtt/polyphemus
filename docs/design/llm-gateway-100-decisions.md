@@ -127,6 +127,12 @@ Three verified facts drove this (litellm prompt-caching docs, the auto-inject tu
 
 The response cache (`LITELLM_CACHE_TYPE=redis|in-memory`) stays out - it is the identical-request cache, and litellm's own proxy docs warn against it for multi-turn agentic traffic. A stateful agent loop's requests mutate each turn; the cacheable surface is the **prefix**, not the whole request, and the prefix is already handled by provider-native caching.
 
+**D8 amended 2026-10-10 - fact 1 also binds the CLIENT, and that is the half the gateway cannot supply.**
+"The KV cache lives only at the provider" makes the hit rate a pure function of the request prefix, so a client that re-sends a growing prefix defeats everything this decision configures.
+That is exactly what the analysis proposers did: the role prompt rode a `SystemMessage` re-added to every turn's message list, so each call appended a copy at a shifting position and `mechanism_typist` grew quadratically in the call number (measured in `converged-agent-turn-adr.md`).
+The gateway side of D8 is unchanged and remains correct; the client now holds its side of the contract by binding the prompt through `create_agent(system_prompt=...)` instead of the trail (`analysis/proposer_turn.py`), so the leading block is byte-identical from call 1.
+Reusable rule and the rejected alternative (collapsing the chain) are in `statefulness-pattern-matrix.md` OUTLIER-5.
+
 **Rationale.** The original "passthrough only" proposal under-counted the gateway-side primitives (auto-inject exists). The corrected proposal adds auto-inject (one config stanza, zero client cost, covers the anthropic-family future) and keeps the response cache out (it would risk stale tool results and corrupted observability).
 
 ## D9 - Sync validation: fail toward staleness on source failure; cold stop on collapse; log-only gaps

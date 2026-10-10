@@ -230,7 +230,12 @@ Layer 2, from the filesystem, `skills/analysis/data-plane/SKILL.md`: the HOW.
 Its frontmatter names the same synthesis the typist's does, verbatim in form: *"Synthesises `overthink` (staged deliberate reasoning), `critical-thinking-logical-reasoning` (claims/evidence/assumptions/fallacies), and `define-hypothesis`/`debug-hypothesis` (frame a business-record hypothesis, then verify it) for the task of lifting the Tier-1 logical DataItems a streamed surface evidences and grounding their flows onto the settled Service model."*
 The file's body is section 7.3's six-step scaffold plus section 7.3a's critical-judgment discipline plus section 7.5's worked examples, in that order - the same three-part shape (reason-by-hypothesis, judge-critically, worked-examples) as `skills/analysis/technical-system/SKILL.md`.
 Loaded through `skill_for("analysis/data-plane", fallback=_DATA_PLANE_SKILL_FALLBACK)`, single-sourced, YAML frontmatter stripped, cached in process, never an inline prompt constant - the #30 per-role retirement, on the Assigner's and Bootstrapper's precedent (`assigner.py:403-445`).
-The in-process cache is what preserves the provider prompt-cache prefix: the file is read once per process, so the system message is byte-identical for every chunk of a run.
+
+**Amended 2026-10-10 (the in-process cache is NOT what preserves the prefix):** this line claimed the cache preserved the byte-identical prefix, and it overstated the case.
+Caching the FILE makes the prompt STRING identical, but the prompt then travelled as a `SystemMessage` re-added to every turn's message list, so the REQUEST still stacked a fresh copy per call at a shifting position.
+The provider caches a request prefix; it cannot reuse one that grows.
+The same correction as `assigner-A1-decisions.md` §4: the string is now bound through `create_agent(system_prompt=...)` via the shared seam (`analysis/proposer_turn.py`), so the volatile part alone rides the trail and the leading block is byte-identical on every call.
+The in-process memo stays load-bearing for a different reason: it is what keeps the STRING itself byte-identical, since the file is a single source read once per process.
 
 The fallback is a degraded stand-in used only when the mount is unavailable, and it must not degrade to silence.
 It carries the load-bearing core: a business record is not a parameter, `fields` name only what was observed, reuse an existing `item_key` before coining one, and a parameter that witnesses no record is correctly left alone.

@@ -31,6 +31,7 @@ def _empty(project_id: str) -> dict:
         "total_tokens": 0,
         "capped_tokens": 0,
         "calls": 0,
+        "cache_detail_omitted": 0,
         "by_agent": {},
     }
 
@@ -83,7 +84,8 @@ def test_record_accumulates_across_calls_for_one_agent():
     assert snap["by_agent"] == {
         "assigner": {"context_tokens": {"cached": 0, "uncached": 13},
                      "generated_tokens": {"reasoning": 0, "visible": 7},
-                     "total_tokens": 20, "capped_tokens": 20, "calls": 2},
+                     "total_tokens": 20, "capped_tokens": 20, "calls": 2,
+        "cache_detail_omitted": 2},
     }
 
 
@@ -113,6 +115,7 @@ def test_record_decomposes_the_two_axes_from_real_usage_metadata():
         "total_tokens": 13_206_903,
         "capped_tokens": 1_203_959,
         "calls": 1,
+        "cache_detail_omitted": 0,
     }
 
 
@@ -304,7 +307,8 @@ def test_middleware_records_usage_for_an_invoked_agent_run():
     assert snap["by_agent"] == {
         "assigner": {"context_tokens": {"cached": 0, "uncached": 11},
                      "generated_tokens": {"reasoning": 0, "visible": 7},
-                     "total_tokens": 18, "capped_tokens": 18, "calls": 1},
+                     "total_tokens": 18, "capped_tokens": 18, "calls": 1,
+                     "cache_detail_omitted": 1},
     }
 
 
@@ -399,7 +403,8 @@ def test_session_turn_records_usage_even_when_observe_is_false():
     assert snap["by_agent"] == {
         "assigner": {"context_tokens": {"cached": 0, "uncached": 11},
                      "generated_tokens": {"reasoning": 0, "visible": 7},
-                     "total_tokens": 18, "capped_tokens": 18, "calls": 1},
+                     "total_tokens": 18, "capped_tokens": 18, "calls": 1,
+                     "cache_detail_omitted": 1},
     }
 
 
@@ -416,3 +421,69 @@ def test_stateful_turn_threads_usage_scope_to_the_session_turn(monkeypatch):
     S.stateful_turn("assigner", "t", [HumanMessage(content="x")],
                     checkpointer=None, observe=False, usage_scope="proj-1")
     assert seen["usage_scope"] == "proj-1"
+
+
+# --- N5: an OMITTED cache detail is not a cache READ OF ZERO -----------------
+#
+# `_axis_totals` mapped an ABSENT `input_token_details` to `cache_read = 0`, which
+# makes "the provider did not report the field" indistinguishable from "the provider
+# reported a genuine cache miss". That is how the mechanism_typist's reported 0%
+# cached share survived: 43 of 46 live calls carried `input_cache_read` as null, and
+# the ledger recorded each one as a cache read of zero.
+
+def test_axis_totals_counts_an_absent_cache_detail_as_omitted():
+    from polymerhus.app.llm.usage import _axis_totals
+
+    totals = _axis_totals({"input_tokens": 1000, "output_tokens": 40})
+    assert totals["cached"] == 0
+    assert totals["cache_detail_omitted"] == 1
+
+
+def test_axis_totals_does_not_count_a_reported_zero_as_omitted():
+    """A provider that says `cache_read: 0` really did report a miss; the
+    provider's own zero is not conflated with its silence."""
+    from polymerhus.app.llm.usage import _axis_totals
+
+    totals = _axis_totals({"input_tokens": 1000, "output_tokens": 40,
+                           "input_token_details": {"cache_read": 0}})
+    assert totals["cached"] == 0
+    assert totals["cache_detail_omitted"] == 0
+
+
+def test_axis_totals_counts_a_reported_cache_read_as_not_omitted():
+    from polymerhus.app.llm.usage import _axis_totals
+
+    totals = _axis_totals({"input_tokens": 1000, "output_tokens": 40,
+                           "input_token_details": {"cache_read": 700}})
+    assert totals["cached"] == 700
+    assert totals["uncached"] == 300
+    assert totals["cache_detail_omitted"] == 0
+
+
+def test_the_ledger_accumulates_the_omitted_count_per_agent():
+    """The count rides the accumulator and the snapshot, so a run's reported cache
+    share is readable together with how much of it the provider never reported."""
+    from polymerhus.app.llm.usage import UsageLedger
+
+    ledger = UsageLedger()
+    ledger.record("proj-1", "mechanism_typist",
+                  {"input_tokens": 100, "output_tokens": 10})  # detail omitted
+    ledger.record("proj-1", "mechanism_typist",
+                  {"input_tokens": 100, "output_tokens": 10})
+    ledger.record("proj-1", "mechanism_typist",
+                  {"input_tokens": 100, "output_tokens": 10,
+                   "input_token_details": {"cache_read": 0}})  # reported zero
+
+    snapshot = ledger.snapshot("proj-1")
+    entry = snapshot["by_agent"]["mechanism_typist"]
+    assert entry["cache_detail_omitted"] == 2
+    assert entry["cache_detail_omitted"] + 1 == entry["calls"]
+
+
+def test_the_omitted_count_is_a_non_accumulating_field():
+    """`cache_detail_omitted` must NOT join the accumulating axis: adding it to
+    `total_tokens`/`capped_tokens` would silently change the budget axis."""
+    from polymerhus.app.llm.usage import _AXIS_FIELDS, _ENTRY_FIELDS
+
+    assert "cache_detail_omitted" in _ENTRY_FIELDS
+    assert "cache_detail_omitted" not in _AXIS_FIELDS

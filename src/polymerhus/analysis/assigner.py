@@ -511,17 +511,22 @@ def assign(
     LLM). Fail-open: a `None`/raising `invoke_fn` (or a chunk with no Endpoint in it)
     degrades to an empty outcome. Pure given its inputs (a replayed chunk yields the
     same outcome)."""
-    from langchain_core.messages import HumanMessage, SystemMessage
+    from langchain_core.messages import HumanMessage
 
     admitted = admit_for_role(chunk, ROLE)
     l0_slice = _chunk_slice(chunk)
     if not l0_slice["nodes"]:  # nothing this role can act on -> valid empty
         return AssignmentOutcome()
+    # The STABLE half of the prompt (#34) rides the stateful seam's `system_prompt=`
+    # binding as the agent's leading block (the converged seam), so the provider's
+    # cache prefix is a byte-identical leading block on every chunk and the prompt
+    # never accumulates in the checkpointed trail. The legacy one-shot seam prepends
+    # it into its message list instead.
+    system_prompt = _system_prompt(mode)
     try:
         raw = invoke_fn([
-            SystemMessage(content=_system_prompt(mode)),
             HumanMessage(content=_user_prompt(l0_slice, inventory)),
-        ])
+        ], schema=L1DeltaBatch, system_prompt=system_prompt)
     except Exception:  # LLM error -> fail-open to no assignment, never crash
         logger.warning("assigner: invoke failed; degrading to empty outcome", exc_info=True)
         return AssignmentOutcome()
@@ -556,12 +561,16 @@ def default_invoke_fn():
     """The legacy stateless call, retained for callers/tests that want the one-shot
     seam: the `analyser` role bound to `L1DeltaBatch` via function-calling through the
     #73 escalating retry (`invoke_role`); `None` = no parseable tool call, which
-    `assign` treats as a valid empty outcome. Production now uses
-    `stateful_invoke_fn` (below)."""
+    `assign` treats as a valid empty outcome. The role prompt is prepended into the
+    message list here, exactly where the stateful seam's `system_prompt=` binding puts
+    it. Production now uses `stateful_invoke_fn` (below)."""
+    from polymerhus.analysis.proposer_turn import prepend_prompt
     from polymerhus.app.llm.roles import invoke_role
 
-    def invoke(messages):
-        return invoke_role("analyser", messages, schema=L1DeltaBatch)
+    def invoke(messages, *, schema=L1DeltaBatch, system_prompt=None):
+        from polymerhus.app.llm.roles import invoke_role
+
+        return invoke_role("analyser", prepend_prompt(messages, system_prompt), schema=schema)
 
     return invoke
 
@@ -570,9 +579,12 @@ def stateful_invoke_fn(run_id: str, checkpointer, project_id: str | None = None)
     """The STATEFUL Assigner call (#94): the `assigner` role runs as a session whose
     context PROGRESSES across the run's chunks, resuming from its own per-run checkpoint
     (`AnalysisSession(run_id, "assigner")`, distinct from every other agent's
-    thread). Structured output is `L1DeltaBatch` via `ToolStrategy` (the
-    function_calling-equivalent, #44-safe). Same `(messages) -> batch | None` shape as
+    thread). Structured output is `L1DeltaBatch` (#44-safe). Same `(messages)` shape as
     the legacy seam, so `make_assigner_body` is unchanged.
+
+    The role prompt is bound ONCE as the agent's ephemeral leading block (the
+    converged seam, `proposer_turn.session_invoke_fn`), so it is the stable prefix of
+    every request and never accumulates in the checkpointed trail.
 
     The Assigner is dispatched sequentially (the supervisor's chunk-major schedule holds
     `ANALYSER_PASS_SEMAPHORE`), so this structurally-sync stateful turn needs no async;
@@ -584,22 +596,9 @@ def stateful_invoke_fn(run_id: str, checkpointer, project_id: str | None = None)
     `stateful_turn`, so an over-budget thread spawns out-of-band running-summary
     passes that the next turn's barrier awaits. Built fail-open: a missing role
     config degrades the profile/window, never the session."""
-    from polymerhus.app.llm.session import stateful_turn
-    from polymerhus.app.llm.session_address import AnalysisSession
+    from polymerhus.analysis.proposer_turn import session_invoke_fn
 
-    address = AnalysisSession(run_id, "assigner")
-
-    from polymerhus.app.llm import compaction as C  # noqa: PLC0415
-
-    middleware = [C.build_role_compaction_middleware("assigner")]
-
-    def invoke(messages):
-        return stateful_turn("assigner", address, messages,
-                             checkpointer=checkpointer, schema=L1DeltaBatch,
-                             middleware=middleware, extra_tags=[run_id],
-                             usage_scope=project_id)
-
-    return invoke
+    return session_invoke_fn("assigner", run_id, checkpointer, project_id)
 
 
 def make_assigner_body(*, invoke_fn, inventory_fn, bar: float = ASSIGN_CONFIDENCE_BAR):

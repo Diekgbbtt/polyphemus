@@ -188,6 +188,56 @@ def neo4j_live():
 
 
 @pytest.fixture(autouse=True)
+def _no_live_gateway_in_unit_tier(request, monkeypatch):
+    """Keep the unit tier off the OPERATOR'S LOCAL LLM CONFIGURATION.
+
+    The checkout's `.env` selects the dev stack's models
+    (`LLM_CRAWLER=opencode:step-5-preview-free`, ...) and its gateway
+    (`LLM_GATEWAY_URL=http://localhost:4000`). None of that is reachable in a
+    plain unit run, and none of it should decide what a unit test asserts.
+
+    It can arrive SET without any test asking for it: importing `litellm` calls
+    `load_dotenv()`, which loads the `.env` into the process environment. One
+    test module that imports litellm therefore leaks the whole configuration into
+    every later test in the process. Observed live: `tests/recon/crawl/
+    test_crawl_agent.py` passed alone and failed after a litellm-importing
+    module - the leak configured the `crawler` role, so `resolve_capability`
+    reached the unreachable gateway, cached the DEGRADED profile (the reader is
+    resolve-and-hold), and the crawl refused its tool loop, returning the empty
+    manifest.
+
+    The unit tier therefore clears the ambient LLM configuration and restores it
+    afterwards - the same discipline it already applies to `NEO4J_URI` /
+    `POSTGRES_DSN` / `KALI_MCP_URL` above. The key set is DERIVED from the role
+    registry (`providers.ROLES`) rather than hardcoded, so a new role or a new
+    shared model key is isolated the moment it is registered. Tests that
+    legitimately exercise a role, the gateway reader or the overrides set their
+    own value inside the test, which this fixture does not touch. Live tiers
+    manage their own environment."""
+    if request.node.get_closest_marker("live_neo4j"):
+        yield
+        return
+
+    ambient: dict[str, str] = {}
+
+    def _clear(keys) -> None:
+        for key in keys:
+            if key in os.environ:
+                ambient[key] = os.environ.pop(key)
+
+    from polymerhus.app.llm.providers import ROLES
+
+    model_keys = {r.model_key for r in ROLES}
+    model_keys.add("LLM_GATEWAY_URL")
+    model_keys.add("LLM_CAPABILITY_OVERRIDES")
+    _clear(model_keys)
+    try:
+        yield
+    finally:
+        os.environ.update(ambient)
+
+
+@pytest.fixture(autouse=True)
 def _isolate_usage_ledger(request):
     """Unit tier: start every test with a memory-only process-wide usage ledger.
 

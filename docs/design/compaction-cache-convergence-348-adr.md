@@ -22,6 +22,33 @@ A single large recent message - a `mechanism_typist` chunk prompt, a `job_orches
 
 `apply_staged` reset the consecutive-pass streak to zero on every "successful" pass, and `_settle` only counted FAILED passes toward the cap. A pass that produced a summary but left the thread over budget therefore looked like a recovery: the next model call re-triggered the barrier, which ran another pass, regenerated the running summary (the first message of the compacted trail), and changed the request prefix from the very first token. The provider prefix cache was invalidated on every call, forcing a full re-prefill - the observed 30-calls-cached=0 shape. The D6 design already intended the cap to make this loop impossible; the gap was that a non-converging success reset the cap.
 
+## Amendment (2026-10-10) - a SECOND, independent mechanism produced the same `mechanism_typist` 30.6% number
+
+**Status:** this ADR's Decision and root cause stand unchanged; this amendment records that they did not explain the whole symptom for `mechanism_typist`, and that a second mechanism was subsequently found and fixed there. Nothing above is superseded.
+
+**What this ADR fixed.** The compaction loop above is real and it is what the cap now bounds. It applies to a thread that has crossed the budget.
+
+**What it did not explain.** `mechanism_typist`'s trail `SystemMessage` re-add was a separate defect that fired from call 1, budget or no budget. The role prompt was re-sent as a `SystemMessage` at the end of every turn's message list, so each call appended a fresh copy at a SHIFTING position:
+
+| call | system-message offsets in the request |
+|---|---|
+| 1 | 0 |
+| 2 | 0, 3 |
+| 7 | 0, 3, 6, 9, 12, 15, 18 |
+
+Rebuilding the exact request through the production seam (`run_session_turn` with a recording model, per `converged-agent-turn-adr.md`) shows the flat form for the assigner and the quadratic form for the typist, whose skill is the largest of the three prompts:
+
+| role | per-call input (chars) | best fit | curvature |
+|---|---|---|---|
+| `mechanism_typist` | 2,468 / 6,053 / 11,042 / 18,126 | quadratic | +3,263 per call² |
+| `assigner` | ~4.7K, flat | - | - |
+
+So the 30.6% figure has TWO contributions: the compaction loop (this ADR, now capped) and the prompt stacking (now fixed by the converged seam). Neither fix alone recovers the cache, because a prefix is only reusable when BOTH the loop is bounded and the leading block is byte-identical.
+
+**The fix and its ruling live elsewhere**: `docs/design/converged-agent-turn-adr.md` (the amended choice, the measured curves, and the rejected alternative of collapsing the three-call chain) with the reusable client-side rule in `statefulness-pattern-matrix.md` OUTLIER-5.
+
+**A consequence for this ADR's own deterministic harness.** The harness measures the longest common message-prefix between consecutive requests. With the prompt re-sent in the trail, that metric reported a non-zero overlap even where nothing was cacheable, because a whole trailing `SystemMessage` block matched by coincidence of content. The overlap column above is therefore an UPPER bound on the real prefix for the `before` case. The `after` column is unaffected, since a bounded loop and a stable head make the two measures agree.
+
 ## Decision
 
 A compaction pass that leaves the thread over budget is NOT a recovery. `apply_staged` now re-measures the applied trail and, when it is still over budget, counts the pass toward the consecutive-pass cap via `_note_failure` instead of resetting the streak. Only a pass that reaches the budget resets the streak and clears the escalation flag.

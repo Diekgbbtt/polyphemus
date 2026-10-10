@@ -157,6 +157,11 @@ A compact pass is observable on the same session trace (`langfuse_session_id`, t
 `cache_read` / `cached_tokens` are recorded, never load-bearing (gateway ADR D11 item 3).
 Compaction bounds only what the agent SEES: the module store keeps the full trail at full fidelity for export/eval, and the checkpointer holds the compacted working set.
 
+**D11 item 4, amended 2026-10-10 - the metadata recipe travels on the compacted THREAD, and that thread's PREFIX is what the compacted roles now hold stable.**
+The observability record stays identical, but the input it describes changed shape: an analysis proposer's role prompt no longer arrives as a re-sent trail `SystemMessage` on every call, so the prefix the D8.1 tail-slice preserves is now a leading block that is fixed from call 1 rather than one that moves earlier with each stacked copy.
+The EFFECT on this record is that `compaction_reclaimed_tokens` now measures a sequence of calls that already share a prefix, so a reclaimed amount is comparable between two consecutive passes.
+No field, recipe or precedence changed - see `docs/design/converged-agent-turn-adr.md`.
+
 **Rationale.**
 The observability contract mirrors the reasoning pipeline's: same trace, same fail-open discipline, same never-gating rule for cache telemetry.
 

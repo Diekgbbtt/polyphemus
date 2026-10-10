@@ -161,7 +161,10 @@ def get_project_usage(project_id: str) -> dict:
     from the process-wide usage ledger: `context_tokens` (`cached` +
     `uncached`) and `generated_tokens` (`reasoning` + `visible`), plus the raw
     scalar `total_tokens`, the trial-budget scalar `capped_tokens` (generated +
-    uncached = `total_tokens - cached`), and a per-agent breakdown. Read-only, NO
+    uncached = `total_tokens - cached`), the count of calls whose cache detail
+    the provider never reported (`cache_detail_omitted`, N5 - it is what keeps a
+    reported 0% cached share readable as "the provider did not say" rather than
+    as "the provider measured a miss"), and a per-agent breakdown. Read-only, NO
     database access: the ledger read-throughs its durable per-project record
     (#326), so a stopped, restarted, or drained project still reports its spend,
     while an unknown/empty project returns zeros/empty and is never validated

@@ -188,6 +188,7 @@ def _build_agent(
     model_factory: ModelFactory | None,
     read_timeout_s: float | None = None,
     model_override: tuple[str, str] | None = None,
+    reasoning_profile=None,
 ):
     """Build the `create_agent` tool-calling agent shared by the sync/async turns.
 
@@ -197,10 +198,18 @@ def _build_agent(
     absent one, `read_timeout_s` builds the model through the budget-aware
     factory (the escalating per-attempt budget, #186) and the default factory
     is the fallback. This is the ONE place tool_calling is wired, so the two
-    turn entry points can never drift."""
+    turn entry points can never drift.
+
+    `reasoning_profile` is the T3 profile the reasoning-replay middleware holds
+    for this turn (resolved by the caller at turn construction, D6/D7: off the
+    #73 axis, fail-open to None). The middleware rides in the SAME list as
+    usage and parsing-recovery, so the re-persist of a turn's reasoning is an
+    AGENT-layer state-shape concern every stateful agent gets from this one seam
+    - never a per-module re-implementation (converged-agent-turn ADR)."""
     from langchain.agents import create_agent
 
     from polymerhus.app.llm.parsing_recovery import parsing_recovery_middleware
+    from polymerhus.app.llm.reasoning import reasoning_replay_middleware
     from polymerhus.app.llm.usage import usage_middleware
 
     if model_factory is not None:
@@ -220,8 +229,12 @@ def _build_agent(
     # #280: parsing-error recovery is wired FIRST so it is the after_model
     # loop-exit node - every caller after_model hook (the compaction ledger)
     # runs before it, and its `jump_to="model"` is honoured by the model-to-tools
-    # routing. Always present: an unanswered invalid call poisons the thread.
+    # routing. The reasoning replay sits beside usage: both are descriptive
+    # model-shape hooks that must never gate the loop. Always present: an
+    # unanswered invalid call poisons the thread, and a turn whose reasoning is
+    # not re-persisted breaks the next turn's byte-identical prefix.
     kwargs["middleware"] = [parsing_recovery_middleware(), usage_middleware(),
+                            reasoning_replay_middleware(reasoning_profile),
                             *list(middleware or ())]
     if store is not None:
         kwargs["store"] = store
@@ -411,78 +424,6 @@ def _resolve_reasoning_profile(role_id: str):
         return None
 
 
-def _log_replay_observability(report: dict, role_id: str, thread_id: str) -> None:
-    """CACHE-TRACK + readability: the per-turn llm-response observability line.
-    `cached_tokens` (usage observability) and the D11 grey-point heuristic
-    (interleaved + shape + cache-presence - low confidence) are recorded as
-    fields, NEVER gating and never on the #73 retry/timeout axis (D7):
-    this hook is purely descriptive, non-blocking, fail-open."""
-    logger.info(
-        "llm-response: role=%s thread=%s reasoning_readability=%s surface=%s "
-        "encrypted=%s cached_tokens=%s heuristic=%s",
-        role_id, thread_id, report.get("readability"), report.get("surface"),
-        report.get("encrypted"), report.get("cached_tokens"), report.get("heuristic"))
-
-
-def _replay_reasoning(agent, config: dict, result: dict, role_id: str,
-                      thread_id: str, profile) -> None:
-    """T6 REPLAY at the session seam boundary: parse the turn's assistant
-    message(s) per the T3 profile and RE-PERSIST them with the reasoning
-    attached, byte-identical, so the next turn restores the replay-ready
-    prefix and provider-native KV caching can hit (D8.1/D11.4).
-
-    The re-persist goes through `agent.update_state` - the official langgraph
-    state-replacement API - so it works on any checkpointer. Encrypted
-    reasoning is re-persisted as well (readability tracked, never skipped).
-    Failure to re-persist is logged and swallowed: replay is best-effort and
-    must never break the turn. The `profile` is resolved at turn CONSTRUCTION
-    (see `_resolve_reasoning_profile`) - never here, never on the return path
-    (D6/D7: the reader is off the turn path; no capability read delays the
-    turn's result)."""
-    from polymerhus.app.llm.reasoning import (
-        replay_assistant_reasoning,
-    )
-
-    messages = result.get("messages", [])
-    if not isinstance(messages, list):
-        return
-    replacement, report = replay_assistant_reasoning(list(messages), profile)
-    if replacement is not None:
-        try:
-            agent.update_state(config, {"messages": replacement})
-        except Exception as exc:  # noqa: BLE001 - replay must never break the turn
-            logger.warning(
-                "reasoning replay re-persist failed for %s/%s: %s (turn result "
-                "unchanged; replay is best-effort, never gating)",
-                role_id, thread_id, exc)
-            return
-    _log_replay_observability(report, role_id, thread_id)
-
-
-async def _areplay_reasoning(agent, config: dict, result: dict, role_id: str,
-                             thread_id: str, profile) -> None:
-    """Async replay re-persist (`aupdate_state`) - identical contract to
-    `_replay_reasoning`, for the event-loop parent entry point."""
-    from polymerhus.app.llm.reasoning import (
-        replay_assistant_reasoning,
-    )
-
-    messages = result.get("messages", [])
-    if not isinstance(messages, list):
-        return
-    replacement, report = replay_assistant_reasoning(list(messages), profile)
-    if replacement is not None:
-        try:
-            await agent.aupdate_state(config, {"messages": replacement})
-        except Exception as exc:  # noqa: BLE001 - replay must never break the turn
-            logger.warning(
-                "reasoning replay re-persist failed for %s/%s: %s (turn result "
-                "unchanged; replay is best-effort, never gating)",
-                role_id, thread_id, exc)
-            return
-    _log_replay_observability(report, role_id, thread_id)
-
-
 def run_session_turn(
     role_id: str,
     thread_id: SessionAddress | str,
@@ -544,7 +485,7 @@ def run_session_turn(
             role_id, tools=tools, response_format=response_format, system_prompt=system_prompt,
             middleware=middleware, store=store, checkpointer=checkpointer,
             model_factory=model_factory, read_timeout_s=read_timeout_s,
-            model_override=model_override,
+            model_override=model_override, reasoning_profile=profile,
         )
         config = _turn_config(role_id, thread_id, observe, extra_tags=extra_tags,
                               usage_scope=usage_scope)
@@ -578,7 +519,10 @@ def run_session_turn(
         if blackloop:
             turn = _blackloop_turn(thread_id, capture)
         elif result is not None:
-            _replay_reasoning(agent, config, result, role_id, thread_id, profile)
+            # The reasoning re-persist is the agent layer's: the
+            # `after_model` replay middleware re-attached it in the state the
+            # checkpointer wrote, so the seam reads the result rather than
+            # writing it again (converged-agent-turn ADR).
             turn = _to_turn(result, response_format, thread_id, reasoning=capture.reasoning)
         else:
             turn = _blackloop_turn(thread_id, capture)
@@ -641,7 +585,7 @@ async def arun_session_turn(
             role_id, tools=tools, response_format=response_format, system_prompt=system_prompt,
             middleware=middleware, store=store, checkpointer=checkpointer,
             model_factory=model_factory, read_timeout_s=read_timeout_s,
-            model_override=model_override,
+            model_override=model_override, reasoning_profile=profile,
         )
         config = _turn_config(role_id, thread_id, observe, extra_tags=extra_tags,
                               usage_scope=usage_scope)
@@ -675,7 +619,10 @@ async def arun_session_turn(
         if blackloop:
             turn = _blackloop_turn(thread_id, capture)
         elif result is not None:
-            await _areplay_reasoning(agent, config, result, role_id, thread_id, profile)
+            # The reasoning re-persist is the agent layer's: the
+            # `after_model` replay middleware re-attached it in the state the
+            # checkpointer wrote, so the seam reads the result rather than
+            # writing it again (converged-agent-turn ADR).
             turn = _to_turn(result, response_format, thread_id, reasoning=capture.reasoning)
         else:
             turn = _blackloop_turn(thread_id, capture)

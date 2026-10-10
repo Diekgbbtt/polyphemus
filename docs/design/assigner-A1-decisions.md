@@ -94,6 +94,14 @@ Removing it was right; leaving the role with NO skill was not, and it made the A
 The role-specific replacement is `skills/analysis/assigner/SKILL.md` (the #30 per-role retirement, for this role), split the same way the Bootstrapper's prompt is: `_ROLE_VERBATIM` in code carries the WHAT (identity, the aggregates-only output contract, the reference shape) and must hold even with no skills mount, while the skill carries the HOW (the ownership-judgment discipline and its worked examples).
 It is selected by `ASSIGNER_PROMPT_CONFIG`, and the default stays `baseline` - the pre-skill prompt, byte-for-byte - until a comparative eval flips it, on the `bootstrap._PROMPT_CONFIGS` discipline that a prompt default is earned by measurement rather than by argument.
 
+**Amended 2026-10-10 (prompt delivery, not content):** the volatility split above was right but the DELIVERY was wrong.
+The stable part was re-sent as a `SystemMessage` in every turn's message list, so each call appended another copy at a shifting position.
+The prompt's own size made that cost visible: `mechanism_typist`, whose skill is the largest of the three, fitted a quadratic in the call number (curvature +3,263/call²) while the Assigner stayed flat at ~4.7K.
+It now rides the `system_prompt=` binding of `create_agent` through the shared seam (`analysis/proposer_turn.py`), which the factory prepends ephemerally at each invocation and never writes into the checkpoint state.
+So the trail carries only the volatile part and the request's leading block is byte-identical on every call - which is the precondition for the prefix hold this section was already aiming at.
+The one-shot legacy leg (`prepend_prompt`) heads the message list with the same prompt, at the same position, so the request the model sees does not depend on which leg a call site takes.
+The full reasoning, the measured growth curves, and the ruling that collapsing the three-call chain was considered and REJECTED are in `docs/design/converged-agent-turn-adr.md`; the reusable rule is `statefulness-pattern-matrix.md` OUTLIER-5.
+
 **User message (volatile):** the un-truncated L1 identities block FIRST (the FR-INVENTORY discipline), then the rendered chunk.
 
 The L1 inventory stays in the USER message deliberately: it mutates as the run proceeds, so hoisting it into the system prefix would invalidate the cache every step and buy nothing.
