@@ -36,7 +36,7 @@ from polymerhus.attack.hunting.pod.pod_memory import (
     PodMemoryStore,
     note_key,
 )
-from polymerhus.attack.hunting.tool_contract import StoreToolBase
+from polymerhus.app.memory.tool_contract import StoreToolBase
 
 # The coded contract rejections (D84-22: the error explains the semantic
 # explicitly; the prefix is the short machine code).

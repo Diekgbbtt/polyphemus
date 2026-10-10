@@ -74,7 +74,6 @@ from __future__ import annotations
 
 import logging
 import os
-import threading
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Literal
@@ -83,11 +82,11 @@ import yaml
 
 from polymerhus.app.atomic_write import write_text_atomic
 from polymerhus.app.data_root import DATA_ROOT, project_dir
+from polymerhus.app.memory.store import BoundedRecordStore
 
 from .hunt_store import (
     ProjectMemoryStore,
     parse_config_file_name,
-    retain_bounded_records,
     semantic_key,
     split_semantic_key,
 )
@@ -117,27 +116,6 @@ HUNTER_NOTES_MAX_BYTES = 4 * 1024 * 1024
 # replaced with `-`, a safe, non-separator keyword char the pattern's own
 # names use freely (`-` itself is never banned - it is the replacement char).
 _UNSAFE_KEYWORD_CHARS = frozenset("_:/\\")
-
-# Per-project write serialisation (the pattern's I2, mirrored from the hunt
-# store): `write_spec`'s create-mode novelty gate is check-then-write and the
-# mover's produced->consumed rename (tracker #172) is check-then-move, and
-# both can run from different threads (the harness offloads sync tool calls to
-# worker threads while the mover drives the loop thread). A per-project lock
-# covers the whole critical section regardless of which thread calls, so the
-# duplicate gate is not TOCTOU and a rename never races a concurrent write.
-_PROJECT_LOCKS: dict[str, threading.Lock] = {}
-_PROJECT_LOCKS_GUARD = threading.Lock()
-
-
-def _lock_for(project_id: str) -> threading.Lock:
-    """The per-project lock, created once (the registry itself is guarded
-    against concurrent creation)."""
-    with _PROJECT_LOCKS_GUARD:
-        lock = _PROJECT_LOCKS.get(project_id)
-        if lock is None:
-            lock = threading.Lock()
-            _PROJECT_LOCKS[project_id] = lock
-        return lock
 
 
 def _is_durable_prior_insight(record: dict) -> bool:
@@ -207,7 +185,7 @@ class DuplicateSpecError(Exception):
     """
 
 
-class HunterMemoryStore:
+class HunterMemoryStore(BoundedRecordStore):
     """The hunter-owned per-project memory store (#164, GP6).
 
     Per-project, per-`fault_key` durable memory of the state-graph hunter:
@@ -360,20 +338,21 @@ class HunterMemoryStore:
             return [r for r in loaded.values() if isinstance(r, dict)]
         return []
 
-    @classmethod
-    def _write_records(cls, path: Path, records: list[dict]) -> None:
+    def _write_records(self, path: Path, records: list[dict]) -> None:
         # Destination safety net only: the app scaffold owns the fixed topology
         # (ensure_project); a store rooted outside it still needs its own file's
         # parent to exist. Atomic (#340): render first, then temp + fsync +
         # os.replace, so an aborted write leaves the previous notes.yaml intact
         # - never a truncated file every later read rejects.
-        retained = retain_bounded_records(
-            records,
-            max_records=HUNTER_NOTES_MAX_RECORDS,
-            max_bytes=HUNTER_NOTES_MAX_BYTES,
-            protected=_is_durable_prior_insight,
+        self._dump_yaml_atomic(
+            path,
+            self._bounded(
+                records,
+                max_records=HUNTER_NOTES_MAX_RECORDS,
+                max_bytes=HUNTER_NOTES_MAX_BYTES,
+                protected=_is_durable_prior_insight,
+            ),
         )
-        write_text_atomic(path, yaml.safe_dump(retained, sort_keys=False))
 
     def _read_spec_file(self, path: Path) -> dict:
         """Read ONE produced/consumed spec file; a corrupt or non-mapping body raises."""
@@ -461,7 +440,7 @@ class HunterMemoryStore:
         # lock (I2, mirrored from the hunt store): the create-mode novelty gate
         # is not TOCTOU and a concurrent produced->consumed rename (the mover,
         # #172) can never race the write.
-        with _lock_for(project_id):
+        with self._lock_for(project_id):
             consumed_path = self._spec_file(
                 project_id, fault_key, fault_keyword, strategy_keyword,
                 side="consumed",
@@ -582,7 +561,7 @@ class HunterMemoryStore:
         move refuses to clobber the consumed record (at-least-once: a moved
         message is never lost to a re-write)."""
         _validate_spec_file(spec_file)
-        with _lock_for(project_id):
+        with self._lock_for(project_id):
             spec_dir = self._spec_dir(project_id, fault_key)
             produced = spec_dir / "produced" / f"{spec_file}.yaml"
             consumed = spec_dir / "consumed" / f"{spec_file}.yaml"

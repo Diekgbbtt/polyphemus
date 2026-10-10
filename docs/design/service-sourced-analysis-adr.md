@@ -96,8 +96,12 @@ This is a deliberate reversal of the chunk-fed default; the streamed path remain
 - **D27.** Reuse the hunting memory pattern, not a copy.
   Lift to a shared app module: `retain_bounded_records`, a minimal shared store base, the coded-teaching rejection, and the notes-tool base.
   Hunting re-imports from the shared module; analysis never imports `attack.hunting`.
+  **Landed (T1)** in `src/polymerhus/app/memory/`: `bounds.py` (`retain_bounded_records`, `rendered_len`, `notes_body_len`), `store.py` (`BoundedRecordStore` + `project_lock`), and `tool_contract.py` (`StoreToolBase`, `coded_teaching_rejection`, `build_notes_tool` / `StoreNotesTool`).
+  Hunting's `HuntStore` / `HunterMemoryStore` build on `BoundedRecordStore` and import the primitives; the historical `attack/hunting/tool_contract.py` path is now a thin re-export so existing hunting imports (and tests) keep resolving.
 - **D28.** The lift lands as its own prerequisite change, green, before the pipeline is built, so a pipeline bug and a refactor bug are never indistinguishable.
-  Lift a minimal set; the hunting-shaped `NotesFieldMap` and `StoreNotesTool` wholesale are NOT moved (analysis defines its own args schema and field map on the shared base).
+  Lift a minimal set.
+  The seam-specific args schemas and field maps stay with their seams (the orchestrator's and hunter's live in `actors.py` / `hunter_tools.py`); only the GENERIC base and the generic builder move.
+  `StoreNotesTool` / `build_notes_tool` are already generic over `NotesFieldMap`, so they moved as-is; analysis defines its own args schema and field map on the shared base.
 - **D29.** Analysis store: `data/<project>/analysis/memory.yaml`, keyed by Service slug.
   The app scaffold (`ensure_project`) must create the `analysis/` bucket, or the first write fails.
 - **D30.** A new closed note-kind enum, fenced to L1-modelling kinds (no fault-hypothesis, payload, technique, or vector language; the phase-3 vocabulary stays unratified).

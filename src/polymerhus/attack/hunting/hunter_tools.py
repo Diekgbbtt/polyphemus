@@ -74,7 +74,7 @@ from .http_history_contract import (
 )
 from .hunter_state import FAULT_STATUSES
 from .hunting_status import TARGET_UNAVAILABLE_DIRECTIVE
-from .tool_contract import (
+from polymerhus.app.memory.tool_contract import (
     NotesFieldMap,
     StoreNotesTool,
     StoreToolBase,

@@ -39,7 +39,7 @@ Resolves #340 (eval-bugs-map EV-29).
 
 ## Follow-up: unbounded `notes.yaml` growth (resolved by #341)
 The 18 MB growth was a separate, non-corruption defect, deferred here because the atomic write removes the corruption failure mode entirely.
-It is now RESOLVED by #341: the whole-file notes stores keep a documented record-count and serialized-size bound (`hunt_store.retain_bounded_records`), so the rewrite cost is O(bound) instead of O(n) and a reader always sees a complete file.
+It is now RESOLVED by #341: the whole-file notes stores keep a documented record-count and serialized-size bound (`app.memory.bounds.retain_bounded_records`, originally `hunt_store.retain_bounded_records`; moved to the shared module by the service-sourced-analysis lift, T1), so the rewrite cost is O(bound) instead of O(n) and a reader always sees a complete file.
 The hunter `notes.yaml` protects the durable prior-insight records (the pod-export stubs) from ordinary eviction.
 See `docs/design/hunting-memory-growth-341-adr.md`.
 

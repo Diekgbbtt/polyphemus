@@ -44,7 +44,7 @@ The admitted tool surface is exactly three tools (the earlier back-edge-to-recon
 The graph view is read-only: a write attempt through the view is rejected (assertion C5).
 The orchestrator never writes L0/L1.
 
-**As of #293** the store surface is typed and single-sourced (`attack/hunting/tool_contract.py`): both tools are `BaseTool`s over pydantic `extra="forbid"` args schemas with every field described and the discriminators as `Literal` enums, and a call omitting the discriminator returns a CODED teaching rejection naming the required field and the known commands - never a bare pydantic error (#286). The `notes` implementation is shared with the hunting agent through a caller-bound store handle, so the `memory.yaml` destination is derived from the handle and is never a request field. The behaviour described in §3.4 of `hunting-orchestrator-candidates-rewrite-spec.md` remains authoritative for the read/write semantics.
+**As of #293** the store surface is typed and single-sourced (`app.memory.tool_contract`, originally `attack/hunting/tool_contract.py`; lifted by the service-sourced-analysis lift, T1): both tools are `BaseTool`s over pydantic `extra="forbid"` args schemas with every field described and the discriminators as `Literal` enums, and a call omitting the discriminator returns a CODED teaching rejection naming the required field and the known commands - never a bare pydantic error (#286). The `notes` implementation is shared with the hunting agent through a caller-bound store handle, so the `memory.yaml` destination is derived from the handle and is never a request field. The behaviour described in §3.4 of `hunting-orchestrator-candidates-rewrite-spec.md` remains authoritative for the read/write semantics.
 
 ### 1.5 Context
 

@@ -51,7 +51,10 @@ The contract is a single constant rendered into the tool's description, so no ag
 `docs/design/hunting-67-test-executor-pod-spec.md` §2, amended by the same change).*
 
 *Superseded in part by #293: the coded teaching rejection and the tool binding
-are now single-sourced in `tool_contract.py`, the orchestrator closures migrated
+are now single-sourced in `app.memory.tool_contract` (originally
+`attack/hunting/tool_contract.py`; lifted to the shared app module by the
+service-sourced-analysis lift, T1, with the historical path kept as a thin
+re-export), the orchestrator closures migrated
 to the same discipline, and `notes` is ONE shared implementation - see the #293
 section below. The `NoteProvenance` typed slot and the hunter/pod data contracts
 recorded here remain in force.*
@@ -118,7 +121,8 @@ rejection; an empty-argument call surfaced a bare `1 validation error for
 hunts_store` (#286). That disposition is now SUPERSEDED, and the discipline is
 single-sourced:
 
-1. **One shared contract module** (`attack/hunting/tool_contract.py`):
+1. **One shared contract module** (`app.memory.tool_contract`, lifted from
+   `attack/hunting/tool_contract.py` by the service-sourced-analysis lift, T1):
    - `coded_teaching_rejection` - the shared translation of a known
      schema-drift `ValidationError` (a missing required discriminator, or an
      out-of-enum value) into the coded JSON rejection naming the discriminator
@@ -222,7 +226,8 @@ log, so its observation metadata is the same shape for consistency.
 
 - The `exec` tool contract (`exec` remains a partially future section).
 - The orchestrator's `hunts_store` / `notes` closures MIGRATED into the shared
-  module (`tool_contract.py`) as of #293 - see the #293 section above. The
+  module (`app.memory.tool_contract`, originally `attack/hunting/tool_contract.py`)
+  as of #293 - see the #293 section above. The
   orchestrator now uses the same typed-schema + coded-teaching-rejection
   discipline as the hunter and pod, and the `notes` implementation is shared
   through a caller-bound store handle.

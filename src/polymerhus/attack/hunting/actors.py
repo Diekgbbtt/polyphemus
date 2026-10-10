@@ -41,7 +41,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from polymerhus.attack.hunting.conciseness import append_conciseness_directive
-from polymerhus.attack.hunting.tool_contract import (
+from polymerhus.app.memory.tool_contract import (
     NotesFieldMap,
     StoreToolBase,
     build_notes_tool,

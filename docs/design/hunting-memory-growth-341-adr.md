@@ -14,7 +14,8 @@ Resolves #341 (the growth follow-up deferred by #340 / EV-29).
 - `test-specs/` and `hunt_configs/` are one-file-per-record stores, so no single file grows; they are out of scope.
 
 ## Decision
-- Add ONE bounded-retention primitive, `hunt_store.retain_bounded_records(records, *, max_records, max_bytes, protected=None)`.
+- Add ONE bounded-retention primitive, `retain_bounded_records(records, *, max_records, max_bytes, protected=None)`.
+  It was defined in `hunt_store`; the service-sourced-analysis lift (T1) moved it to `app.memory.bounds`, and `hunt_store` / `hunter_memory` now import it from there (the single definition).
 - The policy is bounded records with value-aware eviction: the NEWEST records are kept and the OLDEST are dropped until the list fits `max_records` records or `max_bytes` serialized bytes.
 - A record for which `protected(record)` is true is dropped only after every unprotected record.
 - The hunter `notes.yaml` protects the durable prior-insight records: `protected = provenance.verdict_stub`.

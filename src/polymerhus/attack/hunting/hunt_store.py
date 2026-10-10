@@ -53,7 +53,6 @@ import json
 import logging
 import os
 import re
-import threading
 import uuid
 from pathlib import Path
 
@@ -61,6 +60,8 @@ import yaml
 
 from polymerhus.app.atomic_write import write_text_atomic
 from polymerhus.app.data_root import DATA_ROOT, project_dir
+from polymerhus.app.memory.bounds import notes_body_len, retain_bounded_records
+from polymerhus.app.memory.store import BoundedRecordStore
 
 logger = logging.getLogger(__name__)
 
@@ -90,25 +91,6 @@ _CONFIG_DIRECTORIES = ("produced", "consumed")
 
 MEMORY_NOTES_MAX_RECORDS = 2000
 MEMORY_NOTES_MAX_BYTES = 4 * 1024 * 1024
-
-# Per-project write serialisation (I2): write_config is check-then-write and
-# the notes surface is read-modify-write, and the async caller offloads reads
-# to worker threads while writes stay on the loop. A per-project lock covers
-# the whole critical section regardless of which thread calls, so the
-# duplicate gate is not TOCTOU and concurrent note appends never lose a note.
-_PROJECT_LOCKS: dict[str, threading.Lock] = {}
-_PROJECT_LOCKS_GUARD = threading.Lock()
-
-
-def _lock_for(project_id: str) -> threading.Lock:
-    """The per-project lock, created once (the registry itself is guarded
-    against concurrent creation)."""
-    with _PROJECT_LOCKS_GUARD:
-        lock = _PROJECT_LOCKS.get(project_id)
-        if lock is None:
-            lock = threading.Lock()
-            _PROJECT_LOCKS[project_id] = lock
-        return lock
 
 
 def config_file_name(unit_id: str, fault_class: str, vulnerability_class: str) -> str:
@@ -229,49 +211,6 @@ def _prior_spec_insight(spec: dict, spec_id: str | None = None) -> dict:
     return out
 
 
-def _rendered_len(body) -> int:
-    """The byte length of the exact YAML rendering a whole-file write lands, so
-    the size bound measures what actually reaches disk."""
-    return len(yaml.safe_dump(body, sort_keys=False).encode("utf-8"))
-
-
-def _notes_body_len(notes: list[dict]) -> int:
-    """The `memory.yaml` file's byte length for a notes list (the `notes:`
-    wrapper included), so the bound measures the whole file."""
-    return _rendered_len({"notes": notes})
-
-
-def retain_bounded_records(records, *, max_records, max_bytes, protected=None,
-                           render=_rendered_len):
-    """Bound a whole-file notes record list (issue #341).
-
-    `records` is oldest-first (the natural append order). The NEWEST records are
-    kept: while the list exceeds `max_records` records or its rendering exceeds
-    `max_bytes` bytes, the OLDEST record is dropped, so the whole-file rewrite
-    cost stays O(bound) instead of growing without limit over a long run.
-    `render` measures the exact body a caller will write (the bare list by
-    default, or the `notes:` wrapper for `memory.yaml`).
-
-    A record for which `protected(record)` is true is dropped only after every
-    unprotected record, so the durable prior-insight records survive ordinary
-    eviction. When the protected records ALONE exceed the bound the hard ceiling
-    still trims the oldest, so the bound is absolute. The newest record is
-    always kept whole - a single record larger than the ceiling is never
-    truncated (the write must land).
-    """
-    kept = list(records)
-    while len(kept) > 1 and (
-        len(kept) > max_records or render(kept) > max_bytes
-    ):
-        drop = next(
-            (i for i, record in enumerate(kept)
-             if not (protected is not None and protected(record))),
-            0,
-        )
-        del kept[drop]
-    return kept
-
-
 class DuplicateConfigError(ValueError):
     """A config write whose file name already exists in produced/ or consumed/
     (G4): the enforced novelty gate at the storage layer. The callers degrade
@@ -313,7 +252,7 @@ def require_config_identity(data: dict) -> tuple[str, str, str]:
     return unit_id, fault_class, vulnerability_class
 
 
-class HuntStore:
+class HuntStore(BoundedRecordStore):
     """The per-project hunt-config + notes memory store (memory-system spec)."""
 
     def __init__(self, root_dir: str | Path | None = None):
@@ -337,17 +276,6 @@ class HuntStore:
     def _memory_file(self, project_id: str) -> Path:
         return self._project_dir(project_id) / "memory.yaml"
 
-    # --- atomic write primitive (I1) --------------------------------------------
-
-    @staticmethod
-    def _dump_yaml_atomic(path: Path, body) -> None:
-        """Write `body` as YAML atomically through the shared app primitive
-        (#340): render the body in memory, then temp + fsync + `os.replace`.
-        A crash mid-dump leaves the previous file content intact (the old
-        store's documented "append is atomic per file" guarantee) and never a
-        partial target; the leftover temp is cleaned up best-effort."""
-        write_text_atomic(path, yaml.safe_dump(body, sort_keys=False))
-
     # --- config surface ----------------------------------------------------------
 
     def write_config(self, project_id: str, config, *, directory: str = "produced") -> str:
@@ -363,7 +291,7 @@ class HuntStore:
         if directory not in _CONFIG_DIRECTORIES:
             raise ValueError(
                 f"unknown config directory {directory!r}; known: {_CONFIG_DIRECTORIES}")
-        with _lock_for(project_id):
+        with self._lock_for(project_id):
             data = config.model_dump() if not isinstance(config, dict) else dict(config)
             unit_id, fault_class, vulnerability_class = require_config_identity(data)
             # #298 Rule 1: the hunt_id is a DERIVED symbol, never a request
@@ -412,7 +340,7 @@ class HuntStore:
         if directory not in _CONFIG_DIRECTORIES:
             raise ValueError(
                 f"unknown config directory {directory!r}; known: {_CONFIG_DIRECTORIES}")
-        with _lock_for(project_id):
+        with self._lock_for(project_id):
             data = config.model_dump() if not isinstance(config, dict) else dict(config)
             unit_id, fault_class, vulnerability_class = require_config_identity(data)
             # #298 Rule 1: `hunt_id` is DERIVED from the validated identity
@@ -479,7 +407,7 @@ class HuntStore:
         2-part revival-key prefix (`unit::cwe`): produced/ then consumed/, in
         file-name order. A missing store or a failing read degrades to an
         empty set - the caller keeps serving (O4)."""
-        with _lock_for(project_id):
+        with self._lock_for(project_id):
             out: list[dict] = []
             for path in self._config_paths(project_id):
                 item = self._config_with_key(path)
@@ -494,7 +422,7 @@ class HuntStore:
     def read_configs(self, project_id: str) -> list[dict]:
         """Every persisted config (produced + consumed), in deterministic
         order. Fail-open per record (O4)."""
-        with _lock_for(project_id):
+        with self._lock_for(project_id):
             out: list[dict] = []
             for path in self._config_paths(project_id):
                 body = self._read_yaml(path)
@@ -513,7 +441,7 @@ class HuntStore:
         the convention falls back to the body's identity (a file-name-less
         degrade). Fail-open: a missing directory or an unskippable record
         contributes nothing (O4)."""
-        with _lock_for(project_id):
+        with self._lock_for(project_id):
             directory = self._produced_dir(project_id)
             if not directory.exists():
                 return []
@@ -557,7 +485,7 @@ class HuntStore:
                 f"configs - ambiguous, refused)"
             )
         name = config_file_name(*parts)
-        with _lock_for(project_id):
+        with self._lock_for(project_id):
             produced = self._produced_dir(project_id) / name
             consumed = self._consumed_dir(project_id) / name
             if produced.exists() and consumed.exists():
@@ -608,7 +536,7 @@ class HuntStore:
         notes are evicted so the file cannot grow without limit."""
         retained = retain_bounded_records(
             notes, max_records=MEMORY_NOTES_MAX_RECORDS,
-            max_bytes=MEMORY_NOTES_MAX_BYTES, render=_notes_body_len,
+            max_bytes=MEMORY_NOTES_MAX_BYTES, render=notes_body_len,
         )
         self._dump_yaml_atomic(self._memory_file(project_id), {"notes": retained})
 
@@ -616,7 +544,7 @@ class HuntStore:
         """The notes for a key (a 2-part revival key or a 3-part semantic key)
         in natural append order; `key=None` returns every note. Fail-open
         (O4)."""
-        with _lock_for(project_id):
+        with self._lock_for(project_id):
             notes = self._load_notes(project_id)
             if key is None:
                 return notes
@@ -719,7 +647,7 @@ class HuntStore:
         order (no `_seq`, G11). Returns the stored record - its `note_id`
         identifies it for update/delete. The load-append-rewrite runs under
         the project's lock, so concurrent appends never lose a note (I2)."""
-        with _lock_for(project_id):
+        with self._lock_for(project_id):
             record = {"note_id": uuid.uuid4().hex[:12], "revival_key": key, "note": note}
             notes = self._load_notes(project_id)
             notes.append(record)
@@ -728,7 +656,7 @@ class HuntStore:
 
     def update_note(self, project_id: str, note_id: str, note: str) -> bool:
         """Amend the note with `note_id`; False when no such note exists."""
-        with _lock_for(project_id):
+        with self._lock_for(project_id):
             notes = self._load_notes(project_id)
             for record in notes:
                 if record.get("note_id") == note_id:
@@ -739,7 +667,7 @@ class HuntStore:
 
     def delete_note(self, project_id: str, note_id: str) -> bool:
         """Remove the note with `note_id`; False when no such note exists."""
-        with _lock_for(project_id):
+        with self._lock_for(project_id):
             notes = self._load_notes(project_id)
             kept = [n for n in notes if n.get("note_id") != note_id]
             if len(kept) == len(notes):

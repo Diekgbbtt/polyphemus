@@ -251,7 +251,9 @@ The memory + status lifecycle is synergistic in two directions:
   the previous complete file intact and a reader never sees a partial file - the corruption failure mode of EV-29.
 - **The whole-file notes stores are bounded (#341).** `memory.yaml` and the hunter `notes.yaml` are whole-file
   rewrites, so a long run would otherwise grow one file without limit (the observed 18 MB `notes.yaml` under the #338
-  orphan). The ONE bound is `hunt_store.retain_bounded_records`: the newest records are kept and the oldest are
+  orphan). The ONE bound is `app.memory.bounds.retain_bounded_records` (originally
+  `hunt_store.retain_bounded_records`; moved to the shared app module by the
+  service-sourced-analysis lift, T1): the newest records are kept and the oldest are
   evicted until the list fits a documented record count OR serialized-size ceiling, so the rewrite cost is O(bound).
   The hunter `notes.yaml` protects the durable prior-insight records (the Q16 pod-export stubs, `provenance.verdict_stub`,
   consumed by `read_hunter_notes` into a config's `prior_hunt_insights`) from ordinary eviction; the bound is absolute

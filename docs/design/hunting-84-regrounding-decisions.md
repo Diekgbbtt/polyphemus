@@ -307,7 +307,9 @@ tool-calling protocol's own schema (a typed sub-model for `provenance`), never p
 **#293 supersedes the per-seam copies:** the #209 disposition left the orchestrator's `hunts_store` / `notes`
 closures as-is and the rejection helper duplicated per seam. As of #293 the helper, the binding base
 (`StoreToolBase`), and the ONE shared `notes` implementation live in
-`src/polymerhus/attack/hunting/tool_contract.py`; the orchestrator migrated to typed schemas + the same coded
+`src/polymerhus/app/memory/tool_contract.py` (originally
+`src/polymerhus/attack/hunting/tool_contract.py`; lifted by the
+service-sourced-analysis lift, T1); the orchestrator migrated to typed schemas + the same coded
 rejection, and the pod keeps its own `NoteToolSpec` data contract while riding the shared base. See
 `docs/design/hunting-tools-design.md` #293.
 

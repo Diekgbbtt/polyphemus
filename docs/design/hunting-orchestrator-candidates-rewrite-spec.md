@@ -191,12 +191,13 @@ The memory-read/write surface is **two store tools plus `graph_view`**; the earl
    **As of #293** the tool is a typed `BaseTool` (`OrchestratorHuntsStoreArgs`, `extra="forbid"`, every field
    described) with `cmd: Literal["read","write"]`; `hunts_store.invoke({})` returns a CODED teaching rejection
    naming `cmd` and the known commands, never a bare pydantic error. The shared part is the BINDING (the typed
-   schema, the read/write dispatch, and the coded rejection) in `attack/hunting/tool_contract.py` - the same base
+   schema, the read/write dispatch, and the coded rejection) in `app.memory.tool_contract` (originally
+   `attack/hunting/tool_contract.py`; lifted by the service-sourced-analysis lift, T1) - the same base
    the hunter and pod ride; the WRITE ALGORITHM stays per-store (the orchestrator's `HuntStore` upsert with the G4
    dedup gate and the G1 verbatims; the hunter's spec write), by design rather than over-abstraction.
 2. **`notes`** - contract: `read` / `write` cmds, same data contract as `hunts_store`; write options are `append`,
    `update`, `delete` (G3).
-   **As of #293** `notes` is ONE shared implementation (`tool_contract.build_notes_tool` /
+   **As of #293** `notes` is ONE shared implementation (`app.memory.tool_contract.build_notes_tool` /
    `StoreNotesTool`) bound at the orchestrator and hunter seams through a caller-bound store handle and an explicit
    `NotesFieldMap`: the `memory.yaml` destination is derived from the handle (orchestrator `HuntStore`), never a
    request field, and the map is validated against the bound schema so a stray write field can never be read as a
