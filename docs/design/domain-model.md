@@ -282,6 +282,27 @@ A pass that produces no summary leaves every message verbatim.
 
 **The pod memory store** (the #84 test-executor pod's own memory sidecar, D84-20/28, adapted to the per-project deterministic-key pattern D84-33 through D84-38 as of T1/#177, layout re-scoped T2/#178 2026-08-24): the pod is both a session consumer and the owner of a durable, per-project, **deterministic-key** experiment-memory store (`src/polymerhus/attack/hunting/pod/pod_memory.py::PodMemoryStore`, `data/<project_id>/test-executor-pod/`) with a coherent per-spec layout - `variants/<variant-ref>.yaml` (the minted TestImplementationSpec variants, `vN` <-> order N), `experiment-log/<order>.yaml` (one file per variant - the D6 slice: raw_observations, interpretations, the FULL `executed` dedup ledger, and the `experiment_summary` TERMINAL record - overwritten idempotently) and the per-project `notes.yaml`. The spec identifier is the #164 hunter's `<fault>_<strategy>` (D84-34, NOT a content hash) and the order number is the variant ordinal; notes are keyed `<fault>_<strategy>:<order>:<note_name>` (D84-36). There is NO `_seq`/`_ref` (D84-36): the deterministic key plus the natural list order disambiguate every artifact; reads are latest-first, with the typed attribute filters (order/kind/classification/symptom_status) beside the retained substring match. It is pod-owned and per-project, never the cross-project `(unit_id, fault_class)` namespace. Its notes carry the canonical D84-32 value fields under a **closed `POD_NOTE_KINDS` enum** (provisional, D84-28): `experiment_summary` (the ONE consolidated P3 note per stretch - the Triager's primary reasoning artifact, sinking into the variant's log slice as its terminal record, D84-35), `kb_insight` (a KB-derived testing primitive), and `freeform`. The `note` tool (`pod/note_tool.py::PodNoteTool`) is a `BaseTool` (extra="forbid" args, coded rejections, fail-open on a None store) that writes/reads this store - `experiment_summary` writes route to the variant log slice, `kb_insight`/`freeform` to `notes.yaml` - with the prompt-memory pattern (D84-27): `MEMORY_READ_GUIDANCE` + the per-turn indexable key-list covering both the note keys and the experiment-log identifiers embedded in the Runner's lap opener and the Triager's delta.
 
+### 3.8 The agent sub-module - the addressable agent within a module
+
+An automated module does not act as one agent; it decomposes its work among several, and those agents hand artifacts to one another along a pipeline (hunting: the orchestrator configures, the hunter designs tests, the test-executor pod executes).
+
+The model so far named the agent's *memory* (Section 3.7, the session) but not the agent itself as an addressable, independently governable unit.
+
+The automation-forced answer, ratified 2026-10-10 (`#317`, `docs/design/hunting-317-agent-submodule-adr.md`): the **agent sub-module** - the implementation of one specific agent of one module.
+
+It is the unit of independent lifecycle control: it carries its own lifecycle state and its own admission gate, so a pipeline stage can be stopped and started without touching its siblings, the module, or the system.
+
+The term is a *structural* primitive, not a domain claim: it mints no graph node, asserts nothing about the target, and holds no judgment.
+
+Its ontological commitments:
+
+- It is part of a **module**, and the module is its container and its coarse switch: the module's lifecycle state and gate sit above the agents', and a module taken down takes every agent sub-module with it (the hierarchy is one-directional).
+- Its lifecycle state reuses the module's own vocabulary - there is one lifecycle language, not two - and its reachable states are the reversible ones (`running` and `paused`); the terminal states belong to the module's drain and shutdown.
+- It is **distinct from the session**: the session is one thread of reasoning memory; the agent sub-module is the addressable agent that owns one or many such threads. A hunter sub-module may run one thread per ratified config; a pod sub-module one per specified spec.
+- It is **addressed per run by the pipeline role**: a run is one execution of the pipeline over the module, and each role (orchestrator, hunter, pod) is addressable within that run, keyed `hunting:{run_id}:agent-submodules:{role}`; the same role under another run is a distinct handle, reaped at its run's terminal path (ADR `#317` section 4 "Granularity: per (run, role)").
+
+_Status_: ratified; built by `#317` (the per-role gate/state on the runtime manager, the surfer's per-role dispatch enforcement, and the app module REST surface).
+
 ---
 
 ## 4. The integrated model - L0 observed, L1 judged, and the hinge between

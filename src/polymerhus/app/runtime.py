@@ -52,6 +52,20 @@ _ACTIVE_RUNTIME_LOCK = threading.Lock()
 
 _FANOUT_TIMEOUT = 30.0
 
+# The agent sub-module roles each module declares (#317): the addressable
+# agents of the module, each with its own lifecycle state and admission gate.
+# Only hunting is wired by #317; the primitive is general.
+_AGENT_ROLES_BY_MODULE: dict[str, tuple[str, ...]] = {
+    "hunting": ("orchestrator", "hunter", "pod"),
+}
+
+
+def agent_submodule_address(module: str, run_id: str, role: str) -> str:
+    """The per-(run, role) agent-sub-module address (#317):
+    `<module>:<run_id>:agent-submodules:<role>` - the key a role handle is
+    registered under and the honest addressing of the surface."""
+    return f"{module}:{run_id}:agent-submodules:{role}"
+
 # The current run's per-session hold signal (ADR #169 Q14), bound by `_tracked`
 # for the run's full duration. The shared `ModuleGate` reads it at the unit
 # boundary so a dispatch point honours BOTH the module-wide pause AND the
@@ -149,6 +163,11 @@ class RuntimeLoopNotRunning(RuntimeError):
     module. Raised instead of the `AttributeError` a `None` loop would give."""
 
 
+class UnknownAgentSubmoduleRole(Exception):
+    """The role is not a declared agent sub-module role of the module (#317):
+    a named refusal at the addressing boundary - no role handle is created."""
+
+
 class ModuleGate:
     """The per-module cooperative admission gate (#121 D4).
 
@@ -167,11 +186,16 @@ class ModuleGate:
     hold event) pass through unchanged.
     """
 
-    def __init__(self, width: int):
+    def __init__(self, width: int, parent: "ModuleGate | None" = None):
         self.width = width
         self._sem = asyncio.Semaphore(width)
         self._running = asyncio.Event()
         self._running.set()
+        # The gate this one layers UNDER (#317): a role gate binds to its
+        # module's gate so the module pause/drain dominates every role - a
+        # module down takes every role down, a role down leaves the module and
+        # its siblings up.
+        self._parent = parent
 
     def clear_running(self) -> None:
         self._running.clear()
@@ -196,15 +220,21 @@ class ModuleGate:
         return self
 
     async def _await_admission(self) -> None:
-        # The next unit starts only when the module is running AND the current
-        # run is not held. Re-checked in a loop so a pause/hold landing while
-        # the other signal resolves still gates the unit (Q14: the NEXT unit).
+        # The next unit starts only when the module is running AND the parent
+        # gate (when this gate layers under one, #317) is running AND the
+        # current run is not held. Re-checked in a loop so a pause/hold landing
+        # while the other signal resolves still gates the unit (Q14: the NEXT
+        # unit).
         while True:
             hold = _CURRENT_RUN_HOLD.get()
+            parent = self._parent
+            parent_ok = parent is None or parent._running.is_set()
             running_ok = self._running.is_set()
             hold_ok = hold is None or hold.is_set()
-            if running_ok and hold_ok:
+            if parent_ok and running_ok and hold_ok:
                 return
+            if parent is not None and not parent._running.is_set():
+                await parent._running.wait()
             if not running_ok:
                 await self._running.wait()
             if hold is not None and not hold.is_set():
@@ -229,11 +259,15 @@ class ModuleHandle:
     `call_soon_threadsafe`, exactly like the gate's `_running` event.
     """
 
-    def __init__(self, name: str, gate: ModuleGate, hooks: dict[str, Any] | None):
+    def __init__(self, name: str, gate: ModuleGate, hooks: dict[str, Any] | None,
+                 agent_roles: tuple[str, ...] = ()):
         self.name = name
         self.gate = gate
         self.hooks = hooks or {}
         self.state = ModuleState.RUNNING
+        # The module's declared agent sub-module roles (#317): the addressable
+        # agents of this module. Only hunting declares them today.
+        self.agent_roles = tuple(agent_roles)
         self._runs: dict[str, asyncio.Task] = {}
         self._holds: dict[str, asyncio.Event] = {}
         self._runs_lock = threading.Lock()
@@ -283,6 +317,27 @@ class ModuleHandle:
         return self._idle.wait(timeout)
 
 
+class AgentSubmoduleHandle:
+    """A per-(run, role) agent sub-module (#317): the addressable agent of one
+    module, carrying its own lifecycle state (reusing `ModuleState`) and its own
+    cooperative gate (reusing `ModuleGate`, layered under the module gate).
+
+    The primitive is reversible and owns only `start` / `stop`, with the two
+    reachable states `RUNNING` and `PAUSED`; the terminal states belong to the
+    module's own drain and shutdown. It is registered when a run boots and reaped
+    at the run's terminal path, so it never outlives its run. The role state is
+    in-memory and resets to `RUNNING` on process start (a fresh control plane),
+    and is never persisted or restored."""
+
+    def __init__(self, module: str, run_id: str, role: str, gate: ModuleGate):
+        self.module = module
+        self.run_id = run_id
+        self.role = role
+        self.gate = gate
+        self.state = ModuleState.RUNNING
+        self.address = agent_submodule_address(module, run_id, role)
+
+
 class RuntimeManager:
     """The module control plane (#121): one shared worker loop, the module
     registry, cooperative per-module gates, and the shutdown fan-out."""
@@ -297,6 +352,11 @@ class RuntimeManager:
         if gate_widths:
             self._gate_widths.update(gate_widths)
         self._handles: dict[str, ModuleHandle] = {}
+        # The per-(run, role) agent sub-modules (#317), keyed by address. The
+        # registry is created and mutated on the worker loop (run boot/terminal)
+        # and read/stopped from the API thread, so it is lock-guarded.
+        self._agent_submodules: dict[str, AgentSubmoduleHandle] = {}
+        self._agent_lock = threading.Lock()
         self._loop: asyncio.AbstractEventLoop | None = None
         self._runner: asyncio.Runner | None = None
         self._stop: asyncio.Event | None = None
@@ -370,11 +430,19 @@ class RuntimeManager:
         *,
         hooks: dict[str, Any] | None = None,
         gate_width: int | None = None,
+        agent_roles: tuple[str, ...] | None = None,
     ) -> ModuleHandle:
         if name in self._handles:
             raise KeyError(f"module {name!r} already registered")
         width = gate_width if gate_width is not None else self._gate_widths.get(name, 1)
-        handle = ModuleHandle(name=name, gate=ModuleGate(width), hooks=hooks)
+        roles = (
+            tuple(agent_roles)
+            if agent_roles is not None
+            else _AGENT_ROLES_BY_MODULE.get(name, ())
+        )
+        handle = ModuleHandle(
+            name=name, gate=ModuleGate(width), hooks=hooks, agent_roles=roles,
+        )
         self._handles[name] = handle
         return handle
 
@@ -399,6 +467,125 @@ class RuntimeManager:
 
     def wait_module_idle(self, name: str, *, timeout: float) -> bool:
         return self.handle(name).wait_idle(timeout)
+
+    # --- agent sub-modules (#317) --------------------------------------------
+
+    def register_agent_submodule(
+        self, module: str, run_id: str, role: str
+    ) -> AgentSubmoduleHandle:
+        """Register (idempotently) the agent sub-module for `(run_id, role)` and
+        return its handle. A role is valid only when the module declares it - an
+        unknown role is a named refusal and no handle is created. The role gate
+        is a fresh `ModuleGate` bound to the module gate as its parent (the
+        module dominates every role), so a module pause/drain takes every role
+        down. The handle is created with state `RUNNING` (the boot default); a
+        later stop preserves its state across a re-register (the bootstrap
+        registers without resetting an operator's pre-boot stop)."""
+        handle = self.handle(module)
+        if role not in handle.agent_roles:
+            raise UnknownAgentSubmoduleRole(
+                f"unknown agent sub-module role {role!r} for module {module!r}"
+            )
+        address = agent_submodule_address(module, run_id, role)
+        with self._agent_lock:
+            existing = self._agent_submodules.get(address)
+            if existing is not None:
+                return existing
+            gate = ModuleGate(handle.gate.width, parent=handle.gate)
+            sub = AgentSubmoduleHandle(module, run_id, role, gate)
+            self._agent_submodules[address] = sub
+            return sub
+
+    def _get_agent_submodule(
+        self, module: str, run_id: str, role: str
+    ) -> AgentSubmoduleHandle | None:
+        """The live handle for `(module, run_id, role)`, or None. The lock-guarded
+        READ-side counterpart of `register_agent_submodule`: it never mutates the
+        registry, so a read can never resurrect a reaped role."""
+        address = agent_submodule_address(module, run_id, role)
+        with self._agent_lock:
+            return self._agent_submodules.get(address)
+
+    def agent_submodule_state(self, module: str, run_id: str, role: str) -> ModuleState:
+        """The role's current state - a PURE read (#317). It never registers a
+        handle, so a read can never resurrect a role the run terminal reaped
+        (handles never outlive the run). A declared role with no live handle
+        reads `RUNNING` (the in-memory boot default); an undeclared role is a
+        named refusal."""
+        handle = self.handle(module)
+        if role not in handle.agent_roles:
+            raise UnknownAgentSubmoduleRole(
+                f"unknown agent sub-module role {role!r} for module {module!r}"
+            )
+        sub = self._get_agent_submodule(module, run_id, role)
+        return sub.state if sub is not None else ModuleState.RUNNING
+
+    def agent_submodule_states(
+        self, module: str, run_id: str
+    ) -> dict[str, ModuleState]:
+        """Every declared role of the module with its current state, keyed by
+        role - the roles + states read surface. A PURE read: it registers
+        nothing, so it never resurrects a reaped handle; a role with no live
+        handle reads its declared default `RUNNING`."""
+        handle = self.handle(module)
+        states: dict[str, ModuleState] = {}
+        for role in handle.agent_roles:
+            sub = self._get_agent_submodule(module, run_id, role)
+            states[role] = sub.state if sub is not None else ModuleState.RUNNING
+        return states
+
+    def agent_submodule_running(self, module: str, run_id: str, role: str) -> bool:
+        """Whether the role is currently `RUNNING` (#317) - the dispatch
+        decision's convenience over `agent_submodule_state`. A declared role
+        with no live handle is `RUNNING` (fail-open: an unregistered role never
+        wedges a run)."""
+        return self.agent_submodule_state(module, run_id, role) is ModuleState.RUNNING
+
+    def agent_submodule_gate(self, module: str, run_id: str, role: str) -> ModuleGate:
+        return self.register_agent_submodule(module, run_id, role).gate
+
+    def stop_agent_submodule(self, module: str, run_id: str, role: str) -> ModuleState:
+        """Move the role to `PAUSED` (#317): refuse new dispatch for the role
+        AND hold its in-flight threads at their next unit boundary. Idempotent -
+        a stop of an already-paused role is a no-op."""
+        sub = self.register_agent_submodule(module, run_id, role)
+        if sub.state is not ModuleState.PAUSED:
+            sub.state = ModuleState.PAUSED
+            self._deliver(sub.gate.clear_running)
+        return sub.state
+
+    def start_agent_submodule(self, module: str, run_id: str, role: str) -> ModuleState:
+        """Return the role to `RUNNING` (#317) and release its held threads.
+        Idempotent - a start of an already-running role is a no-op."""
+        sub = self.register_agent_submodule(module, run_id, role)
+        if sub.state is not ModuleState.RUNNING:
+            sub.state = ModuleState.RUNNING
+            self._deliver(sub.gate.set_running)
+        return sub.state
+
+    def reap_agent_submodules(self, module: str, run_id: str | None = None) -> None:
+        """Drop the registered agent sub-modules of `module` (of one run, or
+        every run when `run_id` is None). Called at the run's terminal path and
+        at the module settle, so no role handle outlives its run."""
+        with self._agent_lock:
+            for address in list(self._agent_submodules):
+                sub = self._agent_submodules[address]
+                if sub.module == module and (run_id is None or sub.run_id == run_id):
+                    del self._agent_submodules[address]
+
+    def is_session_held(self, module: str, run_id: str) -> bool:
+        """True when the registered run's per-session hold is currently active
+        (its thread is held). False for an unregistered run."""
+        hold = self.handle(module).get_hold(run_id)
+        return hold is not None and not hold.is_set()
+
+    def _deliver(self, fn: Any) -> None:
+        """Deliver a gate event mutation to the worker loop via
+        `call_soon_threadsafe`, no-op when the loop is gone (a post-shutdown
+        transition leaves the in-memory state set; the deliver is skipped)."""
+        loop = self._loop
+        if loop is not None and not loop.is_closed():
+            loop.call_soon_threadsafe(fn)
 
     # --- driving the worker loop ---------------------------------------------
 
@@ -589,6 +776,9 @@ class RuntimeManager:
                 flush_result.dropped_thread_ids,
             )
         handle.state = ModuleState.STOPPED
+        # The module's drain/shutdown settles its agent sub-modules with it, so
+        # no role gate outlives the module (#317).
+        self.reap_agent_submodules(handle.name)
 
     def _flush_module(self, handle: ModuleHandle) -> "FlushResult":
         """Resolve and run the module's flush (TD-2/TD-6): the REGISTERED flush hook

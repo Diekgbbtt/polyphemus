@@ -965,6 +965,167 @@ async def stop_hunting_session(project_id: str, hunting_run_id: str,
     return await _session_verb(project_id, hunting_run_id, session_id, "stop")
 
 
+# --- #317: agent sub-modules and threads (app module REST surface) -----------
+#
+# The additive per-agent control surface over the hunting pipeline: each agent
+# role of a run carries its own lifecycle state and gate (layered under the
+# module gate). `start`/`stop` are idempotent; single-thread stop/resume reuse
+# the existing per-session hold/resume verbs. Map: 404 unknown run / role /
+# thread, 503 no active runtime.
+
+
+async def _hunting_run_or_404(hunting_run_id: str) -> dict:
+    from polymerhus.app.clients import pg  # noqa: PLC0415
+
+    row = await asyncio.to_thread(pg.get_hunting_run, hunting_run_id)
+    if row is None:
+        raise HTTPException(
+            status_code=404, detail="no hunting run for that hunting_run_id")
+    return row
+
+
+@router.post(
+    "/projects/{project_id}/hunting/{hunting_run_id}/agent-submodules/{role}/start"
+)
+async def start_agent_submodule(project_id: str, hunting_run_id: str, role: str) -> dict:
+    """Start ONE agent sub-module role of the run (#317): move it to `RUNNING`
+    and release its held threads. Idempotent (a no-op when already running). 404
+    unknown run / unknown role; 503 no active runtime."""
+    return await _agent_submodule_verb(project_id, hunting_run_id, role, start=True)
+
+
+@router.post(
+    "/projects/{project_id}/hunting/{hunting_run_id}/agent-submodules/{role}/stop"
+)
+async def stop_agent_submodule(project_id: str, hunting_run_id: str, role: str) -> dict:
+    """Stop ONE agent sub-module role of the run (#317): move it to `PAUSED`,
+    refuse new dispatch for the role AND hold its in-flight threads at their
+    next unit boundary. Idempotent. 404 unknown run / unknown role; 503 no active
+    runtime."""
+    return await _agent_submodule_verb(project_id, hunting_run_id, role, start=False)
+
+
+async def _agent_submodule_verb(project_id: str, hunting_run_id: str, role: str,
+                                *, start: bool) -> dict:
+    from polymerhus.app.runtime import UnknownAgentSubmoduleRole  # noqa: PLC0415
+
+    await _hunting_run_or_404(hunting_run_id)
+    runtime = _runtime_or_503()
+    try:
+        if start:
+            state = runtime.start_agent_submodule("hunting", hunting_run_id, role)
+        else:
+            state = runtime.stop_agent_submodule("hunting", hunting_run_id, role)
+    except UnknownAgentSubmoduleRole as exc:
+        raise HTTPException(
+            status_code=404,
+            detail=f"unknown agent sub-module role {role!r}",
+        ) from exc
+    return {
+        "hunting_run_id": hunting_run_id,
+        "role": role,
+        "state": state.value,
+    }
+
+
+@router.get("/projects/{project_id}/hunting/{hunting_run_id}/agent-submodules")
+async def list_agent_submodules(project_id: str, hunting_run_id: str) -> list[dict]:
+    """The run's agent sub-module roles with their states (#317): exactly the
+    three roles `orchestrator`, `hunter`, `pod`. 404 unknown run; 503 no active
+    runtime."""
+    await _hunting_run_or_404(hunting_run_id)
+    runtime = _runtime_or_503()
+    states = runtime.agent_submodule_states("hunting", hunting_run_id)
+    return [{"role": r, "state": s.value} for r, s in states.items()]
+
+
+@router.get("/projects/{project_id}/hunting/{hunting_run_id}/threads")
+async def list_hunting_threads(project_id: str, hunting_run_id: str) -> list[dict]:
+    """Every live thread of the run (#317) as `{thread_id, role, held}`, a read
+    surface that includes the surfer and the bootstrap (role `infra`). 404
+    unknown run; 503 no active runtime."""
+    from polymerhus.attack.hunting.surfer import (  # noqa: PLC0415
+        derive_thread_role,
+        is_run_session_id,
+    )
+
+    await _hunting_run_or_404(hunting_run_id)
+    runtime = _runtime_or_503()
+    threads: list[dict] = []
+    for session_id in runtime.run_ids("hunting"):
+        if not is_run_session_id(session_id, hunting_run_id):
+            continue
+        threads.append({
+            "thread_id": session_id,
+            "role": derive_thread_role(session_id),
+            "held": runtime.is_session_held("hunting", session_id),
+        })
+    return threads
+
+
+async def _thread_verb(project_id: str, hunting_run_id: str, thread_id: str,
+                       *, stop: bool) -> dict:
+    from polymerhus.app.runtime import RunNotRegistered  # noqa: PLC0415
+    from polymerhus.attack.hunting.surfer import (  # noqa: PLC0415
+        is_run_session_id,
+    )
+
+    await _hunting_run_or_404(hunting_run_id)
+    if not is_run_session_id(thread_id, hunting_run_id):
+        raise HTTPException(
+            status_code=404,
+            detail=f"no thread {thread_id!r} of hunting run {hunting_run_id}",
+        )
+    runtime = _runtime_or_503()
+    # Registration is checked EXPLICITLY (as the pod-resume seam does): the
+    # shared `resume_session` verb is a documented no-op for a never-registered
+    # run and NEVER raises, so without this an unknown-unregistered thread would
+    # be answered `200 resumed` (a fabricated success). Stop/`hold_session`
+    # raises on its own, but both verbs must 404 an unknown-unregistered thread.
+    if thread_id not in runtime.run_ids("hunting"):
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"no live thread {thread_id!r} of hunting run {hunting_run_id}"
+            ),
+        )
+    try:
+        if stop:
+            runtime.hold_session("hunting", thread_id)
+        else:
+            runtime.resume_session("hunting", thread_id)
+    except RunNotRegistered as exc:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"no live thread {thread_id!r} of hunting run {hunting_run_id}"
+            ),
+        ) from exc
+    return {
+        "hunting_run_id": hunting_run_id,
+        "thread_id": thread_id,
+        "state": "held" if stop else "resumed",
+    }
+
+
+@router.post("/projects/{project_id}/hunting/{hunting_run_id}/threads/{thread_id}/stop")
+async def stop_hunting_thread(project_id: str, hunting_run_id: str,
+                              thread_id: str) -> dict:
+    """Hold ONE live thread of the run (#317): its next unit boundary waits
+    until resumed; the thread stays registered. Idempotent. 404 unknown run /
+    unknown-unregistered thread; 503 no active runtime."""
+    return await _thread_verb(project_id, hunting_run_id, thread_id, stop=True)
+
+
+@router.post("/projects/{project_id}/hunting/{hunting_run_id}/threads/{thread_id}/resume")
+async def resume_hunting_thread(project_id: str, hunting_run_id: str,
+                                thread_id: str) -> dict:
+    """Release a held thread of the run (#317): a resume of a not-held thread is
+    the runtime verb's safe no-op. Idempotent. 404 unknown run / unknown
+    thread; 503 no active runtime."""
+    return await _thread_verb(project_id, hunting_run_id, thread_id, stop=False)
+
+
 # --- module-lifecycle surface (#118/#121): drive the runtime plane ------------
 
 _MODULES = ("recon", "analysis", "hunting")
