@@ -111,7 +111,10 @@ This is a deliberate reversal of the chunk-fed default; the streamed path remain
 - **D34.** Binding a second tool changes the structured-output negotiation; verify the negotiation still lands on the same structured method, or the cache fix regresses.
   The constant-shape tests pin `convert_to_openai_tool` equality and must be extended.
 - **D35.** Re-mine the per-role compaction thresholds for the new per-Service unit; the current `0.016` and `0.08` were mined on per-chunk occupancy and are stale.
-  **Landed (T3):** D29-D34 are implemented in `analysis/memory.py` (the store, the closed note-kind enum, the args schema + field map, `notes_tool_for`) and `proposer_turn.py` (the notes tool bound on every turn).
+  **Reconciled (T7): deferred to the phase-6 eval, and recorded as such.** The service-sourced unit's occupancy differs by construction (a per-Service slice is at most one Service's aggregated surface; the global assign pass groups the whole settled surface into one unit), so the per-chunk values are not the new optimum.
+  The mined values are left in place because they remain defensible in the safe direction: a fraction-of-window threshold generous for the larger per-chunk unit fires LESS often on the smaller per-Service unit, and the mode is behind a flag.
+  The re-mine is owned by the phase-6 comparative eval (D48), and the reasoning is recorded in `proposer-per-batch-cache-adr.md` section 8, so the stale value is never mistaken for a measured one.
+  **Landed (T3, the memory items D29-D34, recorded here for locality):** `analysis/memory.py` (the store, the closed note-kind enum, the args schema + field map, `notes_tool_for`) and `proposer_turn.py` (the notes tool bound on every turn).
   The negotiation is pinned to its pre-notes no-tools axis (`stateful_turn(structured_tools_bound=False)`), so the second tool never flips the negotiated method (D34).
   The `analysis/` bucket is in `PROJECT_SCAFFOLD` (D29).
   The per-unit backstop is `run_workflow(..., unit_slug=, memory=, project_id=)` -> `ensure_unit_note` (D31).
@@ -146,6 +149,12 @@ This is a deliberate reversal of the chunk-fed default; the streamed path remain
 - **D46.** Testing tiers: unit for the pure Service-slice builder, the `ReasoningWorkflow` dependency validation, and the notes-args schema; integration for the global pass and the per-Service loop with injected `invoke_fn`/`write_fn` and a fake graph; a no-mock pipeline walkthrough; e2e via the phase-6 eval.
 - **D47.** Add a test that the streamed default is byte-unbroken under the new mode flag.
 - **D48.** The regression oracle is comparative: reuse `evaluate_assigner`/the bootstrapper harness on a service-sourced arm against the streamed arm; assert no regression on the integrity columns (stale pool, withheld rate, out-of-inventory rate); do not encode a target count.
+  **The arms, defined (not yet run).** Arm A is the streamed default (`analysis_mode: streamed`, `streaming_analysis: true`); arm B is the service-sourced pipeline (`analysis_mode: service_sourced`).
+  The two arms run the SAME targets and the SAME `operator_kb`, selected per trial through `TrialConfig.analysis_mode` (the settings PUT; the `run` verb's `--analysis-mode`).
+  Per target, read the graph back with `evaluation.read_assignment` and derive `assignment_metrics`, then `evaluation.evaluate_assigner` / `compare` with `primary_key="n_aggregates"` and `ASSIGNMENT_INTEGRITY_KEYS`.
+  The verdict is read off the INTEGRITY columns, not the primary axis: arm B must not regress the `stale_pool` (a LARGER stale pool is the positive signal here), the `withheld_rate`, or the `out_of_inventory_rate`.
+  Assignment VOLUME is never a score, and no target count or threshold is encoded anywhere.
+  This is the measurement D22 rests on.
 
 ## 4. Riskiest decision and its mitigation
 

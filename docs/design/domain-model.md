@@ -371,6 +371,15 @@ This is decided against two alternatives - edges between L0 parameters (which re
 
 The DataItem is doubly load-bearing: it is the Tier-1 trust locus, and it is the *noise filter for concretisation* - the small semantic selector through which a test reaches its handful of real L0 sites instead of fanning out over a service's whole member set (`L1D-32`, the `L1R-8` hazard).
 
+### 4.6 The Service as the pipeline unit - the up/down classing
+
+The Service is the first-class unit of the analysis pipeline, not the recon job's surface (the service-sourced mode, `docs/design/service-sourced-analysis-adr.md`).
+This is a READING DISCIPLINE, not an ontology change: no L0 or L1 node class is added.
+The Service (an L1 target) is promoted to the pipeline unit, and the L0 surface is demoted to lower-class evidence reachable only through the hinge edges (`AGGREGATES`, `SURFACES_AT`, `EVIDENCED_BY`) - the same graph, read Service-first.
+The pipeline runs post-recon: a global assign pass attaches the settled L0 to Services via `AGGREGATES` (Section 4.2), then the per-Service loop iterates the bootstrapped Services (plus one residual unit for the unaggregated surface) and runs a decomposed reasoning workflow per Service, each sub-problem one LLM turn carrying its declared inputs verbatim.
+The streamed, chunk-fed path remains the default; the service-sourced pipeline is a selectable mode behind `settings.recon.analysis_mode`.
+The design decision is `docs/design/service-sourced-analysis-adr.md`; the spec is `docs/design/service-sourced-analysis-spec.md`.
+
 ---
 
 ## 5. Actors and their authority

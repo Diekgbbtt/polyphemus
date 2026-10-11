@@ -312,6 +312,12 @@ def _chunk_slice(chunk: Chunk) -> dict:
 # deliberately unreached. The reasoning workflow now runs the first three stages
 # (`candidate_owners`) on every pass and the RESIDUE stage inside `assign`, so the
 # reflection is no longer dead weight. The stages stay TESTED on both prompt arms.
+#
+# RECONCILED (T7): reflection was always carried TWICE - once by the workflow's
+# sub-problem prompts (below) and once by a `mode="reflect"` append to the STABLE
+# system prompt. Because the workflow now runs the stages on EVERY pass, the
+# `mode` append was pure duplication; it is retired and the workflow is the single
+# carrier. See `docs/design/assigner-A1-decisions.md` section 5.
 _REFLECT_STEPS = (
     "RESTATE AS EVIDENCE: for each aggregate, quote the exact path segment or "
     "parameter name you matched and the clause of the Service's contract it matched "
@@ -324,11 +330,6 @@ _REFLECT_STEPS = (
     "CALIBRATE: state each confidence, whether it clears the bar, and what specific "
     "evidence would move it.",
     "RESIDUE: list the Endpoints you could not place, one short sentence each.",
-)
-
-_REFLECT_VERBATIM = (
-    "\n\nREFLECT PASS. Before emitting any revised proposal, write these four steps out:\n"
-    + "\n".join(f"{i}. {s}" for i, s in enumerate(_REFLECT_STEPS, 1))
 )
 
 # The Assigner's two sub-problems (spec 3.3): `candidate_owners` is the reasoning
@@ -370,11 +371,13 @@ WORKFLOW = ReasoningWorkflow(
 )
 
 
-def _system_prompt(mode: str = "create") -> str:
-    """The STABLE half of the prompt (#34): the role verbatim, the judgment
-    discipline, and under `reflect` the reflection protocol. Everything here is
-    invariant across a run so the provider prompt-cache prefix survives it; the
-    volatile inventory and chunk ride the user message instead.
+def _system_prompt() -> str:
+    """The STABLE half of the prompt (#34): the role verbatim and the judgment
+    discipline. Everything here is invariant across a run so the provider
+    prompt-cache prefix survives it; the volatile inventory and chunk ride the
+    user message instead. The reflection stages are NOT appended here: the
+    workflow's sub-problem prompts are their single carrier (T7 reconciliation),
+    so the stable prefix is byte-identical on every pass, reflect or create.
 
     It deliberately does NOT load the shared legacy analyser skill. That skill is
     L0-oriented and addresses a generalist proposer: it instructs System modelling,
@@ -389,7 +392,7 @@ def _system_prompt(mode: str = "create") -> str:
         if _assigner_prompt_config() == "skill"
         else f"{_ROLE_VERBATIM}\n\n{_FEW_SHOTS}"
     )
-    return base + _REFLECT_VERBATIM if mode == "reflect" else base
+    return base
 
 
 _ROLE_VERBATIM = (
@@ -544,7 +547,6 @@ def assign(
     inventory: dict | None = None,
     existing_slugs: frozenset[str] = frozenset(),
     bar: float = ASSIGN_CONFIDENCE_BAR,
-    mode: str = "create",
     run_id: str | None = None,
     tags: list | None = None,
 ) -> AssignmentOutcome:
@@ -570,7 +572,7 @@ def assign(
     # cache prefix is a byte-identical leading block on every chunk and the prompt
     # never accumulates in the checkpointed trail. The legacy one-shot seam prepends
     # it into its message list instead.
-    system_prompt = _system_prompt(mode)
+    system_prompt = _system_prompt()
     # The volatile base sources the workflow injects verbatim: the inventory block
     # FIRST (identity reuse), then the rendered chunk surface.
     base_artifacts = {
@@ -688,7 +690,6 @@ def make_assigner_body(*, invoke_fn, inventory_fn, bar: float = ASSIGN_CONFIDENC
             inventory=inventory,
             existing_slugs=frozenset(inventory.get("services") or ()),
             bar=bar,
-            mode=getattr(dispatch, "mode", "create"),
             run_id=run_id or None,
             tags=["analysis", getattr(dispatch, "role", "assigner")],
         )

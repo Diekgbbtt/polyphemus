@@ -1,6 +1,7 @@
 # ADR: the converged agent turn - one `system_prompt` seam, reasoning replayed by an agent-layer middleware, and the collapse assessment
 
 **Status:** ACCEPTED and IMPLEMENTED (2026-10-10; branch `refactor/analysis-context-engineering`, off `dev` `fe375d0`).
+**Amended 2026-10-11** by `service-sourced-analysis-adr.md` D22/D23/D24: the proposers' chains are EXPANDED into declared sub-problems (one typed turn each, dependencies injected verbatim), superseding this record's no-expansion clause for the proposers; the phase-6 eval is the measurement. See section 9.
 **Amends:** `assigner-A1-decisions.md` §4 (prompt structure - the delivery, not the content), `dataplane-A1-decisions.md` §7.2 (the same delivery claim), `context-compaction-95-decisions.md` D11 item 4 (the replay rides the session seam), `llm-gateway-100-decisions.md` D8 (fact 1 also binds the client), and it records a SECOND mechanism behind the figure in `compaction-cache-convergence-348-adr.md` whose Decision and root cause stand unchanged.
 **Related:** `statefulness-pattern-matrix.md` (the reusable rule, OUTLIER-5), the usage surface in `eval-token-tracking-spec.md` N5.
 
@@ -59,6 +60,11 @@ The operator asked whether the technical sequence structurally forces one bounde
 
 **Decision: the chain stays.** Collapsing reflection → extraction → linking into one high-reasoning pass would trade a ratified design property (the fail-closed reflection gate, the separate structured shapes, the inspectable WHY trace) for no cache gain, and would risk extraction quality. The chain is only revisited if a post-fix live run still reports a low cached share, which would point at the provider-side `prompt_tokens_details` omission (hypothesis H1 of the diagnosis) rather than at the app request.
 
+**Superseded (2026-10-11) for the proposers by `service-sourced-analysis-adr.md` D22.** This section refused to EXPAND the chain "without measurement".
+The operator has since directed the expansion, and the measurement now exists as the phase-6 comparative eval (D48): each proposer's chain is decomposed into declared sub-problems, one typed `AnalysisTurn` turn each, with `depends_on` artifacts injected verbatim (D23/D24) rather than carried on the session trail.
+The cache discipline this record established - the constant request shape, the ephemeral `system_prompt=` prefix - is EXTENDED, not reversed: the whole sub-problem chain still binds one byte-identical tool set (`AnalysisTurn` plus `notes`).
+See section 9.
+
 ### 3.4 The prose triplication
 
 `mechanism_typist.py:336`, `:371` and `data_modeller.py:568-569` embed the reflection prose into later prompts while the prose ALSO rides the trail as an assistant message. With a stable prefix that is pure fresh-input inflation on every structured call, so it goes.
@@ -106,3 +112,15 @@ Done as a single change: `assigner-A1-decisions.md`, `dataplane-A1-decisions.md`
 4. `replay_assistant_reasoning` keeps its existing unit contract unchanged; the reasoning lands on the same ratified surfaces; a replay failure never breaks a turn.
 5. The one-shot legacy seam (`_default_invoke_fn`) still returns the same shapes, so the contract tier is untouched.
 6. No agent implementation keeps its own bespoke prompt-replay or reasoning-replay logic: pod, hunting, recon and analysis all route through the one `_build_agent` seam.
+
+## 9. Amendment (2026-10-11): the no-expansion clause is superseded for the proposers
+
+`service-sourced-analysis-adr.md` D22 expands each analyser proposer's chain into a declared `ReasoningWorkflow` of `SubProblem`s - one LLM turn each, every sub-problem emitting a typed artifact, its `depends_on` artifacts injected verbatim (D23/D24).
+This is a bounded, operator-directed expansion of exactly the chain section 3.3 refused to expand unmeasured.
+
+What changes and what does not:
+
+- **Changes.** `mechanism_typist` and `data_modeller` run more turns (four each), and `assigner` runs two; a dependency is re-injected from the recorded turns, never read off the session trail; the assigner's old `mode="reflect"` system append is retired because the reflection stages now ride the workflow's sub-problem prompts on every pass (one carrier, not two).
+- **Does not change.** The converged seam this record established: the role prompt still binds once through `create_agent(system_prompt=...)` as an ephemeral leading block, the trail still carries only the volatile task, and every turn of a role still binds the SAME tool set (`AnalysisTurn` plus `notes`), so the provider prefix cache still holds across the whole chain.
+
+The measurement that justifies the expansion is the comparative eval of `service-sourced-analysis-adr.md` D48 (service-sourced versus streamed on the assignment integrity columns), not a target count.

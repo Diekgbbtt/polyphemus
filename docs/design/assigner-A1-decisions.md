@@ -86,7 +86,8 @@ It is an OUTPUT of the assertion suite, not a reasoned input, and stays env-tuna
 
 Split by VOLATILITY so the provider prompt-cache prefix holds across a run.
 
-**System message (stable):** the ASSIGNER skill, the role verbatim, the reflection protocol, the worked examples, the output-shape rules.
+**System message (stable):** the ASSIGNER skill, the role verbatim, the worked examples, the output-shape rules.
+(Amended 2026-10-11: the reflection protocol is NO LONGER in the system message - it rides the workflow's sub-problem prompts, see section 5.)
 
 Amended 2026-07-28: this line originally read "the analyser skill", meaning the SHARED `skills/analysis/analyser/SKILL.md`.
 #34 removed that skill from the Assigner's system message and left nothing in its place, because the shared skill addresses a generalist proposer - it instructs System modelling, data relationships and Service props that D4/D18 forbid this role from emitting, so carrying it here let the model choose between "emit aggregates only" and a WebPresentation worked example.
@@ -109,9 +110,13 @@ This is the same volatility split as decision 7 of `service-decomposition-A2.md`
 
 ## 5. Reflection verbatim (`mode="reflect"`)
 
-`AgentDispatch.mode` already carries `create` / `reflect` and is currently unused.
-The reflect verbatim lives in the system message and fires only on `mode="reflect"`.
-It merges the load-bearing primitives of `~/.claude/skills/overthink/SKILL.md` and `~/.claude/skills/critical-thinking-logical-reasoning/SKILL.md` down to four steps, each producing a written line before any revised proposal:
+**Amended 2026-10-11 (`service-sourced-analysis-adr.md` D25/D26).** The reflection is REVIVED and now runs UNCONDITIONALLY, so the `mode` toggle is retired for this role.
+Each of the four stages below is mapped onto a workflow sub-problem (`candidate_owners` carries RESTATE AS EVIDENCE / COMPETING OWNER / CALIBRATE; `assign` carries RESIDUE), and those sub-problem prompts are the reflection's SINGLE carrier on every pass.
+The old `mode="reflect"` system-message append is removed: shipping it beside the workflow would carry every stage twice.
+The stable system prompt is therefore byte-identical on every pass.
+`AgentDispatch.mode` stays a generic dispatch field; the Assigner no longer reads it.
+
+The four stages merge the load-bearing primitives of `~/.claude/skills/overthink/SKILL.md` and `~/.claude/skills/critical-thinking-logical-reasoning/SKILL.md` down to four steps, each producing a written line before any revised proposal:
 
 1. Restate each aggregate's claim AS EVIDENCE: quote the path segment or parameter matched and the contract clause it matched against.
    An aggregate whose evidence restates the slug rather than the surface is self-refuting.

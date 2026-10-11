@@ -46,6 +46,10 @@ Analysis consumes the marker LAST (FIFO), and only then computes `drained` (mark
 **Rationale.** This is the single, minimal remaining coupling: recon says "no more chunks", never "wait for me".
 An idle-timeout inference was rejected - it reintroduces a timing/length gate (violates D8) and races a slow recon job.
 
+**Amended 2026-10-11 (`service-sourced-analysis-adr.md` D1/D2).** The terminal marker is now the trigger for a RE-READING pass, not only the drain signal.
+`settings.recon.analysis_mode` selects the pass: `streamed` (default) keeps today's chunk-fed drain byte-for-byte; `service_sourced` makes recon push NO per-job chunk and leaves the terminal marker as the ONLY push, and the selected `pass_fn` (`service_sourced_pass`) re-reads the settled graph.
+The marker path and this FIFO are unchanged; only the meaning of the marker for the new mode is added.
+
 ## D5 - Analysis run keyed by the recon run_id (1:1 now), indexed to allow later relaunch
 
 For now the `analysis_runs` row is keyed by the same `run_id` as its recon run (1:1), so an observer/e2e finds the analysis result by the same id it launched recon with.

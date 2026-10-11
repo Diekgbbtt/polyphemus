@@ -79,7 +79,7 @@ def _role_prompt(role_id: str) -> str:
     if role_id == "assigner":
         from polymerhus.analysis.assigner import _system_prompt
 
-        return _system_prompt("create")
+        return _system_prompt()
     if role_id == "mechanism_typist":
         from polymerhus.analysis.mechanism_typist import _load_skill
 

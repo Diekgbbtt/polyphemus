@@ -1,6 +1,7 @@
 # ADR: proposer prompt-cache misses - per-batch memory, a constant request shape, and a per-role compaction threshold
 
 **Status:** EXPERIMENT, operator-directed (2026-10-10; branch `exp/proposer-cache`, off `dev` `cfee00a`).
+**Amended 2026-10-11** by `service-sourced-analysis-adr.md` (D17/D26/D35): the batch unit becomes the business Service in the service-sourced mode, and the per-role compaction thresholds are re-mined for that unit (see section 8). The streamed default keeps the per-chunk unit described here, byte-for-byte.
 **Related:** `docs/design/plans/2026-10-10-proposer-cache-experiment.md` (the directive), `docs/design/converged-agent-turn-adr.md` (the seam this builds on), `docs/design/context-compaction-95-decisions.md` (D2, the threshold), `docs/design/compaction-cache-convergence-348-adr.md` (the convergence failure mode).
 **Touches:** `analysis/proposer_turn.py`, `analysis/{assigner,mechanism_typist,data_modeller}.py`, `app/llm/session_address.py`, `app/llm/providers.py`, `app/llm/compaction.py`.
 
@@ -58,3 +59,23 @@ A secondary amplifier: under a run-long thread, each chunk RE-INJECTED the strea
 ## 7. Consequences and follow-up
 
 The three changes compose: change 1 makes the reflection/extraction tool set identical, change 2 keeps each chunk's context small so the constant prefix remains the dominant cached span, and change 3 keeps a single chunk under the compaction budget. A live eval re-measuring `cache_read` per role is the confirmation step; the plan's mined defaults are the starting values, not a proven optimum.
+
+## 8. Amendment (2026-10-11): the batch unit becomes the Service
+
+In the service-sourced mode (`service-sourced-analysis-adr.md`) the proposers no longer process a recon JOB's `L0Chunk`.
+Stage 1 groups the whole settled surface into one global assign pass; stage 2 iterates the bootstrapped Services and runs mechanism_typist then data_modeller per Service, over the Service's aggregated slice (a `Chunk` whose `chunk_id` IS the Service slug).
+
+Two of the three changes carry over unchanged, and their UNIT is re-scoped:
+
+- **Constant request shape (change 1).** Unchanged and extended: every turn of a role's sub-problem chain still binds the same tool set (`AnalysisTurn` plus the analysis `notes` tool), which is what keeps the provider prefix cached across the whole chain (ADR D26).
+  The reflection is now a real turn, so this property is load-bearing rather than incidental.
+- **Per-batch memory (change 2).** The discriminator becomes the Service slug instead of the streamed chunk id: `run:<service-slug>:<role>` (`AnalysisSession(run_id, role_id, batch=<sanitised slug>)`, ADR D17/D18).
+  The address is sanitised before it becomes a thread id, because `business_function_slug` is LLM-authored and unvalidated.
+
+**Compaction thresholds (change 3) - re-mined, deferred to the phase-6 eval (ADR D35).** The values (`data_modeller` `0.016`, `mechanism_typist` `0.08`) were mined as 2x headroom over the per-CHUNK occupancy of ~8,162 and ~41,424 tokens on a 1M window.
+The service-sourced unit's occupancy is different by construction: a per-Service slice is at most one Service's aggregated surface, and the global assign pass groups the WHOLE settled surface into one unit.
+The thresholds are therefore NOT the re-mined optimum for the new unit.
+
+Decision: leave the mined values in place for the mode's first outings, because they remain DEFENSIBLE in the safe direction - a fraction-of-window threshold that was generous for a larger per-chunk unit fires LESS often on the smaller per-Service unit, and the pass is behind a flag.
+Re-mine them from the phase-6 eval's per-Service occupancy, exactly as the per-chunk values were mined, rather than guess them now.
+This is recorded as deferred, with the re-mine owned by ADR D35 and the phase-6 run, so the stale value is never mistaken for a measured one.

@@ -274,7 +274,7 @@ The driver opens an `AsyncPostgresStore` (`setup()`) alongside the `AsyncPostgre
 
 The legacy two-pass analyser monolith dissolves into responsibility-scoped proposers, each consuming a `Chunk` narrowed by its own admission set and writing through the sole-writer. Built as standalone slices (flag OFF) then wired, and fully retired in #48.
 
-All three chunk-fed proposers are **STATEFUL session agents as of #94** (`agent_mode="session"`), and **per-BATCH as of the 2026-10-10 cache experiment**: `assigner` / `mechanism_typist` / `data_modeller` run their structured turn via `app/llm/session.py::stateful_turn` on a per-(RUN, CHUNK) `AnalysisSession(run_id, role_id, batch=<chunk_id>)` thread, so the turns WITHIN one chunk share the agent's memory (the reflection is the extraction's context) while the NEXT chunk starts a FRESH context. The per-batch discriminator is set by a `proposer_batch(chunk.chunk_id)` scope the proposer body opens around its invoke chain (`analysis/proposer_turn.py`) - a scoped ContextVar, so the `(messages, *, schema, system_prompt)` invoke contract is unchanged; an unscoped caller keeps the `run:role` thread, preserving the observability/runtime contract. The shared process-wide pooled checkpointer (`app/llm/checkpoints.py`) is the memory store. The one_shot roles (bootstrapper, anatomy, curation, sweep, anti-cluttering) externalise their reasoning to the graph and stay on `invoke_role`.
+All three chunk-fed proposers are **STATEFUL session agents as of #94** (`agent_mode="session"`), and **per-BATCH as of the 2026-10-10 cache experiment**: `assigner` / `mechanism_typist` / `data_modeller` run their structured turn via `app/llm/session.py::stateful_turn` on a per-(RUN, CHUNK) `AnalysisSession(run_id, role_id, batch=<chunk_id>)` thread, so the turns WITHIN one chunk share the agent's memory (the reflection is the extraction's context) while the NEXT chunk starts a FRESH context. The per-batch discriminator is set by a `proposer_batch(chunk.chunk_id)` scope the proposer body opens around its invoke chain (`analysis/proposer_turn.py`) - a scoped ContextVar, so the `(messages, *, schema, system_prompt)` invoke contract is unchanged; an unscoped caller keeps the `run:role` thread, preserving the observability/runtime contract. In the service-sourced mode the batch discriminator is the sanitised Service slug instead of the chunk id, giving `run:<service-slug>:<role>` (`analysis/service_slice.py`, ADR D17/D18); the seam is the same one. The shared process-wide pooled checkpointer (`app/llm/checkpoints.py`) is the memory store. The one_shot roles (bootstrapper, anatomy, curation, sweep, anti-cluttering) externalise their reasoning to the graph and stay on `invoke_role`.
 
 **Constant request shape (2026-10-10 cache experiment, extended by the reasoning workflow and T3):** every turn of a proposer role binds the SAME tool set - the `AnalysisTurn` envelope plus the shared analysis `notes` tool - so the request shape never toggles and the provider prefix cache matches across a role's whole sub-problem chain. Before this the reflection bound NO tool and the extraction bound one, so `data_modeller`'s strict `P,S,P,S` schedule toggled the tool set every call and the provider prefix cache never matched (`cache_read=0`). `mechanism_typist`'s `P,S,S` shared an `S,S` tool set and cached, which was the asymmetry that named the fix. A prose turn binds `(notes, AnalysisTurn)`; a structured turn passes only `notes` and lets `response_format` append `AnalysisTurn`, so both final bound lists are `(notes, AnalysisTurn)`. `notes` is bound through the session `tools=` seam, never the skills seam (`skill_agent_binding` would raise for an undeclared role; ADR D33).
 
@@ -310,6 +310,33 @@ One compact structured judgment from a reasoning sub-problem: `subject`, `assert
 It is the typed datum a dependency hands to a dependent sub-problem (ADR D23/D24), in place of prose that compaction could summarise away.
 
 A role's sub-problems map onto the stages its `_REFLECTION_STEPS` already enumerate; the mapping is explicit (ADR D22), so no boundary is invented.
+
+## The service-sourced pipeline
+
+**Service-sourced mode** (`analysis/feed.py::resolve_analysis_mode`; ADR D2, D45):
+The analysis mode selected by `settings.recon.analysis_mode`, one of `streamed` (the untouched default) and `service_sourced`.
+It is read at ONE seam alongside `resolve_feed_mode`; `service_sourced` fires the QUEUED feed on its own and does NOT require `streaming_analysis`, so the mode can never recur as a silent no-op.
+The mode's `pass_fn` is `analysis/service_sourced.py::service_sourced_pass`: the terminal marker is its only trigger, it gates on recon reaching `complete`, and it is guarded once per run.
+The eval selects it through `TrialConfig.analysis_mode`, written into the settings PUT (ADR D45).
+
+**Pipeline unit (the Service)**:
+The `service_sourced` pipeline's unit of reasoning is the business Service, not the recon job's surface.
+This is the UP/DOWN CLASSING (plan section 2.4; `docs/design/domain-model.md` section 4.6), and it is a READING DISCIPLINE, not a new node class: the Service is promoted to the first-class pipeline unit, and the L0 surface is demoted to lower-class evidence reachable only through the hinge edges (`AGGREGATES`, `SURFACES_AT`, `EVIDENCED_BY`).
+No L0 or L1 node type is added; the same graph is read Service-first.
+
+**Global assign pass** (`analysis/assigner.py::assign_global`; T4, ADR D7-D11):
+Stage 1 of the service-sourced pass: a plain awaited call (not a supervisor dispatch) that re-reads the SETTLED L0 and the Service inventory, runs the Assigner's `candidate_owners -> assign` workflow over the whole surface, and writes `AGGREGATES` through the no-mint writer.
+It reuses the five shaping gates unchanged and reports a census (admitted, proposed, unresolvable, out-of-inventory, rescaled, withheld, kept, written, and the residual `stale` pool), persisted to `analysis_runs.stats`.
+It never mints a Service: the Bootstrapper remains the sole Service source.
+
+**Service slice** (`analysis/service_slice.py::build_service_slices`; T5, ADR D14, D20, D39):
+The pure builder that groups the settled L0 surface into one `Chunk` per Service - its `chunk_id` is the sanitised `business_function_slug` - sorted by slug, plus one RESIDUAL unit (`__residual__`) carrying the surface no Service aggregates.
+A Service with no aggregated surface still gets an empty unit, so its absence is an explicit `no_surface` outcome, never a silent skip (ADR D15).
+
+**Per-Service loop** (`analysis/service_slice.py::run_service_loop`; T5, ADR D12-D20, D38-D42):
+Stage 2 of the service-sourced pass: for each unit it runs mechanism_typist then data_modeller (each role's full `ReasoningWorkflow` scoped to the unit's slice) through the supervisor control plane.
+It is fail-open per unit with a bounded per-unit retry; a stop is honoured at a unit boundary and reported `stopped`.
+The pass's drained signal is WRITE-BASED (ADR D41): `wrote` is true only when a step actually wrote, so a run where every Service degraded is reported `withheld`, never `drained`.
 
 Since **#187** all three build their turn through ONE seam, `analysis/proposer_turn.py`: the per-run thread, the role's #95 compaction middleware, the run-correlation tag, the project usage scope, and the role's OWN prompt. A proposer can therefore never be built with another proposer's prompt - the role_id selects all of it.
 

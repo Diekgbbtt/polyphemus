@@ -236,6 +236,28 @@ def test_recon_trial_enables_streamed_analysis_in_settings(tmp_path) -> None:
     assert settings.body["recon"]["streaming_analysis"] is True
 
 
+def test_recon_trial_defaults_to_streamed_analysis_mode(tmp_path) -> None:
+    # ADR D45: the mode is written into the settings PUT so an eval trial can
+    # select the pipeline; the streamed default is unchanged.
+    api_runner = FakeApi(_full_routes())
+
+    _trial(tmp_path, api_runner).run()
+
+    settings = next(c for c in api_runner.calls if c.path == "/projects/pid/settings")
+    assert settings.body["recon"]["analysis_mode"] == "streamed"
+
+
+def test_recon_trial_can_select_service_sourced_analysis(tmp_path) -> None:
+    # ADR D45: a trial selects the service-sourced pipeline through the same
+    # settings PUT the streamed mode rides.
+    api_runner = FakeApi(_full_routes())
+
+    _trial(tmp_path, api_runner, analysis_mode="service_sourced").run()
+
+    settings = next(c for c in api_runner.calls if c.path == "/projects/pid/settings")
+    assert settings.body["recon"]["analysis_mode"] == "service_sourced"
+
+
 def test_analysis_entry_skips_recon_and_launches_analysis(tmp_path) -> None:
     api_runner = FakeApi(
         {

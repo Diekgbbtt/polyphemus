@@ -17,10 +17,11 @@ code path. Everything else is the real deployed wiring: the consumer entry point
 the role middleware builder, and the `create_agent` loop.
 
 The mechanism-typist lane is exercised the way the agent actually runs: the real
-3-call `type_mechanisms` chain (reflection -> systems extraction -> services
-linking) over TWO realistic `service` chunks, all on ONE growing session thread - so
-this is a genuinely multi-step session whose context crosses the budget repeatedly
-and compacts MULTIPLE times into progressively richer running summaries.
+4-sub-problem `type_mechanisms` workflow (`mechanism_hypotheses` ->
+`page_clusters` -> `systems_extract` -> `link`) over TWO realistic `service`
+chunks, all on ONE growing session thread - so this is a genuinely multi-step
+session whose context crosses the budget repeatedly and compacts MULTIPLE times
+into progressively richer running summaries.
 
 The hunting hunter lane still runs its one author+judge turn pair (the lane's
 tool-calling reasoning chains await the parallel tool-support work; once tool
@@ -232,9 +233,13 @@ def _scripted_typing_model(summarise_state):
     - the SUMMARISER's structured call (user message opens with the running-summary
       preamble) -> ONE rich, realistic `SummaryUpdate` per pass (its content derives
       from the session material, so the running summary is a genuine condensation);
-    - the typist's REFLECTION turn (free prose) -> a realistic mechanism hypothesis;
-    - the EXTRACTION (`L1DeltaBatch`) and LINKING (`L1DeltaBatch`) structured turns
-      -> tool calls holding real systems / system_edges.
+    - the typist's reasoning turns (`mechanism_hypotheses`, `page_clusters`) ->
+      `AnalysisTurn` JSON claims, the typed artifact every turn now emits;
+    - the EXTRACTION (`systems_extract`) and LINKING (`link`) turns -> `AnalysisTurn`
+      JSON holding real systems / system_edges.
+    All four sub-problems speak the ONE `AnalysisTurn` envelope, so under the
+    unknown-profile negotiation the fake returns content-JSON on EVERY turn - never
+    tool_calls - and the tool set never toggles (ADR D26).
     Realistic per-call usage metadata advances a shared cursor, so the accumulated
     context crosses the budget on repeated turns and compaction fires more than once.
     """
@@ -303,14 +308,31 @@ def _scripted_typing_model(summarise_state):
             i = summarise_state.get("turn", 0)
             summarise_state["turn"] = i + 1
             usage = usage_plan[i % len(usage_plan)]
+            # The reasoning turns (mechanism_hypotheses / page_clusters) emit
+            # `claims` on the AnalysisTurn envelope. Content-JSON, not tool_calls:
+            # the unknown-profile negotiation resolves the native structured method.
+            claims_json = json.dumps({"claims": [
+                {
+                    "subject": "Endpoint /rest/user/login",
+                    "assertion": "RESTApi overlay carrying an IdentificationSystem identity raft",
+                    "evidence": "shared session cookie across login/register/whoami",
+                    "verdict": "new RESTApi; extend the defined IdentificationSystem",
+                },
+                {
+                    "subject": "Endpoint /api/orders",
+                    "assertion": "checkout consumes the same identity it does not mint",
+                    "evidence": "orders/basket share the session cookie, no auth of its own",
+                    "verdict": "extend RESTApi; no AuthenticationMechanism edge for checkout",
+                },
+                {
+                    "subject": "account page cluster",
+                    "assertion": "login/register form pages render from one template",
+                    "evidence": "shared title/structure/size on the auth pages",
+                    "verdict": "account::login cluster, one WebPresentation",
+                },
+            ]})
             return ChatResult(generations=[ChatGeneration(message=AIMessage(
-                content=(
-                    "The login/register/whoami trio with a shared session cookie evidence a RESTApi "
-                    "overlay carrying an IdentificationSystem identity raft, minted through an "
-                    "AuthenticationMechanism on credential exchange; the orders/basket API shares the "
-                    "same identity but owns no auth of its own. No WAF is evidenced on the surface."
-                ),
-                usage_metadata=usage))])
+                content=claims_json, usage_metadata=usage))])
 
         @property
         def _llm_type(self) -> str:
@@ -328,10 +350,10 @@ def _scripted_typing_model(summarise_state):
 
 
 def test_mechanism_typist_chained_lane_compacts_e2e(monkeypatch):
-    """D9 consumer 2 (chained session): the REAL 3-call mechanism-typist chain
-    (`type_mechanisms`) runs over TWO realistic `service` chunks on ONE growing
-    session thread - SIX prompts on the same thread, multiple over-budget turns,
-    MULTIPLE out-of-band running-summary passes. The chain survives every
+    """D9 consumer 2 (chained session): the REAL 4-sub-problem mechanism-typist
+    workflow (`type_mechanisms`) runs over TWO realistic `service` chunks on ONE
+    growing session thread - EIGHT prompts on the same thread, multiple over-budget
+    turns, MULTIPLE out-of-band running-summary passes. The chain survives every
     compaction (both chunks still type real Systems + edges), the compacted thread
     carries the synthetic running-summary message, and the passes are observable
     both on the manager's last report and in the number of summariser calls."""
@@ -380,11 +402,19 @@ def test_mechanism_typist_chained_lane_compacts_e2e(monkeypatch):
     assert any(e.rel == "EXPOSED_VIA" and e.service_slug == "checkout"
                for e in batch2.system_edges)
 
-    # The ledger really observed per-turn occupancy (the compact trigger).
-    thread_id = "run-e2e-typist:mechanism_typist"
-    mem = read_session_memory(saver, thread_id)
-    assert mem is not None
-    contents = [str(m.content) for m in mem.messages]
+    # The ledger really observed per-turn occupancy (the compact trigger). The
+    # session is per-BATCH since the cache experiment: each streamed chunk gets its
+    # own `run:<chunk>:<role>` thread, so compaction fires within a chunk's
+    # sub-problem chain, not across a run-long trail.
+    from polymerhus.app.llm.session_address import AnalysisSession
+
+    thread_ids = [
+        AnalysisSession("run-e2e-typist", "mechanism_typist", batch=cid).thread_id
+        for cid in ("katana:service:0", "katana:service:1")
+    ]
+    mems = [read_session_memory(saver, tid) for tid in thread_ids]
+    assert all(m is not None for m in mems), "each per-batch thread must persist"
+    contents = [str(m.content) for mem in mems for m in mem.messages]
     assert any(c.startswith("[running summary]") for c in contents), \
         "the compacted thread must carry the synthetic running-summary message"
     # The produced summary is the REALISTIC condensation of the session material

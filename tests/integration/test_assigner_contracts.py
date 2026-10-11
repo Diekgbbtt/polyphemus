@@ -26,6 +26,7 @@ from polymerhus.analysis.assigner import (
 )
 from polymerhus.analysis.chunking import Chunk
 from polymerhus.analysis.l1_types import L0Ref
+from polymerhus.analysis.reasoning_workflow import AnalysisTurn
 from polymerhus.recon.domain.types import AssetDelta, Observation
 
 BU = "https://a"
@@ -52,14 +53,31 @@ def _chunk(*paths):
     return Chunk(chunk_id="katana:0", source_job="katana", assets=tuple(_ep(p) for p in paths))
 
 
+def _turn(batch: L1DeltaBatch) -> AnalysisTurn:
+    """Lift a raw delta batch onto the LLM-facing `AnalysisTurn` envelope the
+    workflow now binds (the tool set is constant across a role's calls, ADR D26)."""
+    return batch if isinstance(batch, AnalysisTurn) else AnalysisTurn.model_validate(batch.model_dump())
+
+
 def _capture():
-    """An invoke_fn that records the messages it was handed and returns a batch."""
-    seen = {}
+    """An invoke_fn that records what it was handed and returns the given turn.
+
+    The Assigner's workflow makes ONE call per sub-problem (`candidate_owners`
+    then `assign`), so the record is overwritten each call; the LAST call is the
+    `assign` extraction turn, which carries the full volatile context. The stable
+    role prompt rides the `system_prompt=` kwarg, not the message list (the
+    converged seam, ADR D26)."""
+    seen = {"calls": []}
 
     def make(batch):
-        def invoke(messages):
+        turn = _turn(batch)
+
+        def invoke(messages, *, schema=None, system_prompt=None):
             seen["messages"] = messages
-            return batch
+            seen["schema"] = schema
+            seen["system_prompt"] = system_prompt
+            seen["calls"].append((messages, system_prompt))
+            return turn
         return invoke
 
     return seen, make
@@ -80,14 +98,14 @@ def test_C13_withhold_below_bar_keeps_evidence():
 
 def test_C14_out_of_inventory_slug_dropped_at_any_confidence():
     batch = L1DeltaBatch(aggregates=[_agg("/x", 0.99, service="ghost-service")])
-    out = assign(_chunk("/x"), invoke_fn=lambda m: batch, inventory=INVENTORY,
+    out = assign(_chunk("/x"), invoke_fn=lambda m, **k: _turn(batch), inventory=INVENTORY,
                  existing_slugs=SLUGS, bar=0.75)
     assert out.batch.aggregates == []  # a high confidence does not rescue it
 
 
 def test_C15_out_of_inventory_slug_becomes_backlog_description():
     batch = L1DeltaBatch(aggregates=[_agg("/x", 0.99, service="ghost-service")])
-    out = assign(_chunk("/x"), invoke_fn=lambda m: batch, inventory=INVENTORY,
+    out = assign(_chunk("/x"), invoke_fn=lambda m, **k: _turn(batch), inventory=INVENTORY,
                  existing_slugs=SLUGS, bar=0.75)
     assert len(out.backlog) == 1
     (item,) = out.backlog
@@ -111,7 +129,7 @@ def test_C16_two_services_may_own_the_same_endpoint():
         _agg("/orders/42", 0.85, service="checkout"),
         _agg("/orders/42", 0.80, service="fulfilment"),
     ])
-    out = assign(_chunk("/orders/42"), invoke_fn=lambda m: batch, inventory=INVENTORY,
+    out = assign(_chunk("/orders/42"), invoke_fn=lambda m, **k: _turn(batch), inventory=INVENTORY,
                  existing_slugs=SLUGS, bar=0.75)
     assert len(out.batch.aggregates) == 2
     assert {a.service_slug for a in out.batch.aggregates} == {"checkout", "fulfilment"}
@@ -128,7 +146,7 @@ def test_C17_assigner_never_emits_services():
         ],
         aggregates=[_agg("/x", 0.90)],
     )
-    out = assign(_chunk("/x"), invoke_fn=lambda m: batch, inventory=INVENTORY,
+    out = assign(_chunk("/x"), invoke_fn=lambda m, **k: _turn(batch), inventory=INVENTORY,
                  existing_slugs=SLUGS, bar=0.75)
     assert out.batch.services == []          # reused AND would-be-minted both dropped
     assert len(out.batch.aggregates) == 1    # the assignment survives
@@ -153,24 +171,24 @@ def test_C18_narrow_drops_non_assignment_lists():
 # --- C19: degradation ---------------------------------------------------------
 
 def test_C19_degrades_to_empty_outcome():
-    def boom(messages):
+    def boom(messages, *, schema=None, system_prompt=None):
         raise RuntimeError("llm down")
 
     empty = AssignmentOutcome()
     # (a) a chunk with nothing this role admits
-    assert assign(Chunk(chunk_id="katana:0"), invoke_fn=lambda m: None) == empty
+    assert assign(Chunk(chunk_id="katana:0"), invoke_fn=lambda m, **k: None) == empty
     # (b) the invoke raises
     assert assign(_chunk("/x"), invoke_fn=boom) == empty
     # (c) no parseable tool call
-    assert assign(_chunk("/x"), invoke_fn=lambda m: None) == empty
+    assert assign(_chunk("/x"), invoke_fn=lambda m, **k: None) == empty
 
 
 # --- C20: idempotent ----------------------------------------------------------
 
 def test_C20_idempotent_same_inputs_same_result():
     batch = L1DeltaBatch(aggregates=[_agg("/x", 0.90)])
-    a = assign(_chunk("/x"), invoke_fn=lambda m: batch, inventory=INVENTORY, existing_slugs=SLUGS)
-    b = assign(_chunk("/x"), invoke_fn=lambda m: batch, inventory=INVENTORY, existing_slugs=SLUGS)
+    a = assign(_chunk("/x"), invoke_fn=lambda m, **k: _turn(batch), inventory=INVENTORY, existing_slugs=SLUGS)
+    b = assign(_chunk("/x"), invoke_fn=lambda m, **k: _turn(batch), inventory=INVENTORY, existing_slugs=SLUGS)
     assert a == b
 
 
@@ -184,7 +202,9 @@ def test_C21_prompt_renders_admitted_endpoints_only():
     ))
     seen, make = _capture()
     assign(chunk, invoke_fn=make(L1DeltaBatch()), inventory=INVENTORY, existing_slugs=SLUGS)
-    user = seen["messages"][1].content
+    # The last call is the `assign` extraction turn; its one human message carries
+    # the injected surface.
+    user = seen["messages"][-1].content
     assert "/orders/42" in user
     assert "secretparam" not in user
     assert "X-Secret-Header" not in user
@@ -200,7 +220,7 @@ def test_C22_observations_not_rendered_on_the_assigner_path():
     ))
     seen, make = _capture()
     assign(chunk, invoke_fn=make(L1DeltaBatch()), inventory=INVENTORY, existing_slugs=SLUGS)
-    rendered = "".join(m.content for m in seen["messages"])
+    rendered = (seen["system_prompt"] or "") + "".join(m.content for m in seen["messages"])
     assert "DISTINCTIVE-OBSERVATION-STRING" not in rendered
 
 
@@ -209,7 +229,7 @@ def test_C22_observations_not_rendered_on_the_assigner_path():
 def test_C23_prompt_directs_contract_match_and_forbids_minting():
     seen, make = _capture()
     assign(_chunk("/x"), invoke_fn=make(L1DeltaBatch()), inventory=INVENTORY, existing_slugs=SLUGS)
-    system, user = (m.content for m in seen["messages"])
+    system, user = seen["system_prompt"], seen["messages"][-1].content
     assert "Take a basket to a paid order." in user   # the contract IS in the prompt
     assert "path segments" in system                  # the match is directed
     assert "cannot create a Service" in system        # minting is forbidden
@@ -223,7 +243,7 @@ def test_C23_prompt_directs_contract_match_and_forbids_minting():
 def test_C24_stable_prefix_in_system_volatile_in_user():
     seen, make = _capture()
     assign(_chunk("/x"), invoke_fn=make(L1DeltaBatch()), inventory=INVENTORY, existing_slugs=SLUGS)
-    system, user = (m.content for m in seen["messages"])
+    system, user = seen["system_prompt"], seen["messages"][-1].content
     assert "checkout" not in system            # no inventory identity in the stable half
     assert "checkout" in user                  # it rides the volatile half
     assert user.index("checkout") < user.index("/x")  # identities block comes FIRST
@@ -231,32 +251,32 @@ def test_C24_stable_prefix_in_system_volatile_in_user():
 
 # --- C25: the reflect verbatim ------------------------------------------------
 
-def test_C25_reflect_verbatim_only_under_reflect_mode():
-    # `CALIBRATE` was dropped from this marker set when `skill` became the default
-    # (2026-07-29): the skill's own fourth move is "CALIBRATE, THEN COMMIT OR
-    # WITHHOLD", so the word stopped discriminating between the two prompts. The
-    # assertion is unchanged in strength - the four remaining markers are verified
-    # absent from the skill body - but it now names only text the reflect verbatim
-    # actually owns.
-    #
-    # The collision is a real (harmless) REDUNDANCY: the skill teaches calibration in
-    # the create pass and the reflect verbatim re-teaches it in the reflect pass.
-    # Harmless only because nothing dispatches `mode="reflect"` today; whoever wires
-    # reflection must reconcile the two rather than shipping both.
-    markers = ["REFLECT PASS", "RESTATE AS EVIDENCE", "COMPETING OWNER", "RESIDUE"]
-    seen_c, make_c = _capture()
-    assign(_chunk("/x"), invoke_fn=make_c(L1DeltaBatch()), inventory=INVENTORY,
-           existing_slugs=SLUGS, mode="create")
-    create_system = seen_c["messages"][0].content
+def test_C25_reflection_rides_the_workflow_user_turns_not_the_system_prompt():
+    """The reflection stages are now UNCONDITIONAL (ADR D25): the workflow's
+    `candidate_owners` sub-problem carries RESTATE AS EVIDENCE / COMPETING OWNER /
+    CALIBRATE and the `assign` sub-problem carries RESIDUE, on EVERY pass.
 
-    seen_r, make_r = _capture()
-    assign(_chunk("/x"), invoke_fn=make_r(L1DeltaBatch()), inventory=INVENTORY,
-           existing_slugs=SLUGS, mode="reflect")
-    reflect_system = seen_r["messages"][0].content
+    This reconciles the old deferred note. Reflection used to be carried TWICE - the
+    workflow prompts below AND a `mode="reflect"` append to the stable system prompt.
+    The workflow is now the single carrier, so the append is retired and the stages
+    are never shipped twice. The property is unchanged in strength: every stage is
+    still asserted present, now against the turn that actually carries it."""
+    markers = ["RESTATE AS EVIDENCE", "COMPETING OWNER", "CALIBRATE", "RESIDUE"]
+    seen, make = _capture()
+    assign(_chunk("/x"), invoke_fn=make(L1DeltaBatch()), inventory=INVENTORY, existing_slugs=SLUGS)
 
-    assert not any(m in create_system for m in markers)
-    assert all(m in reflect_system for m in markers)
-    assert reflect_system.startswith(create_system)  # the cacheable prefix is unchanged
+    # every stage rides a workflow user turn (candidate_owners covers the first
+    # three, `assign` covers RESIDUE)
+    user_turns = "\n".join(
+        m.content for messages, _system_prompt in seen["calls"] for m in messages)
+    assert all(m in user_turns for m in markers)
+    # The reflect-verbatim-owned markers are absent from the stable system prompt:
+    # the workflow is their single carrier. CALIBRATE is deliberately NOT in this
+    # set - the assigner skill teaches calibration as its own move (the HOW), which
+    # is a different register from the workflow's stage mapping, and the old marker
+    # set dropped it for exactly that reason.
+    for marker in ("RESTATE AS EVIDENCE", "COMPETING OWNER", "RESIDUE"):
+        assert marker not in seen["system_prompt"]
 
 
 # --- C26: the supervisor receipt tells the truth ------------------------------
@@ -407,7 +427,7 @@ def test_C34_repaired_reference_survives_the_full_shaping_end_to_end():
         service_slug="checkout", l0=L0Ref(label="GET /api/Complaints", identity={}),
         confidence=0.88, evidence_refs=["path segment /api/Complaints"],
     )])
-    out = assign(chunk, invoke_fn=lambda m: raw, inventory=INVENTORY,
+    out = assign(chunk, invoke_fn=lambda m, **k: _turn(raw), inventory=INVENTORY,
                  existing_slugs=SLUGS, bar=0.75)
     (agg,) = out.batch.aggregates
     assert agg.l0.label == "Endpoint"
@@ -448,7 +468,7 @@ def test_C35b_prompt_states_the_identity_shape_the_repair_depends_on():
     unlike the label sentence, deleting it would change outcomes."""
     seen, make = _capture()
     assign(_chunk("/x"), invoke_fn=make(L1DeltaBatch()), inventory=INVENTORY, existing_slugs=SLUGS)
-    system = seen["messages"][0].content
+    system = seen["system_prompt"]
     assert "l0.identity" in system
     for key in ("path", "method", "baseurl"):
         assert f'"{key}"' in system
@@ -467,7 +487,7 @@ def test_C36_stats_name_where_each_judgment_died():
         AggregatesProposal(service_slug="checkout", l0=L0Ref(label="GET /gone", identity={}), confidence=0.9),
         AggregatesProposal(service_slug="checkout", l0=L0Ref(label="GET /a", identity={}), confidence=0.1),
     ])
-    out = assign(Chunk(chunk_id="c0", assets=(ep,)), invoke_fn=lambda m: raw,
+    out = assign(Chunk(chunk_id="c0", assets=(ep,)), invoke_fn=lambda m, **k: _turn(raw),
                  inventory=INVENTORY, existing_slugs=SLUGS, bar=0.75)
     st = out.stats
     assert (st.admitted, st.proposed, st.kept) == (1, 4, 1)
@@ -488,12 +508,12 @@ def test_C36_stats_name_where_each_judgment_died():
 _BASELINE_EXPECTED = f"{assigner._ROLE_VERBATIM}\n\n{assigner._FEW_SHOTS}"
 
 
-def _system_for(config, monkeypatch, mode="create"):
+def _system_for(config, monkeypatch):
     monkeypatch.setenv("ASSIGNER_PROMPT_CONFIG", config)
     seen, make = _capture()
     assign(_chunk("/x"), invoke_fn=make(L1DeltaBatch()), inventory=INVENTORY,
-           existing_slugs=SLUGS, mode=mode)
-    return seen["messages"][0].content
+           existing_slugs=SLUGS)
+    return seen["system_prompt"]
 
 
 def test_C37_baseline_arm_is_byte_identical_to_the_pre_skill_prompt(monkeypatch):
@@ -514,7 +534,7 @@ def test_C37b_the_default_arm_is_skill_and_an_unknown_value_coerces_to_it(monkey
     explicit_skill = _system_for("skill", monkeypatch)
 
     monkeypatch.delenv("ASSIGNER_PROMPT_CONFIG", raising=False)
-    assert assigner._system_prompt("create") == explicit_skill
+    assert assigner._system_prompt() == explicit_skill
     assert _system_for("no-such-arm", monkeypatch) == explicit_skill
 
     # non-vacuity: the default is a REAL change from the rollback arm, not the same
@@ -588,14 +608,17 @@ def test_C40_role_contract_holds_under_every_prompt_config(config, monkeypatch):
 
 
 @pytest.mark.parametrize("config", assigner._ASSIGNER_PROMPT_CONFIGS)
-def test_C40b_reflect_appends_without_disturbing_the_cacheable_prefix(config, monkeypatch):
-    """C25's property, held on both arms: reflect must EXTEND the create prefix, never
-    rewrite it, or the provider prompt-cache is invalidated on every reflect pass."""
-    create = _system_for(config, monkeypatch, mode="create")
-    reflect = _system_for(config, monkeypatch, mode="reflect")
-    assert reflect.startswith(create)
-    assert "RESTATE AS EVIDENCE" in reflect
-    assert "RESTATE AS EVIDENCE" not in create
+def test_C40b_the_cacheable_prefix_carries_no_reflection(config, monkeypatch):
+    """C25's property, held on both arms, relocated to the retired duplication: the
+    workflow's user turns carry the reflection, so the STABLE system prompt must never
+    carry it on EITHER arm - otherwise the stages ship twice and the cacheable prefix
+    grows on a path that no longer exists. The prefix is byte-stable by construction."""
+    system = _system_for(config, monkeypatch)
+    assert "RESTATE AS EVIDENCE" not in system
+    assert "COMPETING OWNER" not in system
+    assert "RESIDUE" not in system
+    # and it really IS the single-sourced stable half, not an accident of emptiness
+    assert assigner._ROLE_VERBATIM in system
 
 
 # --- C41: the scale gate (found live, in the graph, by the eval harness) -------

@@ -28,5 +28,12 @@ Accepted (2026-10-05).
 - A seeded trial (`existing_project_id`) still makes no settings call - its
   project carries the operator's settings unchanged.
 
+## Amendment (2026-10-11): the pipeline selector is `analysis_mode`
+
+`service-sourced-analysis-adr.md` D2/D45 adds `settings.recon.analysis_mode` (`streamed` | `service_sourced`, default `streamed`), read at the same seam as this flag.
+This record stands for the streamed path and is unchanged by it: `streaming_analysis` still turns on the per-job chunk push and the queued consumer, and `TrialConfig.streaming_analysis` still defaults `True`.
+The new mode is additive: under `analysis_mode=service_sourced` the pass fires the queued feed on its own and does NOT require `streaming_analysis`, so the #321 silent no-op cannot recur.
+The eval selects the mode through `TrialConfig.analysis_mode` (written into the settings PUT), which the `run` verb sets from `--analysis-mode`.
+
 ## References
-- #321 (analysis L1 gap), `pipeline.py:386`/`:725`, `analysis/feed.py`.
+- #321 (analysis L1 gap), `pipeline.py:386`/`:725`, `analysis/feed.py`, `docs/design/service-sourced-analysis-adr.md` (D2/D45).

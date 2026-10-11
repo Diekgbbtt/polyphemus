@@ -162,6 +162,13 @@ def _parser() -> argparse.ArgumentParser:
     )
     run_parser.add_argument("--budget-s", type=float, default=7200.0)
     run_parser.add_argument("--poll-s", type=float, default=15.0)
+    run_parser.add_argument(
+        "--analysis-mode",
+        choices=trial.ANALYSIS_MODES,
+        default="streamed",
+        help="the analysis pipeline the trial arms (settings.recon.analysis_mode, "
+        "ADR D45): `streamed` (default, unchanged) or `service_sourced`",
+    )
     run_parser.add_argument("--project-id", help="resume an existing project")
     run_parser.add_argument(
         "--existing-project-id",
@@ -698,6 +705,10 @@ def _trial_config(args, setup: EvalSetup, config: OrchestratorConfig) -> tuple[
         # every trial - the batched/post-recon path is obsolete and a recon run
         # without it mints no L1 edges (#321).
         streaming_analysis=True,
+        # The analysis pipeline selector (settings.recon.analysis_mode, ADR D45):
+        # the CLI choice arms the service-sourced pipeline for an eval arm;
+        # streamed is the default and is byte-unbroken.
+        analysis_mode=args.analysis_mode,
         budget_s=args.budget_s,
         poll_s=args.poll_s,
         project_id=args.project_id,
