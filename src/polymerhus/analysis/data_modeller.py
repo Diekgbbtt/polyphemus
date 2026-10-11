@@ -560,11 +560,13 @@ def _reflection_prompt(chunk: Chunk, inventory: dict | None, candidates: dict) -
     )
 
 
-def _extraction_prompt(inventory: dict | None, candidates: dict) -> str:
+def _extraction_prompt() -> str:
+    # The reflection `user` (the preceding turn, already in the trail) is the SINGLE
+    # carrier of the known-items inventory and the candidate owning services, so this
+    # extraction `user` carries ONLY its own instruction and refers to what the
+    # reflection already showed - re-sending those blocks would duplicate the harness
+    # entities on every structured call (the measured cache/occupancy defect).
     return (
-        f"{_known_items_block(inventory)}\n\n"
-        "CANDIDATE OWNING SERVICES (copy `data_flows.service_slug` VERBATIM from these):\n"
-        f"{_candidates_render(candidates)}\n\n"
         # The reflection rides the thread as the assistant message this call follows;
         # re-embedding it would send the same prose twice on the structured call (N3).
         # POSITIVE framing (DPL-DEC-18): the legacy single data call returned ZERO
@@ -572,13 +574,15 @@ def _extraction_prompt(inventory: dict | None, candidates: dict) -> str:
         # FILL and that empty is wrong when a record was verified.
         "TASK - EXTRACT THE DATA PLANE FROM YOUR REFLECTION. The assistant message "
         "immediately above is your reflection: use it - do not ask for it again and do "
-        "not restate it. Fill FOUR lists: "
+        "not restate it. The known-items inventory and the candidate owning services "
+        "are in that reflection - take each `data_flows.service_slug` VERBATIM from "
+        "the candidate list shown there, never a slug you invent. Fill FOUR lists: "
         "`data_items`, `surfaces_at`, `data_flows`, `data_relationships` for every "
         "record your reflection verified - an empty result here is wrong whenever "
-        "your reflection named a record. For a record already listed above, REUSE "
-        "its exact item_key and output the COMPOUNDED fields/notes (fold new insight "
-        "in, never blank or merely restate); coin a new item_key only for a record no "
-        "existing key covers. Reference a surface site as "
+        "your reflection named a record. For a record already listed in the inventory "
+        "above, REUSE its exact item_key and output the COMPOUNDED fields/notes (fold "
+        "new insight in, never blank or merely restate); coin a new item_key only for "
+        "a record no existing key covers. Reference a surface site as "
         '{"label": "Parameter"|"Header"|"Secret", "identity": {...the exact fields shown '
         "above...}}. `fields` names ONLY fields you actually observed on the surface "
         "above - never a speculative attribute. Fold the adversarial insight into each "
@@ -768,7 +772,7 @@ def model_data(
 
         try:
             raw = invoke_fn(
-                [HumanMessage(content=_extraction_prompt(inventory, candidates))],
+                [HumanMessage(content=_extraction_prompt())],
                 schema=L1DeltaBatch, system_prompt=system_prompt,
             )
         except Exception:  # fail-open: extraction LLM error -> empty outcome, never crash

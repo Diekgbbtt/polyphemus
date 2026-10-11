@@ -293,6 +293,33 @@ def test_model_data_scopes_its_invokes_by_the_chunk_batch():
     assert seen == ["stream:0", "stream:0"]
 
 
+def test_extraction_prompt_does_not_reinject_the_inventory_or_candidates():
+    """Change 2: the reflection `user` message is the SINGLE carrier of the
+    known-items inventory and the candidate owning services; the extraction `user`
+    message that follows in the same batch must NOT rebuild or re-send them - they
+    already sit in the trail. The extraction still directs what to emit and refers
+    to the candidates it already saw."""
+    from polymerhus.analysis.data_modeller import _extraction_prompt, _reflection_prompt
+
+    chunk = _chunk([_param("qty")])
+    inventory = {"data_items": ["shopping_basket"], "services": ["cart"]}
+    candidates = {"Parameter:qty@/api/x": ["cart"]}
+
+    reflection = _reflection_prompt(chunk, inventory, candidates)
+    extraction = _extraction_prompt()
+
+    assert "CURRENTLY-KNOWN DATAITEMS" in reflection
+    assert "shopping_basket" in reflection
+    assert "CANDIDATE OWNING SERVICES" in reflection
+    assert "cart" in reflection
+
+    assert "CURRENTLY-KNOWN DATAITEMS" not in extraction
+    assert "CANDIDATE OWNING SERVICES" not in extraction
+    assert "shopping_basket" not in extraction
+    assert "cart" not in extraction
+    assert "EXTRACT THE DATA PLANE" in extraction
+
+
 def test_empty_admission_no_llm_call():
     calls = {"n": 0}
 

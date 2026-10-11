@@ -584,5 +584,79 @@ def test_the_constant_shape_covers_the_whole_mechanism_typist_chain(monkeypatch)
     assert tool_sets == [tool_sets[0]] * 3, "the tool set never toggles across the chain"
 
 
+def test_every_roles_prose_turn_binds_the_structured_turns_exact_tool(monkeypatch):
+    """Change 1, byte-identity of the tool OBJECT: the tool a role binds on its
+    PROSE turn is the EXACT tool its STRUCTURED turn carries - the same name,
+    description, JSON-schema serialization, and derivation - so the provider
+    prefix (which includes the tool definitions) never toggles. Driven end to end
+    through the real seam for all three roles.
 
+    The assertion compares the bound tool objects for EQUALITY, not merely their
+    `convert_to_openai_tool` rendering: a hand-built look-alike can serialize the
+    same today and drift tomorrow, which is exactly what let the cache-miss defect
+    survive the earlier constant-shape change."""
+    from langchain_core.utils.function_calling import convert_to_openai_tool
+
+    from polymerhus.analysis.analyser_types import L1DeltaBatch
+    from polymerhus.analysis.proposer_turn import proposer_batch, session_invoke_fn
+
+    _force_voluntary_rung(monkeypatch)
+    monkeypatch.setattr(
+        "polymerhus.analysis.proposer_turn._role_prompt", lambda role_id: "PROMPT")
+
+    for role in ("assigner", "mechanism_typist", "data_modeller"):
+        model = _ToolRecordingModel()
+        monkeypatch.setattr(
+            "polymerhus.app.llm.session._default_model_factory", lambda role_id: model)
+        invoke = session_invoke_fn(role, f"run-{role}", InMemorySaver())
+        with proposer_batch("c1"):
+            invoke([HumanMessage(content="reflection")], schema=None)
+            invoke([HumanMessage(content="extraction")], schema=L1DeltaBatch)
+
+        assert len(model._bound) == 2, f"{role}: one bind per turn"
+        (prose_tools, _), (struct_tools, _) = model._bound
+        assert len(prose_tools) == 1 and len(struct_tools) == 1
+        prose_tool, struct_tool = prose_tools[0], struct_tools[0]
+
+        assert (prose_tool.name, prose_tool.description) == (
+            struct_tool.name, struct_tool.description)
+        assert prose_tool.tool_call_schema == struct_tool.tool_call_schema
+        assert convert_to_openai_tool(prose_tool) == convert_to_openai_tool(struct_tool)
+        # The EXACT tool object/derivation, not a same-shaped hand-built one.
+        assert prose_tool == struct_tool, (
+            f"{role}: the prose tool is not the exact structured-turn tool")
+
+
+def test_within_a_batch_the_reflection_user_is_the_shared_prefix(monkeypatch):
+    """Change 3: within ONE batch the reflection `user` message is the leading
+    trail message of the extraction request, carried once and never rebuilt. A new
+    chunk opens a FRESH thread, so the harness entities cannot accumulate run-long."""
+    from polymerhus.analysis.analyser_types import L1DeltaBatch
+    from polymerhus.analysis.proposer_turn import proposer_batch, session_invoke_fn
+
+    model = _RecordingModel()
+    monkeypatch.setattr(
+        "polymerhus.app.llm.session._default_model_factory", lambda role_id: model)
+    monkeypatch.setattr(
+        "polymerhus.analysis.proposer_turn._role_prompt", lambda role_id: "PROMPT")
+
+    saver = InMemorySaver()
+    invoke = session_invoke_fn("data_modeller", "runprefix", saver)
+    with proposer_batch("chunk-1"):
+        invoke([HumanMessage(content="reflection user")], schema=None)
+        invoke([HumanMessage(content="extraction user")], schema=L1DeltaBatch)
+    with proposer_batch("chunk-2"):
+        invoke([HumanMessage(content="chunk 2 reflection")], schema=None)
+
+    prose_request, extraction_request = model._seen[0], model._seen[1]
+    # The reflection `user` leads the extraction request: shared, not re-injected.
+    assert prose_request[1].content == "reflection user"
+    assert extraction_request[1].content == "reflection user"
+    assert sum(1 for m in extraction_request
+               if m.content == "reflection user") == 1, "carried once"
+    assert extraction_request[-1].content == "extraction user"
+    # The next chunk's request carries none of chunk 1's messages.
+    chunk_two = model._seen[-1]
+    assert chunk_two[1].content == "chunk 2 reflection"
+    assert all("reflection user" != getattr(m, "content", "") for m in chunk_two)
 
