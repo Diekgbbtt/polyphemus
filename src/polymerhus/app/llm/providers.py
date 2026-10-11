@@ -637,7 +637,10 @@ class ReasoningPreservingChatOpenAI(ChatOpenAI):
     (`"any"`, `"required"`, `True`, or a `{"type": "function", ...}` dict -
     anything but `None`/`"auto"`/`"none"`) to `"auto"` in `bind_tools`, so a
     thinking-mode relay that refuses a forced choice still serves the tool
-    loop. It is a PRIVATE attr (not a pydantic field - the pinned SDK's model
+    loop. On the same rung an unset `tool_choice` with tools bound also
+    normalizes to `"auto"`, so the factory's structured turn (forced) and prose
+    turn (unset) send one identical wire value and the request shape does not
+    toggle. It is a PRIVATE attr (not a pydantic field - the pinned SDK's model
     config drops extra fields) popped in `__init__`, so unrelaxed
     construction stays byte-identical.
 
@@ -656,15 +659,24 @@ class ReasoningPreservingChatOpenAI(ChatOpenAI):
         self._relax_forced_tool_choice = bool(relax_forced_tool_choice)
 
     def bind_tools(self, tools, *, tool_choice=None, **kwargs):
-        if self._relax_forced_tool_choice and _is_forced_tool_choice(tool_choice):
-            if not self._relax_logged:
-                logger.info("relaxed forced tool_choice %r -> 'auto' (A6 voluntary rung)",
-                            tool_choice)
-                self._relax_logged = True
-            else:
-                logger.debug("relaxed forced tool_choice %r -> 'auto' (A6 voluntary rung)",
-                             tool_choice)
-            tool_choice = "auto"
+        if self._relax_forced_tool_choice:
+            if _is_forced_tool_choice(tool_choice):
+                if not self._relax_logged:
+                    logger.info("relaxed forced tool_choice %r -> 'auto' (A6 voluntary rung)",
+                                tool_choice)
+                    self._relax_logged = True
+                else:
+                    logger.debug("relaxed forced tool_choice %r -> 'auto' (A6 voluntary rung)",
+                                 tool_choice)
+                tool_choice = "auto"
+            elif tool_choice is None and tools:
+                # The agent factory binds the same tool set twice per role: a
+                # structured turn with tool_choice="any" and a prose turn with
+                # request.tool_choice (None). Sending "auto" for the unset case
+                # too makes the wire value uniform, so one role's prefix (tools
+                # included) serializes once. None and "auto" are the same
+                # meaning when tools are bound.
+                tool_choice = "auto"
         return super().bind_tools(tools, tool_choice=tool_choice, **kwargs)
 
     def _create_chat_result(self, response, generation_info=None):
