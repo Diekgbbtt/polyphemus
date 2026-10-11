@@ -76,6 +76,22 @@ def _default_sem():
     return ANALYSER_PASS_SEMAPHORE
 
 
+def _census_observed(census) -> bool:
+    """Whether a pass OBSERVED surface, for the drained claim (D4/DQ2b).
+
+    A pass that carries an explicit write-based signal (`wrote`, ADR D41) is
+    authoritative: the service-sourced pass writes only when it actually wrote, so
+    a run where every Service degraded is not falsely reported drained. A pass with
+    no such signal (the streamed chunked pass) falls back to the dispatch-entry
+    count, byte-for-byte as before."""
+    if census is None:
+        return False
+    wrote = getattr(census, "wrote", None)
+    if wrote is not None:
+        return bool(wrote)
+    return bool(getattr(census, "dispatches_entered", 0) or 0)
+
+
 class L0Chunk(BaseModel):
     """The queue element: a curated slice of L0 surface a recon job produced.
 
@@ -160,6 +176,12 @@ class InlineAnalysisFeed:
         self._passes = 0
         self._timings = _Timings()
 
+    @property
+    def stopping(self) -> bool:
+        """The inline feed runs each pass to completion on the caller's task, so
+        there is no in-flight boundary to stop at: never stopping."""
+        return False
+
     async def push(self, chunk: L0Chunk) -> None:
         self._advanced += 1
         started = time.monotonic()
@@ -222,6 +244,7 @@ class QueuedAnalysisFeed:
         # needs this because the terminal marker is a no-op by construction.
         self._observed_any = False
         self._l0_assets_read = 0
+        self._stopped_any = False
         # Dispatches entered across ALL passes. Accumulated (not read from the last
         # census) because the terminal marker is itself a final pass whose census
         # carries zero dispatches - reading only `_last_census` would report 0 for a
@@ -255,6 +278,13 @@ class QueuedAnalysisFeed:
         ))
 
     # --- consumer side (analysis) ---------------------------------------------
+
+    @property
+    def stopping(self) -> bool:
+        """Whether a graceful stop has been requested (D7). The service-sourced
+        pass reads this between Service units so a long pass stops at a unit
+        boundary (ADR D42)."""
+        return self._stop_event.is_set()
 
     def start(self) -> "QueuedAnalysisFeed":
         self._done.clear()
@@ -302,8 +332,10 @@ class QueuedAnalysisFeed:
                         self._last_census = getattr(result, "census", None)
                         entered = getattr(self._last_census, "dispatches_entered", 0) or 0
                         self._dispatches_entered += entered
-                        if entered:
+                        if _census_observed(self._last_census):
                             self._observed_any = True
+                        if getattr(self._last_census, "stopped", False):
+                            self._stopped_any = True
                         self._l0_assets_read += len(chunk.assets)
                 except asyncio.CancelledError:
                     self._queue.task_done()
@@ -315,8 +347,13 @@ class QueuedAnalysisFeed:
                     self._queue.task_done()
                 if chunk.terminal:
                     # The marker is consumed LAST (FIFO), so every pushed chunk has been
-                    # consumed. Classify the run (D4): drained iff a pass observed surface.
-                    self._status = "drained" if self._observed_any else "withheld"
+                    # consumed. Classify the run (D4): a MID-PASS stop is `stopped`, never
+                    # `drained` (ADR D42); otherwise drained iff a pass observed surface
+                    # (write-based where the pass says so, ADR D41).
+                    if self._stopped_any:
+                        self._status = "stopped"
+                    else:
+                        self._status = "drained" if self._observed_any else "withheld"
                     break
         finally:
             if pending_get is not None and not pending_get.done():
@@ -365,8 +402,12 @@ class QueuedAnalysisFeed:
 
     def _stats(self) -> FeedStats:
         census = self._last_census
+        # A drained claim is only made from the DRAINED terminal path: a mid-pass
+        # stop (ADR D42) consumed a marker too, but the pass was interrupted, so it
+        # must not read as convergence.
         drained = bool(
-            census is not None
+            self._status == "drained"
+            and census is not None
             and getattr(census, "terminal", False)
             and getattr(census, "unprocessed_after", 0) == 0
             and self._observed_any
@@ -419,14 +460,55 @@ def drop_feed(run_id: str) -> None:
     _FEEDS.pop(run_id, None)
 
 
+# The analysis modes (ADR D2): `streamed` is the untouched default; `service_sourced`
+# promotes the business Service to the pipeline unit.
+ANALYSIS_MODES: tuple[str, ...] = ("streamed", "service_sourced")
+
+
+def resolve_analysis_mode(settings: dict | None) -> str:
+    """The project's analysis mode (ADR D2), read at ONE seam.
+
+    Defaults to `streamed`; an absent or unknown value coerces to `streamed` (the
+    fail-safe direction: the new mode is only ever entered on an explicit,
+    recognised value). `service_sourced` is the flag the whole service-sourced
+    pipeline hangs off - see `resolve_feed_mode` (it fires the queued feed on its
+    own, no `streaming_analysis` needed) and `resolve_analysis_pass_fn`."""
+    s = settings or {}
+    mode = str(s.get("analysis_mode") or "streamed").strip()
+    if mode not in ANALYSIS_MODES:
+        logger.warning(
+            "analysis_mode=%r is unknown (known: %s); using %r",
+            mode, ", ".join(ANALYSIS_MODES), "streamed",
+        )
+        return "streamed"
+    return mode
+
+
+def resolve_analysis_pass_fn(settings: dict | None):
+    """The `pass_fn` the mode selects (ADR D1): `service_sourced` gets the
+    service-sourced pass; `streamed` gets None (the feed's own `analyse_chunked`
+    default, byte-for-byte as today). Import is lazy so this module carries no
+    pipeline dependency at import time."""
+    if resolve_analysis_mode(settings) != "service_sourced":
+        return None
+    from polymerhus.analysis.service_sourced import service_sourced_pass
+
+    return service_sourced_pass
+
+
 def resolve_feed_mode(settings: dict | None) -> str:
     """`queued` is the DEFAULT whenever streaming analysis is on; `inline` only when
     explicitly opted back into (`async_analysis_consumer=False`).
 
-    The terminal pass stays gated on `streaming_analysis` (#34 DQ5a): off means off,
-    byte-for-byte as today, so this flag cannot introduce post-recon batch analysis
-    as a side effect of a scheduling change."""
+    `service_sourced` fires the QUEUED feed on its own and does NOT require
+    `streaming_analysis` (ADR D2): the terminal marker is the only trigger, so the
+    decoupled consumer is the only admissible shape. For every other case the
+    terminal pass stays gated on `streaming_analysis` (#34 DQ5a): off means off,
+    byte-for-byte as today, so no scheduling change sneaks post-recon batch
+    analysis in as a side effect."""
     s = settings or {}
+    if resolve_analysis_mode(s) == "service_sourced":
+        return "queued"
     if not s.get("streaming_analysis"):
         return "inline"
     return "inline" if s.get("async_analysis_consumer") is False else "queued"
