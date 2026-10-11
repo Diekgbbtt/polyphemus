@@ -32,11 +32,15 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
+from typing import TYPE_CHECKING
 
 from polymerhus.analysis.analyser_types import L1DeltaBatch
 from polymerhus.analysis.chunking import Chunk
 from polymerhus.analysis.proposer_reasoning import cot_scaffold, role_header
 from polymerhus.analysis.reasoning_workflow import ReasoningWorkflow, SubProblem
+
+if TYPE_CHECKING:
+    from polymerhus.analysis.memory import AnalysisMemoryStore
 
 logger = logging.getLogger(__name__)
 
@@ -171,6 +175,41 @@ def _reconcile_webpresentation(systems: list, edges: list) -> tuple[list, list]:
                 e = e.model_copy(update=update)
         repaired_edges.append(e)
     return kept_systems, repaired_edges
+
+
+def _system_key(kind: str, discriminator: str | None) -> str:
+    """Render a System identity the way `read_l1_inventory._render_system` does:
+    `kind` for a singleton, else `kind:disc` - so a key computed here matches the
+    inventory's `systems` list (the first-definer test, ADR D19)."""
+    from polymerhus.analysis.l1_types import elide_singleton
+
+    disc = elide_singleton(discriminator)
+    return f"{kind}:{disc}" if disc else kind
+
+
+def strip_recompounded_descriptions(
+    batch: L1DeltaBatch, *, existing_keys: frozenset[str]
+) -> L1DeltaBatch:
+    """The first-definer compounding rule (ADR D19): only the Service that FIRST
+    defines a System compounds its `description`; later Services never re-compound
+    it. A System already present in the live inventory was defined by an earlier
+    Service (or an earlier run), so this Service must not overwrite its
+    description - the description prop is dropped from the emitted batch, and the
+    writer's `SET += props` then leaves the existing description intact. A System
+    that is NOT yet defined (this Service is its first definer) keeps its
+    description, so the one authorised compounding still happens. Inert on the
+    streamed default (`existing_keys` empty)."""
+    if not existing_keys:
+        return batch
+    out = []
+    for system in batch.systems:
+        key = _system_key(system.kind, system.discriminator)
+        if key in existing_keys and (system.props or {}).get("description"):
+            props = dict(system.props)
+            props.pop("description", None)
+            system = system.model_copy(update={"props": props})
+        out.append(system)
+    return batch.model_copy(update={"systems": out})
 
 
 def _known_kinds() -> frozenset[str]:
@@ -493,6 +532,9 @@ def type_mechanisms(
     aggregations: list[dict] | None = None,
     run_id: str | None = None,
     tags: list | None = None,
+    memory: "AnalysisMemoryStore | None" = None,
+    project_id: str | None = None,
+    first_definer: bool = False,
 ) -> L1DeltaBatch:
     """The A.1 mechanism-typist body (grilled #9): the `WORKFLOW` sub-problem chain
     (mechanism_hypotheses -> page_clusters -> systems_extract -> link) over a `service`
@@ -501,7 +543,11 @@ def type_mechanisms(
     `invoke_fn(messages, *, schema, system_prompt) -> AnalysisTurn | None` is injected
     (unit-testable). FAIL-CLOSED on hypotheses exhaustion (the chain halts); SOFT
     pass-through on a later step's exhaustion (write what earlier steps produced).
-    Fail-open on any exception - never crashes the caller."""
+    Fail-open on any exception - never crashes the caller.
+
+    `memory` / `project_id` thread the per-unit analysis backstop into `run_workflow`
+    (ADR D31); `first_definer=True` applies the ADR D19 compounding rule, used only by
+    the service-sourced loop. Both are inert for the streamed default."""
     if not chunk.assets:  # empty delta -> nothing to type (valid empty)
         return L1DeltaBatch()
     invoke_fn = invoke_fn or _default_invoke_fn
@@ -536,6 +582,7 @@ def type_mechanisms(
                 WORKFLOW, invoke_fn=invoke_fn, system_prompt=skill,
                 base_artifacts=base_artifacts,
                 halt_when=lambda sp, turn: sp.id == "mechanism_hypotheses" and turn is None,
+                unit_slug=chunk.chunk_id, memory=memory, project_id=project_id, run_id=run_id,
             )
     except Exception:
         logger.warning("mechanism_typist: workflow failed; degrading to empty batch", exc_info=True)
@@ -579,7 +626,13 @@ def type_mechanisms(
         system_edges=reconciled_edges,
     )
     combined = narrow_to_typing(combined)
-    return drop_unknown_vocabulary(combined, kinds=_known_kinds(), rels=_known_rels())
+    combined = drop_unknown_vocabulary(combined, kinds=_known_kinds(), rels=_known_rels())
+    if first_definer:
+        # ADR D19: strip the description from any System an earlier Service already
+        # defined, so N Services never re-compound it. Inert on the streamed path.
+        combined = strip_recompounded_descriptions(
+            combined, existing_keys=frozenset((inventory or {}).get("systems") or ()))
+    return combined
 
 
 # --- supervisor wiring (the proposer_bodies["mechanism_typist"] seam) ----------
@@ -601,6 +654,8 @@ def mechanism_typist_body(
     invoke_fn=None,
     read_inventory=None,
     read_aggregations=None,
+    memory: "AnalysisMemoryStore | None" = None,
+    first_definer: bool = False,
 ) -> L1DeltaBatch | None:
     """The supervisor proposer BODY - matches `supervisor.ProposerBody` EXACTLY, like
     the Assigner (grilled #9 wiring caveat): route the A.1 create phase to
@@ -633,4 +688,5 @@ def mechanism_typist_body(
     tags = ["analysis", getattr(dispatch, "role", "mechanism_typist")]
     return type_mechanisms(chunk, invoke_fn=invoke_fn, inventory=inventory,
                            aggregations=aggregations, run_id=run_id or None,
-                           tags=tags)
+                           tags=tags, memory=memory, project_id=project_id or None,
+                           first_definer=first_definer)

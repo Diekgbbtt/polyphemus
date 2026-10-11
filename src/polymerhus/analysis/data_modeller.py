@@ -30,6 +30,7 @@ from __future__ import annotations
 import logging
 import os
 from collections import defaultdict
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -38,6 +39,9 @@ from polymerhus.analysis.chunking import Chunk, admit_for_role
 from polymerhus.analysis.l1_types import L0Ref
 from polymerhus.analysis.proposer_reasoning import cot_scaffold, role_header
 from polymerhus.analysis.reasoning_workflow import ReasoningWorkflow, SubProblem
+
+if TYPE_CHECKING:
+    from polymerhus.analysis.memory import AnalysisMemoryStore
 
 logger = logging.getLogger(__name__)
 
@@ -769,6 +773,8 @@ def stateful_invoke_fn(run_id: str, checkpointer, project_id: str | None = None)
 def model_data(
     chunk: Chunk, *, invoke_fn=None, inventory: dict | None = None,
     aggregations: list[dict] | None = None,
+    memory: "AnalysisMemoryStore | None" = None, project_id: str | None = None,
+    run_id: str | None = None,
 ) -> DataPlaneOutcome:
     """The A.1 data_modeller body: the `WORKFLOW` sub-problem chain
     (record_hypotheses -> data_extract -> flow_shape -> flow_extract) -> the six
@@ -813,6 +819,7 @@ def model_data(
                 WORKFLOW, invoke_fn=invoke_fn, system_prompt=system_prompt,
                 base_artifacts=base_artifacts,
                 halt_when=lambda sp, turn: sp.id == "record_hypotheses" and turn is None,
+                unit_slug=chunk.chunk_id, memory=memory, project_id=project_id, run_id=run_id,
             )
     except Exception:  # fail-open: LLM error -> empty outcome, never crash (DPL-DEC fail-open)
         logger.warning("data_modeller: workflow failed; degrading to empty outcome", exc_info=True)
@@ -886,16 +893,19 @@ def _default_read_aggregations(project_id: str) -> list[dict]:
     return read_service_aggregations(project_id)
 
 
-def make_data_modeller_body(*, invoke_fn=None, inventory_fn=None, aggregations_fn=None):
+def make_data_modeller_body(
+    *, invoke_fn=None, inventory_fn=None, aggregations_fn=None, memory=None,
+):
     """Adapt `model_data` to the supervisor's `ProposerBody` signature
     (`(dispatch, state) -> L1DeltaBatch | None`), a FACTORY binding every
     collaborator once (DPL-DEC-02, the Assigner's precedent - not the typist's
     `functools.partial` shape, so the dispatch-time reads stay explicit here).
 
-    Returns `None` immediately when `dispatch.phase != "A1"` - the inert A.2 seam
-    (DPL-DEC-23): A.2 is `designed-not-built`, never a silent half-implementation.
-    Every read is guarded, so this body never raises regardless of what its
-    collaborators do."""
+    `memory` threads the per-unit analysis backstop into `run_workflow` (ADR D31);
+    it is inert (None) on the streamed default. Returns `None` immediately when
+    `dispatch.phase != "A1"` - the inert A.2 seam (DPL-DEC-23): A.2 is
+    `designed-not-built`, never a silent half-implementation. Every read is
+    guarded, so this body never raises regardless of what its collaborators do."""
 
     def body(dispatch, state) -> L1DeltaBatch | None:
         if getattr(dispatch, "phase", None) != "A1":
@@ -916,7 +926,11 @@ def make_data_modeller_body(*, invoke_fn=None, inventory_fn=None, aggregations_f
         except Exception:
             logger.warning("data_modeller: aggregation read failed; no candidate owners", exc_info=True)
             aggregations = []
-        outcome = model_data(chunk, invoke_fn=invoke_fn, inventory=inventory, aggregations=aggregations)
+        outcome = model_data(
+            chunk, invoke_fn=invoke_fn, inventory=inventory, aggregations=aggregations,
+            memory=memory, project_id=project_id or None,
+            run_id=(state.get("run_id") or "").removeprefix("stream-") or None,
+        )
         if outcome.backlog:
             logger.info("data_modeller: %d backlog description(s) not transported (DPL-DEC-22)", len(outcome.backlog))
         return outcome.batch
