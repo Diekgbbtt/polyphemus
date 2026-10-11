@@ -276,7 +276,22 @@ The legacy two-pass analyser monolith dissolves into responsibility-scoped propo
 
 All three chunk-fed proposers are **STATEFUL session agents as of #94** (`agent_mode="session"`), and **per-BATCH as of the 2026-10-10 cache experiment**: `assigner` / `mechanism_typist` / `data_modeller` run their structured turn via `app/llm/session.py::stateful_turn` on a per-(RUN, CHUNK) `AnalysisSession(run_id, role_id, batch=<chunk_id>)` thread, so the turns WITHIN one chunk share the agent's memory (the reflection is the extraction's context) while the NEXT chunk starts a FRESH context. The per-batch discriminator is set by a `proposer_batch(chunk.chunk_id)` scope the proposer body opens around its invoke chain (`analysis/proposer_turn.py`) - a scoped ContextVar, so the `(messages, *, schema, system_prompt)` invoke contract is unchanged; an unscoped caller keeps the `run:role` thread, preserving the observability/runtime contract. The shared process-wide pooled checkpointer (`app/llm/checkpoints.py`) is the memory store. The one_shot roles (bootstrapper, anatomy, curation, sweep, anti-cluttering) externalise their reasoning to the graph and stay on `invoke_role`.
 
-**Constant request shape (2026-10-10 cache experiment, extended by the reasoning workflow):** every turn of a proposer role binds the SAME structured tool, the `AnalysisTurn` envelope, so the request shape never toggles and the provider prefix cache matches across a role's whole sub-problem chain. Before this the reflection bound NO tool and the extraction bound one, so `data_modeller`'s strict `P,S,P,S` schedule toggled the tool set every call and the provider prefix cache never matched (`cache_read=0`). `mechanism_typist`'s `P,S,S` shared an `S,S` tool set and cached, which was the asymmetry that named the fix.
+**Constant request shape (2026-10-10 cache experiment, extended by the reasoning workflow and T3):** every turn of a proposer role binds the SAME tool set - the `AnalysisTurn` envelope plus the shared analysis `notes` tool - so the request shape never toggles and the provider prefix cache matches across a role's whole sub-problem chain. Before this the reflection bound NO tool and the extraction bound one, so `data_modeller`'s strict `P,S,P,S` schedule toggled the tool set every call and the provider prefix cache never matched (`cache_read=0`). `mechanism_typist`'s `P,S,S` shared an `S,S` tool set and cached, which was the asymmetry that named the fix. A prose turn binds `(notes, AnalysisTurn)`; a structured turn passes only `notes` and lets `response_format` append `AnalysisTurn`, so both final bound lists are `(notes, AnalysisTurn)`. `notes` is bound through the session `tools=` seam, never the skills seam (`skill_agent_binding` would raise for an undeclared role; ADR D33).
+
+**Analysis episodic memory** (`analysis/memory.py`, ADR D27-D32):
+The durable per-Service memory the proposers write through the shared `notes` tool, at `data/<project_id>/analysis/memory.yaml`.
+One whole-file YAML list of note records keyed by the Service slug (`<unit>:<note_name>`), bounded by the shared `retain_bounded_records` with `MEMORY_NOTES_MAX_RECORDS` / `MEMORY_NOTES_MAX_BYTES`.
+The store builds on the shared `app.memory.BoundedRecordStore` and never imports `attack.hunting`.
+Read-back is within-run (a later Service reads earlier Services' notes) and cross-run, because the store is per-project and durable.
+
+**Note kind** (`analysis/memory.py`, closed enum, ADR D30):
+One of `assignment`, `system`, `data`, `refusal`, `open_question` - L1-modelling only.
+The phase-3 hunting vocabulary (fault hypothesis, payload, technique, vector) stays unratified in this context, so no note kind may speak it.
+
+**Per-unit backstop** (`analysis/memory.py::ensure_unit_note`, ADR D31):
+After a unit's `ReasoningWorkflow` chain the executor writes ONE note for the unit when the proposer wrote none, so "one note per Service exists after the run" is an auditable coverage guarantee, not merely a prompt instruction.
+Inert without a bound unit or memory store; fail-open on a write failure.
+
 
 **Reasoning workflow** (`analysis/reasoning_workflow.py`):
 A role's reasoning is a `ReasoningWorkflow`: an ordered list of `SubProblem`s, one LLM turn each, every turn speaking the ONE `AnalysisTurn` envelope.

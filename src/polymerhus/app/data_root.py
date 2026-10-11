@@ -7,6 +7,7 @@ the layout is defined once and no module scaffolds its own directories:
     ├── skills/                 # the skills module owns this
     ├── auth/                   # the auth module owns this (#220)
     ├── usage/                  # the durable token-usage record (#326)
+    ├── analysis/               # the analysis episodic memory (T3)
     ├── hunting/
     │   ├── orchestration/      # HuntStore
     │   ├── hunter/             # HunterMemoryStore
@@ -43,6 +44,7 @@ PROJECT_SCAFFOLD: tuple[str, ...] = (
     "skills",
     "auth",
     "usage",
+    "analysis",
     "hunting/orchestration",
     "hunting/orchestration/hunt_configs/produced",
     "hunting/orchestration/hunt_configs/consumed",

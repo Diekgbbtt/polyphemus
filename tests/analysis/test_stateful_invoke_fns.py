@@ -137,7 +137,8 @@ def test_the_proposers_carry_no_skill_surface(monkeypatch):
         # prose turn; it is never a skill tool.
         tool_names = {getattr(t, "name", "") for t in (seen["tools"] or ())}
         assert "load_skill" not in tool_names, f"{role} must bind no skill tool"
-        assert tool_names <= {"AnalysisTurn"}, f"{role} binds only its own structured tool"
+        assert tool_names <= {"AnalysisTurn", "notes"}, (
+            f"{role} binds only its own structured tool plus the analysis notes tool")
         assert seen["context"] is None, f"{role} must carry no skill context"
         assert "_skill_index" not in {
             type(mw).__name__ for mw in seen["middleware"] or ()

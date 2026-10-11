@@ -115,39 +115,80 @@ def _role_structured_schema(role_id: str) -> Any:
     return None
 
 
-def _prose_tools(role_id: str) -> tuple:
-    """The role's structured tool, bound on a PROSE turn so the tool set is constant
-    across the role's calls (the cache-shape rule).
+def _analysis_notes_tool(project_id: str | None):
+    """The analysis `notes` tool, bound on every proposer turn through the session
+    `tools=` seam - NEVER the skills seam (`skill_agent_binding` would raise for an
+    undeclared role; ADR D33). The store is per-project; the Service slug is a
+    request field, so a later unit reads earlier units' notes. Fail-open: an
+    unbuildable notes tool binds nothing (the session always starts)."""
+    try:
+        from polymerhus.analysis.memory import AnalysisMemoryStore, notes_tool_for
 
-    The structured turn supplies the SAME tool through `response_format`; binding it
-    again there would duplicate it, so only a prose turn (`schema is None`) gets it
-    here. The tool is the exact tool the ToolStrategy path builds when the role's
-    negotiated structured-output method is ToolStrategy (the A6 voluntary rung); a
-    ProviderStrategy method carries no tool, so this returns (). The tool is made
-    inert - the reflection prompt forbids a call, and a stray call then costs one
-    benign tool message instead of a ToolNode error. Fail-open: an unbuildable shape
+        return notes_tool_for(
+            store=AnalysisMemoryStore(), project_id=project_id or "")
+    except Exception:  # noqa: BLE001 - fail-open: an unbuildable notes tool binds nothing
+        return None
+
+
+def _prose_tools(role_id: str, *, project_id: str | None = None) -> tuple:
+    """The tools bound on a PROSE turn, so the tool set is constant across the
+    role's calls (the cache-shape rule): the shared `notes` tool plus, when the
+    role negotiates `ToolStrategy`, its structured-output tool.
+
+    The structured turn supplies the structured tool through `response_format`
+    (which `create_agent` appends AFTER the passed tools), so a prose turn binds
+    `(notes, AnalysisTurn)` in that exact order to reproduce the same final
+    bound list. The structured tool is made inert - a stray call costs one benign
+    tool message instead of a ToolNode error. Fail-open: an unbuildable shape
     binds nothing (the session always starts)."""
     schema = _role_structured_schema(role_id)
     if schema is None:
         return ()
+    tools: list = []
+    notes = _analysis_notes_tool(project_id)
+    if notes is not None:
+        tools.append(notes)
     try:
         from langchain.agents.structured_output import ToolStrategy
         from langchain_core.tools import StructuredTool
 
         from polymerhus.app.llm.session import structured_response_format
 
+        # The notes tool is a per-project memory sidecar, NOT the structured-output
+        # carrier: the negotiation axis stays the NO-TOOLS axis (as before the notes
+        # binding), so adding `notes` never flips the negotiated method or the
+        # request shape (ADR D34). The structured turn supplies the structured tool
+        # through `response_format`.
         fmt = structured_response_format(role_id, schema, tools_bound=False)
         if not isinstance(fmt, ToolStrategy):
-            return ()
+            return tuple(tools)
         spec = fmt.schema_specs[0]
-        return (StructuredTool(
+        tools.append(StructuredTool(
             name=spec.name,
             description=spec.description,
             args_schema=spec.json_schema,
             func=lambda **_: "structured output is only produced on the extraction turn",
-        ),)
+        ))
     except Exception:  # noqa: BLE001 - fail-open: an unbuildable tool binds nothing
+        return tuple(tools)
+    return tuple(tools)
+
+
+def _turn_tools(role_id: str, project_id: str | None, *,
+                structured_bound: bool) -> tuple:
+    """The constant per-role tool set for ONE turn.
+
+    A structured turn passes only `notes` and lets `response_format` append
+    `AnalysisTurn`; a prose turn passes `(notes, AnalysisTurn)` directly. Both
+    final bound lists are `(notes, AnalysisTurn)`, so the request shape never
+    toggles between a role's reflection and extraction turns (the shape that
+    defeated the provider prefix cache; ADR D26/D34)."""
+    if _role_structured_schema(role_id) is None:
         return ()
+    if structured_bound:
+        notes = _analysis_notes_tool(project_id)
+        return (notes,) if notes is not None else ()
+    return _prose_tools(role_id, project_id=project_id)
 
 
 def session_invoke_fn(role_id: str, run_id: str, checkpointer, project_id: str | None = None):
@@ -162,9 +203,10 @@ def session_invoke_fn(role_id: str, run_id: str, checkpointer, project_id: str |
 
     Two cross-call invariants ride this ONE seam:
 
-    - **Constant request shape**: a prose turn still binds the role's structured tool
-      via `tools=`, so the tool set never toggles between a role's reflection and
-      extraction turns (the shape that defeated the provider prefix cache).
+    - **Constant request shape**: every turn binds the analysis `notes` tool, and a
+      prose turn ALSO binds the role's structured tool via `tools=`, so the tool set
+      never toggles between a role's reflection and extraction turns (the shape that
+      defeated the provider prefix cache; ADR D26/D34).
     - **Per-batch memory**: the thread is `AnalysisSession(run, role, batch)` where
       `batch` is the innermost `proposer_batch` scope the body opened (the streamed
       chunk id) - or None (the `run:role` thread) when none is set.
@@ -185,11 +227,13 @@ def session_invoke_fn(role_id: str, run_id: str, checkpointer, project_id: str |
         # can never be built with another proposer's prompt by accident.
         resolved_schema = (_role_default_schema(role_id)
                            if schema is _NO_SCHEMA else schema)
-        # Constant shape: a prose turn binds the role's structured tool so the tool
-        # set never toggles; the structured turn supplies it via `response_format`.
-        # Only a non-empty set is forwarded, so the structured calls stay byte-identical
-        # to the pre-change requests.
-        tools = () if resolved_schema is not None else _prose_tools(role_id)
+        # Constant shape: every turn binds the analysis `notes` tool, and a prose
+        # turn ALSO binds the structured tool the structured turn gets through
+        # `response_format`, so the tool set never toggles. Only a non-empty set is
+        # forwarded, so the structured calls stay byte-identical to the pre-change
+        # requests.
+        tools = _turn_tools(
+            role_id, project_id, structured_bound=resolved_schema is not None)
         address = AnalysisSession(run_id, role_id, batch=current_batch())
         kwargs: dict[str, Any] = {}
         if tools:
@@ -199,7 +243,9 @@ def session_invoke_fn(role_id: str, run_id: str, checkpointer, project_id: str |
                              schema=resolved_schema,
                              system_prompt=system_prompt or _role_prompt(role_id),
                              middleware=middleware, extra_tags=[run_id],
-                             usage_scope=project_id, **kwargs)
+                             usage_scope=project_id,
+                             # Keep the structured negotiation on its pre-notes axis.
+                             structured_tools_bound=False, **kwargs)
 
     return invoke
 

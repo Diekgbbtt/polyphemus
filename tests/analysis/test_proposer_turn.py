@@ -176,7 +176,8 @@ def test_the_stateful_leg_carries_no_skill_surface(monkeypatch):
 
     tool_names = {getattr(t, "name", "") for t in bound.get("tools") or ()}
     assert "load_skill" not in tool_names, "no skill tool"
-    assert tool_names <= {"AnalysisTurn"}, "only the role's own structured-output tool"
+    assert tool_names <= {"AnalysisTurn", "notes"}, (
+        "only the role's own structured-output tool plus the analysis notes tool")
     assert "context" not in bound or bound.get("context") is None
     assert "_skill_index" not in {type(m).__name__ for m in bound["middleware"] or ()}
     assert roles == ["mechanism_typist"], "one middleware per turn, for its OWN role"
@@ -535,8 +536,9 @@ def _force_voluntary_rung(monkeypatch):
 
 def test_a_roles_tool_set_is_constant_across_its_turns(monkeypatch):
     """Change 1, end to end through the REAL seam, on the new turn shape: every turn
-    of a role binds the SAME structured tool (`AnalysisTurn`), so the request shape -
-    and the provider prefix - never toggles across its sub-problems."""
+    of a role binds the SAME structured tool (`AnalysisTurn`) plus the analysis
+    `notes` tool, so the request shape - and the provider prefix - never toggles
+    across its sub-problems."""
     from langchain_core.utils.function_calling import convert_to_openai_tool
 
     from polymerhus.analysis.proposer_turn import proposer_batch, session_invoke_fn
@@ -558,12 +560,61 @@ def test_a_roles_tool_set_is_constant_across_its_turns(monkeypatch):
 
     assert len(model._bound) == 4, "one bind per turn"
     tool_sets = [tuple(t.name for t in tools) for tools, _ in model._bound]
-    assert tool_sets == [("AnalysisTurn",)] * 4, "the tool set never toggles"
+    assert tool_sets == [("notes", "AnalysisTurn")] * 4, "the tool set never toggles"
     # Byte-identical tool DEFINITIONS - what the provider's prefix cache sees.
     first = model._bound[0][0]
     for tools, _ in model._bound[1:]:
         assert [convert_to_openai_tool(t) for t in tools] == [
             convert_to_openai_tool(t) for t in first]
+
+
+def test_binding_notes_keeps_the_structured_method_constant(monkeypatch):
+    """ADR D34: a second bound tool changes the negotiation axis; the analysis
+    seam pins the structured negotiation to its PRE-notes no-tools axis, so the
+    second tool never flips the negotiated method. On the deployed voluntary rung
+    the axis still lands on ToolStrategy; on an unknown profile it still lands on
+    the json_schema rung (ProviderStrategy) - exactly as before `notes` was
+    bound."""
+    from langchain.agents.structured_output import ProviderStrategy, ToolStrategy
+
+    from polymerhus.analysis.proposer_turn import _prose_tools, _role_structured_schema
+    from polymerhus.analysis.reasoning_workflow import AnalysisTurn
+    from polymerhus.app.llm.session import structured_response_format
+
+    schema = _role_structured_schema("mechanism_typist")
+    assert schema is AnalysisTurn
+
+    # Unknown profile (no forced rung): the no-tools axis keeps the json_schema rung.
+    monkeypatch.setattr(
+        "polymerhus.app.llm.providers.resolve_role", lambda role: ("provider", "model"))
+    import polymerhus.app.llm.capability as cap
+    import polymerhus.app.llm.session as S
+    monkeypatch.setattr(cap, "resolve_capability", lambda p, m: None)
+    monkeypatch.setattr(S, "resolve_capability", lambda p, m: None)
+    assert isinstance(
+        structured_response_format("mechanism_typist", schema, tools_bound=False),
+        ProviderStrategy)
+
+    # Deployed voluntary rung: the same no-tools axis lands on ToolStrategy.
+    _force_voluntary_rung(monkeypatch)
+    assert isinstance(
+        structured_response_format("mechanism_typist", schema, tools_bound=False),
+        ToolStrategy)
+    # The prose turn binds the same final set the structured turn will bind:
+    # (notes, AnalysisTurn) - the structured turn passes only notes and lets
+    # `response_format` append AnalysisTurn last.
+    prose_tools = _prose_tools("mechanism_typist", project_id="proj-1")
+    assert tuple(t.name for t in prose_tools) == ("notes", "AnalysisTurn")
+
+
+def test_a_prose_turn_binds_notes_too(monkeypatch):
+    """The notes tool is bound on a PROSE turn as well, so the tool set is
+    constant whether the role's turn is structured or free-text."""
+    _force_voluntary_rung(monkeypatch)
+    from polymerhus.analysis.proposer_turn import _prose_tools
+
+    names = tuple(t.name for t in _prose_tools("assigner", project_id="proj-1"))
+    assert names == ("notes", "AnalysisTurn")
 
 
 def test_the_constant_shape_covers_the_whole_mechanism_typist_chain(monkeypatch):

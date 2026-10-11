@@ -6,8 +6,8 @@ session role, one turn per (fresh, realistic, large) HumanMessage, and reads the
 per-model-call cached/uncached split out of the process-wide usage ledger
 (`app.llm.usage.usage_ledger()`). It mirrors the production wiring:
 
-- mechanism_typist: the reflection prompt built by
-  `analysis.mechanism_typist._reflection_prompt` over a synthetic but realistic
+- mechanism_typist: the first sub-problem turn rendered by
+  `analysis.mechanism_typist.WORKFLOW` over a synthetic but realistic
   `Chunk` (Endpoint assets with content_type/title/status/server props plus
   triager Observations), with the role skill as a per-turn SystemMessage - the
   same shape `stateful_invoke_fn` drives.
@@ -114,7 +114,14 @@ def _mechanism_prompt(k: int, target_chars: int, salt: str):
     from langchain_core.messages import HumanMessage, SystemMessage
 
     from polymerhus.analysis.chunking import Chunk
-    from polymerhus.analysis.mechanism_typist import _load_skill, _reflection_prompt
+    from polymerhus.analysis.l1_curator import vocabulary_prompt
+    from polymerhus.analysis.mechanism_typist import (
+        WORKFLOW,
+        _asset_observation_paragraphs,
+        _defined_systems_block,
+        _load_skill,
+    )
+    from polymerhus.analysis.reasoning_workflow import render_turn
     from polymerhus.recon.domain.types import AssetDelta, Observation
 
     base = f"https://app-{k}-{salt}.target.test"
@@ -155,7 +162,13 @@ def _mechanism_prompt(k: int, target_chars: int, salt: str):
         ))
         chunk = Chunk(chunk_id=f"chunk-{k}", source_job=f"job-{k}",
                       assets=tuple(assets), observations=tuple(observations))
-        prompt = _reflection_prompt(chunk, {})
+        # The production seam's FIRST sub-problem turn, rendered exactly as
+        # `run_workflow` renders it (the task constants, not a retired helper).
+        prompt = render_turn(WORKFLOW.sub_problems[0], {
+            "surface": _asset_observation_paragraphs(chunk),
+            "inventory": _defined_systems_block({}),
+            "vocabulary": vocabulary_prompt(),
+        })
 
     system = SystemMessage(content=_load_skill())
     human = HumanMessage(content=prompt)

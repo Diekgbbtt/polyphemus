@@ -313,37 +313,6 @@ def _defined_systems_block(inventory: dict | None) -> str:
     return "\n".join(lines)
 
 
-def _reflection_prompt(chunk: Chunk, inventory: dict | None) -> str:
-    from polymerhus.analysis.l1_curator import vocabulary_prompt
-
-    return (
-        f"{role_header('the TechnicalSystem mechanism-typist', 'reconstruct, at breadth, the cross-cutting technical Systems this streamed surface evidences and how they overlay the Services')}\n\n"
-        f"{_defined_systems_block(inventory)}\n\n"
-        f"{vocabulary_prompt()}\n\n"
-        "STREAMED SURFACE (each asset with its adversarial observation insight):\n"
-        f"{_asset_observation_paragraphs(chunk)}\n\n"
-        f"{cot_scaffold(_REFLECTION_STEPS)}\n\n"
-        "Write your reasoning as prose. Do not emit JSON or a tool call in this step."
-    )
-
-
-def _systems_prompt(inventory: dict | None) -> str:
-    from polymerhus.analysis.l1_curator import vocabulary_prompt
-
-    return (
-        f"{_defined_systems_block(inventory)}\n\n"
-        f"{vocabulary_prompt()}\n\n"
-        # The reflection above is NOT re-embedded here: it rides the thread as the
-        # assistant message this call follows, and re-embedding it would send the
-        # same prose twice on every structured call (the N2 prose triplication).
-        # POSITIVE framing (mirrors pod.py's data-modelling fix): a negative "leave
-        # X, Y, Z EMPTY" litany makes a weaker model anchor on the empties and return
-        # an all-empty batch (observed live: reflection named 5 mechanisms, extraction
-        # returned 0 systems). State what to FILL, and that empty is wrong.
-        f"{_SYSTEMS_TASK}"
-    )
-
-
 _SYSTEMS_TASK = (
     "TASK - EXTRACT SYSTEMS. The reasoning above (and the page clusters) is your "
     "reflection: use it. Propose ONE `systems` entry for EACH mechanism you "
@@ -362,25 +331,6 @@ _SYSTEMS_TASK = (
     "`props`. Never emit a __singleton__ WebPresentation and never one per raw URL. "
     "Do not link edges here."
 )
-
-
-def _linking_prompt(systems_batch: L1DeltaBatch, primary: list[str],
-                    secondary: list[str], owned: dict[str, list[str]],
-                    inventory: dict | None) -> str:
-    proposed = sorted({s.kind if s.discriminator == _SINGLETON else f"{s.kind}:{s.discriminator}"
-                       for s in systems_batch.systems})
-    defined = (inventory or {}).get("systems") or []
-    prim_lines = "\n".join(
-        f"  - {slug} (owns: {', '.join(owned.get(slug, [])) or 'surface in this chunk'})"
-        for slug in primary) or "  (none)"
-    return (
-        # The reflection rides the thread above as an assistant message; the systems it
-        # drove are the structured call that follows. Re-embedding either here would
-        # send the same content twice on every call (N2).
-        "SYSTEMS now available to link (proposed this step + already defined): "
-        f"{sorted(set(proposed) | set(defined))}\n\n"
-        f"{_linking_context(primary, secondary, owned)}\n\n{_LINKING_TASK}"
-    )
 
 
 def _linking_context(primary: list[str], secondary: list[str],

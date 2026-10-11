@@ -191,3 +191,52 @@ def test_data_modeller_workflow_matches_the_spec_table():
     assert by_id["data_extract"].depends_on == ("record_hypotheses",)
     assert by_id["flow_shape"].depends_on == ("data_extract",)
     assert by_id["flow_extract"].depends_on == ("flow_shape", "data_extract")
+
+
+# --- the per-unit backstop (ADR D31) ------------------------------------------
+
+def test_backstop_writes_one_note_when_the_proposer_wrote_none(tmp_path):
+    """The coverage guarantee: after a unit's chain, a note for that unit MUST
+    exist. If the proposer wrote none, the workflow execution writes one."""
+    from polymerhus.analysis.memory import AnalysisMemoryStore, NOTE_KINDS
+
+    store = AnalysisMemoryStore(root_dir=tmp_path)
+    wf = ReasoningWorkflow(role_id="test", sub_problems=(_sp("a"),))
+
+    run_workflow(wf, invoke_fn=lambda m, **k: AnalysisTurn(),
+                 system_prompt="SYS", unit_slug="checkout",
+                 memory=store, project_id="proj-1")
+
+    notes = store.read_notes("proj-1", parent_key="checkout")
+    assert len(notes) == 1
+    assert notes[0]["unit"] == "checkout"
+    assert notes[0]["kind"] in NOTE_KINDS
+    assert store.has_note("proj-1", "checkout")
+
+
+def test_backstop_records_nothing_when_a_note_already_exists(tmp_path):
+    from polymerhus.analysis.memory import AnalysisMemoryStore
+
+    store = AnalysisMemoryStore(root_dir=tmp_path)
+    store.write_note("proj-1", unit="checkout", note_name="cart",
+                     kind="data", body="already here")
+    wf = ReasoningWorkflow(role_id="test", sub_problems=(_sp("a"),))
+
+    run_workflow(wf, invoke_fn=lambda m, **k: AnalysisTurn(),
+                 system_prompt="SYS", unit_slug="checkout",
+                 memory=store, project_id="proj-1")
+
+    notes = store.read_notes("proj-1", parent_key="checkout")
+    assert [n["note_name"] for n in notes] == ["cart"]
+
+
+def test_backstop_is_inert_without_a_unit_or_a_memory_store(tmp_path):
+    """A caller that binds neither (the contract tier) still runs the chain."""
+    from polymerhus.analysis.memory import AnalysisMemoryStore
+
+    store = AnalysisMemoryStore(root_dir=tmp_path)
+    wf = ReasoningWorkflow(role_id="test", sub_problems=(_sp("a"),))
+    run = run_workflow(wf, invoke_fn=lambda m, **k: AnalysisTurn(),
+                       system_prompt="SYS", memory=store, project_id="proj-1")
+    assert store.read_notes("proj-1") == []
+    assert run.turns == {"a": run.turns["a"]}

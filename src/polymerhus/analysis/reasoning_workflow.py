@@ -20,11 +20,14 @@ from __future__ import annotations
 import json
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from polymerhus.analysis.analyser_types import L1DeltaBatch
+
+if TYPE_CHECKING:
+    from polymerhus.analysis.memory import AnalysisMemoryStore
 
 
 class Claim(BaseModel):
@@ -163,6 +166,10 @@ def run_workflow(
     system_prompt: str,
     base_artifacts: Mapping[str, str] | None = None,
     halt_when: Callable[[SubProblem, "AnalysisTurn | None"], bool] | None = None,
+    unit_slug: str | None = None,
+    memory: "AnalysisMemoryStore | None" = None,
+    project_id: str | None = None,
+    run_id: str | None = None,
 ) -> WorkflowRun:
     """Run a workflow's sub-problems in order, one stateful turn each.
 
@@ -173,7 +180,13 @@ def run_workflow(
     whether that degrades the step is the CALLER's policy, expressed through
     `halt_when` (the fail-closed reflection gate, for the roles that need it): when
     the predicate holds the chain stops, so no later turn runs on an exhausted
-    premise."""
+    premise.
+
+    When `unit_slug` and a `memory` store are bound, the per-unit BACKSTOP runs
+    after the chain (ADR D31): the coverage guarantee, not a prompt instruction.
+    It writes one note for the unit when the proposer wrote none, so "one note per
+    Service exists after the run" is auditable. Inert otherwise (the contract
+    tier)."""
     from langchain_core.messages import HumanMessage
 
     artifacts: dict[str, str] = dict(base_artifacts or {})
@@ -185,4 +198,10 @@ def run_workflow(
         artifacts[sub_problem.id] = render_emitted(sub_problem, turn)
         if halt_when is not None and halt_when(sub_problem, turn):
             break
+    if unit_slug and memory is not None:
+        # Imported lazily: the executor stays a pure value-object module at import
+        # time (CODING_STANDARD section 6), and the backstop is optional.
+        from polymerhus.analysis.memory import ensure_unit_note
+
+        ensure_unit_note(memory, project_id, unit_slug, run_id=run_id)
     return WorkflowRun(turns=turns, artifacts=artifacts)

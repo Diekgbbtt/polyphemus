@@ -111,6 +111,10 @@ This is a deliberate reversal of the chunk-fed default; the streamed path remain
 - **D34.** Binding a second tool changes the structured-output negotiation; verify the negotiation still lands on the same structured method, or the cache fix regresses.
   The constant-shape tests pin `convert_to_openai_tool` equality and must be extended.
 - **D35.** Re-mine the per-role compaction thresholds for the new per-Service unit; the current `0.016` and `0.08` were mined on per-chunk occupancy and are stale.
+  **Landed (T3):** D29-D34 are implemented in `analysis/memory.py` (the store, the closed note-kind enum, the args schema + field map, `notes_tool_for`) and `proposer_turn.py` (the notes tool bound on every turn).
+  The negotiation is pinned to its pre-notes no-tools axis (`stateful_turn(structured_tools_bound=False)`), so the second tool never flips the negotiated method (D34).
+  The `analysis/` bucket is in `PROJECT_SCAFFOLD` (D29).
+  The per-unit backstop is `run_workflow(..., unit_slug=, memory=, project_id=)` -> `ensure_unit_note` (D31).
 
 ### 3.6 L1 write path
 
