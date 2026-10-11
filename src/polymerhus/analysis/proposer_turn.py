@@ -241,8 +241,7 @@ def session_invoke_fn(role_id: str, run_id: str, checkpointer, project_id: str |
                              system_prompt=system_prompt or _role_prompt(role_id),
                              middleware=middleware, extra_tags=[run_id],
                              usage_scope=project_id,
-                             # Keep the structured negotiation on its pre-notes axis.
-                             structured_tools_bound=False, **kwargs)
+                             **kwargs)
 
     return invoke
 

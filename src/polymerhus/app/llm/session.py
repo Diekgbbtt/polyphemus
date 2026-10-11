@@ -781,7 +781,6 @@ def stateful_turn(
     usage_scope: str | None = None,
     context: dict | None = None,
     tools: Sequence = (),
-    structured_tools_bound: bool | None = None,
 ):
     """The UBIQUITOUS stateful-agent invocation (#94): one turn of a sequentially
     dispatched agent that RESUMES from its OWN per-instance checkpoint and appends this
@@ -810,17 +809,10 @@ def stateful_turn(
     attributed to in the process-wide usage ledger, threaded to the session turn
     (and any blackloop recovery) independent of `observe`.
 
-    `structured_tools_bound` (default None) overrides the `no_tools_bound` AXIS
-    the structured-output negotiation reads: by default it derives from
-    `bool(tools)` (a bound tool loop is the tool rung), but a caller whose bound
-    tools are NOT the structured-output carrier can pin the axis - the analysis
-    proposer seam binds the shared `notes` memory tool on every turn yet keeps
-    the structured negotiation on its no-tools axis, so adding the memory tool
-    never flips the negotiated method or the request shape (ADR D34)."""
-    tools_bound = (
-        structured_tools_bound if structured_tools_bound is not None
-        else bool(tools)
-    )
+    The structured-output negotiation reads the `bool(tools)` axis: a bound tool
+    loop is the tool rung, so a role that binds the shared `notes` memory tool
+    negotiates on the tool axis and yields `ToolStrategy`."""
+    tools_bound = bool(tools)
     response_format = (structured_response_format(role_id, schema, tools_bound=tools_bound)
                        if schema is not None else None)
     thread_id = _as_thread_id(thread)
