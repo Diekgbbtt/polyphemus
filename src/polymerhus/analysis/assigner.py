@@ -86,6 +86,29 @@ class AssignmentOutcome(BaseModel):
     stats: AssignmentStats = Field(default_factory=AssignmentStats)
 
 
+class AssignmentCensus(BaseModel):
+    """What the GLOBAL assign pass observed over the whole SETTLED surface (T4,
+    ADR D10/D11).
+
+    `AssignmentStats` counts the gates for one chunk; the census counts the same
+    five gates across the one global pass and adds the residual `stale` pool - the
+    admitted Endpoints that ended with no kept owner. It is returned AND persisted
+    to `analysis_runs.stats`, so coverage and withholding stay answerable after the
+    run (the signal `AssignmentStats` had no home for)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    admitted: int = 0          # Endpoints on the settled L0 surface
+    proposed: int = 0          # aggregates the model returned
+    unresolvable: int = 0      # dropped: named no Endpoint on the surface
+    out_of_inventory: int = 0  # dropped: named no live Service
+    rescaled: int = 0          # repaired: confidence was a percentage
+    withheld: int = 0          # dropped: below the confidence bar
+    kept: int = 0              # aggregates handed to the writer
+    written: int = 0           # aggregates the writer actually wrote
+    stale: int = 0             # admitted Endpoints left with no owner
+
+
 def narrow_to_assignment(batch: L1DeltaBatch) -> L1DeltaBatch:
     """Leg 4 (#8, tightened by #34 D4): the Assigner owns ONLY `aggregates`. Drop
     `services` (-> Bootstrapper), `systems` / `system_edges` (-> TechnicalSystem)
@@ -674,3 +697,156 @@ def make_assigner_body(*, invoke_fn, inventory_fn, bar: float = ASSIGN_CONFIDENC
         return outcome.batch
 
     return body
+
+
+# --- T4: the global assign pass over the settled surface ----------------------
+
+
+def _default_write_fn(batch: L1DeltaBatch, project_id: str) -> int:
+    """The global pass's curator collaborator: write `AGGREGATES` and nothing else.
+
+    It routes through `proposals_to_deltas` + `l1_curator.write_aggregates`, never
+    `l1_curate`: a writer that could create a Service would quietly restore the
+    minting path the Bootstrapper owns alone (ADR D37, "the pass no-mints")."""
+    from polymerhus.analysis import l1_curator
+    from polymerhus.analysis.analyser_types import proposals_to_deltas
+    from polymerhus.analysis.l1_types import Provenance
+
+    _, _, aggregates = proposals_to_deltas(batch, Provenance(job="analyser:global"))
+    return l1_curator.write_aggregates(aggregates, project_id)
+
+
+# The analysis run is `draining` for the whole of stage 1: the global pass runs
+# first, at the head of the run. Re-stamping that same live status is truthful and
+# idempotent (it never stamps `finished_at`), and the census rides the additive
+# `stats` JSONB merge (ADR D11).
+_CENSUS_STATUS = "draining"
+
+
+def _persist_census(run_id: str, census: AssignmentCensus) -> None:
+    """Merge the census onto the analysis run's `stats` (ADR D11)."""
+    from polymerhus.app.clients import pg
+
+    pg.set_analysis_run_status(
+        run_id, _CENSUS_STATUS, stats={"assignment_census": census.model_dump()})
+
+
+def _endpoint_key(identity: dict) -> tuple[str, str, str]:
+    """A stable key for an Endpoint identity, method-normalised: `_endpoint_index`
+    keys the pair on the UPPERCASED method while the canonical identity keeps the
+    original case, so the two must agree here."""
+    ident = identity or {}
+    return (
+        str(ident.get("path") or ""),
+        str(ident.get("method") or "").upper(),
+        str(ident.get("baseurl") or ""),
+    )
+
+
+def _stale_count(admitted, batch: L1DeltaBatch) -> int:
+    """The residual stale pool: the admitted Endpoints that received no kept
+    aggregate. Distinct keys, because several Services may own one Endpoint without
+    that counting as two covered elements."""
+    admitted_keys = {_endpoint_key(a.identity) for a in admitted}
+    kept_keys = {_endpoint_key(a.l0.identity) for a in batch.aggregates}
+    return len(admitted_keys - kept_keys)
+
+
+async def assign_global(
+    project_id: str,
+    run_id: str,
+    *,
+    read_fn=None,
+    invoke_fn=None,
+    write_fn=None,
+    inventory_fn=None,
+    persist_fn=None,
+    bar: float = ASSIGN_CONFIDENCE_BAR,
+) -> AssignmentCensus:
+    """THE GLOBAL ASSIGN PASS (T4, spec 4.2, ADR D7-D11): re-read the settled L0
+    surface and the Service inventory, run the Assigner's `candidate_owners ->
+    assign` workflow over the WHOLE surface, write `AGGREGATES` through the no-mint
+    writer, and return (and persist) the census.
+
+    A plain awaited call, NOT a supervisor dispatch (ADR D9): `AgentDispatch`
+    rejects a slice-less non-slice-less role, and the pass is a whole-graph single
+    step anyway. It assembles its own input from the graph - there is no pushed
+    chunk and no FIFO (ADR D1/D3); the surface is grouped into ONE chunk-shaped
+    slice so the SAME prompt and the SAME five shaping gates run unchanged (ADR
+    D7).
+
+    Every collaborator is injected, so the pass is unit-testable with no Neo4j and
+    no LLM:
+
+    - `read_fn(project_id) -> {nodes, links}`: the pod-shaped L0 read.
+    - `inventory_fn(project_id) -> inventory`: the live Service inventory.
+    - `invoke_fn(messages, *, schema, system_prompt)`: the Assigner's LLM seam.
+    - `write_fn(batch, project_id) -> int`: the no-mint `AGGREGATES` writer.
+    - `persist_fn(run_id, census)`: the `analysis_runs.stats` write.
+
+    Fail-open: a degraded or empty result yields a census with zero writes and
+    NEVER raises into the caller. Persistence is best-effort, exactly like the
+    lifecycle's own stats write."""
+    from polymerhus.analysis.l0_stream import read_l0_assets
+    from polymerhus.analysis.l1_inventory import read_l1_inventory
+
+    if invoke_fn is None:
+        invoke_fn = default_invoke_fn()
+    if write_fn is None:
+        write_fn = _default_write_fn
+    if inventory_fn is None:
+        inventory_fn = read_l1_inventory
+    if persist_fn is None:
+        persist_fn = _persist_census
+
+    census = AssignmentCensus()
+    try:
+        assets = read_l0_assets(project_id, read_fn=read_fn)
+        # ONE grouped slice for the whole surface: the session scope is the run's
+        # global pass, so the two sub-problems share a single session.
+        chunk = Chunk(chunk_id=f"global:{run_id}", assets=tuple(assets))
+        admitted = admit_for_role(chunk, ROLE)
+        inventory = inventory_fn(project_id) or {}
+        outcome = assign(
+            chunk,
+            invoke_fn=invoke_fn,
+            inventory=inventory,
+            existing_slugs=frozenset(inventory.get("services") or ()),
+            bar=bar,
+            run_id=run_id,
+            tags=["analysis", "assigner", "service_sourced", "global"],
+        )
+        written = 0
+        if outcome.batch.aggregates:  # an empty result writes NOTHING, not a null
+            written = int(write_fn(outcome.batch, project_id) or 0)
+        st = outcome.stats
+        census = AssignmentCensus(
+            # `admitted` is the surface READ, not the LLM's view of it: on a degraded
+            # turn (`st` all zero) reporting the surface is what says "there was work
+            # and none of it was done". The gate counts below stay the LLM's.
+            admitted=len(admitted),
+            proposed=st.proposed,
+            unresolvable=st.unresolvable,
+            out_of_inventory=st.out_of_inventory,
+            rescaled=st.rescaled,
+            withheld=st.withheld,
+            kept=st.kept,
+            written=written,
+            stale=_stale_count(admitted, outcome.batch),
+        )
+    except Exception:  # noqa: BLE001 - a degraded pass must never crash the run
+        logger.warning("assign_global: pass degraded; returning a zero census", exc_info=True)
+        census = AssignmentCensus()
+
+    try:
+        persist_fn(run_id, census)
+    except Exception:  # noqa: BLE001 - persistence is best-effort (mirrors lifecycle)
+        logger.warning("assign_global: census persistence failed", exc_info=True)
+
+    logger.info(
+        "assign_global run=%s admitted=%d kept=%d written=%d stale=%d "
+        "(unresolvable=%d out_of_inventory=%d withheld=%d)",
+        run_id, census.admitted, census.kept, census.written, census.stale,
+        census.unresolvable, census.out_of_inventory, census.withheld,
+    )
+    return census
