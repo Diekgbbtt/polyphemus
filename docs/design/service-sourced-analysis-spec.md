@@ -54,7 +54,7 @@ No dependency relies on the trail: a dependency is always re-injected (ADR D24).
 
 Each sub-problem maps onto the stages the role's `_REFLECTION_STEPS` already enumerate (ADR D22); the mapping is explicit so no boundary is invented.
 
-**Assigner (global pass), `_REFLECT_VERBATIM` stages RESTATE / COMPETING OWNER / CALIBRATE / RESIDUE:**
+**Assigner (global pass), `_REFLECT_STEPS` stages RESTATE / COMPETING OWNER / CALIBRATE / RESIDUE:**
 
 | id | covers stages | emits |
 |---|---|---|

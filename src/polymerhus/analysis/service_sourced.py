@@ -121,7 +121,7 @@ async def service_sourced_pass(
     """The service-sourced pass (the mode's `pass_fn`). See the module docstring.
 
     Every collaborator is injectable, so the pass is unit-testable with no Neo4j,
-    no LLM and no database: `assign_fn(project_id, run_id, *, persist_fn)` (stage
+    no LLM and no database: `assign_fn(project_id, run_id, *, memory)` (stage
     1), `loop_fn(project_id, run_id, *, memory, stop_fn, observe)` (stage 2), and
     `status_fn(run_id) -> status`. The pass never raises: a degraded stage yields a
     terminal census that claims nothing."""
@@ -182,7 +182,7 @@ async def service_sourced_pass(
 
     # --- stage 1: the global assign pass (a plain awaited call, ADR D9) ---------
     try:
-        census = await assign_fn(project_id, analysis_run_id)
+        census = await assign_fn(project_id, analysis_run_id, memory=memory)
     except Exception:  # noqa: BLE001 - a degraded stage 1 must not lose stage 2
         logger.warning("service_sourced: global assign pass failed for %s", recon_run_id,
                        exc_info=True)

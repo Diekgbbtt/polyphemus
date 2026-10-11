@@ -549,6 +549,9 @@ def assign(
     bar: float = ASSIGN_CONFIDENCE_BAR,
     run_id: str | None = None,
     tags: list | None = None,
+    memory=None,
+    project_id: str | None = None,
+    note_kind: str = "open_question",
 ) -> AssignmentOutcome:
     """The Assigner proposer body (#8): from a `Chunk` + the LIVE inventory, judge
     which existing Service owns each admitted Endpoint, then drop unknown owners and
@@ -558,7 +561,12 @@ def assign(
     injected `invoke_fn`, then shapes the extraction turn. `invoke_fn(messages, *,
     schema, system_prompt) -> AnalysisTurn | None` is injected (unit-testable, no
     live LLM). Fail-open: a `None`/raising `invoke_fn` (or a chunk with no Endpoint
-    in it) degrades to an empty outcome. Pure given its inputs."""
+    in it) degrades to an empty outcome. Pure given its inputs.
+
+    `memory` / `project_id` / `note_kind` thread the per-unit backstop into
+    `run_workflow` (ADR D31): the global assign pass binds them so its turns'
+    unit records one note (an `assignment` note); the streamed per-chunk path
+    binds none, so it stays inert and byte-unbroken."""
     from polymerhus.analysis.pod import _inventory_block, _slice_repr
     from polymerhus.analysis.proposer_turn import proposer_batch
     from polymerhus.analysis.reasoning_workflow import run_workflow, to_delta_batch
@@ -586,7 +594,10 @@ def assign(
         with proposer_batch(chunk.chunk_id):
             run = run_workflow(WORKFLOW, invoke_fn=invoke_fn,
                                system_prompt=system_prompt,
-                               base_artifacts=base_artifacts)
+                               base_artifacts=base_artifacts,
+                               unit_slug=chunk.chunk_id, memory=memory,
+                               project_id=project_id, run_id=run_id,
+                               note_kind=note_kind)
     except Exception:  # LLM error -> fail-open to no assignment, never crash
         logger.warning("assigner: workflow failed; degrading to empty outcome", exc_info=True)
         return AssignmentOutcome()
@@ -625,10 +636,14 @@ def default_invoke_fn():
     through the #73 escalating retry (`invoke_role`); `None` = no parseable tool call,
     which `assign` treats as a valid empty outcome. The role prompt is prepended into
     the message list here, exactly where the stateful seam's `system_prompt=` binding
-    puts it. Production now uses `stateful_invoke_fn` (below)."""
+    puts it.
+
+    It is NOT the global assign pass's production seam: that one is notes-bound
+    (`stateful_invoke_fn` / the per-Service proposer turn seam) so the
+    constant-tool-set contract holds (spec 3.2/5, ADR D26). This one-shot seam binds
+    no `notes` and stays for the contract tier."""
     from polymerhus.analysis.proposer_turn import prepend_prompt
     from polymerhus.analysis.reasoning_workflow import AnalysisTurn
-    from polymerhus.app.llm.roles import invoke_role
 
     def invoke(messages, *, schema=AnalysisTurn, system_prompt=None):
         from polymerhus.app.llm.roles import invoke_role
@@ -753,6 +768,21 @@ def _stale_count(admitted, batch: L1DeltaBatch) -> int:
     return len(admitted_keys - kept_keys)
 
 
+def _global_invoke_fn(run_id: str, project_id: str, checkpointer):
+    """The global assign pass's production turn seam: the SAME notes-bound
+    `session_invoke_fn` the per-Service proposers use (spec 3.2/5, ADR D26/D34),
+    with the `assigner` role, so both sub-problem turns bind `{AnalysisTurn,
+    notes}` and the tool set never toggles. Fail-open: an unbuildable seam falls
+    back to the legacy one-shot call, so a degraded pass writes nothing rather
+    than crashing the run."""
+    try:
+        return stateful_invoke_fn(run_id, checkpointer, project_id)
+    except Exception:  # noqa: BLE001 - fail-open to the notes-less one-shot seam
+        logger.warning("assigner: global pass seam unavailable; using the one-shot seam",
+                       exc_info=True)
+        return default_invoke_fn()
+
+
 async def assign_global(
     project_id: str,
     run_id: str,
@@ -762,6 +792,8 @@ async def assign_global(
     write_fn=None,
     inventory_fn=None,
     persist_fn=None,
+    memory=None,
+    checkpointer=None,
     bar: float = ASSIGN_CONFIDENCE_BAR,
 ) -> AssignmentCensus:
     """THE GLOBAL ASSIGN PASS (T4, spec 4.2, ADR D7-D11): re-read the settled L0
@@ -784,6 +816,17 @@ async def assign_global(
     - `invoke_fn(messages, *, schema, system_prompt)`: the Assigner's LLM seam.
     - `write_fn(batch, project_id) -> int`: the no-mint `AGGREGATES` writer.
     - `persist_fn(run_id, census)`: the `analysis_runs.stats` write.
+    - `memory` / `checkpointer`: the notes store and session checkpointer the
+      notes-bound default seam and the per-unit backstop use. Both are optional:
+      absent a `memory` store the backstop is inert, and absent a `checkpointer`
+      one is resolved from the session checkpointer.
+
+    The default `invoke_fn` is the SAME notes-bound proposer seam the per-Service
+    proposers use (spec 3.2/5, ADR D26), NOT the notes-less one-shot call, so
+    both sub-problem turns bind `{AnalysisTurn, notes}`. When a `memory` store is
+    bound, the pass's turns carry `unit_slug="global:<run_id>"` so `run_workflow`'s
+    backstop records one `assignment` note for the pass (ADR D31) - making the
+    `assignment` kind reachable in `service_sourced`.
 
     Fail-open: a degraded or empty result yields a census with zero writes and
     NEVER raises into the caller. Persistence is best-effort, exactly like the
@@ -792,7 +835,14 @@ async def assign_global(
     from polymerhus.analysis.l1_inventory import read_l1_inventory
 
     if invoke_fn is None:
-        invoke_fn = default_invoke_fn()
+        if checkpointer is None:
+            try:
+                from polymerhus.app.llm.checkpoints import get_session_checkpointer
+
+                checkpointer = get_session_checkpointer()
+            except Exception:  # noqa: BLE001 - a null checkpointer degrades the seam
+                checkpointer = None
+        invoke_fn = _global_invoke_fn(run_id, project_id, checkpointer)
     if write_fn is None:
         write_fn = _default_write_fn
     if inventory_fn is None:
@@ -816,6 +866,9 @@ async def assign_global(
             bar=bar,
             run_id=run_id,
             tags=["analysis", "assigner", "service_sourced", "global"],
+            memory=memory,
+            project_id=project_id,
+            note_kind="assignment",
         )
         written = 0
         if outcome.batch.aggregates:  # an empty result writes NOTHING, not a null

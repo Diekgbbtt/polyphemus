@@ -280,6 +280,7 @@ def ensure_unit_note(
     *,
     run_id: str | None = None,
     source: str = "backstop",
+    kind: str = "open_question",
 ) -> dict | None:
     """The per-unit coverage backstop (ADR D31): write ONE note for `unit` when
     the proposer wrote none during its turns.
@@ -288,8 +289,10 @@ def ensure_unit_note(
     coverage property, not merely a prompt instruction. The backstop is inert
     when no store, project, or unit is bound (the contract tier). It is
     fail-open: a write failure is logged and returns None, never raised into the
-    run. Returns the recorded note or None (a note already existed, or the
-    backstop was inert/failed)."""
+    run. `kind` defaults to `open_question`; the global assign pass passes
+    `assignment` so its coverage note carries the kind the pass owns. Returns the
+    recorded note or None (a note already existed, or the backstop was
+    inert/failed)."""
     if store is None or not project_id or not unit:
         return None
     try:
@@ -299,7 +302,7 @@ def ensure_unit_note(
             project_id,
             unit=unit,
             note_name=source,
-            kind="open_question",
+            kind=kind,
             body=(f"no note was recorded for {unit} during the run; the backstop "
                   f"records the Service so its coverage is auditable"),
             provenance={"source": source, "run_id": run_id or ""},
@@ -312,7 +315,7 @@ def ensure_unit_note(
             exc_info=True,
         )
         return None
-    return {"unit": unit, "note_name": source, "kind": "open_question"}
+    return {"unit": unit, "note_name": source, "kind": kind}
 
 
 # --- the notes tool (the shared StoreNotesTool, bound to this store) ----------

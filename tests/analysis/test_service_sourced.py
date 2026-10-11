@@ -34,9 +34,10 @@ class _Assign:
         self.calls = []
         self.persist_fn = None
 
-    async def __call__(self, project_id, run_id, *, persist_fn=None):
+    async def __call__(self, project_id, run_id, *, persist_fn=None, memory=None):
         self.calls.append((project_id, run_id))
         self.persist_fn = persist_fn
+        self.memory = memory
         return self.census
 
 

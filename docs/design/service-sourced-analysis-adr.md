@@ -86,7 +86,7 @@ This is a deliberate reversal of the chunk-fed default; the streamed path remain
   Each turn's human message carries its `depends_on` artifacts rendered verbatim, plus the Service slice.
   The session trail still accumulates (stateful per Service and role) for the run archive and the cache prefix, but NO dependency relies on the trail.
   This resolves the tension the adversarial pass found: a trail-carried prose dependency is compaction-evictable and unverifiable; an injected typed artifact is neither.
-- **D25.** Reviving the Assigner's reflection mode (`assigner._REFLECT_VERBATIM`) reverses the 2026-07-28 ratification that recorded it as deliberately unreached.
+- **D25.** Reviving the Assigner's reflection mode (`assigner._REFLECT_STEPS`) reverses the 2026-07-28 ratification that recorded it as deliberately unreached.
   This is a deliberate reversal, recorded here so it is not mistaken for an accident.
 - **D26.** Keep the constant request shape per role: the tool set is byte-identical across a role's calls (`L1DeltaBatch` plus `notes`).
   The sub-problems differ only in their prompt and injected inputs.
@@ -106,6 +106,7 @@ This is a deliberate reversal of the chunk-fed default; the streamed path remain
   The app scaffold (`ensure_project`) must create the `analysis/` bucket, or the first write fails.
 - **D30.** A new closed note-kind enum, fenced to L1-modelling kinds (no fault-hypothesis, payload, technique, or vector language; the phase-3 vocabulary stays unratified).
 - **D31.** Each proposer binds `notes` and writes during its turns; a pipeline backstop records one Service note if the agent wrote none, so "one note per Service" is an auditable coverage guarantee, not just a prompt instruction.
+  The backstop runs in a `finally`, so a unit whose turns RAISE still leaves its note; the global assign pass is a proposer too (its turns bind the same notes-bound seam) and its backstop writes an `assignment` note, making that kind reachable in `service_sourced`.
 - **D32.** Memory reads back both within-run (a later Service reads earlier Services' notes) and cross-run.
 - **D33.** `notes` binds through the session `tools=` seam, NOT the skill seam (`skill_agent_binding` would raise for an undeclared role).
 - **D34.** Binding a second tool changes the structured-output negotiation; verify the negotiation still lands on the same structured method, or the cache fix regresses.

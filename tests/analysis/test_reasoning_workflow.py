@@ -240,3 +240,24 @@ def test_backstop_is_inert_without_a_unit_or_a_memory_store(tmp_path):
                        system_prompt="SYS", memory=store, project_id="proj-1")
     assert store.read_notes("proj-1") == []
     assert run.turns == {"a": run.turns["a"]}
+
+
+def test_backstop_still_writes_the_unit_note_when_a_turn_raises(tmp_path):
+    """ADR D31 coverage on the FAILURE path: a unit whose role body raises must
+    still leave its one note, so "one note per unit after the run" holds even when
+    the chain degrades. The backstop runs in a `finally`, and is itself fail-open,
+    so the original error still propagates to the caller's degradation policy."""
+    from polymerhus.analysis.memory import AnalysisMemoryStore
+
+    store = AnalysisMemoryStore(root_dir=tmp_path)
+    wf = ReasoningWorkflow(role_id="test", sub_problems=(_sp("a"),))
+
+    def boom(messages, *, schema=None, system_prompt=None):
+        raise RuntimeError("llm down")
+
+    with pytest.raises(RuntimeError, match="llm down"):
+        run_workflow(wf, invoke_fn=boom, system_prompt="SYS",
+                     unit_slug="checkout", memory=store, project_id="proj-1")
+
+    assert store.has_note("proj-1", "checkout")
+    assert len(store.read_notes("proj-1", parent_key="checkout")) == 1

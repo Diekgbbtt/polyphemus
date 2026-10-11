@@ -154,6 +154,42 @@ def test_the_whole_surface_is_grouped_into_one_pass():
     assert "checkout" in first_user
 
 
+def test_global_pass_turns_bind_notes_and_the_backstop_writes_an_assignment_note(
+        monkeypatch, tmp_path):
+    """Spec 3.2/5 + ADR D26/D31: the global assign pass is a proposer too, so its
+    two sub-problem turns bind the SAME `{analysis_turn, notes}` set the per-Service
+    proposers bind - it must NOT fall back to the notes-less one-shot seam - and the
+    per-unit backstop records an `assignment` note for the pass. The `assignment`
+    kind is otherwise unreachable in `service_sourced`."""
+    from polymerhus.analysis.memory import AnalysisMemoryStore
+
+    seen: list[dict] = []
+
+    def seam(role_id, thread, messages, **kw):
+        seen.append(kw)
+        return None
+
+    monkeypatch.setattr("polymerhus.app.llm.session.stateful_turn", seam)
+    store = AnalysisMemoryStore(root_dir=tmp_path)
+
+    _run(assign_global(
+        "p1", "ar1",
+        read_fn=lambda pid: _surface("/a"),
+        inventory_fn=lambda pid: INVENTORY,
+        write_fn=_Writer(), persist_fn=_Persister(),
+        memory=store, checkpointer=object(),
+    ))
+
+    # both sub-problem turns ran through the notes-bound seam (not `default_invoke_fn`)
+    assert len(seen) == 2
+    for kw in seen:
+        names = {getattr(t, "name", "") for t in kw.get("tools") or ()}
+        assert "notes" in names, "every global-pass turn binds notes (D26)"
+    # the pass's unit note exists, and it is an `assignment` note
+    notes = store.read_notes("p1", parent_key="global:ar1")
+    assert [n["kind"] for n in notes] == ["assignment"]
+
+
 def test_empty_surface_writes_nothing_and_invokes_nobody():
     invoker, writer, persister = _Invoker(AnalysisTurn(aggregates=[_agg("/a", 0.90)])), _Writer(), _Persister()
     census = _run(assign_global(

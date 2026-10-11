@@ -170,6 +170,7 @@ def run_workflow(
     memory: "AnalysisMemoryStore | None" = None,
     project_id: str | None = None,
     run_id: str | None = None,
+    note_kind: str = "open_question",
 ) -> WorkflowRun:
     """Run a workflow's sub-problems in order, one stateful turn each.
 
@@ -185,23 +186,29 @@ def run_workflow(
     When `unit_slug` and a `memory` store are bound, the per-unit BACKSTOP runs
     after the chain (ADR D31): the coverage guarantee, not a prompt instruction.
     It writes one note for the unit when the proposer wrote none, so "one note per
-    Service exists after the run" is auditable. Inert otherwise (the contract
-    tier)."""
+    Service exists after the run" is auditable. It sits in a `finally`, so a unit
+    whose turns RAISE still leaves its note (the coverage property holds on the
+    failure path too); `ensure_unit_note` is itself fail-open, so the original
+    error still propagates to the caller's degradation policy. `note_kind` lets
+    the global assign pass record its backstop as an `assignment` note. Inert
+    otherwise (the contract tier)."""
     from langchain_core.messages import HumanMessage
 
     artifacts: dict[str, str] = dict(base_artifacts or {})
     turns: dict[str, AnalysisTurn | None] = {}
-    for sub_problem in workflow.sub_problems:
-        message = HumanMessage(content=render_turn(sub_problem, artifacts))
-        turn = invoke_fn([message], schema=AnalysisTurn, system_prompt=system_prompt)
-        turns[sub_problem.id] = turn
-        artifacts[sub_problem.id] = render_emitted(sub_problem, turn)
-        if halt_when is not None and halt_when(sub_problem, turn):
-            break
-    if unit_slug and memory is not None:
-        # Imported lazily: the executor stays a pure value-object module at import
-        # time (CODING_STANDARD section 6), and the backstop is optional.
-        from polymerhus.analysis.memory import ensure_unit_note
+    try:
+        for sub_problem in workflow.sub_problems:
+            message = HumanMessage(content=render_turn(sub_problem, artifacts))
+            turn = invoke_fn([message], schema=AnalysisTurn, system_prompt=system_prompt)
+            turns[sub_problem.id] = turn
+            artifacts[sub_problem.id] = render_emitted(sub_problem, turn)
+            if halt_when is not None and halt_when(sub_problem, turn):
+                break
+    finally:
+        if unit_slug and memory is not None:
+            # Imported lazily: the executor stays a pure value-object module at import
+            # time (CODING_STANDARD section 6), and the backstop is optional.
+            from polymerhus.analysis.memory import ensure_unit_note
 
-        ensure_unit_note(memory, project_id, unit_slug, run_id=run_id)
+            ensure_unit_note(memory, project_id, unit_slug, run_id=run_id, kind=note_kind)
     return WorkflowRun(turns=turns, artifacts=artifacts)

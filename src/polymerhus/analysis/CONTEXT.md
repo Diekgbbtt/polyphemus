@@ -290,6 +290,8 @@ The phase-3 hunting vocabulary (fault hypothesis, payload, technique, vector) st
 
 **Per-unit backstop** (`analysis/memory.py::ensure_unit_note`, ADR D31):
 After a unit's `ReasoningWorkflow` chain the executor writes ONE note for the unit when the proposer wrote none, so "one note per Service exists after the run" is an auditable coverage guarantee, not merely a prompt instruction.
+The backstop runs in a `finally`, so a unit whose turns RAISE still leaves its note (`ensure_unit_note` is itself fail-open, so the original error still propagates to the caller's degradation policy).
+The note kind defaults to `open_question`; the global assign pass passes `assignment`, so its coverage note carries the kind that pass owns.
 Inert without a bound unit or memory store; fail-open on a write failure.
 
 
@@ -326,6 +328,7 @@ No L0 or L1 node type is added; the same graph is read Service-first.
 
 **Global assign pass** (`analysis/assigner.py::assign_global`; T4, ADR D7-D11):
 Stage 1 of the service-sourced pass: a plain awaited call (not a supervisor dispatch) that re-reads the SETTLED L0 and the Service inventory, runs the Assigner's `candidate_owners -> assign` workflow over the whole surface, and writes `AGGREGATES` through the no-mint writer.
+It is a proposer too: its default turn seam is the SAME notes-bound proposer seam the per-Service proposers use, so both sub-problem turns bind `{AnalysisTurn, notes}` (spec 3.2/5, ADR D26); with a memory store bound, the per-unit backstop records one `assignment` note for `global:<run_id>` (ADR D31).
 It reuses the five shaping gates unchanged and reports a census (admitted, proposed, unresolvable, out-of-inventory, rescaled, withheld, kept, written, and the residual `stale` pool), persisted to `analysis_runs.stats`.
 It never mints a Service: the Bootstrapper remains the sole Service source.
 
