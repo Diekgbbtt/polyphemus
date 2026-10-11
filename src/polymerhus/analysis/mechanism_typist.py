@@ -36,6 +36,7 @@ from collections import defaultdict
 from polymerhus.analysis.analyser_types import L1DeltaBatch
 from polymerhus.analysis.chunking import Chunk
 from polymerhus.analysis.proposer_reasoning import cot_scaffold, role_header
+from polymerhus.analysis.reasoning_workflow import ReasoningWorkflow, SubProblem
 
 logger = logging.getLogger(__name__)
 
@@ -339,24 +340,28 @@ def _systems_prompt(inventory: dict | None) -> str:
         # X, Y, Z EMPTY" litany makes a weaker model anchor on the empties and return
         # an all-empty batch (observed live: reflection named 5 mechanisms, extraction
         # returned 0 systems). State what to FILL, and that empty is wrong.
-        "TASK - EXTRACT SYSTEMS FROM YOUR REFLECTION. The assistant message "
-        "immediately above is your reflection: use it - do not ask for it again and "
-        "do not restate it. Propose ONE `systems` entry for EACH mechanism you "
-        "identified: a known `kind` (+ `discriminator`, default __singleton__) with a "
-        "`description` prop in `props` - a brief adversarially-oriented NL characterisation "
-        "of that mechanism. You MUST return at least one system whenever your reflection "
-        "named a mechanism; an empty `systems` list is a wrong answer here. For a System "
-        "already listed above, REUSE its exact key and output an ENRICHED description (fold "
-        "your new insight in - never blank it, never merely restate). "
-        # WebPresentation is PER (service, page-cluster), not a singleton (#53): the
-        # downstream agent must locate the exact page a service is exposed on.
-        "SPECIAL CASE - WebPresentation: emit ONE per (owning service, page cluster) from the "
-        "CLUSTER PAGES step - set `discriminator` to '<service_slug>::<cluster>' (a short "
-        "stable cluster slug, e.g. 'product-detail', 'category-listing', 'checkout', "
-        "'not-found') and put the cluster's member text/html page paths in a `pages` list in "
-        "`props`. Never emit a __singleton__ WebPresentation and never one per raw URL. "
-        "Do not link edges here."
+        f"{_SYSTEMS_TASK}"
     )
+
+
+_SYSTEMS_TASK = (
+    "TASK - EXTRACT SYSTEMS. The reasoning above (and the page clusters) is your "
+    "reflection: use it. Propose ONE `systems` entry for EACH mechanism you "
+    "identified: a known `kind` (+ `discriminator`, default __singleton__) with a "
+    "`description` prop in `props` - a brief adversarially-oriented NL characterisation "
+    "of that mechanism. You MUST return at least one system whenever your reflection "
+    "named a mechanism; an empty `systems` list is a wrong answer here. For a System "
+    "already listed above, REUSE its exact key and output an ENRICHED description (fold "
+    "your new insight in - never blank it, never merely restate). "
+    # WebPresentation is PER (service, page-cluster), not a singleton (#53): the
+    # downstream agent must locate the exact page a service is exposed on.
+    "SPECIAL CASE - WebPresentation: emit ONE per (owning service, page cluster) from the "
+    "CLUSTER PAGES step - set `discriminator` to '<service_slug>::<cluster>' (a short "
+    "stable cluster slug, e.g. 'product-detail', 'category-listing', 'checkout', "
+    "'not-found') and put the cluster's member text/html page paths in a `pages` list in "
+    "`props`. Never emit a __singleton__ WebPresentation and never one per raw URL. "
+    "Do not link edges here."
+)
 
 
 def _linking_prompt(systems_batch: L1DeltaBatch, primary: list[str],
@@ -374,18 +379,99 @@ def _linking_prompt(systems_batch: L1DeltaBatch, primary: list[str],
         # send the same content twice on every call (N2).
         "SYSTEMS now available to link (proposed this step + already defined): "
         f"{sorted(set(proposed) | set(defined))}\n\n"
+        f"{_linking_context(primary, secondary, owned)}\n\n{_LINKING_TASK}"
+    )
+
+
+def _linking_context(primary: list[str], secondary: list[str],
+                     owned: dict[str, list[str]]) -> str:
+    """The dynamic service context the LINKING sub-problem injects: PRIMARY services
+    (with the assets they own, as linking evidence) and the SECONDARY list."""
+    prim_lines = "\n".join(
+        f"  - {slug} (owns: {', '.join(owned.get(slug, [])) or 'surface in this chunk'})"
+        for slug in primary) or "  (none)"
+    return (
         "PRIMARY services (they aggregate this chunk's assets - link Systems to THESE first):\n"
         f"{prim_lines}\n"
-        f"SECONDARY services (other asset-bearing services): {secondary or '(none)'}\n\n"
-        "TASK - LINK SERVICES (system_edges ONLY). Connect each System above to the "
-        "Service(s) it overlays, choosing the exact edge label "
-        "(EXPOSED_VIA a REST/GraphQL API OR a WebPresentation page-cluster - copy its "
-        "'<service>::<cluster>' discriminator VERBATIM so the edge hits the right node; "
-        "FRONTED_BY / PROTECTED_BY / ROUTED_BY a perimeter; "
-        "IDENTIFIED_BY / AUTHENTICATED_BY / AUTHORIZED_BY the identity Systems). Copy each "
-        "service_slug VERBATIM from the lists above; prefer PRIMARY services. Leave every "
-        "other list EMPTY."
+        f"SECONDARY services (other asset-bearing services): {secondary or '(none)'}"
     )
+
+
+_LINKING_TASK = (
+    "TASK - LINK SERVICES (system_edges ONLY). Connect each System above to the "
+    "Service(s) it overlays, choosing the exact edge label "
+    "(EXPOSED_VIA a REST/GraphQL API OR a WebPresentation page-cluster - copy its "
+    "'<service>::<cluster>' discriminator VERBATIM so the edge hits the right node; "
+    "FRONTED_BY / PROTECTED_BY / ROUTED_BY a perimeter; "
+    "IDENTIFIED_BY / AUTHENTICATED_BY / AUTHORIZED_BY the identity Systems). Copy each "
+    "service_slug VERBATIM from the lists above; prefer PRIMARY services. Leave every "
+    "other list EMPTY."
+)
+
+
+# The typist's four sub-problems (spec 3.3), each mapping onto a run of the
+# `_REFLECTION_STEPS` stages: ORIENT+HYPOTHESISE, CLUSTER PAGES, VERIFY-FALSIFY+
+# INTEGRATE, EMIT. The two reasoning turns emit `claims`; the two extraction turns
+# emit `systems` and `system_edges`. Every turn speaks `AnalysisTurn`, so the tool
+# set never toggles. Placed here, after the prompt texts it composes.
+_ROLE_HEADER = role_header(
+    "the TechnicalSystem mechanism-typist",
+    "reconstruct, at breadth, the cross-cutting technical Systems this surface "
+    "evidences and how they overlay the Services",
+)
+
+WORKFLOW = ReasoningWorkflow(
+    role_id="mechanism_typist",
+    sub_problems=(
+        SubProblem(
+            id="mechanism_hypotheses",
+            name="mechanism hypotheses",
+            prompt=(
+                f"{_ROLE_HEADER}\n\n{cot_scaffold(_REFLECTION_STEPS[:2])}\n\n"
+                "Emit one Claim per asset+observation: `subject` the asset, `assertion` "
+                "the candidate System kind and whether it is new or an extension, "
+                "`evidence` the response evidence you read, `verdict` new-vs-extend with "
+                "the defined System key. Emit `claims` only; do not emit deltas yet."
+            ),
+            inject=("surface", "inventory", "vocabulary"),
+            emit=("claims",),
+        ),
+        SubProblem(
+            id="page_clusters",
+            name="page clusters",
+            prompt=(
+                f"{_ROLE_HEADER}\n\n{cot_scaffold(_REFLECTION_STEPS[2:3])}\n\n"
+                "Emit one Claim per (service, cluster): `subject` the service, `assertion` "
+                "the cluster and its member page paths, `evidence` the shared "
+                "title/structure/size, `verdict` the short cluster slug. Emit `claims` only."
+            ),
+            inject=("surface",),
+            emit=("claims",),
+        ),
+        SubProblem(
+            id="systems_extract",
+            name="systems extract",
+            prompt=(
+                f"{_ROLE_HEADER}\n\n{cot_scaffold(_REFLECTION_STEPS[3:5])}\n\n"
+                f"{_SYSTEMS_TASK}"
+            ),
+            inject=("inventory", "vocabulary", "mechanism_hypotheses", "page_clusters"),
+            emit=("systems",),
+            depends_on=("mechanism_hypotheses", "page_clusters"),
+        ),
+        SubProblem(
+            id="link",
+            name="link",
+            prompt=(
+                f"{_ROLE_HEADER}\n\n{cot_scaffold(_REFLECTION_STEPS[5:6])}\n\n"
+                f"{_LINKING_TASK}"
+            ),
+            inject=("inventory", "candidates", "systems_extract"),
+            emit=("system_edges",),
+            depends_on=("systems_extract",),
+        ),
+    ),
+)
 
 
 # --- the injected LLM seam ----------------------------------------------------
@@ -406,9 +492,9 @@ def _default_invoke_fn(messages, *, schema=None, system_prompt=None):
 
 def stateful_invoke_fn(run_id: str, checkpointer, project_id: str | None = None):
     """The STATEFUL mechanism-typist call (#94): the `mechanism_typist` role runs as a
-    session resuming from its OWN per-run checkpoint (`AnalysisSession(run_id, "mechanism_typist")`, distinct from every other agent's), so its 3-call
-    chain and every chunk append to ONE growing context. Structured turns go through
-    `ToolStrategy` (#44-safe); the reflection turn (`schema=None`) returns prose. Same
+    session resuming from its OWN per-run checkpoint (`AnalysisSession(run_id, "mechanism_typist")`, distinct from every other agent's), so its
+    sub-problem chain and every chunk append to ONE growing context. Every turn goes
+    through the one `AnalysisTurn` envelope. Same
     `(messages, *, schema)` shape as `_default_invoke_fn`. Structurally sync (sequential
     dispatch under `ANALYSER_PASS_SEMAPHORE`).
 
@@ -447,7 +533,7 @@ def _load_skill() -> str:
     return _TECHNICAL_SYSTEM_SKILL
 
 
-# --- the 3-call proposer body -------------------------------------------------
+# --- the 4-sub-problem proposer body ------------------------------------------
 
 def type_mechanisms(
     chunk: Chunk,
@@ -458,16 +544,14 @@ def type_mechanisms(
     run_id: str | None = None,
     tags: list | None = None,
 ) -> L1DeltaBatch:
-    """The A.1 mechanism-typist body (grilled #9): the reflection -> systems-extraction
-    -> services-linking chain over a `service` chunk, returning a narrowed
-    `L1DeltaBatch{systems, system_edges}`.
+    """The A.1 mechanism-typist body (grilled #9): the `WORKFLOW` sub-problem chain
+    (mechanism_hypotheses -> page_clusters -> systems_extract -> link) over a `service`
+    chunk, returning a narrowed `L1DeltaBatch{systems, system_edges}`.
 
-    `invoke_fn(messages, *, schema) -> str | L1DeltaBatch | None` is injected (unit-
-    testable). FAIL-CLOSED on reflection exhaustion (empty batch); SOFT pass-through on
-    a later step's exhaustion (write what earlier steps produced). Fail-open on any
-    exception - never crashes the caller."""
-    from langchain_core.messages import HumanMessage
-
+    `invoke_fn(messages, *, schema, system_prompt) -> AnalysisTurn | None` is injected
+    (unit-testable). FAIL-CLOSED on hypotheses exhaustion (the chain halts); SOFT
+    pass-through on a later step's exhaustion (write what earlier steps produced).
+    Fail-open on any exception - never crashes the caller."""
     if not chunk.assets:  # empty delta -> nothing to type (valid empty)
         return L1DeltaBatch()
     invoke_fn = invoke_fn or _default_invoke_fn
@@ -476,48 +560,56 @@ def type_mechanisms(
     # checkpointed trail. The legacy one-shot seam prepends it itself.
     skill = _load_skill()
 
-    # Per-batch memory: the three calls of ONE chunk share a session (the batch
-    # scope), so the reflection's reasoning is the extraction's context; the next
-    # chunk opens a fresh thread. The scope is inert for the one-shot legacy seam.
+    from polymerhus.analysis.l1_curator import vocabulary_prompt
     from polymerhus.analysis.proposer_turn import proposer_batch
+    from polymerhus.analysis.reasoning_workflow import run_workflow, to_delta_batch
 
-    with proposer_batch(chunk.chunk_id):
-        # Call 1 - REFLECTION (reason). Exhaustion => fail-closed (whole step empty).
-        # The escalating retry lives inside invoke_fn (invoke_role) now; a None return
-        # is the exhausted-generation fail-closed signal, exactly as before.
-        prose = invoke_fn(
-            [HumanMessage(content=_reflection_prompt(chunk, inventory))],
-            schema=None, system_prompt=skill,
-        )
-        if not prose:
-            logger.warning("mechanism_typist: reflection exhausted; fail-closed to empty batch")
-            return L1DeltaBatch()
+    # The volatile base sources the workflow injects verbatim: the surface with its
+    # adversarial insight, the currently-defined Systems, the vocabulary, and the
+    # primary/secondary service context for linking.
+    all_services = frozenset((inventory or {}).get("services") or [])
+    primary, secondary, owned = partition_services(chunk.assets, aggregations or [], all_services)
+    base_artifacts = {
+        "surface": _asset_observation_paragraphs(chunk),
+        "inventory": _defined_systems_block(inventory),
+        "vocabulary": vocabulary_prompt(),
+        "candidates": _linking_context(primary, secondary, owned),
+    }
 
-        # #9/#18: attach the reflection prose to the run-correlated trace (explicit
-        # run correlation - the supervisor no longer opens an agent span, so the
-        # ambient update would go nowhere). Otherwise the WHY behind each System
-        # proposal - the hypothesis-driven reason call - is built, consumed by
-        # extraction, and discarded, leaving nothing to evaluate the thought
-        # process against. Fail-open no-op untraced.
-        from polymerhus.app.observability import trace_reasoning
-        trace_reasoning(prose, call="typist-reflection", run_id=run_id, tags=tags)
+    # Per-batch memory: the whole chain of ONE chunk shares a session (the batch
+    # scope), so the reasoning is the extraction's context; the next chunk opens a
+    # fresh thread. The scope is inert for the one-shot legacy seam. The fail-closed
+    # gate halts the chain when the hypotheses turn exhausts.
+    try:
+        with proposer_batch(chunk.chunk_id):
+            run = run_workflow(
+                WORKFLOW, invoke_fn=invoke_fn, system_prompt=skill,
+                base_artifacts=base_artifacts,
+                halt_when=lambda sp, turn: sp.id == "mechanism_hypotheses" and turn is None,
+            )
+    except Exception:
+        logger.warning("mechanism_typist: workflow failed; degrading to empty batch", exc_info=True)
+        return L1DeltaBatch()
 
-        # Call 2 - SYSTEMS EXTRACTION (extract). Soft pass-through on exhaustion.
-        systems_batch = invoke_fn(
-            [HumanMessage(content=_systems_prompt(inventory))],
-            schema=L1DeltaBatch, system_prompt=skill,
-        ) or L1DeltaBatch()
+    if run.turns.get("mechanism_hypotheses") is None:
+        logger.warning("mechanism_typist: hypotheses exhausted; fail-closed to empty batch")
+        return L1DeltaBatch()
 
-        # Call 3 - SERVICES LINKING (extract). Soft pass-through on exhaustion.
-        all_services = frozenset((inventory or {}).get("services") or [])
-        primary, secondary, owned = partition_services(chunk.assets, aggregations or [], all_services)
-        link_batch = invoke_fn(
-            [HumanMessage(content=_linking_prompt(systems_batch, primary, secondary, owned, inventory))],
-            schema=L1DeltaBatch, system_prompt=skill,
-        ) or L1DeltaBatch()
+    # #9/#18: attach the reasoning to the run-correlated trace (explicit run
+    # correlation - the supervisor no longer opens an agent span, so the ambient
+    # update would go nowhere). Otherwise the WHY behind each System proposal is
+    # built, consumed, and discarded, leaving nothing to evaluate against.
+    from polymerhus.app.observability import trace_reasoning
+    trace_reasoning(run.artifacts.get("mechanism_hypotheses", ""),
+                    call="typist-reflection", run_id=run_id, tags=tags)
+
+    systems_turn = run.turns.get("systems_extract")
+    link_turn = run.turns.get("link")
+    systems_batch = to_delta_batch(systems_turn) if systems_turn is not None else L1DeltaBatch()
+    link_batch = to_delta_batch(link_turn) if link_turn is not None else L1DeltaBatch()
 
     # #18/observability: persist the typist's STRUCTURED output (systems + edges, with each
-    # system's kind/discriminator) alongside its reflection prose - otherwise the WHAT it
+    # system's kind/discriminator) alongside its reasoning - otherwise the WHAT it
     # proposed (not just the WHY) leaves no inspectable trace (moodique cc29fd4a).
     from polymerhus.app.observability import trace_generation
     trace_generation("typist-systems-and-edges",

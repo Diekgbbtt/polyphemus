@@ -276,7 +276,25 @@ The legacy two-pass analyser monolith dissolves into responsibility-scoped propo
 
 All three chunk-fed proposers are **STATEFUL session agents as of #94** (`agent_mode="session"`), and **per-BATCH as of the 2026-10-10 cache experiment**: `assigner` / `mechanism_typist` / `data_modeller` run their structured turn via `app/llm/session.py::stateful_turn` on a per-(RUN, CHUNK) `AnalysisSession(run_id, role_id, batch=<chunk_id>)` thread, so the turns WITHIN one chunk share the agent's memory (the reflection is the extraction's context) while the NEXT chunk starts a FRESH context. The per-batch discriminator is set by a `proposer_batch(chunk.chunk_id)` scope the proposer body opens around its invoke chain (`analysis/proposer_turn.py`) - a scoped ContextVar, so the `(messages, *, schema, system_prompt)` invoke contract is unchanged; an unscoped caller keeps the `run:role` thread, preserving the observability/runtime contract. The shared process-wide pooled checkpointer (`app/llm/checkpoints.py`) is the memory store. The one_shot roles (bootstrapper, anatomy, curation, sweep, anti-cluttering) externalise their reasoning to the graph and stay on `invoke_role`.
 
-**Constant request shape (2026-10-10 cache experiment):** every turn of a proposer role binds the SAME structured tool. The reflection (prose) turn binds the role's `L1DeltaBatch` tool through the seam's `tools=` while keeping `response_format` prose; the extraction turn supplies the same tool through `response_format`. Before this the reflection bound NO tool and the extraction bound one, so `data_modeller`'s strict `P,S,P,S` schedule toggled the tool set every call and the provider prefix cache never matched (`cache_read=0`). `mechanism_typist`'s `P,S,S` shared an `S,S` tool set and cached, which was the asymmetry that named the fix.
+**Constant request shape (2026-10-10 cache experiment, extended by the reasoning workflow):** every turn of a proposer role binds the SAME structured tool, the `AnalysisTurn` envelope, so the request shape never toggles and the provider prefix cache matches across a role's whole sub-problem chain. Before this the reflection bound NO tool and the extraction bound one, so `data_modeller`'s strict `P,S,P,S` schedule toggled the tool set every call and the provider prefix cache never matched (`cache_read=0`). `mechanism_typist`'s `P,S,S` shared an `S,S` tool set and cached, which was the asymmetry that named the fix.
+
+**Reasoning workflow** (`analysis/reasoning_workflow.py`):
+A role's reasoning is a `ReasoningWorkflow`: an ordered list of `SubProblem`s, one LLM turn each, every turn speaking the ONE `AnalysisTurn` envelope.
+A `SubProblem` declares an `id` and `name`, the `prompt` (the volatile task text), the `inject` sources rendered VERBATIM into its human message (the base sources the body seeds - the Service slice, the inventory - plus the earlier sub-problems it `depends_on`), the `emit` artifact(s) it populates, and its `depends_on` edges.
+Construction validates strictly: a duplicate id, a `depends_on` naming a non-earlier sub-problem, or an undeclared `emit` raises.
+The executor injects each dependency's artifact from the RECORDED turns, never from the session trail, so compaction can never evict a dependency.
+A `halt_when` predicate preserves a role's fail-closed gate (e.g. the typist's hypotheses turn).
+
+**Analysis turn** (`AnalysisTurn`):
+The single LLM-facing structured envelope every proposer turn binds: a strict SUPERSET of the curator's `L1DeltaBatch` (all delta lists) plus `claims: list[Claim]`.
+`L1DeltaBatch` stays the pure curator input; `to_delta_batch` maps an `AnalysisTurn` to it, dropping `claims`.
+A reasoning sub-problem populates `claims`; an extraction sub-problem populates the delta lists.
+
+**Claim**:
+One compact structured judgment from a reasoning sub-problem: `subject`, `assertion`, `evidence`, `verdict`.
+It is the typed datum a dependency hands to a dependent sub-problem (ADR D23/D24), in place of prose that compaction could summarise away.
+
+A role's sub-problems map onto the stages its `_REFLECTION_STEPS` already enumerate; the mapping is explicit (ADR D22), so no boundary is invented.
 
 Since **#187** all three build their turn through ONE seam, `analysis/proposer_turn.py`: the per-run thread, the role's #95 compaction middleware, the run-correlation tag, the project usage scope, and the role's OWN prompt. A proposer can therefore never be built with another proposer's prompt - the role_id selects all of it.
 
@@ -290,7 +308,7 @@ Sole owner of the `AGGREGATES` hinge: high-precision classification of an observ
 *Prompt.* TWO layers, the Bootstrapper's split: the role verbatim in code (identity, the aggregates-only contract, the `l0.identity` shape - the WHAT, which must hold with no prompt file) plus `analysis/prompts/assigner.md` (the no-owner null hypothesis, the differential over candidate owners, discriminating evidence, confidence anchors - the HOW). The shared analyser skill was never a fit here: it addresses a generalist proposer and instructs the System and data modelling D4/D18 forbid this role (the #30 per-role retirement).
 `ASSIGNER_PROMPT_CONFIG` selects; **`skill` is the default** (operator-ratified 2026-07-29), `baseline` a byte-identical rollback. The default was NOT earned on measurement - the comparison was confounded by inventory size (23 vs 11 Services) and supports only "no regression".
 The system half is byte-stable so the provider prompt-cache survives a run; inventory and chunk ride the volatile user turn.
-Its structured output is the role's DEFAULT, so no call site may drop it by omission: the shared seam treats an absent `schema` as the role's own contract and only a deliberate `None` selects a prose turn.
+Its structured output is the role's DEFAULT (`AnalysisTurn`), so no call site may drop it by omission: the shared seam treats an absent `schema` as the role's own contract; only a deliberate `None` selects the legacy prose turn.
 
 *Shaping* (deterministic, post-LLM, ORDER load-bearing): `narrow_to_assignment` -> `resolve_l0_refs` -> `drop_out_of_inventory` -> `normalise_confidence` -> `withhold_below_bar`.
 Correctness never depends on the model's formatting: an `l0.label` the model coined is repaired against the streamed chunk, and a percentage-scale confidence is rescaled BEFORE the bar - an unrescaled `85` clears a 0.75 bar and silently voids the withholding gate, as it did on 213 live edges.
@@ -305,7 +323,7 @@ _Avoid_: analyser (the whole-model term).
 
 **TechnicalSystem / mechanism-typist**:
 The sole owner of mechanism TYPING (agent spec #9) - it defines/extends the cross-cutting `System`s the streamed surface evidences and links them to Services as typed `Service->System` edges, never Service props. BREADTH-ONLY: it emits `L1DeltaBatch{systems, system_edges}`; all System DEEPENING (WebPresentation rendering/navigation, authz inverse-pyramid, backward-recon probes, the `AnatomyResult` triple) is Phase B (epic #39).
-It runs a THREE-call chain over one `service` chunk delivered AFTER the Assigner: a hypothesis-driven free-text **reflection** (define which Systems the assets impact, verify soundly - overthink + critical-thinking + define/debug-hypothesis; exhaustion fails the step CLOSED), then structured **systems extraction**, then structured **services linking** (soft pass-through on later-step exhaustion).
+It runs a FOUR-sub-problem `ReasoningWorkflow` over one `service` chunk delivered AFTER the Assigner: `mechanism_hypotheses` (ORIENT + HYPOTHESISE -> `claims`) -> `page_clusters` (CLUSTER PAGES -> `claims`) -> `systems_extract` (VERIFY-FALSIFY + INTEGRATE -> `systems`, depending on both reasoning turns) -> `link` (EMIT -> `system_edges`, depending on `systems_extract`). Each turn speaks the ONE `AnalysisTurn` envelope; exhaustion of the hypotheses turn fails the step CLOSED (the chain halts), a later step's exhaustion is a soft pass-through.
 _Avoid_: analyser (the whole-model term); anatomy (the Phase-B deepening path).
 
 **System description (discriminative attribute)**:

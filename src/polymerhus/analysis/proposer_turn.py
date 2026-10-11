@@ -37,9 +37,10 @@ from typing import Any, Iterator, Sequence
 from langchain_core.messages import BaseMessage, SystemMessage
 
 # Distinguishes "the caller passed no schema" (use the role's own default) from
-# "the caller passed schema=None" (a deliberate prose turn). The analysis role's
-# schema is part of its output contract: the assigner is permanently structured,
-# while the reflection-driven proposers alternate prose and structured turns.
+# "the caller passed schema=None" (a deliberate prose turn). Every analysis proposer
+# now defaults to the one structured envelope `AnalysisTurn`, so a normal turn is
+# always structured; the explicit-None prose path is retained for a caller that
+# genuinely wants free text.
 _NO_SCHEMA = object()
 
 # The per-streamed-chunk memory scope (the per-batch discriminator). A proposer body
@@ -92,24 +93,25 @@ def _role_prompt(role_id: str) -> str:
 
 
 def _role_default_schema(role_id: str) -> Any:
-    """The role's default structured-output schema, or None for a role that takes
-    prose turns. Part of the role's output contract, not a per-call decision."""
-    if role_id == "assigner":
-        from polymerhus.analysis.analyser_types import L1DeltaBatch
+    """The role's default structured-output schema. Every analysis proposer now speaks
+    the ONE envelope `AnalysisTurn`: its reasoning sub-problems populate `claims` and
+    its extraction sub-problems populate the delta lists, so a caller that passes no
+    schema still gets the role's output contract."""
+    if role_id in ("assigner", "mechanism_typist", "data_modeller"):
+        from polymerhus.analysis.reasoning_workflow import AnalysisTurn
 
-        return L1DeltaBatch
+        return AnalysisTurn
     return None
 
 
 def _role_structured_schema(role_id: str) -> Any:
-    """The schema a role's STRUCTURED turns use, or None for a role with no structured
-    contract. Distinct from `_role_default_schema`, which is None for the
-    reflection-driven proposers: their prose turns are deliberate, but they still
-    share this one structured tool so the request shape never toggles."""
+    """The schema a role's structured turns use, or None for a role with no structured
+    contract. `AnalysisTurn` is the single structured tool every analysis proposer
+    binds, so the request shape never toggles across its sub-problems (ADR D26)."""
     if role_id in ("assigner", "mechanism_typist", "data_modeller"):
-        from polymerhus.analysis.analyser_types import L1DeltaBatch
+        from polymerhus.analysis.reasoning_workflow import AnalysisTurn
 
-        return L1DeltaBatch
+        return AnalysisTurn
     return None
 
 

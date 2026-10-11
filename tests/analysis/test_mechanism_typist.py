@@ -24,6 +24,7 @@ from polymerhus.analysis.mechanism_typist import (
     partition_services,
     type_mechanisms,
 )
+from polymerhus.analysis.reasoning_workflow import AnalysisTurn, Claim
 from polymerhus.recon.domain.types import AssetDelta, Observation
 
 _KINDS = frozenset({"WebPresentation", "RESTApi", "AuthenticationMechanism", "WAF", "CDN"})
@@ -39,29 +40,43 @@ def _service_chunk(*assets, observations=()):
                  observations=tuple(observations))
 
 
-class _Recorder:
-    """A 3-call `invoke_fn` honouring the `schema` kwarg: `schema=None` -> prose
-    (reflection); a schema -> a crafted batch keyed by the task marker in the prompt.
-    Records the call order for the sequence assertion (N2)."""
+def _claims(*subjects):
+    return AnalysisTurn(claims=[Claim(subject=s, assertion="a", evidence="e", verdict="v")
+                                for s in subjects])
 
-    def __init__(self, prose="I reason about the mechanisms.", systems=None, edges=None):
+
+class _Recorder:
+    """A 4-call `invoke_fn` honouring the `schema` kwarg (always `AnalysisTurn` here):
+    routes by the sub-problem marker in the prompt and returns a crafted turn. Records
+    the call order for the sequence assertion. `halt_hypotheses` forces the
+    mechanism_hypotheses turn to exhaust (the fail-closed signal)."""
+
+    def __init__(self, hypotheses=None, clusters=None, systems=None, edges=None,
+                 halt_hypotheses=False, systems_none=False, linking_none=False):
         self.calls: list[str] = []
-        self.prose = prose
-        self.systems = systems if systems is not None else L1DeltaBatch(
-            systems=[SystemProposal(kind="RESTApi", props={"description": "REST surface"})])
-        self.edges = edges if edges is not None else L1DeltaBatch(
-            system_edges=[SystemEdgeProposal(service_slug="checkout", kind="RESTApi", rel="EXPOSED_VIA")])
+        self.hypotheses = _claims("asset-x") if hypotheses is None else hypotheses
+        self.clusters = _claims("svc") if clusters is None else clusters
+        self.systems = (AnalysisTurn(systems=[SystemProposal(kind="RESTApi", props={"description": "REST surface"})])
+                        if systems is None else systems)
+        self.edges = (AnalysisTurn(system_edges=[SystemEdgeProposal(service_slug="checkout", kind="RESTApi", rel="EXPOSED_VIA")])
+                      if edges is None else edges)
+        self.halt_hypotheses = halt_hypotheses
+        self.systems_none = systems_none
+        self.linking_none = linking_none
 
     def __call__(self, messages, *, schema=None, system_prompt=None):
         content = messages[-1].content
-        if schema is None:
-            self.calls.append("reflect")
-            return self.prose
         if "EXTRACT SYSTEMS" in content:
             self.calls.append("systems")
-            return self.systems
-        self.calls.append("link")
-        return self.edges
+            return None if self.systems_none else self.systems
+        if "LINK SERVICES" in content:
+            self.calls.append("link")
+            return None if self.linking_none else self.edges
+        if "CLUSTER PAGES" in content:
+            self.calls.append("clusters")
+            return self.clusters
+        self.calls.append("hypotheses")
+        return None if self.halt_hypotheses else self.hypotheses
 
 
 # --- pure shaping -------------------------------------------------------------
@@ -112,9 +127,9 @@ def test_N7_partition_primary_secondary_and_asset_less_excluded():
 
 # --- the 3-call chain (N2 order, N3 fail-closed, N4 soft pass-through) ---------
 
-def test_the_three_calls_share_the_chunk_batch_scope():
-    """Per-batch memory: the 3-call chain runs under ONE batch scope (the chunk id),
-    so reflection + extraction + linking share a context and the next chunk resets."""
+def test_the_four_subproblems_share_the_chunk_batch_scope():
+    """Per-batch memory: the whole sub-problem chain runs under ONE batch scope (the
+    chunk id), so its turns share a context and the next chunk resets."""
     from polymerhus.analysis.proposer_turn import current_batch
 
     seen: list[str | None] = []
@@ -125,50 +140,47 @@ def test_the_three_calls_share_the_chunk_batch_scope():
             return super().__call__(messages, schema=schema, system_prompt=system_prompt)
 
     type_mechanisms(_service_chunk(), invoke_fn=_ScopeRecorder())
-    assert seen == ["c", "c", "c"]
+    assert seen == ["c", "c", "c", "c"]
 
 
-def test_N2_three_call_sequence_in_order():
+def test_N2_four_subproblem_sequence_in_order():
     rec = _Recorder()
     out = type_mechanisms(_service_chunk(), invoke_fn=rec)
-    assert rec.calls == ["reflect", "systems", "link"]
+    assert rec.calls == ["hypotheses", "clusters", "systems", "link"]
     assert [s.kind for s in out.systems] == ["RESTApi"]
     assert [(e.service_slug, e.rel) for e in out.system_edges] == [("checkout", "EXPOSED_VIA")]
 
 
-def test_N3_reflection_exhaustion_fails_closed():
-    def invoke(messages, *, schema=None, system_prompt=None):
-        return None if schema is None else L1DeltaBatch(systems=[SystemProposal(kind="RESTApi")])
-
-    out = type_mechanisms(_service_chunk(), invoke_fn=invoke)
-    assert out == L1DeltaBatch()  # no reflection -> whole step empty, no systems/edges
+def test_N3_hypotheses_exhaustion_fails_closed():
+    """A None hypotheses turn halts the chain (the fail-closed reflection gate): the
+    later turns are NEVER attempted."""
+    rec = _Recorder(halt_hypotheses=True)
+    out = type_mechanisms(_service_chunk(), invoke_fn=rec)
+    assert out == L1DeltaBatch()  # no hypotheses -> whole step empty
+    assert rec.calls == ["hypotheses"]
 
 
 def test_N4_systems_exhaustion_soft_passthrough_no_systems():
-    def invoke(messages, *, schema=None, system_prompt=None):
-        if schema is None:
-            return "prose"
-        return None  # both structured calls exhaust
-    out = type_mechanisms(_service_chunk(), invoke_fn=invoke)
+    rec = _Recorder(systems_none=True, linking_none=True)
+    out = type_mechanisms(_service_chunk(), invoke_fn=rec)
     assert out.systems == [] and out.system_edges == []  # degraded, never crashed
+    assert "link" in rec.calls  # soft pass-through: linking STILL attempted
 
 
 def test_N4_linking_exhaustion_keeps_systems_drops_edges():
-    def invoke(messages, *, schema=None, system_prompt=None):
-        if schema is None:
-            return "prose"
-        if "EXTRACT SYSTEMS" in messages[-1].content:
-            return L1DeltaBatch(systems=[SystemProposal(kind="CDN", props={"description": "edge"})])
-        return None  # linking exhausts
-    out = type_mechanisms(_service_chunk(), invoke_fn=invoke)
+    rec = _Recorder(
+        systems=AnalysisTurn(systems=[SystemProposal(kind="CDN", props={"description": "edge"})]),
+        linking_none=True,
+    )
+    out = type_mechanisms(_service_chunk(), invoke_fn=rec)
     assert [s.kind for s in out.systems] == ["CDN"]
     assert out.system_edges == []  # soft pass-through: systems survive, edges degrade
 
 
 def test_N5_end_to_end_emits_only_valid_vocabulary():
     rec = _Recorder(
-        systems=L1DeltaBatch(systems=[SystemProposal(kind="RESTApi"), SystemProposal(kind="Nonsense")]),
-        edges=L1DeltaBatch(system_edges=[
+        systems=AnalysisTurn(systems=[SystemProposal(kind="RESTApi"), SystemProposal(kind="Nonsense")]),
+        edges=AnalysisTurn(system_edges=[
             SystemEdgeProposal(service_slug="s", kind="RESTApi", rel="EXPOSED_VIA"),
             SystemEdgeProposal(service_slug="s", kind="RESTApi", rel="RENDERED_BY"),
         ]),
@@ -180,17 +192,15 @@ def test_N5_end_to_end_emits_only_valid_vocabulary():
 
 
 def test_N6_extend_prompt_shows_existing_description_and_demands_enrichment():
-    """Compounding (grilled #9 Q7): the extraction prompt must surface the currently-
+    """Compounding (grilled #9 Q7): the systems_extract prompt must surface the currently-
     defined System WITH its description AND instruct enrich-never-blank, or the model
     cannot compound and would clobber."""
     captured = {}
 
     def invoke(messages, *, schema=None, system_prompt=None):
-        if schema is None:
-            return "prose"
         if "EXTRACT SYSTEMS" in messages[-1].content:
             captured["systems_prompt"] = messages[-1].content
-        return L1DeltaBatch()
+        return AnalysisTurn()
     inventory = {"services": [], "systems": ["AuthenticationMechanism"],
                  "system_descriptions": {"AuthenticationMechanism": "bearer-token auth"}}
     type_mechanisms(_service_chunk(), invoke_fn=invoke, inventory=inventory)
@@ -206,14 +216,15 @@ def test_co_produced_systems_from_linking_are_captured_not_discarded():
     never discarded - else the graph gets edge-materialised bare Systems with no
     description (the discriminative attribute)."""
     def invoke(messages, *, schema=None, system_prompt=None):
-        if schema is None:
-            return "prose naming a REST API"
-        if "EXTRACT SYSTEMS" in messages[-1].content:
-            return L1DeltaBatch()  # extraction empty (observed live)
-        return L1DeltaBatch(  # linking co-produces both
-            systems=[SystemProposal(kind="RESTApi", props={"description": "unified REST API"})],
-            system_edges=[SystemEdgeProposal(service_slug="checkout", kind="RESTApi", rel="EXPOSED_VIA")],
-        )
+        content = messages[-1].content
+        if "EXTRACT SYSTEMS" in content:
+            return AnalysisTurn()  # extraction empty (observed live)
+        if "LINK SERVICES" in content:
+            return AnalysisTurn(  # linking co-produces both
+                systems=[SystemProposal(kind="RESTApi", props={"description": "unified REST API"})],
+                system_edges=[SystemEdgeProposal(service_slug="checkout", kind="RESTApi", rel="EXPOSED_VIA")],
+            )
+        return _claims("asset")
     out = type_mechanisms(_service_chunk(), invoke_fn=invoke,
                           inventory={"services": ["checkout"]}, aggregations=[])
     assert [s.kind for s in out.systems] == ["RESTApi"]                 # captured
@@ -221,22 +232,22 @@ def test_co_produced_systems_from_linking_are_captured_not_discarded():
     assert any(e.kind == "RESTApi" for e in out.system_edges)
 
 
-def test_N8_observations_feed_reflection_only():
+def test_N8_observations_feed_the_hypotheses_turn_only():
     captured = {}
 
     def invoke(messages, *, schema=None, system_prompt=None):
         content = messages[-1].content
-        if schema is None:
-            captured["reflect"] = content
-        elif "EXTRACT SYSTEMS" in content:
+        if "EXTRACT SYSTEMS" in content:
             captured["systems"] = content
-        return "prose" if schema is None else L1DeltaBatch()
+        elif "LINK SERVICES" not in content and "CLUSTER PAGES" not in content:
+            captured["hypotheses"] = content
+        return AnalysisTurn()
     obs = Observation(macro_kind="header", severity="info", evidence="Set-Cookie: sid",
                       rationale="session cookie missing Secure",
                       anchor={"type": "Endpoint", "identity": {"path": "/x", "baseurl": "https://a"}},
                       source_job="triager", source_tool="triager")
     type_mechanisms(_service_chunk(_endpoint("/x"), observations=(obs,)), invoke_fn=invoke)
-    assert "session cookie missing Secure" in captured["reflect"]   # insight in reflection
+    assert "session cookie missing Secure" in captured["hypotheses"]   # insight in the surface
     assert "session cookie missing Secure" not in captured["systems"]  # NOT re-shown to extract
 
 
@@ -252,9 +263,11 @@ def test_baseurl_anchored_observation_reaches_its_endpoint_insight():
     captured = {}
 
     def invoke(messages, *, schema=None, system_prompt=None):
-        if schema is None:
-            captured["reflect"] = messages[-1].content
-        return "prose" if schema is None else L1DeltaBatch()
+        content = messages[-1].content
+        if "EXTRACT SYSTEMS" not in content and "LINK SERVICES" not in content \
+                and "CLUSTER PAGES" not in content:
+            captured["hypotheses"] = content
+        return AnalysisTurn()
 
     obs = Observation(macro_kind="cors", severity="high",
                       evidence="access_control_allow_origin: *",
@@ -265,23 +278,25 @@ def test_baseurl_anchored_observation_reaches_its_endpoint_insight():
         _service_chunk(_endpoint("/rest/admin", baseurl="https://a"), observations=(obs,)),
         invoke_fn=invoke,
     )
-    assert "wide-open CORS enables cross-origin exfiltration" in captured["reflect"]
+    assert "wide-open CORS enables cross-origin exfiltration" in captured["hypotheses"]
 
 
-def test_response_evidence_props_reach_reflection_not_path_alone():
+def test_response_evidence_props_reach_the_hypotheses_turn_not_path_alone():
     """REGRESSION (typist blind to content_type). The mechanism a path evidences is
     discriminated by what it SERVES - content_type / title / status / server - not by
     its path string. The renderer used to emit the identity dict ALONE, so an
     API-looking path returning text/html (a client-routed SPA view) was
     indistinguishable from a REST endpoint and no WebPresentation could be typed. The
-    reflection prompt must now carry the discriminative props AND drop pipeline
-    plumbing (profile/source) so the surface stays no-noise."""
+    hypotheses prompt must carry the discriminative props AND drop pipeline plumbing
+    (profile/source) so the surface stays no-noise."""
     captured = {}
 
     def invoke(messages, *, schema=None, system_prompt=None):
-        if schema is None:
-            captured["reflect"] = messages[-1].content
-        return "prose" if schema is None else L1DeltaBatch()
+        content = messages[-1].content
+        if "EXTRACT SYSTEMS" not in content and "LINK SERVICES" not in content \
+                and "CLUSTER PAGES" not in content:
+            captured["hypotheses"] = content
+        return AnalysisTurn()
 
     shell = AssetDelta(
         type="Endpoint",
@@ -290,11 +305,11 @@ def test_response_evidence_props_reach_reflection_not_path_alone():
                "server": "AmazonS3", "profile": "webapp", "source": "httpx"},
     )
     type_mechanisms(_service_chunk(shell), invoke_fn=invoke)
-    reflect = captured["reflect"]
-    assert "content_type=text/html" in reflect      # the discriminating evidence reaches it
-    assert "title=Daytona" in reflect
-    assert "profile=webapp" not in reflect           # pipeline plumbing filtered out (no-noise)
-    assert "source=httpx" not in reflect
+    hypotheses = captured["hypotheses"]
+    assert "content_type=text/html" in hypotheses      # the discriminating evidence reaches it
+    assert "title=Daytona" in hypotheses
+    assert "profile=webapp" not in hypotheses           # pipeline plumbing filtered out (no-noise)
+    assert "source=httpx" not in hypotheses
 
 
 def test_webpresentation_per_service_cluster_survives_shaping():
@@ -339,12 +354,12 @@ def test_webpresentation_singleton_duplicate_and_orphan_edge_reconciled():
     channel is EXPOSED_VIA, never FRONTED_BY, so the rel is coerced."""
     desc = "PrestaShop-rendered HTML homepage at GET / (redirects to /it/)."
     chunk = _service_chunk(_endpoint("/"))
-    systems = L1DeltaBatch(systems=[SystemProposal(
+    systems = AnalysisTurn(systems=[SystemProposal(
         kind="WebPresentation", discriminator="catalogue_and_discovery::homepage",
         props={"description": desc, "pages": ["/"]})])
     # linking call co-produces the SAME system at the default discriminator + a MISLABELLED
     # (FRONTED_BY) edge to it - both the discriminator drift and the wrong rel must be repaired.
-    link = L1DeltaBatch(
+    link = AnalysisTurn(
         systems=[SystemProposal(kind="WebPresentation", props={"description": desc})],  # discriminator=__singleton__
         system_edges=[SystemEdgeProposal(
             service_slug="catalogue_and_discovery", kind="WebPresentation", rel="FRONTED_BY")])  # discriminator=__singleton__
@@ -470,12 +485,11 @@ def test_read_service_aggregations_shape():
 # --- the converged turn shape (#187, converged-agent-turn ADR) -----------------
 #
 # The role prompt is bound ONCE as the agent's ephemeral leading block and NEVER
-# enters the checkpointed trail, and the reflection prose is not re-embedded into
-# the later prompts. Both are what make the per-call request a stable append-only
-# prefix instead of a prefix that re-stacks the prompt and triplicates the prose.
+# enters the checkpointed trail, so the per-call request is a stable append-only
+# prefix instead of one that re-stacks the prompt.
 
 def test_the_typist_puts_no_role_prompt_in_the_messages():
-    """Every call of the 3-call chain forwards ONLY its per-call task: the
+    """Every turn of the sub-problem chain forwards ONLY its per-call task: the
     `technical-system.md` skill rides the `system_prompt=` binding, not a
     `SystemMessage` in the forwarded list."""
     from langchain_core.messages import SystemMessage
@@ -487,37 +501,53 @@ def test_the_typist_puts_no_role_prompt_in_the_messages():
 
         def __call__(self, messages, *, schema=None, system_prompt=None):
             self.msgs.append(list(messages))
-            return "prose" if schema is None else L1DeltaBatch()
+            return AnalysisTurn()
 
     rec = _Rec()
     type_mechanisms(_service_chunk(), invoke_fn=rec)
 
-    assert len(rec.msgs) == 3, "the 3-call chain is unchanged"
+    assert len(rec.msgs) == 4, "the four-sub-problem chain"
     for messages in rec.msgs:
         assert not any(isinstance(m, SystemMessage) for m in messages), (
             "no role prompt in the forwarded trail (it rides system_prompt=)")
         assert messages[0].content != _load_skill(), "the prompt is not message[0]"
 
 
-def test_the_typist_does_not_reembed_the_reflection_prose():
-    """The prose is triplicated today: once as an assistant message and once inside
-    each of the two structured prompts. With a stable prefix that is fresh-input
-    inflation on every structured call, so the prompts must reference the reflection
-    WITHOUT re-embedding it."""
+def test_the_typist_injects_the_dependency_artifacts_verbatim():
+    """ADR D24: the extraction turn carries the reasoning turn's `claims` injected
+    VERBATIM - no dependency rides the session trail. The surface, which
+    systems_extract does NOT declare, is not injected into it."""
     class _Rec:
         def __init__(self):
-            self.prompts = []
+            self.by_prompt = {}
 
         def __call__(self, messages, *, schema=None, system_prompt=None):
-            if schema is None:
-                return "UNIQUE-PROSE-MARKER-xyzzy"
-            self.prompts.append(messages[-1].content)
-            return L1DeltaBatch()
+            content = messages[-1].content
+            if "LINK SERVICES" in content:
+                self.by_prompt["link"] = content
+            elif "EXTRACT SYSTEMS" in content:
+                self.by_prompt["systems_extract"] = content
+            elif "CLUSTER PAGES" in content:
+                self.by_prompt["page_clusters"] = content
+            else:
+                self.by_prompt["hypotheses"] = content
+            if "EXTRACT SYSTEMS" in content or "LINK SERVICES" in content \
+                    or "CLUSTER PAGES" in content:
+                return AnalysisTurn()
+            return AnalysisTurn(claims=[Claim(
+                subject="asset-a", assertion="witnesses a REST API",
+                evidence="content_type application/json", verdict="new RESTApi")])
 
     rec = _Rec()
-    type_mechanisms(_service_chunk(), invoke_fn=rec)
+    shell = AssetDelta(
+        type="Endpoint",
+        identity={"path": "/x", "baseurl": "https://a"},
+        props={"server": "SURFACE-ONLY-MARKER"},
+    )
+    type_mechanisms(_service_chunk(shell), invoke_fn=rec)
 
-    assert len(rec.prompts) == 2
-    for prompt in rec.prompts:
-        assert "UNIQUE-PROSE-MARKER-xyzzy" not in prompt, (
-            "the reflection prose must not be re-embedded into a later prompt")
+    systems = rec.by_prompt["systems_extract"]
+    assert "witnesses a REST API" in systems   # the dependency claim is injected
+    assert "new RESTApi" in systems
+    # systems_extract declares no `surface` injection: the raw surface is absent.
+    assert "SURFACE-ONLY-MARKER" not in systems

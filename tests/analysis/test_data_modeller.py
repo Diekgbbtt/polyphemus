@@ -35,6 +35,7 @@ from polymerhus.analysis.data_modeller import (
     site_index,
 )
 from polymerhus.analysis.l1_types import L0Ref
+from polymerhus.analysis.reasoning_workflow import AnalysisTurn
 from polymerhus.recon.domain.types import AssetDelta
 
 
@@ -279,18 +280,19 @@ def test_owning_services_header_joins_baseurl_only():
 
 def test_model_data_scopes_its_invokes_by_the_chunk_batch():
     """Per-batch memory: the body sets the streamed chunk id as the session batch
-    around BOTH turns, so the reflection and extraction share one context and the
-    next chunk (a new batch) starts fresh."""
+    around the WHOLE sub-problem chain (hypotheses -> data_extract -> flow_shape ->
+    flow_extract), so the chain shares one context and the next chunk starts fresh."""
     from polymerhus.analysis.proposer_turn import current_batch
+    from polymerhus.analysis.reasoning_workflow import AnalysisTurn
 
     seen: list[str | None] = []
 
     def invoke_fn(messages, *, schema=None, system_prompt=None):
         seen.append(current_batch())
-        return "reflected" if schema is None else L1DeltaBatch()
+        return AnalysisTurn()
 
     model_data(_chunk([_param("a")]), invoke_fn=invoke_fn, inventory={}, aggregations=[])
-    assert seen == ["stream:0", "stream:0"]
+    assert seen == ["stream:0"] * 4
 
 
 def test_empty_admission_no_llm_call():
@@ -330,7 +332,7 @@ def test_degradation_inventory_read_raises():
         raise RuntimeError("neo4j down")
 
     body = make_data_modeller_body(
-        invoke_fn=lambda *a, **k: L1DeltaBatch() if k.get("schema") else "reflected",
+        invoke_fn=lambda *a, **k: AnalysisTurn(),
         inventory_fn=boom_inventory, aggregations_fn=lambda pid: [],
     )
     dispatch = type("D", (), {"phase": "A1", "chunk": _chunk([_param("a")])})()
@@ -343,7 +345,7 @@ def test_degradation_aggregation_read_raises():
         raise RuntimeError("neo4j down")
 
     body = make_data_modeller_body(
-        invoke_fn=lambda *a, **k: L1DeltaBatch() if k.get("schema") else "reflected",
+        invoke_fn=lambda *a, **k: AnalysisTurn(),
         inventory_fn=lambda pid: {}, aggregations_fn=boom_aggregations,
     )
     dispatch = type("D", (), {"phase": "A1", "chunk": _chunk([_param("a")])})()

@@ -38,6 +38,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from polymerhus.analysis.analyser_types import L1DeltaBatch
 from polymerhus.analysis.chunking import Chunk, admit_for_role
 from polymerhus.analysis.l1_types import L0Ref
+from polymerhus.analysis.reasoning_workflow import ReasoningWorkflow, SubProblem
 
 logger = logging.getLogger(__name__)
 
@@ -280,31 +281,69 @@ def _chunk_slice(chunk: Chunk) -> dict:
     return {"nodes": nodes, "links": []}
 
 
-# The four-step reflect verbatim (#34), merging the load-bearing primitives of the
+# The four reflect stages (#34), merging the load-bearing primitives of the
 # `overthink` and `critical-thinking-logical-reasoning` disciplines down to what this
-# role needs. Fires ONLY on `mode="reflect"`, so the create-pass system prefix stays
-# byte-stable and provider prompt-caching holds across the run.
+# role needs. `candidate_owners` and `assign` each cover a slice of them (spec 3.3).
 #
-# NOT REACHED IN PRODUCTION, deliberately (operator-ratified 2026-07-28). `Mode` is
-# declared at `analysis/messages.py:36` and read only by `_system_prompt`; no
-# dispatcher ever sets `"reflect"`. Like the curation pass, reflection is legacy
-# under the analysis rewrite and degrades ORGANICALLY as the pipeline completes - it
-# is neither wired up nor deleted here. It stays TESTED (C25, C40b on both prompt
-# arms) so that whoever does wire it inherits a pinned contract rather than a guess,
-# and so its cost is visible: it is dead weight until then, not a working feature.
-_REFLECT_VERBATIM = (
-    "\n\nREFLECT PASS. Before emitting any revised proposal, write these four steps out:\n"
-    "1. RESTATE AS EVIDENCE: for each aggregate, quote the exact path segment or "
+# REVIVED IN PRODUCTION (ADR D25): the 2026-07-28 ratification recorded reflection as
+# deliberately unreached. The reasoning workflow now runs the first three stages
+# (`candidate_owners`) on every pass and the RESIDUE stage inside `assign`, so the
+# reflection is no longer dead weight. The stages stay TESTED on both prompt arms.
+_REFLECT_STEPS = (
+    "RESTATE AS EVIDENCE: for each aggregate, quote the exact path segment or "
     "parameter name you matched and the clause of the Service's contract it matched "
     "against. An aggregate whose evidence restates the slug instead of the surface is "
-    "self-refuting - drop it.\n"
-    "2. COMPETING OWNER: name the strongest competing Service and say why it lost. If "
+    "self-refuting - drop it.",
+    "COMPETING OWNER: name the strongest competing Service and say why it lost. If "
     "it genuinely also owns the element, emit it too rather than discarding it. If you "
     "cannot name any competitor, that means the inventory is thin, not that you are "
-    "confident.\n"
-    "3. CALIBRATE: state each confidence, whether it clears the bar, and what specific "
-    "evidence would move it.\n"
-    "4. RESIDUE: list the Endpoints you could not place, one short sentence each."
+    "confident.",
+    "CALIBRATE: state each confidence, whether it clears the bar, and what specific "
+    "evidence would move it.",
+    "RESIDUE: list the Endpoints you could not place, one short sentence each.",
+)
+
+_REFLECT_VERBATIM = (
+    "\n\nREFLECT PASS. Before emitting any revised proposal, write these four steps out:\n"
+    + "\n".join(f"{i}. {s}" for i, s in enumerate(_REFLECT_STEPS, 1))
+)
+
+# The Assigner's two sub-problems (spec 3.3): `candidate_owners` is the reasoning
+# turn (RESTATE / COMPETING OWNER / CALIBRATE -> claims); `assign` is the extraction
+# turn (RESIDUE + the assignment task -> aggregates). Each turn speaks the ONE
+# envelope `AnalysisTurn`, so the tool set never toggles.
+WORKFLOW = ReasoningWorkflow(
+    role_id=ROLE,
+    sub_problems=(
+        SubProblem(
+            id="candidate_owners",
+            name="candidate owners",
+            prompt=(
+                "REASONING - candidate owners. Work through these stages out loud:\n"
+                + "\n".join(f"{i}. {s}" for i, s in enumerate(_REFLECT_STEPS[:3], 1))
+                + "\n\nFor each Endpoint, emit one Claim per candidate owner: `subject` "
+                "the Endpoint, `assertion` the matched evidence and the strongest "
+                "competing owner, `evidence` the exact path segment or parameter you "
+                "matched, `verdict` the owner you would choose and your confidence. "
+                "Emit `claims` only; do not propose deltas yet."
+            ),
+            inject=("inventory", "surface"),
+            emit=("claims",),
+        ),
+        SubProblem(
+            id="assign",
+            name="assign",
+            prompt=(
+                "EXTRACTION - assign. " + _REFLECT_STEPS[3] + "\n\nFrom the claims "
+                "above, emit the `aggregates`: one per Endpoint and owning Service(s), "
+                "each with `confidence` (0..1) and `evidence_refs`. Leave services, "
+                "systems, system_edges and every data-modelling list EMPTY."
+            ),
+            inject=("inventory", "surface", "candidate_owners"),
+            emit=("aggregates",),
+            depends_on=("candidate_owners",),
+        ),
+    ),
 )
 
 
@@ -475,23 +514,6 @@ def _assigner_prompt_config() -> str:
     return cfg
 
 
-def _user_prompt(l0_slice: dict, inventory: dict | None) -> str:
-    """The VOLATILE half of the prompt (#34): the un-truncated L1 identities block
-    FIRST (the FR-INVENTORY discipline - identity reuse enforced at write time),
-    then the rendered chunk.
-
-    The inventory sits here rather than in the system prefix ON PURPOSE: it mutates
-    as the run proceeds, so hoisting it into the cacheable prefix would invalidate
-    that prefix at every step and buy nothing."""
-    from polymerhus.analysis.pod import _inventory_block, _slice_repr
-
-    return (
-        f"{_inventory_block(inventory)}\n\n{_slice_repr(l0_slice)}\n\n"
-        "TASK: assign each Endpoint above to the Service(s) that own it, each "
-        "aggregate carrying your `confidence` (0..1) and `evidence_refs`."
-    )
-
-
 def assign(
     chunk: Chunk,
     *,
@@ -507,11 +529,14 @@ def assign(
     which existing Service owns each admitted Endpoint, then drop unknown owners and
     SELF-WITHHOLD below the bar, returning the narrowed batch plus its backlog.
 
-    `invoke_fn(messages) -> L1DeltaBatch | None` is injected (unit-testable, no live
-    LLM). Fail-open: a `None`/raising `invoke_fn` (or a chunk with no Endpoint in it)
-    degrades to an empty outcome. Pure given its inputs (a replayed chunk yields the
-    same outcome)."""
-    from langchain_core.messages import HumanMessage
+    The body runs the role's `WORKFLOW` (candidate_owners -> assign) through the
+    injected `invoke_fn`, then shapes the extraction turn. `invoke_fn(messages, *,
+    schema, system_prompt) -> AnalysisTurn | None` is injected (unit-testable, no
+    live LLM). Fail-open: a `None`/raising `invoke_fn` (or a chunk with no Endpoint
+    in it) degrades to an empty outcome. Pure given its inputs."""
+    from polymerhus.analysis.pod import _inventory_block, _slice_repr
+    from polymerhus.analysis.proposer_turn import proposer_batch
+    from polymerhus.analysis.reasoning_workflow import run_workflow, to_delta_batch
 
     admitted = admit_for_role(chunk, ROLE)
     l0_slice = _chunk_slice(chunk)
@@ -523,21 +548,27 @@ def assign(
     # never accumulates in the checkpointed trail. The legacy one-shot seam prepends
     # it into its message list instead.
     system_prompt = _system_prompt(mode)
-    # Per-batch memory: the chunk id scopes this turn to its own session (the
+    # The volatile base sources the workflow injects verbatim: the inventory block
+    # FIRST (identity reuse), then the rendered chunk surface.
+    base_artifacts = {
+        "inventory": _inventory_block(inventory),
+        "surface": _slice_repr(l0_slice),
+    }
+    # Per-batch memory: the chunk id scopes the whole chain to its own session (the
     # supervisor dispatches one chunk at a time), so the next chunk starts fresh.
     # The scope is inert for the one-shot legacy seam.
-    from polymerhus.analysis.proposer_turn import proposer_batch
-
     try:
         with proposer_batch(chunk.chunk_id):
-            raw = invoke_fn([
-                HumanMessage(content=_user_prompt(l0_slice, inventory)),
-            ], schema=L1DeltaBatch, system_prompt=system_prompt)
+            run = run_workflow(WORKFLOW, invoke_fn=invoke_fn,
+                               system_prompt=system_prompt,
+                               base_artifacts=base_artifacts)
     except Exception:  # LLM error -> fail-open to no assignment, never crash
-        logger.warning("assigner: invoke failed; degrading to empty outcome", exc_info=True)
+        logger.warning("assigner: workflow failed; degrading to empty outcome", exc_info=True)
         return AssignmentOutcome()
-    if raw is None:  # no parseable tool call after retries -> empty outcome
+    turn = run.turns.get("assign")
+    if turn is None:  # no parseable tool call after retries -> empty outcome
         return AssignmentOutcome()
+    raw = to_delta_batch(turn)
     outcome = shape_proposal(
         raw, existing_slugs=existing_slugs, endpoints=admitted, bar=bar,
     )
@@ -565,15 +596,16 @@ def assign(
 
 def default_invoke_fn():
     """The legacy stateless call, retained for callers/tests that want the one-shot
-    seam: the `analyser` role bound to `L1DeltaBatch` via function-calling through the
-    #73 escalating retry (`invoke_role`); `None` = no parseable tool call, which
-    `assign` treats as a valid empty outcome. The role prompt is prepended into the
-    message list here, exactly where the stateful seam's `system_prompt=` binding puts
-    it. Production now uses `stateful_invoke_fn` (below)."""
+    seam: the `analyser` role bound to the `AnalysisTurn` envelope via function-calling
+    through the #73 escalating retry (`invoke_role`); `None` = no parseable tool call,
+    which `assign` treats as a valid empty outcome. The role prompt is prepended into
+    the message list here, exactly where the stateful seam's `system_prompt=` binding
+    puts it. Production now uses `stateful_invoke_fn` (below)."""
     from polymerhus.analysis.proposer_turn import prepend_prompt
+    from polymerhus.analysis.reasoning_workflow import AnalysisTurn
     from polymerhus.app.llm.roles import invoke_role
 
-    def invoke(messages, *, schema=L1DeltaBatch, system_prompt=None):
+    def invoke(messages, *, schema=AnalysisTurn, system_prompt=None):
         from polymerhus.app.llm.roles import invoke_role
 
         return invoke_role("analyser", prepend_prompt(messages, system_prompt), schema=schema)
@@ -585,8 +617,9 @@ def stateful_invoke_fn(run_id: str, checkpointer, project_id: str | None = None)
     """The STATEFUL Assigner call (#94): the `assigner` role runs as a session whose
     context PROGRESSES across the run's chunks, resuming from its own per-run checkpoint
     (`AnalysisSession(run_id, "assigner")`, distinct from every other agent's
-    thread). Structured output is `L1DeltaBatch` (#44-safe). Same `(messages)` shape as
-    the legacy seam, so `make_assigner_body` is unchanged.
+    thread). Structured output is the `AnalysisTurn` envelope (#44-safe). Same
+    `(messages, *, schema)` shape as the legacy seam, so `make_assigner_body` is
+    unchanged.
 
     The role prompt is bound ONCE as the agent's ephemeral leading block (the
     converged seam, `proposer_turn.session_invoke_fn`), so it is the stable prefix of

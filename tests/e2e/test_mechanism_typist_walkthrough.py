@@ -21,9 +21,10 @@ the exact deltas the sole-writer would MERGE. Promote to a live-graph readback +
 NOT RUN by the verifier (e2e tier; and dispatch deferred). Expected values from the
 build spec (§10 W-N1), never recomputed the way the code computes them.
 """
-from polymerhus.analysis.analyser_types import L1DeltaBatch, SystemEdgeProposal, SystemProposal
+from polymerhus.analysis.analyser_types import SystemEdgeProposal, SystemProposal
 from polymerhus.analysis.chunking import Chunk
 from polymerhus.analysis.mechanism_typist import type_mechanisms
+from polymerhus.analysis.reasoning_workflow import AnalysisTurn, Claim
 from polymerhus.recon.domain.types import AssetDelta
 
 # The fixture surface: a 3-endpoint `service` chunk owned (via the Assigner's prior
@@ -42,25 +43,28 @@ _FIXTURE_INVENTORY = {"services": ["checkout", "account"], "systems": [], "syste
 
 
 def _scripted_invoke(messages, *, schema=None, system_prompt=None):
-    """The proposer's LLM, scripted to the fixture: reflection prose, then the two
-    structured extractions (systems, then linking). Routed by prompt marker so a
-    bounded_retry re-call of a step is stable."""
+    """The proposer's LLM, scripted to the fixture and the sub-problem chain: the
+    hypotheses and page-cluster reasoning turns (claims), then the two structured
+    extractions (systems, then linking). Routed by prompt marker so a re-call of a
+    step is stable."""
     prompt = messages[-1].content
-    if schema is None:
-        return ("The JSON REST endpoints evidence a shared RESTApi paradigm overlay; the "
-                "session cookie on /whoami evidences an IdentificationSystem. No WAF proven.")
     if "TASK - EXTRACT SYSTEMS" in prompt:
-        return L1DeltaBatch(systems=[
+        return AnalysisTurn(systems=[
             SystemProposal(kind="RESTApi", props={"description": "JSON REST paradigm the app exposes through."}),
             SystemProposal(kind="IdentificationSystem", props={"description": "Cookie/session identity for principals."}),
         ])
     if "TASK - LINK SERVICES" in prompt:
-        return L1DeltaBatch(system_edges=[
+        return AnalysisTurn(system_edges=[
             SystemEdgeProposal(service_slug="checkout", kind="RESTApi", rel="EXPOSED_VIA"),
             SystemEdgeProposal(service_slug="account", kind="RESTApi", rel="EXPOSED_VIA"),
             SystemEdgeProposal(service_slug="account", kind="IdentificationSystem", rel="IDENTIFIED_BY"),
         ])
-    return None
+    if "CLUSTER PAGES" in prompt:
+        return AnalysisTurn(claims=[Claim(subject="checkout", assertion="one API cluster",
+                                          evidence="shared JSON structure", verdict="api")])
+    return AnalysisTurn(claims=[Claim(
+        subject="/api/BasketItems", assertion="a shared RESTApi paradigm",
+        evidence="JSON REST endpoints", verdict="new RESTApi")])
 
 
 def test_W_N1_three_endpoint_service_chunk_types_shared_systems_and_links():

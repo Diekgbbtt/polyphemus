@@ -176,7 +176,7 @@ def test_the_stateful_leg_carries_no_skill_surface(monkeypatch):
 
     tool_names = {getattr(t, "name", "") for t in bound.get("tools") or ()}
     assert "load_skill" not in tool_names, "no skill tool"
-    assert tool_names <= {"L1DeltaBatch"}, "only the role's own structured-output tool"
+    assert tool_names <= {"AnalysisTurn"}, "only the role's own structured-output tool"
     assert "context" not in bound or bound.get("context") is None
     assert "_skill_index" not in {type(m).__name__ for m in bound["middleware"] or ()}
     assert roles == ["mechanism_typist"], "one middleware per turn, for its OWN role"
@@ -469,6 +469,7 @@ class _ToolRecordingModel(BaseChatModel):
     def __init__(self):
         super().__init__()
         self._bound: list[tuple] = []
+        self._calls = 0
 
     def bind_tools(self, tools, **kwargs):
         self._bound.append((list(tools), dict(kwargs)))
@@ -480,9 +481,12 @@ class _ToolRecordingModel(BaseChatModel):
         content = getattr(last, "content", "")
         return isinstance(content, str) and "reflect" in content.lower()
 
-    @staticmethod
-    def _tool_call():
-        return {"name": "L1DeltaBatch", "args": {}, "id": "call-1", "type": "tool_call"}
+    def _tool_call(self):
+        # A unique id per call: a repeated tool-call id on one shared thread makes
+        # the agent re-enter the same call instead of terminating the turn.
+        self._calls += 1
+        return {"name": "AnalysisTurn", "args": {}, "id": f"call-{self._calls}",
+                "type": "tool_call"}
 
     def _generate(self, messages, stop=None, run_manager=None, **kwargs):
         if self._is_reflection(messages):
@@ -495,10 +499,11 @@ class _ToolRecordingModel(BaseChatModel):
         if self._is_reflection(messages):
             yield ChatGenerationChunk(message=AIMessageChunk(content="prose answer"))
         else:
+            call = self._tool_call()
             yield ChatGenerationChunk(message=AIMessageChunk(
                 content="",
-                tool_call_chunks=[{"name": "L1DeltaBatch", "args": "{}",
-                                   "id": "call-1", "index": 0,
+                tool_call_chunks=[{"name": "AnalysisTurn", "args": "{}",
+                                   "id": call["id"], "index": 0,
                                    "type": "tool_call_chunk"}],
             ))
 
@@ -528,15 +533,14 @@ def _force_voluntary_rung(monkeypatch):
     monkeypatch.setattr(S, "resolve_capability", lambda p, m: profile)
 
 
-def test_a_roles_tool_set_is_constant_across_reflection_and_extraction(monkeypatch):
-    """Change 1, end to end through the REAL seam: the tool set bound on a role's
-    PROSE (reflection) turn is byte-identical to the one bound on its STRUCTURED
-    (extraction) turn, so the request shape - and the provider prefix - never
-    toggles. The prose turn still returns prose."""
+def test_a_roles_tool_set_is_constant_across_its_turns(monkeypatch):
+    """Change 1, end to end through the REAL seam, on the new turn shape: every turn
+    of a role binds the SAME structured tool (`AnalysisTurn`), so the request shape -
+    and the provider prefix - never toggles across its sub-problems."""
     from langchain_core.utils.function_calling import convert_to_openai_tool
 
-    from polymerhus.analysis.analyser_types import L1DeltaBatch
     from polymerhus.analysis.proposer_turn import proposer_batch, session_invoke_fn
+    from polymerhus.analysis.reasoning_workflow import AnalysisTurn
 
     _force_voluntary_rung(monkeypatch)
     model = _ToolRecordingModel()
@@ -547,25 +551,26 @@ def test_a_roles_tool_set_is_constant_across_reflection_and_extraction(monkeypat
 
     invoke = session_invoke_fn("data_modeller", "runshape", InMemorySaver())
     with proposer_batch("c1"):
-        prose = invoke([HumanMessage(content="reflection")], schema=None)
-        invoke([HumanMessage(content="extraction")], schema=L1DeltaBatch)
+        invoke([HumanMessage(content="record hypotheses")], schema=AnalysisTurn)
+        invoke([HumanMessage(content="data extract")], schema=AnalysisTurn)
+        invoke([HumanMessage(content="flow shape")], schema=AnalysisTurn)
+        invoke([HumanMessage(content="flow extract")], schema=AnalysisTurn)
 
-    assert prose == "prose answer", "the prose turn still returns prose"
-    assert len(model._bound) == 2, "one bind per turn"
-    (reflect_tools, _reflect_kwargs), (extract_tools, _extract_kwargs) = model._bound
-    assert reflect_tools, "the prose turn binds the structured tool"
-    assert [t.name for t in reflect_tools] == [t.name for t in extract_tools]
+    assert len(model._bound) == 4, "one bind per turn"
+    tool_sets = [tuple(t.name for t in tools) for tools, _ in model._bound]
+    assert tool_sets == [("AnalysisTurn",)] * 4, "the tool set never toggles"
     # Byte-identical tool DEFINITIONS - what the provider's prefix cache sees.
-    assert [convert_to_openai_tool(t) for t in reflect_tools] == [
-        convert_to_openai_tool(t) for t in extract_tools]
+    first = model._bound[0][0]
+    for tools, _ in model._bound[1:]:
+        assert [convert_to_openai_tool(t) for t in tools] == [
+            convert_to_openai_tool(t) for t in first]
 
 
 def test_the_constant_shape_covers_the_whole_mechanism_typist_chain(monkeypatch):
-    """The same rule over the typist's 3-call chain (P,S,S): all three turns bind
-    the same tool set, so the S,S pair keeps caching AND the P->S transition now
-    shares the shape too."""
-    from polymerhus.analysis.analyser_types import L1DeltaBatch
+    """The same rule over the typist's four-sub-problem chain: all four turns bind
+    the same tool set, so the prefix cache is shared across the whole chain."""
     from polymerhus.analysis.proposer_turn import proposer_batch, session_invoke_fn
+    from polymerhus.analysis.reasoning_workflow import AnalysisTurn
 
     _force_voluntary_rung(monkeypatch)
     model = _ToolRecordingModel()
@@ -576,12 +581,13 @@ def test_the_constant_shape_covers_the_whole_mechanism_typist_chain(monkeypatch)
 
     invoke = session_invoke_fn("mechanism_typist", "runshape", InMemorySaver())
     with proposer_batch("c1"):
-        invoke([HumanMessage(content="reflect")], schema=None)
-        invoke([HumanMessage(content="extract")], schema=L1DeltaBatch)
-        invoke([HumanMessage(content="link")], schema=L1DeltaBatch)
+        invoke([HumanMessage(content="mechanism hypotheses")], schema=AnalysisTurn)
+        invoke([HumanMessage(content="page clusters")], schema=AnalysisTurn)
+        invoke([HumanMessage(content="systems extract")], schema=AnalysisTurn)
+        invoke([HumanMessage(content="link")], schema=AnalysisTurn)
 
     tool_sets = [tuple(t.name for t in tools) for tools, _ in model._bound]
-    assert tool_sets == [tool_sets[0]] * 3, "the tool set never toggles across the chain"
+    assert tool_sets == [tool_sets[0]] * 4, "the tool set never toggles across the chain"
 
 
 

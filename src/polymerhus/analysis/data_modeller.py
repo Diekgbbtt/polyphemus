@@ -37,6 +37,7 @@ from polymerhus.analysis.analyser_types import L1DeltaBatch
 from polymerhus.analysis.chunking import Chunk, admit_for_role
 from polymerhus.analysis.l1_types import L0Ref
 from polymerhus.analysis.proposer_reasoning import cot_scaffold, role_header
+from polymerhus.analysis.reasoning_workflow import ReasoningWorkflow, SubProblem
 
 logger = logging.getLogger(__name__)
 
@@ -483,6 +484,102 @@ _REFLECTION_STEPS = [
 ]
 
 
+# The data_modeller's four sub-problems (spec 3.3), each mapping onto a run of the
+# `_REFLECTION_STEPS` stages: ORIENT+HYPOTHESISE+VERIFY-FALSIFY, INTEGRATE, SHAPE,
+# EMIT-WITHHOLD. The two reasoning turns emit `claims`; the two extraction turns emit
+# `{data_items, surfaces_at}` and `{data_flows, data_relationships}`. Every turn
+# speaks `AnalysisTurn`, so the tool set never toggles.
+_ROLE_HEADER = role_header(
+    "the DataPlane Analyser (data_modeller)",
+    "lift the Tier-1 logical DataItems this surface evidences, bind them to the "
+    "surface, and ground their flows onto the settled Service model",
+)
+
+_RECORD_HYPOTHESES_TASK = (
+    "Emit one Claim per admitted name: `subject` the name, `assertion` the candidate "
+    "business record it witnesses (or 'no record' explicitly), `evidence` the exact "
+    "name/path/endpoint corroboration, `verdict` reuse-vs-coin against the known "
+    "DataItems. Emit `claims` only; do not emit deltas yet."
+)
+
+_DATA_EXTRACT_TASK = (
+    "TASK - EXTRACT THE DATA ITEMS. From the reasoning above, fill `data_items` and "
+    "`surfaces_at` for every record it verified. For a record already listed above, "
+    "REUSE its exact item_key and output the COMPOUNDED fields/notes (fold new insight "
+    "in, never blank or merely restate); coin a new item_key only for a record no "
+    "existing key covers. Reference a surface site as "
+    '{"label": "Parameter"|"Header"|"Secret", "identity": {...the exact fields shown '
+    "above...}}. `fields` names ONLY fields you actually observed on the surface "
+    "above - never a speculative attribute. Fold the adversarial insight into each "
+    "item's `notes` as an adversarial CHARACTERISATION only - never a named payload, "
+    "technique, or vector."
+)
+
+_FLOW_SHAPE_TASK = (
+    "Emit one Claim per verified record's flow shape: `subject` the record, "
+    "`assertion` the Surface site(s) and the producing/consuming Service, `evidence` "
+    "the candidate list you copied the slugs from and the shared-surface relation, "
+    "`verdict` the trust assumption predicate and any record-to-record relation. Emit "
+    "`claims` only; do not emit deltas yet."
+)
+
+_FLOW_EXTRACT_TASK = (
+    "TASK - EXTRACT THE FLOWS. From the shape above, fill `data_flows` "
+    "(`service_slug` copied VERBATIM from the candidate list) and `data_relationships` "
+    "(a fixed allowlist `kind`) for every relation the surface itself shows. Name what "
+    "you WITHHELD and why, so withholding is the demonstrated conclusion."
+)
+
+WORKFLOW = ReasoningWorkflow(
+    role_id=ROLE,
+    sub_problems=(
+        SubProblem(
+            id="record_hypotheses",
+            name="record hypotheses",
+            prompt=(
+                f"{_ROLE_HEADER}\n\n{cot_scaffold(_REFLECTION_STEPS[:3])}\n\n"
+                f"{_RECORD_HYPOTHESES_TASK}"
+            ),
+            inject=("inventory", "candidates", "surface", "observations"),
+            emit=("claims",),
+        ),
+        SubProblem(
+            id="data_extract",
+            name="data extract",
+            prompt=(
+                f"{_ROLE_HEADER}\n\n{cot_scaffold(_REFLECTION_STEPS[3:4])}\n\n"
+                f"{_DATA_EXTRACT_TASK}"
+            ),
+            inject=("inventory", "candidates", "surface", "record_hypotheses"),
+            emit=("data_items", "surfaces_at"),
+            depends_on=("record_hypotheses",),
+        ),
+        SubProblem(
+            id="flow_shape",
+            name="flow shape",
+            prompt=(
+                f"{_ROLE_HEADER}\n\n{cot_scaffold(_REFLECTION_STEPS[4:5])}\n\n"
+                f"{_FLOW_SHAPE_TASK}"
+            ),
+            inject=("inventory", "candidates", "record_hypotheses", "data_extract"),
+            emit=("claims",),
+            depends_on=("data_extract",),
+        ),
+        SubProblem(
+            id="flow_extract",
+            name="flow extract",
+            prompt=(
+                f"{_ROLE_HEADER}\n\n{cot_scaffold(_REFLECTION_STEPS[5:6])}\n\n"
+                f"{_FLOW_EXTRACT_TASK}"
+            ),
+            inject=("inventory", "candidates", "data_extract", "flow_shape"),
+            emit=("data_flows", "data_relationships"),
+            depends_on=("flow_shape", "data_extract"),
+        ),
+    ),
+)
+
+
 def _known_items_block(inventory: dict | None) -> str:
     inv = inventory or {}
     items = inv.get("data_items") or []
@@ -541,50 +638,6 @@ def _origin_observations_block(chunk: Chunk) -> str:
             f"{o.rationale or ''} ({o.evidence or ''})".strip()
         )
     return "\n".join(lines)
-
-
-def _reflection_prompt(chunk: Chunk, inventory: dict | None, candidates: dict) -> str:
-    admitted = admit_for_role(chunk, ROLE)
-    return (
-        f"{role_header('the DataPlane Analyser (data_modeller)', 'lift the Tier-1 logical DataItems this streamed surface evidences, bind them to the surface, and ground their flows onto the settled Service model')}\n\n"
-        f"{_known_items_block(inventory)}\n\n"
-        "CANDIDATE OWNING SERVICES (the only valid data_flows.service_slug values; a "
-        "Header/Secret join is origin-coarse, stated for that reason):\n"
-        f"{_candidates_render(candidates)}\n\n"
-        "STREAMED SURFACE (Parameter/Header/Secret only - never an Endpoint, a path is "
-        "an address, not a place data appears):\n"
-        f"{_admitted_render(admitted)}\n\n"
-        f"{_origin_observations_block(chunk)}\n\n"
-        f"{cot_scaffold(_REFLECTION_STEPS)}\n\n"
-        "Write your reasoning as prose. Do not emit JSON or a tool call in this step."
-    )
-
-
-def _extraction_prompt(inventory: dict | None, candidates: dict) -> str:
-    return (
-        f"{_known_items_block(inventory)}\n\n"
-        "CANDIDATE OWNING SERVICES (copy `data_flows.service_slug` VERBATIM from these):\n"
-        f"{_candidates_render(candidates)}\n\n"
-        # The reflection rides the thread as the assistant message this call follows;
-        # re-embedding it would send the same prose twice on the structured call (N3).
-        # POSITIVE framing (DPL-DEC-18): the legacy single data call returned ZERO
-        # data_items under a "leave the other lists EMPTY" litany; state what to
-        # FILL and that empty is wrong when a record was verified.
-        "TASK - EXTRACT THE DATA PLANE FROM YOUR REFLECTION. The assistant message "
-        "immediately above is your reflection: use it - do not ask for it again and do "
-        "not restate it. Fill FOUR lists: "
-        "`data_items`, `surfaces_at`, `data_flows`, `data_relationships` for every "
-        "record your reflection verified - an empty result here is wrong whenever "
-        "your reflection named a record. For a record already listed above, REUSE "
-        "its exact item_key and output the COMPOUNDED fields/notes (fold new insight "
-        "in, never blank or merely restate); coin a new item_key only for a record no "
-        "existing key covers. Reference a surface site as "
-        '{"label": "Parameter"|"Header"|"Secret", "identity": {...the exact fields shown '
-        "above...}}. `fields` names ONLY fields you actually observed on the surface "
-        "above - never a speculative attribute. Fold the adversarial insight into each "
-        "item's `notes` as an adversarial CHARACTERISATION only - never a named "
-        "payload, technique, or vector."
-    )
 
 
 # --- system message: two layers (section 7.2) -----------------------------------
@@ -692,9 +745,9 @@ def _default_invoke_fn(messages, *, schema=None, system_prompt=None):
 
 def stateful_invoke_fn(run_id: str, checkpointer, project_id: str | None = None):
     """The STATEFUL data-modeller call (#94): the `data_modeller` role runs as a session
-    resuming from its OWN per-run checkpoint (`AnalysisSession(run_id, "data_modeller")`, distinct from every other agent's), so its call chain and
-    every chunk append to ONE growing context. Structured turns are #44-safe;
-    a `schema=None` turn returns prose. Same `(messages, *, schema)` shape as
+    resuming from its OWN per-run checkpoint (`AnalysisSession(run_id, "data_modeller")`, distinct from every other agent's), so its sub-problem
+    chain and every chunk append to ONE growing context. Every turn goes through the
+    one `AnalysisTurn` envelope. Same `(messages, *, schema)` shape as
     `_default_invoke_fn`. Structurally sync (sequential dispatch).
 
     The role prompt is bound ONCE as the agent's ephemeral leading block (the
@@ -717,17 +770,16 @@ def model_data(
     chunk: Chunk, *, invoke_fn=None, inventory: dict | None = None,
     aggregations: list[dict] | None = None,
 ) -> DataPlaneOutcome:
-    """The A.1 data_modeller body: reflection (free prose) -> ONE structured
-    extraction call -> the six ordered shaping gates, over one chunk.
+    """The A.1 data_modeller body: the `WORKFLOW` sub-problem chain
+    (record_hypotheses -> data_extract -> flow_shape -> flow_extract) -> the six
+    ordered shaping gates, over one chunk.
 
-    `invoke_fn(messages, *, schema) -> str | L1DeltaBatch | None` is injected
-    (unit-testable, no live LLM). FAIL-CLOSED on reflection exhaustion (empty
-    outcome, `stats.reflection_exhausted=True`); empty on extraction exhaustion.
-    Fail-open on any exception - never crashes the caller. An empty admission is a
-    VALID empty result with NO LLM call (DPL-DEC precision-first: nothing to model
-    is not a judgment to make)."""
-    from langchain_core.messages import HumanMessage
-
+    `invoke_fn(messages, *, schema, system_prompt) -> AnalysisTurn | None` is injected
+    (unit-testable, no live LLM). FAIL-CLOSED on hypotheses exhaustion (empty outcome,
+    `stats.reflection_exhausted=True`); empty on extraction exhaustion. Fail-open on
+    any exception - never crashes the caller. An empty admission is a VALID empty
+    result with NO LLM call (DPL-DEC precision-first: nothing to model is not a
+    judgment to make)."""
     admitted = admit_for_role(chunk, ROLE)
     if not admitted:
         return DataPlaneOutcome()
@@ -735,47 +787,57 @@ def model_data(
     invoke_fn = invoke_fn or _default_invoke_fn
     system_prompt = _system_prompt()
     candidates = owning_services(admitted, aggregations or [])
+    admitted_counts: dict[str, int] = defaultdict(int)
+    for a in admitted:
+        admitted_counts[a.type] += 1
+    candidate_slugs = {slug for slugs in candidates.values() for slug in slugs}
 
-    # Per-batch memory: the reflection and extraction of ONE chunk share a session
-    # (the batch scope), so the reflection's reasoning is the extraction's context;
-    # the next chunk opens a fresh thread. The scope is inert for the one-shot leg.
+    # The volatile base sources the workflow injects verbatim.
+    base_artifacts = {
+        "inventory": _known_items_block(inventory),
+        "candidates": _candidates_render(candidates),
+        "surface": _admitted_render(admitted),
+        "observations": _origin_observations_block(chunk),
+    }
+
+    # Per-batch memory: the whole chain of ONE chunk shares a session (the batch
+    # scope), so the reasoning is the extraction's context; the next chunk opens a
+    # fresh thread. The scope is inert for the one-shot leg. The fail-closed gate
+    # halts the chain when the hypotheses turn exhausts.
     from polymerhus.analysis.proposer_turn import proposer_batch
+    from polymerhus.analysis.reasoning_workflow import AnalysisTurn, run_workflow, to_delta_batch
 
-    with proposer_batch(chunk.chunk_id):
-        try:
-            prose = invoke_fn(
-                [HumanMessage(content=_reflection_prompt(chunk, inventory, candidates))],
-                schema=None, system_prompt=system_prompt,
+    try:
+        with proposer_batch(chunk.chunk_id):
+            run = run_workflow(
+                WORKFLOW, invoke_fn=invoke_fn, system_prompt=system_prompt,
+                base_artifacts=base_artifacts,
+                halt_when=lambda sp, turn: sp.id == "record_hypotheses" and turn is None,
             )
-        except Exception:  # fail-open: LLM error -> empty outcome, never crash (DPL-DEC fail-open)
-            logger.warning("data_modeller: reflection invoke failed; degrading to empty outcome", exc_info=True)
-            return DataPlaneOutcome()
-        admitted_counts: dict[str, int] = defaultdict(int)
-        for a in admitted:
-            admitted_counts[a.type] += 1
-        candidate_slugs = {slug for slugs in candidates.values() for slug in slugs}
+    except Exception:  # fail-open: LLM error -> empty outcome, never crash (DPL-DEC fail-open)
+        logger.warning("data_modeller: workflow failed; degrading to empty outcome", exc_info=True)
+        return DataPlaneOutcome()
 
-        if not prose:
-            logger.warning("data_modeller: reflection exhausted; fail-closed to empty outcome")
-            return DataPlaneOutcome(stats=DataPlaneStats(
-                admitted_parameters=admitted_counts.get("Parameter", 0),
-                admitted_headers=admitted_counts.get("Header", 0),
-                admitted_secrets=admitted_counts.get("Secret", 0),
-                observations_attached=len(chunk.observations),
-                candidate_services=len(candidate_slugs),
-                reflection_exhausted=True,
-            ))
+    if run.turns.get("record_hypotheses") is None:
+        logger.warning("data_modeller: hypotheses exhausted; fail-closed to empty outcome")
+        return DataPlaneOutcome(stats=DataPlaneStats(
+            admitted_parameters=admitted_counts.get("Parameter", 0),
+            admitted_headers=admitted_counts.get("Header", 0),
+            admitted_secrets=admitted_counts.get("Secret", 0),
+            observations_attached=len(chunk.observations),
+            candidate_services=len(candidate_slugs),
+            reflection_exhausted=True,
+        ))
 
-        try:
-            raw = invoke_fn(
-                [HumanMessage(content=_extraction_prompt(inventory, candidates))],
-                schema=L1DeltaBatch, system_prompt=system_prompt,
-            )
-        except Exception:  # fail-open: extraction LLM error -> empty outcome, never crash
-            logger.warning("data_modeller: extraction invoke failed; degrading to empty outcome", exc_info=True)
-            return DataPlaneOutcome()
-    extraction_exhausted = raw is None
-    raw = raw or L1DeltaBatch()
+    data_turn = run.turns.get("data_extract")
+    flow_turn = run.turns.get("flow_extract")
+    extraction_exhausted = data_turn is None and flow_turn is None
+    raw = to_delta_batch(AnalysisTurn(
+        data_items=list(data_turn.data_items) if data_turn is not None else [],
+        surfaces_at=list(data_turn.surfaces_at) if data_turn is not None else [],
+        data_flows=list(flow_turn.data_flows) if flow_turn is not None else [],
+        data_relationships=list(flow_turn.data_relationships) if flow_turn is not None else [],
+    ))
 
     inv = inventory or {}
     outcome = shape_proposal(
