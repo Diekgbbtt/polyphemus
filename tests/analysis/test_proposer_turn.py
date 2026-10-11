@@ -641,5 +641,36 @@ def test_the_constant_shape_covers_the_whole_mechanism_typist_chain(monkeypatch)
     assert tool_sets == [tool_sets[0]] * 4, "the tool set never toggles across the chain"
 
 
+def test_within_a_batch_the_reflection_user_is_the_shared_prefix(monkeypatch):
+    """Change 3: within ONE batch the reflection `user` message is the leading
+    trail message of the extraction request, carried once and never rebuilt. A new
+    chunk opens a FRESH thread, so the harness entities cannot accumulate run-long."""
+    from polymerhus.analysis.analyser_types import L1DeltaBatch
+    from polymerhus.analysis.proposer_turn import proposer_batch, session_invoke_fn
 
+    model = _RecordingModel()
+    monkeypatch.setattr(
+        "polymerhus.app.llm.session._default_model_factory", lambda role_id: model)
+    monkeypatch.setattr(
+        "polymerhus.analysis.proposer_turn._role_prompt", lambda role_id: "PROMPT")
+
+    saver = InMemorySaver()
+    invoke = session_invoke_fn("data_modeller", "runprefix", saver)
+    with proposer_batch("chunk-1"):
+        invoke([HumanMessage(content="reflection user")], schema=None)
+        invoke([HumanMessage(content="extraction user")], schema=L1DeltaBatch)
+    with proposer_batch("chunk-2"):
+        invoke([HumanMessage(content="chunk 2 reflection")], schema=None)
+
+    prose_request, extraction_request = model._seen[0], model._seen[1]
+    # The reflection `user` leads the extraction request: shared, not re-injected.
+    assert prose_request[1].content == "reflection user"
+    assert extraction_request[1].content == "reflection user"
+    assert sum(1 for m in extraction_request
+               if m.content == "reflection user") == 1, "carried once"
+    assert extraction_request[-1].content == "extraction user"
+    # The next chunk's request carries none of chunk 1's messages.
+    chunk_two = model._seen[-1]
+    assert chunk_two[1].content == "chunk 2 reflection"
+    assert all("reflection user" != getattr(m, "content", "") for m in chunk_two)
 

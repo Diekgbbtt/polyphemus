@@ -132,15 +132,17 @@ def _analysis_notes_tool(project_id: str | None):
 
 def _prose_tools(role_id: str, *, project_id: str | None = None) -> tuple:
     """The tools bound on a PROSE turn, so the tool set is constant across the
-    role's calls (the cache-shape rule): the shared `notes` tool plus, when the
-    role negotiates `ToolStrategy`, its structured-output tool.
+    role's calls (the cache-shape rule): the shared `notes` tool plus the role's
+    structured-output tool.
 
     The structured turn supplies the structured tool through `response_format`
     (which `create_agent` appends AFTER the passed tools), so a prose turn binds
-    `(notes, AnalysisTurn)` in that exact order to reproduce the same final
-    bound list. The structured tool is made inert - a stray call costs one benign
-    tool message instead of a ToolNode error. Fail-open: an unbuildable shape
-    binds nothing (the session always starts)."""
+    `(notes, AnalysisTurn)` in that exact order to reproduce the same final bound
+    list. The structured tool is the EXACT tool the ToolStrategy path builds - the
+    agent factory's own `OutputToolBinding.from_schema_spec` derivation, not a
+    hand-built look-alike - so the serialized `tools=` payload is byte-identical
+    between the prose and structured turns. Fail-open: an unbuildable shape binds
+    nothing (the session always starts)."""
     schema = _role_structured_schema(role_id)
     if schema is None:
         return ()
@@ -149,8 +151,7 @@ def _prose_tools(role_id: str, *, project_id: str | None = None) -> tuple:
     if notes is not None:
         tools.append(notes)
     try:
-        from langchain.agents.structured_output import ToolStrategy
-        from langchain_core.tools import StructuredTool
+        from langchain.agents.structured_output import OutputToolBinding, ToolStrategy
 
         from polymerhus.app.llm.session import structured_response_format
 
@@ -162,13 +163,9 @@ def _prose_tools(role_id: str, *, project_id: str | None = None) -> tuple:
         fmt = structured_response_format(role_id, schema, tools_bound=False)
         if not isinstance(fmt, ToolStrategy):
             return tuple(tools)
-        spec = fmt.schema_specs[0]
-        tools.append(StructuredTool(
-            name=spec.name,
-            description=spec.description,
-            args_schema=spec.json_schema,
-            func=lambda **_: "structured output is only produced on the extraction turn",
-        ))
+        # The SAME derivation `create_agent` runs for the structured turn
+        # (`OutputToolBinding.from_schema_spec`), so the two turns cannot drift.
+        tools.append(OutputToolBinding.from_schema_spec(fmt.schema_specs[0]).tool)
     except Exception:  # noqa: BLE001 - fail-open: an unbuildable tool binds nothing
         return tuple(tools)
     return tuple(tools)

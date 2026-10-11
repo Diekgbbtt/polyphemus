@@ -921,6 +921,43 @@ def test_a6_relaxed_model_leaves_none_auto_none_untouched():
         assert bound.kwargs.get("tool_choice") == untouched
 
 
+def test_a6_relaxed_model_sends_one_tool_choice_for_prose_and_structured_turn():
+    """The langchain factory binds the SAME tool set twice for a role whose
+    structured turn uses ToolStrategy: the structured turn with
+    `tool_choice="any"` and the prose (reflection) turn with
+    `request.tool_choice` (None). On the deepseek rung (forced choice
+    unsupported) both must reach the model with ONE effective `tool_choice` -
+    a differing value serializes two request shapes for one role, so the
+    provider prefix (tools included) never matches."""
+    from polymerhus.app.llm.providers import ReasoningPreservingChatOpenAI
+    tools = [{"type": "function", "function": {
+        "name": "L1DeltaBatch", "description": "extract",
+        "parameters": {"type": "object", "properties": {}}}}]
+    m = ReasoningPreservingChatOpenAI(model="m", api_key="k",
+                                      base_url="https://x.test/v1",
+                                      relax_forced_tool_choice=True)
+    structured = m.bind_tools(tools, tool_choice="any")
+    prose = m.bind_tools(tools, tool_choice=None)
+    assert structured.kwargs.get("tool_choice") == prose.kwargs.get("tool_choice")
+    assert structured.kwargs.get("tool_choice") == "auto"
+
+
+def test_a6_unrelaxed_model_keeps_prose_and_structured_tool_choice_distinct():
+    """Off the relaxed rung the two factory bindings keep their distinct
+    semantics: the structured turn stays forced, the prose turn stays unset."""
+    from polymerhus.app.llm.providers import ReasoningPreservingChatOpenAI
+    tools = [{"type": "function", "function": {
+        "name": "L1DeltaBatch", "description": "extract",
+        "parameters": {"type": "object", "properties": {}}}}]
+    m = ReasoningPreservingChatOpenAI(model="m", api_key="k",
+                                      base_url="https://x.test/v1")
+    structured = m.bind_tools(tools, tool_choice="any")
+    prose = m.bind_tools(tools, tool_choice=None)
+    assert structured.kwargs.get("tool_choice") == "required"
+    assert prose.kwargs.get("tool_choice") is None
+    assert structured.kwargs.get("tool_choice") != prose.kwargs.get("tool_choice")
+
+
 def test_a6_unrelaxed_model_passes_forced_choice_through():
     from polymerhus.app.llm.providers import ReasoningPreservingChatOpenAI
     m = ReasoningPreservingChatOpenAI(model="m", api_key="k",
