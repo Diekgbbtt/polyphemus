@@ -25,7 +25,12 @@ import logging
 import time
 import uuid
 
-from polymerhus.analysis.feed import drop_feed, get_feed, get_or_create_feed
+from polymerhus.analysis.feed import (
+    drop_feed,
+    get_feed,
+    get_or_create_feed,
+    resolve_hunt_after_analysis,
+)
 from polymerhus.app.runtime import ModuleAdmissionRefused, RuntimeLoopNotRunning
 
 logger = logging.getLogger(__name__)
@@ -125,16 +130,23 @@ def _start_analysis_sync(project_id: str, run_id: str, pass_fn=None) -> str | No
                        run_id, exc_info=True)
 
     # The analysis-only dispatch (`POST /analysis`) does not carry the recon
-    # settings; resolve the mode-selected pass_fn here so a service_sourced run
-    # started that way gets the right pass rather than the streamed default. A
-    # combined dispatch already supplies it (and the feed, if it exists, wins).
+    # settings; read them once here for both the mode-selected pass_fn and the
+    # hunt-after-analysis policy. A combined dispatch already supplies the
+    # pass_fn (and the feed, if it exists, wins), but the policy still needs the
+    # read. Fail-open: an unreachable read degrades to the default pass and the
+    # automatic chain OFF.
+    try:
+        settings = pg.load_settings(project_id)
+    except Exception:  # noqa: BLE001
+        settings = None
     if pass_fn is None:
         try:
             from polymerhus.analysis.feed import resolve_analysis_pass_fn
 
-            pass_fn = resolve_analysis_pass_fn(pg.load_settings(project_id))
+            pass_fn = resolve_analysis_pass_fn(settings)
         except Exception:  # noqa: BLE001 - unresolvable mode degrades to the default pass
             pass_fn = None
+    hunt_after_analysis = resolve_hunt_after_analysis(settings)
 
     feed = get_or_create_feed(project_id, run_id, pass_fn=pass_fn).start()
 
@@ -159,6 +171,12 @@ def _start_analysis_sync(project_id: str, run_id: str, pass_fn=None) -> str | No
         # drain retires the feed and frees its memory (D12).
         if status in ("drained", "withheld"):
             drop_feed(run_id)
+        # A genuinely drained analysis chains ONE hunting run (opt-in policy,
+        # `settings.recon.hunt_after_analysis`); a withheld/stopped one must not.
+        # Fail-open: the chain helper logs and never raises into the supervisor.
+        await _chain_hunting_on_drained(
+            project_id, run_id, status, enabled=hunt_after_analysis
+        )
 
     runtime = _require_runtime()
     # #332 (same class as #328): a drain settles the analysis module to
@@ -191,6 +209,60 @@ def _start_analysis_sync(project_id: str, run_id: str, pass_fn=None) -> str | No
         return None
     _ANALYSIS_RUN_IDS[run_id] = analysis_run_id
     return analysis_run_id
+
+
+async def _chain_hunting_on_drained(
+    project_id: str, run_id: str, status: str, *, enabled: bool
+) -> None:
+    """Chain ONE hunting run after a genuine analysis terminal, fail-open.
+
+    Only `drained` - the analysis finished and wrote its findings - chains; a
+    `withheld` (vacuous) or `stopped` (deliberate, resumable) analysis must NOT,
+    because hunting reasons over the analysis findings (the bug this fixes: a
+    hunting run launched at recon's terminal read an empty, bootstrapped L1).
+
+    Bounded-context discipline: this module must not import `attack.hunting` at
+    import time, so the control plane and the launch seam resolve lazily here.
+    The launch reuses the SAME operator-intent path as
+    `POST /projects/{id}/hunting` (`project_management.api.launch_hunting`) - its
+    one-live-run-per-project guard refuses a second live run (409), which this
+    path treats as the idempotent no-op; it never forks a second launcher.
+
+    Fail-open LOUD: a missing runtime, an inactive control plane, or any launch
+    failure is logged, never raised into the supervisor (a settled analysis must
+    not be turned into a crash)."""
+    if status != "drained" or not enabled:
+        return
+    # Lazy imports keep `analysis -> attack.hunting` and `analysis ->
+    # project_management` off the import graph (CONTEXT-MAP.md).
+    try:
+        from polymerhus.attack.hunting import runtime as hunting_runtime
+    except Exception:  # noqa: BLE001 - a missing control plane degrades loudly
+        logger.warning(
+            "analysis %s drained but the hunting runtime is unavailable; "
+            "hunting not launched (fail-open)",
+            run_id,
+            exc_info=True,
+        )
+        return
+    if not hunting_runtime.hunting_control_plane_available():
+        logger.warning(
+            "analysis %s drained but the hunting control plane is not active; "
+            "hunting not launched (fail-open)",
+            run_id,
+        )
+        return
+    try:
+        from polymerhus.project_management.api import HuntingLaunch, launch_hunting
+
+        await launch_hunting(project_id, HuntingLaunch())
+    except Exception:  # noqa: BLE001 - fail-open: the drained analysis must settle
+        logger.warning(
+            "analysis %s drained but the hunting launch failed (fail-open); "
+            "an operator or the surfer can relaunch",
+            run_id,
+            exc_info=True,
+        )
 
 
 async def stop_analysis(run_id: str) -> None:

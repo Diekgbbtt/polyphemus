@@ -501,6 +501,16 @@ class Trial:
                     note=f"poll recon to terminal (budget {cfg.budget_s:g}s)",
                 )
             )
+            steps.append(
+                TrialPlanStep(
+                    "analysis drain",
+                    calls=(api.analysis_status(project, "<run>"),),
+                    note=(
+                        "drain the analysis consumer to its terminal before "
+                        f"hunting (budget {cfg.budget_s:g}s)"
+                    ),
+                )
+            )
         elif cfg.start_phase == "analysis":
             steps.append(
                 TrialPlanStep(
@@ -579,25 +589,28 @@ class Trial:
                     terminal = "failed"
                 else:
                     state = replace(state, recon_run_id=phase.run_id)
-                    current_phase = "hunting"
-                    nxt, cap = self._phase_hunting(state)
-                    phases.append(nxt)
-                    terminal = _terminal_of(nxt, cap)
+                    # Hunting reasons over the ANALYSIS findings, so drain the
+                    # analysis run to its terminal BEFORE launching hunting. The
+                    # combined recon dispatch already started the consumer
+                    # (`run_pipeline` -> `start_analysis`), so this phase must NOT
+                    # relaunch it (a second `POST /analysis` 409s as a double-run);
+                    # a recon-only dispatch left no consumer, so the trial starts
+                    # one here.
+                    current_phase = "analysis"
+                    phases.append(
+                        self._phase_analysis(state, launch=not cfg.with_analysis)
+                    )
+                    terminal = self._analysis_terminal(phases[-1])
+                    if terminal is None:
+                        current_phase = "hunting"
+                        nxt, cap = self._phase_hunting(state)
+                        phases.append(nxt)
+                        terminal = _terminal_of(nxt, cap)
             elif cfg.start_phase == "analysis":
                 current_phase = "analysis"
                 phases.append(self._phase_analysis(state))
-                phase = phases[-1]
-                if not phase.entered:
-                    terminal = "blocked"
-                elif phase.status == "timeout":
-                    terminal = "timeout"
-                elif _spend_stopped(phase, self._spend):
-                    # A token-budget stop ends the trial here; a natural analysis
-                    # `stopped` is not a spend stop, so it still chains.
-                    terminal = "stopped"
-                elif _phase_failed(phase):
-                    terminal = "failed"
-                else:
+                terminal = self._analysis_terminal(phases[-1])
+                if terminal is None:
                     current_phase = "hunting"
                     nxt, cap = self._phase_hunting(state)
                     phases.append(nxt)
@@ -771,7 +784,7 @@ class Trial:
                 api.launch_recon(state.project_id, with_analysis=self.config.with_analysis)
             )
         )
-        status = self._poll(
+        status, _terminal_row = self._poll(
             state.project_id,
             api.recon_status(state.project_id, run_id),
             api.RECON_TERMINAL,
@@ -796,16 +809,28 @@ class Trial:
             failure=failure,
         )
 
-    def _phase_analysis(self, state: predicates.PhaseState) -> PhaseRecord:
+    def _phase_analysis(
+        self, state: predicates.PhaseState, *, launch: bool = True
+    ) -> PhaseRecord:
+        """Enter the analysis phase and drain the run's consumer to terminal.
+
+        `launch=True` (the `start_phase='analysis'` entry) starts the consumer;
+        on the recon path the combined dispatch already started it, so
+        `launch=False` only drains - a second `POST /analysis` would double-run
+        (or 409). The consumer is keyed by the RECON run id either way; the
+        surrogate `analysis_run_id` is read from the terminal row when the phase
+        did not launch it."""
         if self._api is None:
             raise TrialError("trial execution requires an API runner")
         gate = predicates.analysis_entry(self._api, self._files, state)
         if not gate.ok:
             return PhaseRecord(phase="analysis", blocks=list(gate.blocks))
-        analysis_run_id = api.analysis_run_id_of(
-            self._call(api.launch_analysis(state.project_id, state.recon_run_id))
-        )
-        status = self._poll(
+        analysis_run_id = None
+        if launch:
+            analysis_run_id = api.analysis_run_id_of(
+                self._call(api.launch_analysis(state.project_id, state.recon_run_id))
+            )
+        status, row = self._poll(
             state.project_id,
             api.analysis_status(state.project_id, state.recon_run_id),
             api.ANALYSIS_TERMINAL,
@@ -813,6 +838,8 @@ class Trial:
             # status read uses, not the surrogate `analysis_run_id`.
             run=("analysis", state.recon_run_id),
         )
+        if analysis_run_id is None:
+            analysis_run_id = (row or {}).get("analysis_run_id")
         return PhaseRecord(
             phase="analysis",
             entered=True,
@@ -823,6 +850,23 @@ class Trial:
             stop_run_id=state.recon_run_id,
             notes=list(gate.notes),
         )
+
+    def _analysis_terminal(self, phase: PhaseRecord) -> str | None:
+        """The terminal an analysis phase dictates, or None to chain into hunting.
+
+        Preserves the `start_phase='analysis'` semantics: a block, a timeout, a
+        token-budget stop (`_spend_stopped`), and a failure terminal
+        (`_phase_failed`) all stop the trial; a natural analysis `stopped` is not
+        a spend stop, so it still chains."""
+        if not phase.entered:
+            return "blocked"
+        if phase.status == "timeout":
+            return "timeout"
+        if _spend_stopped(phase, self._spend):
+            return "stopped"
+        if _phase_failed(phase):
+            return "failed"
+        return None
 
     def _phase_hunting(self, state: predicates.PhaseState) -> tuple[PhaseRecord, PollResult | None]:
         if self._api is None:
@@ -852,19 +896,25 @@ class Trial:
         terminal: frozenset,
         *,
         run: tuple[str, str],
-    ) -> str:
+    ) -> tuple[str, Mapping | None]:
+        """Poll a run to its terminal, returning `(status, last row)`.
+
+        The last row is what the status read supplied at the settle; an analysis
+        phase reads the surrogate run id from it when it did not launch the
+        consumer itself."""
         deadline = self._clock() + self.config.budget_s
         while True:
-            status = api.status_of(self._call(status_call))
+            response = self._call(status_call)
+            status = api.status_of(response)
             if status in terminal:
-                return status
+                return status, response
             # The token budget and the trial deadline both stop the active run,
             # so a poll never returns while the run it launched keeps running.
             if self._check_spend(project_id, *run):
-                return "stopped"
+                return "stopped", response
             if self._clock() >= deadline:
                 self._stop_run(project_id, *run)
-                return "timeout"
+                return "timeout", response
             self._sleep(self.config.poll_s)
 
     def _stop_run(self, project_id: str, run_kind: str, run_id: str) -> None:

@@ -497,3 +497,10 @@ _Status_: withdrawn - an unbuilt, deferred extension, not a live primitive.
 **Context-memory scaffold**:
 Cross-phase operational-failure memory (`recon_signals`), grounded coverage verdicts, and finding-triggered extension - all specified, none built.
 _Status_: designed-not-built (`recon-pipeline-design.md` §9).
+
+**Hunt-after-analysis chain**:
+The policy that chains ONE hunting run off a genuinely `drained` analysis (never `withheld`/`stopped`), gated by the opt-in `settings.recon.hunt_after_analysis` (default OFF, read through `feed.resolve_hunt_after_analysis`).
+The trigger is the analysis supervisor's terminal write (`lifecycle.py`); it reuses the SAME operator-intent launch seam as `POST /projects/{id}/hunting` (`project_management.api.launch_hunting`), so the one-live-run guard refuses a second live run (409, the idempotent no-op).
+It is opt-in because the eval trial sequences the `recon -> analysis -> hunting` chain itself; an unconditional app-side launch would collide with the trial's own hunting launch.
+It resolves `attack.hunting`/`project_management` lazily (never at import time) and fails open loudly.
+See `docs/design/hunting-at-analysis-finish-adr.md`.

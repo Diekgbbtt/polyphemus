@@ -192,6 +192,7 @@ def _full_routes() -> dict:
             "per_job": [{"job": "crawl", "status": "complete"}],
             "stats": {"analysis_drained": True},
         },
+        "GET /projects/pid/analysis/r1": {"status": "drained", "analysis_run_id": "a1"},
         "GET /projects/pid/hunting/h1": {"status": "complete"},
         "POST /projects/pid/hunting": {"hunting_run_id": "h1"},
         "POST /projects/pid/recon": {"run_id": "r1"},
@@ -202,26 +203,92 @@ def _full_routes() -> dict:
     }
 
 
-def test_recon_trial_runs_recon_then_hunting_and_records(tmp_path) -> None:
+def test_recon_trial_runs_recon_then_analysis_then_hunting_and_records(tmp_path) -> None:
     api_runner = FakeApi(_full_routes())
 
     record = _trial(tmp_path, api_runner).run()
 
     assert record.project_id == "pid"
-    assert [p.phase for p in record.phases] == ["recon", "hunting"]
+    assert [p.phase for p in record.phases] == ["recon", "analysis", "hunting"]
     assert record.phases[0].run_id == "r1"
-    assert record.phases[1].run_id == "h1"
+    assert record.phases[1].run_id == "a1"
+    assert record.phases[2].run_id == "h1"
     assert record.phases[0].status == "complete"
-    assert record.phases[1].status == "complete"
+    assert record.phases[1].status == "drained"
+    assert record.phases[2].status == "complete"
     assert record.terminal == "complete"
     # The recon launch is the combined recon+analysis dispatch.
     recon_launch = next(c for c in api_runner.calls if c.path.endswith("/recon"))
     assert recon_launch.body == {"with_analysis": True}
+    # Recon already started the analysis consumer; the trial only drains it. A
+    # second `POST /analysis` would double-run (or 409), so it never happens.
+    assert not any(
+        c.method == "POST" and c.path == "/projects/pid/analysis"
+        for c in api_runner.calls
+    )
     # The trial record is persisted into the trial directory.
     assert record.trial_dir is not None
     written = yaml.safe_load(Path(record.trial_dir, "trial.yaml").read_text())
     assert written["project_id"] == "pid"
     assert written["terminal"] == "complete"
+
+
+def test_recon_trial_drains_the_analysis_before_it_hunts(tmp_path) -> None:
+    api_runner = FakeApi(_full_routes())
+
+    _trial(tmp_path, api_runner).run()
+
+    analysis_poll = next(
+        i
+        for i, c in enumerate(api_runner.calls)
+        if c.method == "GET" and c.path == "/projects/pid/analysis/r1"
+    )
+    hunt_launch = next(
+        i
+        for i, c in enumerate(api_runner.calls)
+        if c.method == "POST" and c.path == "/projects/pid/hunting"
+    )
+    assert analysis_poll < hunt_launch
+
+
+def test_a_failed_analysis_after_recon_never_chains_into_hunting(tmp_path) -> None:
+    routes = _full_routes()
+    routes["GET /projects/pid/analysis/r1"] = {
+        "status": "interrupted",
+        "analysis_run_id": "a1",
+    }
+    api_runner = FakeApi(routes)
+
+    record = _trial(tmp_path, api_runner).run()
+
+    assert record.terminal == "failed"
+    assert [p.phase for p in record.phases] == ["recon", "analysis"]
+    assert record.phases[1].status == "interrupted"
+    assert not any(
+        c.method == "POST" and c.path == "/projects/pid/hunting"
+        for c in api_runner.calls
+    )
+
+
+def test_a_spend_stopped_analysis_after_recon_never_chains_into_hunting(tmp_path) -> None:
+    api_runner = SeqUsageApi(
+        {
+            **_full_routes(),
+            "GET /projects/pid/analysis/r1": {"status": "draining", "analysis_run_id": "a1"},
+            "POST /projects/pid/analysis/r1/stop": {"stopped": True},
+        },
+        totals=[1000, 1500, 1500],
+    )
+
+    record = _trial(tmp_path, api_runner, token_budget=500).run()
+
+    assert record.terminal == "stopped"
+    assert [p.phase for p in record.phases] == ["recon", "analysis"]
+    assert record.phases[1].status == "stopped"
+    assert not any(
+        c.method == "POST" and c.path == "/projects/pid/hunting"
+        for c in api_runner.calls
+    )
 
 
 def test_recon_trial_enables_streamed_analysis_in_settings(tmp_path) -> None:

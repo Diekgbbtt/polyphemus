@@ -484,6 +484,20 @@ def resolve_analysis_mode(settings: dict | None) -> str:
     return mode
 
 
+def resolve_hunt_after_analysis(settings: dict | None) -> bool:
+    """Whether a genuinely drained analysis chains ONE hunting run.
+
+    Opt-in and default-OFF (`settings.recon.hunt_after_analysis`): the eval trial
+    sequences the recon -> analysis -> hunting chain explicitly, so an implicit
+    app-side launch would collide with the trial's own hunting launch (the
+    one-live-run-per-project guard 409s). An internal caller enables the flag to
+    get the ordering without sequencing it. A missing/absent value is False - the
+    fail-safe direction, so the automatic chain is only entered on an explicit
+    true."""
+    s = settings or {}
+    return bool(s.get("hunt_after_analysis"))
+
+
 def resolve_analysis_pass_fn(settings: dict | None):
     """The `pass_fn` the mode selects (ADR D1): `service_sourced` gets the
     service-sourced pass; `streamed` gets None (the feed's own `analyse_chunked`

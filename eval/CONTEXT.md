@@ -122,6 +122,7 @@ _Avoid_: attempt, run
 
 **Phase**:
 One of the three discovery stages a trial can start at: recon, analysis, or hunting; each phase entry has a persisted-state dependency check.
+A `recon` entry chains `recon -> analysis -> hunting`: the trial drains the analysis consumer to its terminal BEFORE it launches hunting, because hunting reasons over the analysis findings, not the bootstrapped L1.
 _Avoid_: stage, step
 
 **Target lifecycle strategy**:
