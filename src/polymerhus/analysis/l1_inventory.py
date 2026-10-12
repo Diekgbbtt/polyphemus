@@ -33,7 +33,8 @@ def _resolve_read_fn(read_fn):
 def _empty() -> dict:
     return {"services": [], "systems": [], "data_items": [],
             "service_contracts": {}, "system_descriptions": {},
-            "data_item_fields": {}, "data_item_notes": {}}
+            "data_item_fields": {}, "data_item_notes": {},
+            "application_overview": ""}
 
 
 def _render_system(row: dict) -> str:
@@ -47,7 +48,7 @@ def _render_system(row: dict) -> str:
     return kind
 
 
-def read_l1_inventory(project_id: str, *, read_fn=None) -> dict:
+def read_l1_inventory(project_id: str, *, read_fn=None, settings_fn=None) -> dict:
     """Return the project's current L1 identities as
     `{"services": [business_function_slug,...], "systems": ["kind" | "kind:disc",...],
     "data_items": [item_key,...], "service_contracts": {slug: service_contract}}`,
@@ -65,6 +66,12 @@ def read_l1_inventory(project_id: str, *, read_fn=None) -> dict:
     same `_render_system` shape). The mechanism-typist reads it to decide new-vs-extend
     and to COMPOUND the description on extension (grilled #9).
 
+    `application_overview` is the KB's macro framing (W-d): the `## Overview`
+    paragraph the deterministic scaffold persists to `settings` when it writes
+    the skeleton. It is NOT a graph node (operator decision: a skeleton
+    attribute), so it is read from settings, not from a `:L1*` label. It is the
+    framing a proposer prepends to the Service it is reasoning about.
+
     `data_item_fields` (`{item_key: [field, ...]}`) and `data_item_notes`
     (`{item_key: notes}`) are the SAME additive pattern for DataItems (#48,
     dataplane-A1-decisions.md DPL-DEC-08/09): the flat `data_items` list stays
@@ -76,6 +83,16 @@ def read_l1_inventory(project_id: str, *, read_fn=None) -> dict:
     Fail-open: any read error degrades to the empty inventory shape and never raises
     into the caller."""
     read_fn = _resolve_read_fn(read_fn)
+    if settings_fn is None:
+        from polymerhus.app.clients import pg
+
+        settings_fn = pg.load_settings
+    try:
+        overview = (settings_fn(project_id) or {}).get("application_overview") or ""
+    except Exception:  # fail-open: no framing is better than no inventory
+        logger.warning("read application_overview failed for project=%s", project_id,
+                       exc_info=True)
+        overview = ""
     try:
         service_rows = read_fn(
             "MATCH (n:L1Service) WHERE n.project_id = $project_id "
@@ -127,4 +144,5 @@ def read_l1_inventory(project_id: str, *, read_fn=None) -> dict:
         "system_descriptions": system_descriptions,
         "data_item_fields": data_item_fields,
         "data_item_notes": data_item_notes,
+        "application_overview": overview,
     }

@@ -93,6 +93,27 @@ BULLET_RE = re.compile(r"^-\s+(.*)$")
 KB_SECTIONS = ("Services", "Systems", "Roles")
 
 
+def parse_overview(text: str) -> str:
+    """EXTRACT the `## Overview` section body from the operator_kb.md.
+
+    The Overview is the macro description of the deployed SOLUTION (what the
+    application IS, its deployment model, the audiences it serves). It is the
+    framing every Service is read inside, so it is carried as a skeleton
+    attribute and prepended to each Service's reasoning.
+    Returns the joined prose (whitespace-normalised), or "" when absent."""
+    lines: list[str] = []
+    in_overview = False
+    for raw in text.splitlines():
+        line = raw.rstrip()
+        m = SECTION_RE.match(line)
+        if m:
+            in_overview = m.group(1).strip().lower() == "overview"
+            continue
+        if in_overview and line.strip():
+            lines.append(line.strip())
+    return " ".join(lines)
+
+
 def parse_kb(text: str) -> tuple[list[dict], list[dict], list[str]]:
     """Parse the structured operator_kb.md. Returns (services, systems, roles).
 
@@ -237,7 +258,8 @@ def build_shells_from_path(kb_path: str | Path):
     return build_shells(Path(kb_path).read_text(encoding="utf-8"))
 
 
-def scaffold_project(project_id: str, operator_kb: str, *, curate_fn=None) -> tuple[int, int]:
+def scaffold_project(project_id: str, operator_kb: str, *, curate_fn=None,
+                     save_settings_fn=None) -> tuple[int, int]:
     """Deterministically project `operator_kb` into the L1 skeleton for
     `project_id` through the SAME projection the LLM bootstrap uses.
 
@@ -247,7 +269,15 @@ def scaffold_project(project_id: str, operator_kb: str, *, curate_fn=None) -> tu
     injectable sole-writer seam (tests pass a recorder); it defaults to
     `l1_curator.l1_curate`, resolved lazily so importing this module constructs
     no driver.
-    """
+
+    The KB's `## Overview` is carried as the skeleton attribute
+    `settings.application_overview` (W-d): it is the macro framing every Service
+    is read inside, so it is persisted here and prepended to each Service's
+    reasoning downstream. `save_settings_fn` is the injectable settings seam
+    (default `app.clients.pg.save_settings`); a write failure is fail-open - the
+    skeleton still persists, only the framing is dropped."""
+    import logging
+
     from polymerhus.analysis.analyser_types import proposals_to_deltas
     from polymerhus.analysis.bootstrap import shells_to_batch
     from polymerhus.analysis.l1_types import Provenance
@@ -257,6 +287,20 @@ def scaffold_project(project_id: str, operator_kb: str, *, curate_fn=None) -> tu
         raise ScaffoldError(
             "zero services parsed - a broken KB is a blocked scaffold"
         )
+
+    overview = parse_overview(operator_kb)
+    if overview:
+        if save_settings_fn is None:
+            from polymerhus.app.clients import pg
+
+            save_settings_fn = pg.save_settings
+        try:
+            save_settings_fn(project_id, {"application_overview": overview})
+        except Exception:  # noqa: BLE001 - framing is fail-open, the skeleton is not
+            logging.getLogger(__name__).warning(
+                "scaffold: could not persist application_overview for %s",
+                project_id, exc_info=True,
+            )
 
     batch = shells_to_batch(service_shells, system_shells)
     provenance = Provenance(job="data-dependency-scaffold", model=None, prompt_id=None)
@@ -277,6 +321,7 @@ __all__ = [
     "build_shells_from_path",
     "map_system_kind",
     "parse_kb",
+    "parse_overview",
     "scaffold_project",
     "system_kinds",
 ]

@@ -11,6 +11,12 @@ Let each stage's insight shape the next. Never jump to the answer.
 4. **WITHHOLD.** Drop every candidate with NO span behind it, and say what was missing or merely assumed. Record non-obvious Systems the text asserts as shallow hypothesis stubs with a one-line rationale. Capture the AuthorizationSystem's stated roles and realms.
 5. **DECIDE.** Commit to the grounded skeleton. REUSE an identity already in the inventory before you coin a synonym for it.
 
+## Write the application Overview first
+
+Begin with a short `## Overview` paragraph: what the SOLUTION is as a whole - its product category, deployment model, and the audiences it serves.
+It is the framing every Service is read inside, and it is carried as the skeleton attribute `application_overview`, prepended to each Service's later reasoning.
+Keep it to a few sentences and ground it in the knowledge base exactly as the contracts are: no invented depth.
+
 ## Write a service contract for every Service
 
 Every Service carries a **service contract**: a brief functional profile of what that business function does and what it owns.

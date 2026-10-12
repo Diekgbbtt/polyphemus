@@ -63,10 +63,11 @@ def test_read_error_is_fail_open():
     def boom(cypher, params):
         raise RuntimeError("neo4j down")
 
-    inv = read_l1_inventory("proj-1", read_fn=boom)
+    inv = read_l1_inventory("proj-1", read_fn=boom, settings_fn=lambda pid: {})
     assert inv == {"services": [], "systems": [], "data_items": [],
                    "service_contracts": {}, "system_descriptions": {},
-                   "data_item_fields": {}, "data_item_notes": {}}
+                   "data_item_fields": {}, "data_item_notes": {},
+                   "application_overview": ""}
 
 
 def test_service_contracts_are_returned_alongside_the_slugs():

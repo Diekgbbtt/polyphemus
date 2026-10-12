@@ -175,6 +175,11 @@ Its system message is TWO layers: a stable base prompt in code (identity, pipeli
 WHICH TURN the discipline rides in is configurable (`BOOTSTRAP_PROMPT_CONFIG`, `_PROMPT_CONFIGS`) and was settled empirically, not by argument: the default `skill_in_prompt` puts it in the USER turn beside the task, which measured best on both breadth mean and breadth floor over 15 live runs (operator-ratified 2026-07-27; see the agent-configuration eval below).
 The base layer is always the system message in every arm.
 
+**Application overview** (`settings.application_overview`; W-d, ADR `operator-kb-overview-attribute-adr.md`):
+The `## Overview` paragraph of the `operator_kb.md` - the macro description of the deployed SOLUTION (product category, deployment model, audiences) - carried as a SKELETON ATTRIBUTE (not a graph node), persisted by the deterministic scaffold, surfaced by `read_l1_inventory`, and prepended to each Service's reasoning as `APPLICATION OVERVIEW: ...`.
+It is the framing a Service contract alone cannot give: what the application IS, so a proposer harvests inside the right picture.
+_Avoid_: summary, description (that is a System's discriminative attribute).
+
 **Service contract**:
 A brief functional profile of a business-function Service - what it DOES and what it OWNS - written in the application's own domain nouns and action verbs, and persisted as the `service_contract` prop.
 Written by the Bootstrapper for every Service, and by the Bootstrapper alone since #34 D4 retired Assigner minting; it is the PRIMARY evidence the cross-layer Assigner consumes, matching the nouns and actions in an observed endpoint path against it to judge ownership.

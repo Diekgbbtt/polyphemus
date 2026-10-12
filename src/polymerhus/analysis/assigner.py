@@ -343,7 +343,10 @@ def _unit_context_block(chunk: Chunk, inventory: dict | None, owned_endpoints=()
     slug = str(getattr(chunk, "source_job", "") or "").removeprefix("service:") or chunk.chunk_id
     contracts = (inventory or {}).get("service_contracts") or {}
     contract = contracts.get(slug, "") if isinstance(contracts, dict) else ""
+    overview = (inventory or {}).get("application_overview") or ""
+    framing = f"APPLICATION OVERVIEW: {overview}\n\n" if overview else ""
     return (
+        f"{framing}"
         f"SERVICE UNIT: {slug}\n"
         f"contract: {contract or '(none)'}\n"
         f"already aggregated endpoints: {_owned_endpoints_repr(owned_endpoints)}"
