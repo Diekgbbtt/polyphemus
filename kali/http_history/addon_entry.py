@@ -16,6 +16,9 @@ def build_addons() -> list:
             root=config.store_root,
             resolver=registry,
             max_body_bytes=config.max_body_bytes,
+            fuzz_max_query_params=config.fuzz_max_query_params,
+            fuzz_max_path_segment=config.fuzz_max_path_segment,
+            exclude_host_suffixes=config.exclude_host_suffixes,
         )
     ]
 

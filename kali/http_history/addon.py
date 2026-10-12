@@ -14,7 +14,15 @@ from __future__ import annotations
 
 import threading
 
-from kali.http_history.normalize import DEFAULT_MAX_BODY_BYTES, normalize_flow
+from kali.http_history.normalize import (
+    DEFAULT_EXCLUDE_HOST_SUFFIXES,
+    DEFAULT_FUZZ_MAX_PATH_SEGMENT,
+    DEFAULT_FUZZ_MAX_QUERY_PARAMS,
+    DEFAULT_MAX_BODY_BYTES,
+    is_excluded_host,
+    is_fuzzing_request,
+    normalize_flow,
+)
 from kali.http_history.store import HttpHistoryStore
 
 UNSCOPED_PROJECT = "unscoped"
@@ -47,12 +55,18 @@ class HttpHistoryAddon:
         resolver=None,
         enabled: bool = True,
         max_body_bytes: int = DEFAULT_MAX_BODY_BYTES,
+        fuzz_max_query_params: int = DEFAULT_FUZZ_MAX_QUERY_PARAMS,
+        fuzz_max_path_segment: int = DEFAULT_FUZZ_MAX_PATH_SEGMENT,
+        exclude_host_suffixes: tuple[str, ...] = DEFAULT_EXCLUDE_HOST_SUFFIXES,
         store_factory=None,
     ):
         self.root = root
         self.resolver = resolver
         self.enabled = enabled
         self.max_body_bytes = max_body_bytes
+        self.fuzz_max_query_params = fuzz_max_query_params
+        self.fuzz_max_path_segment = fuzz_max_path_segment
+        self.exclude_host_suffixes = tuple(exclude_host_suffixes or ())
         self._store_factory = store_factory or (lambda project: HttpHistoryStore(root, project))
         self._stores: dict[str, HttpHistoryStore] = {}
         self._lock = threading.Lock()
@@ -62,6 +76,8 @@ class HttpHistoryAddon:
             "unscoped": 0,
             "excluded_websocket": 0,
             "excluded_http3": 0,
+            "excluded_fuzzing": 0,
+            "excluded_tooling": 0,
             "last_error": None,
         }
 
@@ -92,6 +108,18 @@ class HttpHistoryAddon:
             return
         if _is_http3(flow):
             self._bump("excluded_http3")
+            return
+        if is_fuzzing_request(
+            getattr(flow, "request", None),
+            max_query_params=self.fuzz_max_query_params,
+            max_path_segment=self.fuzz_max_path_segment,
+        ):
+            self._bump("excluded_fuzzing")
+            return
+        if is_excluded_host(
+            getattr(flow, "request", None), self.exclude_host_suffixes
+        ):
+            self._bump("excluded_tooling")
             return
         try:
             project, context = self._resolve(flow)

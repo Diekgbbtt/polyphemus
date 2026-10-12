@@ -27,6 +27,69 @@ from kali.http_history.models import (
 
 DEFAULT_MAX_BODY_BYTES = 5 * 1024 * 1024
 
+# Fuzzing / parameter-mining traffic shape: a query-parameter count far above
+# any real route, or a single path segment far longer than any real route.
+# These are scanner artifacts (arjun/ffuf-style), never the navigational
+# surface the analysis reasons over, and their full URLs are what blow up a
+# downstream context (the comfyui blowup: 110k URLs, max 3546 chars, 36.8 MB).
+DEFAULT_FUZZ_MAX_QUERY_PARAMS = 30
+DEFAULT_FUZZ_MAX_PATH_SEGMENT = 80
+
+# Hosts that the recon toolchain itself fetches inside a lease (tool
+# self-update / telemetry). They are never the target's scope; recording them
+# attributes the container's own traffic to the project. Suffix match, so
+# `pdtm.sh` also excludes `api.pdtm.sh`.
+DEFAULT_EXCLUDE_HOST_SUFFIXES: tuple[str, ...] = ("pdtm.sh",)
+
+
+def is_excluded_host(
+    request,
+    suffixes: tuple[str, ...] = DEFAULT_EXCLUDE_HOST_SUFFIXES,
+) -> bool:
+    """True when the request host is one of the recon toolchain's own hosts."""
+    if request is None or not suffixes:
+        return False
+    url = getattr(request, "pretty_url", None) or getattr(request, "url", None) or ""
+    if not isinstance(url, str) or not url:
+        return False
+    try:
+        host = urlsplit(url).hostname or ""
+    except ValueError:
+        return False
+    host = host.lower()
+    return any(host == s or host.endswith("." + s) for s in suffixes if s)
+
+
+def is_fuzzing_request(
+    request,
+    *,
+    max_query_params: int = DEFAULT_FUZZ_MAX_QUERY_PARAMS,
+    max_path_segment: int = DEFAULT_FUZZ_MAX_PATH_SEGMENT,
+) -> bool:
+    """True when a request's URL carries a scanner/fuzzing shape.
+
+    Deterministic and conservative: an ordinary route with a handful of
+    parameters, or a normal path, never trips it. A non-positive bound disables
+    that half of the check.
+    """
+    if request is None:
+        return False
+    url = getattr(request, "pretty_url", None) or getattr(request, "url", None) or ""
+    if not isinstance(url, str) or not url:
+        return False
+    try:
+        split = urlsplit(url)
+    except ValueError:
+        return False
+    if max_query_params > 0:
+        params = parse_qsl(split.query, keep_blank_values=True)
+        if len(params) > max_query_params:
+            return True
+    if max_path_segment > 0:
+        if any(len(segment) > max_path_segment for segment in split.path.split("/")):
+            return True
+    return False
+
 
 def normalize_flow(
     flow,

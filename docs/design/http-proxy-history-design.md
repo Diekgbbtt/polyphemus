@@ -262,6 +262,12 @@ volume, but without the knob it is not used.
 5. **Lineage is not lost**: every replay carries `derived_from`; every artifact carries the
    context of the execution.
 6. **Limits are declared where they bite**: body cap, byte ceiling, pool, redirected ports.
+7. **Capture records the target's surface, not the scanner's**: a fuzzing-shaped request or a
+   request to the recon toolchain's own hosts is dropped at capture (counters `excluded_fuzzing`,
+   `excluded_tooling`), so a reader's context is bounded by the real surface. See
+   `docs/design/http-history-capture-integrity-adr.md`. Scope is enforced at both ends: capture
+   (correlation; the toolchain-host gate) and query (`_guard_project` refuses an empty
+   `project_id` and the reserved `unscoped` project; the store is per-project).
 
 ### 2.9 The decisions, and why
 

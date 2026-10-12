@@ -97,3 +97,73 @@ def test_websocket_flows_are_excluded_and_disclosed(tmp_path):
     addon.response(WsFlow(response=FakeMessage(status=101, reason="Switching Protocols")))
     assert addon.status()["recorded"] == 0
     assert addon.status()["excluded_websocket"] == 1
+
+
+def _fuzzing_url_with_many_params(n=120):
+    query = "&".join(f"p{i}={100000 + i}" for i in range(n))
+    return f"https://target.example/api/features?{query}"
+
+
+def test_parameter_fuzzing_flow_is_excluded_and_disclosed(tmp_path):
+    addon = _addon(
+        tmp_path, FakeResolver({"172.30.0.2": ("proj-1", CaptureContext())})
+    )
+    addon.response(
+        FakeFlow(
+            request=FakeMessage(method="GET", url=_fuzzing_url_with_many_params()),
+            response=FakeMessage(status=200, reason="OK"),
+        )
+    )
+    assert addon.status()["recorded"] == 0
+    assert addon.status()["excluded_fuzzing"] == 1
+    assert HttpHistoryStore(tmp_path, "proj-1").search([]).artifacts == []
+
+
+def test_long_path_segment_fuzzing_flow_is_excluded(tmp_path):
+    addon = _addon(
+        tmp_path, FakeResolver({"172.30.0.2": ("proj-1", CaptureContext())})
+    )
+    addon.response(
+        FakeFlow(
+            request=FakeMessage(
+                method="GET", url="https://target.example/api/" + "A" * 400
+            ),
+            response=FakeMessage(status=404, reason="Not Found"),
+        )
+    )
+    assert addon.status()["recorded"] == 0
+    assert addon.status()["excluded_fuzzing"] == 1
+
+
+def test_ordinary_navigation_with_a_few_params_is_still_recorded(tmp_path):
+    addon = _addon(
+        tmp_path, FakeResolver({"172.30.0.2": ("proj-1", CaptureContext())})
+    )
+    addon.response(
+        FakeFlow(
+            request=FakeMessage(
+                method="GET",
+                url="https://target.example/view?filename=a.png&type=output&subfolder=",
+            ),
+            response=FakeMessage(status=200, reason="OK"),
+        )
+    )
+    assert addon.status()["recorded"] == 1
+    assert addon.status()["excluded_fuzzing"] == 0
+
+
+def test_toolchain_host_traffic_is_excluded_and_disclosed(tmp_path):
+    addon = _addon(
+        tmp_path, FakeResolver({"172.30.0.2": ("proj-1", CaptureContext())})
+    )
+    addon.response(
+        FakeFlow(
+            request=FakeMessage(
+                method="GET", url="https://api.pdtm.sh/api/v1/tools/naabu?arch=arm64"
+            ),
+            response=FakeMessage(status=200, reason="OK"),
+        )
+    )
+    assert addon.status()["recorded"] == 0
+    assert addon.status()["excluded_tooling"] == 1
+    assert HttpHistoryStore(tmp_path, "proj-1").search([]).artifacts == []

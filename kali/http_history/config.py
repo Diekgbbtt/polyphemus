@@ -35,6 +35,15 @@ class HttpHistoryConfig:
     store_root: str = "/data"
     enabled: bool = True
     max_body_bytes: int = 5 * 1024 * 1024
+    # Fuzzing/param-mining capture gate (0 disables that half). A flow whose
+    # request shape trips either bound is NOT recorded: it is scanner noise,
+    # never the navigational surface, and its URL is what blows up context.
+    fuzz_max_query_params: int = 30
+    fuzz_max_path_segment: int = 80
+    # The recon toolchain's own hosts (comma-separated suffixes). Traffic to
+    # these inside a lease is the container's own tooling, never the target's
+    # scope, so it is not recorded.
+    exclude_host_suffixes: tuple[str, ...] = ("pdtm.sh",)
     pool_size: int = 8
     ttl_s: int = 900
     acquire_timeout_s: float = 30.0
@@ -55,6 +64,13 @@ def load_config() -> HttpHistoryConfig:
         store_root=os.environ.get("KALI_HTTP_HISTORY_ROOT", "/data"),
         enabled=_env_bool("KALI_HTTP_CAPTURE_ENABLED", True),
         max_body_bytes=_env_int("KALI_HTTP_MAX_BODY_BYTES", 5 * 1024 * 1024),
+        fuzz_max_query_params=_env_int("KALI_HTTP_FUZZ_MAX_QUERY_PARAMS", 30),
+        fuzz_max_path_segment=_env_int("KALI_HTTP_FUZZ_MAX_PATH_SEGMENT", 80),
+        exclude_host_suffixes=tuple(
+            s.strip().lower()
+            for s in os.environ.get("KALI_HTTP_EXCLUDE_HOSTS", "pdtm.sh").split(",")
+            if s.strip()
+        ),
         pool_size=max(1, min(256, _env_int("KALI_HTTP_NAMESPACE_POOL", 8))),
         ttl_s=_env_int("KALI_HTTP_LEASE_TTL_S", 900),
         acquire_timeout_s=_env_float("KALI_HTTP_ACQUIRE_TIMEOUT_S", 30.0),
