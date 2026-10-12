@@ -4,8 +4,9 @@ Mirrors `tests/e2e/test_bootstrap_reasoned_walkthrough.py` in shape - the WHOLE
 system runs end to end - but over INJECTED fakes for the two external seams (the
 LLM and the graph), the way every seam is designed to be injected (CODING_STANDARD
 section 6). Nothing is monkeypatched: `service_sourced_pass` runs its real stages,
-`assign_global` runs the Assigner's real `candidate_owners -> assign` workflow and
-its five shaping gates, and `run_service_loop` runs the real Service-slice builder,
+`assign_global` runs the Assigner's real workflow (harvest_surface -> falsify_harvest
+-> prior_insights -> candidate_owners -> assign -> closure) and its five shaping gates,
+and `run_service_loop` runs the real Service-slice builder,
 the supervisor control plane, and each role's real `ReasoningWorkflow`.
 
 The assertions are the observable L1 counts the pipeline produced: the AGGREGATES

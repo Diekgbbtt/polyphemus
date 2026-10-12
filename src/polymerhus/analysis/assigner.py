@@ -305,14 +305,41 @@ def _chunk_slice(chunk: Chunk) -> dict:
     return {"nodes": nodes, "links": []}
 
 
-def _service_block(chunk: Chunk, inventory: dict | None) -> str:
-    """Render the ONE Service unit the v2 pipeline feeds the assigner: its slug and
-    its `service_contract` (the primary routing evidence). A unit whose slug is not
-    in the contracts map renders `(none)` - a thin KB gets a thin honest contract."""
+def _owned_endpoints_repr(endpoints) -> str:
+    """Render the Service's OWN already-aggregated endpoints, one
+    `METHOD /path (baseurl)` per entry; `(none)` when it aggregates nothing yet."""
+    lines = []
+    for asset in endpoints or ():
+        ident = getattr(asset, "identity", None) or {}
+        path = ident.get("path")
+        if not isinstance(path, str):
+            continue
+        method = str(ident.get("method") or "").upper()
+        baseurl = ident.get("baseurl")
+        line = " ".join(part for part in (method, path) if part)
+        if baseurl:
+            line = f"{line} ({baseurl})"
+        lines.append(line)
+    return "; ".join(lines) if lines else "(none)"
+
+
+def _unit_context_block(chunk: Chunk, inventory: dict | None, owned_endpoints=()) -> str:
+    """The ONLY per-unit context the assigner is fed (L1-unit-first): the Service's
+    slug, its `service_contract` (the primary routing evidence) and the endpoints it
+    ALREADY aggregates, if any.
+
+    The whole settled surface is deliberately ABSENT: the model discovers its own
+    surface by querying the tools, driven by the contract (`harvest_surface`). A thin
+    KB gets a thin honest contract, and an orphan Service gets an empty owned list;
+    both render explicitly rather than as a silently empty prompt."""
     slug = str(getattr(chunk, "source_job", "") or "").removeprefix("service:") or chunk.chunk_id
     contracts = (inventory or {}).get("service_contracts") or {}
     contract = contracts.get(slug, "") if isinstance(contracts, dict) else ""
-    return f"SERVICE UNIT: {slug}\nservice_contract: {contract or '(none)'}"
+    return (
+        f"SERVICE UNIT: {slug}\n"
+        f"contract: {contract or '(none)'}\n"
+        f"already aggregated endpoints: {_owned_endpoints_repr(owned_endpoints)}"
+    )
 
 
 # The four reflect stages (#34), merging the load-bearing primitives of the
@@ -343,34 +370,56 @@ _REFLECT_STEPS = (
     "RESIDUE: list the Endpoints you could not place, one short sentence each.",
 )
 
-# The Assigner's two sub-problems (spec 3.3): `candidate_owners` is the reasoning
-# turn (RESTATE / COMPETING OWNER / CALIBRATE -> claims); `assign` is the extraction
-# turn (RESIDUE + the assignment task -> aggregates). Each turn speaks the ONE
-# envelope `AnalysisTurn`, so the tool set never toggles.
+# The Assigner's six sub-problems (L1-unit-first): `harvest_surface` DISCOVERS the
+# unit's surface through the tools, `falsify_harvest` tries to throw the harvest out
+# against the contract, `candidate_owners` is the reasoning differential over the
+# SURVIVORS, `assign` is the extraction turn, and `closure` writes the note. Each
+# turn speaks the ONE envelope `AnalysisTurn`, so the tool set never toggles.
 WORKFLOW = ReasoningWorkflow(
     role_id=ROLE,
     sub_problems=(
         SubProblem(
-            id="surface_scan",
-            name="broad L0 surface scan",
+            id="harvest_surface",
+            name="harvest the surface",
             prompt=(
-                "BROAD L0 SCAN - no asset-name assumptions. You are given ONE Service "
-                "(its slug and `service_contract`). Before you judge ownership, "
-                "establish the raw surface: call `graph_view` with bounded read-only "
-                "Cypher (always a LIMIT) to enumerate the L0 `Endpoint`s this target "
-                "exposes. Do NOT query for a specific path or parameter you guessed from "
-                "the contract; enumerate what EXISTS. Suggested queries: (1) every "
-                "`:BaseURL` in the project; (2) every `:Endpoint` reachable from those "
-                "BaseURLs via `:HAS_ENDPOINT`, with its method/path/url and its "
-                "`:Parameter` names; (3) the `:Endpoint`s any Service already "
-                "`AGGREGATES`. Emit one Claim per discovered Endpoint: `subject` "
+                "HARVEST THE SURFACE - the unit is your only anchor. You are given ONE "
+                "Service (its slug and `contract`). Derive MULTIPLE candidate strings "
+                "from that contract: the nouns it owns, the actions it performs, and "
+                "path-word fragments of each. For EVERY candidate string query "
+                "`graph_view` with bounded read-only Cypher (always a LIMIT): enumerate "
+                "the `:BaseURL`s and their `:Endpoint`s broadly, and run a path-substring "
+                "probe per candidate. Where a candidate suggests a path, call "
+                "`search_http_history` too and read the recorded request shape. Query "
+                "BROADLY and AGGRESSIVELY; a candidate that returns nothing is a valid "
+                "miss, not a failure. Emit one Claim per harvested Endpoint: `subject` "
                 "`METHOD /path`; `assertion` the raw surface facts (path segments, "
-                "method, trailing segment, parameter names, baseurl); `evidence` the "
-                "Cypher you ran; `verdict` `seen`. Do not decide ownership here. Emit "
-                "`claims` only."
+                "method, trailing segment, parameter names, baseurl) AND which candidate "
+                "string found it; `evidence` the Cypher/filter you ran; `verdict` "
+                "`harvested`. Do not decide ownership here. Emit `claims` only."
             ),
-            inject=("service", "inventory", "surface"),
+            inject=("service", "inventory"),
             emit=("claims",),
+        ),
+        SubProblem(
+            id="falsify_harvest",
+            name="falsify the harvest",
+            prompt=(
+                "FALSIFY THE HARVEST - reduce the wrong-aggregation risk before you "
+                "decide anything. For EACH harvested Endpoint, try hard to falsify that "
+                "it is relevant AND correct for THIS Service's contract: does a noun or "
+                "action in the path actually match a clause this contract claims, or is "
+                "the match only topical? Is the candidate string that found it one the "
+                "contract really names, or a coincidence? Emit one Claim per harvested "
+                "Endpoint: `subject` the Endpoint; `assertion` the reason; `evidence` the "
+                "path segment or contract clause you tested it against; `verdict` "
+                "`survive` or `reject`. An Endpoint whose only link is topical or "
+                "technological is `reject`. Lean strict: a rejected real Endpoint costs a "
+                "later pass, while an admitted wrong one hangs a false edge that looks "
+                "answered. Emit `claims` only."
+            ),
+            inject=("service", "harvest_surface"),
+            emit=("claims",),
+            depends_on=("harvest_surface",),
         ),
         SubProblem(
             id="prior_insights",
@@ -379,46 +428,49 @@ WORKFLOW = ReasoningWorkflow(
                 "PRIOR MODELLING INSIGHTS - read before you enrich. Call the `notes` "
                 "tool with command=\"read\" to surface what earlier units concluded "
                 "about this Service and its neighbours. Read this Service's own notes "
-                "(`unit` = the slug), notes whose body mentions the path nouns you found "
-                "in the scan, and any note naming a Service that may be missing. For "
-                "each relevant note emit one Claim: `subject` the note key; `assertion` "
-                "the recorded insight; `evidence` the note body excerpt; `verdict` "
-                "`reuse`, `avoid`, or `competing-owner`. A run with no prior notes is a "
-                "valid result - say so. Emit `claims` only."
+                "(`unit` = the slug), notes whose body mentions the path nouns you "
+                "harvested, and any note naming a Service that may be missing. For each "
+                "relevant note emit one Claim: `subject` the note key; `assertion` the "
+                "recorded insight; `evidence` the note body excerpt; `verdict` `reuse`, "
+                "`avoid`, or `competing-owner`. A run with no prior notes is a valid "
+                "result - say so. Emit `claims` only."
             ),
-            inject=("service", "surface_scan"),
+            inject=("service", "falsify_harvest"),
             emit=("claims",),
-            depends_on=("surface_scan",),
+            depends_on=("falsify_harvest",),
         ),
         SubProblem(
             id="candidate_owners",
             name="candidate owners",
             prompt=(
-                "REASONING - candidate owners. Work through these stages out loud:\n"
+                "REASONING - candidate owners, over the SURVIVORS only. Work through "
+                "these stages out loud:\n"
                 + "\n".join(f"{i}. {s}" for i, s in enumerate(_REFLECT_STEPS[:3], 1))
-                + "\n\nFor each Endpoint, emit one Claim per candidate owner: `subject` "
-                "the Endpoint, `assertion` the matched evidence and the strongest "
-                "competing owner, `evidence` the exact path segment or parameter you "
-                "matched, `verdict` the owner you would choose and your confidence. "
-                "Emit `claims` only; do not propose deltas yet."
+                + "\n\nFor each surviving Endpoint (`verdict` `survive`), emit one Claim "
+                "per candidate owner: `subject` the Endpoint, `assertion` the matched "
+                "evidence and the strongest competing owner, `evidence` the exact path "
+                "segment or parameter you matched, `verdict` the owner you would choose "
+                "and your confidence. Emit `claims` only; do not propose deltas yet."
             ),
-            inject=("inventory", "surface", "surface_scan", "prior_insights"),
+            inject=("inventory", "service", "falsify_harvest", "prior_insights"),
             emit=("claims",),
-            depends_on=("surface_scan", "prior_insights"),
+            depends_on=("falsify_harvest", "prior_insights"),
         ),
         SubProblem(
             id="assign",
             name="assign",
             prompt=(
                 "EXTRACTION - assign. " + _REFLECT_STEPS[3] + "\n\nFrom the claims "
-                "above, emit the `aggregates`: one per Endpoint and owning Service(s), "
-                "each with `confidence` (0..1) and `evidence_refs`. Emit one aggregate "
-                "for EACH genuine owner. Use only `service_slug`s from the inventory; an "
-                "invented owner names nothing. Leave services, systems, system_edges and "
-                "every data-modelling list EMPTY. Put the residue in `claims`: one Claim "
-                "per unplaced Endpoint (`verdict` `residue`)."
+                "above, over the survivors only, emit the `aggregates`: one per Endpoint "
+                "and owning Service(s), each with `confidence` (0..1) and "
+                "`evidence_refs`. Emit one aggregate for EACH genuine owner; a Service "
+                "may name ANY live Service as the owner, not only this unit. Use only "
+                "`service_slug`s from the inventory; an invented owner names nothing. "
+                "Leave services, systems, system_edges and every data-modelling list "
+                "EMPTY. Put the residue in `claims`: one Claim per unplaced Endpoint "
+                "(`verdict` `residue`)."
             ),
-            inject=("inventory", "surface", "surface_scan", "candidate_owners"),
+            inject=("inventory", "service", "falsify_harvest", "candidate_owners"),
             emit=("aggregates", "claims"),
             depends_on=("candidate_owners",),
         ),
@@ -436,7 +488,7 @@ WORKFLOW = ReasoningWorkflow(
                 "Service; `assertion` the claimed and unclaimed counts; `evidence` the "
                 "note key; `verdict` `closed`. Emit `claims` only."
             ),
-            inject=("service", "surface_scan", "assign"),
+            inject=("service", "harvest_surface", "assign"),
             emit=("claims",),
             depends_on=("assign",),
         ),
@@ -620,6 +672,7 @@ def assign(
     invoke_fn,
     inventory: dict | None = None,
     existing_slugs: frozenset[str] = frozenset(),
+    owned_endpoints=(),
     bar: float = ASSIGN_CONFIDENCE_BAR,
     run_id: str | None = None,
     tags: list | None = None,
@@ -631,17 +684,26 @@ def assign(
     which existing Service owns each admitted Endpoint, then drop unknown owners and
     SELF-WITHHOLD below the bar, returning the narrowed batch plus its backlog.
 
-    The body runs the role's `WORKFLOW` (candidate_owners -> assign) through the
-    injected `invoke_fn`, then shapes the extraction turn. `invoke_fn(messages, *,
-    schema, system_prompt) -> AnalysisTurn | None` is injected (unit-testable, no
-    live LLM). Fail-open: a `None`/raising `invoke_fn` (or a chunk with no Endpoint
-    in it) degrades to an empty outcome. Pure given its inputs.
+    The body runs the role's `WORKFLOW` (harvest_surface -> falsify_harvest ->
+    prior_insights -> candidate_owners -> assign -> closure) through the injected
+    `invoke_fn`, then shapes the extraction turn. The surface is NOT pre-fed: the
+    prompt carries the Service unit (`_unit_context_block`) and the inventory, and
+    the model discovers the surface through the tools. The full admitted endpoint
+    set is still built from the chunk for the deterministic gates (`shape_proposal`),
+    so a harvested Endpoint outside the unit context is validated, never assumed.
+
+    `owned_endpoints` is the Service's OWN already-aggregated surface (the per-Service
+    unit's `assets`), rendered into the unit card; it is context only, never a write
+    scope. `invoke_fn(messages, *, schema, system_prompt) -> AnalysisTurn | None` is
+    injected (unit-testable, no live LLM). Fail-open: a `None`/raising `invoke_fn`
+    (or a chunk with no Endpoint in it) degrades to an empty outcome. Pure given its
+    inputs.
 
     `memory` / `project_id` / `note_kind` thread the per-unit backstop into
     `run_workflow` (ADR D31): the global assign pass binds them so its turns'
     unit records one note (an `assignment` note); the streamed per-chunk path
     binds none, so it stays inert and byte-unbroken."""
-    from polymerhus.analysis.pod import _inventory_block, _slice_repr
+    from polymerhus.analysis.pod import _inventory_block
     from polymerhus.analysis.proposer_turn import proposer_batch
     from polymerhus.analysis.reasoning_workflow import run_workflow, to_delta_batch
 
@@ -656,11 +718,12 @@ def assign(
     # it into its message list instead.
     system_prompt = _system_prompt()
     # The volatile base sources the workflow injects verbatim: the inventory block
-    # FIRST (identity reuse), then the rendered chunk surface.
+    # (identity reuse) and the Service UNIT context. The settled surface is NOT a
+    # base source - the model DISCOVERS it through the tools (L1-unit-first), so only
+    # the unit travels the prompt. `l0_slice`/`admitted` still feed `shape_proposal`.
     base_artifacts = {
         "inventory": _inventory_block(inventory),
-        "surface": _slice_repr(l0_slice),
-        "service": _service_block(chunk, inventory),
+        "service": _unit_context_block(chunk, inventory, owned_endpoints),
     }
     # Per-batch memory: the chunk id scopes the whole chain to its own session (the
     # supervisor dispatches one chunk at a time), so the next chunk starts fresh.
@@ -872,8 +935,9 @@ async def assign_global(
     bar: float = ASSIGN_CONFIDENCE_BAR,
 ) -> AssignmentCensus:
     """THE GLOBAL ASSIGN PASS (T4, spec 4.2, ADR D7-D11): re-read the settled L0
-    surface and the Service inventory, run the Assigner's `candidate_owners ->
-    assign` workflow over the WHOLE surface, write `AGGREGATES` through the no-mint
+    surface and the Service inventory, run the Assigner's L1-unit-first workflow
+    (harvest_surface -> falsify_harvest -> prior_insights -> candidate_owners ->
+    assign -> closure) over the WHOLE surface, write `AGGREGATES` through the no-mint
     writer, and return (and persist) the census.
 
     A plain awaited call, NOT a supervisor dispatch (ADR D9): `AgentDispatch`
@@ -1002,14 +1066,16 @@ async def assign_services(
     The v2 consumption filter for the Assigner is EACH SERVICE (v2 spec section 2):
     the assigner grounds ownership on the L0 surface THROUGH one Service at a time,
     rather than grouping the whole surface into one pass. Each Service unit carries
-    the settled L0 surface as its broad candidate set (the "no asset-name
-    assumption" rule - the assigner sees the surface and the Service, then asks
-    which endpoints THAT Service owns), and is judged with `existing_slugs={slug}`
-    so it can only write its OWN `AGGREGATES` (shared ownership stays possible: two
-    Services independently claim the same endpoint).
+    the settled L0 surface as the candidate set the deterministic gates validate
+    against, and its OWN aggregated endpoints as the unit context; the model
+    DISCOVERS its relevant surface through the tools, driven by the contract. A
+    Service is judged with the FULL live inventory as `existing_slugs`, so it may
+    name ANY live Service as an owner - there is NO per-Service write filter. The
+    only surviving gate is the GLOBAL inventory validation: a slug not in the live
+    inventory is still dropped by `drop_out_of_inventory`.
 
     It reuses the SAME `assign` body, prompt and five shaping gates as the global
-    pass - only the unit set and the validation set differ - and sums the per-Service
+    pass - only the unit set and the unit context differ - and sums the per-Service
     censuses into one. Fail-open per Service: a unit that raises contributes zero and
     the next unit runs. Persistence mirrors `assign_global` (best-effort)."""
     from polymerhus.analysis.l0_stream import read_l0_assets
@@ -1057,8 +1123,10 @@ async def assign_services(
         slug = str(unit.source_job or "").removeprefix("service:") or unit.chunk_id
         if slug not in all_slugs:
             continue
-        # The broad candidate set: the WHOLE settled surface, judged one Service at a
-        # time; `existing_slugs={slug}` makes the write filter per-Service.
+        # The unit is the prompt anchor; the whole settled surface rides the chunk so
+        # the deterministic gates can validate a harvested Endpoint. `unit.assets` is
+        # the Service's OWN already-aggregated surface, fed as context. The FULL live
+        # inventory is the validation set, so no per-Service write filter remains.
         chunk = Chunk(
             chunk_id=unit.chunk_id, source_job=f"service:{slug}", assets=assets,
         )
@@ -1068,7 +1136,8 @@ async def assign_services(
                 chunk,
                 invoke_fn=invoke_fn,
                 inventory=inventory,
-                existing_slugs=frozenset({slug}),
+                existing_slugs=all_slugs,
+                owned_endpoints=tuple(unit.assets),
                 bar=bar,
                 run_id=run_id,
                 tags=["analysis", "assigner", "service_sourced", "per_service"],

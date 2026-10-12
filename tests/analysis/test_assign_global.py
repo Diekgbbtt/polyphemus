@@ -1,9 +1,10 @@
 """Unit-tier assertions for the global assign pass (T4).
 
 The pass re-reads the SETTLED L0 surface and the Service inventory, runs the
-Assigner's `candidate_owners -> assign` workflow over the whole surface via an
-injected invoke seam, writes `AGGREGATES` through the no-mint writer, and reports
-the census. Everything is injected (read_fn / inventory_fn / invoke_fn / write_fn
+Assigner's whole workflow (harvest_surface -> falsify_harvest -> prior_insights ->
+candidate_owners -> assign -> closure) over the whole surface via an injected invoke
+seam, writes `AGGREGATES` through the no-mint writer, and reports the census.
+Everything is injected (read_fn / inventory_fn / invoke_fn / write_fn
 / persist_fn), so the whole pass runs with no Neo4j, no LLM and no database.
 
 The properties pinned here:
@@ -141,18 +142,21 @@ def test_stale_counts_only_endpoints_with_no_kept_owner():
 
 def test_the_whole_surface_is_grouped_into_one_pass():
     invoker = _Invoker(AnalysisTurn())
-    _run(assign_global(
+    census = _run(assign_global(
         "p1", "ar1",
         read_fn=lambda pid: _surface("/a", "/b", "/c"),
         inventory_fn=lambda pid: INVENTORY,
         invoke_fn=invoker, write_fn=_Writer(), persist_fn=_Persister(),
     ))
-    # the Assigner's five v2 sub-problems: surface_scan, prior_insights,
-    # candidate_owners, assign, closure
-    assert len(invoker.calls) == 5
+    # the Assigner's six v2 sub-problems: harvest_surface, falsify_harvest,
+    # prior_insights, candidate_owners, assign, closure
+    assert len(invoker.calls) == 6
+    # the WHOLE surface is admitted in the one pass (the deterministic gates see it),
+    # but it is NOT pre-fed: the model discovers it through the tools
+    assert census.admitted == 3
     first_user = invoker.calls[0][0][-1].content
-    assert all(p in first_user for p in ("/a", "/b", "/c"))
     assert "checkout" in first_user
+    assert "/a" not in first_user and "/b" not in first_user and "/c" not in first_user
 
 
 def test_global_pass_turns_bind_notes_and_the_backstop_writes_an_assignment_note(
@@ -182,7 +186,7 @@ def test_global_pass_turns_bind_notes_and_the_backstop_writes_an_assignment_note
     ))
 
     # every sub-problem turn ran through the notes-bound seam (not `default_invoke_fn`)
-    assert len(seen) == 5
+    assert len(seen) == 6
     for kw in seen:
         names = {getattr(t, "name", "") for t in kw.get("tools") or ()}
         assert "notes" in names, "every global-pass turn binds notes (D26)"

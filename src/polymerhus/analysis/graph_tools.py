@@ -2,7 +2,7 @@
 
 The v2 pipeline reasons FROM a unit and enriches it. Every proposer therefore
 needs to query the mapped L0 surface broadly and aggressively, without assuming
-asset names, and the data-modeller additionally needs the recorded request shapes.
+asset names, and to confirm discovered paths against the recorded request shapes.
 
 Three tools are bound on every proposer turn (the constant request shape, the
 cache rule):
@@ -124,8 +124,8 @@ def build_analysis_graph_view_tool(project_id: str, *, read_fn: GraphReadFn | No
 
 
 def build_http_history_tools(project_id: str):
-    """The `search_http_history` / `get_http_artifact` read pair, bound for the
-    data-modeller so it can read the recorded request shapes.
+    """The `search_http_history` / `get_http_artifact` read pair, bound for every
+    proposer that harvests a surface so it can read the recorded request shapes.
 
     The classes and contracts are single-sourced in the hunting module and
     reused verbatim; the default read seams are the app client. Resolved lazily
@@ -152,7 +152,7 @@ def build_http_history_tools(project_id: str):
 def build_surface_tools(role_id: str, *, project_id: str | None = None,
                         with_http: bool = False) -> tuple:
     """The L0-grounding tools bound on a proposer turn: `graph_view` always, and
-    the HTTP-history pair when `with_http` (the data-modeller)."""
+    the HTTP-history pair when `with_http` (every harvesting proposer)."""
     if not project_id:
         return ()
     tools: list[Any] = []

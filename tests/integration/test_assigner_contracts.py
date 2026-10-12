@@ -62,11 +62,12 @@ def _turn(batch: L1DeltaBatch) -> AnalysisTurn:
 def _capture():
     """An invoke_fn that records what it was handed and returns the given turn.
 
-    The Assigner's workflow makes ONE call per sub-problem (`candidate_owners`
-    then `assign`), so the record is overwritten each call; the LAST call is the
-    `assign` extraction turn, which carries the full volatile context. The stable
-    role prompt rides the `system_prompt=` kwarg, not the message list (the
-    converged seam, ADR D26)."""
+    The Assigner's workflow makes ONE call per sub-problem (harvest_surface ->
+    falsify_harvest -> prior_insights -> candidate_owners -> assign -> closure), so
+    the record is overwritten each call; `seen["calls"]` keeps every turn, and the
+    `assign` extraction turn is selected by `_turn_for`. The stable role prompt
+    rides the `system_prompt=` kwarg, not the message list (the converged seam,
+    ADR D26)."""
     seen = {"calls": []}
 
     def make(batch):
@@ -192,9 +193,24 @@ def test_C20_idempotent_same_inputs_same_result():
     assert a == b
 
 
+def _turn_for(seen, marker: str) -> str:
+    """The human message of the recorded call whose text carries `marker`. The
+    extraction turn is `assign`; the LAST call is `closure`, so a test that wants
+    the extraction turn must select it rather than take `[-1]`."""
+    for messages, _system_prompt in seen["calls"]:
+        content = messages[-1].content
+        if marker in content:
+            return content
+    raise AssertionError(f"no recorded call carries {marker!r}")
+
+
 # --- C21: D2/D7 applied at the proposer ---------------------------------------
 
-def test_C21_prompt_renders_admitted_endpoints_only():
+def test_C21_prompt_carries_the_unit_not_the_passed_surface():
+    """The L1-unit-first prompt no longer renders the settled surface: the unit
+    travels the prompt and the model DISCOVERS the surface through the tools. The
+    role admission set still narrows the deterministic gates, and no type this role
+    does not admit can leak into the prompt."""
     chunk = Chunk(chunk_id="katana:0", assets=(
         _ep("/orders/42"),
         AssetDelta(type="Parameter", identity={"name": "secretparam", "baseurl": BU}),
@@ -202,10 +218,9 @@ def test_C21_prompt_renders_admitted_endpoints_only():
     ))
     seen, make = _capture()
     assign(chunk, invoke_fn=make(L1DeltaBatch()), inventory=INVENTORY, existing_slugs=SLUGS)
-    # The last call is the `assign` extraction turn; its one human message carries
-    # the injected surface.
-    user = seen["messages"][-1].content
-    assert "/orders/42" in user
+    user = _turn_for(seen, "EXTRACTION - assign")
+    assert "SERVICE UNIT" in user              # the unit context travels the prompt
+    assert "/orders/42" not in user            # the settled surface is NOT pre-fed
     assert "secretparam" not in user
     assert "X-Secret-Header" not in user
 
@@ -229,7 +244,7 @@ def test_C22_observations_not_rendered_on_the_assigner_path():
 def test_C23_prompt_directs_contract_match_and_forbids_minting():
     seen, make = _capture()
     assign(_chunk("/x"), invoke_fn=make(L1DeltaBatch()), inventory=INVENTORY, existing_slugs=SLUGS)
-    system, user = seen["system_prompt"], seen["messages"][-1].content
+    system, user = seen["system_prompt"], _turn_for(seen, "EXTRACTION - assign")
     assert "Take a basket to a paid order." in user   # the contract IS in the prompt
     assert "path segments" in system                  # the match is directed
     assert "cannot create a Service" in system        # minting is forbidden
@@ -243,10 +258,11 @@ def test_C23_prompt_directs_contract_match_and_forbids_minting():
 def test_C24_stable_prefix_in_system_volatile_in_user():
     seen, make = _capture()
     assign(_chunk("/x"), invoke_fn=make(L1DeltaBatch()), inventory=INVENTORY, existing_slugs=SLUGS)
-    system, user = seen["system_prompt"], seen["messages"][-1].content
+    system, user = seen["system_prompt"], _turn_for(seen, "EXTRACTION - assign")
     assert "checkout" not in system            # no inventory identity in the stable half
     assert "checkout" in user                  # it rides the volatile half
-    assert user.index("checkout") < user.index("/x")  # identities block comes FIRST
+    # the identities block comes FIRST, then the Service unit card
+    assert user.index("Services (business_function_slug)") < user.index("SERVICE UNIT")
 
 
 # --- C25: the reflect verbatim ------------------------------------------------
@@ -544,14 +560,14 @@ def test_C37b_the_default_arm_is_skill_and_an_unknown_value_coerces_to_it(monkey
 
 
 def test_C38_assigner_skill_is_single_sourced():
-    """The discipline lives in ONE place - the module's prompts/ dir. A second
-    copy in Python is how the two drift apart."""
-    from pathlib import Path
+    """The discipline lives in ONE place - the module's prompts/ dir, for the ACTIVE
+    variant. A second copy in Python is how the two drift apart."""
+    from polymerhus.analysis.prompt_variant import prompt_path
 
     skill = assigner._load_assigner_skill()
     assert skill
     assert not skill.startswith("---")                      # plain .md, no frontmatter
-    expected = (Path(assigner.__file__).resolve().parent / "prompts" / "assigner.md").read_text(encoding="utf-8")
+    expected = prompt_path("assigner").read_text(encoding="utf-8")
     assert skill == expected                                 # single source
     # the in-process memo is what keeps the system prefix byte-stable across a run,
     # so the provider prompt-cache survives every chunk of that run

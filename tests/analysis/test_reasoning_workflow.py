@@ -159,9 +159,15 @@ def test_assigner_workflow_matches_the_spec_table():
 
     by_id = {sp.id: sp for sp in WORKFLOW.sub_problems}
     assert [sp.id for sp in WORKFLOW.sub_problems] == [
-        "surface_scan", "prior_insights", "candidate_owners", "assign", "closure"]
-    assert by_id["surface_scan"].emit == ("claims",)
+        "harvest_surface", "falsify_harvest", "prior_insights",
+        "candidate_owners", "assign", "closure"]
+    assert by_id["harvest_surface"].emit == ("claims",)
+    assert by_id["falsify_harvest"].emit == ("claims",)
+    assert by_id["falsify_harvest"].depends_on == ("harvest_surface",)
+    assert by_id["prior_insights"].emit == ("claims",)
+    assert by_id["prior_insights"].depends_on == ("falsify_harvest",)
     assert by_id["candidate_owners"].emit == ("claims",)
+    assert by_id["candidate_owners"].depends_on == ("falsify_harvest", "prior_insights")
     assert by_id["assign"].emit == ("aggregates", "claims")
     assert by_id["assign"].depends_on == ("candidate_owners",)
     assert by_id["closure"].depends_on == ("assign",)

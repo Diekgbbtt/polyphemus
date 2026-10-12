@@ -130,16 +130,26 @@ def _analysis_notes_tool(project_id: str | None):
         return None
 
 
+# The roles whose harvest needs the recorded request shapes, so they bind the
+# HTTP-history pair on every turn (the constant-tool-set rule). All three analysis
+# proposers harvest a surface now: the data-modeller always did, and the assigner /
+# mechanism-typist discovery phases query paths the history can confirm.
+_HTTP_TOOL_ROLES = frozenset({"assigner", "mechanism_typist", "data_modeller"})
+
+
 def _surface_tools(role_id: str, project_id: str | None) -> tuple:
     """The L0-grounding tools every proposer binds (analysis-unit-first v2): the
-    read-only `graph_view` (broad L0 query) and, for the data-modeller, the
-    HTTP-history read pair (request shapes). Fail-open: an unbuildable surface
-    binds nothing. The set is constant across the role's turns (the cache rule)."""
+    read-only `graph_view` (broad L0 query) plus the HTTP-history read pair (recorded
+    request shapes) for the roles that harvest a surface. All three proposers harvest
+    now - the assigner and the mechanism-typist discover their surface too - so they
+    all bind the pair, and it is present on every turn (the cache rule). Fail-open:
+    an unbuildable surface binds nothing. The set is constant across the role's
+    turns."""
     try:
         from polymerhus.analysis.graph_tools import build_surface_tools
 
         return build_surface_tools(
-            role_id, project_id=project_id, with_http=(role_id == "data_modeller"))
+            role_id, project_id=project_id, with_http=role_id in _HTTP_TOOL_ROLES)
     except Exception:  # noqa: BLE001 - fail-open: no surface tools bound
         return ()
 

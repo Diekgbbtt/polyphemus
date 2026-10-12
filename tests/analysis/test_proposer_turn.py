@@ -606,10 +606,13 @@ def test_binding_notes_keeps_the_structured_method_constant(monkeypatch):
         structured_response_format("mechanism_typist", schema, tools_bound=False),
         ToolStrategy)
     # The prose turn binds the same final set the structured turn will bind:
-    # (notes, AnalysisTurn) - the structured turn passes only notes and lets
-    # `response_format` append AnalysisTurn last.
+    # (notes, graph_view, http pair, AnalysisTurn) - the structured turn passes only
+    # notes and lets `response_format` append AnalysisTurn last. The mechanism-typist
+    # harvests a surface, so it binds the HTTP-history pair too (T1/T2).
     prose_tools = _prose_tools("mechanism_typist", project_id="proj-1")
-    assert tuple(t.name for t in prose_tools) == ("notes", "graph_view", "AnalysisTurn")
+    assert tuple(t.name for t in prose_tools) == (
+        "notes", "graph_view", "search_http_history", "get_http_artifact",
+        "AnalysisTurn")
 
 
 def test_a_prose_turn_binds_notes_too(monkeypatch):
@@ -619,7 +622,19 @@ def test_a_prose_turn_binds_notes_too(monkeypatch):
     from polymerhus.analysis.proposer_turn import _prose_tools
 
     names = tuple(t.name for t in _prose_tools("assigner", project_id="proj-1"))
-    assert names == ("notes", "graph_view", "AnalysisTurn")
+    assert names == ("notes", "graph_view", "search_http_history",
+                     "get_http_artifact", "AnalysisTurn")
+
+
+def test_the_assigners_bound_tool_set_includes_the_http_pair(monkeypatch):
+    """T1: the assigner's harvest queries paths, so it binds the HTTP-history pair
+    on every turn - the set matches the tools its rewritten workflow tells it to
+    call, and stays constant across the chain (the cache rule)."""
+    _force_voluntary_rung(monkeypatch)
+    from polymerhus.analysis.proposer_turn import _prose_tools
+
+    names = {t.name for t in _prose_tools("assigner", project_id="proj-1")}
+    assert {"search_http_history", "get_http_artifact"} <= names
 
 
 def test_the_constant_shape_covers_the_whole_mechanism_typist_chain(monkeypatch):

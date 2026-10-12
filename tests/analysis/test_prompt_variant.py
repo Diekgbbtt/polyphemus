@@ -129,3 +129,19 @@ def test_the_three_batched_files_exist_and_are_non_empty():
         path = _prompts_dir() / f"{base}-batched-l1unit-first.md"
         assert path.is_file(), f"{path} is missing"
         assert path.read_text(encoding="utf-8").strip(), f"{path} is empty"
+
+
+def test_the_default_assigner_prompt_is_rewritten_not_the_legacy_copy(monkeypatch):
+    """T1: the default variant's assigner file is the L1-unit-first rewrite, not a
+    verbatim copy of the legacy file. The rewrite carries the harvest/falsify
+    discipline the old L0chunk-first text never had, and the legacy file is retained
+    verbatim for the rollback."""
+    from polymerhus.analysis import assigner
+
+    monkeypatch.delenv("ANALYSIS_PROMPT_VARIANT", raising=False)
+    monkeypatch.setattr(assigner, "_ASSIGNER_SKILLS", {})
+    batched = assigner._load_assigner_skill()
+    legacy = _read("assigner.md")
+    assert batched != legacy
+    assert "HARVEST" in batched and "FALSIFY" in batched
+    assert "Work each Endpoint in four moves" in legacy
