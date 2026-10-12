@@ -44,6 +44,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from polymerhus.analysis.analyser_types import L1DeltaBatch
 from polymerhus.analysis.chunking import Chunk, admit_for_role
+from polymerhus.analysis.l1_curator import DATA_RELATIONSHIP_KINDS
 from polymerhus.analysis.l1_types import L0Ref
 from polymerhus.analysis.prompt_variant import prompt_path, resolve_prompt_variant
 from polymerhus.analysis.proposer_reasoning import cot_scaffold, role_header
@@ -87,7 +88,6 @@ class DataPlaneStats(BaseModel):
     admitted_headers: int = 0
     admitted_secrets: int = 0
     observations_attached: int = 0
-    candidate_services: int = 0
 
     # generation side
     reflection_exhausted: bool = False
@@ -170,16 +170,15 @@ def _canonical_label(raw) -> str | None:
     return _LABEL_ALIASES.get(raw.strip().lower())
 
 
-def site_index(admitted) -> dict[tuple[str, str], dict]:
-    """Index this chunk's admitted Parameter/Header/Secret assets by
-    `(label, the-part-a-model-reliably-gets-right)`, for `resolve_surface_refs` to
-    canonicalise against. Parameter/Header key on `name`; Secret keys on
-    `value_hash` (its whole identity). First match wins on a name collision -
-    ambiguity here is bounded by the chunk (<=100 assets), and the reflection
-    scaffold's HYPOTHESISE step is where ambiguity is meant to be resolved, not
-    this index."""
+def site_index(sites) -> dict[tuple[str, str], dict]:
+    """Index the Parameter/Header/Secret sites the reference gate resolves against
+    by `(label, the-part-a-model-reliably-gets-right)`. `sites` is the UNION of the
+    unit's admitted chunk and the live graph-discovered sites (C-M1). Parameter and
+    Header key on `name`; Secret keys on `value_hash` (its whole identity). First
+    match wins on a name collision; the reflection scaffold's HYPOTHESISE step is
+    where ambiguity is meant to be resolved, not this index."""
     index: dict[tuple[str, str], dict] = {}
-    for a in admitted:
+    for a in sites:
         ident = a.identity or {}
         if a.type == "Parameter" or a.type == "Header":
             name = ident.get("name")
@@ -215,7 +214,8 @@ def resolve_surface_refs(batch: L1DeltaBatch, *, sites: dict) -> tuple[L1DeltaBa
     """GATE 3, THE REFERENCE GATE (section 5.1): rewrite every `surfaces_at.l0`
     into the exact `Parameter{name,position,endpoint_path,baseurl}` /
     `Header{name,value,baseurl}` / `Secret{value_hash}` shape, and DROP any that
-    names no site this chunk actually streamed.
+    names no site the gate could resolve against (the admitted chunk UNION the
+    live graph-discovered sites, C-M1).
 
     `_l0_match_clause` MATCHes on exact label + identity and does not distinguish
     a zero-row match from a write (`l1_curator._write_each` counts it as written
@@ -404,60 +404,16 @@ def shape_proposal(
     return DataPlaneOutcome(batch=batch, backlog=backlog, stats=stats)
 
 
-# --- candidate owning Services (section 6) -------------------------------------
+# --- observed vocabulary (section 5.3) -----------------------------------------
 
-def _asset_ref(asset) -> str:
-    ident = asset.identity or {}
-    if asset.type == "Parameter":
-        return f"Parameter:{ident.get('name')}@{ident.get('endpoint_path')}"
-    if asset.type == "Header":
-        return f"Header:{ident.get('name')}@{ident.get('baseurl')}"
-    if asset.type == "Secret":
-        return f"Secret:{ident.get('value_hash')}"
-    return f"{asset.type}:{ident}"
-
-
-def owning_services(admitted, aggregations: list[dict]) -> dict[str, list[str]]:
-    """The candidate-owning-Service join (section 6): a Parameter joins on
-    `endpoint_path` + `baseurl` against the live Service->Endpoint aggregation
-    view; a Header/Secret has no endpoint in its identity, so it joins on
-    `baseurl` alone (deliberately coarser - a response header is origin-scoped
-    rather than endpoint-scoped, and pretending otherwise would manufacture
-    precision the surface does not carry). `aggregations` is
-    `l1_read.read_service_aggregations`'s live view; only rows whose L0 labels
-    include `Endpoint` participate."""
-    by_endpoint: dict[tuple, set[str]] = defaultdict(set)
-    by_baseurl: dict[str, set[str]] = defaultdict(set)
-    for row in aggregations:
-        slug = row.get("slug")
-        labels = row.get("labels") or []
-        if not slug or "Endpoint" not in labels:
-            continue
-        props = row.get("props") or {}
-        path, baseurl = props.get("path"), props.get("baseurl")
-        if path and baseurl:
-            by_endpoint[(path, baseurl)].add(slug)
-        if baseurl:
-            by_baseurl[baseurl].add(slug)
-
-    out: dict[str, list[str]] = {}
-    for a in admitted:
-        ident = a.identity or {}
-        ref = _asset_ref(a)
-        if a.type == "Parameter":
-            key = (ident.get("endpoint_path"), ident.get("baseurl"))
-            out[ref] = sorted(by_endpoint.get(key, ()))
-        elif a.type in ("Header", "Secret"):
-            out[ref] = sorted(by_baseurl.get(ident.get("baseurl"), ()))
-    return out
-
-
-def observed_vocabulary(admitted) -> frozenset[str]:
-    """The names this chunk could actually have observed (section 5.3): the
-    `name` of every admitted Parameter/Header, plus any non-identity keys those
-    (and Secret) assets carry in `props`."""
+def observed_vocabulary(sites) -> frozenset[str]:
+    """The names the observed-only gate may keep (section 5.3): the `name` of every
+    Parameter/Header site, plus any non-identity keys those (and Secret) assets
+    carry in `props`. The `sites` list is the UNION of the unit's admitted chunk
+    and the live graph-discovered sites (C-M1), so a field seen only through
+    `graph_view` is still groundable."""
     names: set[str] = set()
-    for a in admitted:
+    for a in sites:
         ident = a.identity or {}
         if a.type in ("Parameter", "Header") and ident.get("name") is not None:
             names.add(str(ident["name"]))
@@ -553,7 +509,9 @@ _FLOW_EXTRACT_TASK = (
     "TASK - EXTRACT THE FLOWS. From the shape above, fill `data_flows` "
     "(`service_slug` copied VERBATIM from the live Service inventory - any live "
     "Service may be named as producer or consumer) and `data_relationships` "
-    "(a fixed allowlist `kind`) for every relation the surface itself shows. Name what "
+    "(the fixed allowlist `kind`, one of: "
+    + ", ".join(k for k, _desc in DATA_RELATIONSHIP_KINDS)
+    + ") for every relation the surface itself shows. Name what "
     "you WITHHELD and why, so withholding is the demonstrated conclusion."
 )
 
@@ -682,7 +640,7 @@ WORKFLOW = ReasoningWorkflow(
             prompt=(
                 f"{_ROLE_HEADER}\n\nCLOSE - write the modelling-closure note for this "
                 "Service. Call `notes` with command=\"write\", action=\"append\", unit = "
-                "the Service slug, note_name=\"modelling_closure\", kind=\"data\", and a "
+                "the Service slug, note_name=\"modelling-closure\", kind=\"data\", and a "
                 "body summarising this enrichment. The body MUST name: the DataItems "
                 "lifted and compounded (item_key, fields, anchors, flows); the records "
                 "reused; what you WITHHELD or FALSIFIED and why; the recorded request "
@@ -704,6 +662,28 @@ def _service_slug(chunk: Chunk) -> str:
     Mirrors the assigner's `_unit_context_block` so both read the same unit key."""
     src = str(getattr(chunk, "source_job", "") or "")
     return src.removeprefix("service:") if src.startswith("service:") else str(chunk.chunk_id)
+
+
+def _contracted_service(chunk: Chunk, inventory: dict | None) -> str:
+    """The unit's non-empty `service_contract` (C-M2): a Service with a contract but
+    no PRE-AGGREGATED surface still discovers its own."""
+    contracts = (inventory or {}).get("service_contracts") or {}
+    return str(contracts.get(_service_slug(chunk), "") or "") if isinstance(contracts, dict) else ""
+
+
+def _discovered_sites(read_sites_fn, project_id: str | None) -> list:
+    """The live graph-discovered sites the reference/observed gates resolve against
+    (C-M1), filtered to the surface labels this role may ground on. Fail-open to the
+    admitted chunk alone."""
+    if read_sites_fn is None or not project_id:
+        return []
+    try:
+        sites = read_sites_fn(project_id) or []
+    except Exception:  # noqa: BLE001 - a read blip degrades to the chunk-only index
+        logger.warning("data_modeller: discovered-sites read failed; using the chunk only",
+                       exc_info=True)
+        return []
+    return [a for a in sites if a.type in _SURFACE_LABELS]
 
 
 def _aggregated_endpoints_repr(chunk: Chunk, aggregations: list[dict] | None) -> str:
@@ -806,7 +786,7 @@ def _origin_observations_block(chunk: Chunk) -> str:
     text-matching refinement (operator-rejected, question 16)."""
     if not chunk.observations:
         return "ORIGIN-SCOPED ADVERSARIAL INSIGHT: (none)"
-    lines = ["ORIGIN-SCOPED ADVERSARIAL INSIGHT (context for every admitted asset on that origin):"]
+    lines = ["ORIGIN-SCOPED ADVERSARIAL INSIGHT (context for every surface site on that origin):"]
     for o in chunk.observations:
         anchor = o.anchor or {}
         lines.append(
@@ -832,11 +812,11 @@ _ROLE_VERBATIM = (
     "an endpoint or a parameter itself. A parameter that witnesses no business record "
     "(a pagination cursor, a CSRF token, a framework header) is correctly left alone.\n"
     "REFERENCING A SURFACE SITE: put the site in `surfaces_at.l0` as "
-    '{"label": "Parameter"|"Header"|"Secret", "identity": {...exact fields shown to '
-    'you...}}. NEVER reference an Endpoint - a path is the address you interrogate, '
+    '{"label": "Parameter"|"Header"|"Secret", "identity": {...exact fields you '
+    'discovered...}}. NEVER reference an Endpoint - a path is the address you interrogate, '
     "never a place data appears.\n"
     "`fields` on a DataItem name ONLY fields you actually OBSERVED on the surface "
-    "shown to you; never a speculative or merely-plausible field.\n"
+    "you discovered; never a speculative or merely-plausible field.\n"
     "`data_flows.service_slug` is copied VERBATIM from the live Service inventory you "
     "are given - any live Service may be named as producer or consumer; never a slug "
     "you invent.\n"
@@ -946,6 +926,7 @@ def stateful_invoke_fn(run_id: str, checkpointer, project_id: str | None = None)
 def model_data(
     chunk: Chunk, *, invoke_fn=None, inventory: dict | None = None,
     aggregations: list[dict] | None = None,
+    read_sites_fn=None,
     memory: "AnalysisMemoryStore | None" = None, project_id: str | None = None,
     run_id: str | None = None,
 ) -> DataPlaneOutcome:
@@ -960,28 +941,33 @@ def model_data(
     (L1-unit-first). `existing_slugs` at the shaping seam is the full live inventory,
     so a flow may name ANY live Service - there is no per-unit write scope.
 
+    The deterministic reference/observed gates resolve against the unit's admitted
+    chunk UNION the live graph-discovered sites `read_sites_fn(project_id)` returns
+    (C-M1): a site the model found only through `graph_view` can still ground an item.
+
     `invoke_fn(messages, *, schema, system_prompt) -> AnalysisTurn | None` is injected
     (unit-testable, no live LLM). FAIL-CLOSED on hypotheses exhaustion (empty outcome,
     `stats.reflection_exhausted=True`); empty on extraction exhaustion. Fail-open on
     any exception - never crashes the caller. An empty admission is a VALID empty
-    result with NO LLM call (DPL-DEC precision-first: nothing to model is not a
-    judgment to make)."""
+    result with NO LLM call - EXCEPT for a contracted Service with no pre-aggregated
+    surface, which still DISCOVERS its own (C-M2; DPL-DEC precision-first: nothing to
+    model is not a judgment to make, but discovery is the point)."""
     admitted = admit_for_role(chunk, ROLE)
-    if not admitted:
+    if not admitted and not _contracted_service(chunk, inventory):
         return DataPlaneOutcome()
 
     invoke_fn = invoke_fn or _default_invoke_fn
     system_prompt = _system_prompt()
-    candidates = owning_services(admitted, aggregations or [])
+    discovered = _discovered_sites(read_sites_fn, project_id)
+    sites = [*admitted, *discovered]
     admitted_counts: dict[str, int] = defaultdict(int)
     for a in admitted:
         admitted_counts[a.type] += 1
-    candidate_slugs = {slug for slugs in candidates.values() for slug in slugs}
 
     # The volatile base sources the workflow injects verbatim. The whole settled
     # surface is NOT a base source (L1-unit-first): the model DISCOVERS it through
     # the tools. Only the unit context, the known DataItems, the full live Service
-    # inventory and the origin-scoped insight travel the prompt. `admitted` still
+    # inventory and the origin-scoped insight travel the prompt. `sites` still
     # feeds the deterministic gates (reference resolution, observed vocabulary).
     base_artifacts = {
         "service": _service_unit_block(chunk, inventory, aggregations),
@@ -1003,8 +989,8 @@ def model_data(
                 WORKFLOW, invoke_fn=invoke_fn, system_prompt=system_prompt,
                 base_artifacts=base_artifacts,
                 halt_when=lambda sp, turn: sp.id == "record_hypotheses" and turn is None,
-                unit_slug=chunk.chunk_id, memory=memory, project_id=project_id, run_id=run_id,
-                note_kind="data",
+                unit_slug=_service_slug(chunk), memory=memory, project_id=project_id,
+                run_id=run_id, note_kind="data",
             )
     except Exception:  # fail-open: LLM error -> empty outcome, never crash (DPL-DEC fail-open)
         logger.warning("data_modeller: workflow failed; degrading to empty outcome", exc_info=True)
@@ -1017,7 +1003,6 @@ def model_data(
             admitted_headers=admitted_counts.get("Header", 0),
             admitted_secrets=admitted_counts.get("Secret", 0),
             observations_attached=len(chunk.observations),
-            candidate_services=len(candidate_slugs),
             reflection_exhausted=True,
         ))
 
@@ -1034,10 +1019,10 @@ def model_data(
     inv = inventory or {}
     outcome = shape_proposal(
         raw,
-        sites=site_index(admitted),
+        sites=site_index(sites),
         existing_slugs=frozenset(inv.get("services") or ()),
         known_items=frozenset(inv.get("data_items") or ()),
-        observed_names=observed_vocabulary(admitted),
+        observed_names=observed_vocabulary(sites),
         existing_fields=inv.get("data_item_fields") or {},
     )
     stats = outcome.stats.model_copy(update={
@@ -1045,7 +1030,6 @@ def model_data(
         "admitted_headers": admitted_counts.get("Header", 0),
         "admitted_secrets": admitted_counts.get("Secret", 0),
         "observations_attached": len(chunk.observations),
-        "candidate_services": len(candidate_slugs),
         "extraction_exhausted": extraction_exhausted,
     })
     outcome = outcome.model_copy(update={"stats": stats})
@@ -1079,7 +1063,8 @@ def _default_read_aggregations(project_id: str) -> list[dict]:
 
 
 def make_data_modeller_body(
-    *, invoke_fn=None, inventory_fn=None, aggregations_fn=None, memory=None,
+    *, invoke_fn=None, inventory_fn=None, aggregations_fn=None, read_sites_fn=None,
+    memory=None,
 ):
     """Adapt `model_data` to the supervisor's `ProposerBody` signature
     (`(dispatch, state) -> L1DeltaBatch | None`), a FACTORY binding every
@@ -1087,10 +1072,12 @@ def make_data_modeller_body(
     `functools.partial` shape, so the dispatch-time reads stay explicit here).
 
     `memory` threads the per-unit analysis backstop into `run_workflow` (ADR D31);
-    it is inert (None) on the streamed default. Returns `None` immediately when
-    `dispatch.phase != "A1"` - the inert A.2 seam (DPL-DEC-23): A.2 is
-    `designed-not-built`, never a silent half-implementation. Every read is
-    guarded, so this body never raises regardless of what its collaborators do."""
+    it is inert (None) on the streamed default. `read_sites_fn` is the C-M1
+    live-identity seam; absent it, the gates resolve against the chunk alone.
+    Returns `None` immediately when `dispatch.phase != "A1"` - the inert A.2 seam
+    (DPL-DEC-23): A.2 is `designed-not-built`, never a silent half-implementation.
+    Every read is guarded, so this body never raises regardless of what its
+    collaborators do."""
 
     def body(dispatch, state) -> L1DeltaBatch | None:
         if getattr(dispatch, "phase", None) != "A1":
@@ -1109,10 +1096,11 @@ def make_data_modeller_body(
         try:
             aggregations = read_aggregations(project_id)
         except Exception:
-            logger.warning("data_modeller: aggregation read failed; no candidate owners", exc_info=True)
+            logger.warning("data_modeller: aggregation read failed; no live Service context", exc_info=True)
             aggregations = []
         outcome = model_data(
             chunk, invoke_fn=invoke_fn, inventory=inventory, aggregations=aggregations,
+            read_sites_fn=read_sites_fn,
             memory=memory, project_id=project_id or None,
             run_id=(state.get("run_id") or "").removeprefix("stream-") or None,
         )

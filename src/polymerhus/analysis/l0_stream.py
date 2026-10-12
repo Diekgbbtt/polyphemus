@@ -96,6 +96,19 @@ def read_l0_assets(project_id: str, *, read_fn=None) -> list[AssetDelta]:
         return []
 
 
+# The L0 labels a data-modeller `surfaces_at` may ground on (DPL-DEC-10).
+_SURFACE_LABELS: tuple[str, ...] = ("Parameter", "Header", "Secret")
+
+
+def read_surface_sites(project_id: str, *, read_fn=None) -> list[AssetDelta]:
+    """The live Parameter/Header/Secret sites, independent of any one unit's
+    pre-aggregated chunk (C-M1). The data-modeller's reference/observed gates
+    resolve against the UNION of this index and the unit's admitted chunk, so a
+    site discovered only through `graph_view` still grounds an item. Reuses the
+    same fail-open `read_l0_assets` read, filtered to the surface labels."""
+    return [a for a in read_l0_assets(project_id, read_fn=read_fn) if a.type in _SURFACE_LABELS]
+
+
 def read_observations(project_id: str, *, read_fn=None) -> list[Observation]:
     """The project's triager `Observation`s, with their ANCHOR reconstructed, for
     the chunk builder (dataplane-A1-decisions.md §11 step 0).

@@ -8,21 +8,25 @@ it emits `L1DeltaBatch{systems, system_edges}`; all System DEEPENING (WebPresent
 rendering/navigation, authz inverse-pyramid, backward-recon probes, the AnatomyResult
 triple) is Phase B (epic #39; deepening #41; System under-typing #40).
 
-Algorithm (grilled #9) - THREE sequential calls over one `service` chunk delivered
-AFTER the Assigner (`chunking.CONCERN_ROLES["service"] = ("assigner", "mechanism_typist")`):
+Algorithm (T2, `batched-l1unit-first-adr.md`) - EIGHT sequential sub-problems over
+one unit, a Service OR a System (`service_slice.build_service_slices` appends
+both), each turn speaking the ONE `AnalysisTurn` envelope:
 
-  1. REFLECTION (free-text prose, the "reason" call): a hypothesis-driven meta-process
-     (overthink + critical-thinking + define/debug-hypothesis) over each asset paired
-     with its triager observation insight, the currently-defined Systems WITH their
-     descriptions, and the static SYSTEM_KINDS vocabulary. Exhaustion => the WHOLE step
-     degrades to an empty batch (FAIL-CLOSED).
-  2. SYSTEMS EXTRACTION (structured): the prose -> `systems` deltas (new/extended, each
-     carrying a COMPOUNDED NL `description` prop that folds in the adversarial insight -
-     never emptied; the description is the System-side discriminative attribute). Soft
-     pass-through on exhaustion.
-  3. SERVICES LINKING (structured): the prose + systems + services split PRIMARY (those
-     aggregating this chunk's assets, live from AGGREGATES) vs SECONDARY (other
-     asset-bearing services) -> `system_edges`. Soft pass-through on exhaustion.
+  1. `orient_from_catalog` - read the RDF catalog, the bootstrapped Systems, and
+     the unit; state the mechanism landscape.
+  2. `harvest_surface` - DISCOVER the unit's surface through `graph_view` and the
+     bound HTTP-history pair, driven by the unit identifier/description.
+  3. `prior_insights` - read the notes store.
+  4. `mechanism_hypotheses` - the direction-dependent central question (a Service
+     unit asks forward, a System unit in reverse). Exhaustion here fails the step
+     CLOSED (the chain halts).
+  5. `page_clusters` - group the navigable `text/html` pages by rendered similarity.
+  6. `systems_extract` - VERIFY/FALSIFY then emit the `systems` deltas (new/extended,
+     each carrying a COMPOUNDED NL `description` prop). Soft pass-through on
+     exhaustion.
+  7. `link` - EMIT the `system_edges` against any live Service that rides the System.
+     Soft pass-through on exhaustion.
+  8. `closure` - write the `system` modelling-closure note.
 
 Standalone + injected `invoke_fn` / reads (unit-testable, no live LLM/graph); the body
 matches the `supervisor.ProposerBody` protocol EXACTLY (like the Assigner) - it is
@@ -414,11 +418,13 @@ def _linking_context(primary: list[str], secondary: list[str],
 
 _LINKING_TASK = (
     "TASK - LINK SERVICES (system_edges ONLY). Connect each System above to EVERY "
-    "Service it genuinely overlays, choosing the exact edge label "
-    "(EXPOSED_VIA a REST/GraphQL API OR a WebPresentation page-cluster - copy its "
+    "Service it genuinely overlays, choosing the exact edge label - the full `rel` "
+    "catalogue is in the fed `vocabulary` artifact (e.g. "
+    "EXPOSED_VIA a REST/GraphQL API OR a WebPresentation page-cluster - copy its "
     "'<service>::<cluster>' discriminator VERBATIM so the edge hits the right node; "
     "FRONTED_BY / PROTECTED_BY / ROUTED_BY a perimeter; "
-    "IDENTIFIED_BY / AUTHENTICATED_BY / AUTHORIZED_BY the identity Systems). A "
+    "IDENTIFIED_BY / AUTHENTICATED_BY / AUTHORIZED_BY the identity Systems; "
+    "SHAPES_DATA_OF / ON_REQUEST_PATH / DEPENDS_ON the remaining catalogue rels). A "
     "Service unit may link its System to ANY live Service; a System unit may link to "
     "any rider. There is NO per-unit write scope - pick the owner that FITS, and copy "
     "each service_slug VERBATIM. Leave every other list EMPTY."
@@ -464,7 +470,7 @@ WORKFLOW = ReasoningWorkflow(
             name="harvest the surface",
             prompt=(
                 f"{_ROLE_HEADER}\n\nHARVEST THE SURFACE - DISCOVER THE UNIT'S SURFACE, "
-                "from the unit and not from a pre-fed slice. Read the unit's identifier "
+                "from the unit and not from a pre-fed inventory. Read the unit's identifier "
                 "and description, and, "
                 "for a Service unit, its already-aggregated endpoints. Hypothesise the "
                 "paths and mechanisms the unit implies FIRST, then call `graph_view` "
@@ -473,7 +479,8 @@ WORKFLOW = ReasoningWorkflow(
                 "`AGGREGATES`; for a System unit read its `EVIDENCED_BY` fingerprints "
                 "plus the `AGGREGATES` endpoints of every Service that rides it. The "
                 "HTTP-history pair is bound: call `search_http_history` on each "
-                "hypothesised path and read the recorded request shape where it helps. "
+                "hypothesised path, then `get_http_artifact` to read a specific recorded "
+                "request shape where it helps. "
                 "Read every returned endpoint with the response evidence that "
                 "discriminates a mechanism (`content_type`, `title`, `status_code`, "
                 "`server`). Emit one Claim per discovered endpoint: `subject` the "
@@ -562,7 +569,7 @@ WORKFLOW = ReasoningWorkflow(
                 f"{_ROLE_HEADER}\n\n{cot_scaffold(_REFLECTION_STEPS[5:6])}\n\n"
                 f"{_LINKING_TASK}"
             ),
-            inject=("inventory", "candidates", "systems_extract"),
+            inject=("unit", "inventory", "vocabulary", "candidates", "systems_extract"),
             emit=("system_edges",),
             depends_on=("systems_extract",),
         ),
@@ -597,8 +604,6 @@ def _default_invoke_fn(messages, *, schema=None, system_prompt=None):
     (the reflection call); a pydantic `schema` returns structured output. Production now
     uses `session_invoke_fn`, which binds the same prompt as the agent's leading block
     instead of a trail message."""
-    from langchain_core.messages import HumanMessage, SystemMessage
-
     from polymerhus.analysis.proposer_turn import prepend_prompt
     from polymerhus.app.llm.roles import invoke_role
 
@@ -651,8 +656,14 @@ def _load_skill() -> str:
 # --- the 8-sub-problem proposer body ------------------------------------------
 
 def _unit_kind(chunk: Chunk) -> str:
-    """`System` for a System unit (`source_job` prefixed `system:`), else `Service`."""
-    return "System" if str(getattr(chunk, "source_job", "") or "").startswith("system:") else "Service"
+    """`System` for a System unit (`source_job` prefixed `system:`), `Residual` for
+    the unaggregated-surface unit (`source_job` `residual`), else `Service`."""
+    src = str(getattr(chunk, "source_job", "") or "")
+    if src.startswith("system:"):
+        return "System"
+    if src == "residual":
+        return "Residual"
+    return "Service"
 
 
 def _service_slug(chunk: Chunk) -> str:
@@ -661,10 +672,20 @@ def _service_slug(chunk: Chunk) -> str:
     return src.removeprefix("service:") if src.startswith("service:") else str(chunk.chunk_id)
 
 
+def _service_contract(chunk: Chunk, inventory: dict | None) -> str:
+    """The unit's non-empty `service_contract`, when the unit is a contracted
+    Service. Used only by the unit-first empty-asset entry gate (C-M2): a Service
+    with a contract but no PRE-AGGREGATED surface still discovers its surface."""
+    if _unit_kind(chunk) != "Service":
+        return ""
+    contracts = (inventory or {}).get("service_contracts") or {}
+    return str(contracts.get(_service_slug(chunk), "") or "") if isinstance(contracts, dict) else ""
+
+
 def _aggregated_endpoints_repr(aggregations: list[dict] | None, slug: str) -> str:
     """Render the Service's OWN already-aggregated endpoints from the live
     aggregation view, one `METHOD /path (baseurl)` per row. `(none)` when the
-    Service aggregates nothing yet, so a thin slice renders explicitly."""
+    Service aggregates nothing yet, so a thin surface renders explicitly."""
     lines: list[str] = []
     for row in aggregations or []:
         if row.get("slug") != slug or "Endpoint" not in (row.get("labels") or []):
@@ -704,6 +725,19 @@ def _unit_block(chunk: Chunk, *, inventory: dict | None = None,
         question = (
             "CENTRAL QUESTION (inverse): which Services rely on this technical "
             "overlay, and how? Name each rider and the edge label that binds it.")
+        # B-m9: a System unit has no Service aggregation key, so the "already
+        # aggregates" line would always read (none) and mislead. Omit it.
+        aggregates_line = ""
+    elif kind == "Residual":
+        # B-m8: the residual is the surface NO Service aggregates, so it is not a
+        # forward Service with an empty contract. Frame it neutrally.
+        description_line = (
+            "UNIT DESCRIPTION (residual): this surface belongs to no Service.")
+        question = (
+            "CENTRAL QUESTION (residual): this surface belongs to no Service; which "
+            "cross-cutting technical Systems does it evidence, and which are already "
+            "mapped?")
+        aggregates_line = ""
     else:
         description = (inv.get("service_contracts") or {}).get(service, "")
         description_line = f"UNIT DESCRIPTION (the service_contract): {description.strip() or '(none)'}"
@@ -711,11 +745,13 @@ def _unit_block(chunk: Chunk, *, inventory: dict | None = None,
             "CENTRAL QUESTION (forward): given the catalog, which technical Systems "
             "could this Service rely on to offer its contract, and HOW is the contract "
             "implemented? Name the relied-upon Systems that are NOT yet mapped.")
+        aggregates_line = (
+            f"UNIT ALREADY AGGREGATES: {_aggregated_endpoints_repr(aggregations, service)}\n")
     return (
         f"UNIT: {slug}\n"
         f"UNIT KIND: {kind}\n"
         f"{description_line}\n"
-        f"UNIT ALREADY AGGREGATES: {_aggregated_endpoints_repr(aggregations, service)}\n"
+        f"{aggregates_line}"
         f"{question}\n"
         "This unit - not any asset name - is the reasoning anchor. Its FUNCTIONAL "
         "role is to ask the central question above, then DISCOVER the surface that "
@@ -750,7 +786,10 @@ def type_mechanisms(
     `memory` / `project_id` thread the per-unit analysis backstop into `run_workflow`
     (ADR D31); `first_definer=True` applies the ADR D19 compounding rule, used only by
     the service-sourced loop. Both are inert for the streamed default."""
-    if not chunk.assets:  # empty delta -> nothing to type (valid empty)
+    if not chunk.assets and not _service_contract(chunk, inventory):
+        # C-M2: an empty PRE-AGGREGATED surface is not a skip when the Service has a
+        # contract - discovery is the point. A unit with neither contract nor assets
+        # is a valid empty with no LLM call.
         return L1DeltaBatch()
     invoke_fn = invoke_fn or _default_invoke_fn
     # The skill rides the stateful seam's `system_prompt=` binding (the converged
@@ -872,7 +911,7 @@ def mechanism_typist_body(
     if getattr(dispatch, "phase", None) != "A1":
         return None  # A.2 (missing-systems sweep) is a later slice
     chunk = getattr(dispatch, "chunk", None)
-    if chunk is None or not getattr(chunk, "assets", None):
+    if chunk is None:
         return L1DeltaBatch()
     project_id = state.get("project_id", "")
     read_inventory = read_inventory or _default_read_inventory
@@ -882,6 +921,10 @@ def mechanism_typist_body(
     except Exception:  # a read failure degrades to no inventory context, never crashes
         logger.warning("mechanism_typist: inventory read failed; typing without it", exc_info=True)
         inventory = {}
+    # C-M2: a contracted Service with no PRE-AGGREGATED surface still discovers its
+    # own; only a unit with neither contract nor assets is a valid no-op.
+    if not getattr(chunk, "assets", None) and not _service_contract(chunk, inventory):
+        return L1DeltaBatch()
     try:
         aggregations = read_aggregations(project_id)
     except Exception:

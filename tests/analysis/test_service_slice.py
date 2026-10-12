@@ -221,6 +221,63 @@ def test_no_surface_unit_yields_an_explicit_outcome_and_is_not_dispatched():
     assert result.wrote is False
 
 
+def test_contracted_service_with_no_assets_is_dispatched_for_discovery():
+    """C-M2: under the batched variant a Service with a non-empty `service_contract`
+    is dispatched even with no PRE-AGGREGATED surface, so it can discover its own.
+    The contract gate needs the inventory; the caller injects it here."""
+    units = [Chunk(chunk_id="empty-svc", source_job="service:empty-svc", assets=())]
+    log = []
+    bodies = {
+        "mechanism_typist": _ok_body(log, "mechanism_typist"),
+        "data_modeller": _ok_body(log, "data_modeller"),
+    }
+    result = _run(run_service_loop(
+        "p1", "r1", units=units, proposer_bodies=bodies,
+        inventory_fn=lambda pid: {"services": ["empty-svc"],
+                                  "service_contracts": {"empty-svc": "does x"}},
+        write_fn=_fake_write_fn({}), observe=False,
+    ))
+    assert log == [("empty-svc", "mechanism_typist"), ("empty-svc", "data_modeller")]
+    assert all(o.status != "no_surface" for o in result.outcomes)
+
+
+def test_a_service_with_neither_contract_nor_assets_stays_no_surface():
+    """C-M2: the dispatch is bounded to contracted units - neither contract nor
+    assets is still an explicit `no_surface`, never a fan-out."""
+    units = [Chunk(chunk_id="empty-svc", source_job="service:empty-svc", assets=())]
+    log = []
+    bodies = {
+        "mechanism_typist": _ok_body(log, "mechanism_typist"),
+        "data_modeller": _ok_body(log, "data_modeller"),
+    }
+    result = _run(run_service_loop(
+        "p1", "r1", units=units, proposer_bodies=bodies,
+        inventory_fn=lambda pid: {"services": ["empty-svc"], "service_contracts": {}},
+        write_fn=_fake_write_fn({}), observe=False,
+    ))
+    assert log == []
+    assert [o.status for o in result.outcomes] == ["no_surface", "no_surface"]
+
+
+def test_legacy_variant_keeps_the_hard_no_surface_skip(monkeypatch):
+    """C-M2 is batched-only: the `legacy` rollback keeps ADR D15's hard skip."""
+    monkeypatch.setenv("ANALYSIS_PROMPT_VARIANT", "legacy")
+    units = [Chunk(chunk_id="empty-svc", source_job="service:empty-svc", assets=())]
+    log = []
+    bodies = {
+        "mechanism_typist": _ok_body(log, "mechanism_typist"),
+        "data_modeller": _ok_body(log, "data_modeller"),
+    }
+    result = _run(run_service_loop(
+        "p1", "r1", units=units, proposer_bodies=bodies,
+        inventory_fn=lambda pid: {"services": ["empty-svc"],
+                                  "service_contracts": {"empty-svc": "does x"}},
+        write_fn=_fake_write_fn({}), observe=False,
+    ))
+    assert log == []
+    assert [o.status for o in result.outcomes] == ["no_surface", "no_surface"]
+
+
 def test_bounded_retry_recovers_a_unit_whose_first_attempt_degraded():
     calls = {"n": 0}
 

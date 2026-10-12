@@ -308,7 +308,7 @@ It is the only extraction turn for the flow half of the delta.
 **Reflection prose (the exact task text):**
 
 > CLOSE - write the modelling-closure note for this Service.
-> Call `notes` with `command="write"`, `action="append"`, `unit` the Service slug, `note_name="modelling_closure"`, `kind="data"`, and the body summarising this enrichment.
+> Call `notes` with `command="write"`, `action="append"`, `unit` the Service slug, `note_name="modelling-closure"`, `kind="data"`, and the body summarising this enrichment.
 > The body MUST name: the DataItems lifted and compounded (item_key, fields, anchors, flows), the records reused, what you WITHHELD or FALSIFIED and why, the recorded request shapes consulted, and any open question the surface left unresolved.
 > Then emit one Claim summarising the closure: `subject` the Service, `assertion` the enrichment result, `evidence` the note key, `verdict` the residual open question or "resolved".
 > Emit `claims` only.
@@ -400,9 +400,9 @@ The model's own `search_http_history`/`get_http_artifact` calls are for deeper i
 Every finished Service leaves one note, so coverage is auditable.
 
 - **store**: the **analysis episodic memory** at `data/<project_id>/analysis/memory.yaml`.
-- **key**: `<service_slug>:modelling_closure`.
+- **key**: `<service_slug>:modelling-closure`.
 - **`unit`**: the Service slug.
-- **`note_name`**: `modelling_closure`.
+- **`note_name`**: `modelling-closure`.
 - **`kind`**: `data` (one of `NOTE_KINDS`: `assignment`, `system`, `data`, `refusal`, `open_question`).
 - **written by**: the `closure_note` sub-problem through the shared `notes` tool (`command="write"`, `action="append"`).
 - **backstop**: `ensure_unit_note` writes one note for the unit when the closure turn wrote none.
@@ -446,7 +446,7 @@ REFERENCING A SURFACE SITE: put the site in `surfaces_at.l0` as {"label": "Param
 `fields` on a DataItem name ONLY fields you actually OBSERVED on the surface shown, including the request-shape keys you read from the HTTP history; never a speculative or merely-plausible field.
 `data_flows.service_slug` is copied VERBATIM from the candidate owning-Services list you are given - never a slug you invent.
 `data_relationships.kind` is one of the fixed allowlist; anything else is discarded.
-CLOSE with a modelling-closure note: call `notes` (command="write", action="append", unit=the Service slug, note_name="modelling_closure", kind="data") summarising the DataItems you lifted and compounded, what you withheld and falsified and why, the request shapes you consulted, and any open question.
+CLOSE with a modelling-closure note: call `notes` (command="write", action="append", unit=the Service slug, note_name="modelling-closure", kind="data") summarising the DataItems you lifted and compounded, what you withheld and falsified and why, the request shapes you consulted, and any open question.
 You never set provenance or write status; those are stamped by the system.
 ```
 
@@ -475,7 +475,7 @@ Do not answer from the first pattern a name suggests. Work the Service in stages
 
 7. **Shape and emit flows.** For each verified record, name the surface sites it appears at, and which Service produces it and which consumes it, choosing service slugs ONLY from the candidate list you were given. For a `consumes` whose producing Service differs from the consuming Service, state the falsifiable predicate the consumer holds about that data (the trust assumption). Relate - only where the surface itself shows it - a record-to-record dependency using one of the allowed kinds, with a shallow predicate. Then fill `data_flows` and `data_relationships`. Name what you WITHHELD and why, so withholding is the loop's demonstrated conclusion, not an assumed default.
 
-8. **Close.** Call `notes` with command="write", action="append", unit the Service slug, `note_name="modelling_closure"`, `kind="data"`, and a body naming the DataItems lifted and compounded, the records reused, what you withheld and falsified and why, the request shapes consulted, and any open question the surface left unresolved.
+8. **Close.** Call `notes` with command="write", action="append", unit the Service slug, `note_name="modelling-closure"`, `kind="data"`, and a body naming the DataItems lifted and compounded, the records reused, what you withheld and falsified and why, the request shapes consulted, and any open question the surface left unresolved.
 
 Prefer external signal (the actual parameter/header names, the paths, the recorded request shapes, the prior notes) over your own fluency. A confident-sounding record with no witness in the surface is the failure to avoid; surface that evidences no record returns nothing.
 
@@ -511,7 +511,7 @@ Each example names its HELD hypotheses, not only its final answer. The identity 
 
 **Example 6 - observed-only fields, an obviously-plausible field OMITTED.** Verified record `product_listing`, observed fields `{productId, name}`. A third field, `price`, is plausible but was not observed on the surface or in any recorded request. -> `fields: [productId, name]`; `price` is not written, and the reason is stated: plausibility is not observation.
 
-**Example 7 - the closure note.** After enriching, call `notes` with command="write", action="append", unit="cart", note_name="modelling_closure", kind="data", body="modelling closure - Service cart. DataItems lifted: shopping_basket :: fields=[quantity, productId]; anchors=Parameter{quantity,/api/basket}, Parameter{productId,/api/basket}; flows=produces -> cart. Request shapes consulted: 3 recorded transactions to /api/basket. Open questions: the coupon record on /api/checkout/apply is owned by a different Service."
+**Example 7 - the closure note.** After enriching, call `notes` with command="write", action="append", unit="cart", note_name="modelling-closure", kind="data", body="modelling closure - Service cart. DataItems lifted: shopping_basket :: fields=[quantity, productId]; anchors=Parameter{quantity,/api/basket}, Parameter{productId,/api/basket}; flows=produces -> cart. Request shapes consulted: 3 recorded transactions to /api/basket. Open questions: the coupon record on /api/checkout/apply is owned by a different Service."
 ```
 
 ---
@@ -672,7 +672,7 @@ They extend `docs/design/dataplane-A1-decisions.md` and must be folded into it o
 - **DPL-DEC-29 - a dedicated memory-insight phase reads prior modelling insights.**
   It uses `notes` (command="read") and reconciles prior `data` notes and `open_question`s against the current survey.
 - **DPL-DEC-30 - a closure phase writes the modelling-closure note.**
-  The note kind is `data`, the `note_name` is `modelling_closure`, the key is `<service_slug>:modelling_closure`.
+  The note kind is `data`, the `note_name` is `modelling-closure`, the key is `<service_slug>:modelling-closure`.
   The per-unit backstop remains the safety net, with `note_kind="data"`.
 - **DPL-DEC-31 - the eight sub-problems map one-to-one onto eight reflection stages.**
   The mapping is explicit (the ADR D22 discipline); no boundary is invented.

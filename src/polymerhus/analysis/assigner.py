@@ -295,9 +295,12 @@ def shape_proposal(
 
 
 def _chunk_slice(chunk: Chunk) -> dict:
-    """Adapt a chunk's immutable L0 delta to the prompt slice shape
-    (`{nodes, links}`) the assignment verbatim reads, narrowed to the types this
-    role admits (#34 D2/D7) - for the Assigner, Endpoints alone."""
+    """Build the admitted-Endpoint view (`{nodes, links}`) this role narrows the
+    chunk to (#34 D2/D7) - for the Assigner, Endpoints alone.
+
+    Solely the "nothing to act on" gate: when it is empty the pass is a valid
+    empty with no LLM call. The prompt no longer renders a surface slice, so this
+    view exists only for that gate and for `shape_proposal`'s deterministic checks."""
     nodes = [
         {"type": a.type, "identity": a.identity, "properties": dict(a.props or {})}
         for a in admit_for_role(chunk, ROLE)
@@ -344,7 +347,7 @@ def _unit_context_block(chunk: Chunk, inventory: dict | None, owned_endpoints=()
 
 # The four reflect stages (#34), merging the load-bearing primitives of the
 # `overthink` and `critical-thinking-logical-reasoning` disciplines down to what this
-# role needs. `candidate_owners` and `assign` each cover a slice of them (spec 3.3).
+# role needs. `candidate_owners` and `assign` each cover a subset of them (spec 3.3).
 #
 # REVIVED IN PRODUCTION (ADR D25): the 2026-07-28 ratification recorded reflection as
 # deliberately unreached. The reasoning workflow now runs the first three stages
@@ -389,7 +392,8 @@ WORKFLOW = ReasoningWorkflow(
                 "`graph_view` with bounded read-only Cypher (always a LIMIT): enumerate "
                 "the `:BaseURL`s and their `:Endpoint`s broadly, and run a path-substring "
                 "probe per candidate. Where a candidate suggests a path, call "
-                "`search_http_history` too and read the recorded request shape. Query "
+                "`search_http_history` and then `get_http_artifact` to read a specific "
+                "recorded request shape. Query "
                 "BROADLY and AGGRESSIVELY; a candidate that returns nothing is a valid "
                 "miss, not a failure. Emit one Claim per harvested Endpoint: `subject` "
                 "`METHOD /path`; `assertion` the raw surface facts (path segments, "
@@ -500,8 +504,8 @@ WORKFLOW = ReasoningWorkflow(
 def _system_prompt() -> str:
     """The STABLE half of the prompt (#34): the role verbatim and the judgment
     discipline. Everything here is invariant across a run so the provider
-    prompt-cache prefix survives it; the volatile inventory and chunk ride the
-    user message instead. The reflection stages are NOT appended here: the
+    prompt-cache prefix survives it; the volatile inventory and the Service unit ride
+    the user message instead. The reflection stages are NOT appended here: the
     workflow's sub-problem prompts are their single carrier (T7 reconciliation),
     so the stable prefix is byte-identical on every pass, reflect or create.
 
@@ -524,7 +528,7 @@ def _system_prompt() -> str:
 _ROLE_VERBATIM = (
     "You are the cross-layer Assigner in an attack-surface analyser.\n"
     "ROLE - SURFACE ASSIGNMENT. You judge ONE thing: which EXISTING Service owns each "
-    "Endpoint you are shown. You propose `aggregates` and nothing else.\n"
+    "Endpoint you discover. You propose `aggregates` and nothing else.\n"
     # The contract is the PRIMARY routing evidence (#29). Before it existed the
     # inventory offered only slugs, so matching fell back to guessing what an opaque
     # slug (`byoc`, `agent-tool`) might mean - the assignment noise the withholding
@@ -553,8 +557,8 @@ _ROLE_VERBATIM = (
     # fire, because `_candidate_path` reads `identity["path"]` first.
     "REFERENCING AN ENDPOINT: put the endpoint in `l0.identity` as "
     "`{\"path\": \"/api/Users\", \"method\": \"GET\", "
-    "\"baseurl\": \"<the baseurl shown>\"}`, with `l0.label` set to `Endpoint`. "
-    "Only reference endpoints that appear above; one you invent names nothing and "
+    "\"baseurl\": \"<the baseurl the tool returned>\"}`, with `l0.label` set to `Endpoint`. "
+    "Only reference endpoints you discovered through the tools; one you invent names nothing and "
     "is discarded.\n"
     "Emit `aggregates` only. Leave services, systems, system_edges and every "
     "data-modelling list EMPTY - other proposers own those."

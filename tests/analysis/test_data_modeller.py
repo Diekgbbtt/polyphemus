@@ -30,7 +30,6 @@ from polymerhus.analysis.data_modeller import (
     model_data,
     narrow_to_data,
     observed_vocabulary,
-    owning_services,
     resolve_surface_refs,
     shape_proposal,
     site_index,
@@ -253,29 +252,13 @@ def test_shape_proposal_census_end_to_end():
     assert outcome.stats.reused_item_keys == 0
 
 
-# --- owning_services (candidate owner join, section 6) --------------------------
-
-def test_owning_services_parameter_joins_endpoint_and_baseurl():
-    admitted = [_param("ProductId", endpoint_path="/api/basket", baseurl="B")]
-    aggregations = [
-        {"slug": "cart", "labels": ["Endpoint"], "props": {"path": "/api/basket", "baseurl": "B"}},
-        {"slug": "other", "labels": ["Endpoint"], "props": {"path": "/api/other", "baseurl": "B"}},
-    ]
-    candidates = owning_services(admitted, aggregations)
-    ref = list(candidates)[0]
-    assert candidates[ref] == ["cart"]
-
-
-def test_owning_services_header_joins_baseurl_only():
-    admitted = [_header("X-Cart-Token", baseurl="B")]
-    aggregations = [
-        {"slug": "cart", "labels": ["Endpoint"], "props": {"path": "/api/basket", "baseurl": "B"}},
-        {"slug": "orders", "labels": ["Endpoint"], "props": {"path": "/api/orders", "baseurl": "B"}},
-    ]
-    candidates = owning_services(admitted, aggregations)
-    ref = list(candidates)[0]
-    assert candidates[ref] == ["cart", "orders"]  # coarse: every Service on that origin
-
+# --- owning_services (candidate-owner join) -------------------------------------
+#
+# RETIRED (C-m1): the per-asset owner join is dead under the L1-unit-first survey -
+# the candidate list is no longer fed to the prompt, and the `candidate_services`
+# census counter had no other consumer. The function and its two unit tests are
+# removed with it; the live Service inventory (the `services` artifact) is the
+# surviving validation surface.
 
 # --- make_data_modeller_body / model_data: valid-empty + degradation (C13/C14) --
 
@@ -489,3 +472,87 @@ def test_hypothesise_verify_loop_and_observed_only_fields_still_hold():
     assert "no business record" in captured["hypotheses"]
     # `price` was never observed, so it is stripped; `ProductId` survives.
     assert outcome.batch.data_items[0].props["fields"] == ["ProductId"]
+
+
+# --- C-M1: the reference gate is fed the graph-discovered sites ----------------
+
+def test_graph_discovered_site_grounds_an_item_not_in_the_chunk():
+    """C-M1: a site the model discovers through `graph_view` (here injected via the
+    `read_sites_fn` live index) can ground an item even when the unit's chunk never
+    carried it - the gate is no longer bounded by the pre-fed admitted set."""
+    discovered = _param("graphOnlyField", endpoint_path="/discovered", baseurl="https://g")
+
+    def invoke(messages, *, schema=None, system_prompt=None):
+        content = messages[-1].content
+        if "TASK - EXTRACT THE DATA ITEMS" in content:
+            return AnalysisTurn(
+                data_items=[DataItemProposal(item_key="discovered_record")],
+                surfaces_at=[SurfacesAtProposal(
+                    item_key="discovered_record",
+                    l0=L0Ref(label="Parameter", identity={"name": "graphOnlyField"}))],
+            )
+        return AnalysisTurn()
+
+    outcome = model_data(
+        _chunk([_param("chunkOnlyField")]), invoke_fn=invoke,
+        inventory={}, aggregations=[],
+        read_sites_fn=lambda pid: [discovered], project_id="p1",
+    )
+    assert outcome.stats.kept_surfaces == 1
+    assert outcome.stats.kept_items == 1
+    assert outcome.batch.surfaces_at[0].l0.identity["name"] == "graphOnlyField"
+
+    # CONTROL: without the live index the graph-discovered site is unresolvable and
+    # the item it grounded is dropped - the defect C-M1 fixes.
+    control = model_data(_chunk([_param("chunkOnlyField")]), invoke_fn=invoke,
+                         inventory={}, aggregations=[])
+    assert control.stats.unresolvable_surfaces == 1
+    assert control.stats.kept_surfaces == 0
+
+
+# --- C-M2: a contracted Service with no pre-aggregated surface still discovers --
+
+def test_contracted_empty_service_dispatches_the_modeller():
+    """C-M2: no pre-aggregated assets is not a skip when the Service has a
+    contract - discovery is the point."""
+    calls = {"n": 0}
+
+    def invoke(messages, *, schema=None, system_prompt=None):
+        calls["n"] += 1
+        return AnalysisTurn()
+
+    chunk = Chunk(chunk_id="empty-svc", source_job="service:empty-svc", assets=())
+    model_data(chunk, invoke_fn=invoke,
+               inventory={"services": ["empty-svc"],
+                          "service_contracts": {"empty-svc": "does x"}})
+    assert calls["n"] == 8   # the whole chain ran; discovery found nothing -> empty
+
+
+def test_serviceless_empty_unit_stays_a_no_call_empty():
+    """C-M2: neither contract nor assets is a valid no-op with no LLM call."""
+    calls = {"n": 0}
+
+    def invoke(messages, *, schema=None, system_prompt=None):
+        calls["n"] += 1
+        return AnalysisTurn()
+
+    chunk = Chunk(chunk_id="orphan", source_job="service:orphan", assets=())
+    outcome = model_data(chunk, invoke_fn=invoke, inventory={})
+    assert calls["n"] == 0
+    assert outcome.batch == L1DeltaBatch()
+
+
+# --- C-m6: the canonical modelling-closure note name ---------------------------
+
+def test_modelling_closure_note_name_is_canonical(monkeypatch):
+    """C-m6: the canonical key is `<unit>:modelling-closure`; the data-modeller
+    (code and both prompt files) must not use the underscore variant."""
+    monkeypatch.delenv("ANALYSIS_PROMPT_VARIANT", raising=False)
+    from polymerhus.analysis import data_modeller as dm
+
+    batched = dm._load_skill()
+    assert 'note_name="modelling-closure"' in batched
+    assert "modelling_closure" not in batched
+    closure = next(sp for sp in dm.WORKFLOW.sub_problems if sp.id == "closure_note")
+    assert 'note_name="modelling-closure"' in closure.prompt
+    assert "modelling_closure" not in closure.prompt

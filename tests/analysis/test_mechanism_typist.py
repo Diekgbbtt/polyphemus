@@ -715,3 +715,96 @@ def test_rewritten_prompt_file_loads_under_default_and_differs_from_legacy(monke
     assert "Read what EXISTS" not in batched        # the "never filter" rule is reverted
     assert "L1 unit" in batched                     # the unit-first framing is present
     assert "per-unit write scope" in batched        # the link scope is removed
+
+
+def test_batched_prompt_edge_catalogue_cannot_contradict_the_fed_vocabulary(monkeypatch):
+    """B-M1: the prompt's edge-label list must be the FULL catalogue the
+    `vocabulary` artifact feeds (`l1_curator.SYSTEM_EDGE_RELS`, 10 values), so the
+    model can never be told "exactly" a subset the code then rejects or omits."""
+    from polymerhus.analysis import mechanism_typist
+    from polymerhus.analysis.l1_curator import SYSTEM_EDGE_RELS
+
+    monkeypatch.delenv("ANALYSIS_PROMPT_VARIANT", raising=False)
+    monkeypatch.setattr(mechanism_typist, "_TECHNICAL_SYSTEM_SKILLS", {})
+    batched = mechanism_typist._load_skill()
+    # the seven old labels plus the two long-standing ones the prompt omitted
+    for rel in sorted(SYSTEM_EDGE_RELS):
+        assert rel in batched, f"{rel} missing from the edge catalogue"
+    assert "ON_REQUEST_PATH" in batched and "DEPENDS_ON" in batched
+    # the gloss must cover BOTH EXPOSED_VIA carriers (B-m7)
+    assert "WebPresentation" in batched
+
+
+def test_batched_prompt_states_six_stages_and_names_get_http_artifact(monkeypatch):
+    """B-m4/B-m5: the prompt says SIX stages (CLUSTER PAGES included) and names
+    `get_http_artifact` in the harvest step, matching `_REFLECTION_STEPS` and the
+    bound HTTP pair."""
+    from polymerhus.analysis import mechanism_typist
+
+    monkeypatch.delenv("ANALYSIS_PROMPT_VARIANT", raising=False)
+    monkeypatch.setattr(mechanism_typist, "_TECHNICAL_SYSTEM_SKILLS", {})
+    batched = mechanism_typist._load_skill()
+    assert "six stages" in batched
+    assert "Cluster pages" in batched
+    assert "get_http_artifact" in batched
+
+
+def test_link_sub_problem_injects_the_unit_and_the_vocabulary():
+    """B-m6/B-M1: the `link` turn carries the `unit` (so the direction survives
+    compaction) and the `vocabulary` (the same catalogue the static prompt names)."""
+    from polymerhus.analysis.mechanism_typist import WORKFLOW
+
+    link = next(sp for sp in WORKFLOW.sub_problems if sp.id == "link")
+    assert "unit" in link.inject
+    assert "vocabulary" in link.inject
+
+
+def test_system_unit_block_omits_the_service_aggregation_line():
+    """B-m9: a System unit's key never matches a Service aggregation, so the
+    "UNIT ALREADY AGGREGATES" line would always read (none) and is omitted."""
+    block = _unit_block(
+        Chunk(chunk_id="RESTApi", source_job="system:RESTApi", assets=(_endpoint("/x"),)),
+        inventory={"services": ["checkout"]})
+    assert "UNIT ALREADY AGGREGATES" not in block
+
+
+def test_residual_unit_is_framed_neutrally_not_as_a_forward_service():
+    """B-m8: the residual unit is the surface NO Service aggregates - it must not
+    be typed as a forward Service with an empty contract."""
+    from polymerhus.analysis.service_slice import RESIDUAL_UNIT
+
+    block = _unit_block(
+        Chunk(chunk_id=RESIDUAL_UNIT, source_job="residual", assets=(_endpoint("/health"),)),
+        inventory={"services": ["checkout"], "service_contracts": {"checkout": "c"}})
+    assert "UNIT KIND: Residual" in block
+    assert "no Service" in block
+    assert "which technical Systems could this Service rely on" not in block
+
+
+def test_contracted_empty_service_runs_the_typist_workflow():
+    """C-M2 (typist side): a contracted Service with no PRE-AGGREGATED assets still
+    runs the full chain so it can discover its own surface."""
+    calls = {"n": 0}
+
+    def invoke(messages, *, schema=None, system_prompt=None):
+        calls["n"] += 1
+        return AnalysisTurn()
+
+    chunk = Chunk(chunk_id="empty-svc", source_job="service:empty-svc", assets=())
+    out = type_mechanisms(chunk, invoke_fn=invoke,
+                          inventory={"services": ["empty-svc"],
+                                     "service_contracts": {"empty-svc": "does x"}})
+    assert calls["n"] == 8
+    assert out == L1DeltaBatch()   # discovery found nothing -> genuinely empty
+
+
+def test_empty_unit_without_a_contract_is_a_no_call_empty():
+    calls = {"n": 0}
+
+    def invoke(messages, *, schema=None, system_prompt=None):
+        calls["n"] += 1
+        return AnalysisTurn()
+
+    chunk = Chunk(chunk_id="orphan", source_job="service:orphan", assets=())
+    assert type_mechanisms(chunk, invoke_fn=invoke, inventory={}) == L1DeltaBatch()
+    assert calls["n"] == 0

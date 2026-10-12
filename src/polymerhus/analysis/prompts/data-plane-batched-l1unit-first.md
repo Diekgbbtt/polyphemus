@@ -31,7 +31,7 @@ Prefer external signal (the actual parameter/header names, the paths, the observ
 - A `surfaces_at` target is `{"label": "Parameter"|"Header"|"Secret", "identity": {...}}` - NEVER an Endpoint. A path is the address you interrogate, never a place data appears.
 - `fields` name ONLY fields you actually OBSERVED on the surface; never a speculative or merely-plausible field. Unobserved attributes are a later, dedicated enrichment activity.
 - `data_flows.service_slug` is copied VERBATIM from the LIVE Service inventory you are given - any live Service may be named as producer or consumer, and a slug not in that inventory names nothing and is discarded.
-- `data_relationships.kind` is one of the fixed allowlist; anything else is discarded.
+- `data_relationships.kind` is one of the fixed allowlist: `derived_from`, `reflected_in`, `equals_hash_of`, `copy_of`, `concatenation_of`, `subset_of`. Anything else is discarded.
 - You never set provenance or write status; those are stamped by the system.
 
 ## Worked examples - imitate the REASONING SHAPE, never the domain
@@ -48,7 +48,7 @@ Each example names its HELD hypotheses, not only its final answer - an example s
 
 **Example 5 - reuse over paraphrase, against the known-items block.** Known items include `shopping_basket :: client-supplied quantity and product reference; server may trust submitted quantity without revalidation`. Newly discovered: `Parameter{qty, /api/cart/items}`. Hypothesise: candidate A - a NEW record (different endpoint, different field name); candidate B - the SAME record as the known `shopping_basket`, reached via a second endpoint. Verify: `qty` and `quantity` are the same field under a different name, and `/api/cart/items` and `/api/basket` plausibly serve the same function - reuse `shopping_basket`'s exact `item_key`, compound its `fields`/`notes` rather than minting `cart_item` as a paraphrase.
 
-**Example 6 - observed-only fields, an obviously-plausible field OMITTED.** Verified record `product_listing`, observed fields `{productId, name}` from the surface actually shown. A third field, `price`, is highly plausible for a product listing but was not observed anywhere. -> `fields: [productId, name]`; `price` is not written, and the reason is stated: plausibility is not observation.
+**Example 6 - observed-only fields, an obviously-plausible field OMITTED.** Verified record `product_listing`, observed fields `{productId, name}` from the surface you discovered. A third field, `price`, is highly plausible for a product listing but was not observed anywhere. -> `fields: [productId, name]`; `price` is not written, and the reason is stated: plausibility is not observation.
 
 ## The workflow you run, in order
 
@@ -61,4 +61,4 @@ You run eight sub-problems, one turn each; you may call tools in any of them.
 5. **Data extract** (`data_extract`). Emit `data_items` and `surfaces_at`.
 6. **Flow shape** (`flow_shape`). Shape producing/consuming and trust assumptions.
 7. **Flow extract** (`flow_extract`). Emit `data_flows` and `data_relationships`.
-8. **Closure** (`closure_note`). Write ONE modelling-closure note through `notes` (`command="write"`, `action="append"`, `note_name="modelling_closure"`, `kind="data"`) naming the items lifted, what you withheld and why, and the request shapes consulted, then record it in a Claim.
+8. **Closure** (`closure_note`). Write ONE modelling-closure note through `notes` (`command="write"`, `action="append"`, `note_name="modelling-closure"`, `kind="data"`) naming the items lifted, what you withheld and why, and the request shapes consulted, then record it in a Claim.

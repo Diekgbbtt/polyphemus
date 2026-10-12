@@ -17,7 +17,9 @@ surface. This module owns the two halves of stage 2:
     BOUNDED per-unit retry (ADR D15, D16): a unit whose first attempt degraded is
     retried up to `attempts`; a unit that stays degraded is recorded and the loop
     continues. A unit with no surface yields an explicit `no_surface` outcome,
-    never a silent skip. The loop checks an injected `stop_fn` between units, so a
+    never a silent skip - EXCEPT under the batched L1-unit-first variant, where a
+    contracted Service with no PRE-AGGREGATED surface is dispatched so it can
+    discover its own (C-M2). The loop checks an injected `stop_fn` between units, so a
     long pass is interruptible at a Service boundary (ADR D42).
 
 Every collaborator is injectable, so the whole module is unit-testable with no
@@ -34,6 +36,7 @@ from typing import Callable
 
 from polymerhus.analysis.chunking import Chunk
 from polymerhus.analysis.messages import StepReceipt, WriteCounts
+from polymerhus.analysis.prompt_variant import resolve_prompt_variant
 
 logger = logging.getLogger(__name__)
 
@@ -280,11 +283,13 @@ def _any_degraded(receipts) -> bool:
 
 def _build_bodies(
     *, memory, invoke_fns, inventory_fn, aggregations_fn, first_definer: bool,
+    read_sites_fn=None,
 ) -> dict:
     """Build the two role bodies for the service-sourced loop, threading the
     per-project memory store and the unit slug (ADR D31; the deferred T3 wiring).
     The typist gets `first_definer=True` so it never re-compounds an already-defined
-    System's description over N Services (ADR D19); the streamed default does not."""
+    System's description over N Services (ADR D19); the streamed default does not.
+    `read_sites_fn` is the data-modeller's C-M1 live-identity seam."""
     from polymerhus.analysis.data_modeller import make_data_modeller_body
     from polymerhus.analysis.mechanism_typist import mechanism_typist_body
 
@@ -295,7 +300,8 @@ def _build_bodies(
     )
     data = make_data_modeller_body(
         invoke_fn=(invoke_fns or {}).get("data_modeller"),
-        inventory_fn=inventory_fn, aggregations_fn=aggregations_fn, memory=memory,
+        inventory_fn=inventory_fn, aggregations_fn=aggregations_fn,
+        read_sites_fn=read_sites_fn, memory=memory,
     )
     return {"mechanism_typist": typist, "data_modeller": data}
 
@@ -354,6 +360,7 @@ async def run_service_loop(
     invoke_fns: dict | None = None,
     inventory_fn=None,
     aggregations_fn=None,
+    read_sites_fn=None,
     write_fn=None,
     proposer_bodies: dict | None = None,
     checkpointer=None,
@@ -370,6 +377,17 @@ async def run_service_loop(
     `stop_fn` between units so a stop is honoured at a Service boundary. Returns
     the loop's terminal record."""
     from polymerhus.analysis.supervisor import _chunked_write_fn, build_supervisor_graph
+
+    # The production path (no injected units/bodies/reads) resolves the live reads
+    # once: the inventory feeds the C-M2 contract gate and both bodies, and the
+    # graph-backed site index feeds the data-modeller's C-M1 reference gate. A
+    # caller that injects any of these owns the seam and stays hermetic.
+    if inventory_fn is None and read_sites_fn is None and proposer_bodies is None and units is None:
+        from polymerhus.analysis.l0_stream import read_surface_sites
+        from polymerhus.analysis.l1_inventory import read_l1_inventory
+
+        inventory_fn = read_l1_inventory
+        read_sites_fn = read_surface_sites
 
     if units is None:
         units = build_service_slices(project_id, read_fn=read_fn, systems_fn=systems_fn)
@@ -400,6 +418,7 @@ async def run_service_loop(
         proposer_bodies = _build_bodies(
             memory=memory, invoke_fns=invoke_fns, inventory_fn=inventory_fn,
             aggregations_fn=aggregations_fn, first_definer=True,
+            read_sites_fn=read_sites_fn,
         )
 
     write_fn = write_fn or _chunked_write_fn
@@ -410,6 +429,31 @@ async def run_service_loop(
     receipts_by_id: dict[str, StepReceipt] = {}
     stopped = False
 
+    # C-M2: under the batched L1-unit-first variant a Service unit with a non-empty
+    # `service_contract` is dispatched even when it carries no PRE-AGGREGATED assets
+    # - discovery is the point. A unit with neither a contract nor assets stays an
+    # explicit `no_surface` (ADR D15), never a silent skip. Bounded: one dispatch
+    # per unit, no fan-out. Contracts need the inventory, so the gate is inert
+    # without an `inventory_fn` (unit tests and any caller that injects its own).
+    batched_unit_first = resolve_prompt_variant() == "batched_l1unit_first"
+    inventory_cache: dict = {}
+
+    def _contracted(unit: Chunk) -> bool:
+        src = str(getattr(unit, "source_job", "") or "")
+        if not batched_unit_first or not src.startswith("service:"):
+            return False
+        if "value" not in inventory_cache:
+            fn = inventory_fn or (lambda pid: {})
+            try:
+                inventory_cache["value"] = fn(project_id) or {}
+            except Exception:  # noqa: BLE001 - a read blip leaves the old skip
+                logger.warning("service_slice: inventory read failed; no contract gate",
+                               exc_info=True)
+                inventory_cache["value"] = {}
+        contracts = inventory_cache["value"].get("service_contracts") or {}
+        slug = src.removeprefix("service:")
+        return bool(str(contracts.get(slug, "") or "") if isinstance(contracts, dict) else "")
+
     for unit in units:
         if stop_fn is not None and stop_fn():
             stopped = True
@@ -417,7 +461,7 @@ async def run_service_loop(
             break
         visited.append(unit.chunk_id)
 
-        if not unit.assets:
+        if not unit.assets and not _contracted(unit):
             # ADR D15: an explicit outcome, never a silent skip. The per-unit
             # backstop still records the Service so its coverage is auditable (D31).
             for role in _roles_for(unit):

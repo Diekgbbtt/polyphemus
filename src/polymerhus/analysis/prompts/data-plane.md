@@ -61,4 +61,4 @@ You run eight sub-problems, one turn each; you may call tools in any of them.
 5. **Data extract** (`data_extract`). Emit `data_items` and `surfaces_at`.
 6. **Flow shape** (`flow_shape`). Shape producing/consuming and trust assumptions.
 7. **Flow extract** (`flow_extract`). Emit `data_flows` and `data_relationships`.
-8. **Closure** (`closure_note`). Write ONE modelling-closure note through `notes` (`command="write"`, `action="append"`, `note_name="modelling_closure"`, `kind="data"`) naming the items lifted, what you withheld and why, and the request shapes consulted, then record it in a Claim.
+8. **Closure** (`closure_note`). Write ONE modelling-closure note through `notes` (`command="write"`, `action="append"`, `note_name="modelling-closure"`, `kind="data"`) naming the items lifted, what you withheld and why, and the request shapes consulted, then record it in a Claim.

@@ -320,6 +320,7 @@ Fail-open: an unbuildable tool binds nothing.
 
 **Modelling-closure note** (v2, ADR D46):
 The episodic memory a proposer writes at its `closure` phase, through the shared `notes` tool, keyed `<unit>:modelling-closure` (kind `assignment` for the assigner, `system` for the mechanism-typist, `data` for the data-modeller).
+The `note_name` is the canonical `modelling-closure` for every role; the data-modeller's earlier `modelling_closure` underscore variant was corrected to it (`batched-l1unit-first-adr.md` decision 22).
 It records what the unit closed over, what it withheld and why, and the open questions - so a later unit reads prior modelling insight (`prior_insights`) instead of re-deriving it.
 The per-unit backstop `ensure_unit_note` remains the coverage guarantee.
 
@@ -356,6 +357,7 @@ It never mints a Service: the Bootstrapper remains the sole Service source.
 **Service slice** (`analysis/service_slice.py::build_service_slices`; T5, ADR D14, D20, D39):
 The pure builder that groups the settled L0 surface into one `Chunk` per Service - its `chunk_id` is the sanitised `business_function_slug` - sorted by slug, plus one RESIDUAL unit (`__residual__`) carrying the surface no Service aggregates.
 A Service with no aggregated surface still gets an empty unit, so its absence is an explicit `no_surface` outcome, never a silent skip (ADR D15).
+AMENDED (`batched-l1unit-first-adr.md` decision 20): under the batched L1-unit-first variant a Service unit with a NON-EMPTY `service_contract` is dispatched even when it aggregates nothing, because discovering its own surface is the point; a unit with neither a contract nor assets stays `no_surface`, and the `legacy` variant keeps the hard skip.
 
 **Per-Service loop** (`analysis/service_slice.py::run_service_loop`; T5, ADR D12-D20, D38-D42):
 Stage 2 of the service-sourced pass: for each unit it runs mechanism_typist then data_modeller (each role's full `ReasoningWorkflow` scoped to the unit's slice) through the supervisor control plane.
@@ -406,7 +408,7 @@ The sole owner of the Tier-1 data substrate.
 Its analysis object is the L1 UNIT (the Service), not a pre-fed asset slice: it reasons DOWN from the unit - the slug, the `service_contract`, and the Endpoints the Service already aggregates - and DISCOVERS the unit's `Parameter`/`Header`/`Secret` surface through `graph_view` and the bound HTTP-history pair.
 From that discovered surface it lifts logical `DataItem`s (business records), binds them with `SURFACES_AT`, and maps `PRODUCES`/`CONSUMES` flows onto the settled Service model plus surface-observable `DataItem`-to-`DataItem` dependencies.
 Emits `L1DeltaBatch{data_items, surfaces_at, data_flows, data_relationships}` and nothing else; its chain is `surface_survey -> request_shapes -> insight_recall -> record_hypotheses -> data_extract -> flow_shape -> flow_extract -> closure_note` (eight sub-problems, each speaking the ONE `AnalysisTurn` envelope). It runs LAST in the per-Service loop (after the Assigner and the mechanism-typist) so its flow-onto-Service join has a live `AGGREGATES` answer.
-It carries NO per-unit `service_slug` write scope: a `data_flow` may name ANY live Service as producer or consumer, and only the GLOBAL inventory validation (`drop_out_of_inventory_services`) still drops a slug that names no live Service. The deterministic gates still resolve against the admitted surface and the observed vocabulary.
+It carries NO per-unit `service_slug` write scope: a `data_flow` may name ANY live Service as producer or consumer, and only the GLOBAL inventory validation (`drop_out_of_inventory_services`) still drops a slug that names no live Service. The deterministic reference and observed gates resolve against the admitted surface UNION a live graph-backed site index (`l0_stream.read_surface_sites`), so a site discovered only through `graph_view` can ground an item (`batched-l1unit-first-adr.md` decision 19). A contracted Service with no pre-aggregated surface is still dispatched, so it discovers its own (decision 20).
 A.1 is BUILT; A.2 (a batched completeness sweep per user-controllable datum) is `designed-not-built` - the phase guard in `make_data_modeller_body` returns `None` for any phase but `"A1"`, an inert dormant seam, never a silent half-implementation.
 _Avoid_: analyser (the whole-model term).
 

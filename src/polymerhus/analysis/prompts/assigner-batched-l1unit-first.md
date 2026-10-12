@@ -22,7 +22,8 @@ Three moves, in order. Do not collapse them.
 
 1. **HARVEST AGGRESSIVELY.**
    From the contract alone, write down several candidate strings: the nouns it owns, the actions it performs, and path-word fragments of each.
-   Query `graph_view` broadly for every candidate, always with a `LIMIT`, and call `search_http_history` wherever a candidate suggests a path.
+   Query `graph_view` broadly for every candidate, always with a `LIMIT`.
+   Where a candidate suggests a path, call `search_http_history`, then `get_http_artifact` to read a specific recorded request shape.
    A candidate string that finds nothing is a valid miss, not a failure.
    Harvest wide on purpose: a strict harvest that misses the Service's own surface cannot be repaired later.
 
@@ -36,8 +37,8 @@ Three moves, in order. Do not collapse them.
 3. **ASSIGN THE SURVIVORS.**
    Run the differential over the survivors, not over everything you found.
    Hold every candidate Service whose contract touches the harvested nouns or actions, not the first one that fits.
-   A candidate that arrived with no competition is usually the first pattern you noticed rather than the best-supported one, so name the runner-up even when you are sure.
-   For each candidate ask whether the evidence fits THIS contract and not the others.
+   A candidate owner that arrived with no competition is usually the first pattern you noticed rather than the best-supported one, so name the runner-up even when you are sure.
+   For each candidate owner ask whether the evidence fits THIS contract and not the others.
    Evidence that fits three Services equally is evidence for none of them - park it at a low confidence, never a confident pick among the three.
    Two contracts that genuinely both reach the Endpoint are two owners rather than a tie to break - emit an aggregate for each, every one carrying its own honest confidence.
    Give each aggregate the confidence the falsification earned it, and quote the exact path segment or parameter you matched as its evidence.
@@ -54,11 +55,11 @@ Calibrate against the evidence the harvest survived, not against how much surfac
 
 A judgment below the bar simply produces no edge, and that is the correct outcome rather than a failure.
 
-## Judge the surface in front of you, freshly
+## Judge each discovered Endpoint freshly
 
-There is no repeated streamed chunk any more: you query the surface yourself, and a later run discovers it again.
+You query the surface yourself; a later run discovers it afresh.
 An Endpoint whose owner looks obvious when you harvest it deserves the same falsification as one that does not.
-Give every surviving Endpoint its own differential; a re-judged Endpoint costs nothing, while one waved through on recognition is how a whole unit's precision drops at once.
+Give every surviving Endpoint its own differential; one waved through on recognition is how a whole unit's precision drops at once.
 
 ## Worked examples
 
@@ -91,9 +92,9 @@ Both genuinely reach this Endpoint; emit both rather than choosing.
 
 You run six sub-problems, one turn each; you may call tools in any of them.
 
-1. **Harvest the surface** (`harvest_surface`). Derive several candidate strings from the contract and query `graph_view` broadly for each, plus `search_http_history` where a path is suggested. Record one Claim per harvested Endpoint, naming the candidate string that found it.
+1. **Harvest the surface** (`harvest_surface`). Derive several candidate strings from the contract and query `graph_view` broadly for each, plus `search_http_history` where a path is suggested. Then call `get_http_artifact` to read a specific recorded request shape. Record one Claim per harvested Endpoint, naming the candidate string that found it.
 2. **Falsify the harvest** (`falsify_harvest`). Try to throw each harvested Endpoint out against THIS contract. Record `survive` or `reject` and the reason; only survivors are assigned.
-3. **Prior modelling insights** (`prior_insights`). Read the `notes` store for this Service and for notes that name a shared mechanism. Reuse an earlier unit's conclusion; do not re-derive it.
+3. **Prior modelling insights** (`prior_insights`). Read the `notes` store for this Service, for notes whose body mentions the path nouns you harvested, and for any note naming a Service that may be missing. Reuse an earlier unit's conclusion; do not re-derive it.
 4. **Candidate owners** (`candidate_owners`). The differential above, over the survivors.
 5. **Assign** (`assign`). Emit the `aggregates`.
 6. **Closure** (`closure`). Write ONE modelling-closure note through `notes` (`command="write"`, `action="append"`, `note_name="modelling-closure"`, `kind="assignment"`) naming what you claimed AND what you left in the stale pool, then record it in a Claim.
