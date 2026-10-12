@@ -143,5 +143,27 @@ Remaining slices (follow-up, not in this change):
 
 - W-d: prepend the Overview in the mechanism-typist and data-modeller unit
   contexts, and retrofit any `operator_kb.md` without an Overview.
+  DONE (`28a17af`): all three proposers prepend it; all five kb files already
+  carry an Overview, so no retrofit was needed.
 - W-c: the crawl-hint ticket #353.
 - W-a: a live run to confirm the store is clean and the capture counters move.
+
+## Release and measure
+
+Once every work item is implemented and the relevant part of the test suite is
+green:
+
+1. Commit the work (done: W-a `15c2aed`, W-c `5a5eb32`, W-b `f4e9a43`, W-d
+   `63334d2` + `28a17af`).
+2. Merge `feat/surface-integrity` into `dev`.
+3. Push `dev`.
+4. Check the alignment of the stack (the version-advance / alignment action:
+   restart, recreate, or config-layer adjustment for each impacted component).
+5. Run the SAME trial as the diagnosed run (comfyui, `webexploitbench-8-run2`),
+   starting ONLY the analysis pipeline.
+6. Measure again, following `/measure-experiment-results`, with a COMPARATIVE
+   approach against the best prior version.
+7. Write the report in the comparison document
+   (`docs/experiments/analysisUnitFirst-vs-l0batchFirst-pipeline-comfyui-results.md`),
+   always.
+
