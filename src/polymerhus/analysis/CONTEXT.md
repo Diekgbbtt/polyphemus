@@ -331,6 +331,15 @@ It is read at ONE seam alongside `resolve_feed_mode`; `service_sourced` fires th
 The mode's `pass_fn` is `analysis/service_sourced.py::service_sourced_pass`: the terminal marker is its only trigger, it gates on recon reaching `complete`, and it is guarded once per run.
 The eval selects it through `TrialConfig.analysis_mode`, written into the settings PUT (ADR D45).
 
+**Batched L1-unit-first variant** (`ANALYSIS_PROMPT_VARIANT`; T0, ADR `batched-l1unit-first-adr.md`):
+The NEW default prompt arrangement for `service_sourced`: each proposer reasons from the L1 unit (identifier, kind, description) and discovers its own surface, rather than reading a pre-fed asset slice.
+It is a PROMPT-FILE variant, not a settings key and not a new analysis mode: the mode value stays `service_sourced`.
+`legacy` selects the original `<role>.md` files and is the rollback; `batched_l1unit_first` selects `<role>-batched-l1unit-first.md`.
+The selector is read ON CALL, never at import, and an unknown value warns and coerces to the default.
+`analysis/prompt_variant.py::prompt_path(role_id, variant=None)` is the ONE role-to-file map; the three role loaders resolve through it and memoize PER VARIANT, so the system prefix stays byte-identical across a run.
+_Avoid_: prompt version, prompt tag (it is a whole-file variant, not a revision counter).
+_Status_: the seam is built (T0); the three new files start as verbatim copies and are rewritten from scratch in T1-T3.
+
 **Pipeline unit (the Service)**:
 The `service_sourced` pipeline's unit of reasoning is the business Service, not the recon job's surface.
 This is the UP/DOWN CLASSING (plan section 2.4; `docs/design/domain-model.md` section 4.6), and it is a READING DISCIPLINE, not a new node class: the Service is promoted to the first-class pipeline unit, and the L0 surface is demoted to lower-class evidence reachable only through the hinge edges (`AGGREGATES`, `SURFACES_AT`, `EVIDENCED_BY`).

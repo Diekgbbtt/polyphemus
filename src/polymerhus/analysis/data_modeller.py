@@ -37,6 +37,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from polymerhus.analysis.analyser_types import L1DeltaBatch
 from polymerhus.analysis.chunking import Chunk, admit_for_role
 from polymerhus.analysis.l1_types import L0Ref
+from polymerhus.analysis.prompt_variant import prompt_path, resolve_prompt_variant
 from polymerhus.analysis.proposer_reasoning import cot_scaffold, role_header
 from polymerhus.analysis.reasoning_workflow import ReasoningWorkflow, SubProblem
 
@@ -809,25 +810,25 @@ _BASELINE_FEW_SHOTS = (
     '"kind": "derived_from", "rationale": "a basket line is derived from a listed product"}]'
 )
 
-# The data_modeller role prompt (`prompts/data-plane.md`), memoized on first call
-# (no import-time I/O, CODING STANDARD section 6). A missing prompt file is a
-# defect: FAIL-CLOSED (raise).
-_DATA_PLANE_SKILL: str | None = None
+# The data_modeller role prompt, selected by the active prompt variant
+# (`prompt_variant.prompt_path`: `data-plane.md` for `legacy`,
+# `data-plane-batched-l1unit-first.md` for the default), memoized PER VARIANT on
+# first call (no import-time I/O, CODING STANDARD section 6). A missing prompt file
+# is a defect: FAIL-CLOSED (raise).
+_DATA_PLANE_SKILLS: dict[str, str] = {}
 
 
 def _load_skill() -> str:
-    """The data_modeller's HOW, read directly from this module's
-    `prompts/data-plane.md` (DPL-DEC-16): memoized in-process, FAIL-CLOSED on a
-    missing file (raise). Every HARD invariant survives regardless, because
+    """The data_modeller's HOW, read from the file the active prompt variant selects
+    (DPL-DEC-16): memoized in-process PER VARIANT, FAIL-CLOSED on a missing file
+    (raise). Every HARD invariant survives regardless, because
     narrow/resolve/validate/bind/ground are code."""
-    global _DATA_PLANE_SKILL
-    if _DATA_PLANE_SKILL is None:
-        from pathlib import Path  # noqa: PLC0415
-
-        _DATA_PLANE_SKILL = (
-            Path(__file__).resolve().parent / "prompts" / "data-plane.md"
-        ).read_text(encoding="utf-8")
-    return _DATA_PLANE_SKILL
+    variant = resolve_prompt_variant()
+    cached = _DATA_PLANE_SKILLS.get(variant)
+    if cached is None:
+        cached = prompt_path("data_modeller", variant).read_text(encoding="utf-8")
+        _DATA_PLANE_SKILLS[variant] = cached
+    return cached
 
 
 _DATA_MODELLER_PROMPT_CONFIGS = ("baseline", "skill")

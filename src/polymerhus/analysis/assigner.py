@@ -38,6 +38,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from polymerhus.analysis.analyser_types import L1DeltaBatch
 from polymerhus.analysis.chunking import Chunk, admit_for_role
 from polymerhus.analysis.l1_types import L0Ref
+from polymerhus.analysis.prompt_variant import prompt_path, resolve_prompt_variant
 from polymerhus.analysis.reasoning_workflow import ReasoningWorkflow, SubProblem
 
 logger = logging.getLogger(__name__)
@@ -458,8 +459,8 @@ def _system_prompt() -> str:
     from emitting. Carrying it here would put "emit aggregates only" and a
     WebPresentation worked example in one system message and let the model choose.
     Retiring it per-role is ticket #30; the ROLE-SPECIFIC prompt that replaces it for
-    the Assigner is `prompts/assigner.md`, selected by
-    `ASSIGNER_PROMPT_CONFIG=skill`."""
+    the Assigner is the file `prompt_variant.prompt_path` selects
+    (`ANALYSIS_PROMPT_VARIANT`), gated on `ASSIGNER_PROMPT_CONFIG=skill`."""
     base = (
         f"{_ROLE_VERBATIM}\n\n{_load_assigner_skill()}"
         if _assigner_prompt_config() == "skill"
@@ -541,11 +542,13 @@ _FEW_SHOTS = (
 # The Assigner's system message is TWO layers, mirroring the Bootstrapper
 # (`bootstrap.py::_BOOTSTRAPPER_BASE_SYSTEM`): `_ROLE_VERBATIM` above is the WHAT
 # (identity, the aggregates-only output contract, the reference shape) and holds
-# unconditionally, while `prompts/assigner.md` is the HOW (the
-# ownership-judgment discipline and its worked examples), operator-tunable without a
-# code change. This is the per-role retirement of the shared analyser skill promised by
-# #30: that skill instructs System modelling and data relationships this role is
-# forbidden to emit, so a GENERALIST skill was worse here than none.
+# unconditionally, while the HOW (the ownership-judgment discipline and its worked
+# examples) is the file `prompt_variant.prompt_path` selects - `assigner.md` for the
+# `legacy` variant, `assigner-batched-l1unit-first.md` for the default. Either way
+# it is operator-tunable without a code change. This is the per-role retirement of
+# the shared analyser skill promised by #30: that skill instructs System modelling
+# and data relationships this role is forbidden to emit, so a GENERALIST skill was
+# worse here than none.
 #
 # There is no degraded stand-in: a missing prompt file is a defect and the read
 # below FAILS CLOSED (raises). Withholding is the only defence against the
@@ -553,25 +556,23 @@ _FEW_SHOTS = (
 # discriminating-evidence and calibration core must always be present - and every
 # HARD invariant survives regardless, because narrow / resolve / inventory / bar
 # are code, not prompt.
-_ASSIGNER_SKILL: str | None = None
+_ASSIGNER_SKILLS: dict[str, str] = {}
 
 
 def _load_assigner_skill() -> str:
-    """The Assigner's ownership-judgment discipline, read directly from this
-    module's `prompts/assigner.md`: memoized in-process, FAIL-CLOSED on a
-    missing file (raise).
+    """The Assigner's ownership-judgment discipline, read from the file the active
+    prompt variant selects (`prompt_variant.prompt_path`): memoized in-process PER
+    VARIANT, FAIL-CLOSED on a missing file (raise).
 
-    That memoization is what preserves the provider prompt-cache prefix: the file
-    is read ONCE per process, so `_system_prompt` returns byte-identical content
-    for every chunk of a run."""
-    global _ASSIGNER_SKILL
-    if _ASSIGNER_SKILL is None:
-        from pathlib import Path  # noqa: PLC0415
-
-        _ASSIGNER_SKILL = (
-            Path(__file__).resolve().parent / "prompts" / "assigner.md"
-        ).read_text(encoding="utf-8")
-    return _ASSIGNER_SKILL
+    The per-variant memoization is what preserves the provider prompt-cache prefix:
+    within a variant the file is read ONCE per process, so `_system_prompt`
+    returns byte-identical content for every chunk of a run."""
+    variant = resolve_prompt_variant()
+    cached = _ASSIGNER_SKILLS.get(variant)
+    if cached is None:
+        cached = prompt_path("assigner", variant).read_text(encoding="utf-8")
+        _ASSIGNER_SKILLS[variant] = cached
+    return cached
 
 
 # The assignment prompt is the highest-variance surface in the analyser: the SAME

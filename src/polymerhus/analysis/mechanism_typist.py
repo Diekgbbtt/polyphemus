@@ -36,6 +36,7 @@ from typing import TYPE_CHECKING
 
 from polymerhus.analysis.analyser_types import L1DeltaBatch
 from polymerhus.analysis.chunking import Chunk
+from polymerhus.analysis.prompt_variant import prompt_path, resolve_prompt_variant
 from polymerhus.analysis.proposer_reasoning import cot_scaffold, role_header
 from polymerhus.analysis.reasoning_workflow import ReasoningWorkflow, SubProblem
 
@@ -568,25 +569,25 @@ def stateful_invoke_fn(run_id: str, checkpointer, project_id: str | None = None)
     return session_invoke_fn("mechanism_typist", run_id, checkpointer, project_id)
 
 
-# The mechanism-typist role prompt (`prompts/technical-system.md`), memoized on
-# first call (no import-time I/O, CODING STANDARD section 6). A missing prompt
+# The mechanism-typist role prompt, selected by the active prompt variant
+# (`prompt_variant.prompt_path`: `technical-system.md` for `legacy`,
+# `technical-system-batched-l1unit-first.md` for the default), memoized PER VARIANT
+# on first call (no import-time I/O, CODING STANDARD section 6). A missing prompt
 # file is a defect: FAIL-CLOSED (raise).
-_TECHNICAL_SYSTEM_SKILL: str | None = None
+_TECHNICAL_SYSTEM_SKILLS: dict[str, str] = {}
 
 
 def _load_skill() -> str:
     """The mechanism-typist's OWN prompt (grilled #9): hypothesis-driven
-    mechanism-typing discipline + the >=6 breadth exemplars, read directly from
-    this module's `prompts/` dir. Memoized in-process; FAIL-CLOSED on a missing
-    file (raise). NOT the assignment-oriented analyser skill."""
-    global _TECHNICAL_SYSTEM_SKILL
-    if _TECHNICAL_SYSTEM_SKILL is None:
-        from pathlib import Path  # noqa: PLC0415
-
-        _TECHNICAL_SYSTEM_SKILL = (
-            Path(__file__).resolve().parent / "prompts" / "technical-system.md"
-        ).read_text(encoding="utf-8")
-    return _TECHNICAL_SYSTEM_SKILL
+    mechanism-typing discipline + the >=6 breadth exemplars, read from the file the
+    active prompt variant selects. Memoized in-process PER VARIANT; FAIL-CLOSED on a
+    missing file (raise). NOT the assignment-oriented analyser skill."""
+    variant = resolve_prompt_variant()
+    cached = _TECHNICAL_SYSTEM_SKILLS.get(variant)
+    if cached is None:
+        cached = prompt_path("mechanism_typist", variant).read_text(encoding="utf-8")
+        _TECHNICAL_SYSTEM_SKILLS[variant] = cached
+    return cached
 
 
 # --- the 4-sub-problem proposer body ------------------------------------------

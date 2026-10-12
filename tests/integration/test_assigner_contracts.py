@@ -567,12 +567,13 @@ def test_C39_missing_prompt_raises_fail_closed(monkeypatch):
         raise OSError("no mount")
 
     monkeypatch.setattr(pathlib.Path, "read_text", boom)
-    monkeypatch.setattr(assigner, "_ASSIGNER_SKILL", None)
+    # the memo is PER VARIANT, so the whole cache is cleared to force the re-read
+    monkeypatch.setattr(assigner, "_ASSIGNER_SKILLS", {})
     try:
         with pytest.raises(OSError):
             assigner._load_assigner_skill()
     finally:
-        monkeypatch.setattr(assigner, "_ASSIGNER_SKILL", None)
+        monkeypatch.setattr(assigner, "_ASSIGNER_SKILLS", {})
 
 
 @pytest.mark.parametrize("config", assigner._ASSIGNER_PROMPT_CONFIGS)
