@@ -185,6 +185,12 @@ def _trial_routes() -> dict:
             "per_job": [{"job": "crawl", "status": "complete"}],
             "stats": {"analysis_drained": True},
         },
+        # The recon entry chains recon -> analysis -> hunting, so the analysis
+        # status route must settle (`drained` is the analysis terminal vocabulary;
+        # a `complete` status is never terminal there, so it would poll forever).
+        # It must precede the generic `GET /projects` needle, which the substring
+        # matcher would otherwise answer with a status-less body.
+        "GET /projects/pid/analysis/r1": {"status": "drained", "analysis_run_id": "a1"},
         "GET /projects/pid/hunting/h1": {"status": "complete"},
         "POST /projects/pid/hunting": {"hunting_run_id": "h1"},
         "POST /projects/pid/recon": {"run_id": "r1"},

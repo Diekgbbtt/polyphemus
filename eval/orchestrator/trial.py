@@ -788,7 +788,6 @@ class Trial:
             state.project_id,
             api.recon_status(state.project_id, run_id),
             api.RECON_TERMINAL,
-            run=("recon", run_id),
         )
         # P8 liveness: a recon run that reports `complete` with no job rows, or
         # with every job failed, is a failed run - never chained into hunting.
@@ -834,9 +833,6 @@ class Trial:
             state.project_id,
             api.analysis_status(state.project_id, state.recon_run_id),
             api.ANALYSIS_TERMINAL,
-            # The analysis stop is keyed by the recon run id, the same id the
-            # status read uses, not the surrogate `analysis_run_id`.
-            run=("analysis", state.recon_run_id),
         )
         if analysis_run_id is None:
             analysis_run_id = (row or {}).get("analysis_run_id")
@@ -894,8 +890,6 @@ class Trial:
         project_id: str,
         status_call: api.ApiCall,
         terminal: frozenset,
-        *,
-        run: tuple[str, str],
     ) -> tuple[str, Mapping | None]:
         """Poll a run to its terminal, returning `(status, last row)`.
 
@@ -908,26 +902,29 @@ class Trial:
             status = api.status_of(response)
             if status in terminal:
                 return status, response
-            # The token budget and the trial deadline both stop the active run,
-            # so a poll never returns while the run it launched keeps running.
-            if self._check_spend(project_id, *run):
+            # The token budget and the trial deadline both stop the WHOLE project
+            # execution, so a poll never returns while ANY run of the project keeps
+            # running - not merely the run this poll launched.
+            if self._check_spend(project_id):
                 return "stopped", response
             if self._clock() >= deadline:
-                self._stop_run(project_id, *run)
+                self._stop_project(project_id)
                 return "timeout", response
             self._sleep(self.config.poll_s)
 
-    def _stop_run(self, project_id: str, run_kind: str, run_id: str) -> None:
-        """Stop the active run through the injected API seam.
+    def _stop_project(self, project_id: str) -> None:
+        """Stop the WHOLE project execution through the injected API seam.
 
-        A token-budget stop and a trial-deadline stop both stop the run the
-        trial launched. No surfer runs by default and the surfer has no timeout
-        trigger, so leaving the run running would orphan it and let it contend
-        for the agent and provider.
+        A token-budget stop and a trial-deadline stop both stop the project - every
+        live run of every kind (recon, analysis, hunting) - not just the run the poll
+        launched. The budget is enforced on the project's CUMULATIVE spend, so the stop
+        must bound the same unit: stopping one run left a co-launched analysis (and,
+        behind it, an auto-chained hunting run) spending far past the budget. One call,
+        no per-run-kind branching, and agnostic to the analysis mode.
         """
-        self._call(api.stop_run(project_id, run_kind, run_id))
+        self._call(api.stop_project(project_id))
 
-    def _check_spend(self, project_id: str, run_kind: str, run_id: str) -> SpendResult | None:
+    def _check_spend(self, project_id: str) -> SpendResult | None:
         """Enforce the trial-wide token budget; a `SpendResult` when it stops.
 
         The budget counts capped tokens (`capped_tokens`: new output +
@@ -936,7 +933,7 @@ class Trial:
         budget. No configured budget means no API call at all, so an unbudgeted
         trial pays nothing. The first check snapshots the project's cumulative
         capped total as the baseline; a resumed trial arrives with one and never
-        re-snapshots. On overflow the active run is stopped and the spend, the
+        re-snapshots. On overflow the WHOLE project execution is stopped and the spend, the
         post-stop overshoot, and the per-agent breakdown are recorded.
         """
         budget = self.config.token_budget
@@ -949,7 +946,7 @@ class Trial:
         spent = max(0, total - self._spend_baseline)
         if spent < budget:
             return None
-        self._stop_run(project_id, run_kind, run_id)
+        self._stop_project(project_id)
         # Re-read after the stop: the in-flight work may add tokens past the
         # budget, which is the recorded overshoot.
         final_total = api.usage_capped(self._call(api.usage(project_id)))
@@ -973,10 +970,10 @@ class Trial:
             # jetlinks-1 tier-0 cap-exhaustion) and a consumed-config COUNT is not
             # a failure signal - the run settles on its own quiesce, the budget,
             # or the trial deadline.
-            if self._check_spend(project_id, "hunting", run_id):
+            if self._check_spend(project_id):
                 return PollResult("stopped")
             if self._clock() >= deadline:
-                self._stop_run(project_id, "hunting", run_id)
+                self._stop_project(project_id)
                 return PollResult("timeout")
             self._sleep(cfg.poll_s)
 

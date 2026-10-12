@@ -165,7 +165,8 @@ REMOVED (2026-10-05): a consumed-config count is not a failure signal, and hard-
 _Avoid_: budget, limit
 
 **Token budget**:
-The per-`Target`-declared bound on a `Trial`'s token spend, enforced trial-wide: every phase poll reads the project's cumulative **capped-token** spend from the app usage surface (`capped_tokens` - generated output plus uncached input = `total_tokens - cached`), and when the spend over the trial's baseline reaches the budget the trial stops the active run and terminates `stopped`.
+The per-`Target`-declared bound on a `Trial`'s token spend, enforced trial-wide: every phase poll reads the project's cumulative **capped-token** spend from the app usage surface (`capped_tokens` - generated output plus uncached input = `total_tokens - cached`), and when the spend over the trial's baseline reaches the budget the trial stops the WHOLE project execution - every live run of every kind, recon, analysis, and hunting, in one `POST /projects/{id}/execution/stop` call - and terminates `stopped`.
+The stop is project-scoped, never a single run, because the budget bounds the project's cumulative spend and the runs are independent lifecycles: the analysis is co-launched with recon and can be streamed or batched, so a per-run-kind stop would branch the monitor and would leave the co-launched analysis (and a hunting run it chains on drain) spending past the budget.
 Counting capped tokens - new output plus uncached input, never cached input - measures the inference power a run induces and rewards cache reuse, so context the model re-reads from cache never consumes the budget (ADR `eval-budget-axis-adr.md`, #347).
 _Avoid_: cap, limit
 
@@ -187,8 +188,8 @@ The project's cumulative `capped_tokens` at the trial's first spend poll; persis
 _Avoid_: cap baseline, offset
 
 **Trial deadline**:
-The per-`Trial` wall-clock bound (`TrialConfig.budget_s`) on any one phase poll. When a poll reaches it the trial stops the active run - recon, analysis, or hunting - exactly as a **Token budget** stop does, then terminates the phase `timeout`. No run is left running for a surfer, because none runs by default.
-The stop is the same `api.stop_run(project_id, run_kind, run_id)` call as the budget stop; only the trial terminal differs (`timeout`, not `stopped`), and the phase record's `stop_run_id` already names the run the stop verb expects.
+The per-`Trial` wall-clock bound (`TrialConfig.budget_s`) on any one phase poll. When a poll reaches it the trial stops the WHOLE project execution - every live run of every kind - exactly as a **Token budget** stop does, then terminates the phase `timeout`. No run is left running for a surfer, because none runs by default.
+The stop is the same project-scoped call as the budget stop (`api.stop_project`, `POST /projects/{id}/execution/stop`); only the trial terminal differs (`timeout`, not `stopped`).
 _Avoid_: budget, phase cap
 
 **Pre-mined hunting artifacts**:

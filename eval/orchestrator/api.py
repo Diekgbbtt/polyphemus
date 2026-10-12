@@ -255,6 +255,16 @@ def stop_run(project_id: str, run_kind: str, run_id: str) -> ApiCall:
     return ApiCall("POST", f"/projects/{project_id}/{run_kind}/{run_id}/stop")
 
 
+def stop_project(project_id: str) -> ApiCall:
+    """Stop the WHOLE project execution: every live run of every kind at once.
+
+    The ONE stop the token-budget and trial-deadline monitors call, so the monitor
+    never has to know which run kinds - or which analysis mode - are live, nor
+    address each module's run id separately. The project's execution is the unit it
+    bounds, exactly as the project's cumulative token spend is."""
+    return ApiCall("POST", f"/projects/{project_id}/execution/stop")
+
+
 def project_graph(project_id: str) -> ApiCall:
     return ApiCall("GET", f"/projects/{project_id}/graph")
 

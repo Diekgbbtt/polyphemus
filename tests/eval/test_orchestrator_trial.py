@@ -275,7 +275,7 @@ def test_a_spend_stopped_analysis_after_recon_never_chains_into_hunting(tmp_path
         {
             **_full_routes(),
             "GET /projects/pid/analysis/r1": {"status": "draining", "analysis_run_id": "a1"},
-            "POST /projects/pid/analysis/r1/stop": {"stopped": True},
+            "POST /projects/pid/execution/stop": {"stopped": True},
         },
         totals=[1000, 1500, 1500],
     )
@@ -645,7 +645,7 @@ def test_a_failed_usage_read_leaves_the_spectrum_absent(tmp_path) -> None:
 def _usage_routes() -> dict:
     return {
         "GET /projects/pid/hunting/h1": {"status": "running"},
-        "POST /projects/pid/hunting/h1/stop": {"stopping": True},
+        "POST /projects/pid/execution/stop": {"stopping": True},
         "POST /projects/pid/hunting": {"hunting_run_id": "h1"},
         "GET /projects/pid/graph": GRAPH_L1_L0,
     }
@@ -656,7 +656,7 @@ def test_no_token_budget_makes_no_usage_call(tmp_path) -> None:
 
     t = _trial(tmp_path, api_runner, project_id="pid", token_budget=None)
 
-    assert t._check_spend("pid", "recon", "r1") is None
+    assert t._check_spend("pid") is None
     assert api_runner.usage_calls == 0
 
 
@@ -669,7 +669,7 @@ def test_the_spend_check_returns_a_spend_result_on_a_stop(tmp_path) -> None:
         tmp_path, api_runner, project_id="pid", token_budget=500, spend_baseline=1000
     )
 
-    result = t._check_spend("pid", "hunting", "h1")
+    result = t._check_spend("pid")
 
     assert isinstance(result, trial.SpendResult)
     assert result.spent == 500
@@ -715,9 +715,9 @@ def test_the_budget_counts_capped_tokens_not_the_cache_heavy_raw_total(tmp_path)
     t = _trial(tmp_path, api_runner, project_id="pid", token_budget=500)
 
     # Baseline capped 10 (raw 50M ignored); capped stays 10 -> spent 0 < 500.
-    assert t._check_spend("pid", "hunting", "h1") is None
-    assert t._check_spend("pid", "hunting", "h1") is None
-    assert t._check_spend("pid", "hunting", "h1") is None
+    assert t._check_spend("pid") is None
+    assert t._check_spend("pid") is None
+    assert t._check_spend("pid") is None
     assert not any(c.path.endswith("/stop") for c in api_runner.calls)
 
 
@@ -747,8 +747,8 @@ def test_uncached_input_advances_the_budget(tmp_path) -> None:
     api_runner = UncachedApi(_usage_routes(), capped_seq=[10, 600, 600])
     t = _trial(tmp_path, api_runner, project_id="pid", token_budget=500)
 
-    assert t._check_spend("pid", "hunting", "h1") is None
-    result = t._check_spend("pid", "hunting", "h1")
+    assert t._check_spend("pid") is None
+    result = t._check_spend("pid")
 
     assert isinstance(result, trial.SpendResult)
     assert result.spent == 590
@@ -769,7 +769,7 @@ def test_token_budget_stops_the_run_and_records_the_spend(tmp_path) -> None:
     ).run()
 
     stop = next(c for c in api_runner.calls if c.path.endswith("/stop"))
-    assert stop.path == "/projects/pid/hunting/h1/stop"
+    assert stop.path == "/projects/pid/execution/stop"
     assert record.terminal == "stopped"
     assert record.token_budget == 500
     assert record.spend_baseline == 1000
@@ -801,7 +801,7 @@ def test_the_token_budget_is_trial_wide_and_stops_recon(tmp_path) -> None:
     api_runner = SeqUsageApi(
         {
             "GET /projects/pid/recon/r1": {"status": "running"},
-            "POST /projects/pid/recon/r1/stop": {"stopped": True},
+            "POST /projects/pid/execution/stop": {"stopped": True},
             "POST /projects/pid/recon": {"run_id": "r1"},
             "GET /projects/pid/graph": GRAPH_L1_L0,
             "GET /projects": PROJECTS,
@@ -818,7 +818,7 @@ def test_the_token_budget_is_trial_wide_and_stops_recon(tmp_path) -> None:
     ).run()
 
     stop = next(c for c in api_runner.calls if c.path.endswith("/stop"))
-    assert stop.path == "/projects/pid/recon/r1/stop"
+    assert stop.path == "/projects/pid/execution/stop"
     assert record.terminal == "stopped"
     assert [p.phase for p in record.phases] == ["recon"]
     assert record.phases[0].status == "stopped"
@@ -838,7 +838,7 @@ def test_an_analysis_token_stop_names_the_recon_run_id(tmp_path) -> None:
                 "per_job": [{"job": "crawl", "status": "complete"}],
                 "stats": {},
             },
-            "POST /projects/pid/analysis/r0/stop": {"stopped": True},
+            "POST /projects/pid/execution/stop": {"stopped": True},
             "POST /projects/pid/analysis": {"analysis_run_id": "a1"},
             "GET /projects/pid/analysis/r0": {"status": "draining"},
             "GET /projects/pid/graph": GRAPH_L1_L0,
@@ -856,7 +856,7 @@ def test_an_analysis_token_stop_names_the_recon_run_id(tmp_path) -> None:
     ).run()
 
     stop = next(c for c in api_runner.calls if c.path.endswith("/stop"))
-    assert stop.path == "/projects/pid/analysis/r0/stop"
+    assert stop.path == "/projects/pid/execution/stop"
     assert record.terminal == "stopped"
     assert [p.phase for p in record.phases] == ["analysis"]
     # The analysis consumer id is the surrogate; the recon id is the stop key.
@@ -925,7 +925,7 @@ def test_a_malformed_usage_payload_never_falsely_stops(tmp_path) -> None:
         {
             "GET /projects/pid/usage": {"capped_tokens": "not-an-int", "by_agent": "oops"},
             "GET /projects/pid/hunting/h1": {"status": "running"},
-            "POST /projects/pid/hunting/h1/stop": {"stopping": True},
+            "POST /projects/pid/execution/stop": {"stopping": True},
             "POST /projects/pid/hunting": {"hunting_run_id": "h1"},
             "GET /projects/pid/graph": GRAPH_L1_L0,
         }
@@ -948,7 +948,7 @@ def test_a_malformed_usage_payload_never_falsely_stops(tmp_path) -> None:
     assert record.spent_tokens == 0
     # The trial deadline still stops the run (#338); it is not a budget stop.
     stops = [c for c in api_runner.calls if c.path.endswith("/stop")]
-    assert [c.path for c in stops] == ["/projects/pid/hunting/h1/stop"]
+    assert [c.path for c in stops] == ["/projects/pid/execution/stop"]
 
 
 # --- pre-mined artifacts ------------------------------------------------------
@@ -1065,7 +1065,7 @@ def test_budget_timeout_is_recorded_not_raised(tmp_path) -> None:
     api_runner = FakeApi(
         {
             "GET /projects/pid/recon/r1": {"status": "running"},
-            "POST /projects/pid/recon/r1/stop": {"stopping": True},
+            "POST /projects/pid/execution/stop": {"stopping": True},
             "POST /projects/pid/recon": {"run_id": "r1"},
             "GET /projects/pid/graph": GRAPH_L1_L0,
             "GET /projects": PROJECTS,
@@ -1093,7 +1093,7 @@ def test_a_wall_clock_timeout_stops_the_recon_run(tmp_path) -> None:
     api_runner = FakeApi(
         {
             "GET /projects/pid/recon/r1": {"status": "running"},
-            "POST /projects/pid/recon/r1/stop": {"stopping": True},
+            "POST /projects/pid/execution/stop": {"stopping": True},
             "POST /projects/pid/recon": {"run_id": "r1"},
             "GET /projects/pid/graph": GRAPH_L1_L0,
             "GET /projects": PROJECTS,
@@ -1112,14 +1112,14 @@ def test_a_wall_clock_timeout_stops_the_recon_run(tmp_path) -> None:
     assert record.terminal == "timeout"
     assert record.phases[0].status == "timeout"
     stops = [c for c in api_runner.calls if c.path.endswith("/stop")]
-    assert [c.path for c in stops] == ["/projects/pid/recon/r1/stop"]
+    assert [c.path for c in stops] == ["/projects/pid/execution/stop"]
 
 
 def test_a_wall_clock_timeout_stops_the_hunting_run(tmp_path) -> None:
     api_runner = FakeApi(
         {
             "GET /projects/pid/hunting/h1": {"status": "running"},
-            "POST /projects/pid/hunting/h1/stop": {"stopping": True},
+            "POST /projects/pid/execution/stop": {"stopping": True},
             "POST /projects/pid/hunting": {"hunting_run_id": "h1"},
             "GET /projects/pid/graph": GRAPH_L1_L0,
         }
@@ -1138,7 +1138,7 @@ def test_a_wall_clock_timeout_stops_the_hunting_run(tmp_path) -> None:
     assert record.terminal == "timeout"
     assert record.phases[0].status == "timeout"
     stops = [c for c in api_runner.calls if c.path.endswith("/stop")]
-    assert [c.path for c in stops] == ["/projects/pid/hunting/h1/stop"]
+    assert [c.path for c in stops] == ["/projects/pid/execution/stop"]
 
 
 def test_a_wall_clock_timeout_stops_the_analysis_run_by_recon_id(tmp_path) -> None:
@@ -1151,7 +1151,7 @@ def test_a_wall_clock_timeout_stops_the_analysis_run_by_recon_id(tmp_path) -> No
                 "per_job": [{"job": "crawl", "status": "complete"}],
                 "stats": {},
             },
-            "POST /projects/pid/analysis/r0/stop": {"stopped": True},
+            "POST /projects/pid/execution/stop": {"stopped": True},
             "POST /projects/pid/analysis": {"analysis_run_id": "a1"},
             "GET /projects/pid/analysis/r0": {"status": "draining"},
             "GET /projects/pid/graph": GRAPH_L1_L0,
@@ -1173,7 +1173,7 @@ def test_a_wall_clock_timeout_stops_the_analysis_run_by_recon_id(tmp_path) -> No
     assert record.phases[0].run_id == "a1"
     assert record.phases[0].stop_run_id == "r0"
     stops = [c for c in api_runner.calls if c.path.endswith("/stop")]
-    assert [c.path for c in stops] == ["/projects/pid/analysis/r0/stop"]
+    assert [c.path for c in stops] == ["/projects/pid/execution/stop"]
 
 
 # --- bootstrap: auth, scaffold, plan ------------------------------------------

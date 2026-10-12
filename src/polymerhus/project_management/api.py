@@ -448,6 +448,72 @@ async def stop_recon(project_id: str, run_id: str) -> dict:
     return {"run_id": run_id, "stopping": True}
 
 
+@router.post("/projects/{project_id}/execution/stop")
+async def stop_project_execution(project_id: str) -> dict:
+    """Stop the WHOLE project execution: EVERY live run of the project, all run
+    kinds at once.
+
+    This is the ONE stop a token-budget or deadline monitor calls. It exists so the
+    monitor never has to know which run kinds are live (a streamed or a batched
+    analysis, a hunting run, or any combination) nor address each module's run id
+    separately: the project's execution is the unit, exactly as its cumulative token
+    spend is. It removes the per-kind stop branching from the monitor.
+
+    Order is deliberate: the analysis leg runs FIRST, because a genuinely DRAINED
+    analysis chains a new hunting run (`hunt_after_analysis`), so stopping it before
+    it can drain is what prevents a fresh hunt from spawning behind the stop; the
+    recon and hunting legs are hard cancels that follow.
+
+    Idempotent and best-effort per leg: a project with nothing live returns empty
+    `stopped` lists, and one already-terminal run never masks another (each stopped
+    run id is reported in `stopped`, each leg failure in `errors`). The run rows
+    reach their own first-class terminal (`stopped`) on each pipeline's cancellation
+    path, never here."""
+    from polymerhus.app.clients import pg
+
+    stopped: dict[str, list[str]] = {"analysis": [], "recon": [], "hunting": []}
+    errors: list[str] = []
+    runtime = _runtime()
+
+    for row in pg.list_running_analysis_runs():
+        if row.get("project_id") != project_id:
+            continue
+        run_id = row["run_id"]
+        try:
+            from polymerhus.analysis.lifecycle import stop_analysis
+
+            await stop_analysis(run_id)
+            stopped["analysis"].append(run_id)
+        except Exception as exc:  # noqa: BLE001 - one leg never masks another
+            errors.append(f"analysis {run_id}: {exc}")
+
+    for row in pg.list_running_runs():
+        if row.get("project_id") != project_id:
+            continue
+        run_id = row["run_id"]
+        try:
+            if runtime is None:
+                raise RuntimeError("module runtime is not active")
+            runtime.cancel_run("recon", run_id)
+            stopped["recon"].append(run_id)
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"recon {run_id}: {exc}")
+
+    for row in pg.list_running_hunting_runs():
+        if row.get("project_id") != project_id:
+            continue
+        hunting_run_id = row["hunting_run_id"]
+        try:
+            from polymerhus.attack.hunting import runtime as hunting_runtime
+
+            await hunting_runtime.stop_hunting(hunting_run_id)
+            stopped["hunting"].append(hunting_run_id)
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"hunting {hunting_run_id}: {exc}")
+
+    return {"project_id": project_id, "stopped": stopped, "errors": errors}
+
+
 @router.post("/projects/{project_id}/analysis")
 async def launch_analysis(project_id: str, body: AnalysisLaunch) -> dict:
     """The dispatcher's analysis-ONLY entrypoint (#75): start a consumer that drains

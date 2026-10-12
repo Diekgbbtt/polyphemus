@@ -76,6 +76,12 @@ def test_stop_run_rejects_an_unknown_kind() -> None:
         api.stop_run("p", "exploit", "x1")
 
 
+def test_stop_project_builder() -> None:
+    # The ONE stop the token-budget / deadline monitor calls: the whole project
+    # execution, every live run of every kind, with no run kind or run id.
+    assert api.stop_project("p") == api.ApiCall("POST", "/projects/p/execution/stop")
+
+
 def test_call_display_renders_method_path_and_body() -> None:
     call = api.create_project("eval-t1")
     assert call.display() == 'POST /projects json={"name": "eval-t1"}'

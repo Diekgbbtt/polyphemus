@@ -51,6 +51,14 @@ the in-flight pod/tool teardown is a separate concern (#76).
 _Avoid_: writing the run status in the HTTP adapter (the terminal belongs to the
 pipeline).
 
+**Project execution stop** (`POST /projects/{id}/execution/stop`):
+The operator's request to stop the WHOLE project execution - every live run of the project, all run kinds at once (recon, analysis, hunting).
+It is the ONE stop a token-budget or deadline monitor calls, so the monitor never enumerates run kinds or addresses each module's run id; the project's execution is the unit it bounds, exactly as the project's cumulative token spend is.
+The handler reads the live runs (`list_running_runs`, `list_running_analysis_runs`, `list_running_hunting_runs`) and stops each through the existing primitives - `stop_analysis` (analysis, FIRST, so a drained analysis cannot chain a new hunting run behind the stop), `RuntimeManager.cancel_run("recon", ...)`, and `stop_hunting` (recon and hunting, hard cancels).
+It is idempotent and best-effort per leg: nothing live returns empty `stopped` lists, and one already-terminal run never masks another (`stopped` per kind, `errors`).
+Each leg's run reaches its own first-class terminal (`stopped`) on its pipeline's cancellation path, never here.
+_Avoid_: calling it a module stop (it is project-scoped, not one module); a per-run-kind stop the monitor must enumerate.
+
 **App-state read surface**:
 The instance-wide running-state read - `GET /app-state` (optional `?project_id` scope, `idle` reflects the scope).
 Per project it reports the in-flight runs of every run class the store expresses (recon `running`, analysis `draining`, hunting `running` - each the only live state of its lifecycle) plus the top-level `idle`; read-only, no mutation surface, with the equivalent direct-postgres query documented on the route as the fallback.

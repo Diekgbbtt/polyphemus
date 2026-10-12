@@ -734,6 +734,73 @@ def test_stop_unknown_run_404(monkeypatch):
     assert resp.status_code == 404
 
 
+# --- POST /projects/{pid}/execution/stop ---------------------------------------
+
+def test_project_execution_stop_stops_every_live_run_kind(monkeypatch):
+    # The ONE stop a token-budget / deadline monitor calls: every live run of the
+    # project, all kinds at once, regardless of analysis mode - analysis, then the
+    # recon and hunting hard cancels. Other projects' runs are never touched.
+    monkeypatch.setattr(pg, "list_running_analysis_runs", lambda: [
+        {"analysis_run_id": "a1", "run_id": "r0", "project_id": "p1",
+         "status": "draining", "started_at": None},
+        {"analysis_run_id": "a9", "run_id": "r9", "project_id": "other",
+         "status": "draining", "started_at": None},
+    ])
+    monkeypatch.setattr(pg, "list_running_runs", lambda: [
+        {"run_id": "r0", "project_id": "p1", "status": "running", "jobs": {}},
+        {"run_id": "r9", "project_id": "other", "status": "running", "jobs": {}},
+    ])
+    monkeypatch.setattr(pg, "list_running_hunting_runs", lambda: [
+        {"hunting_run_id": "h1", "project_id": "p1", "status": "running",
+         "started_at": None, "finished_at": None},
+    ])
+
+    stopped_analysis: list[str] = []
+
+    async def _fake_stop_analysis(run_id: str) -> None:
+        stopped_analysis.append(run_id)
+
+    import polymerhus.analysis.lifecycle as analysis_lifecycle
+    monkeypatch.setattr(analysis_lifecycle, "stop_analysis", _fake_stop_analysis)
+
+    fake_runtime = _FakeRuntime()
+    hunting_runtime = _patch_control_plane(monkeypatch, fake_runtime)
+
+    stopped_hunting: list[str] = []
+
+    async def _fake_stop_hunting(hunting_run_id: str) -> None:
+        stopped_hunting.append(hunting_run_id)
+
+    monkeypatch.setattr(hunting_runtime, "stop_hunting", _fake_stop_hunting)
+
+    resp = client.post("/projects/p1/execution/stop")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["stopped"] == {"analysis": ["r0"], "recon": ["r0"], "hunting": ["h1"]}
+    assert body["errors"] == []
+    assert stopped_analysis == ["r0"]     # only the p1 analysis, by its recon id
+    assert "r0" in fake_runtime.cancelled  # recon hard-cancel, only p1
+    assert "r9" not in fake_runtime.cancelled
+    assert stopped_hunting == ["h1"]
+
+
+def test_project_execution_stop_is_a_no_op_for_an_idle_project(monkeypatch):
+    monkeypatch.setattr(pg, "list_running_analysis_runs", lambda: [])
+    monkeypatch.setattr(pg, "list_running_runs", lambda: [])
+    monkeypatch.setattr(pg, "list_running_hunting_runs", lambda: [])
+    _patch_control_plane(monkeypatch, _FakeRuntime())
+
+    resp = client.post("/projects/p1/execution/stop")
+
+    assert resp.status_code == 200
+    assert resp.json() == {
+        "project_id": "p1",
+        "stopped": {"analysis": [], "recon": [], "hunting": []},
+        "errors": [],
+    }
+
+
 # --- GET /projects/{pid}/hunting/{rid} -----------------------------------------
 
 def test_status_returns_the_status_row(monkeypatch):
