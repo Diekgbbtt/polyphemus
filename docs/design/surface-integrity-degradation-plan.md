@@ -125,9 +125,23 @@ Feedback loop (red-capable, deterministic):
 
 ## Sequence and commit gates
 
-1. W-a: red tests, implementation, `pytest tests/kali -q`, docs, commit.
-2. W-c: investigation report; a ticket if a crawler change is needed; no code change if not.
-3. W-b: red tests, implementation, targeted `pytest tests/analysis -q`, docs, commit.
-4. W-d: red tests, implementation, targeted `pytest tests/analysis -q`, docs, commit.
+1. W-a: red tests, implementation, `pytest tests/kali -q`, docs, commit. DONE (`15c2aed`).
+2. W-c: investigation report; a ticket if a crawler change is needed; no code change if not. DONE (`5a5eb32`, ticket #353).
+3. W-b: red tests, implementation, `pytest tests/analysis -q`, docs, commit. DONE (`f4e9a43`).
+4. W-d: red tests, implementation, `pytest tests/analysis -q`, docs, commit. DONE (`63334d2`).
 
-Each work item ends with its targeted suite green and its documentation landed.
+Each work item ended with its targeted suite green and its documentation landed.
+
+## Status (2026-10-12)
+
+All four work items are landed on `feat/surface-integrity`.
+Full non-e2e gate: 5203 passed, 45 skipped, 1 xfailed; the 12 failures are the
+live `tests/test_steel_exec_live.py` suite, which calls `docker compose up` and
+fails because Docker is not installed locally (pre-existing, environmental).
+
+Remaining slices (follow-up, not in this change):
+
+- W-d: prepend the Overview in the mechanism-typist and data-modeller unit
+  contexts, and retrofit any `operator_kb.md` without an Overview.
+- W-c: the crawl-hint ticket #353.
+- W-a: a live run to confirm the store is clean and the capture counters move.
