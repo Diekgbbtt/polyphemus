@@ -16,7 +16,7 @@ from polymerhus.analysis.analyser_types import AggregatesProposal
 from polymerhus.analysis.assigner import assign_services
 from polymerhus.analysis.chunking import Chunk
 from polymerhus.analysis.l1_types import L0Ref
-from polymerhus.analysis.reasoning_workflow import AnalysisTurn
+from polymerhus.analysis.reasoning_workflow import AnalysisTurn, Claim
 
 BU = "https://shop"
 INVENTORY = {
@@ -55,7 +55,10 @@ class _Invoker:
 
     def __call__(self, messages, *, schema=None, system_prompt=None):
         self.calls.append(messages)
-        return self.turn
+        if "EXTRACTION - assign" in messages[0].content:
+            return self.turn
+        return AnalysisTurn(claims=[Claim(subject="GET /x", assertion="found",
+                                          evidence="", verdict="survive")])
 
 
 class _Writer:

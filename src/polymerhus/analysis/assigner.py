@@ -85,6 +85,11 @@ class AssignmentOutcome(BaseModel):
     batch: L1DeltaBatch = Field(default_factory=L1DeltaBatch)
     backlog: tuple[str, ...] = ()
     stats: AssignmentStats = Field(default_factory=AssignmentStats)
+    # The absent-surface degradation: the bounded harvest found nothing relevant
+    # to the contract, so the chain halted before `candidate_owners`. This is a
+    # finding (the Service's surface is not mapped), never a failure to search
+    # hard enough - it is what stops the escalation to the HTTP firehose.
+    no_surface: bool = False
 
 
 class AssignmentCensus(BaseModel):
@@ -373,7 +378,27 @@ _REFLECT_STEPS = (
     "RESIDUE: list the Endpoints you could not place, one short sentence each.",
 )
 
-# The Assigner's six sub-problems (L1-unit-first): `harvest_surface` DISCOVERS the
+# The absent-surface degradation (W-b). The harvest is bounded (surgical
+# `graph_view` probes, url-path-filtered `search_http_history`), and when it
+# finds nothing the chain HALTS before `candidate_owners` rather than running
+# the reasoning/assign turns on an empty premise. This is what stops the model
+# escalating to the HTTP firehose when a Service's surface is simply not mapped.
+def _survivor_count(turn) -> int:
+    """The harvested Endpoints that survived falsification (verdict `survive`)."""
+    if turn is None:
+        return 0
+    return sum(1 for c in (getattr(turn, "claims", None) or []) if c.verdict == "survive")
+
+
+def _halt_without_surface(sub_problem, turn) -> bool:
+    """The `halt_when` predicate: stop after `falsify_harvest` when nothing
+    survived, so `candidate_owners`/`assign` never run on an absent surface."""
+    if sub_problem.id != "falsify_harvest":
+        return False
+    return _survivor_count(turn) == 0
+
+
+
 # unit's surface through the tools, `falsify_harvest` tries to throw the harvest out
 # against the contract, `candidate_owners` is the reasoning differential over the
 # SURVIVORS, `assign` is the extraction turn, and `closure` writes the note. Each
@@ -737,6 +762,7 @@ def assign(
             run = run_workflow(WORKFLOW, invoke_fn=invoke_fn,
                                system_prompt=system_prompt,
                                base_artifacts=base_artifacts,
+                               halt_when=_halt_without_surface,
                                unit_slug=chunk.chunk_id, memory=memory,
                                project_id=project_id, run_id=run_id,
                                note_kind=note_kind)
@@ -744,7 +770,17 @@ def assign(
         logger.warning("assigner: workflow failed; degrading to empty outcome", exc_info=True)
         return AssignmentOutcome()
     turn = run.turns.get("assign")
-    if turn is None:  # no parseable tool call after retries -> empty outcome
+    if turn is None:
+        # The chain halted at `falsify_harvest` because nothing survived: the
+        # Service's surface is not mapped. Record it as a finding, not a failure.
+        falsify = run.turns.get("falsify_harvest")
+        if falsify is not None and _survivor_count(falsify) == 0:
+            logger.info(
+                "assigner chunk=%s no_surface: bounded harvest found nothing; "
+                "halted before candidate_owners", chunk.chunk_id,
+            )
+            return AssignmentOutcome(no_surface=True)
+        # no parseable tool call after retries -> empty outcome
         return AssignmentOutcome()
     raw = to_delta_batch(turn)
     outcome = shape_proposal(

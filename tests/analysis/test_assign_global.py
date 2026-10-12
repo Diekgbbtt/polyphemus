@@ -20,7 +20,7 @@ import asyncio
 from polymerhus.analysis.analyser_types import AggregatesProposal, ServiceProposal
 from polymerhus.analysis.assigner import AssignmentCensus, assign_global
 from polymerhus.analysis.l1_types import L0Ref
-from polymerhus.analysis.reasoning_workflow import AnalysisTurn
+from polymerhus.analysis.reasoning_workflow import AnalysisTurn, Claim
 
 BU = "https://shop"
 INVENTORY = {
@@ -57,7 +57,11 @@ def _agg(path, conf, service="checkout"):
 
 
 class _Invoker:
-    """An invoke seam that records its calls and returns a fixed turn."""
+    """An invoke seam that records its calls and returns a PER-STEP turn: a
+    `survive` claim for the reasoning steps (so the bounded harvest yields a
+    surface and the chain reaches `assign`), and the fixed turn for the `assign`
+    extraction step. A real model never returns the extraction turn for every
+    sub-problem; this stub mirrors that."""
 
     def __init__(self, turn):
         self.turn = turn
@@ -65,7 +69,10 @@ class _Invoker:
 
     def __call__(self, messages, *, schema=None, system_prompt=None):
         self.calls.append((messages, schema, system_prompt))
-        return self.turn
+        if "EXTRACTION - assign" in messages[0].content:
+            return self.turn
+        return AnalysisTurn(claims=[Claim(subject="GET /x", assertion="found",
+                                          evidence="", verdict="survive")])
 
 
 class _Writer:
@@ -172,7 +179,10 @@ def test_global_pass_turns_bind_notes_and_the_backstop_writes_an_assignment_note
 
     def seam(role_id, thread, messages, **kw):
         seen.append(kw)
-        return None
+        # A `survive` claim keeps the bounded harvest non-empty, so the chain
+        # reaches every sub-problem (this test asserts all six bind notes).
+        return AnalysisTurn(claims=[Claim(subject="GET /x", assertion="found",
+                                          evidence="", verdict="survive")])
 
     monkeypatch.setattr("polymerhus.app.llm.session.stateful_turn", seam)
     store = AnalysisMemoryStore(root_dir=tmp_path)

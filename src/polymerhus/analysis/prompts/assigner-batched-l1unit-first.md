@@ -20,18 +20,25 @@ Nothing is owned until you have found it, and finding it is not the same as owni
 
 Three moves, in order. Do not collapse them.
 
-1. **HARVEST AGGRESSIVELY.**
-   From the contract alone, write down several candidate strings: the nouns it owns, the actions it performs, and path-word fragments of each.
-   Query `graph_view` broadly for every candidate, always with a `LIMIT`.
-   Where a candidate suggests a path, call `search_http_history`, then `get_http_artifact` to read a specific recorded request shape.
+1. **HARVEST SURGICALLY.**
+   From the contract alone, write down the candidate strings it supports: the nouns it owns, the actions it performs, and path-word fragments of each.
+   Query `graph_view` NARROWLY, once per candidate, always with a `LIMIT`.
+   Prefer a precise path-substring probe over enumerating the whole surface, and stop enumerating once the candidate set is exhausted.
+   Call `search_http_history` ONLY with a url-path filter string derived from the contract (filter on `url` containing the candidate path); a call with no path filter is refused - it returns the firehose, not the Service's surface.
+   Then `get_http_artifact` to read ONE recorded request shape.
    A candidate string that finds nothing is a valid miss, not a failure.
-   Harvest wide on purpose: a strict harvest that misses the Service's own surface cannot be repaired later.
+   Do NOT widen a search that found nothing into a broader one; more surface is not the goal.
+
+   **STOP WHEN THE SURFACE IS ABSENT.** If the bounded harvest (every candidate, both tools) returns nothing relevant, the Service has no mapped surface - say so and stop.
+   Do not escalate to unbounded queries, ever-wider substring probes, or the full HTTP firehose: that spends the whole context and still finds nothing, because the surface is not there.
+   An absent surface is a finding, not a failure to search hard enough.
 
 2. **FALSIFY THE HARVEST.**
    Try hard to throw each harvested Endpoint out.
    Ask whether a noun or action in the path really matches a clause THIS contract claims, or whether the match is only topical.
    Ask whether the candidate string that found it is one the contract names, or a coincidence.
    Keep only the Endpoints that survive an honest attempt to falsify them.
+   If NOTHING survives, that is the absent-surface outcome: do not proceed to assign, and do not go back to harvest wider.
    Rejecting a real Endpoint costs a later pass; admitting a wrong one hangs a false edge that looks answered, so lean strict.
 
 3. **ASSIGN THE SURVIVORS.**
@@ -92,8 +99,8 @@ Both genuinely reach this Endpoint; emit both rather than choosing.
 
 You run six sub-problems, one turn each; you may call tools in any of them.
 
-1. **Harvest the surface** (`harvest_surface`). Derive several candidate strings from the contract and query `graph_view` broadly for each, plus `search_http_history` where a path is suggested. Then call `get_http_artifact` to read a specific recorded request shape. Record one Claim per harvested Endpoint, naming the candidate string that found it.
-2. **Falsify the harvest** (`falsify_harvest`). Try to throw each harvested Endpoint out against THIS contract. Record `survive` or `reject` and the reason; only survivors are assigned.
+1. **Harvest the surface** (`harvest_surface`). Derive the candidate strings from the contract and query `graph_view` narrowly for each, plus `search_http_history` with a url-path filter where a path is suggested. Then call `get_http_artifact` to read one recorded request shape. Record one Claim per harvested Endpoint, naming the candidate string that found it. If nothing relevant returns, record that the surface is absent and stop - do not widen the search.
+2. **Falsify the harvest** (`falsify_harvest`). Try to throw each harvested Endpoint out against THIS contract. Record `survive` or `reject` and the reason; only survivors are assigned. If no Endpoint survives, the run stops here with no assignment.
 3. **Prior modelling insights** (`prior_insights`). Read the `notes` store for this Service, for notes whose body mentions the path nouns you harvested, and for any note naming a Service that may be missing. Reuse an earlier unit's conclusion; do not re-derive it.
 4. **Candidate owners** (`candidate_owners`). The differential above, over the survivors.
 5. **Assign** (`assign`). Emit the `aggregates`.
