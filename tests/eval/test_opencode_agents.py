@@ -37,7 +37,6 @@ AGENT_DIR = REPO_ROOT / ".opencode" / "agent"
 ROLES = {
     "eval-assessor": "eval/prompts/assessment.md",
     "eval-diagnoser": "eval/prompts/diagnoser.md",
-    "eval-aligner": "eval/prompts/alignment.md",
     "eval-surfer": "eval/prompts/surfer.md",
 }
 

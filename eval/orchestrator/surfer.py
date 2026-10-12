@@ -42,7 +42,7 @@ from typing import Callable, Mapping, Protocol, Sequence
 
 import yaml
 
-from advance.app_state import AppState
+from orchestrator.app_state import AppState
 from orchestrator import alignment, api, instances, subagents, trial
 from orchestrator.commands import Command, CommandRunner, require_ok
 from orchestrator.files import FileStore

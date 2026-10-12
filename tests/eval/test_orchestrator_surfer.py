@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from advance.app_state import AppState
+from orchestrator.app_state import AppState
 from orchestrator import alignment, api, instances, surfer, trial
 from orchestrator.commands import CommandResult
 from orchestrator.files import FileStore, hunt_configs_dir

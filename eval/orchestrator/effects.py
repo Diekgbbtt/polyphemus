@@ -1,4 +1,4 @@
-"""effects.py - the one subprocess seam for the advancement plane.
+"""effects.py - the one subprocess seam for the eval orchestrator.
 
 Every advance module that shells out (`images`, `app_state`, `manifest`, and the
 daemon's alert hook) shares this `CommandResult` type and one `run_process`

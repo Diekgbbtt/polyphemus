@@ -332,7 +332,8 @@ from its own git worktree DETACHED at the `eval` branch commit under the
 configured instances root, with its own `.env` validated by
 `eval/env_preflight.py`; the compose project is `ph-<short>`. Detached means any
 number of instances share the one read-only `eval` branch (git refuses the same
-branch in two worktrees); the daemon fast-forwards each detached HEAD. Every
+branch in two worktrees); the external operator fast-forwards each detached
+HEAD. Every
 target run gets a unique synthetic Host (`t-<short>.target`), written into the
 target front and aliased in that instance's kali.
 
@@ -547,9 +548,9 @@ a closer look.
 - `GET /app-state` (optional `?project_id=`) - the idle proxy: per-project
   in-flight recon (`running`), analysis (`draining`), and hunting (`running`)
   runs plus the top-level `idle` flag.
-  When the API is unreachable, the advancement daemon reads the same rows
+  When the API is unreachable, the surfer reads the same rows
   straight from postgres - idle iff this returns no rows: `SELECT 'recon' AS kind, run_id AS id, project_id FROM recon_runs WHERE status = 'running' UNION ALL SELECT 'analysis', analysis_run_id, project_id FROM analysis_runs WHERE status = 'draining' UNION ALL SELECT 'hunting', hunting_run_id, project_id FROM hunting_runs WHERE status = 'running';`.
-  With more than one instance (`EVAL_ADVANCE_INSTANCES`) each instance carries its own fallback `dsn`, so a down API attributes its in-flight rows to that instance's database; an instance without one uses the shared `EVAL_ADVANCE_DSN` (R-I1).
+  Each instance carries its own fallback `dsn`, so a down API attributes its in-flight rows to that instance's database.
 
 ### 2.2. The judgment protocol (you are the oracle)
 
@@ -699,8 +700,8 @@ breakdowns.
 A push to `dev` fast-forwards the eval server's canonical `dev` checkout. The
 delivery is owned by `.github/workflows/deploy-eval.yml`, which pipes
 `eval/deploy/ff_dev.sh` over SSH; it touches only the server's `dev` branch and
-never the `eval` branch or any instance worktree (`dev` -> `eval` is the sync
-daemon's job).
+never the `eval` branch or any instance worktree (`dev` -> `eval` is the
+external operator's job).
 
 Before fetching, the script converges the checkout's `origin` onto the
 configured origin: a checkout previously cloned from another URL (a leftover
@@ -762,8 +763,8 @@ EVAL_ASSESS_COMMAND='opencode run --agent eval-assessor --dir <canonical-checkou
 `opencode run` takes the prompt as a message; the role agent reads the contract
 file named in `{prompt}` itself, so the launcher never has to know opencode's
 flags beyond `--agent` and `--dir`.
-The four dispatched role agents (`eval-assessor`, `eval-diagnoser`,
-`eval-aligner`, `eval-surfer`) ship tracked under `.opencode/agent/`, so `--dir`
+The three dispatched role agents (`eval-assessor`, `eval-diagnoser`,
+`eval-surfer`) ship tracked under `.opencode/agent/`, so `--dir`
 must be the checkout that contains them; an agent that is not in the checkout is
 a missing one ("agent ... not found" at dispatch).
 
@@ -897,52 +898,22 @@ are `eval/prompts/assessment.md` and `eval/prompts/diagnoser.md`.
 |---|---|
 | `PYTHONPATH=eval python3 -m orchestrator monitor <setup.yaml> [--budget-s N] [--dry-run]` | One tick of the post-execution control plane: verify every trial's execution state and advance one node (assessment then diagnosis). `--dry-run` reports the state and dispatches nothing. |
 
-### 2.12. Version-advance alignment and holds
+### 2.12. Recovery-state holds
 
-The sync daemon fast-forwards `eval` to `dev` when every instance is idle and
-records a stack manifest diff (the `decision` payload of its heartbeat). It
-never decides what a jump requires; the orchestrator does (`align`, D42).
+The version advance (fast-forwarding `eval` to `dev`) is performed by the
+external operator, out of band.
+This codebase no longer performs or decides a jump, and no client code observes
+one; the daemon, the alignment decision, and the operator rewind are gone.
 
-`align` reads the latest decision input from the daemon heartbeat (or a
-supplied file), interposes an agent turn with the delta, the documented impact
-map, and the environment context, and executes the returned actions: restart a
-named component (`kali`, `litellm`), recreate only the named compose services,
-run the `env_preflight.py` config-layer alignment and recreate when the keyset
-changed, or run a migration/rebuild declared per artifact class in the setup's
-`alignment:` section. There is no hardcoded fail-closed set: an artifact class
-the map does not name still reaches the decider.
-
-A jump the decider cannot align without an operator decision is escalated and
-held: an atomic hold marker lands in the alignment state, and `up`/`trial`
-refuse to start until an operator resolves it. The daemon's advance is never
-reverted (D38: no rewind); the operator decides how to proceed and records that
-decision on the hold.
+What stays is the durable recovery state at `--state`
+(`EVAL_ALIGNMENT_STATE`, default `eval/state/alignment.yaml`): the hold markers
+an escalation writes, and the surfer's handled-trigger keys.
+A hold refuses `up`/`trial` until an operator resolves it; resolving records the
+operator's decision and clears the hold.
 
 | Primitive | Contract |
 |---|---|
-| `PYTHONPATH=eval python3 -m orchestrator align <setup.yaml> [--instance <id>] [--decision-file <yaml>] [--dry-run]` | Assert the advance delta and execute the alignment decision. `--decision-file` supplies a decision-input YAML; the default is the daemon heartbeat (`--heartbeat`, `EVAL_ADVANCE_HEARTBEAT`). `--dry-run` plans the alignment commands and executes none of them (the agent turn still runs to obtain a decision). The alignment state lives at `--state` (`EVAL_ALIGNMENT_STATE`, default `eval/state/alignment.yaml`). |
-| `PYTHONPATH=eval python3 -m orchestrator alignment resolve <setup.yaml> --hold-id <id> --decision <text>` | Record the operator's decision on a named hold and clear it, unblocking `up`/`trial`. The advance is not reverted. |
-
-Configure the alignment agent command once, as `EVAL_ALIGN_COMMAND` (or
-`--command` per invocation). It is a shell line whose placeholders the
-orchestrator substitutes before running it:
-
-| Placeholder | Substituted with |
-|---|---|
-| `{prompt}` | `eval/prompts/alignment.md` - the alignment decision contract. |
-| `{input}` | the rendered input (decision input + impact map + environment context). |
-| `{destination}` | where the agent writes the decision document. |
-
-Example:
-
-```
-EVAL_ALIGN_COMMAND='opencode run --agent eval-aligner --dir <canonical-checkout> "Follow {prompt}. input={input}; destination={destination}. Write only {destination}."'
-```
-
-The impact map is DATA the prompt receives; the code contains no per-class
-branch that chooses an action. The executor only honours the decision and
-resolves a declared migration/rebuild command by artifact class; an action with
-no declaration fails loud rather than inventing one.
+| `PYTHONPATH=eval python3 -m orchestrator alignment resolve <setup.yaml> --hold-id <id> --decision <text>` | Record the operator's decision on a named hold and clear it, unblocking `up`/`trial`. |
 
 ### 2.13. The surfer loop (background state assertion and recovery)
 

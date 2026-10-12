@@ -1,4 +1,4 @@
-"""app_state.py - the idle proxy for the eval sync daemon.
+"""app_state.py - the idle proxy for the eval surfer loop.
 
 "An eval is executing" is read from polymerhus's own read-only running-state
 surface (D26/#265): `GET /app-state` returns `{"idle": bool, "projects": [...]}`,
@@ -22,7 +22,7 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Callable, Mapping, Sequence, Tuple
 
-from advance.effects import CommandResult, run_process
+from orchestrator.effects import CommandResult, run_process
 
 # The documented fallback: the same predicate `GET /app-state` applies. Idle
 # iff this returns no rows. Kept verbatim with #265's route docstring and

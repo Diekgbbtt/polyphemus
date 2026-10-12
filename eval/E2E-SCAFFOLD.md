@@ -52,10 +52,10 @@ A run attempted with one missing fails loud; none is silently defaulted.
 | B4 | The local WebExploitBench checkout `~/WebExploitBench` (or `EVAL_WEB_DIR`) with the `comfyui` target built (targetctl clones if missing) | target routed | `targetctl build/up comfyui` runs locally; the front is the shared `ph-eval-front` container (no ssh, no host nginx) |
 | B5 | The same local checkout serves ground truth (`EVAL_WEB_DIR`, default `~/WebExploitBench`; D45) | assessment, diagnosis | `gt.py` reads `<EVAL_WEB_DIR>/comfyui/challenge.json`; the KB is committed at `eval/data/webexploitbench/comfyui/operator_kb.md` |
 | B6 | LLM provider credits/keys for the roles in B2 | trial | Recon/analysis/hunting spend them |
-| B7 | `EVAL_SHA` and `EVAL_STACK_FINGERPRINT` | trial, store | The `eval` branch commit and the daemon's stack fingerprint of the running (post-advance) tree. Read the SHA with `git -C "$EVAL_REPO" rev-parse eval`; read the fingerprint from the advance daemon heartbeat's `decision.fingerprints.dev` - the post-advance/running side, which pairs with the now-current SHA. Do NOT use `decision.fingerprints.eval`: that is the pre-advance fingerprint and would pair the new SHA with a stale stack. Both are mandatory: `store materialize` refuses `identity_missing`, and every verdict and diagnosis row must carry them. |
+| B7 | `EVAL_SHA` and `EVAL_STACK_FINGERPRINT` | trial, store | The `eval` branch commit and the operator-supplied stack fingerprint of the running tree. Read the SHA with `git -C "$EVAL_REPO" rev-parse eval`; the fingerprint is owned by the external operator (the jump and its manifest are out of this codebase), so take it from the operator's record or reuse a prior run's value. Both are mandatory: `store materialize` refuses `identity_missing`, and every verdict and diagnosis row must carry them. |
 | B8 | `EVAL_ASSESS_COMMAND` and `EVAL_DIAGNOSE_COMMAND` | assessment, diagnosis | Shell lines with the documented placeholders (OPERATOR.md 2.9/2.10); no command means `assessment_no_command` / `diagnosis_no_command` escalation |
 | B9 | `EVAL_GITHUB_TOKEN` | diagnosis | The read-only `issue-search` bank; absent means the diagnoser writes a `proposed_issue` |
-| B10 | `EVAL_ALIGNMENT_STATE` with no unresolved hold | trial | `up`/`trial` refuse while a hold exists; resolve with `alignment resolve` |
+| B10 | `EVAL_ALIGNMENT_STATE` with no unresolved hold | trial | `up`/`trial` refuse while a hold exists; resolve with `alignment resolve` (the hold is recovery state, not a jump) |
 | B11 | The store root `/srv/eval-artifacts` writable on the eval server | store sync/materialize | The harness creates the tree; its parent must exist and be writable |
 | B12 | The instance data root `EVAL_DATA_ROOT` = `$EVAL_INSTANCES_ROOT/eval-server-1/data` | trial, assess, diagnose, close-verify, store | Export it in section 3 and pass `--data-root "$EVAL_DATA_ROOT"` on every step. The trial/assess/diagnose verbs default to `<repo>/data` while `store materialize` derives `<instances-root>/<instance>/data`; an unset root splits the pipeline across two trees (`chain_unresolved` at materialize, or unattributable paths). |
 
@@ -84,28 +84,15 @@ export EVAL_WEB_DIR=~/WebExploitBench
 export EVAL_TARGET_PLATFORM=linux/amd64
 export PH_API=http://localhost:8080
 export EVAL_SHA=$(git -C "$EVAL_REPO" rev-parse eval)
-export EVAL_STACK_FINGERPRINT=<daemon heartbeat decision.fingerprints.dev>
+export EVAL_STACK_FINGERPRINT=<the operator's fingerprint for the running tree>
 export EVAL_ASSESS_COMMAND="opencode run --agent eval-assessor --dir $EVAL_REPO \"Follow {prompt}. trial_record={trial_record}; ground_truth={ground_truth}; data_root={data_root}; destination={destination}; trace_id={trace_id}. Write only {destination}.\""
 export EVAL_DIAGNOSE_COMMAND="opencode run --agent eval-diagnoser --dir $EVAL_REPO \"Follow {prompt}. trial_record={trial_record}; verdicts={verdicts}; ground_truth={ground_truth}; data_root={data_root}; vulns={vulns}; destination={destination}; trace_id={trace_id}. Write only {destination}.\""
-export EVAL_ALIGN_COMMAND="opencode run --agent eval-aligner --dir $EVAL_REPO \"Follow {prompt}. input={input}; destination={destination}. Write only {destination}.\""
 export EVAL_SURFER_COMMAND="opencode run --agent eval-surfer --dir $EVAL_REPO \"Follow {prompt}. input={input}; destination={destination}. Write only {destination}.\""
 ```
 
-`EVAL_STACK_FINGERPRINT` is always the fingerprint of the running (post-advance) tree, so it matches the current `EVAL_SHA`.
-It comes from the daemon heartbeat (`decision.fingerprints.dev`, never `.eval`) only when an advance was recorded.
-For the very first run (no advance yet), compute it once the instance stack is up (step 1), over the current `eval` SHA and the running image digests:
-
-```
-PYTHONPATH=eval python3 -c "
-from pathlib import Path
-from advance import fingerprint, images, manifest
-repo, sha, project = Path('$EVAL_REPO'), '$EVAL_SHA', 'ph-dd131acc'
-m = manifest.build_manifest(repo, sha, images.collect_image_digests(images.default_containers(project)))
-print(fingerprint.fingerprint(m))
-"
-```
-
-`ph-dd131acc` is the instance's compose project (`ph-<short hash>` of `eval-server-1`); a future fingerprint CLI would fold this one-liner away.
+`EVAL_STACK_FINGERPRINT` is the fingerprint of the running tree, so it matches the current `EVAL_SHA`.
+The version jump and its stack manifest are owned by the external operator, out of band, and are no longer computed by this codebase; the operator supplies the fingerprint (or reuses a prior run's value) when a scenario asserts it.
+The `eval/advance/` package and its `manifest`/`images`/`fingerprint` modules are gone, so there is no in-repo one-liner for this value.
 
 ### Step 0 - plan gate (already green, re-run to confirm)
 
@@ -206,7 +193,7 @@ The verdict and diagnosis schemas refuse a row whose identity is missing or does
 
 - The orchestrator's verbs surface every failure on stderr as `orchestrator: error: <named cause>` and exit non-zero, except `trial`, which records a non-`complete` terminal in `trial.yaml` and stdout and exits 1 only for `failed`/`timeout` (0 for `blocked`/`stopped`) for the surfer loop to recover.
 - Configuration-layer repairs only: the trial's `chain` retries once after an `env`/`stack` repair; the surfer loop may apply `env` or `replace_artifacts` and resume.
-- An unalignable version jump or an unbound surfer action writes a hold (same mechanism) and blocks `up`/`trial` until an operator resolves it.
+- An unbound surfer action writes a hold and blocks `up`/`trial` until an operator resolves it.
 - The artifact store fails loud with a named code rather than copying a partial tree.
 - A proposed issue is written into `diagnoses.yaml`; the diagnoser never files.
 

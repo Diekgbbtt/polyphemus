@@ -1,4 +1,4 @@
-"""Unit tests for the eval idle proxy (`eval/advance/app_state.py`).
+"""Unit tests for the eval idle proxy (`eval/orchestrator/app_state.py`).
 
 The proxy reads the instance-wide running state from #265's `GET /app-state`
 surface and falls back to the documented direct-postgres query when the API is
@@ -11,7 +11,7 @@ import json
 
 import pytest
 
-from advance import app_state
+from orchestrator import app_state
 
 
 def test_http_idle_is_returned_from_the_endpoint() -> None:
@@ -133,7 +133,7 @@ def test_psql_command_carries_the_dsn_and_query() -> None:
 
 
 def test_default_dsn_transport_runs_psql_and_returns_stdout() -> None:
-    from advance.images import CommandResult
+    from orchestrator.effects import CommandResult
 
     seen: list[list[str]] = []
 

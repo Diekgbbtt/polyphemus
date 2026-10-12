@@ -236,7 +236,7 @@ _Avoid_: stage, step, phase
 The opencode agent under `.opencode/agent/<role>.md` that the harness selects by role id. The monitor runs the assessor and the diagnoser as awaited native opencode child sessions (`client.session.prompt({agent: <role>})`, D57); the aligner and the surfer, and the manual `assess`/`diagnose` verbs, are selected with `opencode run --agent <role> --dir <checkout> "<message>"`.
 It carries `mode: all` and the eval model (`opencode-go/deepseek-v4.1-flash`), and its body names the `eval/prompts/*.md` contract it reads.
 Each role ends its reply with an explicit terminal line (`... COMPLETE` / `... FAILED: <reason>`).
-The four dispatched roles are `eval-assessor`, `eval-diagnoser`, `eval-aligner`, and `eval-surfer`.
+The three dispatched roles are `eval-assessor`, `eval-diagnoser`, and `eval-surfer`.
 Their source is TRACKED in the repo so it reaches the eval server's canonical checkout; only the per-machine install state (`node_modules`, lockfiles) is ignored - an agent that is gitignored is a missing one.
 _Avoid_: subagent config, prompt file
 
@@ -252,12 +252,8 @@ One dispatch or verification step of the assessment subagent, recorded on the tr
 _Avoid_: retry, poll
 
 **Eval branch** (`eval`):
-The read-only branch the eval environment runs; fast-forwarded from `dev` by the sync daemon only when no eval is executing.
+The read-only branch the eval environment runs; fast-forwarded from `dev` by the external operator only when no eval is executing.
 _Avoid_: eval mirror, deploy branch
-
-**Execution-state variable**:
-The symbolic runner's authoritative flag that an eval is executing; it gates the sync daemon and must be lock-backed and staleness-recoverable.
-_Avoid_: eval lock flag, busy flag
 
 **Evidence chain**:
 The per-verdict set of hunting artifacts (hunt config, `TestImplementationSpec`, experiment logs, `PodExport`) plus phase-mapped observability reasoning references that support a positive verdict.
@@ -279,45 +275,20 @@ The background loop that monitors instance state and prompts the orchestrator to
 Each acted-on trigger is recorded by its deterministic identity in the eval state, so the loop acts once per distinct trigger and skips one it already handled.
 _Avoid_: monitor, watchdog
 
-**Version advance**:
-The environment-wide move of all instance worktrees from the current `eval` SHA to `dev`'s commit, performed only when all instances are idle.
-Each detached HEAD is fast-forwarded; a move that reaches only some worktrees is reported as a partial advance, never as a clean one.
-_Avoid_: sync, pull
-
 **Delivery plane**:
 The GitHub Actions CD controller's responsibility: fast-forwarding the eval server's canonical `dev` checkout from `origin/dev` on every push to `dev`.
 It first converges the checkout's `origin` onto the configured origin, repointing a checkout that was cloned from another URL (a leftover bundle, a moved mirror) rather than fetching that other `dev` and reporting a no-op fast-forward as a successful delivery.
 A genuine `dev` divergence still fails loudly and leaves the working tree untouched.
-It never touches `eval` or instance worktrees, and it never fetches on the daemon's behalf.
+It never touches `eval` or instance worktrees.
 _Avoid_: deployment, CD, release
 
 **Idle proxy**:
-The read of the app module's running-state surface (`GET /app-state`, with the documented direct-postgres fallback) that tells the sync daemon whether every instance is idle; unknown state is never treated as idle.
+The read of the app module's running-state surface (`GET /app-state`, with the documented direct-postgres fallback) that tells the surfer loop whether every instance is idle; unknown state is never treated as idle.
 _Avoid_: eval lock, busy flag, execution-state variable
-
-**Heartbeat**:
-The file the sync daemon atomically rewrites every poll carrying the observed `dev` and `eval` SHAs, the idle verdict, the advance state, each worktree's observed HEAD, the last error, and the timestamp of the last advance.
-_Avoid_: status file, health check
-
-**Last-known-good SHA**:
-The `eval` SHA the sync daemon records before each advance; the only SHAs an operator rewind may target.
-_Avoid_: checkpoint, backup ref
-
-**Rewind**:
-The operator-only rollback of every eval worktree to a recorded last-known-good SHA, behind an explicit confirmation flag; the daemon's polling loop can never perform one.
-_Avoid_: rollback, revert, reset
-
-**Stack fingerprint**:
-A single compressed hash over the stack manifest (alignment-relevant artifact SHAs plus running image digests) that tells whether a version advance needs an alignment action.
-_Avoid_: build hash, checksum
-
-**Alignment action**:
-The restart, recreate, or config-layer adjustment a version advance requires for an impacted component, decided by the eval orchestrator (not hardcoded); a jump the orchestrator cannot align without an operator decision is escalated and held.
-_Avoid_: deploy, rollout
 
 **Hold**:
 The atomic marker an escalation writes in the eval state: until an operator resolves it, `up`/`trial` refuse to start and name the hold and its rationale; resolving records the operator's decision and clears the block, without reverting the advance.
-Both an alignment escalation and a surfer escalation write one, through the same mechanism.
+A surfer escalation writes one through this mechanism.
 _Avoid_: lock, freeze, pause
 
 **Eval compose overlay**:

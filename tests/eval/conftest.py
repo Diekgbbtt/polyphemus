@@ -1,7 +1,7 @@
 """Test setup for the eval harness modules.
 
 `eval/` is a flat directory of scripts with no package `__init__`; the newer
-`eval/advance/` package is imported by putting `eval/` on `sys.path`, so the
+the `eval/` package is imported by putting `eval/` on `sys.path`, so the
 tests load it the same way the daemon's entry point does.
 """
 from __future__ import annotations

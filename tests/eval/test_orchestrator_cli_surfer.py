@@ -12,7 +12,7 @@ from types import SimpleNamespace
 
 import yaml
 
-from advance.app_state import AppState
+from orchestrator.app_state import AppState
 from orchestrator import alignment, cli, setup as setup_mod, surfer, trial
 
 

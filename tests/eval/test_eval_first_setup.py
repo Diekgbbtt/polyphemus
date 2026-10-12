@@ -108,7 +108,6 @@ def test_first_setup_parses_against_the_real_schema() -> None:
         "l1-surface",
         "hunting-artifacts",
     ]
-    assert parsed.alignment is None  # no migrations/rebuilds declared yet
 
     (instance,) = parsed.instances
     assert instance.instance_id == INSTANCE
