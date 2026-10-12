@@ -167,3 +167,28 @@ green:
    (`docs/experiments/analysisUnitFirst-vs-l0batchFirst-pipeline-comfyui-results.md`),
    always.
 
+### Release status (2026-10-12)
+
+Steps 1-3 are DONE: committed, `dev` fast-forwarded to `a4e831d`, `origin/dev`
+pushed (`8294c1f..a4e831d`).
+
+Steps 4-7 are PENDING. They are live, stateful operations on the shared eval
+server, which currently has many target containers up (comfyui, phpbb,
+geoserver, dataease, ...), so they are not run unattended:
+
+1. Align the stack: fast-forward `/opt/polymerhus-dev` (at `5e303326`) to
+   `a4e831d`, fast-forward the `eval` branch / instance worktree, and recreate
+   the agent container (`docker compose ... up -d --force-recreate --no-deps
+   agent`) so the new `kali/` and `src/polymerhus/analysis/` code is live.
+   Verify the `ph-eval-front` proxy and the target front are healthy.
+2. Run the analysis-only trial: the same comfyui `webexploitbench-8-run2` trial
+   from the diagnosed run, via `POST /projects/{id}/recon` with the analysis
+   subset (recon + analysis), NO hunting.
+3. Measure per `/measure-experiment-results`, comparatively against the best
+   prior version (the `l0batchFirst` arm), and write the report in the
+   comparison doc.
+
+The comparison doc currently lives in the main worktree only
+(`docs/experiments/analysisUnitFirst-vs-l0batchFirst-pipeline-comfyui-results.md`,
+untracked); it must be committed with the report.
+
