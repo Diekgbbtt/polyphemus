@@ -750,7 +750,10 @@ def _unit_block(chunk: Chunk, *, inventory: dict | None = None,
             "implemented? Name the relied-upon Systems that are NOT yet mapped.")
         aggregates_line = (
             f"UNIT ALREADY AGGREGATES: {_aggregated_endpoints_repr(aggregations, service)}\n")
+    overview = (inv.get("application_overview") or "").strip()
+    framing = f"APPLICATION OVERVIEW: {overview}\n\n" if overview else ""
     return (
+        f"{framing}"
         f"UNIT: {slug}\n"
         f"UNIT KIND: {kind}\n"
         f"{description_line}\n"

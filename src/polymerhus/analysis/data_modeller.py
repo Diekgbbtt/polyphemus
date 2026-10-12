@@ -826,7 +826,10 @@ def _service_unit_block(
     slug = _service_slug(chunk)
     contracts = (inventory or {}).get("service_contracts") or {}
     contract = contracts.get(slug, "") if isinstance(contracts, dict) else ""
+    overview = ((inventory or {}).get("application_overview") or "").strip()
+    framing = f"APPLICATION OVERVIEW: {overview}\n\n" if overview else ""
     return (
+        f"{framing}"
         f"SERVICE UNIT: {slug}\n"
         "This Service - not any asset name - is the reasoning anchor for the data "
         "plane. Its contract states what it does and owns; its already-aggregated "

@@ -83,3 +83,29 @@ def test_unit_context_block_omits_the_framing_when_absent():
     inventory = {"service_contracts": {"checkout": "X."}}
     block = _unit_context_block(chunk, inventory, ())
     assert block.startswith("SERVICE UNIT: checkout")
+
+
+def test_mechanism_typist_unit_block_prepends_the_overview():
+    from polymerhus.analysis.mechanism_typist import _unit_block
+
+    chunk = Chunk(chunk_id="checkout", source_job="service:checkout", assets=())
+    inventory = {
+        "service_contracts": {"checkout": "Take a basket to a paid order."},
+        "application_overview": "A single web service for node-graph editing.",
+    }
+    block = _unit_block(chunk, inventory=inventory)
+    assert block.startswith("APPLICATION OVERVIEW: A single web service")
+    assert "UNIT: checkout" in block
+
+
+def test_data_modeller_unit_block_prepends_the_overview():
+    from polymerhus.analysis.data_modeller import _service_unit_block
+
+    chunk = Chunk(chunk_id="checkout", source_job="service:checkout", assets=())
+    inventory = {
+        "service_contracts": {"checkout": "Take a basket to a paid order."},
+        "application_overview": "A single web service for node-graph editing.",
+    }
+    block = _service_unit_block(chunk, inventory)
+    assert block.startswith("APPLICATION OVERVIEW: A single web service")
+    assert "SERVICE UNIT: checkout" in block

@@ -48,10 +48,8 @@ in-repo contract and the downstream plumbing it requires.
 ## Consequences
 
 - Every proposer that reads `read_l1_inventory` can frame its reasoning; the
-  assigner does so today.
+  assigner, the mechanism-typist, and the data-modeller all do so today.
 - The Overview is not a graph node, so it is invisible to `graph_view` by
   design; consumers read it from the inventory dict.
-- The remaining slice (not in this change): prepend the Overview in the
-  mechanism-typist and data-modeller unit contexts too, and retrofit any
-  `operator_kb.md` that lacks an Overview. The five present kb files already
-  carry one.
+- No kb retrofit was needed: all five present `eval/data/webexploitbench/*/
+  operator_kb.md` files already carry an `## Overview`.
