@@ -304,6 +304,16 @@ def _chunk_slice(chunk: Chunk) -> dict:
     return {"nodes": nodes, "links": []}
 
 
+def _service_block(chunk: Chunk, inventory: dict | None) -> str:
+    """Render the ONE Service unit the v2 pipeline feeds the assigner: its slug and
+    its `service_contract` (the primary routing evidence). A unit whose slug is not
+    in the contracts map renders `(none)` - a thin KB gets a thin honest contract."""
+    slug = str(getattr(chunk, "source_job", "") or "").removeprefix("service:") or chunk.chunk_id
+    contracts = (inventory or {}).get("service_contracts") or {}
+    contract = contracts.get(slug, "") if isinstance(contracts, dict) else ""
+    return f"SERVICE UNIT: {slug}\nservice_contract: {contract or '(none)'}"
+
+
 # The four reflect stages (#34), merging the load-bearing primitives of the
 # `overthink` and `critical-thinking-logical-reasoning` disciplines down to what this
 # role needs. `candidate_owners` and `assign` each cover a slice of them (spec 3.3).
@@ -340,6 +350,46 @@ WORKFLOW = ReasoningWorkflow(
     role_id=ROLE,
     sub_problems=(
         SubProblem(
+            id="surface_scan",
+            name="broad L0 surface scan",
+            prompt=(
+                "BROAD L0 SCAN - no asset-name assumptions. You are given ONE Service "
+                "(its slug and `service_contract`). Before you judge ownership, "
+                "establish the raw surface: call `graph_view` with bounded read-only "
+                "Cypher (always a LIMIT) to enumerate the L0 `Endpoint`s this target "
+                "exposes. Do NOT query for a specific path or parameter you guessed from "
+                "the contract; enumerate what EXISTS. Suggested queries: (1) every "
+                "`:BaseURL` in the project; (2) every `:Endpoint` reachable from those "
+                "BaseURLs via `:HAS_ENDPOINT`, with its method/path/url and its "
+                "`:Parameter` names; (3) the `:Endpoint`s any Service already "
+                "`AGGREGATES`. Emit one Claim per discovered Endpoint: `subject` "
+                "`METHOD /path`; `assertion` the raw surface facts (path segments, "
+                "method, trailing segment, parameter names, baseurl); `evidence` the "
+                "Cypher you ran; `verdict` `seen`. Do not decide ownership here. Emit "
+                "`claims` only."
+            ),
+            inject=("service", "inventory", "surface"),
+            emit=("claims",),
+        ),
+        SubProblem(
+            id="prior_insights",
+            name="prior modelling insights",
+            prompt=(
+                "PRIOR MODELLING INSIGHTS - read before you enrich. Call the `notes` "
+                "tool with command=\"read\" to surface what earlier units concluded "
+                "about this Service and its neighbours. Read this Service's own notes "
+                "(`unit` = the slug), notes whose body mentions the path nouns you found "
+                "in the scan, and any note naming a Service that may be missing. For "
+                "each relevant note emit one Claim: `subject` the note key; `assertion` "
+                "the recorded insight; `evidence` the note body excerpt; `verdict` "
+                "`reuse`, `avoid`, or `competing-owner`. A run with no prior notes is a "
+                "valid result - say so. Emit `claims` only."
+            ),
+            inject=("service", "surface_scan"),
+            emit=("claims",),
+            depends_on=("surface_scan",),
+        ),
+        SubProblem(
             id="candidate_owners",
             name="candidate owners",
             prompt=(
@@ -351,8 +401,9 @@ WORKFLOW = ReasoningWorkflow(
                 "matched, `verdict` the owner you would choose and your confidence. "
                 "Emit `claims` only; do not propose deltas yet."
             ),
-            inject=("inventory", "surface"),
+            inject=("inventory", "surface", "surface_scan", "prior_insights"),
             emit=("claims",),
+            depends_on=("surface_scan", "prior_insights"),
         ),
         SubProblem(
             id="assign",
@@ -360,15 +411,37 @@ WORKFLOW = ReasoningWorkflow(
             prompt=(
                 "EXTRACTION - assign. " + _REFLECT_STEPS[3] + "\n\nFrom the claims "
                 "above, emit the `aggregates`: one per Endpoint and owning Service(s), "
-                "each with `confidence` (0..1) and `evidence_refs`. Leave services, "
-                "systems, system_edges and every data-modelling list EMPTY."
+                "each with `confidence` (0..1) and `evidence_refs`. Emit one aggregate "
+                "for EACH genuine owner. Use only `service_slug`s from the inventory; an "
+                "invented owner names nothing. Leave services, systems, system_edges and "
+                "every data-modelling list EMPTY. Put the residue in `claims`: one Claim "
+                "per unplaced Endpoint (`verdict` `residue`)."
             ),
-            inject=("inventory", "surface", "candidate_owners"),
-            emit=("aggregates",),
+            inject=("inventory", "surface", "surface_scan", "candidate_owners"),
+            emit=("aggregates", "claims"),
             depends_on=("candidate_owners",),
+        ),
+        SubProblem(
+            id="closure",
+            name="modelling closure",
+            prompt=(
+                "CLOSURE - write the modelling-closure note. Summarise what this unit "
+                "closed over: the `Endpoint`s you claimed as `AGGREGATES` (slug, "
+                "confidence, matched evidence) and EXPLICITLY the `Endpoint`s you did "
+                "NOT claim and why each was left in the stale pool. Call the `notes` "
+                "tool once: command=\"write\", action=\"append\", unit = the Service "
+                "slug, note_name=\"modelling-closure\", kind=\"assignment\", body = the "
+                "closure body. Then emit one Claim recording the closure: `subject` the "
+                "Service; `assertion` the claimed and unclaimed counts; `evidence` the "
+                "note key; `verdict` `closed`. Emit `claims` only."
+            ),
+            inject=("service", "surface_scan", "assign"),
+            emit=("claims",),
+            depends_on=("assign",),
         ),
     ),
 )
+
 
 
 def _system_prompt() -> str:
@@ -586,6 +659,7 @@ def assign(
     base_artifacts = {
         "inventory": _inventory_block(inventory),
         "surface": _slice_repr(l0_slice),
+        "service": _service_block(chunk, inventory),
     }
     # Per-batch memory: the chunk id scopes the whole chain to its own session (the
     # supervisor dispatches one chunk at a time), so the next chunk starts fresh.
@@ -902,5 +976,130 @@ async def assign_global(
         "(unresolvable=%d out_of_inventory=%d withheld=%d)",
         run_id, census.admitted, census.kept, census.written, census.stale,
         census.unresolvable, census.out_of_inventory, census.withheld,
+    )
+    return census
+
+
+async def assign_services(
+    project_id: str,
+    run_id: str,
+    *,
+    read_fn=None,
+    invoke_fn=None,
+    write_fn=None,
+    inventory_fn=None,
+    persist_fn=None,
+    memory=None,
+    checkpointer=None,
+    units=None,
+    read_slices_fn=None,
+    bar: float = ASSIGN_CONFIDENCE_BAR,
+) -> AssignmentCensus:
+    """THE PER-SERVICE ASSIGN PASS (v2, spec 2.1, ADR D46): one awaited call per
+    Service unit.
+
+    The v2 consumption filter for the Assigner is EACH SERVICE (v2 spec section 2):
+    the assigner grounds ownership on the L0 surface THROUGH one Service at a time,
+    rather than grouping the whole surface into one pass. Each Service unit carries
+    the settled L0 surface as its broad candidate set (the "no asset-name
+    assumption" rule - the assigner sees the surface and the Service, then asks
+    which endpoints THAT Service owns), and is judged with `existing_slugs={slug}`
+    so it can only write its OWN `AGGREGATES` (shared ownership stays possible: two
+    Services independently claim the same endpoint).
+
+    It reuses the SAME `assign` body, prompt and five shaping gates as the global
+    pass - only the unit set and the validation set differ - and sums the per-Service
+    censuses into one. Fail-open per Service: a unit that raises contributes zero and
+    the next unit runs. Persistence mirrors `assign_global` (best-effort)."""
+    from polymerhus.analysis.l0_stream import read_l0_assets
+
+    if inventory_fn is None:
+        from polymerhus.analysis.l1_inventory import read_l1_inventory
+
+        inventory_fn = read_l1_inventory
+    if write_fn is None:
+        write_fn = _default_write_fn
+    if persist_fn is None:
+        persist_fn = _persist_census
+    if units is None:
+        from polymerhus.analysis.service_slice import (
+            RESIDUAL_UNIT,
+            build_service_slices,
+        )
+
+        all_units = build_service_slices(project_id, read_fn=read_slices_fn)
+        units = [u for u in all_units if u.chunk_id != RESIDUAL_UNIT]
+
+    if invoke_fn is None:
+        if checkpointer is None:
+            try:
+                from polymerhus.app.llm.checkpoints import get_session_checkpointer
+
+                checkpointer = get_session_checkpointer()
+            except Exception:  # noqa: BLE001 - a null checkpointer degrades the seam
+                checkpointer = None
+        invoke_fn = _global_invoke_fn(run_id, project_id, checkpointer)
+
+    totals = {
+        "admitted": 0, "proposed": 0, "unresolvable": 0, "out_of_inventory": 0,
+        "rescaled": 0, "withheld": 0, "kept": 0, "written": 0, "stale": 0,
+    }
+    try:
+        assets = tuple(read_l0_assets(project_id, read_fn=read_fn))
+        inventory = inventory_fn(project_id) or {}
+        all_slugs = frozenset(inventory.get("services") or ())
+    except Exception:  # noqa: BLE001 - a degraded read yields a zero census
+        logger.warning("assign_services: read failed; returning a zero census", exc_info=True)
+        units, assets, inventory, all_slugs = [], (), {}, frozenset()
+
+    for unit in units:
+        slug = str(unit.source_job or "").removeprefix("service:") or unit.chunk_id
+        if slug not in all_slugs:
+            continue
+        # The broad candidate set: the WHOLE settled surface, judged one Service at a
+        # time; `existing_slugs={slug}` makes the write filter per-Service.
+        chunk = Chunk(
+            chunk_id=unit.chunk_id, source_job=f"service:{slug}", assets=assets,
+        )
+        try:
+            admitted = admit_for_role(chunk, ROLE)
+            outcome = assign(
+                chunk,
+                invoke_fn=invoke_fn,
+                inventory=inventory,
+                existing_slugs=frozenset({slug}),
+                bar=bar,
+                run_id=run_id,
+                tags=["analysis", "assigner", "service_sourced", "per_service"],
+                memory=memory,
+                project_id=project_id,
+                note_kind="assignment",
+            )
+            written = 0
+            if outcome.batch.aggregates:  # an empty result writes NOTHING
+                written = int(write_fn(outcome.batch, project_id) or 0)
+            st = outcome.stats
+            totals["admitted"] += len(admitted)
+            totals["proposed"] += st.proposed
+            totals["unresolvable"] += st.unresolvable
+            totals["out_of_inventory"] += st.out_of_inventory
+            totals["rescaled"] += st.rescaled
+            totals["withheld"] += st.withheld
+            totals["kept"] += st.kept
+            totals["written"] += written
+            totals["stale"] += _stale_count(admitted, outcome.batch)
+        except Exception:  # noqa: BLE001 - fail-open per Service, the loop continues
+            logger.warning("assign_services: unit %s degraded; continuing", unit.chunk_id,
+                           exc_info=True)
+
+    census = AssignmentCensus(**totals)
+    try:
+        persist_fn(run_id, census)
+    except Exception:  # noqa: BLE001 - persistence is best-effort (mirrors lifecycle)
+        logger.warning("assign_services: census persistence failed", exc_info=True)
+
+    logger.info(
+        "assign_services run=%s units=%d kept=%d written=%d stale=%d",
+        run_id, len(units), census.kept, census.written, census.stale,
     )
     return census

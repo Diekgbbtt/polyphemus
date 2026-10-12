@@ -70,3 +70,13 @@ Endpoint `GET /invoices/42/shipment`.
 Differential: both contracts name a noun that appears in the path, and neither claim rules the other out.
 -> TWO aggregates: `invoice-settlement` at 0.85 (evidence "path segment /invoices") and `parcel-dispatch` at 0.80 (evidence "path segment /shipment").
 Both genuinely reach this Endpoint; emit both rather than choosing.
+
+## The workflow you run, in order
+
+You run five sub-problems, one turn each; you may call tools in any of them.
+
+1. **Broad L0 scan** (`surface_scan`). Call `graph_view` to enumerate this target's Endpoints broadly, with no asset-name assumption. Read what EXISTS; never filter on a path or parameter you guessed from the contract.
+2. **Prior modelling insights** (`prior_insights`). Read the `notes` store for this Service and for notes that name a shared mechanism. Reuse an earlier unit's conclusion; do not re-derive it.
+3. **Candidate owners** (`candidate_owners`). The four moves above, over the scanned surface.
+4. **Assign** (`assign`). Emit the `aggregates`.
+5. **Closure** (`closure`). Write ONE modelling-closure note through `notes` (`command="write"`, `action="append"`, `note_name="modelling-closure"`, `kind="assignment"`) naming what you claimed AND what you left in the stale pool, then record it in a Claim.

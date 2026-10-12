@@ -158,10 +158,13 @@ def test_assigner_workflow_matches_the_spec_table():
     from polymerhus.analysis.assigner import WORKFLOW
 
     by_id = {sp.id: sp for sp in WORKFLOW.sub_problems}
-    assert [sp.id for sp in WORKFLOW.sub_problems] == ["candidate_owners", "assign"]
+    assert [sp.id for sp in WORKFLOW.sub_problems] == [
+        "surface_scan", "prior_insights", "candidate_owners", "assign", "closure"]
+    assert by_id["surface_scan"].emit == ("claims",)
     assert by_id["candidate_owners"].emit == ("claims",)
-    assert by_id["assign"].emit == ("aggregates",)
+    assert by_id["assign"].emit == ("aggregates", "claims")
     assert by_id["assign"].depends_on == ("candidate_owners",)
+    assert by_id["closure"].depends_on == ("assign",)
 
 
 def test_mechanism_typist_workflow_matches_the_spec_table():
@@ -169,13 +172,17 @@ def test_mechanism_typist_workflow_matches_the_spec_table():
 
     by_id = {sp.id: sp for sp in WORKFLOW.sub_problems}
     assert [sp.id for sp in WORKFLOW.sub_problems] == [
-        "mechanism_hypotheses", "page_clusters", "systems_extract", "link"]
+        "unit_surface_read", "prior_insights", "mechanism_hypotheses",
+        "page_clusters", "systems_extract", "link", "closure"]
+    assert by_id["unit_surface_read"].emit == ("claims",)
+    assert by_id["prior_insights"].emit == ("claims",)
     assert by_id["mechanism_hypotheses"].emit == ("claims",)
     assert by_id["page_clusters"].emit == ("claims",)
     assert by_id["systems_extract"].emit == ("systems",)
     assert by_id["link"].emit == ("system_edges",)
     assert by_id["systems_extract"].depends_on == ("mechanism_hypotheses", "page_clusters")
     assert by_id["link"].depends_on == ("systems_extract",)
+    assert by_id["closure"].depends_on == ("systems_extract", "link")
 
 
 def test_data_modeller_workflow_matches_the_spec_table():
@@ -183,14 +190,20 @@ def test_data_modeller_workflow_matches_the_spec_table():
 
     by_id = {sp.id: sp for sp in WORKFLOW.sub_problems}
     assert [sp.id for sp in WORKFLOW.sub_problems] == [
-        "record_hypotheses", "data_extract", "flow_shape", "flow_extract"]
+        "surface_survey", "request_shapes", "insight_recall", "record_hypotheses",
+        "data_extract", "flow_shape", "flow_extract", "closure_note"]
+    assert by_id["surface_survey"].emit == ("claims",)
+    assert by_id["request_shapes"].emit == ("claims",)
+    assert by_id["insight_recall"].emit == ("claims",)
     assert by_id["record_hypotheses"].emit == ("claims",)
     assert by_id["data_extract"].emit == ("data_items", "surfaces_at")
     assert by_id["flow_shape"].emit == ("claims",)
     assert by_id["flow_extract"].emit == ("data_flows", "data_relationships")
+    assert by_id["closure_note"].emit == ("claims",)
     assert by_id["data_extract"].depends_on == ("record_hypotheses",)
     assert by_id["flow_shape"].depends_on == ("data_extract",)
     assert by_id["flow_extract"].depends_on == ("flow_shape", "data_extract")
+    assert by_id["closure_note"].depends_on == ("flow_extract",)
 
 
 # --- the per-unit backstop (ADR D31) ------------------------------------------

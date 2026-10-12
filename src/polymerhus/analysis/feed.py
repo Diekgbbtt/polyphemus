@@ -487,15 +487,19 @@ def resolve_analysis_mode(settings: dict | None) -> str:
 def resolve_hunt_after_analysis(settings: dict | None) -> bool:
     """Whether a genuinely drained analysis chains ONE hunting run.
 
-    Opt-in and default-OFF (`settings.recon.hunt_after_analysis`): the eval trial
-    sequences the recon -> analysis -> hunting chain explicitly, so an implicit
-    app-side launch would collide with the trial's own hunting launch (the
-    one-live-run-per-project guard 409s). An internal caller enables the flag to
-    get the ordering without sequencing it. A missing/absent value is False - the
-    fail-safe direction, so the automatic chain is only entered on an explicit
-    true."""
+    Default-ON for the analysis-unit-enrichment experiment (ADR D46): an absent
+    value returns True, so the app chains the recon -> analysis -> hunting
+    sequence itself and the ordering is deterministic without the caller
+    sequencing it. An explicit `settings.recon.hunt_after_analysis = false` opts
+    out.
+
+    The chain is idempotent: it reuses the SAME operator-intent launch seam as
+    `POST /projects/{id}/hunting`, so where the caller ALSO launches hunting the
+    second launch is refused (409) rather than double-run. Only a genuinely
+    `drained` analysis (never `withheld`/`stopped`) triggers it."""
     s = settings or {}
-    return bool(s.get("hunt_after_analysis"))
+    value = s.get("hunt_after_analysis")
+    return True if value is None else bool(value)
 
 
 def resolve_analysis_pass_fn(settings: dict | None):

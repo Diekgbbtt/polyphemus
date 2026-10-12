@@ -1,8 +1,9 @@
 """The drained-analysis -> hunting chain trigger (app side).
 
 An analysis consumer that genuinely drains (`drained`, never `withheld`/`stopped`)
-and whose project opted in (`settings.recon.hunt_after_analysis`) chains ONE
-hunting run through the SAME operator-intent launch seam the REST
+and whose project has the chain ON (default-ON; an explicit
+`settings.recon.hunt_after_analysis = false` opts out) chains ONE hunting run
+through the SAME operator-intent launch seam the REST
 `POST /projects/{id}/hunting` rides. The trigger is fail-open loudly: a missing
 control plane or a refused launch is logged, never raised into the supervisor.
 """
@@ -21,9 +22,11 @@ def _run(coro):
     return asyncio.run(coro)
 
 
-def test_the_chain_flag_is_opt_in_and_defaults_off():
-    assert resolve_hunt_after_analysis(None) is False
-    assert resolve_hunt_after_analysis({}) is False
+def test_the_chain_flag_defaults_on_and_can_be_opted_out():
+    # ADR D46: default-ON for the analysis-unit-enrichment experiment; an explicit
+    # `false` opts out.
+    assert resolve_hunt_after_analysis(None) is True
+    assert resolve_hunt_after_analysis({}) is True
     assert resolve_hunt_after_analysis({"hunt_after_analysis": False}) is False
     assert resolve_hunt_after_analysis({"hunt_after_analysis": True}) is True
 

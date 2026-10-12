@@ -176,7 +176,7 @@ def test_the_stateful_leg_carries_no_skill_surface(monkeypatch):
 
     tool_names = {getattr(t, "name", "") for t in bound.get("tools") or ()}
     assert "load_skill" not in tool_names, "no skill tool"
-    assert tool_names <= {"AnalysisTurn", "notes"}, (
+    assert tool_names <= {"AnalysisTurn", "notes", "graph_view"}, (
         "only the role's own structured-output tool plus the analysis notes tool")
     assert "context" not in bound or bound.get("context") is None
     assert "_skill_index" not in {type(m).__name__ for m in bound["middleware"] or ()}
@@ -551,7 +551,7 @@ def test_a_roles_tool_set_is_constant_across_its_turns(monkeypatch):
     monkeypatch.setattr(
         "polymerhus.analysis.proposer_turn._role_prompt", lambda role_id: "PROMPT")
 
-    invoke = session_invoke_fn("data_modeller", "runshape", InMemorySaver())
+    invoke = session_invoke_fn("data_modeller", "runshape", InMemorySaver(), project_id="proj-1")
     with proposer_batch("c1"):
         invoke([HumanMessage(content="record hypotheses")], schema=AnalysisTurn)
         invoke([HumanMessage(content="data extract")], schema=AnalysisTurn)
@@ -560,7 +560,12 @@ def test_a_roles_tool_set_is_constant_across_its_turns(monkeypatch):
 
     assert len(model._bound) == 4, "one bind per turn"
     tool_sets = [tuple(t.name for t in tools) for tools, _ in model._bound]
-    assert tool_sets == [("notes", "AnalysisTurn")] * 4, "the tool set never toggles"
+    # The set is constant across the chain (the cache rule): notes + the role's
+    # L0-grounding tools first, the structured tool (`AnalysisTurn`) last. The
+    # data-modeller additionally binds the HTTP-history read pair.
+    assert tool_sets[0][:2] == ("notes", "graph_view"), "notes + graph_view first"
+    assert tool_sets[0][-1] == "AnalysisTurn", "structured tool last"
+    assert all(s == tool_sets[0] for s in tool_sets), "the tool set never toggles"
     # Byte-identical tool DEFINITIONS - what the provider's prefix cache sees.
     first = model._bound[0][0]
     for tools, _ in model._bound[1:]:
@@ -604,7 +609,7 @@ def test_binding_notes_keeps_the_structured_method_constant(monkeypatch):
     # (notes, AnalysisTurn) - the structured turn passes only notes and lets
     # `response_format` append AnalysisTurn last.
     prose_tools = _prose_tools("mechanism_typist", project_id="proj-1")
-    assert tuple(t.name for t in prose_tools) == ("notes", "AnalysisTurn")
+    assert tuple(t.name for t in prose_tools) == ("notes", "graph_view", "AnalysisTurn")
 
 
 def test_a_prose_turn_binds_notes_too(monkeypatch):
@@ -614,7 +619,7 @@ def test_a_prose_turn_binds_notes_too(monkeypatch):
     from polymerhus.analysis.proposer_turn import _prose_tools
 
     names = tuple(t.name for t in _prose_tools("assigner", project_id="proj-1"))
-    assert names == ("notes", "AnalysisTurn")
+    assert names == ("notes", "graph_view", "AnalysisTurn")
 
 
 def test_the_constant_shape_covers_the_whole_mechanism_typist_chain(monkeypatch):

@@ -5,12 +5,21 @@ no per-job chunk in this mode and still calls `signal_end`, so the terminal
 marker is the ONLY push and the only trigger: when the queued consumer reaches
 it, this pass runs.
 
-The pass has two sequential stages (ADR D6):
+The pass has two sequential stages (ADR D6, D46):
 
-  1. the GLOBAL ASSIGN pass - `assign_global` over the whole settled L0 surface
-     (T4), a plain awaited call, NOT a supervisor dispatch (ADR D9);
+  1. the PER-SERVICE ASSIGN pass - `assign_services` (v2, ADR D46) grounds
+     ownership on the settled L0 surface through ONE Service at a time: each
+     Service unit sees the whole surface as its broad candidate set and may write
+     only its own `AGGREGATES`. It is a plain awaited per-unit call, NOT a
+     supervisor dispatch (ADR D9);
   2. the PER-SERVICE LOOP - `run_service_loop` (T5), mechanism_typist then
      data_modeller per Service unit.
+
+The v2 consumption filter (v2 spec section 2) is: `assigner` <- each Service;
+`mechanism_typist` <- all units aggregated to L0 endpoints (Service and System);
+`data_modeller` <- each Service. Stage 1 and the data-modeller half of the loop
+are per-Service; the mechanism-typist's System units are appended by the slice
+builder (see the HANDOFF for the still-open System-unit expansion).
 
 It is gated on recon reaching `complete` (ADR D4) and guarded once per run (ADR
 D5). It returns a terminal `PassResult` whose drained signal is WRITE-BASED (ADR
@@ -125,7 +134,7 @@ async def service_sourced_pass(
     1), `loop_fn(project_id, run_id, *, memory, stop_fn, observe)` (stage 2), and
     `status_fn(run_id) -> status`. The pass never raises: a degraded stage yields a
     terminal census that claims nothing."""
-    from polymerhus.analysis.assigner import assign_global
+    from polymerhus.analysis.assigner import assign_services
     from polymerhus.analysis.pod import AnalyserExport
     from polymerhus.analysis.service_slice import run_service_loop
     from polymerhus.analysis.supervisor import PassCensus, PassResult, _utc_now_iso, _window
@@ -175,7 +184,7 @@ async def service_sourced_pass(
     _PASSED.add(recon_run_id)
 
     analysis_run_id = _resolve_analysis_run_id(recon_run_id) or recon_run_id
-    assign_fn = assign_fn or assign_global
+    assign_fn = assign_fn or assign_services
     loop_fn = loop_fn or run_service_loop
     if memory is None:
         memory = _default_memory()

@@ -538,14 +538,84 @@ WORKFLOW = ReasoningWorkflow(
     role_id=ROLE,
     sub_problems=(
         SubProblem(
+            id="surface_survey",
+            name="surface survey",
+            prompt=(
+                f"{_ROLE_HEADER}\n\nSURVEY - ORIENT over the mapped L0 surface of this "
+                "Service, BROADLY. Do not assume anything from an asset name. Navigate "
+                "from the Service down to its attack surface: enumerate the Service's "
+                "aggregated Endpoints, and for each Endpoint its Parameters, the Headers "
+                "and Secrets on the BaseURL it lives on, and any existing DataItems "
+                "already flowed to or from this Service. Use `graph_view` with read-only "
+                "Cypher (always a LIMIT); a path is the address you interrogate, never a "
+                "place data appears. For each surface sighting, emit one Claim: `subject` "
+                "the Service or the endpoint; `assertion` what the surface alone tells you "
+                "(the concrete Parameters, Headers and Secrets you found, and their "
+                "transport position); `evidence` the exact Cypher-returned identity; "
+                "`verdict` whether this is a surface site that could witness a business "
+                "record. A name that merely sounds like a record is not evidence yet; "
+                "record the sighting, do not judge it here. Emit `claims` only."
+            ),
+            inject=("service", "endpoints"),
+            emit=("claims",),
+        ),
+        SubProblem(
+            id="request_shapes",
+            name="request shapes",
+            prompt=(
+                f"{_ROLE_HEADER}\n\nREAD SHAPES - read the RECORDED REQUEST SHAPES to "
+                "this Service's aggregated endpoints. The mapped L0 surface names the "
+                "inputs; the HTTP history shows how they are actually sent. Call "
+                "`search_http_history` with a conjunctive filter over the request side "
+                "(filter on `url` containing the endpoint path), then call "
+                "`get_http_artifact` on the returned `artifact_id` to inspect one recorded "
+                "transaction. Read the `request` object `{method, url, headers, cookies, "
+                "query, form}`; body content is never visible and secret-bearing values "
+                "are redacted, so the KEYS are what matter. For each request-shape "
+                "observation, emit one Claim: `subject` the endpoint; `assertion` the "
+                "request keys actually sent and their transport (query, form, header, "
+                "cookie); `evidence` the `artifact_id` and the exact key names; `verdict` "
+                "which mapped surface site the shape corroborates. A recorded request is a "
+                "candidate, never a verification. Emit `claims` only."
+            ),
+            inject=("service", "endpoints", "surface_survey"),
+            emit=("claims",),
+            depends_on=("surface_survey",),
+        ),
+        SubProblem(
+            id="insight_recall",
+            name="insight recall",
+            prompt=(
+                f"{_ROLE_HEADER}\n\nRECALL - read the PRIOR MODELLING INSIGHTS from the "
+                "notes store before you enrich. Call `notes` with command=\"read\" for "
+                "this Service's unit slug, and again with a `body_keyword` for the "
+                "modelling closures of other Services that may share a record or a flow. "
+                "Reconcile what prior runs concluded against the surface you just "
+                "surveyed: a prior `data` item that still fits is a REUSE target; a prior "
+                "`open_question` the request shapes now answer is settled here; a prior "
+                "insight the survey contradicts is named and set aside. For each prior "
+                "insight you carry forward, emit one Claim: `subject` the prior item or "
+                "question; `assertion` how the current survey confirms or corrects it; "
+                "`evidence` the note key and the surface corroboration; `verdict` reuse, "
+                "compound, or set aside. Emit `claims` only."
+            ),
+            inject=("service", "inventory", "surface_survey", "request_shapes"),
+            emit=("claims",),
+            depends_on=("surface_survey", "request_shapes"),
+        ),
+        SubProblem(
             id="record_hypotheses",
             name="record hypotheses",
             prompt=(
                 f"{_ROLE_HEADER}\n\n{cot_scaffold(_REFLECTION_STEPS[:3])}\n\n"
                 f"{_RECORD_HYPOTHESES_TASK}"
             ),
-            inject=("inventory", "candidates", "surface", "observations"),
+            inject=(
+                "inventory", "candidates", "surface", "observations",
+                "surface_survey", "request_shapes", "insight_recall",
+            ),
             emit=("claims",),
+            depends_on=("surface_survey", "request_shapes", "insight_recall"),
         ),
         SubProblem(
             id="data_extract",
@@ -580,8 +650,58 @@ WORKFLOW = ReasoningWorkflow(
             emit=("data_flows", "data_relationships"),
             depends_on=("flow_shape", "data_extract"),
         ),
+        SubProblem(
+            id="closure_note",
+            name="modelling closure",
+            prompt=(
+                f"{_ROLE_HEADER}\n\nCLOSE - write the modelling-closure note for this "
+                "Service. Call `notes` with command=\"write\", action=\"append\", unit = "
+                "the Service slug, note_name=\"modelling_closure\", kind=\"data\", and a "
+                "body summarising this enrichment. The body MUST name: the DataItems "
+                "lifted and compounded (item_key, fields, anchors, flows); the records "
+                "reused; what you WITHHELD or FALSIFIED and why; the recorded request "
+                "shapes consulted; and any open question the surface left unresolved. "
+                "Then emit one Claim: `subject` the Service; `assertion` the enrichment "
+                "result; `evidence` the note key; `verdict` the residual open question or "
+                "`resolved`. Emit `claims` only."
+            ),
+            inject=("service", "record_hypotheses", "data_extract", "flow_extract", "request_shapes"),
+            emit=("claims",),
+            depends_on=("flow_extract",),
+        ),
     ),
 )
+
+
+def _service_unit_block(chunk: Chunk) -> str:
+    """The `service` base source: the ONE Service unit this workflow enriches."""
+    return (
+        f"SERVICE UNIT: {chunk.chunk_id}\n"
+        "This Service - not any asset name - is the reasoning anchor for the data "
+        "plane. Enumerate the L0 surface it SERVES (its aggregated Endpoints, their "
+        "Parameters, and the Headers/Secrets on their BaseURLs), then enrich it."
+    )
+
+
+def _aggregated_endpoints_block(chunk: Chunk, aggregations: list[dict] | None) -> str:
+    """The `endpoints` base source: the Service's settled aggregated L0 Endpoints -
+    a starting point, never an asset-name filter (the agent queries `graph_view` for
+    the rest)."""
+    slug = str(chunk.chunk_id)
+    rows = [
+        a for a in (aggregations or [])
+        if a.get("slug") == slug and "Endpoint" in (a.get("labels") or [])
+    ]
+    if not rows:
+        return (
+            f"AGGREGATED ENDPOINTS for {slug}: (none settled yet - enumerate them with "
+            "`graph_view`)"
+        )
+    lines = [f"AGGREGATED ENDPOINTS for {slug}:"]
+    for a in rows:
+        p = a.get("props") or {}
+        lines.append(f"- {p.get('method', '?')} {p.get('url') or p.get('path') or p}")
+    return "\n".join(lines)
 
 
 def _known_items_block(inventory: dict | None) -> str:
@@ -800,6 +920,8 @@ def model_data(
 
     # The volatile base sources the workflow injects verbatim.
     base_artifacts = {
+        "service": _service_unit_block(chunk),
+        "endpoints": _aggregated_endpoints_block(chunk, aggregations),
         "inventory": _known_items_block(inventory),
         "candidates": _candidates_render(candidates),
         "surface": _admitted_render(admitted),
@@ -820,6 +942,7 @@ def model_data(
                 base_artifacts=base_artifacts,
                 halt_when=lambda sp, turn: sp.id == "record_hypotheses" and turn is None,
                 unit_slug=chunk.chunk_id, memory=memory, project_id=project_id, run_id=run_id,
+                note_kind="data",
             )
     except Exception:  # fail-open: LLM error -> empty outcome, never crash (DPL-DEC fail-open)
         logger.warning("data_modeller: workflow failed; degrading to empty outcome", exc_info=True)

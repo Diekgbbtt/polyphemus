@@ -103,10 +103,43 @@ def _matches(asset, row: dict) -> bool:
     return all(str(props.get(k)) == str(v) for k, v in (asset.identity or {}).items())
 
 
+def _read_systems_live(project_id: str) -> tuple[list[dict], list[dict]]:
+    """The live read for System units: the Services that ride each L1 System, and
+    the L0 nodes each System is `EVIDENCED_BY`. Fail-open to `([], [])`."""
+    try:
+        from polymerhus.analysis.l1_read import _resolve_read_fn
+
+        read_fn = _resolve_read_fn(None)
+        riders = read_fn(
+            "MATCH (s:L1Service {project_id: $project_id})-[r]->(y:L1System {project_id: $project_id}) "
+            "RETURN y.kind AS kind, y.discriminator AS discriminator, "
+            "s.business_function_slug AS slug",
+            {"project_id": project_id},
+        )
+        evid = read_fn(
+            "MATCH (y:L1System {project_id: $project_id})-[:EVIDENCED_BY]->(l0) "
+            "RETURN y.kind AS kind, y.discriminator AS discriminator, "
+            "labels(l0) AS labels, l0 {.*} AS props",
+            {"project_id": project_id},
+        )
+        return list(riders or []), list(evid or [])
+    except Exception:  # noqa: BLE001 - a read blip degrades to no System units
+        logger.warning("service_slice: system read failed; no System units", exc_info=True)
+        return [], []
+
+
+def _system_key(kind: str, discriminator: str | None) -> str:
+    """The rendered System key (`kind` for a singleton, else `kind:discriminator`),
+    matching `l1_inventory._render_system` so a unit maps to the live System."""
+    disc = discriminator or ""
+    return kind if disc in ("", "__singleton__") else f"{kind}:{disc}"
+
+
 def build_service_slices(
-    project_id: str, *, read_fn: Callable[[str], tuple] | None = None
+    project_id: str, *, read_fn: Callable[[str], tuple] | None = None,
+    systems_fn: Callable[[str], tuple] | None = None,
 ) -> list[Chunk]:
-    """PURE builder over an injected read seam (ADR D14, D20, D39).
+    """PURE builder over an injected read seam (ADR D14, D20, D39, D46).
 
     `read_fn(project_id) -> (services, aggregations, assets)`. Services are
     deduped and sorted by `business_function_slug`; each becomes a `Chunk` whose
@@ -116,7 +149,16 @@ def build_service_slices(
     there is no residual surface. A Service with no aggregated surface still gets
     a unit (an empty one), so the loop can record an explicit `no_surface`
     outcome instead of silently skipping it (ADR D15). A read failure degrades to
-    no units and never raises."""
+    no units and never raises.
+
+    When a `systems_fn(project_id) -> (riders, evidence)` seam is supplied (v2,
+    ADR D46), ONE System unit per L1 System is appended AFTER the Service units
+    (before the residual) with `source_job="system:<key>"`: its assets are the L0
+    nodes the System is `EVIDENCED_BY` plus the aggregated surface of every
+    Service that rides it, so the mechanism-typist can reason over the
+    cross-cutting layer as well as per-Service. A System whose surface is empty is
+    still emitted, so its absence is an explicit outcome. Omitted when no seam is
+    supplied (the pure default)."""
     read_fn = read_fn or _read_live
     try:
         services, aggregations, assets = read_fn(project_id)
@@ -129,6 +171,7 @@ def build_service_slices(
     surface = list(assets or [])
 
     matched: set[int] = set()
+    owned_by_slug: dict[str, list] = {}
     units: list[Chunk] = []
     for slug in service_slugs:
         owned: list = []
@@ -137,10 +180,45 @@ def build_service_slices(
             if any(_matches(asset, r) for r in slug_rows):
                 owned.append(asset)
                 matched.add(i)
+        owned_by_slug[slug] = owned
         units.append(Chunk(
             chunk_id=sanitise_slug(slug), source_job=f"service:{slug}",
             assets=tuple(owned),
         ))
+
+    if systems_fn is not None:
+        riders, evidence = systems_fn(project_id)
+        keys: list[str] = []
+        for r in evidence or []:
+            k = _system_key(r.get("kind"), r.get("discriminator"))
+            if k and k not in keys:
+                keys.append(k)
+        for r in riders or []:
+            k = _system_key(r.get("kind"), r.get("discriminator"))
+            if k and k not in keys:
+                keys.append(k)
+        for key in sorted(keys):
+            sys_assets: list = []
+            seen_ids: set[int] = set()
+            for r in riders or []:
+                if _system_key(r.get("kind"), r.get("discriminator")) != key:
+                    continue
+                for asset in owned_by_slug.get(r.get("slug"), []):
+                    ident = id(asset)
+                    if ident not in seen_ids:
+                        seen_ids.add(ident)
+                        sys_assets.append(asset)
+            for r in evidence or []:
+                if _system_key(r.get("kind"), r.get("discriminator")) != key:
+                    continue
+                for asset in surface:
+                    if _matches(asset, r) and id(asset) not in seen_ids:
+                        seen_ids.add(id(asset))
+                        sys_assets.append(asset)
+            units.append(Chunk(
+                chunk_id=sanitise_slug(key), source_job=f"system:{key}",
+                assets=tuple(sys_assets),
+            ))
 
     residual = tuple(a for i, a in enumerate(surface) if i not in matched)
     if residual:
@@ -186,6 +264,16 @@ class ServiceLoopResult:
         return any(r.status == "written" for r in self.receipts)
 
 
+def _roles_for(unit: Chunk) -> tuple[str, ...]:
+    """The roles a unit is dispatched to (v2, ADR D46): a System unit is typed by
+    the mechanism-typist alone; a Service unit runs the typist then the
+    data-modeller. The unit kind is carried by its `source_job` prefix."""
+    src = str(getattr(unit, "source_job", "") or "")
+    if src.startswith("system:") or src == "residual":
+        return ("mechanism_typist",)
+    return SERVICE_ROLES
+
+
 def _any_degraded(receipts) -> bool:
     return any(getattr(r, "status", None) == "degraded" for r in (receipts or []))
 
@@ -221,7 +309,8 @@ async def _run_unit(
     supervisor state and the attempt count actually spent."""
     from polymerhus.analysis.supervisor import build_schedule, run_supervisor
 
-    schedule = build_schedule([unit], run_id, roles=SERVICE_ROLES, phase="A1")
+    roles = _roles_for(unit)
+    schedule = build_schedule([unit], run_id, roles=roles, phase="A1")
     state: dict = {}
     used = 0
     for attempt in range(1, attempts + 1):
@@ -260,6 +349,7 @@ async def run_service_loop(
     *,
     units: list[Chunk] | None = None,
     read_fn=None,
+    systems_fn=_read_systems_live,
     memory=None,
     invoke_fns: dict | None = None,
     inventory_fn=None,
@@ -282,7 +372,7 @@ async def run_service_loop(
     from polymerhus.analysis.supervisor import _chunked_write_fn, build_supervisor_graph
 
     if units is None:
-        units = build_service_slices(project_id, read_fn=read_fn)
+        units = build_service_slices(project_id, read_fn=read_fn, systems_fn=systems_fn)
 
     if memory is None:
         try:
@@ -330,7 +420,7 @@ async def run_service_loop(
         if not unit.assets:
             # ADR D15: an explicit outcome, never a silent skip. The per-unit
             # backstop still records the Service so its coverage is auditable (D31).
-            for role in SERVICE_ROLES:
+            for role in _roles_for(unit):
                 outcomes.append(UnitOutcome(unit=unit.chunk_id, role=role, status="no_surface"))
             _backstop_note(memory, project_id, unit.chunk_id, run_id)
             continue
@@ -342,14 +432,14 @@ async def run_service_loop(
             )
         except Exception as exc:  # noqa: BLE001 - fail-open per unit, the loop continues
             logger.warning("service_slice: unit %s failed; continuing", unit.chunk_id, exc_info=True)
-            for role in SERVICE_ROLES:
+            for role in _roles_for(unit):
                 outcomes.append(UnitOutcome(
                     unit=unit.chunk_id, role=role, status="degraded", error=str(exc)))
             continue
         unit_receipts = list(state.get("receipts") or [])
         for receipt in unit_receipts:
             receipts_by_id[receipt.dispatch_id] = receipt
-        for role in SERVICE_ROLES:
+        for role in _roles_for(unit):
             receipt = next((r for r in unit_receipts if r.role == role), None)
             if receipt is None:
                 outcomes.append(UnitOutcome(

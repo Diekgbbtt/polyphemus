@@ -147,8 +147,9 @@ def test_the_whole_surface_is_grouped_into_one_pass():
         inventory_fn=lambda pid: INVENTORY,
         invoke_fn=invoker, write_fn=_Writer(), persist_fn=_Persister(),
     ))
-    # the Assigner's two sub-problems: one candidate_owners turn, one assign turn
-    assert len(invoker.calls) == 2
+    # the Assigner's five v2 sub-problems: surface_scan, prior_insights,
+    # candidate_owners, assign, closure
+    assert len(invoker.calls) == 5
     first_user = invoker.calls[0][0][-1].content
     assert all(p in first_user for p in ("/a", "/b", "/c"))
     assert "checkout" in first_user
@@ -180,8 +181,8 @@ def test_global_pass_turns_bind_notes_and_the_backstop_writes_an_assignment_note
         memory=store, checkpointer=object(),
     ))
 
-    # both sub-problem turns ran through the notes-bound seam (not `default_invoke_fn`)
-    assert len(seen) == 2
+    # every sub-problem turn ran through the notes-bound seam (not `default_invoke_fn`)
+    assert len(seen) == 5
     for kw in seen:
         names = {getattr(t, "name", "") for t in kw.get("tools") or ()}
         assert "notes" in names, "every global-pass turn binds notes (D26)"

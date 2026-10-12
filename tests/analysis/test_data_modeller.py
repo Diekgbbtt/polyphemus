@@ -292,7 +292,7 @@ def test_model_data_scopes_its_invokes_by_the_chunk_batch():
         return AnalysisTurn()
 
     model_data(_chunk([_param("a")]), invoke_fn=invoke_fn, inventory={}, aggregations=[])
-    assert seen == ["stream:0"] * 4
+    assert seen == ["stream:0"] * 8
 
 
 def test_empty_admission_no_llm_call():

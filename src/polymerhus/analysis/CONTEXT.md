@@ -313,6 +313,16 @@ It is the typed datum a dependency hands to a dependent sub-problem (ADR D23/D24
 
 A role's sub-problems map onto the stages its `_REFLECTION_STEPS` already enumerate; the mapping is explicit (ADR D22), so no boundary is invented.
 
+**Analysis graph tools** (`analysis/graph_tools.py`; v2, ADR D46):
+The read-only tool bundle every proposer turn binds, alongside `notes` and the structured tool: `graph_view` (bounded read-only Cypher over the mapped L0/L1 surface, with its own write-shape guard) and, for the data-modeller only, the HTTP-history read pair (`search_http_history` / `get_http_artifact`).
+It is what makes the broad "no asset-name assumption" query possible: a proposer enumerates the surface rather than trusting a pre-filtered slice.
+Fail-open: an unbuildable tool binds nothing.
+
+**Modelling-closure note** (v2, ADR D46):
+The episodic memory a proposer writes at its `closure` phase, through the shared `notes` tool, keyed `<unit>:modelling-closure` (kind `assignment` for the assigner, `system` for the mechanism-typist, `data` for the data-modeller).
+It records what the unit closed over, what it withheld and why, and the open questions - so a later unit reads prior modelling insight (`prior_insights`) instead of re-deriving it.
+The per-unit backstop `ensure_unit_note` remains the coverage guarantee.
+
 ## The service-sourced pipeline
 
 **Service-sourced mode** (`analysis/feed.py::resolve_analysis_mode`; ADR D2, D45):
@@ -327,7 +337,9 @@ This is the UP/DOWN CLASSING (plan section 2.4; `docs/design/domain-model.md` se
 No L0 or L1 node type is added; the same graph is read Service-first.
 
 **Global assign pass** (`analysis/assigner.py::assign_global`; T4, ADR D7-D11):
-Stage 1 of the service-sourced pass: a plain awaited call (not a supervisor dispatch) that re-reads the SETTLED L0 and the Service inventory, runs the Assigner's `candidate_owners -> assign` workflow over the whole surface, and writes `AGGREGATES` through the no-mint writer.
+Stage 1 of the v1 service-sourced pass: a plain awaited call (not a supervisor dispatch) that re-reads the SETTLED L0 and the Service inventory, runs the Assigner's `surface_scan -> prior_insights -> candidate_owners -> assign -> closure` workflow over the whole surface, and writes `AGGREGATES` through the no-mint writer.
+SUPERSEDED as the service-sourced default by `assign_services` (v2, ADR D46): the v2 consumption filter is EACH SERVICE, so stage 1 is one awaited pass per Service, each judged with `existing_slugs={slug}` so a Service writes only its own `AGGREGATES` (shared ownership stays possible - two Services may claim the same endpoint independently).
+Both passes reuse the SAME `assign` body, prompt and five shaping gates; they differ only in the unit set and the validation set.
 It is a proposer too: its default turn seam is the SAME notes-bound proposer seam the per-Service proposers use, so both sub-problem turns bind `{AnalysisTurn, notes}` (spec 3.2/5, ADR D26); with a memory store bound, the per-unit backstop records one `assignment` note for `global:<run_id>` (ADR D31).
 It reuses the five shaping gates unchanged and reports a census (admitted, proposed, unresolvable, out-of-inventory, rescaled, withheld, kept, written, and the residual `stale` pool), persisted to `analysis_runs.stats`.
 It never mints a Service: the Bootstrapper remains the sole Service source.
@@ -369,7 +381,7 @@ _Avoid_: analyser (the whole-model term).
 
 **TechnicalSystem / mechanism-typist**:
 The sole owner of mechanism TYPING (agent spec #9) - it defines/extends the cross-cutting `System`s the streamed surface evidences and links them to Services as typed `Service->System` edges, never Service props. BREADTH-ONLY: it emits `L1DeltaBatch{systems, system_edges}`; all System DEEPENING (WebPresentation rendering/navigation, authz inverse-pyramid, backward-recon probes, the `AnatomyResult` triple) is Phase B (epic #39).
-It runs a FOUR-sub-problem `ReasoningWorkflow` over one `service` chunk delivered AFTER the Assigner: `mechanism_hypotheses` (ORIENT + HYPOTHESISE -> `claims`) -> `page_clusters` (CLUSTER PAGES -> `claims`) -> `systems_extract` (VERIFY-FALSIFY + INTEGRATE -> `systems`, depending on both reasoning turns) -> `link` (EMIT -> `system_edges`, depending on `systems_extract`). Each turn speaks the ONE `AnalysisTurn` envelope; exhaustion of the hypotheses turn fails the step CLOSED (the chain halts), a later step's exhaustion is a soft pass-through.
+It runs a SEVEN-sub-problem `ReasoningWorkflow` (v2, ADR D46) over one `service` chunk delivered AFTER the Assigner: `unit_surface_read` (broad L0 `graph_view` query, NO asset-name assumption -> `claims`) -> `prior_insights` (read the notes store -> `claims`) -> `mechanism_hypotheses` (ORIENT + HYPOTHESISE -> `claims`) -> `page_clusters` (CLUSTER PAGES -> `claims`) -> `systems_extract` (VERIFY-FALSIFY + INTEGRATE -> `systems`, depending on both reasoning turns) -> `link` (EMIT -> `system_edges`, depending on `systems_extract`) -> `closure` (write the `system` modelling-closure note -> `claims`). Each turn speaks the ONE `AnalysisTurn` envelope; exhaustion of the hypotheses turn fails the step CLOSED (the chain halts), a later step's exhaustion is a soft pass-through. The v2 consumption filter for this role is ALL units aggregated to L0 endpoints (Service and System); the still-open System-unit expansion is in the HANDOFF.
 _Avoid_: analyser (the whole-model term); anatomy (the Phase-B deepening path).
 
 **System description (discriminative attribute)**:
@@ -499,7 +511,8 @@ Cross-phase operational-failure memory (`recon_signals`), grounded coverage verd
 _Status_: designed-not-built (`recon-pipeline-design.md` §9).
 
 **Hunt-after-analysis chain**:
-The policy that chains ONE hunting run off a genuinely `drained` analysis (never `withheld`/`stopped`), gated by the opt-in `settings.recon.hunt_after_analysis` (default OFF, read through `feed.resolve_hunt_after_analysis`).
+The policy that chains ONE hunting run off a genuinely `drained` analysis (never `withheld`/`stopped`), gated by `settings.recon.hunt_after_analysis` (default-ON as of ADR D46; an explicit `false` opts out), read through `feed.resolve_hunt_after_analysis`.
+The default was flipped ON so the `recon -> analysis -> hunting` chain is deterministic without the caller sequencing it; the chain is idempotent (a second launch is refused 409).
 The trigger is the analysis supervisor's terminal write (`lifecycle.py`); it reuses the SAME operator-intent launch seam as `POST /projects/{id}/hunting` (`project_management.api.launch_hunting`), so the one-live-run guard refuses a second live run (409, the idempotent no-op).
 It is opt-in because the eval trial sequences the `recon -> analysis -> hunting` chain itself; an unconditional app-side launch would collide with the trial's own hunting launch.
 It resolves `attack.hunting`/`project_management` lazily (never at import time) and fails open loudly.

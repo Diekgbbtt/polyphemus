@@ -413,6 +413,52 @@ WORKFLOW = ReasoningWorkflow(
     role_id="mechanism_typist",
     sub_problems=(
         SubProblem(
+            id="unit_surface_read",
+            name="unit surface read",
+            prompt=(
+                f"{_ROLE_HEADER}\n\nREAD THE UNIT - the broad L0 query phase. You are "
+                "given ONE unit (its identity and kind). Call `graph_view` with bounded "
+                "read-only Cypher (always a LIMIT) to enumerate this unit's L0 "
+                "`Endpoint`s broadly, with NO asset-name assumption: do NOT filter by "
+                "any path, URL, or parameter name you guessed. A Service's endpoints are "
+                "reached by traversing `AGGREGATES`; a System's endpoints are its own "
+                "`EVIDENCED_BY` fingerprints plus the `AGGREGATES` endpoints of every "
+                "Service that rides it. Read every returned endpoint with the response "
+                "evidence that discriminates a mechanism (`content_type`, `title`, "
+                "`status_code`, `server`, `content_length`). Then call `graph_view` "
+                "again to fetch the triager `Observation`s anchored to those endpoints, "
+                "matching on the broad anchor (`BaseURL`, `Subdomain`, `Domain`, `IP`, "
+                "`Service`) - an observation is never anchored on a narrow `Endpoint`, so "
+                "look it up on the endpoint's owning BaseURL too. Emit one Claim per "
+                "distinct endpoint: `subject` the endpoint; `assertion` the mechanism "
+                "evidence you actually read; `evidence` the response fields; `verdict` a "
+                "tentative mechanism kind or `unknown`. Read the surfaces the unit "
+                "SERVES, not the names it CARRIES. Emit `claims` only."
+            ),
+            inject=("unit",),
+            emit=("claims",),
+        ),
+        SubProblem(
+            id="prior_insights",
+            name="prior insights",
+            prompt=(
+                f"{_ROLE_HEADER}\n\nRECALL PRIOR INSIGHTS - read before you reason. Call "
+                "the `notes` tool with command=\"read\" on the unit slug; call it again "
+                "with `body_keyword` set to each mechanism noun the surface read surfaced "
+                "(for example `auth`, `session`, `api`, `presentation`) so a note another "
+                "earlier unit wrote about a shared mechanism is found even when keyed by "
+                "a different unit. Do not re-derive a mechanism an earlier unit already "
+                "characterised; reuse that characterisation. For each reusable insight "
+                "emit one Claim: `subject` the prior unit or note key; `assertion` the "
+                "inherited insight; `evidence` the note key; `verdict` `reuse` or "
+                "`supersede`. A run with no prior notes is a valid result - say so. Emit "
+                "`claims` only."
+            ),
+            inject=("unit", "unit_surface_read"),
+            emit=("claims",),
+            depends_on=("unit_surface_read",),
+        ),
+        SubProblem(
             id="mechanism_hypotheses",
             name="mechanism hypotheses",
             prompt=(
@@ -422,8 +468,9 @@ WORKFLOW = ReasoningWorkflow(
                 "`evidence` the response evidence you read, `verdict` new-vs-extend with "
                 "the defined System key. Emit `claims` only; do not emit deltas yet."
             ),
-            inject=("surface", "inventory", "vocabulary"),
+            inject=("unit", "surface", "inventory", "vocabulary", "unit_surface_read", "prior_insights"),
             emit=("claims",),
+            depends_on=("unit_surface_read", "prior_insights"),
         ),
         SubProblem(
             id="page_clusters",
@@ -434,8 +481,9 @@ WORKFLOW = ReasoningWorkflow(
                 "the cluster and its member page paths, `evidence` the shared "
                 "title/structure/size, `verdict` the short cluster slug. Emit `claims` only."
             ),
-            inject=("surface",),
+            inject=("unit", "unit_surface_read"),
             emit=("claims",),
+            depends_on=("unit_surface_read",),
         ),
         SubProblem(
             id="systems_extract",
@@ -458,6 +506,25 @@ WORKFLOW = ReasoningWorkflow(
             inject=("inventory", "candidates", "systems_extract"),
             emit=("system_edges",),
             depends_on=("systems_extract",),
+        ),
+        SubProblem(
+            id="closure",
+            name="closure",
+            prompt=(
+                f"{_ROLE_HEADER}\n\nCLOSE. Summarise the unit's outcome: which Systems "
+                "were DEFINED, which were EXTENDED, and which Service->System edges were "
+                "linked, naming the evidence each typing rests on; name each mechanism "
+                "you could not decide and why. Call the `notes` tool once: "
+                "command=\"write\", action=\"append\", unit = the unit slug, "
+                "note_name=\"modelling-closure\", kind=\"system\", body = the closure "
+                "body. Write it even when you typed no System, so the unit's coverage "
+                "stays auditable. Then emit one Claim: `subject` the unit; `assertion` "
+                "the count of Systems defined and extended; `evidence` the note key; "
+                "`verdict` `closed`. Emit `claims` only."
+            ),
+            inject=("unit", "systems_extract", "link"),
+            emit=("claims",),
+            depends_on=("systems_extract", "link"),
         ),
     ),
 )
@@ -524,6 +591,21 @@ def _load_skill() -> str:
 
 # --- the 4-sub-problem proposer body ------------------------------------------
 
+def _unit_block(chunk: Chunk) -> str:
+    """The `unit` base source: the ONE unit this workflow enriches, its kind, and
+    the discipline that makes the unit - not the asset names - the reasoning anchor
+    (the v2 enrichment principle)."""
+    slug = str(chunk.chunk_id)
+    kind = "System" if str(getattr(chunk, "source_job", "") or "").startswith("system:") else "Service"
+    return (
+        f"UNIT: {slug}\n"
+        f"UNIT KIND: {kind}\n"
+        "This unit - not any asset name - is the reasoning anchor. Enumerate the L0 "
+        "endpoints the unit SERVES: a Service aggregates them; a System fingerprints "
+        "them and the Services that ride it bring the rest."
+    )
+
+
 def type_mechanisms(
     chunk: Chunk,
     *,
@@ -566,6 +648,7 @@ def type_mechanisms(
     all_services = frozenset((inventory or {}).get("services") or [])
     primary, secondary, owned = partition_services(chunk.assets, aggregations or [], all_services)
     base_artifacts = {
+        "unit": _unit_block(chunk),
         "surface": _asset_observation_paragraphs(chunk),
         "inventory": _defined_systems_block(inventory),
         "vocabulary": vocabulary_prompt(),
@@ -583,6 +666,7 @@ def type_mechanisms(
                 base_artifacts=base_artifacts,
                 halt_when=lambda sp, turn: sp.id == "mechanism_hypotheses" and turn is None,
                 unit_slug=chunk.chunk_id, memory=memory, project_id=project_id, run_id=run_id,
+                note_kind="system",
             )
     except Exception:
         logger.warning("mechanism_typist: workflow failed; degrading to empty batch", exc_info=True)

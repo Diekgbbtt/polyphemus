@@ -130,10 +130,24 @@ def _analysis_notes_tool(project_id: str | None):
         return None
 
 
+def _surface_tools(role_id: str, project_id: str | None) -> tuple:
+    """The L0-grounding tools every proposer binds (analysis-unit-first v2): the
+    read-only `graph_view` (broad L0 query) and, for the data-modeller, the
+    HTTP-history read pair (request shapes). Fail-open: an unbuildable surface
+    binds nothing. The set is constant across the role's turns (the cache rule)."""
+    try:
+        from polymerhus.analysis.graph_tools import build_surface_tools
+
+        return build_surface_tools(
+            role_id, project_id=project_id, with_http=(role_id == "data_modeller"))
+    except Exception:  # noqa: BLE001 - fail-open: no surface tools bound
+        return ()
+
+
 def _prose_tools(role_id: str, *, project_id: str | None = None) -> tuple:
     """The tools bound on a PROSE turn, so the tool set is constant across the
-    role's calls (the cache-shape rule): the shared `notes` tool plus the role's
-    structured-output tool.
+    role's calls (the cache-shape rule): the shared `notes` tool, the
+    L0-grounding surface tools, plus the role's structured-output tool.
 
     The structured turn supplies the structured tool through `response_format`
     (which `create_agent` appends AFTER the passed tools), so a prose turn binds
@@ -150,6 +164,7 @@ def _prose_tools(role_id: str, *, project_id: str | None = None) -> tuple:
     notes = _analysis_notes_tool(project_id)
     if notes is not None:
         tools.append(notes)
+    tools.extend(_surface_tools(role_id, project_id))
     try:
         from langchain.agents.structured_output import OutputToolBinding, ToolStrategy
 
@@ -183,8 +198,12 @@ def _turn_tools(role_id: str, project_id: str | None, *,
     if _role_structured_schema(role_id) is None:
         return ()
     if structured_bound:
+        tools: list = []
         notes = _analysis_notes_tool(project_id)
-        return (notes,) if notes is not None else ()
+        if notes is not None:
+            tools.append(notes)
+        tools.extend(_surface_tools(role_id, project_id))
+        return tuple(tools)
     return _prose_tools(role_id, project_id=project_id)
 
 

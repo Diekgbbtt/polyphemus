@@ -75,6 +75,15 @@ class _Recorder:
         if "CLUSTER PAGES" in content:
             self.calls.append("clusters")
             return self.clusters
+        if "READ THE UNIT" in content:
+            self.calls.append("surface_read")
+            return self.hypotheses
+        if "RECALL PRIOR INSIGHTS" in content:
+            self.calls.append("prior")
+            return self.hypotheses
+        if "CLOSE." in content:
+            self.calls.append("closure")
+            return self.hypotheses
         self.calls.append("hypotheses")
         return None if self.halt_hypotheses else self.hypotheses
 
@@ -140,13 +149,13 @@ def test_the_four_subproblems_share_the_chunk_batch_scope():
             return super().__call__(messages, schema=schema, system_prompt=system_prompt)
 
     type_mechanisms(_service_chunk(), invoke_fn=_ScopeRecorder())
-    assert seen == ["c", "c", "c", "c"]
+    assert seen == ["c", "c", "c", "c", "c", "c", "c"]
 
 
 def test_N2_four_subproblem_sequence_in_order():
     rec = _Recorder()
     out = type_mechanisms(_service_chunk(), invoke_fn=rec)
-    assert rec.calls == ["hypotheses", "clusters", "systems", "link"]
+    assert rec.calls == ["surface_read", "prior", "hypotheses", "clusters", "systems", "link", "closure"]
     assert [s.kind for s in out.systems] == ["RESTApi"]
     assert [(e.service_slug, e.rel) for e in out.system_edges] == [("checkout", "EXPOSED_VIA")]
 
@@ -157,7 +166,7 @@ def test_N3_hypotheses_exhaustion_fails_closed():
     rec = _Recorder(halt_hypotheses=True)
     out = type_mechanisms(_service_chunk(), invoke_fn=rec)
     assert out == L1DeltaBatch()  # no hypotheses -> whole step empty
-    assert rec.calls == ["hypotheses"]
+    assert rec.calls == ["surface_read", "prior", "hypotheses"]
 
 
 def test_N4_systems_exhaustion_soft_passthrough_no_systems():
@@ -239,7 +248,9 @@ def test_N8_observations_feed_the_hypotheses_turn_only():
         content = messages[-1].content
         if "EXTRACT SYSTEMS" in content:
             captured["systems"] = content
-        elif "LINK SERVICES" not in content and "CLUSTER PAGES" not in content:
+        elif ("LINK SERVICES" not in content and "CLUSTER PAGES" not in content
+              and "READ THE UNIT" not in content and "RECALL PRIOR INSIGHTS" not in content
+              and "CLOSE." not in content):
             captured["hypotheses"] = content
         return AnalysisTurn()
     obs = Observation(macro_kind="header", severity="info", evidence="Set-Cookie: sid",
@@ -264,8 +275,9 @@ def test_baseurl_anchored_observation_reaches_its_endpoint_insight():
 
     def invoke(messages, *, schema=None, system_prompt=None):
         content = messages[-1].content
-        if "EXTRACT SYSTEMS" not in content and "LINK SERVICES" not in content \
-                and "CLUSTER PAGES" not in content:
+        if ("EXTRACT SYSTEMS" not in content and "LINK SERVICES" not in content
+                and "CLUSTER PAGES" not in content and "READ THE UNIT" not in content
+                and "RECALL PRIOR INSIGHTS" not in content and "CLOSE." not in content):
             captured["hypotheses"] = content
         return AnalysisTurn()
 
@@ -293,8 +305,9 @@ def test_response_evidence_props_reach_the_hypotheses_turn_not_path_alone():
 
     def invoke(messages, *, schema=None, system_prompt=None):
         content = messages[-1].content
-        if "EXTRACT SYSTEMS" not in content and "LINK SERVICES" not in content \
-                and "CLUSTER PAGES" not in content:
+        if ("EXTRACT SYSTEMS" not in content and "LINK SERVICES" not in content
+                and "CLUSTER PAGES" not in content and "READ THE UNIT" not in content
+                and "RECALL PRIOR INSIGHTS" not in content and "CLOSE." not in content):
             captured["hypotheses"] = content
         return AnalysisTurn()
 
@@ -506,7 +519,7 @@ def test_the_typist_puts_no_role_prompt_in_the_messages():
     rec = _Rec()
     type_mechanisms(_service_chunk(), invoke_fn=rec)
 
-    assert len(rec.msgs) == 4, "the four-sub-problem chain"
+    assert len(rec.msgs) == 7, "the seven-sub-problem chain"
     for messages in rec.msgs:
         assert not any(isinstance(m, SystemMessage) for m in messages), (
             "no role prompt in the forwarded trail (it rides system_prompt=)")

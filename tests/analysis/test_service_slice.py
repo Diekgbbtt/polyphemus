@@ -89,6 +89,49 @@ def test_read_failure_yields_no_units():
     assert build_service_slices("p1", read_fn=boom) == []
 
 
+def test_builds_a_system_unit_with_rider_surface_and_evidence():
+    """v2 (ADR D46): with a `systems_fn` seam, ONE System unit per L1 System is
+    appended; its assets are the surface of every Service that rides it PLUS the
+    L0 nodes it is EVIDENCED_BY."""
+    read = lambda pid: (
+        ["checkout"], [_row("checkout", "/orders")],
+        [_endpoint("/orders"), _endpoint("/health")],
+    )
+
+    def systems(pid):
+        riders = [{"kind": "RESTApi", "discriminator": "core-rest", "slug": "checkout"}]
+        evidence = [{
+            "kind": "AuthenticationSystem", "discriminator": "__singleton__",
+            "labels": ["Endpoint"],
+            "props": {"path": "/health", "method": "GET", "baseurl": "https://s"},
+        }]
+        return riders, evidence
+
+    units = build_service_slices("p1", read_fn=read, systems_fn=systems)
+    by_src = {u.source_job: u for u in units}
+    assert "system:RESTApi:core-rest" in by_src          # the rider's mechanism
+    assert "system:AuthenticationSystem" in by_src       # the singleton key
+    assert {a.identity["path"] for a in by_src["system:RESTApi:core-rest"].assets} == {"/orders"}
+    assert {a.identity["path"] for a in by_src["system:AuthenticationSystem"].assets} == {"/health"}
+
+
+def test_no_system_units_without_a_systems_seam():
+    read = lambda pid: (["checkout"], [_row("checkout", "/a")], [_endpoint("/a")])
+    units = build_service_slices("p1", read_fn=read)
+    assert all(not u.source_job.startswith("system:") for u in units)
+
+
+def test_roles_for_dispatches_the_typist_only_on_system_and_residual():
+    from polymerhus.analysis.service_slice import _roles_for
+
+    assert _roles_for(Chunk(chunk_id="checkout", source_job="service:checkout", assets=())) == (
+        "mechanism_typist", "data_modeller")
+    assert _roles_for(Chunk(chunk_id="RESTApi", source_job="system:RESTApi", assets=())) == (
+        "mechanism_typist",)
+    assert _roles_for(Chunk(chunk_id=RESIDUAL_UNIT, source_job="residual", assets=())) == (
+        "mechanism_typist",)
+
+
 def test_sanitise_slug_is_boundary_safe_and_bounded():
     # an ordinary Service slug is unchanged (so chunk_id IS the Service slug)
     assert sanitise_slug("checkout") == "checkout"

@@ -49,3 +49,16 @@ Each example names its HELD hypotheses, not only its final answer - an example s
 **Example 5 - reuse over paraphrase, against a known-items block.** Known items include `shopping_basket :: client-supplied quantity and product reference; server may trust submitted quantity without revalidation`. New surface this chunk: `Parameter{qty, /api/cart/items}`. Hypothesise: candidate A - a NEW record (different endpoint, different field name); candidate B - the SAME record as the known `shopping_basket`, reached via a second endpoint. Verify: `qty` and `quantity` are the same field under a different name, and `/api/cart/items` and `/api/basket` plausibly serve the same function - reuse `shopping_basket`'s exact `item_key`, compound its `fields`/`notes` rather than minting `cart_item` as a paraphrase.
 
 **Example 6 - observed-only fields, an obviously-plausible field OMITTED.** Verified record `product_listing`, observed fields `{productId, name}` from the surface actually shown. A third field, `price`, is highly plausible for a product listing but was not observed anywhere in this chunk. -> `fields: [productId, name]`; `price` is not written, and the reason is stated: plausibility is not observation.
+
+## The workflow you run, in order
+
+You run eight sub-problems, one turn each; you may call tools in any of them.
+
+1. **Surface survey** (`surface_survey`). Call `graph_view` to navigate from the Service down to its aggregated Endpoints, their Parameters, and the Headers/Secrets on their BaseURLs - broadly, never trusting an asset name.
+2. **Request shapes** (`request_shapes`). Call `search_http_history` then `get_http_artifact` to read how the inputs are actually sent (`{method, url, headers, cookies, query, form}`).
+3. **Insight recall** (`insight_recall`). Read the `notes` store; reconcile prior modelling against the survey.
+4. **Record hypotheses** (`record_hypotheses`). HYPOTHESISE "this name witnesses record R", carry the null explicitly, then VERIFY/FALSIFY.
+5. **Data extract** (`data_extract`). Emit `data_items` and `surfaces_at`.
+6. **Flow shape** (`flow_shape`). Shape producing/consuming and trust assumptions.
+7. **Flow extract** (`flow_extract`). Emit `data_flows` and `data_relationships`.
+8. **Closure** (`closure_note`). Write ONE modelling-closure note through `notes` (`command="write"`, `action="append"`, `note_name="modelling_closure"`, `kind="data"`) naming the items lifted, what you withheld and why, and the request shapes consulted, then record it in a Claim.
