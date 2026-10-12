@@ -54,6 +54,30 @@ _lock = threading.Lock()
 # analysis/hunt agents, with headroom. Kept modest so a run never exhausts Postgres.
 _POOL_MAX = 24
 
+# The checkpointed pydantic entities outside langgraph's own SAFE_MSGPACK_TYPES that
+# a stateful turn puts in its checkpoint state, keyed `(module, name)` so the
+# allow-list can name a CONSUMER context's type without `app` importing it (analysis
+# reads app; app must never read analysis). Under `LANGGRAPH_STRICT_MSGPACK=true` an
+# unlisted type is BLOCKED at load (`msgpack_blocked`) - a resumed turn silently loses
+# the value - so every structured-output envelope a workflow persists is listed here.
+_ALLOWED_MSGPACK_MODULES: tuple[tuple[str, str], ...] = (
+    # The analysis reasoning workflow's ONE structured envelope (`AnalysisTurn`); the
+    # reasoning state carries it in `turns`, so a resumed proposer re-hydrates it.
+    ("polymerhus.analysis.reasoning_workflow", "AnalysisTurn"),
+)
+
+
+def checkpoint_serde() -> Any:
+    """The ONE checkpoint serializer: langgraph's `JsonPlusSerializer` with the app's
+    checkpointed pydantic entities allow-listed, so strict msgpack stays ON (the safe
+    default) and a structured-output entity still re-hydrates across turns. Every
+    construction point - the module facade, the per-thread bounded in-memory savers,
+    the version scratch saver, and the pooled PG flush target - uses this, so no path
+    can deserialize under a different allow-list."""
+    from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
+
+    return JsonPlusSerializer(allowed_msgpack_modules=_ALLOWED_MSGPACK_MODULES)
+
 # The module context (`module_context(name)`), set at a module's outermost runtime
 # entry point for its full duration. `copy_context` propagates it into executor work
 # (concurrent.futures and asyncio.to_thread), so offloaded stateful turns resolve the
@@ -323,7 +347,7 @@ def _module_scoped_saver(index: ModuleIndex) -> Any:
 
         class _ModuleScopedSaver(BaseCheckpointSaver[str]):
             def __init__(self, index_):
-                super().__init__()
+                super().__init__(serde=checkpoint_serde())
                 self._index = index_
 
             def _thread_id(self, config) -> str:
@@ -439,7 +463,7 @@ def _bounded_saver() -> Any:
                             del self.blobs[key]
 
         _bounded_saver_cls = _BoundedInMemorySaver
-    return _bounded_saver_cls()
+    return _bounded_saver_cls(serde=checkpoint_serde())
 
 
 _bounded_saver_cls = None
@@ -454,7 +478,7 @@ def _version_saver() -> Any:
     if _version_saver_obj is None:
         from langgraph.checkpoint.memory import InMemorySaver
 
-        _version_saver_obj = InMemorySaver()
+        _version_saver_obj = InMemorySaver(serde=checkpoint_serde())
     return _version_saver_obj
 
 
@@ -501,7 +525,7 @@ def setup_session_checkpointer(dsn: str | None = None) -> None:
                 # avoids server-side prepared-statement churn across pooled conns.
                 kwargs={"autocommit": True, "row_factory": dict_row, "prepare_threshold": 0},
             )
-            saver = PostgresSaver(pool)
+            saver = PostgresSaver(pool, serde=checkpoint_serde())
             saver.setup()  # idempotent DDL
             _pool, _saver = pool, saver
             logger.info("session checkpointer: pooled PostgresSaver open (max_size=%d)", _POOL_MAX)
