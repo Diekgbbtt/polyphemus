@@ -1,7 +1,7 @@
 # ADR: the batched L1-unit-first analysis prompt variant
 
 *Status: accepted for implementation 2026-10-12 (branch `feat/analysis-unit-enrichment`).*
-*T0 built the selection seam; T1 rewrote the assigner prompt and re-parameterised its code workflow (section "The assigner (T1)"); T2 rewrote the mechanism-typist (section "The mechanism-typist (T2)"); T3 rewrites the data-modeller.*
+*T0 built the selection seam; T1 rewrote the assigner prompt and re-parameterised its code workflow (section "The assigner (T1)"); T2 rewrote the mechanism-typist (section "The mechanism-typist (T2)"); T3 rewrote the data-modeller (section "The data-modeller (T3)").*
 
 ## Context
 
@@ -48,6 +48,15 @@ T2 rewrites the mechanism-typist's HOW prompt (`technical-system-batched-l1unit-
 13. **The "read what exists; never filter on a path you guessed" rule is REVERTED for this role.** The typist now starts FROM the contract and hypothesises, then VERIFIES against the graph and the HTTP history. The old `unit_surface_read` turn is gone, replaced by `harvest_surface`.
 14. **No per-unit `service_slug` write scope on `link`.** A Service unit may link a System to ANY live Service it genuinely overlays; a System unit may link to any rider. The `link` context names the full live Service inventory and marks PRIMARY a PRIORITY, never a restriction. The only surviving gate is the curator's global validation (a `rel` or `kind` outside the catalog is dropped) - a slug that is not a live Service is rejected by the write layer, never scoped by this role.
 
+## The data-modeller (T3)
+
+T3 rewrites the data-modeller's HOW prompt (`data-plane-batched-l1unit-first.md`) and re-parameterises its code workflow.
+
+15. **The analysis object is the L1 UNIT (the Service).** The modeller no longer reads "a streamed slice of Parameter/Header/Secret surface". It reasons DOWN from the unit - the slug, the `service_contract`, and the Endpoints the Service already aggregates - and DISCOVERS its surface through `graph_view` and the bound HTTP-history pair. The opening paragraph is rewritten; the streamed-slice framing is gone. The load-bearing staged loop (Orient / Hypothesise / Verify-Falsify / Integrate / Shape / Emit, with the explicit null hypothesis) is kept verbatim, re-parameterised so the survey starts from the unit and the discovered surface.
+16. **The workflow ids stay; the feeds are re-parameterised.** The chain is `surface_survey` -> `request_shapes` -> `insight_recall` -> `record_hypotheses` -> `data_extract` -> `flow_shape` -> `flow_extract` -> `closure_note`. `surface_survey` surveys downwards from the unit and emits `claims`; `request_shapes` drives its HTTP-history search from the Endpoints discovered in step 1. No sub-problem is fed a whole-streamed-surface list: the base sources are the `service` unit block (slug + `service_contract` + aggregated Endpoints), the `inventory` of known DataItems, the `services` block (the FULL live Service inventory) and the `observations`. The old `surface` (admitted-asset render) and `candidates` (per-asset owner join) sources are removed from the prompt; `admitted` still feeds the deterministic gates (`resolve_surface_refs`, `observed_vocabulary`).
+17. **No per-unit `service_slug` write scope on `data_flows`; the global validation is kept.** The data-modeller already passes the FULL live inventory as `existing_slugs` (`frozenset(inv.get("services") or ())`); T3 confirms this and removes the prompt's per-asset candidate-list framing, so a flow may name ANY live Service as producer or consumer. `drop_out_of_inventory_services` is unchanged: a slug that names no live Service is still dropped, and the backlog still names it.
+18. **The worked examples are rewritten from scratch.** The spurious L0chunk-first examples are replaced by the unit-first survey + hypothesise -> verify -> shape shape; the explicit null hypothesis, the reuse-over-paraphrase and the observed-only-fields examples survive, re-parameterised.
+
 ## Consequences
 
 - The three new files start as verbatim copies, so the seam is testable before T1-T3 rewrite the content.
@@ -65,3 +74,4 @@ T2 rewrites the mechanism-typist's HOW prompt (`technical-system-batched-l1unit-
 - The assigner's v2 `surface_scan -> prior_insights -> candidate_owners -> assign -> closure` chain (and its pre-fed surface source) is superseded by decision 6/7.
 - The mechanism-typist's v2 `unit_surface_read -> prior_insights -> mechanism_hypotheses -> page_clusters -> systems_extract -> link -> closure` chain (ADR D46) and its `unit_surface_read` "no asset-name assumption" rule are superseded by decisions 10-14: `unit_surface_read` is replaced by `orient_from_catalog` + `harvest_surface`, and the "read what exists" discipline is reverted to hypothesis-then-verify for this role.
 - The pre-fed surface / per-unit write-scope framing of the v2 service-sourced pipeline (ADR `analysis-unit-enrichment-adr.md`) is superseded for this role by the unit-first feed and the removed `link` scope.
+- The data-modeller's v2 `surface_survey -> request_shapes -> insight_recall -> record_hypotheses -> data_extract -> flow_shape -> flow_extract -> closure_note` chain's PRE-FED SOURCES are superseded by decision 16: the chain ids survive, but the `surface` / `candidates` / `endpoints` prompt sources are replaced by the unit context and the `services` inventory, and the survey is discovered through the tools. The old `data-plane.md` worked examples (L0chunk-first) are superseded by decision 18.

@@ -4,6 +4,8 @@ Status: RATIFIED by the operator, 2026-07-30, through a direct grilling pass (no
 Ticket: #10 (`Agent spec: DataPlane Analyser`), executed together with #42 (the 2b schedule flip).
 Base: `feat/dataplane-analyser`, branched off `dev` at 5c1fed4 (which carries the mechanism-typist work).
 
+AMENDED 2026-10-12: the "chunk of streamed surface" framing in section 1 below is SUPERSEDED for the `service_sourced` pipeline by `batched-l1unit-first-adr.md` (T3). The analysis object is now the L1 Service unit; the surface is DISCOVERED through `graph_view` and the HTTP-history pair rather than pre-fed, and no per-unit `service_slug` write scope remains. This record is retained as the ratified A.1 specification of the shaping gates, the output shapes and the groundedness discipline, all of which survive unchanged.
+
 Scope: A.1 is specified in full and is the build target.
 A.2 is SCAFFOLDED ONLY, by an inert phase guard, and is marked `designed-not-built` per `CODING_STANDARD.md` section 12.
 Reusability across A.1 and A.2 is explicitly NOT a design priority; section 12 states precisely which components and data survive the adaptation, and which do not.

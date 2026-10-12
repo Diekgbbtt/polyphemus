@@ -145,3 +145,19 @@ def test_the_default_assigner_prompt_is_rewritten_not_the_legacy_copy(monkeypatc
     assert batched != legacy
     assert "HARVEST" in batched and "FALSIFY" in batched
     assert "Work each Endpoint in four moves" in legacy
+
+
+def test_the_default_data_modeller_prompt_is_rewritten_not_the_legacy_copy(monkeypatch):
+    """T3: the default variant's data-modeller file is the L1-unit-first rewrite, not
+    a verbatim copy of the legacy file. The rewrite reasons DOWN from the Service
+    unit; the legacy file still opens on a streamed Parameter/Header/Secret slice."""
+    from polymerhus.analysis import data_modeller
+
+    monkeypatch.delenv("ANALYSIS_PROMPT_VARIANT", raising=False)
+    monkeypatch.setattr(data_modeller, "_DATA_PLANE_SKILLS", {})
+    batched = data_modeller._load_skill()
+    legacy = _read("data-plane.md")
+    assert batched != legacy
+    assert "streamed slice of Parameter/Header/Secret" in legacy
+    assert "streamed slice of Parameter/Header/Secret" not in batched
+    assert "L1 Service unit" in batched

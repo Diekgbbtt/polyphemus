@@ -1,14 +1,22 @@
 """The DataPlane Analyser (agent spec #10, ratified `docs/design/dataplane-A1-decisions.md`
 2026-07-30, realised by #48), the `data_modeller` A.1 proposer.
 
-Sole owner of the Tier-1 data substrate: given a chunk of streamed surface, it
-lifts the logical `DataItem`s that surface evidences, binds each to the concrete
-L0 sites where it appears via `SURFACES_AT`, and maps the `PRODUCES`/`CONSUMES`
-flows that connect those items to the settled Service model, plus the baseline
-surface-observable DataItem-to-DataItem dependencies. It emits
-`L1DeltaBatch{data_items, surfaces_at, data_flows, data_relationships}` and
-nothing else - it does not assign Endpoints (the Assigner), type mechanisms (the
-mechanism-typist), or mint Services.
+Sole owner of the Tier-1 data substrate. Its analysis object is the L1 UNIT (the
+Service): it reasons DOWN from the unit - the slug, the `service_contract` and the
+Endpoints the Service already aggregates - and DISCOVERS the unit's surface
+through `graph_view` and the HTTP-history tools. From that discovered surface it
+lifts the logical `DataItem`s it evidences, binds each to the concrete L0 sites
+where it appears via `SURFACES_AT`, and maps the `PRODUCES`/`CONSUMES` flows that
+connect those items to the settled Service model, plus the baseline
+surface-observable DataItem-to-DataItem dependencies. No whole-surface asset
+stream is pre-fed. It emits `L1DeltaBatch{data_items, surfaces_at, data_flows,
+data_relationships}` and nothing else - it does not assign Endpoints (the
+Assigner), type mechanisms (the mechanism-typist), or mint Services.
+
+There is NO per-unit `service_slug` write scope on `data_flows`: a flow may name
+ANY live Service as producer or consumer. The only surviving gate is the GLOBAL
+inventory validation (`drop_out_of_inventory_services`): a slug that names no live
+Service is still dropped.
 
 It never emits Cypher and never sets provenance or identity keys (C17):
 `enrichment_proposals_to_deltas` stamps provenance at the curate boundary, and
@@ -234,6 +242,11 @@ def drop_out_of_inventory_services(
     `service_slug` is not a live L1 Service, collecting one backlog description
     per missing slug.
 
+    `existing_slugs` is the FULL live Service inventory, never the unit's own slug
+    alone (T3, L1-unit-first): a flow may name ANY live Service as producer or
+    consumer. Only a slug that names no live Service is dropped - the global gate,
+    which is what stops a hallucinated owner.
+
     `build_data_flow_cypher` merges the Service with provenance-on-mint, so an
     unvalidated `data_flow` naming a slug that does not exist would CREATE a
     Service through the data path - exactly the chunk-local minting #34 D4
@@ -456,10 +469,12 @@ def observed_vocabulary(admitted) -> frozenset[str]:
 # --- the hypothesis-driven reflection scaffold (section 7.3) -------------------
 
 _REFLECTION_STEPS = [
-    "ORIENT: read each admitted Parameter/Header/Secret together with the endpoint "
-    "path it hangs off (where it has one) and the origin-scoped adversarial insight; "
-    "say what the surface alone tells you before you look at the known DataItems.",
-    "HYPOTHESISE (define-hypothesis): for each admitted name, state candidate "
+    "ORIENT: read the Service unit first - its contract and the Endpoints it already "
+    "aggregates - then each Parameter/Header/Secret the survey DISCOVERED, together "
+    "with the endpoint path it hangs off (where it has one) and the origin-scoped "
+    "adversarial insight; say what the surface alone tells you before you look at the "
+    "known DataItems.",
+    "HYPOTHESISE (define-hypothesis): for each discovered name, state candidate "
     "hypotheses of the form 'this name witnesses business record R'. For an "
     "ambiguous name (id, token, ref) hold MORE THAN ONE candidate record, and state "
     "'this witnesses no business record' as an explicit candidate among them - never "
@@ -477,31 +492,37 @@ _REFLECTION_STEPS = [
     "SHAPE: for each verified record, three low-risk transcriptions of what "
     "verification already settled - Ground (name the exact surface site(s) it "
     "appears at, and which Service produces it and which consumes it, choosing "
-    "service slugs ONLY from the candidate list you were given), Trust (for a "
-    "consumes whose producing Service differs from the consumer, state the "
-    "falsifiable predicate the consumer holds about that data, in one surface-"
-    "readable sentence), Relate (only where the surface itself shows it, state a "
-    "record-to-record dependency using one of the allowed kinds, with a shallow "
-    "predicate).",
+    "service slugs from the LIVE Service inventory you were given - any live Service "
+    "may be named, not only this unit), Trust (for a consumes whose producing Service "
+    "differs from the consumer, state the falsifiable predicate the consumer holds "
+    "about that data, in one surface-readable sentence), Relate (only where the "
+    "surface itself shows it, state a record-to-record dependency using one of the "
+    "allowed kinds, with a shallow predicate).",
     "EMIT / WITHHOLD: report the verified records. Name what you FALSIFIED and why "
     "- a pagination cursor, a CSRF token, a framework header - so withholding is the "
     "loop's demonstrated conclusion, not an assumed default.",
 ]
 
 
-# The data_modeller's four sub-problems (spec 3.3), each mapping onto a run of the
-# `_REFLECTION_STEPS` stages: ORIENT+HYPOTHESISE+VERIFY-FALSIFY, INTEGRATE, SHAPE,
-# EMIT-WITHHOLD. The two reasoning turns emit `claims`; the two extraction turns emit
-# `{data_items, surfaces_at}` and `{data_flows, data_relationships}`. Every turn
-# speaks `AnalysisTurn`, so the tool set never toggles.
+# The data_modeller's eight sub-problems (T3, L1-unit-first): three SURVEY turns
+# (surface_survey discovers the unit's surface, request_shapes reads the recorded
+# requests, insight_recall reads the notes store), the reasoning/extraction turns
+# (record_hypotheses, data_extract, flow_shape, flow_extract), and closure_note.
+# Each maps onto a run of the `_REFLECTION_STEPS` stages: ORIENT+HYPOTHESISE+
+# VERIFY-FALSIFY, INTEGRATE, SHAPE, EMIT-WITHHOLD. The reasoning turns emit
+# `claims`; the extraction turns emit `{data_items, surfaces_at}` and
+# `{data_flows, data_relationships}`. Every turn speaks `AnalysisTurn`, so the tool
+# set never toggles. No turn is fed a whole streamed asset list: the model discovers
+# the surface through `graph_view` and the HTTP-history pair, driven by the unit.
 _ROLE_HEADER = role_header(
     "the DataPlane Analyser (data_modeller)",
-    "lift the Tier-1 logical DataItems this surface evidences, bind them to the "
-    "surface, and ground their flows onto the settled Service model",
+    "work down from the L1 Service unit to the surface it exposes, lift the Tier-1 "
+    "logical DataItems that surface evidences, bind them to the surface, and ground "
+    "their flows onto the settled Service model",
 )
 
 _RECORD_HYPOTHESES_TASK = (
-    "Emit one Claim per admitted name: `subject` the name, `assertion` the candidate "
+    "Emit one Claim per discovered name: `subject` the name, `assertion` the candidate "
     "business record it witnesses (or 'no record' explicitly), `evidence` the exact "
     "name/path/endpoint corroboration, `verdict` reuse-vs-coin against the known "
     "DataItems. Emit `claims` only; do not emit deltas yet."
@@ -513,24 +534,25 @@ _DATA_EXTRACT_TASK = (
     "REUSE its exact item_key and output the COMPOUNDED fields/notes (fold new insight "
     "in, never blank or merely restate); coin a new item_key only for a record no "
     "existing key covers. Reference a surface site as "
-    '{"label": "Parameter"|"Header"|"Secret", "identity": {...the exact fields shown '
-    "above...}}. `fields` names ONLY fields you actually observed on the surface "
-    "above - never a speculative attribute. Fold the adversarial insight into each "
-    "item's `notes` as an adversarial CHARACTERISATION only - never a named payload, "
-    "technique, or vector."
+    '{"label": "Parameter"|"Header"|"Secret", "identity": {...the exact fields you '
+    "discovered...}}. `fields` names ONLY fields you actually observed on the "
+    "discovered surface - never a speculative attribute. Fold the adversarial insight "
+    "into each item's `notes` as an adversarial CHARACTERISATION only - never a named "
+    "payload, technique, or vector."
 )
 
 _FLOW_SHAPE_TASK = (
     "Emit one Claim per verified record's flow shape: `subject` the record, "
     "`assertion` the Surface site(s) and the producing/consuming Service, `evidence` "
-    "the candidate list you copied the slugs from and the shared-surface relation, "
-    "`verdict` the trust assumption predicate and any record-to-record relation. Emit "
-    "`claims` only; do not emit deltas yet."
+    "the live Service inventory you chose the slugs from and the shared-surface "
+    "relation, `verdict` the trust assumption predicate and any record-to-record "
+    "relation. Emit `claims` only; do not emit deltas yet."
 )
 
 _FLOW_EXTRACT_TASK = (
     "TASK - EXTRACT THE FLOWS. From the shape above, fill `data_flows` "
-    "(`service_slug` copied VERBATIM from the candidate list) and `data_relationships` "
+    "(`service_slug` copied VERBATIM from the live Service inventory - any live "
+    "Service may be named as producer or consumer) and `data_relationships` "
     "(a fixed allowlist `kind`) for every relation the surface itself shows. Name what "
     "you WITHHELD and why, so withholding is the demonstrated conclusion."
 )
@@ -542,22 +564,24 @@ WORKFLOW = ReasoningWorkflow(
             id="surface_survey",
             name="surface survey",
             prompt=(
-                f"{_ROLE_HEADER}\n\nSURVEY - ORIENT over the mapped L0 surface of this "
-                "Service, BROADLY. Do not assume anything from an asset name. Navigate "
-                "from the Service down to its attack surface: enumerate the Service's "
-                "aggregated Endpoints, and for each Endpoint its Parameters, the Headers "
-                "and Secrets on the BaseURL it lives on, and any existing DataItems "
-                "already flowed to or from this Service. Use `graph_view` with read-only "
-                "Cypher (always a LIMIT); a path is the address you interrogate, never a "
-                "place data appears. For each surface sighting, emit one Claim: `subject` "
-                "the Service or the endpoint; `assertion` what the surface alone tells you "
-                "(the concrete Parameters, Headers and Secrets you found, and their "
-                "transport position); `evidence` the exact Cypher-returned identity; "
-                "`verdict` whether this is a surface site that could witness a business "
-                "record. A name that merely sounds like a record is not evidence yet; "
-                "record the sighting, do not judge it here. Emit `claims` only."
+                f"{_ROLE_HEADER}\n\nSURVEY - ORIENT, working DOWNWARD from the Service "
+                "unit. Do not assume anything from an asset name, and do not wait for a "
+                "pre-fed list: the unit (its slug, contract and already-aggregated "
+                "Endpoints) is your only anchor, and you DISCOVER its surface yourself. "
+                "Call `graph_view` with read-only Cypher (always a LIMIT): enumerate the "
+                "Service's aggregated Endpoints, and for each Endpoint its Parameters, "
+                "the Headers and Secrets on the BaseURL it lives on, and any existing "
+                "DataItems already flowed to or from this Service. A path is the address "
+                "you interrogate, never a place data appears. For each surface sighting, "
+                "emit one Claim: `subject` the Service or the endpoint; `assertion` what "
+                "the surface alone tells you (the concrete Parameters, Headers and "
+                "Secrets you found, and their transport position); `evidence` the exact "
+                "Cypher-returned identity; `verdict` whether this is a surface site that "
+                "could witness a business record. A name that merely sounds like a record "
+                "is not evidence yet; record the sighting, do not judge it here. Emit "
+                "`claims` only."
             ),
-            inject=("service", "endpoints"),
+            inject=("service", "inventory"),
             emit=("claims",),
         ),
         SubProblem(
@@ -565,8 +589,9 @@ WORKFLOW = ReasoningWorkflow(
             name="request shapes",
             prompt=(
                 f"{_ROLE_HEADER}\n\nREAD SHAPES - read the RECORDED REQUEST SHAPES to "
-                "this Service's aggregated endpoints. The mapped L0 surface names the "
-                "inputs; the HTTP history shows how they are actually sent. Call "
+                "the endpoints you surveyed in step 1 (the unit's aggregated Endpoints "
+                "and any Endpoint you discovered). The survey names the inputs; the HTTP "
+                "history shows how they are actually sent. Call "
                 "`search_http_history` with a conjunctive filter over the request side "
                 "(filter on `url` containing the endpoint path), then call "
                 "`get_http_artifact` on the returned `artifact_id` to inspect one recorded "
@@ -579,7 +604,7 @@ WORKFLOW = ReasoningWorkflow(
                 "which mapped surface site the shape corroborates. A recorded request is a "
                 "candidate, never a verification. Emit `claims` only."
             ),
-            inject=("service", "endpoints", "surface_survey"),
+            inject=("service", "surface_survey"),
             emit=("claims",),
             depends_on=("surface_survey",),
         ),
@@ -600,7 +625,7 @@ WORKFLOW = ReasoningWorkflow(
                 "`evidence` the note key and the surface corroboration; `verdict` reuse, "
                 "compound, or set aside. Emit `claims` only."
             ),
-            inject=("service", "inventory", "surface_survey", "request_shapes"),
+            inject=("service", "inventory", "services", "surface_survey", "request_shapes"),
             emit=("claims",),
             depends_on=("surface_survey", "request_shapes"),
         ),
@@ -612,7 +637,7 @@ WORKFLOW = ReasoningWorkflow(
                 f"{_RECORD_HYPOTHESES_TASK}"
             ),
             inject=(
-                "inventory", "candidates", "surface", "observations",
+                "inventory", "services", "observations",
                 "surface_survey", "request_shapes", "insight_recall",
             ),
             emit=("claims",),
@@ -625,7 +650,7 @@ WORKFLOW = ReasoningWorkflow(
                 f"{_ROLE_HEADER}\n\n{cot_scaffold(_REFLECTION_STEPS[3:4])}\n\n"
                 f"{_DATA_EXTRACT_TASK}"
             ),
-            inject=("inventory", "candidates", "surface", "record_hypotheses"),
+            inject=("inventory", "services", "record_hypotheses"),
             emit=("data_items", "surfaces_at"),
             depends_on=("record_hypotheses",),
         ),
@@ -636,7 +661,7 @@ WORKFLOW = ReasoningWorkflow(
                 f"{_ROLE_HEADER}\n\n{cot_scaffold(_REFLECTION_STEPS[4:5])}\n\n"
                 f"{_FLOW_SHAPE_TASK}"
             ),
-            inject=("inventory", "candidates", "record_hypotheses", "data_extract"),
+            inject=("inventory", "services", "record_hypotheses", "data_extract"),
             emit=("claims",),
             depends_on=("data_extract",),
         ),
@@ -647,7 +672,7 @@ WORKFLOW = ReasoningWorkflow(
                 f"{_ROLE_HEADER}\n\n{cot_scaffold(_REFLECTION_STEPS[5:6])}\n\n"
                 f"{_FLOW_EXTRACT_TASK}"
             ),
-            inject=("inventory", "candidates", "data_extract", "flow_shape"),
+            inject=("inventory", "services", "data_extract", "flow_shape"),
             emit=("data_flows", "data_relationships"),
             depends_on=("flow_shape", "data_extract"),
         ),
@@ -674,34 +699,79 @@ WORKFLOW = ReasoningWorkflow(
 )
 
 
-def _service_unit_block(chunk: Chunk) -> str:
-    """The `service` base source: the ONE Service unit this workflow enriches."""
-    return (
-        f"SERVICE UNIT: {chunk.chunk_id}\n"
-        "This Service - not any asset name - is the reasoning anchor for the data "
-        "plane. Enumerate the L0 surface it SERVES (its aggregated Endpoints, their "
-        "Parameters, and the Headers/Secrets on their BaseURLs), then enrich it."
-    )
+def _service_slug(chunk: Chunk) -> str:
+    """The unit's Service slug: `source_job`'s `service:` suffix, else the chunk id.
+    Mirrors the assigner's `_unit_context_block` so both read the same unit key."""
+    src = str(getattr(chunk, "source_job", "") or "")
+    return src.removeprefix("service:") if src.startswith("service:") else str(chunk.chunk_id)
 
 
-def _aggregated_endpoints_block(chunk: Chunk, aggregations: list[dict] | None) -> str:
-    """The `endpoints` base source: the Service's settled aggregated L0 Endpoints -
-    a starting point, never an asset-name filter (the agent queries `graph_view` for
-    the rest)."""
-    slug = str(chunk.chunk_id)
+def _aggregated_endpoints_repr(chunk: Chunk, aggregations: list[dict] | None) -> str:
+    """The Service's settled aggregated L0 Endpoints, one `METHOD /path (baseurl)` per
+    entry; a hint to enumerate them with `graph_view` when none are settled. A
+    starting point, never an asset-name filter."""
+    slug = _service_slug(chunk)
     rows = [
         a for a in (aggregations or [])
         if a.get("slug") == slug and "Endpoint" in (a.get("labels") or [])
     ]
     if not rows:
-        return (
-            f"AGGREGATED ENDPOINTS for {slug}: (none settled yet - enumerate them with "
-            "`graph_view`)"
-        )
-    lines = [f"AGGREGATED ENDPOINTS for {slug}:"]
+        return "(none settled yet - enumerate them with `graph_view`)"
+    lines = []
     for a in rows:
         p = a.get("props") or {}
-        lines.append(f"- {p.get('method', '?')} {p.get('url') or p.get('path') or p}")
+        line = " ".join(
+            part for part in (p.get("method", "?"), p.get("path") or p.get("url") or p)
+            if part
+        )
+        if p.get("baseurl"):
+            line = f"{line} ({p['baseurl']})"
+        lines.append(line)
+    return "; ".join(lines)
+
+
+def _service_unit_block(
+    chunk: Chunk, inventory: dict | None = None,
+    aggregations: list[dict] | None = None,
+) -> str:
+    """The `service` base source: the ONE Service unit this workflow enriches - its
+    slug, its `service_contract`, and the Endpoints it already aggregates.
+
+    The whole settled surface is deliberately ABSENT: the model DISCOVERS its own
+    surface through `graph_view` and the HTTP-history pair, driven by the unit
+    (L1-unit-first). A thin KB gets a thin honest contract, and an orphan unit gets an
+    empty aggregated list; both render explicitly rather than as a silently empty
+    prompt."""
+    slug = _service_slug(chunk)
+    contracts = (inventory or {}).get("service_contracts") or {}
+    contract = contracts.get(slug, "") if isinstance(contracts, dict) else ""
+    return (
+        f"SERVICE UNIT: {slug}\n"
+        "This Service - not any asset name - is the reasoning anchor for the data "
+        "plane. Its contract states what it does and owns; its already-aggregated "
+        "Endpoints are a starting point, never a name filter.\n"
+        f"contract: {contract or '(none)'}\n"
+        f"aggregated endpoints: {_aggregated_endpoints_repr(chunk, aggregations)}"
+    )
+
+
+def _live_services_block(inventory: dict | None) -> str:
+    """The `services` base source: the FULL live Service inventory (slug - contract),
+    so a flow may name ANY live Service as producer/consumer - there is NO per-unit
+    write scope. A `service_slug` outside this list is still dropped by the global
+    validation gate."""
+    inv = inventory or {}
+    services = list(inv.get("services") or [])
+    contracts = inv.get("service_contracts") or {}
+    if not services:
+        return "LIVE SERVICE INVENTORY: (none yet)"
+    lines = [
+        "LIVE SERVICE INVENTORY (name ANY of these as a producer/consumer; a slug "
+        "not listed here names nothing and its flow is discarded):",
+    ]
+    for slug in services:
+        note = (contracts or {}).get(slug)
+        lines.append(f"- {slug} - {note}" if note else f"- {slug}")
     return "\n".join(lines)
 
 
@@ -728,25 +798,6 @@ def _known_items_block(inventory: dict | None) -> str:
     return "\n".join(lines)
 
 
-def _candidates_render(candidates: dict[str, list[str]]) -> str:
-    if not candidates:
-        return "  (no admitted surface)"
-    lines = []
-    for ref, slugs in candidates.items():
-        lines.append(f"  - {ref}: {slugs if slugs else '(no candidate owner)'}")
-    return "\n".join(lines)
-
-
-def _admitted_render(admitted) -> str:
-    lines = []
-    for a in admitted:
-        line = f"- {a.type} {dict(a.identity or {})}"
-        if a.props:
-            line += f" props={dict(a.props)}"
-        lines.append(line)
-    return "\n".join(lines) or "(none)"
-
-
 def _origin_observations_block(chunk: Chunk) -> str:
     """Origin-scoped adversarial insight (DPL-DEC-15): observations attach by
     ORIGIN, never per-asset - no Observation is ever anchored to a Parameter or a
@@ -769,11 +820,13 @@ def _origin_observations_block(chunk: Chunk) -> str:
 
 _ROLE_VERBATIM = (
     "You are the DataPlane Analyser (data_modeller) in an attack-surface analyser.\n"
-    "ROLE - DATA MODELLING. You judge which logical business records (DataItems) the "
-    "streamed Parameter/Header/Secret surface evidences, where each one appears "
-    "(`surfaces_at`), which Service produces/consumes it (`data_flows`), and shallow "
-    "record-to-record dependencies (`data_relationships`). You emit these four lists "
-    "and nothing else - never `services`, `systems`, `aggregates`, or `system_edges`.\n"
+    "ROLE - DATA MODELLING. You reason DOWN from the L1 Service unit you are given "
+    "and DISCOVER its Parameter/Header/Secret surface through the tools, then judge "
+    "which logical business records (DataItems) that surface evidences, where each one "
+    "appears (`surfaces_at`), which Service produces/consumes it (`data_flows`), and "
+    "shallow record-to-record dependencies (`data_relationships`). You emit these four "
+    "lists and nothing else - never `services`, `systems`, `aggregates`, or "
+    "`system_edges`.\n"
     "A DataItem is a business record BEHIND the surface (customer account, product "
     "listing, shopping basket, order, delivery address, payment method, coupon), NOT "
     "an endpoint or a parameter itself. A parameter that witnesses no business record "
@@ -784,8 +837,9 @@ _ROLE_VERBATIM = (
     "never a place data appears.\n"
     "`fields` on a DataItem name ONLY fields you actually OBSERVED on the surface "
     "shown to you; never a speculative or merely-plausible field.\n"
-    "`data_flows.service_slug` is copied VERBATIM from the candidate owning-Services "
-    "list you are given - never a slug you invent.\n"
+    "`data_flows.service_slug` is copied VERBATIM from the live Service inventory you "
+    "are given - any live Service may be named as producer or consumer; never a slug "
+    "you invent.\n"
     "`data_relationships.kind` is one of the fixed allowlist; anything else is "
     "discarded.\n"
     "You never set provenance or write status; those are stamped by the system."
@@ -860,8 +914,6 @@ def _default_invoke_fn(messages, *, schema=None, system_prompt=None):
     (the reflection call); a pydantic `schema` returns structured output. The role prompt
     is prepended here, exactly where the stateful seam's `system_prompt=` binding puts
     it. Production now uses `stateful_invoke_fn`."""
-    from langchain_core.messages import HumanMessage, SystemMessage
-
     from polymerhus.analysis.proposer_turn import prepend_prompt
     from polymerhus.app.llm.roles import invoke_role
 
@@ -897,9 +949,16 @@ def model_data(
     memory: "AnalysisMemoryStore | None" = None, project_id: str | None = None,
     run_id: str | None = None,
 ) -> DataPlaneOutcome:
-    """The A.1 data_modeller body: the `WORKFLOW` sub-problem chain
-    (record_hypotheses -> data_extract -> flow_shape -> flow_extract) -> the six
-    ordered shaping gates, over one chunk.
+    """The A.1 data_modeller body: the `WORKFLOW` sub-problem chain (surface_survey
+    -> request_shapes -> insight_recall -> record_hypotheses -> data_extract ->
+    flow_shape -> flow_extract -> closure_note) -> the six ordered shaping gates,
+    over one chunk.
+
+    The prompt carries only the Service UNIT (its slug, `service_contract` and
+    aggregated Endpoints), the known DataItems, the FULL live Service inventory and
+    the origin-scoped insight; the model DISCOVERS its own surface through the tools
+    (L1-unit-first). `existing_slugs` at the shaping seam is the full live inventory,
+    so a flow may name ANY live Service - there is no per-unit write scope.
 
     `invoke_fn(messages, *, schema, system_prompt) -> AnalysisTurn | None` is injected
     (unit-testable, no live LLM). FAIL-CLOSED on hypotheses exhaustion (empty outcome,
@@ -919,13 +978,15 @@ def model_data(
         admitted_counts[a.type] += 1
     candidate_slugs = {slug for slugs in candidates.values() for slug in slugs}
 
-    # The volatile base sources the workflow injects verbatim.
+    # The volatile base sources the workflow injects verbatim. The whole settled
+    # surface is NOT a base source (L1-unit-first): the model DISCOVERS it through
+    # the tools. Only the unit context, the known DataItems, the full live Service
+    # inventory and the origin-scoped insight travel the prompt. `admitted` still
+    # feeds the deterministic gates (reference resolution, observed vocabulary).
     base_artifacts = {
-        "service": _service_unit_block(chunk),
-        "endpoints": _aggregated_endpoints_block(chunk, aggregations),
+        "service": _service_unit_block(chunk, inventory, aggregations),
         "inventory": _known_items_block(inventory),
-        "candidates": _candidates_render(candidates),
-        "surface": _admitted_render(admitted),
+        "services": _live_services_block(inventory),
         "observations": _origin_observations_block(chunk),
     }
 

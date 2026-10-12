@@ -20,7 +20,8 @@ from polymerhus.analysis.analyser_types import (
 )
 from polymerhus.analysis.chunking import Chunk
 from polymerhus.analysis.data_modeller import (
-    DataPlaneOutcome,
+    _live_services_block,
+    _service_unit_block,
     bind_fields_to_observed,
     drop_out_of_inventory_services,
     drop_unknown_relationship_kinds,
@@ -364,3 +365,127 @@ def test_no_cypher_no_provenance():
     assert "MERGE" not in source
     for cls in (DataItemProposal, SurfacesAtProposal, DataFlowProposal, DataRelationshipProposal):
         assert "provenance" not in cls.model_fields
+
+
+# --- T3: the L1-unit-first survey, the unit feed, the global validation --------
+
+def test_workflow_injects_the_unit_not_a_prefed_surface():
+    """T3: no sub-problem is fed a whole streamed asset list. The old `surface`
+    (the admitted-asset render) and `candidates` sources are gone; the survey starts
+    from the `service` unit and the model discovers the rest through the tools."""
+    from polymerhus.analysis.data_modeller import WORKFLOW
+
+    by_id = {sp.id: sp for sp in WORKFLOW.sub_problems}
+    for sp in WORKFLOW.sub_problems:
+        assert "surface" not in sp.inject, sp.id
+        assert "candidates" not in sp.inject, sp.id
+    assert by_id["surface_survey"].inject == ("service", "inventory")
+    assert "services" in by_id["record_hypotheses"].inject
+    assert "services" in by_id["flow_extract"].inject
+    assert "services" in by_id["flow_shape"].inject
+    # the unit itself is the anchor every reasoning turn reads.
+    assert "service" in by_id["surface_survey"].inject
+    assert "service" in by_id["insight_recall"].inject
+
+
+def test_service_unit_block_carries_contract_and_aggregated_endpoints():
+    """T3: the `service` base artifact is the UNIT - slug, `service_contract`, and the
+    Endpoints the Service already aggregates - not an admitted-asset list."""
+    chunk = Chunk(
+        chunk_id="checkout", source_job="service:checkout",
+        assets=(_param("ProductId", endpoint_path="/orders", baseurl="B"),),
+    )
+    aggregations = [{
+        "slug": "checkout", "labels": ["Endpoint"],
+        "props": {"path": "/orders", "method": "POST", "url": "https://a/orders", "baseurl": "B"},
+    }]
+    inventory = {"service_contracts": {"checkout": "takes a basket to a paid order"}}
+    block = _service_unit_block(chunk, inventory, aggregations)
+    assert "SERVICE UNIT: checkout" in block
+    assert "takes a basket to a paid order" in block   # the service_contract
+    assert "POST /orders" in block                     # the aggregated endpoint
+    assert "B" in block
+
+
+def test_live_services_block_lists_the_full_inventory():
+    """T3: the `services` artifact is the FULL live Service inventory, so a flow may
+    name ANY live Service as producer/consumer - not only the unit's own slug."""
+    block = _live_services_block({
+        "services": ["checkout", "catalogue"],
+        "service_contracts": {"checkout": "takes a basket to a paid order"},
+    })
+    assert "checkout" in block
+    assert "catalogue" in block
+    assert "takes a basket to a paid order" in block
+
+
+def test_no_prefed_surface_stream_reaches_the_prompt():
+    """T3: the admitted Parameter is NOT rendered into the prompt as a list. The model
+    discovers it through `graph_view`; only the unit context is fed."""
+    captured = {}
+
+    def invoke(messages, *, schema=None, system_prompt=None):
+        content = messages[-1].content
+        if "SURVEY - ORIENT" in content:
+            captured["survey"] = content
+        return AnalysisTurn()
+
+    model_data(_chunk([_param("SURFACE_MARKER_PARAM")]), invoke_fn=invoke,
+               inventory={}, aggregations=[])
+    prompt = captured["survey"]
+    assert "SERVICE UNIT" in prompt
+    assert "SURFACE_MARKER_PARAM" not in prompt   # the pre-fed asset list is gone
+
+
+def test_a_flow_naming_another_live_service_survives_and_a_ghost_is_dropped():
+    """T3: the FULL live inventory is the validation set, so a cross-Service flow
+    survives; a slug that names no live Service is still dropped (global gate kept)."""
+    def invoke(messages, *, schema=None, system_prompt=None):
+        content = messages[-1].content
+        if "TASK - EXTRACT THE FLOWS" in content:
+            return AnalysisTurn(data_flows=[
+                DataFlowProposal(service_slug="other-live-service", item_key="basket",
+                                 direction="consumes"),
+                DataFlowProposal(service_slug="ghost", item_key="basket", direction="produces"),
+            ])
+        if "TASK - EXTRACT THE DATA ITEMS" in content:
+            return AnalysisTurn(
+                data_items=[DataItemProposal(item_key="basket")],
+                surfaces_at=[SurfacesAtProposal(
+                    item_key="basket",
+                    l0=L0Ref(label="Parameter", identity={"name": "ProductId"}))],
+            )
+        return AnalysisTurn()
+
+    inventory = {"services": ["checkout", "other-live-service"]}
+    outcome = model_data(_chunk([_param("ProductId")]), invoke_fn=invoke,
+                         inventory=inventory, aggregations=[])
+    assert [f.service_slug for f in outcome.batch.data_flows] == ["other-live-service"]
+    assert outcome.stats.out_of_inventory_flows == 1   # the ghost is still dropped
+
+
+def test_hypothesise_verify_loop_and_observed_only_fields_still_hold():
+    """T3: the staged hypothesise/verify loop survives the rewrite, and an
+    unobserved field is still stripped by the observed-only gate."""
+    captured = {}
+
+    def invoke(messages, *, schema=None, system_prompt=None):
+        content = messages[-1].content
+        if "HYPOTHESISE" in content and "TASK - EXTRACT THE DATA ITEMS" not in content:
+            captured["hypotheses"] = content
+        if "TASK - EXTRACT THE DATA ITEMS" in content:
+            return AnalysisTurn(
+                data_items=[DataItemProposal(
+                    item_key="basket", props={"fields": ["ProductId", "price"]})],
+                surfaces_at=[SurfacesAtProposal(
+                    item_key="basket",
+                    l0=L0Ref(label="Parameter", identity={"name": "ProductId"}))],
+            )
+        return AnalysisTurn()
+
+    outcome = model_data(_chunk([_param("ProductId")]), invoke_fn=invoke,
+                         inventory={}, aggregations=[])
+    assert "VERIFY / FALSIFY" in captured["hypotheses"]
+    assert "no business record" in captured["hypotheses"]
+    # `price` was never observed, so it is stripped; `ProductId` survives.
+    assert outcome.batch.data_items[0].props["fields"] == ["ProductId"]

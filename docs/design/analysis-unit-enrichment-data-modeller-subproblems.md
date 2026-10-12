@@ -1,10 +1,11 @@
 # The data_modeller reasoning workflow (analysis-unit-first v2)
 
-*Status: design, 2026-10-11.
+*Status: PARTIALLY SUPERSEDED, 2026-10-12.
 Branch `feat/analysis-unit-enrichment`.
 Owner: the `data_modeller` proposer of the analysis-unit-first v2 pipeline.
 This document specifies the reasoning workflow only.
 It does not change any Python code; the implementation is a later ticket.*
+*The PRE-FED-surface sources specified below are superseded by `batched-l1unit-first-adr.md` (T3): the eight sub-problem ids survive, but no whole-streamed-surface list is fed. The base sources are the `service` unit block (slug + `service_contract` + aggregated Endpoints), the known `inventory` DataItems, the FULL live `services` inventory and the `observations`; the survey is DISCOVERED through `graph_view` and the HTTP-history pair. The implementation lives in `src/polymerhus/analysis/data_modeller.py` and the prompt file `prompts/data-plane-batched-l1unit-first.md`. Sections below are retained as the historical design record.*
 
 The owning decision record is `docs/design/dataplane-A1-decisions.md`.
 This document extends it from the streamed per-chunk pipeline to the unit-first pipeline.

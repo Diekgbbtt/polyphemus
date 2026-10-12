@@ -338,7 +338,7 @@ It is a PROMPT-FILE variant, not a settings key and not a new analysis mode: the
 The selector is read ON CALL, never at import, and an unknown value warns and coerces to the default.
 `analysis/prompt_variant.py::prompt_path(role_id, variant=None)` is the ONE role-to-file map; the three role loaders resolve through it and memoize PER VARIANT, so the system prefix stays byte-identical across a run.
 _Avoid_: prompt version, prompt tag (it is a whole-file variant, not a revision counter).
-_Status_: the seam is built (T0); T1 rewrote the assigner, T2 the mechanism-typist; T3 rewrites the data-modeller.
+_Status_: the seam is built (T0); T1 rewrote the assigner, T2 the mechanism-typist, T3 the data-modeller.
 
 **Pipeline unit (the Service)**:
 The `service_sourced` pipeline's unit of reasoning is the business Service, not the recon job's surface.
@@ -401,9 +401,12 @@ _Avoid_: analyser (the whole-model term); anatomy (the Phase-B deepening path).
 The System-side counterpart of `service_contract`: a System's brief adversarially-oriented NL `description` prop is its DISCRIMINATIVE attribute - the mechanism-typist reads the currently-defined Systems WITH their descriptions (the additive `read_l1_inventory` `system_descriptions` map) to decide new-vs-extend, and on extend it COMPOUNDS the description (reads the existing one, emits the enriched superset), never emptied. Contrast the Assigner's never-re-emit `service_contract`: there the Bootstrapper is the better whole-architecture author, whereas the mechanism-typist is the SOLE incremental author of System descriptions, so compounding is correct, not clobbering.
 _Status_: NL description is the sole carrier at breadth; a richer type-based System specification is Phase B (#40, the L1-System under-typing gap).
 
-**DataPlane Analyser / data-modeller** (#48, `docs/design/dataplane-A1-decisions.md`):
-The sole owner of the Tier-1 data substrate - lifts logical `DataItem`s (business records) from streamed `Parameter`/`Header`/`Secret` surface, binds them with `SURFACES_AT`, and maps `PRODUCES`/`CONSUMES` flows onto the settled Service model plus surface-observable `DataItem`-to-`DataItem` dependencies.
-Emits `L1DeltaBatch{data_items, surfaces_at, data_flows, data_relationships}` and nothing else; runs LAST in the per-chunk schedule (after the Assigner and the mechanism-typist) so its Parameter-to-owning-Service join has a live `AGGREGATES` answer.
+**DataPlane Analyser / data-modeller** (#48, `docs/design/dataplane-A1-decisions.md`; L1-unit-first T3, ADR `batched-l1unit-first-adr.md`):
+The sole owner of the Tier-1 data substrate.
+Its analysis object is the L1 UNIT (the Service), not a pre-fed asset slice: it reasons DOWN from the unit - the slug, the `service_contract`, and the Endpoints the Service already aggregates - and DISCOVERS the unit's `Parameter`/`Header`/`Secret` surface through `graph_view` and the bound HTTP-history pair.
+From that discovered surface it lifts logical `DataItem`s (business records), binds them with `SURFACES_AT`, and maps `PRODUCES`/`CONSUMES` flows onto the settled Service model plus surface-observable `DataItem`-to-`DataItem` dependencies.
+Emits `L1DeltaBatch{data_items, surfaces_at, data_flows, data_relationships}` and nothing else; its chain is `surface_survey -> request_shapes -> insight_recall -> record_hypotheses -> data_extract -> flow_shape -> flow_extract -> closure_note` (eight sub-problems, each speaking the ONE `AnalysisTurn` envelope). It runs LAST in the per-Service loop (after the Assigner and the mechanism-typist) so its flow-onto-Service join has a live `AGGREGATES` answer.
+It carries NO per-unit `service_slug` write scope: a `data_flow` may name ANY live Service as producer or consumer, and only the GLOBAL inventory validation (`drop_out_of_inventory_services`) still drops a slug that names no live Service. The deterministic gates still resolve against the admitted surface and the observed vocabulary.
 A.1 is BUILT; A.2 (a batched completeness sweep per user-controllable datum) is `designed-not-built` - the phase guard in `make_data_modeller_body` returns `None` for any phase but `"A1"`, an inert dormant seam, never a silent half-implementation.
 _Avoid_: analyser (the whole-model term).
 
