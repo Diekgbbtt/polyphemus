@@ -222,15 +222,19 @@ services:
       # - so we pin litellm to its bundled local copy.
       LITELLM_LOCAL_MODEL_COST_MAP: "True"
       # --- Gateway cost guard (#330, ADR D13) -------------------------------
-      # The sync provisions each provider's virtual key with USD budget windows
-      # built from these provider caps scaled by the conservatism factor. The
-      # real caps are opencode-go's dollar-denominated quota ($30/7d weekly -
-      # the dominant boundary - and $60/30d monthly; there is NO 5h cap). The
-      # factor defaults to 1.0: the cost override authors the provider's real
-      # rate, so LiteLLM's spend matches the charge and no pricing under-count
-      # needs compensating (the retired 0.5 compensated a presumed peak that
-      # does not exist, #330 / EV-34). A budget-exceeded request is 429; an
-      # unverifiable counter is 503 (fail_closed_budget_enforcement).
+      # DISABLED BY DEFAULT (operator directive 2026-10-12; ticket
+      # docs/tickets/gateway-cost-guard-mistracks-spend.md): the guard's spend
+      # accounting mistracked (it tripped at Spend=$30.0052 / Limit=$30.00 while
+      # the provider dashboard showed ~$15) and rate-limited every model call
+      # 429. With LLM_GATEWAY_BUDGET_ENABLED absent/false the sync mints the
+      # virtual keys with no budget windows and clears any window already on
+      # them. The caps below are the retained opt-in: set
+      # LLM_GATEWAY_BUDGET_ENABLED: "true" (plus restore
+      # fail_closed_budget_enforcement in gateway/litellm_config.yaml) to
+      # re-enable. The real caps are opencode-go's dollar-denominated quota
+      # ($30/7d weekly - the dominant boundary - and $60/30d monthly; there is
+      # NO 5h cap). The conservatism factor defaults to 1.0.
+      LLM_GATEWAY_BUDGET_ENABLED: "false"
       LLM_GATEWAY_BUDGET_7D_USD: "30.0"
       LLM_GATEWAY_BUDGET_30D_USD: "60.0"
       LLM_GATEWAY_BUDGET_CONSERVATISM_FACTOR: "1.0"

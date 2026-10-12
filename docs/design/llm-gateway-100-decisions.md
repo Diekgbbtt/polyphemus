@@ -193,6 +193,8 @@ opencode-go began enforcing a client-supplied `x-opencode-session` header on 202
 
 ## D13 - Gateway cost guard: a USD virtual-key budget from the models.dev costs (#330)
 
+**Status: DISABLED by default (2026-10-12).** The guard's spend accounting mistracked and its 429 rate-limited every model call; the sync now mints keys with no `budget_limits` unless `LLM_GATEWAY_BUDGET_ENABLED=true|1`. See the 2026-10-12 amendment at the end of this section. The decision below describes the retained, opt-in mechanism.
+
 A persistent provider `429 GoUsageLimitError` (opencode-go's workspace quota) cascaded through the eval (`docs/design/eval-bugs-map.md` §0/§8) because nothing enforced the provider's dollar ceiling before the provider did. The guard is LiteLLM's native **virtual-key USD budget**, provisioned at bootstrap from the sync's existing models.dev per-token costs (`sync_mapping.py` - no new pricing dependency).
 
 **What is provisioned.** `sync.run_sync` builds one `BudgetPlan` (`gateway_budget_plan`) and `GatewayClient.ensure_virtual_key` attaches it to each provider's app-minted virtual key (D3, amended #335):
@@ -258,6 +260,15 @@ Iteration 2 seeded the override at an "off-peak" rate `~6x below` the models.dev
 Live forensics falsified the premise: the models.dev `opencode-go/deepseek-v4.1-flash` record (`input 0.15`, `output 0.60`, `cache_read 0.003` per 1M) IS the rate the provider bills - the window's tokens priced at that record total `$29.83`, matching the provider's `$30`/week cap to within 1% with no peak/off-peak blend. The "~6x off-peak" haircut under-counted the guard's USD ~`4.3x`, so the provider's weekly cap tripped before the guard did (the EV-34 outage).
 The fix: (a) the override is set to the models.dev Go record (`1.5e-07` / `6.0e-07` / `3e-09`), so LiteLLM's spend count matches the provider's charge; (b) the fictional 5h window is retired; (c) `k` defaults to `1.0`, because there is no under-count left to compensate (it remains an env-tunable safety margin for the provider-rolling vs litellm-calendar window mismatch, grey point 3). The guard's effective windows are now the real caps: weekly `$30` (dominant) and monthly `$60`.
 This supersedes grey point 1 of the iteration-2 amendment.
+
+**Amendment (2026-10-12) - the guard is DISABLED by default (operator directive).**
+Live forensics falsified the guard's spend accounting: on the eval server the gateway tripped at `ExceededBudget: Spend=$30.0052, Limit=$30.00` while the operator's provider dashboard showed only ~$15 consumed for that key, so the guard counted roughly double the real spend (either it aggregates multiple virtual keys under one internal key, or it mis-tracks cached/uncached input or output cost). The over-count 429'd every model call.
+The operator instructed removing the rate-limiting, so the sync's `gateway_budget_plan()` now returns an EMPTY `BudgetPlan` by default: no `budget_limits`, no `rpm_limit`, and `ensure_virtual_key` CLEARS any window already on the minted key (`budget_limits: []` is stored by litellm 1.96 as JSON null; `_virtual_key_budget_check` returns early on a falsy surface, verified in the pinned source).
+`LLM_GATEWAY_BUDGET_ENABLED=true|1` is the opt-in that restores the windows; the retained window/env machinery (`_BUDGET_WINDOWS`, `_env_positive_float`, `_env_conservatism_factor`, `DEFAULT_BUDGET_*`) is unchanged behind it.
+`gateway/litellm_config.yaml` sets `general_settings.fail_closed_budget_enforcement: false` (it is a static boot-time setting the sync never writes), paired with the opt-in: re-enabling the guard takes both `LLM_GATEWAY_BUDGET_ENABLED=true` and restoring that setting.
+The pricing-gap warning now fires only when the guard is enabled.
+Acceptance criteria to re-enable (the guard's spend count must reconcile with the provider dashboard to within a small epsilon across a run, and a key must never be charged another key's spend) are in `docs/tickets/gateway-cost-guard-mistracks-spend.md`.
+This supersedes the D13 decision's default-enabled posture; the mechanism itself (what is provisioned, the convergence, the enforcement substrate) is retained for the opt-in path.
 
 ---
 

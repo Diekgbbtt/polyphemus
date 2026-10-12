@@ -173,6 +173,17 @@ def _now_iso() -> str:
 
 # --- The cost guard: the virtual-key USD budget plan (#330, ADR D13) ---------
 #
+# DISABLED BY DEFAULT (operator directive 2026-10-12; ticket
+# `docs/tickets/gateway-cost-guard-mistracks-spend.md`). The guard's spend
+# accounting mistracked - it tripped at `Spend=$30.0052, Limit=$30.00` while
+# the provider dashboard showed ~$15 for that key - and its 429 rate-limited
+# every model call. `LLM_GATEWAY_BUDGET_ENABLED` is the opt-in: absent/empty
+# (the default) provisions NO `budget_limits` and CLEARS any window already on
+# the minted key; `true`/`1` restores the windows below. Do not re-enable until
+# the spend count reconciles with the provider dashboard (see the ticket's
+# acceptance criteria).
+#
+# The retained guard mechanism (opt-in):
 # LiteLLM's native virtual-key `budget_limits` (USD) mirror opencode-go's
 # dollar-denominated cap. The provider's real caps are $30/week and $60/month;
 # there is NO 5h cap, and the weekly is the dominant, first-binding boundary.
@@ -199,18 +210,31 @@ _BUDGET_WINDOWS: tuple[tuple[str, str, float], ...] = (
     ("7d", "LLM_GATEWAY_BUDGET_7D_USD", DEFAULT_BUDGET_7D_USD),
     ("30d", "LLM_GATEWAY_BUDGET_30D_USD", DEFAULT_BUDGET_30D_USD),
 )
+_BUDGET_ENABLED_ENV = "LLM_GATEWAY_BUDGET_ENABLED"
 _CONSERVATISM_FACTOR_ENV = "LLM_GATEWAY_BUDGET_CONSERVATISM_FACTOR"
 _RPM_LIMIT_ENV = "LLM_GATEWAY_KEY_RPM_LIMIT"
+# The values that OPT IN. Absent/empty and every other value (including a typo
+# or `false`) leave the guard off - the safe default, since the accounting is
+# untrusted.
+_BUDGET_ENABLED_TRUE = ("true", "1")
 
 
 @dataclass(frozen=True)
 class BudgetPlan:
     """The per-provider virtual-key cost guard: USD `budget_limits` windows and
     an optional per-minute request limit. Empty `budget_limits` means no USD
-    guard (never the default - the default plan always guards)."""
+    guard AND is the default (the guard is opt-in via
+    `LLM_GATEWAY_BUDGET_ENABLED`)."""
 
     budget_limits: tuple[dict, ...]
     rpm_limit: int | None
+
+
+def _env_budget_enabled() -> bool:
+    raw = os.environ.get(_BUDGET_ENABLED_ENV)
+    if raw is None:
+        return False
+    return raw.strip().lower() in _BUDGET_ENABLED_TRUE
 
 
 def _env_positive_float(name: str, default: float) -> float:
@@ -256,11 +280,18 @@ def _env_optional_positive_int(name: str) -> int | None:
 
 
 def gateway_budget_plan() -> BudgetPlan:
-    """The cost-guard plan from env, with conservative defaults.
+    """The cost-guard plan from env. EMPTY unless explicitly opted in.
 
-    Every provider cap is scaled by the conservatism factor; the resulting
-    windows ride the virtual key (D3). A malformed override raises
-    `SyncConfigError` (hard), never a silently-degraded guard."""
+    The guard is DISABLED by default (`LLM_GATEWAY_BUDGET_ENABLED` absent or
+    empty): the plan carries no `budget_limits` and no `rpm_limit`, so the sync
+    never throttles a virtual key. The already-minted key's windows are CLEARED
+    by the empty desired surface (`ensure_virtual_key`). With
+    `LLM_GATEWAY_BUDGET_ENABLED=true|1` the retained windows are built: every
+    provider cap is scaled by the conservatism factor; a malformed override is
+    a config lie and raises `SyncConfigError` (hard), never a silently-degraded
+    guard."""
+    if not _env_budget_enabled():
+        return BudgetPlan(budget_limits=(), rpm_limit=None)
     factor = _env_conservatism_factor()
     limits = tuple(
         {"budget_duration": duration,
@@ -756,8 +787,12 @@ class GatewayClient:
         absent -> `POST /key/generate {key, models, budget_limits, rpm_limit}`;
         present -> `POST /key/update` ONLY when the stored model scope, the
         canonical budget windows (litellm's server-set `reset_at` ignored), or
-        the rpm differs (a converged run is a no-op, C9). `budget_limits=None`
-        leaves any budget/rpm untouched - model-scope-only management."""
+        the rpm differs (a converged run is a no-op, C9). An EMPTY
+        `budget_limits` (the disabled guard) is a clear: litellm 1.96 stores
+        `budget_limits: []` as JSON null and its `_virtual_key_budget_check`
+        returns early on a falsy surface, so the window is removed, not left in
+        place. `budget_limits=None` leaves any budget/rpm untouched -
+        model-scope-only management."""
         if not key.startswith("sk-"):
             raise SyncPushError(
                 "refusing to mint a non-litellm virtual key (not 'sk-'-"
@@ -778,6 +813,7 @@ class GatewayClient:
                 return
             body: dict = {"key": key, "models": desired}
             if manage_budget:
+                # An empty list is the clearing write (litellm -> JSON null).
                 body["budget_limits"] = list(budget_limits)
                 body["rpm_limit"] = rpm_limit
             self._request("POST", "/key/update", json=body)
@@ -847,10 +883,12 @@ def run_sync(*,
         # #330: resolve the cost-guard plan BEFORE any gateway write, so an
         # unusable budget override (a config lie) cold-stops on a clean
         # gateway rather than after a partial push; and surface any registered
-        # model the USD guard cannot price (it would fail OPEN for it).
+        # model the USD guard cannot price (it would fail OPEN for it). The
+        # guard is DISABLED by default, so the pricing-gap warning only fires
+        # when the guard is actually enabled.
         budget_plan = gateway_budget_plan()  # raises SyncConfigError (hard)
         unpriced = _unpriced_model_names(desired)
-        if unpriced:
+        if budget_plan.budget_limits and unpriced:
             logger.warning(
                 "pricing-gap (cost-guard fails OPEN, LiteLLM #35524): %d "
                 "registered model(s) carry no USD price and cannot reserve "
@@ -890,11 +928,10 @@ def run_sync(*,
         # credential, which litellm's `/key/generate` rejects unless it is
         # `sk-`-prefixed (opencode-go's is `oc_sk_`). Derive the same key the
         # client derives (`gateway_virtual_key`), scoped to that provider's
-        # registered records - idempotent, converges to a no-op (C9). Each key
-        # also carries the USD cost guard (#330): the windows from the existing
-        # models.dev pricing, so the gateway trips a budget before the provider
-        # 429s. A budget/window/scope change converges on the next run; a
-        # no-change re-run is idle.
+        # registered records - idempotent, converges to a no-op (C9). The plan
+        # is the cost guard (#330); DISABLED by default it is empty, which
+        # clears any window already on the key. A budget/window/scope change
+        # converges on the next run; a no-change re-run is idle.
         for provider, api_key in api_keys.items():
             scoped = [m.model_name for m in desired
                       if m.model_name.startswith(f"{provider}/")]

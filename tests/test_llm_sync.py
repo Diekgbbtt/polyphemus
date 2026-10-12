@@ -1010,6 +1010,7 @@ def test_gateway_client_unparseable_info_raises_sync_push_error():
 # ---------------------------------------------------------------------------
 
 _BUDGET_ENV = (
+    "LLM_GATEWAY_BUDGET_ENABLED",
     "LLM_GATEWAY_BUDGET_7D_USD",
     "LLM_GATEWAY_BUDGET_30D_USD",
     "LLM_GATEWAY_BUDGET_CONSERVATISM_FACTOR",
@@ -1022,8 +1023,23 @@ def _clear_budget_env(monkeypatch):
         monkeypatch.delenv(name, raising=False)
 
 
-def test_budget_plan_default_is_the_real_provider_caps(monkeypatch):
+def _enable_budget(monkeypatch):
+    monkeypatch.setenv("LLM_GATEWAY_BUDGET_ENABLED", "true")
+
+
+def test_budget_plan_default_is_disabled(monkeypatch):
+    # The operator directive (2026-10-12): the guard's spend accounting
+    # mistracked and rate-limited every call, so it is DISABLED by default -
+    # an empty plan (no USD windows, no rpm).
     _clear_budget_env(monkeypatch)
+    plan = S.gateway_budget_plan()
+    assert plan.budget_limits == ()
+    assert plan.rpm_limit is None
+
+
+def test_budget_plan_enabled_restores_the_real_provider_caps(monkeypatch):
+    _clear_budget_env(monkeypatch)
+    _enable_budget(monkeypatch)
     plan = S.gateway_budget_plan()
     assert plan.budget_limits == (
         {"budget_duration": "7d", "max_budget": 30.0},
@@ -1032,7 +1048,9 @@ def test_budget_plan_default_is_the_real_provider_caps(monkeypatch):
     assert plan.rpm_limit is None
 
 
-def test_budget_plan_reads_env_overrides(monkeypatch):
+def test_budget_plan_reads_env_overrides_when_enabled(monkeypatch):
+    _clear_budget_env(monkeypatch)
+    _enable_budget(monkeypatch)
     monkeypatch.setenv("LLM_GATEWAY_BUDGET_7D_USD", "40")
     monkeypatch.setenv("LLM_GATEWAY_BUDGET_30D_USD", "80")
     monkeypatch.setenv("LLM_GATEWAY_BUDGET_CONSERVATISM_FACTOR", "0.25")
@@ -1045,8 +1063,18 @@ def test_budget_plan_reads_env_overrides(monkeypatch):
     assert plan.rpm_limit == 30
 
 
+def test_budget_plan_disabled_ignores_a_malformed_override(monkeypatch):
+    # With the guard disabled the env machinery is never read, so a stale or
+    # malformed cap left in the environment cannot cold-stop the sync.
+    _clear_budget_env(monkeypatch)
+    monkeypatch.setenv("LLM_GATEWAY_BUDGET_CONSERVATISM_FACTOR", "1.5")
+    plan = S.gateway_budget_plan()
+    assert plan.budget_limits == ()
+
+
 def test_budget_plan_rejects_a_factor_above_one(monkeypatch):
     _clear_budget_env(monkeypatch)
+    _enable_budget(monkeypatch)
     monkeypatch.setenv("LLM_GATEWAY_BUDGET_CONSERVATISM_FACTOR", "1.5")
     with pytest.raises(S.SyncConfigError):
         S.gateway_budget_plan()
@@ -1054,6 +1082,7 @@ def test_budget_plan_rejects_a_factor_above_one(monkeypatch):
 
 def test_budget_plan_rejects_a_nonpositive_rpm(monkeypatch):
     _clear_budget_env(monkeypatch)
+    _enable_budget(monkeypatch)
     monkeypatch.setenv("LLM_GATEWAY_KEY_RPM_LIMIT", "0")
     with pytest.raises(S.SyncConfigError):
         S.gateway_budget_plan()
@@ -1061,6 +1090,7 @@ def test_budget_plan_rejects_a_nonpositive_rpm(monkeypatch):
 
 def test_budget_plan_rejects_a_non_numeric_cap(monkeypatch):
     _clear_budget_env(monkeypatch)
+    _enable_budget(monkeypatch)
     monkeypatch.setenv("LLM_GATEWAY_BUDGET_7D_USD", "lots")
     with pytest.raises(S.SyncConfigError):
         S.gateway_budget_plan()
@@ -1133,9 +1163,31 @@ def test_gateway_client_ensure_virtual_key_adds_budget_to_an_unbudgeted_key():
     assert body["rpm_limit"] is None
 
 
+def test_gateway_client_ensure_virtual_key_clears_a_preexisting_budget():
+    # Disabling the guard must CLEAR the windows already on the minted key,
+    # not merely stop adding them: an empty desired plan is an explicit
+    # `budget_limits: []` update, which litellm 1.96 stores as JSON null and
+    # `_virtual_key_budget_check` treats as "no guard" (it returns early when
+    # `valid_token.budget_limits` is falsy). Verified against the pinned
+    # litellm source 2026-10-12.
+    info = {"models": ["opencode/a"],
+            "budget_limits": [{"budget_duration": "7d", "max_budget": 30.0,
+                               "reset_at": "2026-10-11T00:00:00+00:00"}],
+            "rpm_limit": None}
+    http = StubHTTP(get_result=_response({"info": info}),
+                    post_results=[_response({})])
+    gw = S.GatewayClient("http://127.0.0.1:4000", "sk-master", client=http)
+    gw.ensure_virtual_key("sk-ph-key", ["opencode/a"], budget_limits=[], rpm_limit=None)
+    method, url, headers, body = http.requests[1]
+    assert method == "POST" and url == "http://127.0.0.1:4000/key/update"
+    assert body == {"key": "sk-ph-key", "models": ["opencode/a"],
+                    "budget_limits": [], "rpm_limit": None}
+
+
 def test_sync_provisions_virtual_keys_with_the_budget_plan(monkeypatch):
+    _clear_budget_env(monkeypatch)
+    _enable_budget(monkeypatch)
     monkeypatch.setenv("LLM_GATEWAY_BUDGET_CONSERVATISM_FACTOR", "1.0")
-    monkeypatch.delenv("LLM_GATEWAY_KEY_RPM_LIMIT", raising=False)
     gw = FakeGateway()
     rc = S.run_sync(**_default_run_args(gateway=gw))
     assert rc == S.SYNC_OK
@@ -1148,8 +1200,9 @@ def test_sync_provisions_virtual_keys_with_the_budget_plan(monkeypatch):
 
 
 def test_budget_change_converges_then_is_a_noop(monkeypatch):
+    _clear_budget_env(monkeypatch)
+    _enable_budget(monkeypatch)
     monkeypatch.setenv("LLM_GATEWAY_BUDGET_CONSERVATISM_FACTOR", "1.0")
-    monkeypatch.delenv("LLM_GATEWAY_KEY_RPM_LIMIT", raising=False)
     gw = FakeGateway()
     assert S.run_sync(**_default_run_args(gateway=gw)) == S.SYNC_OK
 
@@ -1168,9 +1221,84 @@ def test_budget_change_converges_then_is_a_noop(monkeypatch):
         "a converged budget re-run must be fully idle (C9)"
 
 
+def test_sync_disabled_guard_provisions_keys_without_budget(monkeypatch):
+    # The default (guard disabled): the sync mints each provider's virtual key
+    # with an EMPTY budget surface - no USD windows, no rpm - so the key is
+    # never throttled at auth.
+    _clear_budget_env(monkeypatch)
+    gw = FakeGateway()
+    assert S.run_sync(**_default_run_args(gateway=gw)) == S.SYNC_OK
+    key_calls = [c for c in gw.calls if c[0] == "key"]
+    assert len(key_calls) == 2, f"one key per configured provider, got {gw.calls}"
+    for _kind, _key, _scope, budget, rpm in key_calls:
+        assert budget == [], "the disabled guard must mint no USD windows"
+        assert rpm is None
+
+
+def test_sync_disabled_guard_clears_a_preexisting_key_budget_then_is_a_noop(monkeypatch):
+    # The already-minted key on a live gateway carries the old guard's windows.
+    # Disabling the guard must issue ONE clearing update per key (not leave the
+    # budget in place), then converge to a no-op.
+    _clear_budget_env(monkeypatch)
+    _enable_budget(monkeypatch)
+    gw = FakeGateway()
+    assert S.run_sync(**_default_run_args(gateway=gw)) == S.SYNC_OK
+    assert all(c[3] for c in gw.calls if c[0] == "key"), \
+        "the enabled guard must mint the windows first"
+
+    # Disable the guard: the next run clears both keys' windows exactly once.
+    monkeypatch.delenv("LLM_GATEWAY_BUDGET_ENABLED")
+    gw2 = FakeGateway(registered=gw.registered, keys=dict(gw._keys))
+    assert S.run_sync(**_default_run_args(gateway=gw2)) == S.SYNC_OK
+    key_calls = [c for c in gw2.calls if c[0] == "key"]
+    assert len(key_calls) == 2, f"both keys must be cleared once, got {gw2.calls}"
+    for _kind, _key, _scope, budget, rpm in key_calls:
+        assert budget == []
+        assert rpm is None
+
+    # A re-run with the guard still disabled is fully idle (C9).
+    gw3 = FakeGateway(registered=gw2.registered, keys=dict(gw2._keys))
+    assert S.run_sync(**_default_run_args(gateway=gw3)) == S.SYNC_OK
+    assert [c for c in gw3.calls if c[0] == "key"] == [], \
+        "a converged disabled-guard re-run must be fully idle"
+
+
+def test_sync_disabled_guard_does_not_warn_on_pricing_gap(caplog, monkeypatch):
+    # The pricing-gap warning is about the USD guard's inability to reserve
+    # budget; with the guard disabled it must not fire (there is no guard to
+    # fail OPEN).
+    _clear_budget_env(monkeypatch)
+    catalog = {
+        "providers": {
+            "opencode": {
+                "id": "opencode",
+                "api": "https://opencode.ai/zen/v1",
+                "models": {
+                    "no-price": {"id": "no-price", "tool_call": True,
+                                 "limit": {"context": 1000, "output": 100}},
+                },
+            },
+        },
+        "models": {},
+    }
+    gw = FakeGateway()
+    with caplog.at_level("WARNING"):
+        rc = S.run_sync(**_default_run_args(
+            gateway=gw, fetch_catalog=lambda: catalog,
+            providers={"opencode": "https://opencode.ai/zen/v1"},
+            fetch_provider_models=lambda p, k: {"no-price"}))
+    assert rc == S.SYNC_OK
+    assert not any("pricing-gap" in r.message for r in caplog.records), \
+        "the guard's pricing-gap warning must not fire while the guard is off"
+
+
 def test_malformed_budget_config_cold_stops_before_any_push(monkeypatch):
     # An unusable budget override is a config lie: the run cold-stops (exit 1)
-    # on a CLEAN gateway, before any model/key write (#330, ADR D13).
+    # on a CLEAN gateway, before any model/key write (#330, ADR D13). Only the
+    # opted-in guard reads it - with the guard disabled (default) a malformed
+    # cap is inert.
+    _clear_budget_env(monkeypatch)
+    _enable_budget(monkeypatch)
     monkeypatch.setenv("LLM_GATEWAY_BUDGET_CONSERVATISM_FACTOR", "2")
     gw = FakeGateway()
     rc = S.run_sync(**_default_run_args(gateway=gw))
@@ -1178,11 +1306,15 @@ def test_malformed_budget_config_cold_stops_before_any_push(monkeypatch):
     assert gw.calls == [], "a config lie must abort before any gateway write"
 
 
-def test_unpriced_registered_models_are_logged_as_a_budget_gap(caplog):
+def test_unpriced_registered_models_are_logged_as_a_budget_gap(caplog, monkeypatch):
     # A registered model with no authored cost cannot reserve budget
     # (LiteLLM #35524: reserve_budget_for_request returns None), so the USD
     # guard fails OPEN for it. The sync makes the gap LOUD at bootstrap so an
     # unpriced eval model cannot silently escape the guard (#330, ADR D13).
+    # The warning is about the guard, so it fires only when the guard is
+    # enabled.
+    _clear_budget_env(monkeypatch)
+    _enable_budget(monkeypatch)
     catalog = {
         "providers": {
             "opencode": {

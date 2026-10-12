@@ -213,14 +213,17 @@ def test_provider_key_rotation_updates_that_providers_models_with_new_key():
 
 
 def test_budget_windows_are_provisioned_and_converge(monkeypatch):
-    # #330: every minted virtual key carries the USD cost-guard windows from
-    # the plan, and a no-change re-run converges (no key write) because the
-    # diff ignores litellm's server-set `reset_at`.
+    # #330: when the guard is OPTED IN, every minted virtual key carries the USD
+    # cost-guard windows from the plan, and a no-change re-run converges (no key
+    # write) because the diff ignores litellm's server-set `reset_at`. The guard
+    # is disabled by default (the spend accounting mistracked); this exercises
+    # the opt-in path.
     for name in ("LLM_GATEWAY_BUDGET_7D_USD",
                  "LLM_GATEWAY_BUDGET_30D_USD",
                  "LLM_GATEWAY_BUDGET_CONSERVATISM_FACTOR",
                  "LLM_GATEWAY_KEY_RPM_LIMIT"):
         monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("LLM_GATEWAY_BUDGET_ENABLED", "true")
 
     recorder = RecordingGatewayAPI()
     keys = lambda provider: {"opencode": "oc_sk", "openai": "sk-oai"}[provider]  # noqa: E731
@@ -231,6 +234,61 @@ def test_budget_windows_are_provisioned_and_converge(monkeypatch):
         windows = {w["budget_duration"]: w["max_budget"]
                    for w in virtual_key["budget_limits"]}
         assert windows == {"7d": 30.0, "30d": 60.0}, windows
+
+    writes = len(recorder.calls)
+    assert _run(recorder, keys) == S.SYNC_OK
+    assert len(recorder.calls) == writes + 3, "a converged re-run must not write"
+    assert all(call[0] == "GET" for call in recorder.calls[writes:])
+
+
+def test_disabled_guard_mints_keys_without_budget(monkeypatch):
+    # The default: no guard, so the minted virtual keys carry no windows and no
+    # rpm. A re-run converges (no key write).
+    for name in ("LLM_GATEWAY_BUDGET_ENABLED",
+                 "LLM_GATEWAY_BUDGET_7D_USD",
+                 "LLM_GATEWAY_BUDGET_30D_USD",
+                 "LLM_GATEWAY_BUDGET_CONSERVATISM_FACTOR",
+                 "LLM_GATEWAY_KEY_RPM_LIMIT"):
+        monkeypatch.delenv(name, raising=False)
+
+    recorder = RecordingGatewayAPI()
+    keys = lambda provider: {"opencode": "oc_sk", "openai": "sk-oai"}[provider]  # noqa: E731
+    assert _run(recorder, keys) == S.SYNC_OK
+    for virtual_key in recorder.virtual_keys.values():
+        assert virtual_key["budget_limits"] == []
+        assert virtual_key["rpm_limit"] is None
+
+    writes = len(recorder.calls)
+    assert _run(recorder, keys) == S.SYNC_OK
+    assert len(recorder.calls) == writes + 3, "a converged re-run must not write"
+    assert all(call[0] == "GET" for call in recorder.calls[writes:])
+
+
+def test_disabling_the_guard_clears_a_preexisting_key_budget(monkeypatch):
+    # A key minted while the guard was enabled carries windows. Disabling the
+    # guard clears them with exactly one `/key/update` per key, then converges.
+    for name in ("LLM_GATEWAY_BUDGET_7D_USD",
+                 "LLM_GATEWAY_BUDGET_30D_USD",
+                 "LLM_GATEWAY_BUDGET_CONSERVATISM_FACTOR",
+                 "LLM_GATEWAY_KEY_RPM_LIMIT"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("LLM_GATEWAY_BUDGET_ENABLED", "true")
+
+    recorder = RecordingGatewayAPI()
+    keys = lambda provider: {"opencode": "oc_sk", "openai": "sk-oai"}[provider]  # noqa: E731
+    assert _run(recorder, keys) == S.SYNC_OK
+    assert all(vk["budget_limits"] for vk in recorder.virtual_keys.values())
+
+    monkeypatch.delenv("LLM_GATEWAY_BUDGET_ENABLED")
+    assert _run(recorder, keys) == S.SYNC_OK
+    updates = [call for call in recorder.calls
+               if call[0] == "POST" and call[1] == "/key/update"]
+    assert len(updates) == 2, f"both keys must be cleared once, got {updates}"
+    for _m, _p, body in updates:
+        assert body["budget_limits"] == []
+        assert body["rpm_limit"] is None
+    for virtual_key in recorder.virtual_keys.values():
+        assert virtual_key["budget_limits"] == []
 
     writes = len(recorder.calls)
     assert _run(recorder, keys) == S.SYNC_OK
