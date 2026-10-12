@@ -479,8 +479,10 @@ def test_hypothesise_verify_loop_and_observed_only_fields_still_hold():
 def test_graph_discovered_site_grounds_an_item_not_in_the_chunk():
     """C-M1: a site the model discovers through `graph_view` (here injected via the
     `read_sites_fn` live index) can ground an item even when the unit's chunk never
-    carried it - the gate is no longer bounded by the pre-fed admitted set."""
-    discovered = _param("graphOnlyField", endpoint_path="/discovered", baseurl="https://g")
+    carried it - the gate is no longer bounded by the pre-fed admitted set. N1:
+    discovery is scoped to the unit's own BaseURLs, so the discovered site shares the
+    unit chunk's origin (a different name on the same BaseURL)."""
+    discovered = _param("graphOnlyField", endpoint_path="/discovered", baseurl="https://a")
 
     def invoke(messages, *, schema=None, system_prompt=None):
         content = messages[-1].content
@@ -540,6 +542,74 @@ def test_serviceless_empty_unit_stays_a_no_call_empty():
     outcome = model_data(chunk, invoke_fn=invoke, inventory={})
     assert calls["n"] == 0
     assert outcome.batch == L1DeltaBatch()
+
+
+# --- N1: unit-scoped discovery and ambiguity-aware resolution -------------------
+
+def test_site_index_does_not_silently_reanchor_a_colliding_name():
+    """N1: a Parameter name colliding across two Services' endpoints must NOT be
+    first-wins re-anchored. The model's full identity (name + endpoint_path +
+    baseurl) decides; a bare ambiguous name is dropped, never rewritten to B's site
+    from A's (the reproduced C-M1 defect)."""
+    sites = site_index([
+        _param("id", endpoint_path="/serviceA/thing", baseurl="https://a"),
+        _param("id", endpoint_path="/serviceB/thing", baseurl="https://b"),
+    ])
+    full = L1DeltaBatch(surfaces_at=[
+        SurfacesAtProposal(item_key="k", l0=L0Ref(label="Parameter", identity={
+            "name": "id", "endpoint_path": "/serviceB/thing", "baseurl": "https://b"})),
+    ])
+    shaped, dropped = resolve_surface_refs(full, sites=sites)
+    assert dropped == 0
+    assert shaped.surfaces_at[0].l0.identity == {
+        "name": "id", "position": "query",
+        "endpoint_path": "/serviceB/thing", "baseurl": "https://b"}
+    # a bare name that maps to two distinct identities is ambiguous -> dropped.
+    bare = L1DeltaBatch(surfaces_at=[
+        SurfacesAtProposal(item_key="k", l0=L0Ref(label="Parameter", identity={"name": "id"})),
+    ])
+    shaped_bare, dropped_bare = resolve_surface_refs(bare, sites=sites)
+    assert shaped_bare.surfaces_at == []
+    assert dropped_bare == 1
+
+
+def test_site_index_full_identity_mismatch_is_dropped_not_reanchored():
+    """N1: a complete identity naming no known site is a HARD miss - the gate never
+    falls back to a bare-name match that would rewrite a differing path/baseurl."""
+    sites = site_index([_param("id", endpoint_path="/serviceA/thing", baseurl="https://a")])
+    batch = L1DeltaBatch(surfaces_at=[
+        SurfacesAtProposal(item_key="k", l0=L0Ref(label="Parameter", identity={
+            "name": "id", "endpoint_path": "/serviceB/thing", "baseurl": "https://b"})),
+    ])
+    shaped, dropped = resolve_surface_refs(batch, sites=sites)
+    assert shaped.surfaces_at == []
+    assert dropped == 1
+
+
+def test_graph_discovered_site_outside_the_unit_baseurls_is_not_grounded():
+    """N1: discovery is UNIT-SCOPED - a site on a different BaseURL than the unit's
+    chunk is out of scope and cannot ground an item, so one Service's `surfaces_at`
+    can never resolve to another Service's surface."""
+    other = _param("otherServiceField", endpoint_path="/serviceB/thing", baseurl="https://b")
+
+    def invoke(messages, *, schema=None, system_prompt=None):
+        content = messages[-1].content
+        if "TASK - EXTRACT THE DATA ITEMS" in content:
+            return AnalysisTurn(
+                data_items=[DataItemProposal(item_key="record")],
+                surfaces_at=[SurfacesAtProposal(
+                    item_key="record",
+                    l0=L0Ref(label="Parameter", identity={"name": "otherServiceField"}))],
+            )
+        return AnalysisTurn()
+
+    outcome = model_data(
+        _chunk([_param("unitField", endpoint_path="/serviceA/thing", baseurl="https://a")]),
+        invoke_fn=invoke, inventory={}, aggregations=[],
+        read_sites_fn=lambda pid: [other], project_id="p1",
+    )
+    assert outcome.stats.kept_surfaces == 0
+    assert outcome.stats.unresolvable_surfaces == 1
 
 
 # --- C-m6: the canonical modelling-closure note name ---------------------------

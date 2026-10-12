@@ -718,19 +718,23 @@ def test_rewritten_prompt_file_loads_under_default_and_differs_from_legacy(monke
 
 
 def test_batched_prompt_edge_catalogue_cannot_contradict_the_fed_vocabulary(monkeypatch):
-    """B-M1: the prompt's edge-label list must be the FULL catalogue the
-    `vocabulary` artifact feeds (`l1_curator.SYSTEM_EDGE_RELS`, 10 values), so the
-    model can never be told "exactly" a subset the code then rejects or omits."""
+    """B-M1/N8: the prompt's edge-label catalogue must be EXACTLY the catalogue the
+    `vocabulary` artifact feeds (`l1_curator.SYSTEM_EDGE_RELS`, 10 values) - no rel
+    missing AND no rel outside it, so the model can never be told "exactly" a subset
+    the code then rejects, nor offered a label the writer would discard."""
+    import re
+
     from polymerhus.analysis import mechanism_typist
     from polymerhus.analysis.l1_curator import SYSTEM_EDGE_RELS
 
     monkeypatch.delenv("ANALYSIS_PROMPT_VARIANT", raising=False)
     monkeypatch.setattr(mechanism_typist, "_TECHNICAL_SYSTEM_SKILLS", {})
     batched = mechanism_typist._load_skill()
-    # the seven old labels plus the two long-standing ones the prompt omitted
-    for rel in sorted(SYSTEM_EDGE_RELS):
-        assert rel in batched, f"{rel} missing from the edge catalogue"
-    assert "ON_REQUEST_PATH" in batched and "DEPENDS_ON" in batched
+    # the edge-label catalogue sentence, from its lead-in to the `service_slug` note.
+    catalogue = batched.split("Edge labels are the FULL catalogue", 1)[1].split("Copy each", 1)[0]
+    named = set(re.findall(r"`([A-Z][A-Z_]+)`", catalogue))
+    assert named == set(SYSTEM_EDGE_RELS), (
+        f"missing={sorted(set(SYSTEM_EDGE_RELS) - named)} extra={sorted(named - set(SYSTEM_EDGE_RELS))}")
     # the gloss must cover BOTH EXPOSED_VIA carriers (B-m7)
     assert "WebPresentation" in batched
 
@@ -808,3 +812,21 @@ def test_empty_unit_without_a_contract_is_a_no_call_empty():
     chunk = Chunk(chunk_id="orphan", source_job="service:orphan", assets=())
     assert type_mechanisms(chunk, invoke_fn=invoke, inventory={}) == L1DeltaBatch()
     assert calls["n"] == 0
+
+
+def test_typist_backstop_and_unit_block_name_the_real_service_slug(tmp_path):
+    """N7: the prompt's UNIT line and the backstop `unit_slug` use the real Service
+    slug (`_service_slug`), not the sanitised `chunk_id`, matching the data-modeller.
+    A slug that sanitises differently (here `svc:admin` -> `svc-admin`) proves it."""
+    from polymerhus.analysis.memory import AnalysisMemoryStore
+
+    store = AnalysisMemoryStore(root_dir=tmp_path)
+    chunk = Chunk(chunk_id="svc-admin", source_job="service:svc:admin",
+                  assets=(_endpoint("/x"),))
+    block = _unit_block(chunk, inventory={"services": ["svc:admin"]})
+    assert block.startswith("UNIT: svc:admin")          # the real slug, not svc-admin
+    type_mechanisms(chunk, invoke_fn=lambda *a, **k: AnalysisTurn(),
+                    inventory={"services": ["svc:admin"]},
+                    memory=store, project_id="p1", run_id="r1")
+    assert store.has_note("p1", "svc:admin")
+    assert not store.has_note("p1", "svc-admin")

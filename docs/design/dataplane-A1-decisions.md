@@ -205,7 +205,7 @@ A new pure helper `owning_services(admitted, aggregations) -> dict[asset_ref, li
 The header join is deliberately coarse and is stated as such in the prompt, because a response header IS origin-scoped rather than endpoint-scoped; pretending otherwise would manufacture precision the surface does not carry.
 The prompt presents these candidates as the ONLY permitted values for `data_flows.service_slug`, and gate 4 enforces membership in the live inventory regardless of what the model returns.
 
-_SUPERSEDED (`batched-l1unit-first-adr.md` decision 19/23): under the batched L1-unit-first variant the prompt no longer renders this candidate join. `owning_services` and its `candidate_services` census counter were removed as dead (C-m1); the live Service inventory is the surviving validation surface._
+_SUPERSEDED (`batched-l1unit-first-adr.md` decision 16): under the batched L1-unit-first variant the prompt no longer renders this candidate join. `owning_services` and its `candidate_services` census counter were removed as dead (C-m1); the live Service inventory is the surviving validation surface._
 
 **Observations attach by origin, not by exact identity.**
 `curator.ANCHOR_ALLOWLIST = {Domain, Subdomain, BaseURL, IP, Service}` (`recon/domain/curator.py:41`), so a triager `Observation` is NEVER anchored to a `Parameter`, `Header` or `Endpoint` - the triager re-anchors a finding UP to the owning broad asset by design.
@@ -339,7 +339,7 @@ Input side:
 - `admitted_parameters`, `admitted_headers` - what this role was given.
 - `flagged_chunk` - the barrier fail-open flag was set on this chunk.
 - `observations_attached` - origin-scoped insights rendered.
-- `candidate_services` - REMOVED (`batched-l1unit-first-adr.md` decision 19/23): the candidate-owner join is dead under the L1-unit-first survey.
+- `candidate_services` - REMOVED (`batched-l1unit-first-adr.md` decision 16): the candidate-owner join is dead under the L1-unit-first survey.
 
 Generation side:
 

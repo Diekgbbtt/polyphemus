@@ -443,8 +443,8 @@ SURVEY THE MAPPED SURFACE BROADLY. Navigate from the Service to its Endpoints wi
 READ THE RECORDED REQUEST SHAPES. Use `search_http_history` to find recorded transactions to the Service's endpoints, then `get_http_artifact` to inspect one. Read the request `{method, url, headers, cookies, query, form}` keys - body content is never visible and secret-bearing values are redacted. The recorded shape corroborates a lift; it does not by itself anchor one.
 RECALL PRIOR INSIGHT. Use `notes` (command="read") to read this Service's prior modelling notes and other Services' closures before you enrich. Reuse a prior item that still fits; settle an open question the surface now answers.
 REFERENCING A SURFACE SITE: put the site in `surfaces_at.l0` as {"label": "Parameter"|"Header"|"Secret", "identity": {...the exact identity shown to you...}}. NEVER reference an Endpoint - a path noun alone never grounds a lift.
-`fields` on a DataItem name ONLY fields you actually OBSERVED on the surface shown, including the request-shape keys you read from the HTTP history; never a speculative or merely-plausible field.
-`data_flows.service_slug` is copied VERBATIM from the candidate owning-Services list you are given - never a slug you invent.
+`fields` on a DataItem name ONLY fields you actually OBSERVED on the surface you discovered, including the request-shape keys you read from the HTTP history; never a speculative or merely-plausible field.
+`data_flows.service_slug` is copied VERBATIM from the live Service inventory you are given - never a slug you invent.
 `data_relationships.kind` is one of the fixed allowlist; anything else is discarded.
 CLOSE with a modelling-closure note: call `notes` (command="write", action="append", unit=the Service slug, note_name="modelling-closure", kind="data") summarising the DataItems you lifted and compounded, what you withheld and falsified and why, the request shapes you consulted, and any open question.
 You never set provenance or write status; those are stamped by the system.
@@ -490,8 +490,8 @@ Prefer external signal (the actual parameter/header names, the paths, the record
 
 - Emit ONLY: `data_items`, `surfaces_at`, `data_flows`, `data_relationships`. Leave `services`, `systems`, `aggregates`, `system_edges` EMPTY - other proposers own those.
 - A `surfaces_at` target is `{"label": "Parameter"|"Header"|"Secret", "identity": {...}}` - NEVER an Endpoint. A path is the address you interrogate, never a place data appears.
-- `fields` name ONLY fields you actually OBSERVED on the surface shown to you, including the request-shape keys you read from the HTTP history; never a speculative or merely-plausible field.
-- `data_flows.service_slug` is copied VERBATIM from the candidate owning-Services list you are given.
+- `fields` name ONLY fields you actually OBSERVED on the surface you discovered, including the request-shape keys you read from the HTTP history; never a speculative or merely-plausible field.
+- `data_flows.service_slug` is copied VERBATIM from the live Service inventory you are given.
 - `data_relationships.kind` is one of the fixed allowlist; anything else is discarded.
 - You never set provenance or write status; those are stamped by the system.
 

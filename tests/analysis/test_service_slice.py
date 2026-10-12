@@ -32,6 +32,11 @@ def _endpoint(path, baseurl="https://s"):
     return AssetDelta(type="Endpoint", identity={"path": path, "method": "GET", "baseurl": baseurl})
 
 
+def _param(name, endpoint_path="/x", baseurl="https://s"):
+    return AssetDelta(type="Parameter", identity={
+        "name": name, "position": "query", "endpoint_path": endpoint_path, "baseurl": baseurl})
+
+
 def _row(slug, path, baseurl="https://s"):
     return {"slug": slug, "labels": ["Endpoint"],
             "props": {"path": path, "method": "GET", "baseurl": baseurl}}
@@ -221,10 +226,11 @@ def test_no_surface_unit_yields_an_explicit_outcome_and_is_not_dispatched():
     assert result.wrote is False
 
 
-def test_contracted_service_with_no_assets_is_dispatched_for_discovery():
-    """C-M2: under the batched variant a Service with a non-empty `service_contract`
-    is dispatched even with no PRE-AGGREGATED surface, so it can discover its own.
-    The contract gate needs the inventory; the caller injects it here."""
+def test_contracted_service_with_no_assets_but_a_baseurl_is_dispatched_for_discovery():
+    """C-M2/N2: under the batched variant a Service with a non-empty `service_contract`
+    AND a discoverable BaseURL is dispatched even with no PRE-AGGREGATED surface, so it
+    can discover its own. The gate needs the inventory and the aggregation view; the
+    caller injects both here."""
     units = [Chunk(chunk_id="empty-svc", source_job="service:empty-svc", assets=())]
     log = []
     bodies = {
@@ -235,10 +241,88 @@ def test_contracted_service_with_no_assets_is_dispatched_for_discovery():
         "p1", "r1", units=units, proposer_bodies=bodies,
         inventory_fn=lambda pid: {"services": ["empty-svc"],
                                   "service_contracts": {"empty-svc": "does x"}},
+        aggregations_fn=lambda pid: [_row("empty-svc", "/y")],
         write_fn=_fake_write_fn({}), observe=False,
     ))
     assert log == [("empty-svc", "mechanism_typist"), ("empty-svc", "data_modeller")]
     assert all(o.status != "no_surface" for o in result.outcomes)
+
+
+def test_contracted_service_with_no_assets_and_no_baseurls_stays_no_surface():
+    """N2: the contracted-empty dispatch is BOUNDED to a discoverable surface - at
+    minimum a non-empty BaseURL set for the unit. With neither assets nor baseurls the
+    unit is an explicit `no_surface`, never a fan-out that spends two chains."""
+    units = [Chunk(chunk_id="empty-svc", source_job="service:empty-svc", assets=())]
+    log = []
+    bodies = {
+        "mechanism_typist": _ok_body(log, "mechanism_typist"),
+        "data_modeller": _ok_body(log, "data_modeller"),
+    }
+    result = _run(run_service_loop(
+        "p1", "r1", units=units, proposer_bodies=bodies,
+        inventory_fn=lambda pid: {"services": ["empty-svc"],
+                                  "service_contracts": {"empty-svc": "does x"}},
+        aggregations_fn=lambda pid: [],
+        write_fn=_fake_write_fn({}), observe=False,
+    ))
+    assert log == []
+    assert [o.status for o in result.outcomes] == ["no_surface", "no_surface"]
+
+
+def test_the_graph_discovered_read_is_memoised_once_per_run():
+    """N3: the whole-project L0 site read is memoized once per run, not once per unit."""
+    from polymerhus.analysis.reasoning_workflow import AnalysisTurn
+
+    calls = {"n": 0}
+
+    def read_sites(pid):
+        calls["n"] += 1
+        return []
+
+    units = [
+        Chunk(chunk_id="a", source_job="service:a", assets=(_param("x"),)),
+        Chunk(chunk_id="b", source_job="service:b", assets=(_param("y"),)),
+    ]
+    result = _run(run_service_loop(
+        "p1", "r1", units=units,
+        invoke_fns={"mechanism_typist": lambda *a, **k: AnalysisTurn(),
+                    "data_modeller": lambda *a, **k: AnalysisTurn()},
+        inventory_fn=lambda pid: {"services": ["a", "b"]},
+        aggregations_fn=lambda pid: [],
+        read_sites_fn=read_sites,
+        write_fn=_fake_write_fn({}), observe=False,
+    ))
+    assert result.units == ("a", "b")
+    assert calls["n"] == 1
+
+
+def test_memoised_read_caches_and_is_fail_open_on_a_blip():
+    """N3: the memo carries the fail-open-to-chunk-only behaviour - a read blip is
+    attempted once and cached as no discovered sites, never re-raised per unit."""
+    from polymerhus.analysis.service_slice import _memorised_read
+
+    calls = {"n": 0}
+
+    def boom(pid):
+        calls["n"] += 1
+        raise RuntimeError("neo4j down")
+
+    read = _memorised_read(boom)
+    assert read("p") == []
+    assert read("p") == []
+    assert calls["n"] == 1
+
+
+def test_legacy_variant_does_not_wire_the_graph_discovered_index(monkeypatch):
+    """N4: the C-M1 graph-backed index is a batched-variant seam - the `legacy`
+    rollback resolves against the chunk alone, reproducing the pre-change gates."""
+    from polymerhus.analysis.l0_stream import read_surface_sites
+    from polymerhus.analysis.service_slice import _default_read_sites_fn
+
+    monkeypatch.setenv("ANALYSIS_PROMPT_VARIANT", "legacy")
+    assert _default_read_sites_fn() is None
+    monkeypatch.delenv("ANALYSIS_PROMPT_VARIANT", raising=False)
+    assert _default_read_sites_fn() is read_surface_sites
 
 
 def test_a_service_with_neither_contract_nor_assets_stays_no_surface():

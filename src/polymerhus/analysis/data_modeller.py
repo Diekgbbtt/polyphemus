@@ -38,6 +38,7 @@ from __future__ import annotations
 import logging
 import os
 from collections import defaultdict
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -170,52 +171,116 @@ def _canonical_label(raw) -> str | None:
     return _LABEL_ALIASES.get(raw.strip().lower())
 
 
-def site_index(sites) -> dict[tuple[str, str], dict]:
-    """Index the Parameter/Header/Secret sites the reference gate resolves against
-    by `(label, the-part-a-model-reliably-gets-right)`. `sites` is the UNION of the
-    unit's admitted chunk and the live graph-discovered sites (C-M1). Parameter and
-    Header key on `name`; Secret keys on `value_hash` (its whole identity). First
-    match wins on a name collision; the reflection scaffold's HYPOTHESISE step is
-    where ambiguity is meant to be resolved, not this index."""
-    index: dict[tuple[str, str], dict] = {}
+@dataclass(frozen=True)
+class SiteIndex:
+    """The identity index the reference gate resolves against, split into two
+    namespaces so a colliding name can never be silently re-anchored (N1):
+
+    - `exact`: a FULL-identity key (`Parameter`: name + endpoint_path + baseurl;
+      `Header`: name + value + baseurl; `Secret`: value_hash) to the site's identity.
+    - `by_name`: the BARE `(label, name)` (or `(label, value_hash)` for a Secret) to
+      the site's identity, present ONLY when that name maps to a single distinct
+      identity. An ambiguous name is absent, so a bare-name ref is dropped rather than
+      first-wins rewritten onto another Service's path/baseurl."""
+
+    exact: dict[tuple, dict]
+    by_name: dict[tuple, dict]
+
+
+def _full_key(label: str, identity: dict) -> tuple | None:
+    """The full-identity key for a site/ref, or None when it does not supply every
+    identity field. `Secret` has no composite key (its `value_hash` is the whole
+    identity, handled by `_name_key`)."""
+    if label == "Parameter":
+        required = ("name", "endpoint_path", "baseurl")
+    elif label == "Header":
+        required = ("name", "value", "baseurl")
+    else:
+        return None
+    if all(identity.get(k) is not None for k in required):
+        return tuple([label, *(str(identity[k]) for k in required)])
+    return None
+
+
+def _name_key(label: str, identity: dict) -> tuple | None:
+    """The bare-name key: `(label, name)` for Parameter/Header, `(label, value_hash)`
+    for Secret (its whole identity). None when the field is absent."""
+    field = "value_hash" if label == "Secret" else "name"
+    value = identity.get(field)
+    return (label, str(value)) if value is not None else None
+
+
+def site_index(sites) -> SiteIndex:
+    """Index the Parameter/Header/Secret sites the reference gate resolves against.
+    `sites` is the UNION of the unit's admitted chunk and the unit-scoped
+    graph-discovered sites (N1). A complete identity is keyed exactly; a bare name is
+    keyed only when it is unambiguous - a name mapping to more than one distinct
+    identity is dropped from `by_name`, so no collision is resolved first-wins."""
+    exact: dict[tuple, dict] = {}
+    by_name: dict[tuple, dict] = {}
+    ambiguous: set[tuple] = set()
     for a in sites:
-        ident = a.identity or {}
-        if a.type == "Parameter" or a.type == "Header":
-            name = ident.get("name")
-            if name is None:
-                continue
-            key = (a.type, str(name))
-        elif a.type == "Secret":
-            vh = ident.get("value_hash")
-            if vh is None:
-                continue
-            key = ("Secret", str(vh))
-        else:
+        if a.type not in _SURFACE_LABELS:
             continue
-        index.setdefault(key, dict(ident))
-    return index
+        ident = dict(a.identity or {})
+        full = _full_key(a.type, ident)
+        if full is not None:
+            exact.setdefault(full, ident)
+        key = _name_key(a.type, ident)
+        if key is None:
+            continue
+        existing = by_name.get(key)
+        if existing is None:
+            by_name[key] = ident
+        elif existing != ident:
+            ambiguous.add(key)
+    for key in ambiguous:
+        by_name.pop(key, None)
+    return SiteIndex(exact=exact, by_name=by_name)
 
 
-def _resolve_ref(l0: L0Ref, sites: dict) -> L0Ref | None:
+def _contradicts(label: str, identity: dict, canonical: dict) -> bool:
+    """True when a partially-supplied identity contradicts the resolved site: any
+    supplied `endpoint_path`/`baseurl` (Parameter) or `value`/`baseurl` (Header) that
+    differs from the canonical site. Guards against a silent rewrite when the ref
+    carries some, but not all, of the identity fields."""
+    fields = ("endpoint_path", "baseurl") if label == "Parameter" else ("value", "baseurl")
+    return any(
+        identity.get(k) is not None and str(identity[k]) != str(canonical.get(k))
+        for k in fields
+    )
+
+
+def _resolve_ref(l0: L0Ref, sites: SiteIndex) -> L0Ref | None:
     label = _canonical_label(l0.label)
     identity = l0.identity if isinstance(l0.identity, dict) else {}
     candidates = [label] if label else list(_SURFACE_LABELS)
     for lbl in candidates:
-        name = identity.get("value_hash") if lbl == "Secret" else identity.get("name")
-        if name is None:
+        # A COMPLETE identity is matched exactly; a miss is a HARD drop, never a
+        # fall-back to the bare name, which would silently re-anchor the ref onto a
+        # different endpoint_path/baseurl (the reproduced N1 defect).
+        full = _full_key(lbl, identity)
+        if full is not None:
+            canonical = sites.exact.get(full)
+            if canonical is not None:
+                return L0Ref(label=lbl, identity=canonical)
             continue
-        canonical = sites.get((lbl, str(name)))
-        if canonical is not None:
-            return L0Ref(label=lbl, identity=canonical)
+        key = _name_key(lbl, identity)
+        if key is None:
+            continue
+        canonical = sites.by_name.get(key)
+        if canonical is None or _contradicts(lbl, identity, canonical):
+            continue
+        return L0Ref(label=lbl, identity=canonical)
     return None
 
 
-def resolve_surface_refs(batch: L1DeltaBatch, *, sites: dict) -> tuple[L1DeltaBatch, int]:
+def resolve_surface_refs(batch: L1DeltaBatch, *, sites: SiteIndex) -> tuple[L1DeltaBatch, int]:
     """GATE 3, THE REFERENCE GATE (section 5.1): rewrite every `surfaces_at.l0`
     into the exact `Parameter{name,position,endpoint_path,baseurl}` /
     `Header{name,value,baseurl}` / `Secret{value_hash}` shape, and DROP any that
-    names no site the gate could resolve against (the admitted chunk UNION the
-    live graph-discovered sites, C-M1).
+    names no site the gate could resolve against (the unit's admitted chunk UNION
+    the unit-scoped graph-discovered sites, N1).
 
     `_l0_match_clause` MATCHes on exact label + identity and does not distinguish
     a zero-row match from a write (`l1_curator._write_each` counts it as written
@@ -352,7 +417,7 @@ def enforce_groundedness(
 
 
 def shape_proposal(
-    raw: L1DeltaBatch, *, sites: dict, existing_slugs: frozenset[str] = frozenset(),
+    raw: L1DeltaBatch, *, sites: SiteIndex, existing_slugs: frozenset[str] = frozenset(),
     known_items: frozenset[str] = frozenset(), observed_names: frozenset[str] = frozenset(),
     existing_fields: dict[str, list[str]] | None = None,
 ) -> DataPlaneOutcome:
@@ -410,8 +475,8 @@ def observed_vocabulary(sites) -> frozenset[str]:
     """The names the observed-only gate may keep (section 5.3): the `name` of every
     Parameter/Header site, plus any non-identity keys those (and Secret) assets
     carry in `props`. The `sites` list is the UNION of the unit's admitted chunk
-    and the live graph-discovered sites (C-M1), so a field seen only through
-    `graph_view` is still groundable."""
+    and the unit-scoped graph-discovered sites (N1), so a field seen only through
+    `graph_view` on the unit's own BaseURLs is still groundable."""
     names: set[str] = set()
     for a in sites:
         ident = a.identity or {}
@@ -671,10 +736,35 @@ def _contracted_service(chunk: Chunk, inventory: dict | None) -> str:
     return str(contracts.get(_service_slug(chunk), "") or "") if isinstance(contracts, dict) else ""
 
 
-def _discovered_sites(read_sites_fn, project_id: str | None) -> list:
-    """The live graph-discovered sites the reference/observed gates resolve against
-    (C-M1), filtered to the surface labels this role may ground on. Fail-open to the
-    admitted chunk alone."""
+def unit_baseurls(chunk: Chunk, aggregations: list[dict] | None = None) -> set[str]:
+    """The BaseURLs the unit is anchored to: every `baseurl` its chunk assets carry
+    (an Endpoint's origin, a Parameter/Header's origin) plus every `baseurl` on the
+    Endpoints the unit aggregates. This is the N1 scope for graph-discovered sites
+    and the N2 discoverable-surface floor - a Service's `surfaces_at` may only ever
+    resolve to a site on its OWN origins, never another Service's. A Secret carries no
+    baseurl (its identity is the `value_hash`), so Secrets are never scoped here."""
+    out: set[str] = set()
+    for a in chunk.assets or ():
+        b = (a.identity or {}).get("baseurl")
+        if b is not None:
+            out.add(str(b))
+    slug = _service_slug(chunk)
+    for row in aggregations or []:
+        if row.get("slug") != slug:
+            continue
+        b = (row.get("props") or {}).get("baseurl")
+        if b is not None:
+            out.add(str(b))
+    return out
+
+
+def _discovered_sites(read_sites_fn, project_id: str | None, baseurls) -> list:
+    """The graph-discovered sites the reference/observed gates resolve against (N1),
+    UNIT-SCOPED: a Parameter/Header is kept only when its `baseurl` is one of the
+    unit's own BaseURLs (`baseurls`), so discovery can never resolve a ref onto
+    another Service's surface. A Secret is kept unconditionally - its identity is the
+    exact `value_hash`, so it carries no baseurl and no collision risk. Fail-open to
+    the admitted chunk alone on a read blip."""
     if read_sites_fn is None or not project_id:
         return []
     try:
@@ -683,7 +773,18 @@ def _discovered_sites(read_sites_fn, project_id: str | None) -> list:
         logger.warning("data_modeller: discovered-sites read failed; using the chunk only",
                        exc_info=True)
         return []
-    return [a for a in sites if a.type in _SURFACE_LABELS]
+    in_scope = {str(b) for b in (baseurls or ())}
+    out = []
+    for a in sites:
+        if a.type == "Secret":
+            out.append(a)
+            continue
+        if a.type not in _SURFACE_LABELS:
+            continue
+        b = (a.identity or {}).get("baseurl")
+        if b is not None and str(b) in in_scope:
+            out.append(a)
+    return out
 
 
 def _aggregated_endpoints_repr(chunk: Chunk, aggregations: list[dict] | None) -> str:
@@ -942,8 +1043,10 @@ def model_data(
     so a flow may name ANY live Service - there is no per-unit write scope.
 
     The deterministic reference/observed gates resolve against the unit's admitted
-    chunk UNION the live graph-discovered sites `read_sites_fn(project_id)` returns
-    (C-M1): a site the model found only through `graph_view` can still ground an item.
+    chunk UNION the UNIT-SCOPED graph-discovered sites `read_sites_fn(project_id)`
+    returns (N1): a site the model found only through `graph_view` can still ground an
+    item, but only when it lies on one of the unit's own BaseURLs (`unit_baseurls`), so
+    one Service's `surfaces_at` can never resolve to another Service's surface.
 
     `invoke_fn(messages, *, schema, system_prompt) -> AnalysisTurn | None` is injected
     (unit-testable, no live LLM). FAIL-CLOSED on hypotheses exhaustion (empty outcome,
@@ -958,7 +1061,7 @@ def model_data(
 
     invoke_fn = invoke_fn or _default_invoke_fn
     system_prompt = _system_prompt()
-    discovered = _discovered_sites(read_sites_fn, project_id)
+    discovered = _discovered_sites(read_sites_fn, project_id, unit_baseurls(chunk, aggregations))
     sites = [*admitted, *discovered]
     admitted_counts: dict[str, int] = defaultdict(int)
     for a in admitted:

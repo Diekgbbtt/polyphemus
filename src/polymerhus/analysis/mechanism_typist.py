@@ -714,10 +714,13 @@ def _unit_block(chunk: Chunk, *, inventory: dict | None = None,
     REVERSE for a System (which Services rely on this overlay). The unit - not any
     asset name - is the reasoning anchor; the description is what the typist reasons
     FROM, so an absent description renders explicitly rather than as a blank line."""
-    slug = str(chunk.chunk_id)
     kind = _unit_kind(chunk)
     inv = inventory or {}
     service = _service_slug(chunk)
+    # N7: the prompt names the REAL Service slug (`_service_slug`), not the sanitised
+    # `chunk_id`, so the UNIT line and the backstop note key agree with the
+    # data-modeller and with the live inventory the contract is looked up in.
+    slug = service
     if kind == "System":
         key = str(getattr(chunk, "source_job", "") or "").removeprefix("system:")
         description = (inv.get("system_descriptions") or {}).get(key, "")
@@ -826,8 +829,8 @@ def type_mechanisms(
                 WORKFLOW, invoke_fn=invoke_fn, system_prompt=skill,
                 base_artifacts=base_artifacts,
                 halt_when=lambda sp, turn: sp.id == "mechanism_hypotheses" and turn is None,
-                unit_slug=chunk.chunk_id, memory=memory, project_id=project_id, run_id=run_id,
-                note_kind="system",
+                unit_slug=_service_slug(chunk), memory=memory, project_id=project_id,
+                run_id=run_id, note_kind="system",
             )
     except Exception:
         logger.warning("mechanism_typist: workflow failed; degrading to empty batch", exc_info=True)

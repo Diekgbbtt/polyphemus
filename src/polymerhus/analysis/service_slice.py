@@ -79,6 +79,39 @@ def sanitise_slug(slug: str) -> str:
     return cleaned
 
 
+def _default_read_sites_fn():
+    """N4: the graph-backed discovered-site index is a BATCHED-variant seam, so the
+    `legacy` rollback resolves the data-modeller's gates against the chunk alone -
+    the pre-change behaviour. Returns the live reader, or None under `legacy`."""
+    if resolve_prompt_variant() != "batched_l1unit_first":
+        return None
+    from polymerhus.analysis.l0_stream import read_surface_sites
+
+    return read_surface_sites
+
+
+def _memorised_read(read_fn):
+    """N3: wrap a whole-project read so it happens AT MOST once per run. The loop
+    threads one wrapper into every unit's body, so the graph is read once, not once
+    per unit. A blip is cached as no discovered sites, so the fail-open-to-chunk-only
+    behaviour is preserved without re-attempting the read for every later unit."""
+    cache: dict[str, list] = {}
+
+    def read(project_id: str):
+        if project_id not in cache:
+            try:
+                cache[project_id] = read_fn(project_id) or []
+            except Exception:  # noqa: BLE001 - a read blip degrades to the chunk-only index
+                logger.warning(
+                    "service_slice: discovered-sites read failed; chunk-only for this run",
+                    exc_info=True,
+                )
+                cache[project_id] = []
+        return cache[project_id]
+
+    return read
+
+
 def _read_live(project_id: str) -> tuple[list[str], list[dict], list]:
     """The live read seam: the L1 Service inventory, the Service->L0 aggregation
     view, and the settled L0 surface. Each reader is itself fail-open, so a graph
@@ -383,11 +416,17 @@ async def run_service_loop(
     # graph-backed site index feeds the data-modeller's C-M1 reference gate. A
     # caller that injects any of these owns the seam and stays hermetic.
     if inventory_fn is None and read_sites_fn is None and proposer_bodies is None and units is None:
-        from polymerhus.analysis.l0_stream import read_surface_sites
         from polymerhus.analysis.l1_inventory import read_l1_inventory
+        from polymerhus.analysis.l1_read import read_service_aggregations
 
         inventory_fn = read_l1_inventory
-        read_sites_fn = read_surface_sites
+        aggregations_fn = aggregations_fn or read_service_aggregations
+        # N4: the graph-backed discovered-site index is a batched-only seam.
+        read_sites_fn = _default_read_sites_fn()
+
+    # N3: read the whole-project site index at most once per run, never once per unit.
+    if read_sites_fn is not None:
+        read_sites_fn = _memorised_read(read_sites_fn)
 
     if units is None:
         units = build_service_slices(project_id, read_fn=read_fn, systems_fn=systems_fn)
@@ -437,6 +476,18 @@ async def run_service_loop(
     # without an `inventory_fn` (unit tests and any caller that injects its own).
     batched_unit_first = resolve_prompt_variant() == "batched_l1unit_first"
     inventory_cache: dict = {}
+    aggregations_cache: dict = {}
+
+    def _aggregations() -> list[dict]:
+        if "value" not in aggregations_cache:
+            fn = aggregations_fn or (lambda pid: [])
+            try:
+                aggregations_cache["value"] = list(fn(project_id) or [])
+            except Exception:  # noqa: BLE001 - a read blip leaves the old skip
+                logger.warning("service_slice: aggregation read failed; no contract gate",
+                               exc_info=True)
+                aggregations_cache["value"] = []
+        return aggregations_cache["value"]
 
     def _contracted(unit: Chunk) -> bool:
         src = str(getattr(unit, "source_job", "") or "")
@@ -452,7 +503,15 @@ async def run_service_loop(
                 inventory_cache["value"] = {}
         contracts = inventory_cache["value"].get("service_contracts") or {}
         slug = src.removeprefix("service:")
-        return bool(str(contracts.get(slug, "") or "") if isinstance(contracts, dict) else "")
+        if not (str(contracts.get(slug, "") or "") if isinstance(contracts, dict) else ""):
+            return False
+        # N2: a contracted-but-asset-empty unit is dispatched ONLY when it has
+        # discoverable surface - at minimum a non-empty BaseURL set for the unit. With
+        # neither assets nor baseurls it is an explicit `no_surface` below, never an
+        # unbounded two-chain fan-out.
+        from polymerhus.analysis.data_modeller import unit_baseurls
+
+        return bool(unit_baseurls(unit, _aggregations()))
 
     for unit in units:
         if stop_fn is not None and stop_fn():
