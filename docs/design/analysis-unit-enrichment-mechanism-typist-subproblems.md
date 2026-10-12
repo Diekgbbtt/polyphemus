@@ -1,6 +1,7 @@
 # Design: the mechanism-typist reasoning workflow (analysis-unit enrichment v2)
 
-*Status: design document, 2026-10-11. Worktree `polymerhus-unitv2`, branch `feat/analysis-unit-enrichment`.*
+*Status: PARTIALLY SUPERSEDED, 2026-10-12. Worktree `polymerhus-unitv2`, branch `feat/analysis-unit-enrichment`.*
+*The SEVEN-sub-problem chain specified below (section 2, headed by `unit_surface_read`) is superseded by the eight-sub-problem unit-first chain in `batched-l1unit-first-adr.md` (T2): `orient_from_catalog -> harvest_surface -> prior_insights -> mechanism_hypotheses -> page_clusters -> systems_extract -> link -> closure`. The `unit_surface_read` "read what exists, no asset-name assumption" rule is reverted for this role (hypothesis-first, then verify). Sections 3+ are retained as the historical design record; the implementation lives in `src/polymerhus/analysis/mechanism_typist.py` and the prompt file `prompts/technical-system-batched-l1unit-first.md`.*
 *Owning plan: `docs/design/analysis-unit-enrichment-plan.md`. Owning spec: `docs/design/service-sourced-analysis-spec.md` section 3. Owning ADRs: D22 (sub-problems map onto the reflection stages), D23/D24 (Claim and verbatim injection), D26/D34 (constant tool set), D19 (first-definer description compounding).*
 
 This document specifies the REASONING WORKFLOW of the `mechanism_typist` proposer under the v2 analysis-unit-first pipeline.

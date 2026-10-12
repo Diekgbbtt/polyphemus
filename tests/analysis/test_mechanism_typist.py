@@ -18,6 +18,7 @@ from polymerhus.analysis.analyser_types import (
 )
 from polymerhus.analysis.chunking import Chunk
 from polymerhus.analysis.mechanism_typist import (
+    _unit_block,
     drop_unknown_vocabulary,
     mechanism_typist_body,
     narrow_to_typing,
@@ -46,9 +47,9 @@ def _claims(*subjects):
 
 
 class _Recorder:
-    """A 4-call `invoke_fn` honouring the `schema` kwarg (always `AnalysisTurn` here):
-    routes by the sub-problem marker in the prompt and returns a crafted turn. Records
-    the call order for the sequence assertion. `halt_hypotheses` forces the
+    """A per-turn `invoke_fn` honouring the `schema` kwarg (always `AnalysisTurn`
+    here): routes by the sub-problem marker in the prompt and returns a crafted turn.
+    Records the call order for the sequence assertion. `halt_hypotheses` forces the
     mechanism_hypotheses turn to exhaust (the fail-closed signal)."""
 
     def __init__(self, hypotheses=None, clusters=None, systems=None, edges=None,
@@ -75,8 +76,11 @@ class _Recorder:
         if "CLUSTER PAGES" in content:
             self.calls.append("clusters")
             return self.clusters
-        if "READ THE UNIT" in content:
-            self.calls.append("surface_read")
+        if "ORIENT FROM THE CATALOG" in content:
+            self.calls.append("orient")
+            return self.hypotheses
+        if "HARVEST THE SURFACE" in content:
+            self.calls.append("harvest")
             return self.hypotheses
         if "RECALL PRIOR INSIGHTS" in content:
             self.calls.append("prior")
@@ -136,7 +140,7 @@ def test_N7_partition_primary_secondary_and_asset_less_excluded():
 
 # --- the 3-call chain (N2 order, N3 fail-closed, N4 soft pass-through) ---------
 
-def test_the_four_subproblems_share_the_chunk_batch_scope():
+def test_the_eight_subproblems_share_the_chunk_batch_scope():
     """Per-batch memory: the whole sub-problem chain runs under ONE batch scope (the
     chunk id), so its turns share a context and the next chunk resets."""
     from polymerhus.analysis.proposer_turn import current_batch
@@ -149,13 +153,15 @@ def test_the_four_subproblems_share_the_chunk_batch_scope():
             return super().__call__(messages, schema=schema, system_prompt=system_prompt)
 
     type_mechanisms(_service_chunk(), invoke_fn=_ScopeRecorder())
-    assert seen == ["c", "c", "c", "c", "c", "c", "c"]
+    assert seen == ["c"] * 8
 
 
-def test_N2_four_subproblem_sequence_in_order():
+def test_N2_eight_subproblem_sequence_in_order():
     rec = _Recorder()
     out = type_mechanisms(_service_chunk(), invoke_fn=rec)
-    assert rec.calls == ["surface_read", "prior", "hypotheses", "clusters", "systems", "link", "closure"]
+    assert rec.calls == [
+        "orient", "harvest", "prior", "hypotheses", "clusters", "systems", "link", "closure",
+    ]
     assert [s.kind for s in out.systems] == ["RESTApi"]
     assert [(e.service_slug, e.rel) for e in out.system_edges] == [("checkout", "EXPOSED_VIA")]
 
@@ -166,7 +172,7 @@ def test_N3_hypotheses_exhaustion_fails_closed():
     rec = _Recorder(halt_hypotheses=True)
     out = type_mechanisms(_service_chunk(), invoke_fn=rec)
     assert out == L1DeltaBatch()  # no hypotheses -> whole step empty
-    assert rec.calls == ["surface_read", "prior", "hypotheses"]
+    assert rec.calls == ["orient", "harvest", "prior", "hypotheses"]
 
 
 def test_N4_systems_exhaustion_soft_passthrough_no_systems():
@@ -249,7 +255,8 @@ def test_N8_observations_feed_the_hypotheses_turn_only():
         if "EXTRACT SYSTEMS" in content:
             captured["systems"] = content
         elif ("LINK SERVICES" not in content and "CLUSTER PAGES" not in content
-              and "READ THE UNIT" not in content and "RECALL PRIOR INSIGHTS" not in content
+              and "ORIENT FROM THE CATALOG" not in content and "HARVEST THE SURFACE" not in content
+              and "RECALL PRIOR INSIGHTS" not in content
               and "CLOSE." not in content):
             captured["hypotheses"] = content
         return AnalysisTurn()
@@ -276,7 +283,8 @@ def test_baseurl_anchored_observation_reaches_its_endpoint_insight():
     def invoke(messages, *, schema=None, system_prompt=None):
         content = messages[-1].content
         if ("EXTRACT SYSTEMS" not in content and "LINK SERVICES" not in content
-                and "CLUSTER PAGES" not in content and "READ THE UNIT" not in content
+                and "CLUSTER PAGES" not in content and "ORIENT FROM THE CATALOG" not in content
+                and "HARVEST THE SURFACE" not in content
                 and "RECALL PRIOR INSIGHTS" not in content and "CLOSE." not in content):
             captured["hypotheses"] = content
         return AnalysisTurn()
@@ -306,7 +314,8 @@ def test_response_evidence_props_reach_the_hypotheses_turn_not_path_alone():
     def invoke(messages, *, schema=None, system_prompt=None):
         content = messages[-1].content
         if ("EXTRACT SYSTEMS" not in content and "LINK SERVICES" not in content
-                and "CLUSTER PAGES" not in content and "READ THE UNIT" not in content
+                and "CLUSTER PAGES" not in content and "ORIENT FROM THE CATALOG" not in content
+                and "HARVEST THE SURFACE" not in content
                 and "RECALL PRIOR INSIGHTS" not in content and "CLOSE." not in content):
             captured["hypotheses"] = content
         return AnalysisTurn()
@@ -519,7 +528,7 @@ def test_the_typist_puts_no_role_prompt_in_the_messages():
     rec = _Rec()
     type_mechanisms(_service_chunk(), invoke_fn=rec)
 
-    assert len(rec.msgs) == 7, "the seven-sub-problem chain"
+    assert len(rec.msgs) == 8, "the eight-sub-problem chain"
     for messages in rec.msgs:
         assert not any(isinstance(m, SystemMessage) for m in messages), (
             "no role prompt in the forwarded trail (it rides system_prompt=)")
@@ -562,5 +571,147 @@ def test_the_typist_injects_the_dependency_artifacts_verbatim():
     systems = rec.by_prompt["systems_extract"]
     assert "witnesses a REST API" in systems   # the dependency claim is injected
     assert "new RESTApi" in systems
-    # systems_extract declares no `surface` injection: the raw surface is absent.
+    # systems_extract declares no raw-response injection: the asset's response prop is absent.
     assert "SURFACE-ONLY-MARKER" not in systems
+
+
+# --- T2: the unit-first workflow, the two directions, the fed artifacts ---------
+
+def test_workflow_ids_dependencies_and_emits():
+    """T2: the typist chain is the unit-first one, and each SubProblem declares the
+    correct `depends_on` / `emit` (the structural contract the rework rests on)."""
+    from polymerhus.analysis.mechanism_typist import WORKFLOW
+
+    by_id = {sp.id: sp for sp in WORKFLOW.sub_problems}
+    assert [sp.id for sp in WORKFLOW.sub_problems] == [
+        "orient_from_catalog", "harvest_surface", "prior_insights",
+        "mechanism_hypotheses", "page_clusters", "systems_extract", "link", "closure",
+    ]
+    assert by_id["orient_from_catalog"].depends_on == ()
+    assert by_id["harvest_surface"].depends_on == ()
+    assert by_id["prior_insights"].depends_on == ("harvest_surface",)
+    assert by_id["mechanism_hypotheses"].depends_on == (
+        "orient_from_catalog", "harvest_surface", "prior_insights")
+    assert by_id["page_clusters"].depends_on == ("harvest_surface",)
+    assert by_id["systems_extract"].depends_on == ("mechanism_hypotheses", "page_clusters")
+    assert by_id["link"].depends_on == ("systems_extract",)
+    assert by_id["closure"].depends_on == ("systems_extract", "link")
+    # every reasoning turn emits claims; the two extraction turns emit deltas.
+    for sid in ("orient_from_catalog", "harvest_surface", "prior_insights",
+                "mechanism_hypotheses", "page_clusters", "closure"):
+        assert by_id[sid].emit == ("claims",)
+    assert by_id["systems_extract"].emit == ("systems",)
+    assert by_id["link"].emit == ("system_edges",)
+
+
+def test_unit_base_artifact_carries_the_service_contract_and_aggregated_endpoints():
+    """T2: a Service unit's `unit` artifact carries the contract AND the endpoints the
+    Service already aggregates, so the typist reasons FROM the contract."""
+    captured = {}
+
+    def invoke(messages, *, schema=None, system_prompt=None):
+        content = messages[-1].content
+        if "CENTRAL QUESTION" in content:
+            captured["unit"] = content
+        return AnalysisTurn()
+
+    inventory = {"services": ["checkout"], "systems": [],
+                 "service_contracts": {"checkout": "takes a basket to a paid order"},
+                 "system_descriptions": {}}
+    aggregations = [{"slug": "checkout", "labels": ["Endpoint"],
+                     "props": {"path": "/orders", "method": "POST", "baseurl": "https://a"}}]
+    chunk = Chunk(chunk_id="checkout", source_job="service:checkout",
+                  assets=(_endpoint("/orders"),))
+    type_mechanisms(chunk, invoke_fn=invoke, inventory=inventory,
+                    aggregations=aggregations)
+    unit = captured["unit"]
+    assert "UNIT KIND: Service" in unit
+    assert "takes a basket to a paid order" in unit          # the service_contract
+    assert "POST /orders" in unit                            # the aggregated endpoint
+    assert "https://a" in unit
+
+
+def test_unit_base_artifact_carries_the_system_description():
+    """T2: a System unit's `unit` artifact carries the System's own description and is
+    framed as the inverse (System) direction."""
+    chunk = Chunk(chunk_id="RESTApi", source_job="system:RESTApi",
+                  assets=(_endpoint("/x"),))
+    inv = {"services": ["checkout"], "systems": ["RESTApi"],
+           "service_contracts": {},
+           "system_descriptions": {"RESTApi": "unified REST API overlay"}}
+    block = _unit_block(chunk, inventory=inv)
+    assert "UNIT KIND: System" in block
+    assert "unified REST API overlay" in block
+    assert "which Services rely on this technical overlay" in block
+
+
+def test_service_unit_and_system_unit_take_the_two_directions():
+    """T2: the central question is direction-dependent - Service forward, System
+    inverse. The rendered unit block carries the matching framing."""
+    service = _unit_block(
+        Chunk(chunk_id="checkout", source_job="service:checkout",
+              assets=(_endpoint("/x"),)),
+        inventory={"services": ["checkout"], "service_contracts": {"checkout": "c"}})
+    system = _unit_block(
+        Chunk(chunk_id="RESTApi", source_job="system:RESTApi", assets=(_endpoint("/x"),)),
+        inventory={"services": ["checkout"]})
+    assert "which technical Systems could this Service rely on to offer its contract" in service
+    assert "which Services rely on this technical overlay" in system
+    assert service != system
+
+
+def test_vocabulary_artifact_carries_system_kinds_and_edge_rels():
+    """T2: the RDF catalog (every System kind and every System-edge rel) rides the
+    `vocabulary` base artifact, rendered by `l1_curator.vocabulary_prompt`."""
+    from polymerhus.analysis.l1_curator import SYSTEM_EDGE_RELS, _KNOWN_KINDS
+    from polymerhus.analysis.mechanism_typist import type_mechanisms
+
+    captured = {}
+
+    def invoke(messages, *, schema=None, system_prompt=None):
+        content = messages[-1].content
+        if "ORIENT FROM THE CATALOG" in content:
+            captured["vocab"] = content
+        return AnalysisTurn()
+
+    type_mechanisms(_service_chunk(), invoke_fn=invoke)
+    vocab = captured["vocab"]
+    assert "CONTROLLED VOCABULARIES" in vocab
+    for kind in sorted(_KNOWN_KINDS):
+        assert kind in vocab
+    for rel in sorted(SYSTEM_EDGE_RELS):
+        assert rel in vocab
+
+
+def test_link_to_another_live_service_survives_not_scoped_to_the_unit_slug():
+    """T2: the `link` turn carries NO per-unit write scope, so a System unit may link
+    its overlay to a rider Service other than the unit's own slug - the edge survives."""
+    rec = _Recorder(
+        systems=AnalysisTurn(systems=[SystemProposal(kind="RESTApi", props={"description": "REST"})]),
+        edges=AnalysisTurn(system_edges=[
+            SystemEdgeProposal(service_slug="other-live-service", kind="RESTApi", rel="EXPOSED_VIA")]),
+    )
+    out = type_mechanisms(_service_chunk(), invoke_fn=rec,
+                          inventory={"services": ["checkout", "other-live-service"]})
+    # the non-unit owner survives shaping: no per-unit slug filter is applied.
+    assert [(e.service_slug, e.rel) for e in out.system_edges] == [
+        ("other-live-service", "EXPOSED_VIA")]
+
+
+def test_rewritten_prompt_file_loads_under_default_and_differs_from_legacy(monkeypatch):
+    """T2: the default variant loads the rewritten (unit-first) file, distinct from
+    the legacy L0-stream file retained for rollback."""
+    from pathlib import Path
+
+    monkeypatch.delenv("ANALYSIS_PROMPT_VARIANT", raising=False)
+    from polymerhus.analysis import mechanism_typist
+
+    monkeypatch.setattr(mechanism_typist, "_TECHNICAL_SYSTEM_SKILLS", {})
+    batched = mechanism_typist._load_skill()
+    legacy = (Path(mechanism_typist.__file__).resolve().parent
+              / "prompts" / "technical-system.md").read_text(encoding="utf-8")
+    assert batched != legacy
+    assert "streamed slice" not in batched          # the obsolete L0-stream framing is gone
+    assert "Read what EXISTS" not in batched        # the "never filter" rule is reverted
+    assert "L1 unit" in batched                     # the unit-first framing is present
+    assert "per-unit write scope" in batched        # the link scope is removed

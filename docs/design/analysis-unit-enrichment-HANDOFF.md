@@ -13,7 +13,7 @@ See `docs/design/analysis-unit-enrichment-adr.md` (the decision record) and `doc
 
 1. **Plan + three role designs**: `docs/design/analysis-unit-enrichment-plan.md`, `...-{assigner,mechanism-typist,data-modeller}-subproblems.md`.
 2. **Analysis graph tools** (`analysis/graph_tools.py`, NEW): read-only `graph_view` + lazy HTTP-history read pair + `build_surface_tools`; bound on every proposer turn in `proposer_turn.py` (`_surface_tools`), so the constant request shape is preserved.
-3. **v2 workflow chains**: `assigner` 5 (`surface_scan -> prior_insights -> candidate_owners -> assign -> closure`); `mechanism_typist` 7 (`unit_surface_read -> prior_insights -> mechanism_hypotheses -> page_clusters -> systems_extract -> link -> closure`); `data_modeller` 8 (`surface_survey -> request_shapes -> insight_recall -> record_hypotheses -> data_extract -> flow_shape -> flow_extract -> closure_note`). Each seeds its `unit`/`service` + `endpoints` base artifacts and passes `note_kind` (`assignment`/`system`/`data`).
+3. **v2 workflow chains** (as of T0; superseded by the batched L1-unit-first rework for the assigner T1 and the mechanism-typist T2): `assigner` now 6 (`harvest_surface -> falsify_harvest -> prior_insights -> candidate_owners -> assign -> closure`); `mechanism_typist` now 8 (`orient_from_catalog -> harvest_surface -> prior_insights -> mechanism_hypotheses -> page_clusters -> systems_extract -> link -> closure`); `data_modeller` 8 (rework pending T3). Each seeds its `unit`/`service` base artifacts and passes `note_kind` (`assignment`/`system`/`data`).
 4. **Per-Service assign** (`assigner.py::assign_services`, ADR D46): one awaited pass per Service, judged with `existing_slugs={slug}`; wired as the stage-1 default in `service_sourced.py`. Tests: `tests/analysis/test_assign_services.py`.
 5. **Docs pass**: `docs/design/analysis-unit-enrichment-adr.md`; `src/polymerhus/analysis/CONTEXT.md` updated.
 
@@ -21,9 +21,9 @@ Verification: `PYTHONPATH=$PWD/src /Users/diekgbbtt/polymerhus/.venv/bin/python 
 
 ## Still open
 
-1. **System units in the slice builder.** `build_service_slices` (or a sibling `build_system_slices`) must also emit ONE unit per L1 System, so the mechanism-typist's unit set is Service + System. The System unit's assets = the System's `EVIDENCED_BY` L0 nodes plus the aggregated endpoints of every Service that rides it. Then `run_service_loop` must dispatch roles PER UNIT KIND: `mechanism_typist` on a System unit, `("mechanism_typist", "data_modeller")` on a Service unit. A new read of `(:L1Service)-[r]->(:L1System)` plus `EVIDENCED_BY` is needed; keep it an injected seam so the builder stays pure.
-2. **Deterministic `recon -> analysis -> hunting`.** The eval trial (`eval/orchestrator/trial.py`, commit `55054aa`) already sequences the three phases; the app-side `feed.resolve_hunt_after_analysis` remains default-OFF deliberately (an unconditional app-side launch would 409 against the trial's own hunting launch). Confirm the trial path is the intended control plane, else make the chain explicitly deterministic there.
-3. **Role prompts.** Append a "WORK IN ORDER" section (the v2 phase list) to `prompts/{assigner.md,technical-system.md,data-plane.md}`; the full updated prose is in the three subproblem design docs.
+1. **System units in the slice builder - DONE (T0/T2).** `build_service_slices` emits ONE unit per L1 System (`systems_fn`), and `run_service_loop` dispatches roles PER UNIT KIND (`mechanism_typist` on a System unit, `("mechanism_typist", "data_modeller")` on a Service unit). The System unit's assets = its `EVIDENCED_BY` L0 nodes plus the aggregated endpoints of every Service that rides it. The mechanism-typist consumes both unit kinds.
+2. **Deterministic `recon -> analysis -> hunting` - superseded** by point 5/ADR D46 of `analysis-unit-enrichment-adr.md`: the app-side `hunt_after_analysis` default is flipped ON with a 409 idempotent guard.
+3. **Role prompts - DONE.** The v2 files are rewritten unit-first as `prompts/<role>-batched-l1unit-first.md` (T1-T3), selected by `ANALYSIS_PROMPT_VARIANT`; the legacy files are the rollback.
 4. **Langfuse keys** on the eval instance `.env`.
 5. **Analysis-only eval trial**, monitored to stop once units are consumed, then measurement.
 

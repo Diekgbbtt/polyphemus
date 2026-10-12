@@ -18,8 +18,8 @@ The root cause is structural: the pipeline reasoned from a pre-filtered asset sl
 
 The pipeline's reasoning unit is a UNIT (a Service or a System) and the pipeline ENRICHES the unit. It does not filter the surface down to the role's asset types.
 
-1. **Broad L0 query first.** Each proposer begins its workflow with a broad, read-only `graph_view` query over the mapped L0 surface, with NO asset-name assumption. A new analysis-side tool bundle (`analysis/graph_tools.py`) provides `graph_view` and, for the data-modeller, the HTTP-history read pair. The tools are bound on EVERY proposer turn (alongside `notes` and the structured tool last), preserving the constant request shape (ADR D26).
-2. **Consumption filter.** `assigner` <- each Service; `mechanism_typist` <- all units aggregated to L0 endpoints (Service and System); `data_modeller` <- each Service.
+1. **Broad L0 query first (AMENDED by `batched-l1unit-first-adr.md`, T1/T2; fully superseded by the unit-first chains).** Each proposer originally began its workflow with a broad, read-only `graph_view` query over the mapped L0 surface, with NO asset-name assumption. The analysis-side tool bundle (`analysis/graph_tools.py`) provides `graph_view` and the HTTP-history read pair, bound on EVERY proposer turn (alongside `notes` and the structured tool last), preserving the constant request shape (ADR D26). The unit-first rework replaced the broad-first query for the assigner and the mechanism-typist with ORIENT-from-the-unit/hypothesis-then-verify; the data-modeller follows in T3.
+2. **Consumption filter.** `assigner` <- each Service; `mechanism_typist` <- each unit, Service OR System (the System-unit expansion is BUILT, T2); `data_modeller` <- each Service.
 3. **Episodic modelling-closure memory.** Each proposer has a dedicated `prior_insights` phase that reads the shared `notes` store, and a `closure` phase that WRITES one modelling-closure note per unit (kind `assignment` / `system` / `data` respectively). The per-unit backstop (`ensure_unit_note`) remains the coverage guarantee.
 4. **Per-Service assign (AMENDED by `batched-l1unit-first-adr.md`, T1).** Stage 1 is `assign_services`: one awaited pass per Service. The original per-Service write scope (`existing_slugs={slug}`, a Service wrote only its own `AGGREGATES`) is REMOVED: each Service is judged with the FULL live inventory, so it may name any live Service as owner, and only the GLOBAL inventory validation remains. The v1 `assign_global` is retained but no longer the service-sourced default.
 5. **Deterministic chaining.** `recon -> analysis -> hunting` is sequenced by the execution control plane (the eval trial), and the app-side `settings.recon.hunt_after_analysis` default is flipped from OFF to ON for this experiment (ADR D46). An absent value now returns True; an explicit `false` opts out. The app-side launch reuses the same operator-intent seam as `POST /projects/{id}/hunting`, so a chain the trial also launches is refused (409) rather than double-run - the ordering is deterministic and idempotent.
@@ -31,7 +31,7 @@ The pipeline's reasoning unit is a UNIT (a Service or a System) and the pipeline
 ### Workflow chains (v2)
 
 - `assigner` (6, AMENDED by `batched-l1unit-first-adr.md` T1): `harvest_surface -> falsify_harvest -> prior_insights -> candidate_owners -> assign -> closure`.
-- `mechanism_typist` (7): `unit_surface_read -> prior_insights -> mechanism_hypotheses -> page_clusters -> systems_extract -> link -> closure`.
+- `mechanism_typist` (8, AMENDED by `batched-l1unit-first-adr.md` T2): `orient_from_catalog -> harvest_surface -> prior_insights -> mechanism_hypotheses -> page_clusters -> systems_extract -> link -> closure`.
 - `data_modeller` (8): `surface_survey -> request_shapes -> insight_recall -> record_hypotheses -> data_extract -> flow_shape -> flow_extract -> closure_note`.
 
 Each sub-problem speaks the one `AnalysisTurn` envelope; `emit` is a declared artifact (`claims` for a reasoning turn, a delta list for an extraction turn). Dependencies are injected VERBATIM (ADR D24).
@@ -41,10 +41,11 @@ Each sub-problem speaks the one `AnalysisTurn` envelope; `emit` is a declared ar
 - The v1 defect (data-modeller only on the residual) is removed: the data-modeller now runs on every Service and can reach `Parameter` / `Header` / `Secret` through `graph_view` rather than a pre-filtered slice.
 - The mechanism-typist can now reason over the System cross-cutting layer as well as per-Service.
 - Cost rises: the per-Service assign is O(Services x surface) rather than one global pass, and each chain is longer. This is accepted - the v1 formulation failed on coverage, not on cost.
-- Open: the System-unit expansion in `build_service_slices` (so the typlist's unit set is Services + Systems) is specified but not yet built; see `analysis-unit-enrichment-HANDOFF.md`.
+- The System-unit expansion in `build_service_slices` (so the typist's unit set is Services + Systems) is BUILT (T2): the typist consumes both unit kinds.
 
 ## Superseded
 
 - The v1 `assign_global` as the stage-1 default for `service_sourced` (superseded by `assign_services`).
-- The v1 four-sub-problem typist and four-sub-problem data-modeller chains (superseded by the seven- and eight-sub-problem chains).
-- The v1 claim that a per-unit asset slice is the reasoning input (superseded by the broad `graph_view` query).
+- The v1 four-sub-problem typist and four-sub-problem data-modeller chains (superseded by the seven-/eight-sub-problem v2 chains, themselves reworked unit-first by `batched-l1unit-first-adr.md`).
+- The v1 claim that a per-unit asset slice is the reasoning input (superseded by the broad `graph_view` query, itself superseded by the unit-first hypothesis-then-verify discipline).
+- The typist's seven-sub-problem v2 chain and its `unit_surface_read` "read what exists; no asset-name assumption" rule are superseded by the eight-sub-problem unit-first chain and the reverted hypothesis-first discipline (T2).

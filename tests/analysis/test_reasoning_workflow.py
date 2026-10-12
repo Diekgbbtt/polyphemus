@@ -177,15 +177,20 @@ def test_mechanism_typist_workflow_matches_the_spec_table():
     from polymerhus.analysis.mechanism_typist import WORKFLOW
 
     by_id = {sp.id: sp for sp in WORKFLOW.sub_problems}
+    # T2 (batched L1-unit-first): the unit-first chain.
     assert [sp.id for sp in WORKFLOW.sub_problems] == [
-        "unit_surface_read", "prior_insights", "mechanism_hypotheses",
-        "page_clusters", "systems_extract", "link", "closure"]
-    assert by_id["unit_surface_read"].emit == ("claims",)
+        "orient_from_catalog", "harvest_surface", "prior_insights",
+        "mechanism_hypotheses", "page_clusters", "systems_extract", "link", "closure"]
+    assert by_id["orient_from_catalog"].emit == ("claims",)
+    assert by_id["harvest_surface"].emit == ("claims",)
     assert by_id["prior_insights"].emit == ("claims",)
     assert by_id["mechanism_hypotheses"].emit == ("claims",)
     assert by_id["page_clusters"].emit == ("claims",)
     assert by_id["systems_extract"].emit == ("systems",)
     assert by_id["link"].emit == ("system_edges",)
+    assert by_id["prior_insights"].depends_on == ("harvest_surface",)
+    assert by_id["mechanism_hypotheses"].depends_on == (
+        "orient_from_catalog", "harvest_surface", "prior_insights")
     assert by_id["systems_extract"].depends_on == ("mechanism_hypotheses", "page_clusters")
     assert by_id["link"].depends_on == ("systems_extract",)
     assert by_id["closure"].depends_on == ("systems_extract", "link")

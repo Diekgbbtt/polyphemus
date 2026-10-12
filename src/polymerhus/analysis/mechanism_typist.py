@@ -47,31 +47,37 @@ logger = logging.getLogger(__name__)
 
 _SINGLETON = "__singleton__"
 
-# The hypothesis-driven reflection scaffold (grilled #9): the numbered process the
-# reason call works THROUGH out loud, synthesising overthink (staged reasoning),
-# critical-thinking (claim/evidence/assumption/fallacy) and define/debug-hypothesis.
+# The hypothesis-driven reflection scaffold (grilled #9), re-parametrised for the
+# L1-unit-first mechanism-typist: the numbered process the reason turns work THROUGH
+# out loud, synthesising overthink (staged reasoning), critical-thinking
+# (claim/evidence/assumption/fallacy) and define/debug-hypothesis. It reasons FROM
+# the unit and the RDF catalog, then discovers and verifies against the graph.
 _REFLECTION_STEPS = [
-    "ORIENT: what technical mechanisms could this batch of surface plausibly evidence? "
-    "Read each asset with its adversarial observation insight AND its response evidence "
-    "(content type, title, status, server). What a path SERVES outweighs what its name "
-    "suggests: an API-looking path returning text/html is a client-routed web-presentation "
-    "view, not a REST endpoint.",
-    "HYPOTHESISE: for each asset+observation, define candidate hypotheses of the form "
-    "'this asset impacts a System of kind K - newly-defined, OR extending currently-defined "
-    "System X'. Hold more than one candidate kind for an ambiguous asset.",
+    "ORIENT: read the RDF catalog (the System kinds and the System-edge rels) and the "
+    "currently-defined Systems, then read the UNIT subject itself (its identifier, its "
+    "kind, and its description). State the mechanism landscape this unit could sit in - "
+    "which kinds are even plausible here, and which are ruled out - before touching any "
+    "asset.",
+    "HYPOTHESISE: from the contract (Service unit) or the overlay (System unit) define "
+    "candidate hypotheses of the form 'this unit relies on a System of kind K - "
+    "newly-defined, OR extending currently-defined System X' (Service direction), or "
+    "'this System overlays Service S via rel R' (System direction). Hold more than one "
+    "candidate kind for an ambiguous unit.",
     "CLUSTER PAGES (WebPresentation): among the NAVIGABLE text/html pages only (content_type "
     "text/html; exclude API/XHR/JSON responses and static assets), group them by rendered "
     "similarity (shared title/structure/size) into page CLUSTERS - a templated set (e.g. many "
     "product pages) or a single not-found/error page is ONE cluster, not many. Note which "
     "service each cluster serves; each (service, cluster) is one WebPresentation.",
-    "VERIFY / FALSIFY: test each hypothesis against the evidence actually present. A "
-    "framework fingerprint alone is NOT the mechanism-in-use; separate the claim from its "
-    "support; decide new-vs-extend against the currently-defined Systems listed.",
+    "VERIFY / FALSIFY: test each hypothesis against the evidence actually present in the "
+    "graph and the recorded HTTP history. A framework fingerprint alone is NOT the "
+    "mechanism-in-use; separate the claim from its support; decide new-vs-extend against "
+    "the currently-defined Systems listed.",
     "INTEGRATE the adversarial observation insight into the surviving System's "
     "characterisation - what makes that mechanism attackable.",
     "EMIT a prose delta overview: the verified NEW and EXTENDED Systems and their "
-    "adversarial characterisations. Do NOT deep-profile (no rendering/navigation model, "
-    "no authorization pyramid) - that is a later phase.",
+    "adversarial characterisations, and the Service->System edges you can ground. Do NOT "
+    "deep-profile (no rendering/navigation model, no authorization pyramid) - that is a "
+    "later phase.",
 ]
 
 
@@ -340,28 +346,40 @@ def _idkey(identity: dict) -> tuple:
 def _defined_systems_block(inventory: dict | None) -> str:
     """The currently-defined Systems WITH their descriptions (grilled #9 Q3/Q7): the
     discriminative context for the new-vs-extend decision and description compounding.
-    `system_descriptions` is the additive map `read_l1_inventory` now returns."""
+    `system_descriptions` is the additive map `read_l1_inventory` now returns.
+
+    The LIVE Service inventory is appended (T2): the System direction links an overlay
+    to the Services that ride it, so the bootstrapped Service slug list is part of the
+    unit-first context, not a separate source."""
     inv = inventory or {}
     systems = inv.get("systems") or []
     descs = inv.get("system_descriptions") or {}
+    services = inv.get("services") or []
     if not systems:
-        return "CURRENTLY-DEFINED SYSTEMS: (none yet)"
-    lines = ["CURRENTLY-DEFINED SYSTEMS (extend these by their EXACT key; enrich - never blank - a description):"]
-    for s in systems:
-        d = (descs.get(s) or "").strip()
-        lines.append(f"- {s}" + (f" :: {d}" if d else ""))
-    return "\n".join(lines)
+        systems_lines = ["CURRENTLY-DEFINED SYSTEMS: (none yet)"]
+    else:
+        systems_lines = [
+            "CURRENTLY-DEFINED SYSTEMS (extend these by their EXACT key; enrich - never blank - a description):"]
+        for s in systems:
+            d = (descs.get(s) or "").strip()
+            systems_lines.append(f"- {s}" + (f" :: {d}" if d else ""))
+    services_line = (
+        "LIVE SERVICES (link to ANY of these - no per-unit scope): "
+        + (", ".join(services) if services else "(none yet)"))
+    return "\n".join([*systems_lines, services_line])
 
 
 _SYSTEMS_TASK = (
-    "TASK - EXTRACT SYSTEMS. The reasoning above (and the page clusters) is your "
-    "reflection: use it. Propose ONE `systems` entry for EACH mechanism you "
-    "identified: a known `kind` (+ `discriminator`, default __singleton__) with a "
-    "`description` prop in `props` - a brief adversarially-oriented NL characterisation "
-    "of that mechanism. You MUST return at least one system whenever your reflection "
-    "named a mechanism; an empty `systems` list is a wrong answer here. For a System "
-    "already listed above, REUSE its exact key and output an ENRICHED description (fold "
-    "your new insight in - never blank it, never merely restate). "
+    "TASK - EXTRACT SYSTEMS. The orient, harvest and hypotheses above (and the page "
+    "clusters) are your reflection: use them. Propose ONE `systems` entry for EACH "
+    "mechanism your verified hypotheses named: a known `kind` (+ `discriminator`, "
+    "default __singleton__) with a `description` prop in `props` - a brief "
+    "adversarially-oriented NL characterisation of that mechanism. You MUST return at "
+    "least one system whenever your hypotheses named a mechanism; an empty `systems` "
+    "list is a wrong answer here. Read the fed catalog for the legal `kind`s and the "
+    "fed bootstrapped Systems: for a System already listed, REUSE its exact key and "
+    "output an ENRICHED description (fold your new insight in - never blank it, never "
+    "merely restate). "
     # WebPresentation is PER (service, page-cluster), not a singleton (#53): the
     # downstream agent must locate the exact page a service is exposed on.
     "SPECIAL CASE - WebPresentation: emit ONE per (owning service, page cluster) from the "
@@ -374,67 +392,96 @@ _SYSTEMS_TASK = (
 
 
 def _linking_context(primary: list[str], secondary: list[str],
-                     owned: dict[str, list[str]]) -> str:
+                     owned: dict[str, list[str]], all_services=()) -> str:
     """The dynamic service context the LINKING sub-problem injects: PRIMARY services
-    (with the assets they own, as linking evidence) and the SECONDARY list."""
+    (with the assets they own, as linking evidence) and the shared-surface list.
+
+    No per-unit WRITE scope (T2): PRIMARY is a PRIORITY hint, never a restriction,
+    so the FULL live inventory is appended and a link to any other live Service is
+    valid - a System may overlay Services the unit's chunk does not touch."""
     prim_lines = "\n".join(
         f"  - {slug} (owns: {', '.join(owned.get(slug, [])) or 'surface in this chunk'})"
         for slug in primary) or "  (none)"
+    shared = sorted(set(secondary) | {s for s in all_services if s not in set(primary)})
     return (
-        "PRIMARY services (they aggregate this chunk's assets - link Systems to THESE first):\n"
+        "PRIMARY services (they aggregate this unit's assets - link Systems to THESE first,\n"
+        "but they are a PRIORITY, not a restriction):\n"
         f"{prim_lines}\n"
-        f"SECONDARY services (other asset-bearing services): {secondary or '(none)'}"
+        f"ALSO LINKABLE - every other live Service (a System may overlay any of them): "
+        f"{shared or '(none)'}"
     )
 
 
 _LINKING_TASK = (
-    "TASK - LINK SERVICES (system_edges ONLY). Connect each System above to the "
-    "Service(s) it overlays, choosing the exact edge label "
+    "TASK - LINK SERVICES (system_edges ONLY). Connect each System above to EVERY "
+    "Service it genuinely overlays, choosing the exact edge label "
     "(EXPOSED_VIA a REST/GraphQL API OR a WebPresentation page-cluster - copy its "
     "'<service>::<cluster>' discriminator VERBATIM so the edge hits the right node; "
     "FRONTED_BY / PROTECTED_BY / ROUTED_BY a perimeter; "
-    "IDENTIFIED_BY / AUTHENTICATED_BY / AUTHORIZED_BY the identity Systems). Copy each "
-    "service_slug VERBATIM from the lists above; prefer PRIMARY services. Leave every "
-    "other list EMPTY."
+    "IDENTIFIED_BY / AUTHENTICATED_BY / AUTHORIZED_BY the identity Systems). A "
+    "Service unit may link its System to ANY live Service; a System unit may link to "
+    "any rider. There is NO per-unit write scope - pick the owner that FITS, and copy "
+    "each service_slug VERBATIM. Leave every other list EMPTY."
 )
 
 
-# The typist's four sub-problems (spec 3.3), each mapping onto a run of the
-# `_REFLECTION_STEPS` stages: ORIENT+HYPOTHESISE, CLUSTER PAGES, VERIFY-FALSIFY+
-# INTEGRATE, EMIT. The two reasoning turns emit `claims`; the two extraction turns
-# emit `systems` and `system_edges`. Every turn speaks `AnalysisTurn`, so the tool
-# set never toggles. Placed here, after the prompt texts it composes.
+# The typist's eight unit-first sub-problems (T2), each mapping onto a run of the
+# `_REFLECTION_STEPS` stages: ORIENT, HYPOTHESISE, CLUSTER PAGES, VERIFY-FALSIFY,
+# INTEGRATE, EMIT. The reasoning turns emit `claims`; the two extraction turns emit
+# `systems` and `system_edges`. Every turn speaks `AnalysisTurn`, so the tool set
+# never toggles. The unit kind selects the CENTRAL QUESTION direction: a Service
+# unit asks forward (which Systems does this Service rely on); a System unit asks
+# the same question in reverse (which Services rely on this overlay). Placed here,
+# after the prompt texts it composes.
 _ROLE_HEADER = role_header(
     "the TechnicalSystem mechanism-typist",
-    "reconstruct, at breadth, the cross-cutting technical Systems this surface "
-    "evidences and how they overlay the Services",
+    "reconstruct, at breadth, the cross-cutting technical Systems a unit relies on "
+    "(or overlays) and how they bind to the Services",
 )
 
 WORKFLOW = ReasoningWorkflow(
     role_id="mechanism_typist",
     sub_problems=(
         SubProblem(
-            id="unit_surface_read",
-            name="unit surface read",
+            id="orient_from_catalog",
+            name="orient from the catalog",
             prompt=(
-                f"{_ROLE_HEADER}\n\nREAD THE UNIT - the broad L0 query phase. You are "
-                "given ONE unit (its identity and kind). Call `graph_view` with bounded "
-                "read-only Cypher (always a LIMIT) to enumerate this unit's L0 "
-                "`Endpoint`s broadly, with NO asset-name assumption: do NOT filter by "
-                "any path, URL, or parameter name you guessed. A Service's endpoints are "
-                "reached by traversing `AGGREGATES`; a System's endpoints are its own "
-                "`EVIDENCED_BY` fingerprints plus the `AGGREGATES` endpoints of every "
-                "Service that rides it. Read every returned endpoint with the response "
-                "evidence that discriminates a mechanism (`content_type`, `title`, "
-                "`status_code`, `server`, `content_length`). Then call `graph_view` "
-                "again to fetch the triager `Observation`s anchored to those endpoints, "
-                "matching on the broad anchor (`BaseURL`, `Subdomain`, `Domain`, `IP`, "
-                "`Service`) - an observation is never anchored on a narrow `Endpoint`, so "
-                "look it up on the endpoint's owning BaseURL too. Emit one Claim per "
-                "distinct endpoint: `subject` the endpoint; `assertion` the mechanism "
-                "evidence you actually read; `evidence` the response fields; `verdict` a "
-                "tentative mechanism kind or `unknown`. Read the surfaces the unit "
-                "SERVES, not the names it CARRIES. Emit `claims` only."
+                f"{_ROLE_HEADER}\n\n{cot_scaffold(_REFLECTION_STEPS[:1])}\n\n"
+                "ORIENT FROM THE CATALOG. "
+                "Use the fed RDF catalog, the currently-defined Systems, and the UNIT "
+                "subject to state the mechanism landscape for THIS unit: which System "
+                "kinds are plausible for it, and which the catalog rules out. Emit one "
+                "Claim per candidate kind: `subject` the unit; `assertion` why that kind "
+                "fits (or is ruled out); `evidence` the catalog entry or the unit "
+                "description clause; `verdict` `plausible` or `ruled-out`. Emit `claims` "
+                "only."
+            ),
+            inject=("unit", "inventory", "vocabulary"),
+            emit=("claims",),
+        ),
+        SubProblem(
+            id="harvest_surface",
+            name="harvest the surface",
+            prompt=(
+                f"{_ROLE_HEADER}\n\nHARVEST THE SURFACE - DISCOVER THE UNIT'S SURFACE, "
+                "from the unit and not from a pre-fed slice. Read the unit's identifier "
+                "and description, and, "
+                "for a Service unit, its already-aggregated endpoints. Hypothesise the "
+                "paths and mechanisms the unit implies FIRST, then call `graph_view` "
+                "with bounded read-only Cypher (always a LIMIT) to confirm or refute "
+                "each guess and to enumerate broadly: for a Service unit traverse "
+                "`AGGREGATES`; for a System unit read its `EVIDENCED_BY` fingerprints "
+                "plus the `AGGREGATES` endpoints of every Service that rides it. The "
+                "HTTP-history pair is bound: call `search_http_history` on each "
+                "hypothesised path and read the recorded request shape where it helps. "
+                "Read every returned endpoint with the response evidence that "
+                "discriminates a mechanism (`content_type`, `title`, `status_code`, "
+                "`server`). Emit one Claim per discovered endpoint: `subject` the "
+                "endpoint; `assertion` the mechanism evidence you actually read; "
+                "`evidence` the Cypher/history query that found it; `verdict` a "
+                "tentative mechanism kind or `unknown`. Read what the unit SERVES, not "
+                "the names it CARRIES; a guess that returns nothing is a valid miss. "
+                "Emit `claims` only."
             ),
             inject=("unit",),
             emit=("claims",),
@@ -445,7 +492,7 @@ WORKFLOW = ReasoningWorkflow(
             prompt=(
                 f"{_ROLE_HEADER}\n\nRECALL PRIOR INSIGHTS - read before you reason. Call "
                 "the `notes` tool with command=\"read\" on the unit slug; call it again "
-                "with `body_keyword` set to each mechanism noun the surface read surfaced "
+                "with `body_keyword` set to each mechanism noun the harvest surfaced "
                 "(for example `auth`, `session`, `api`, `presentation`) so a note another "
                 "earlier unit wrote about a shared mechanism is found even when keyed by "
                 "a different unit. Do not re-derive a mechanism an earlier unit already "
@@ -455,23 +502,34 @@ WORKFLOW = ReasoningWorkflow(
                 "`supersede`. A run with no prior notes is a valid result - say so. Emit "
                 "`claims` only."
             ),
-            inject=("unit", "unit_surface_read"),
+            inject=("unit", "harvest_surface"),
             emit=("claims",),
-            depends_on=("unit_surface_read",),
+            depends_on=("harvest_surface",),
         ),
         SubProblem(
             id="mechanism_hypotheses",
             name="mechanism hypotheses",
             prompt=(
-                f"{_ROLE_HEADER}\n\n{cot_scaffold(_REFLECTION_STEPS[:2])}\n\n"
-                "Emit one Claim per asset+observation: `subject` the asset, `assertion` "
-                "the candidate System kind and whether it is new or an extension, "
-                "`evidence` the response evidence you read, `verdict` new-vs-extend with "
-                "the defined System key. Emit `claims` only; do not emit deltas yet."
+                f"{_ROLE_HEADER}\n\n{cot_scaffold(_REFLECTION_STEPS[1:2])}\n\n"
+                "Answer the CENTRAL QUESTION for THIS unit, in the DIRECTION its kind "
+                "selects (the unit block states it): a SERVICE unit asks forward - "
+                "given the catalog, which technical Systems could this Service rely on "
+                "to offer its contract, and HOW is that contract implemented; which "
+                "relied-upon Systems are NOT yet mapped. A SYSTEM unit asks the same "
+                "question in reverse - which Services rely on this technical overlay, "
+                "and how. Hypothesise from the contract/overlay first, then hold the "
+                "candidate against the harvested surface. Emit one Claim per hypothesis: "
+                "`subject` the unit or the candidate System/Service; `assertion` the "
+                "candidate System kind (or rider Service and rel) and whether it is new "
+                "or an extension; `evidence` the contract clause and the harvested "
+                "surface that licenses it; `verdict` new-vs-extend with the defined "
+                "System key (or the rider slug + rel). Emit `claims` only; do not emit "
+                "deltas yet."
             ),
-            inject=("unit", "surface", "inventory", "vocabulary", "unit_surface_read", "prior_insights"),
+            inject=("unit", "inventory", "vocabulary", "observations",
+                    "orient_from_catalog", "harvest_surface", "prior_insights"),
             emit=("claims",),
-            depends_on=("unit_surface_read", "prior_insights"),
+            depends_on=("orient_from_catalog", "harvest_surface", "prior_insights"),
         ),
         SubProblem(
             id="page_clusters",
@@ -482,9 +540,9 @@ WORKFLOW = ReasoningWorkflow(
                 "the cluster and its member page paths, `evidence` the shared "
                 "title/structure/size, `verdict` the short cluster slug. Emit `claims` only."
             ),
-            inject=("unit", "unit_surface_read"),
+            inject=("unit", "harvest_surface"),
             emit=("claims",),
-            depends_on=("unit_surface_read",),
+            depends_on=("harvest_surface",),
         ),
         SubProblem(
             id="systems_extract",
@@ -493,7 +551,7 @@ WORKFLOW = ReasoningWorkflow(
                 f"{_ROLE_HEADER}\n\n{cot_scaffold(_REFLECTION_STEPS[3:5])}\n\n"
                 f"{_SYSTEMS_TASK}"
             ),
-            inject=("inventory", "vocabulary", "mechanism_hypotheses", "page_clusters"),
+            inject=("unit", "inventory", "vocabulary", "mechanism_hypotheses", "page_clusters"),
             emit=("systems",),
             depends_on=("mechanism_hypotheses", "page_clusters"),
         ),
@@ -590,20 +648,79 @@ def _load_skill() -> str:
     return cached
 
 
-# --- the 4-sub-problem proposer body ------------------------------------------
+# --- the 8-sub-problem proposer body ------------------------------------------
 
-def _unit_block(chunk: Chunk) -> str:
-    """The `unit` base source: the ONE unit this workflow enriches, its kind, and
-    the discipline that makes the unit - not the asset names - the reasoning anchor
-    (the v2 enrichment principle)."""
+def _unit_kind(chunk: Chunk) -> str:
+    """`System` for a System unit (`source_job` prefixed `system:`), else `Service`."""
+    return "System" if str(getattr(chunk, "source_job", "") or "").startswith("system:") else "Service"
+
+
+def _service_slug(chunk: Chunk) -> str:
+    """The unit's Service slug: `source_job`'s `service:` suffix, else the chunk id."""
+    src = str(getattr(chunk, "source_job", "") or "")
+    return src.removeprefix("service:") if src.startswith("service:") else str(chunk.chunk_id)
+
+
+def _aggregated_endpoints_repr(aggregations: list[dict] | None, slug: str) -> str:
+    """Render the Service's OWN already-aggregated endpoints from the live
+    aggregation view, one `METHOD /path (baseurl)` per row. `(none)` when the
+    Service aggregates nothing yet, so a thin slice renders explicitly."""
+    lines: list[str] = []
+    for row in aggregations or []:
+        if row.get("slug") != slug or "Endpoint" not in (row.get("labels") or []):
+            continue
+        props = row.get("props") or {}
+        path = props.get("path")
+        if not isinstance(path, str):
+            continue
+        method = str(props.get("method") or "").upper()
+        baseurl = props.get("baseurl")
+        line = " ".join(part for part in (method, path) if part)
+        if baseurl:
+            line = f"{line} ({baseurl})"
+        lines.append(line)
+    return "; ".join(lines) if lines else "(none)"
+
+
+def _unit_block(chunk: Chunk, *, inventory: dict | None = None,
+                aggregations: list[dict] | None = None) -> str:
+    """The `unit` base source: the ONE unit this workflow enriches, its kind, its
+    DESCRIPTION, and the direction-dependent central question (T2).
+
+    A Service unit carries its `service_contract` and the endpoints it already
+    aggregates; a System unit carries its bootstrapped `description`. The central
+    question is stated FORWARD for a Service (which Systems does it rely on) and in
+    REVERSE for a System (which Services rely on this overlay). The unit - not any
+    asset name - is the reasoning anchor; the description is what the typist reasons
+    FROM, so an absent description renders explicitly rather than as a blank line."""
     slug = str(chunk.chunk_id)
-    kind = "System" if str(getattr(chunk, "source_job", "") or "").startswith("system:") else "Service"
+    kind = _unit_kind(chunk)
+    inv = inventory or {}
+    service = _service_slug(chunk)
+    if kind == "System":
+        key = str(getattr(chunk, "source_job", "") or "").removeprefix("system:")
+        description = (inv.get("system_descriptions") or {}).get(key, "")
+        description_line = f"UNIT DESCRIPTION (the mechanism overlay): {description.strip() or '(none)'}"
+        question = (
+            "CENTRAL QUESTION (inverse): which Services rely on this technical "
+            "overlay, and how? Name each rider and the edge label that binds it.")
+    else:
+        description = (inv.get("service_contracts") or {}).get(service, "")
+        description_line = f"UNIT DESCRIPTION (the service_contract): {description.strip() or '(none)'}"
+        question = (
+            "CENTRAL QUESTION (forward): given the catalog, which technical Systems "
+            "could this Service rely on to offer its contract, and HOW is the contract "
+            "implemented? Name the relied-upon Systems that are NOT yet mapped.")
     return (
         f"UNIT: {slug}\n"
         f"UNIT KIND: {kind}\n"
-        "This unit - not any asset name - is the reasoning anchor. Enumerate the L0 "
-        "endpoints the unit SERVES: a Service aggregates them; a System fingerprints "
-        "them and the Services that ride it bring the rest."
+        f"{description_line}\n"
+        f"UNIT ALREADY AGGREGATES: {_aggregated_endpoints_repr(aggregations, service)}\n"
+        f"{question}\n"
+        "This unit - not any asset name - is the reasoning anchor. Its FUNCTIONAL "
+        "role is to ask the central question above, then DISCOVER the surface that "
+        "answers it through the tools; a Service aggregates surface, a System "
+        "fingerprints it and the Services that ride it bring the rest."
     )
 
 
@@ -619,9 +736,11 @@ def type_mechanisms(
     project_id: str | None = None,
     first_definer: bool = False,
 ) -> L1DeltaBatch:
-    """The A.1 mechanism-typist body (grilled #9): the `WORKFLOW` sub-problem chain
-    (mechanism_hypotheses -> page_clusters -> systems_extract -> link) over a `service`
-    chunk, returning a narrowed `L1DeltaBatch{systems, system_edges}`.
+    """The A.1 mechanism-typist body (grilled #9, unit-first T2): the `WORKFLOW`
+    sub-problem chain (orient_from_catalog -> harvest_surface -> prior_insights ->
+    mechanism_hypotheses -> page_clusters -> systems_extract -> link -> closure) over
+    one unit (Service OR System), returning a narrowed `L1DeltaBatch{systems,
+    system_edges}`.
 
     `invoke_fn(messages, *, schema, system_prompt) -> AnalysisTurn | None` is injected
     (unit-testable). FAIL-CLOSED on hypotheses exhaustion (the chain halts); SOFT
@@ -643,17 +762,19 @@ def type_mechanisms(
     from polymerhus.analysis.proposer_turn import proposer_batch
     from polymerhus.analysis.reasoning_workflow import run_workflow, to_delta_batch
 
-    # The volatile base sources the workflow injects verbatim: the surface with its
-    # adversarial insight, the currently-defined Systems, the vocabulary, and the
-    # primary/secondary service context for linking.
+    # The volatile base sources the workflow injects verbatim: the unit subject with
+    # its description and direction-dependent central question, its adversarial
+    # observation insight, the bootstrapped Systems (with the live Service list), the
+    # RDF catalog, and the linking context. The whole settled surface is NOT a base
+    # source: the model DISCOVERS it through the tools (L1-unit-first).
     all_services = frozenset((inventory or {}).get("services") or [])
     primary, secondary, owned = partition_services(chunk.assets, aggregations or [], all_services)
     base_artifacts = {
-        "unit": _unit_block(chunk),
-        "surface": _asset_observation_paragraphs(chunk),
+        "unit": _unit_block(chunk, inventory=inventory, aggregations=aggregations),
+        "observations": _asset_observation_paragraphs(chunk),
         "inventory": _defined_systems_block(inventory),
         "vocabulary": vocabulary_prompt(),
-        "candidates": _linking_context(primary, secondary, owned),
+        "candidates": _linking_context(primary, secondary, owned, all_services),
     }
 
     # Per-batch memory: the whole chain of ONE chunk shares a session (the batch

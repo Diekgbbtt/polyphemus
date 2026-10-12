@@ -112,16 +112,16 @@ def _edge(slug, kind, rel):
 
 def _systems_workflow_prompt(inventory):
     """The systems_extract sub-problem's rendered human message."""
-    return render_turn(WORKFLOW.sub_problems[2], {
+    return render_turn(WORKFLOW.sub_problems[5], {
         "inventory": _defined_systems_block(inventory),
         "vocabulary": "",
     })
 
 
-def _linking_workflow_prompt(primary, secondary, owned):
+def _linking_workflow_prompt(primary, secondary, owned, all_services=()):
     """The link sub-problem's rendered human message."""
-    return render_turn(WORKFLOW.sub_problems[3], {
-        "candidates": _linking_context(primary, secondary, owned),
+    return render_turn(WORKFLOW.sub_problems[6], {
+        "candidates": _linking_context(primary, secondary, owned, all_services),
     })
 
 
@@ -156,15 +156,16 @@ def test_N1_narrow_pure_shaper_drops_non_typing():
     assert out.systems and out.system_edges
 
 
-# --- N2: four-call sequence in order ------------------------------------------
+# --- N2: the eight-call unit-first sequence in order --------------------------
 
-def test_N2_four_call_sequence_reasoning_then_extract_then_link():
+def test_N2_eight_call_unit_first_sequence_reasoning_then_extract_then_link():
     inv = ScriptedInvoke(systems=_turn(systems=[_sys("WAF")]),
                          linking=_turn(edges=[_edge("checkout", "WAF", "FRONTED_BY")]))
     type_mechanisms(_service_chunk(), invoke_fn=inv)
-    assert inv.schemas == [AnalysisTurn] * 4          # hypotheses -> clusters -> systems -> link
-    assert _SYSTEMS_MARKER in inv.calls[2][1]
-    assert _LINKING_MARKER in inv.calls[3][1]
+    # orient -> harvest -> prior -> hypotheses -> clusters -> systems -> link -> closure
+    assert inv.schemas == [AnalysisTurn] * 8
+    assert _SYSTEMS_MARKER in inv.calls[5][1]
+    assert _LINKING_MARKER in inv.calls[6][1]
 
 
 # --- N3: reflection fail-closed -----------------------------------------------
@@ -262,11 +263,14 @@ def test_N7_partition_primary_secondary_and_asset_less_excluded():
 
 
 def test_N7_linking_prompt_prefers_primary_and_shows_their_assets():
-    prompt = _linking_workflow_prompt(["checkout"], ["search"], {"checkout": ["Endpoint:/a"]})
+    prompt = _linking_workflow_prompt(
+        ["checkout"], ["search"], {"checkout": ["Endpoint:/a"]},
+        all_services=("checkout", "search", "profile"))
     assert "PRIMARY services" in prompt and "checkout" in prompt
     assert "Endpoint:/a" in prompt                               # the owned asset shown as evidence
-    assert "search" in prompt                                    # secondary listed
-    assert "prefer PRIMARY" in prompt
+    assert "search" in prompt                                    # shared-surface listed
+    assert "profile" in prompt                                   # the FULL live inventory (no write scope)
+    assert "PRIORITY, not a restriction" in prompt               # primary is a hint, never a scope
 
 
 # --- N8: observations feed reasoning ONLY -------------------------------------

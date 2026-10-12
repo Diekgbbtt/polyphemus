@@ -1,7 +1,7 @@
 # ADR: the batched L1-unit-first analysis prompt variant
 
 *Status: accepted for implementation 2026-10-12 (branch `feat/analysis-unit-enrichment`).*
-*T0 built the selection seam; T1 rewrote the assigner prompt and re-parameterised its code workflow (section "The assigner (T1)"); T2-T3 rewrite the other two roles.*
+*T0 built the selection seam; T1 rewrote the assigner prompt and re-parameterised its code workflow (section "The assigner (T1)"); T2 rewrote the mechanism-typist (section "The mechanism-typist (T2)"); T3 rewrites the data-modeller.*
 
 ## Context
 
@@ -38,6 +38,16 @@ T1 rewrites the assigner's HOW prompt (`assigner-batched-l1unit-first.md`) and r
 8. **No per-Service write filter.** `assign_services` judges each Service with the FULL live inventory (`existing_slugs=all_slugs`), so a Service may name ANY live Service as owner. The GLOBAL validation gate (`drop_out_of_inventory`) is unchanged: a slug that is not a live Service is still dropped.
 9. **The HTTP-history pair is bound for every harvesting proposer.** `search_http_history` / `get_http_artifact` join `graph_view` on every assigner (and, for T2, mechanism-typist) turn, so the bound tool set matches the tools the rewritten workflow tells the model to call and stays constant across a run (the cache rule).
 
+## The mechanism-typist (T2)
+
+T2 rewrites the mechanism-typist's HOW prompt (`technical-system-batched-l1unit-first.md`) and re-parameterises its code workflow.
+
+10. **The analysis object is the L1 UNIT, and the question has two directions.** The typist no longer reads "a streamed slice of a target's observable surface". Its unit is a Service OR a System (`service_slice.build_service_slices` appends both). A Service unit asks the CENTRAL question FORWARD: given the catalog, which technical Systems could this Service rely on to offer the service in its contract, and how is that contract implemented; which relied-upon Systems are not yet mapped. A System unit asks the SAME question in REVERSE: which Services rely on this overlay, and how. The unit kind selects the direction; the unit block states it.
+11. **The workflow is the unit-first chain.** `orient_from_catalog` (read the RDF catalog, the bootstrapped Systems, and the unit; state the mechanism landscape) -> `harvest_surface` (discover the unit's surface through `graph_view` and the bound HTTP-history pair) -> `prior_insights` -> `mechanism_hypotheses` (the direction-dependent central question, with the fail-closed halt preserved) -> `page_clusters` -> `systems_extract` -> `link` -> `closure`. Every turn speaks the ONE `AnalysisTurn` envelope.
+12. **The catalog, the bootstrapped Systems, and the unit ride the HumanMessage.** The base artifacts are the `unit` block (identifier, kind, description - the `service_contract` for a Service, the System `description` for a System - plus the Service's aggregated L0 endpoints), the `inventory` (the bootstrapped Systems with their descriptions, plus the live Service list), the `vocabulary` (every System `kind` and System-edge `rel`, via `l1_curator.vocabulary_prompt()`), the `observations`, and the linking `candidates`. None moves into the stable system prompt.
+13. **The "read what exists; never filter on a path you guessed" rule is REVERTED for this role.** The typist now starts FROM the contract and hypothesises, then VERIFIES against the graph and the HTTP history. The old `unit_surface_read` turn is gone, replaced by `harvest_surface`.
+14. **No per-unit `service_slug` write scope on `link`.** A Service unit may link a System to ANY live Service it genuinely overlays; a System unit may link to any rider. The `link` context names the full live Service inventory and marks PRIMARY a PRIORITY, never a restriction. The only surviving gate is the curator's global validation (a `rel` or `kind` outside the catalog is dropped) - a slug that is not a live Service is rejected by the write layer, never scoped by this role.
+
 ## Consequences
 
 - The three new files start as verbatim copies, so the seam is testable before T1-T3 rewrite the content.
@@ -53,3 +63,5 @@ T1 rewrites the assigner's HOW prompt (`assigner-batched-l1unit-first.md`) and r
 
 - `analysis-unit-enrichment-adr.md` item 4 (`existing_slugs={slug}`, the per-Service write scope) is superseded by decision 8: the write filter is removed; only global inventory validation remains.
 - The assigner's v2 `surface_scan -> prior_insights -> candidate_owners -> assign -> closure` chain (and its pre-fed surface source) is superseded by decision 6/7.
+- The mechanism-typist's v2 `unit_surface_read -> prior_insights -> mechanism_hypotheses -> page_clusters -> systems_extract -> link -> closure` chain (ADR D46) and its `unit_surface_read` "no asset-name assumption" rule are superseded by decisions 10-14: `unit_surface_read` is replaced by `orient_from_catalog` + `harvest_surface`, and the "read what exists" discipline is reverted to hypothesis-then-verify for this role.
+- The pre-fed surface / per-unit write-scope framing of the v2 service-sourced pipeline (ADR `analysis-unit-enrichment-adr.md`) is superseded for this role by the unit-first feed and the removed `link` scope.
