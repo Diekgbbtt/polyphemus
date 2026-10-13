@@ -283,6 +283,13 @@ All three chunk-fed proposers are **STATEFUL session agents as of #94** (`agent_
 
 **Constant request shape (2026-10-10 cache experiment, extended by the reasoning workflow and T3):** every turn of a proposer role binds the SAME tool set - the `AnalysisTurn` envelope plus the shared analysis `notes` tool - so the request shape never toggles and the provider prefix cache matches across a role's whole sub-problem chain. Before this the reflection bound NO tool and the extraction bound one, so `data_modeller`'s strict `P,S,P,S` schedule toggled the tool set every call and the provider prefix cache never matched (`cache_read=0`). `mechanism_typist`'s `P,S,S` shared an `S,S` tool set and cached, which was the asymmetry that named the fix. The structured tool is derived with the native LangGraph primitive `langchain.agents.structured_output.OutputToolBinding.from_schema_spec(...)` - the SAME derivation `create_agent` runs, never a hand-built look-alike - so the serialized `tools=` payload cannot drift between the turns. `notes` is bound through the session `tools=` seam, never the skills seam (`skill_agent_binding` would raise for an undeclared role; ADR D33).
 
+**HTTP-history MCP session (per unit)** (`app/clients/kali_http_history.py`, ADR `http-history-mcp-session-per-unit`):
+The single kali MCP session a unit's proposer holds for its HTTP-history reads.
+The unit's first `search_http_history` / `get_http_artifact` call opens one `ClientSession` on a process-wide background loop and loads its tools; every later call of the same unit reuses it; the unit boundary (the `proposer_batch` exit) closes it.
+It replaces the prior one-session-per-call shape, so a unit pays ONE MCP handshake rather than one per tool call.
+Every wait (open, call, close) is bounded, so a session that cannot return degrades to the `http_history_failed` bundle instead of stalling the turn.
+_Why a background loop_: a `ClientSession` is bound to the loop it opened on, so a per-call bridge (a fresh loop each time) could never reuse one.
+
 **Analysis episodic memory** (`analysis/memory.py`, ADR D27-D32):
 The durable per-Service memory the proposers write through the shared `notes` tool, at `data/<project_id>/analysis/memory.yaml`.
 One whole-file YAML list of note records keyed by the Service slug (`<unit>:<note_name>`), bounded by the shared `retain_bounded_records` with `MEMORY_NOTES_MAX_RECORDS` / `MEMORY_NOTES_MAX_BYTES`.

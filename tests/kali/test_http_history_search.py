@@ -1,6 +1,8 @@
 """Conjunctive attribute search, FTS, deterministic pagination, isolation."""
 from __future__ import annotations
 
+import sqlite3
+
 import pytest
 
 from kali.http_history.models import (
@@ -213,3 +215,61 @@ def test_absent_does_not_require_a_value(tmp_path):
          "op": "absent"},
     ])
     assert len(page.artifacts) == 3
+
+
+def _seed_flat(store: HttpHistoryStore, n: int) -> None:
+    """N artifacts that ALL carry `response/header/server`, so the filter key's
+    attribute cardinality equals the flow count - the shape that exposes a
+    per-flow correlated scan as quadratic."""
+    for i in range(n):
+        artifact, bodies = _artifact(
+            f"http_01J{i:024d}A",
+            created_at=float(i),
+            response_body=f"marker-{i}".encode(),
+        )
+        artifact.response.headers = [("server", "nginx")]
+        store.record(artifact, bodies=bodies)
+
+
+def _vm_progress_calls(store: HttpHistoryStore, filters: list[dict], budget: int = 5000):
+    """Run a search under a SQLite progress handler and count how many VM-step
+    checkpoints it crosses. This is a deterministic proxy for how many rows the
+    query visits: the old correlated `EXISTS`/`NOT EXISTS` form crosses
+    O(flows x matching-attributes), the semi-join crosses O(flows + attributes).
+    Returns (aborted, checkpoints)."""
+    conn = store._conn
+    counter = {"n": 0}
+
+    def handler():
+        counter["n"] += 1
+        return 1 if counter["n"] > budget else 0
+
+    conn.set_progress_handler(handler, 100)
+    aborted = False
+    try:
+        store.search(filters)
+    except sqlite3.OperationalError:
+        aborted = True
+    finally:
+        conn.set_progress_handler(None, 0)
+    return aborted, counter["n"]
+
+
+@pytest.mark.parametrize(
+    "filters",
+    [
+        [{"side": "response", "namespace": "header", "key": "server", "op": "absent"}],
+        [
+            {"side": "response", "namespace": "header", "key": "server",
+             "op": "contains", "value": "zzqqxx"},
+        ],
+    ],
+)
+def test_search_filter_does_not_scan_attributes_per_flow(tmp_path, filters):
+    """Regression for the arm-F MCP hang: a filter on a common key must not make
+    SQLite re-scan every matching attribute row once per flow."""
+    store = HttpHistoryStore(tmp_path, "proj-1")
+    _seed_flat(store, 800)
+    aborted, calls = _vm_progress_calls(store, filters)
+    assert not aborted, "search filter ran a per-flow correlated scan (quadratic)"
+    assert calls < 5000, f"search filter is not linear in the store size ({calls} checkpoints)"

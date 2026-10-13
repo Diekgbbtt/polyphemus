@@ -69,6 +69,28 @@ def test_run_coro_blocking_propagates_exceptions_from_within_running_loop():
         asyncio.run(outer())
 
 
+def test_run_coro_blocking_times_out_within_a_running_loop():
+    """A collaborator that never returns must not block the calling turn: with a
+    `timeout_s`, `run_coro_blocking` raises `TimeoutError` (the caller degrades
+    fail-open) instead of hanging on the abandoned worker's loop."""
+    import time
+
+    async def _slow():
+        await asyncio.sleep(30)
+
+    def sync_node():
+        start = time.monotonic()
+        with pytest.raises(TimeoutError):
+            run_coro_blocking(_slow(), timeout_s=0.05)
+        return time.monotonic() - start
+
+    async def outer():
+        return sync_node()
+
+    elapsed = asyncio.run(outer())
+    assert elapsed < 5.0
+
+
 def test_default_exec_fn_works_when_called_from_within_running_loop(monkeypatch):
     """Mirrors the exact production nesting that triggered the bug:
     `routes.py POST /recon` -> `asyncio.create_task` -> `run_pipeline` ->

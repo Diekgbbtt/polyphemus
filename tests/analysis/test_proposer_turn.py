@@ -448,6 +448,22 @@ def test_per_batch_scope_gives_each_chunk_a_fresh_thread(monkeypatch):
     assert "chunk 1 reflection" not in contents
 
 
+def test_per_batch_scope_closes_the_http_history_session(monkeypatch):
+    """The batch scope is ALSO the HTTP-history MCP session boundary: the unit's
+    first kali call opens one session and the scope's exit closes it, so a unit
+    carries one handshake and never leaks a connection into the next unit."""
+    from polymerhus.analysis.proposer_turn import proposer_batch
+
+    closed: list[int] = []
+    monkeypatch.setattr(
+        "polymerhus.app.clients.kali_http_history.close_unit_session",
+        lambda: closed.append(1),
+    )
+    with proposer_batch("chunk-1"):
+        pass
+    assert closed == [1]
+
+
 def test_no_batch_scope_keeps_the_run_role_thread(monkeypatch):
     """Back-compat: an unscoped invoke (the existing callers) keeps the documented
     `run:role` thread - the per-batch discriminator is additive, never a forced

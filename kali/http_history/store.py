@@ -336,18 +336,29 @@ class HttpHistoryStore:
                 raise ValueError(f"unknown op {op!r}")
             if namespace == "header":
                 key = key.lower()
+            # A semi-join (`IN (SELECT ...)`) is chosen over a correlated
+            # `EXISTS`/`NOT EXISTS` subquery on purpose. The correlated form makes
+            # SQLite re-scan every attribute row sharing `(side, namespace, key)`
+            # for EACH candidate flow, so a filter on a common key costs
+            # O(flows x matching-attributes) - on a real capture (32k flows, 32k
+            # `response/header/server` rows) that is ~1e9 index probes and the
+            # search never returns. The `IN` form lets the planner materialise the
+            # matching attribute ids once and probe the flow primary key, which is
+            # linear in the result set (measured 83s -> 0.03s for `absent`, and
+            # >90s -> 0.005s for a no-match `contains` on the same store).
+            # `attributes.artifact_id` is NOT NULL, so `NOT IN` carries no NULL
+            # hazard.
             if op == "absent":
                 clauses.append(
-                    "NOT EXISTS (SELECT 1 FROM attributes a "
-                    "WHERE a.artifact_id = f.artifact_id "
-                    "AND a.side = ? AND a.namespace = ? AND a.key = ?)"
+                    "f.artifact_id NOT IN (SELECT a.artifact_id FROM attributes a "
+                    "WHERE a.side = ? AND a.namespace = ? AND a.key = ?)"
                 )
                 params.extend([side, namespace, key])
                 continue
             clause, clause_params = _op_sql(op, value)
             clauses.append(
-                "EXISTS (SELECT 1 FROM attributes a WHERE a.artifact_id = f.artifact_id "
-                "AND a.side = ? AND a.namespace = ? AND a.key = ? AND " + clause + ")"
+                "f.artifact_id IN (SELECT a.artifact_id FROM attributes a "
+                "WHERE a.side = ? AND a.namespace = ? AND a.key = ? AND " + clause + ")"
             )
             params.extend([side, namespace, key, *clause_params])
         where = (" AND " + " AND ".join(clauses)) if clauses else ""
