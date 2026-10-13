@@ -181,14 +181,16 @@ def test_per_agent_threshold_env_beats_the_global(monkeypatch):
     assert C.resolve_window("mechanism_typist", threshold=None).threshold == 0.90
 
 
-def test_per_agent_threshold_falls_back_to_the_role_default(monkeypatch):
-    """No per-agent env, no global env: the role's own declared default applies (the
-    mined per-batch values), and an unlisted role keeps the 0.90 default."""
+def test_per_agent_threshold_falls_back_to_the_module_default(monkeypatch):
+    """No per-agent env, no global env, and no role default: the module-wide 0.90
+    applies to every role. The analysis proposers no longer carry a per-role default
+    (operator directive 2026-10-13: all agents use the global 0.2), so they fall
+    through to the module default rather than compacting early."""
     monkeypatch.delenv(C.COMPACTION_THRESHOLD_ENV, raising=False)
     monkeypatch.delenv(C.role_threshold_env_name("data_modeller"), raising=False)
     monkeypatch.delenv(C.role_threshold_env_name("mechanism_typist"), raising=False)
-    assert C.resolve_window("data_modeller", threshold=None).threshold == 0.016
-    assert C.resolve_window("mechanism_typist", threshold=None).threshold == 0.08
+    assert C.resolve_window("data_modeller", threshold=None).threshold == 0.90
+    assert C.resolve_window("mechanism_typist", threshold=None).threshold == 0.90
     assert C.resolve_window("assigner", threshold=None).threshold == 0.90
 
 
@@ -203,13 +205,13 @@ def test_per_agent_threshold_is_validated_fail_fast(monkeypatch):
         raise AssertionError(f"per-agent threshold {bad!r} did not raise LLMConfigError")
 
 
-def test_role_compaction_middleware_reads_the_role_default(monkeypatch):
+def test_role_compaction_middleware_reads_the_resolved_threshold(monkeypatch):
     """The wiring half: a middleware built for a role is bound to that role's
-    resolved threshold, so the experiment value actually reaches the manager."""
+    resolved threshold. With no role default and no env, that is the module 0.90."""
     monkeypatch.delenv(C.COMPACTION_THRESHOLD_ENV, raising=False)
     monkeypatch.delenv(C.role_threshold_env_name("data_modeller"), raising=False)
     mw = C.create_compaction_middleware("data_modeller")
-    assert mw.window.threshold == 0.016
+    assert mw.window.threshold == 0.90
 
 
 def test_window_resolves_from_capability_and_fails_open(monkeypatch, caplog):

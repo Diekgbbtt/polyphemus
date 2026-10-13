@@ -804,17 +804,20 @@ def type_mechanisms(
     skill = _load_skill()
 
     from polymerhus.analysis.l1_curator import vocabulary_prompt
+    from polymerhus.analysis.pod import surface_block
     from polymerhus.analysis.proposer_turn import proposer_batch
     from polymerhus.analysis.reasoning_workflow import run_workflow, to_delta_batch
 
-    # The volatile base sources the workflow injects verbatim: the unit subject with
-    # its description and direction-dependent central question, its adversarial
-    # observation insight, the bootstrapped Systems (with the live Service list), the
-    # RDF catalog, and the linking context. The whole settled surface is NOT a base
-    # source: the model DISCOVERS it through the tools (L1-unit-first).
+    # The volatile base sources the workflow injects verbatim: the observed L0
+    # surface (endpoint-first, read directly rather than rediscovered), the unit
+    # subject with its description and direction-dependent central question, its
+    # adversarial observation insight, the bootstrapped Systems (with the live
+    # Service list), the RDF catalog, and the linking context. `surface` is FIRST so
+    # it heads the request prefix.
     all_services = frozenset((inventory or {}).get("services") or [])
     primary, secondary, owned = partition_services(chunk.assets, aggregations or [], all_services)
     base_artifacts = {
+        "surface": surface_block(chunk.assets),
         "unit": _unit_block(chunk, inventory=inventory, aggregations=aggregations),
         "observations": _asset_observation_paragraphs(chunk),
         "inventory": _defined_systems_block(inventory),

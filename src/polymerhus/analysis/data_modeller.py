@@ -1070,12 +1070,15 @@ def model_data(
     for a in admitted:
         admitted_counts[a.type] += 1
 
-    # The volatile base sources the workflow injects verbatim. The whole settled
-    # surface is NOT a base source (L1-unit-first): the model DISCOVERS it through
-    # the tools. Only the unit context, the known DataItems, the full live Service
-    # inventory and the origin-scoped insight travel the prompt. `sites` still
-    # feeds the deterministic gates (reference resolution, observed vocabulary).
+    # The volatile base sources the workflow injects verbatim. The observed L0
+    # surface (endpoint-first) heads the request prefix; the unit context, the known
+    # DataItems, the full live Service inventory and the origin-scoped insight
+    # follow. `sites` still feeds the deterministic gates (reference resolution,
+    # observed vocabulary).
+    from polymerhus.analysis.pod import surface_block
+
     base_artifacts = {
+        "surface": surface_block(chunk.assets),
         "service": _service_unit_block(chunk, inventory, aggregations),
         "inventory": _known_items_block(inventory),
         "services": _live_services_block(inventory),

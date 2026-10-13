@@ -402,9 +402,10 @@ def test_live_services_block_lists_the_full_inventory():
     assert "takes a basket to a paid order" in block
 
 
-def test_no_prefed_surface_stream_reaches_the_prompt():
-    """T3: the admitted Parameter is NOT rendered into the prompt as a list. The model
-    discovers it through `graph_view`; only the unit context is fed."""
+def test_the_prefed_surface_stream_reaches_the_first_turn():
+    """Endpoint-first: the admitted Parameter IS rendered into the hoisted base block
+    of the FIRST turn, so the model reads the surface directly instead of having to
+    rediscover it through `graph_view`."""
     captured = {}
 
     def invoke(messages, *, schema=None, system_prompt=None):
@@ -417,7 +418,7 @@ def test_no_prefed_surface_stream_reaches_the_prompt():
                inventory={}, aggregations=[])
     prompt = captured["survey"]
     assert "SERVICE UNIT" in prompt
-    assert "SURFACE_MARKER_PARAM" not in prompt   # the pre-fed asset list is gone
+    assert "SURFACE_MARKER_PARAM" in prompt   # the endpoint-first surface block
 
 
 def test_a_flow_naming_another_live_service_survives_and_a_ghost_is_dropped():
