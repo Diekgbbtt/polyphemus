@@ -1,7 +1,7 @@
 # ADR: the batched L1-unit-first analysis prompt variant
 
 *Status: accepted for implementation 2026-10-12 (branch `feat/analysis-unit-enrichment`).*
-*T0 built the selection seam; T1 rewrote the assigner prompt and re-parameterised its code workflow (section "The assigner (T1)"); T2 rewrote the mechanism-typist (section "The mechanism-typist (T2)"); T3 rewrote the data-modeller (section "The data-modeller (T3)"); T4 is the adversarial-review fix pass (section "The adversarial-review fixes (T4)").*
+*T0 built the selection seam; T1 rewrote the assigner prompt and re-parameterised its code workflow (section "The assigner (T1)"); T2 rewrote the mechanism-typist (section "The mechanism-typist (T2)"); T3 rewrote the data-modeller (section "The data-modeller (T3)"); T4 is the adversarial-review fix pass (section "The adversarial-review fixes (T4)"); T5 scopes the assigner rewrite to `service_sourced` and restores the legacy slice-based assigner for `streamed` (section "The streamed-mode guard (T5)").*
 
 ## Context
 
@@ -66,6 +66,16 @@ Three adversarial reviews (assigner, mechanism-typist, data-modeller) found real
 21. **The residual unit is framed neutrally (B-M8).** The residual (`__residual__`) carries the surface no Service aggregates, but `_unit_kind` returned `Service` and the unit block put the FORWARD Service question with an empty contract. It is now `UNIT KIND: Residual` with a residual central question: which cross-cutting Systems the unaggregated surface evidences, and which are already mapped. The alternative (skipping the typist for the residual) was rejected - the residual surface still evidences mechanisms.
 22. **The canonical note name is `modelling-closure` (C-m6).** The canonical key in `analysis/CONTEXT.md` is `<unit>:modelling-closure`; the data-modeller used the underscore variant `modelling_closure`. Both its prompt files (the batched rewrite and the retained `data-plane.md`) and the in-code `closure_note` prompt now use `modelling-closure`, matching the assigner and the mechanism-typist. The v2 data-modeller design doc is corrected in the same change (the legacy file no longer reproduces the underscore name byte-for-byte; the correction is deliberate). The edge-label catalogue is also single-sourced: the batched mechanism-typist prompt states the FULL 10-value `SYSTEM_EDGE_RELS` set, the `link` turn injects the `vocabulary` artifact, and a test asserts no `rel` is missing from the prompt.
 
+## The streamed-mode guard (T5)
+
+T1-T4 are scoped to the `service_sourced` pipeline - the ADR's whole subject.
+The code applied them UNCONDITIONALLY to the shared `assign` body, so the DEFAULT `streamed` mode broke: it feeds job-keyed chunks (`chunking.chunks_for_job`; `source_job = job.tool`, e.g. `katana`), and the L1-unit-first discipline resolved that job name to a phantom Service (`SERVICE UNIT: katana`, `contract: (none)`), derived no candidate strings from an absent contract, halted at `falsify_harvest`, and wrote ZERO `AGGREGATES` - no `L1Service -> L0` edges.
+Observed live: six streamed assigner pods (`httpx_0`, `katana_0..4`), zero aggregates each.
+
+27. **The rewrite is scoped to `service_sourced`; `streamed` keeps the legacy slice-based assigner.** `assign` gains `unit_first: bool = True`. `unit_first=True` (the `service_sourced` passes `assign_services` / `assign_global`) runs the L1-unit-first `WORKFLOW`, the batched prompt file, and the `_unit_context_block` feed. `unit_first=False` (the `streamed` `make_assigner_body`, the supervisor's chunk-fed `ProposerBody`) runs the restored `WORKFLOW_LEGACY` (`surface_scan -> prior_insights -> candidate_owners -> assign -> closure`), the legacy `assigner.md` prompt file, the pre-fed `surface` artifact (`_slice_repr(l0_slice)`), and the legacy `_service_block`. The prompt variant and the workflow move TOGETHER: an L1-unit-first HOW over a slice-based workflow (or the reverse) is the mismatch the guard prevents.
+28. **The mode is selected at the call site, never sniffed from the chunk shape.** `make_assigner_body` passes `unit_first=False`; the `service_sourced` passes keep the default. A chunk's `source_job` is not a reliable mode signal (a job name and a Service slug are both bare strings, and the batch adapter's source job is empty), so the caller - which knows the mode - owns the choice.
+29. **`WORKFLOW_LEGACY` and `_service_block` are restored verbatim from the pre-T1 assigner (`dd8d376^`), and the loader takes an explicit variant.** `_load_assigner_skill` / `_system_prompt` accept a `variant`, so the streamed flavour loads `assigner.md` regardless of `ANALYSIS_PROMPT_VARIANT` (which still defaults to `batched_l1unit_first` for the `service_sourced` flavour). The streamed behaviour is therefore byte-comparable to what ran before the rewrite.
+
 ## The re-review fixes (T4b)
 
 A second review of the T4 fix pass found the C-M1 index itself unsafe; all findings are fixed in the same change.
@@ -92,7 +102,7 @@ The decision on the SAFE shape of C-M1 was taken by READING THE SLICE BUILDER FI
 ## Superseded
 
 - `analysis-unit-enrichment-adr.md` item 4 (`existing_slugs={slug}`, the per-Service write scope) is superseded by decision 8: the write filter is removed; only global inventory validation remains.
-- The assigner's v2 `surface_scan -> prior_insights -> candidate_owners -> assign -> closure` chain (and its pre-fed surface source) is superseded by decision 6/7.
+- The assigner's v2 `surface_scan -> prior_insights -> candidate_owners -> assign -> closure` chain (and its pre-fed surface source) is superseded by decision 6/7 FOR `service_sourced` ONLY. REFINED by decision 27 (T5): the `streamed` mode RETAINS this chain, restored as `WORKFLOW_LEGACY` behind the `unit_first=False` guard, because it feeds job-keyed chunks that carry no Service contract.
 - The mechanism-typist's v2 `unit_surface_read -> prior_insights -> mechanism_hypotheses -> page_clusters -> systems_extract -> link -> closure` chain (ADR D46) and its `unit_surface_read` "no asset-name assumption" rule are superseded by decisions 10-14: `unit_surface_read` is replaced by `orient_from_catalog` + `harvest_surface`, and the "read what exists" discipline is reverted to hypothesis-then-verify for this role.
 - The pre-fed surface / per-unit write-scope framing of the v2 service-sourced pipeline (ADR `analysis-unit-enrichment-adr.md`) is superseded for this role by the unit-first feed and the removed `link` scope.
 - The data-modeller's v2 `surface_survey -> request_shapes -> insight_recall -> record_hypotheses -> data_extract -> flow_shape -> flow_extract -> closure_note` chain's PRE-FED SOURCES are superseded by decision 16: the chain ids survive, but the `surface` / `candidates` / `endpoints` prompt sources are replaced by the unit context and the `services` inventory, and the survey is discovered through the tools. The old `data-plane.md` worked examples (L0chunk-first) are superseded by decision 18.

@@ -38,7 +38,12 @@ from pydantic import BaseModel, ConfigDict, Field
 from polymerhus.analysis.analyser_types import L1DeltaBatch
 from polymerhus.analysis.chunking import Chunk, admit_for_role
 from polymerhus.analysis.l1_types import L0Ref
-from polymerhus.analysis.prompt_variant import prompt_path, resolve_prompt_variant
+from polymerhus.analysis.prompt_variant import (
+    BATCHED_L1UNIT_FIRST,
+    LEGACY,
+    prompt_path,
+    resolve_prompt_variant,
+)
 from polymerhus.analysis.reasoning_workflow import ReasoningWorkflow, SubProblem
 
 logger = logging.getLogger(__name__)
@@ -353,6 +358,22 @@ def _unit_context_block(chunk: Chunk, inventory: dict | None, owned_endpoints=()
     )
 
 
+def _service_block(chunk: Chunk, inventory: dict | None) -> str:
+    """The STREAMED per-chunk unit context (the pre-T1 rendering, restored for the
+    `streamed` mode). It names the chunk's source job and its `service_contract` when
+    one exists; a job-keyed chunk has no Service of that name, so it renders
+    `service_contract: (none)` - harmless, because the streamed workflow anchors on the
+    fed L0 `surface` and the inventory, never on the contract (see `assign`).
+
+    Distinct from `_unit_context_block`: this is the legacy slice-based flavour's unit
+    card (`service_contract:` label, no framed overview, no owned-endpoints line), kept
+    in sync with the `assigner.md` prompt file that flavour loads."""
+    slug = str(getattr(chunk, "source_job", "") or "").removeprefix("service:") or chunk.chunk_id
+    contracts = (inventory or {}).get("service_contracts") or {}
+    contract = contracts.get(slug, "") if isinstance(contracts, dict) else ""
+    return f"SERVICE UNIT: {slug}\nservice_contract: {contract or '(none)'}"
+
+
 # The four reflect stages (#34), merging the load-bearing primitives of the
 # `overthink` and `critical-thinking-logical-reasoning` disciplines down to what this
 # role needs. `candidate_owners` and `assign` each cover a subset of them (spec 3.3).
@@ -528,8 +549,109 @@ WORKFLOW = ReasoningWorkflow(
 )
 
 
+# The STREAMED flavour's workflow (the pre-T1 chain, restored for `streamed`).
+# Unlike `WORKFLOW`, it does NOT anchor on the unit's contract: it scans the broad L0
+# surface fed as the `surface` artifact, reads prior notes, reasons over candidate
+# owners, then extracts the aggregates. This is the discipline a job-keyed (streamed)
+# chunk needs, because such a chunk carries no Service contract to harvest from.
+WORKFLOW_LEGACY = ReasoningWorkflow(
+    role_id=ROLE,
+    sub_problems=(
+        SubProblem(
+            id="surface_scan",
+            name="broad L0 surface scan",
+            prompt=(
+                "BROAD L0 SCAN - no asset-name assumptions. You are given ONE Service "
+                "(its slug and `service_contract`). Before you judge ownership, "
+                "establish the raw surface: call `graph_view` with bounded read-only "
+                "Cypher (always a LIMIT) to enumerate the L0 `Endpoint`s this target "
+                "exposes. Do NOT query for a specific path or parameter you guessed from "
+                "the contract; enumerate what EXISTS. Suggested queries: (1) every "
+                "`:BaseURL` in the project; (2) every `:Endpoint` reachable from those "
+                "BaseURLs via `:HAS_ENDPOINT`, with its method/path/url and its "
+                "`:Parameter` names; (3) the `:Endpoint`s any Service already "
+                "`AGGREGATES`. Emit one Claim per discovered Endpoint: `subject` "
+                "`METHOD /path`; `assertion` the raw surface facts (path segments, "
+                "method, trailing segment, parameter names, baseurl); `evidence` the "
+                "Cypher you ran; `verdict` `seen`. Do not decide ownership here. Emit "
+                "`claims` only."
+            ),
+            inject=("service", "inventory", "surface"),
+            emit=("claims",),
+        ),
+        SubProblem(
+            id="prior_insights",
+            name="prior modelling insights",
+            prompt=(
+                "PRIOR MODELLING INSIGHTS - read before you enrich. Call the `notes` "
+                "tool with command=\"read\" to surface what earlier units concluded "
+                "about this Service and its neighbours. Read this Service's own notes "
+                "(`unit` = the slug), notes whose body mentions the path nouns you found "
+                "in the scan, and any note naming a Service that may be missing. For "
+                "each relevant note emit one Claim: `subject` the note key; `assertion` "
+                "the recorded insight; `evidence` the note body excerpt; `verdict` "
+                "`reuse`, `avoid`, or `competing-owner`. A run with no prior notes is a "
+                "valid result - say so. Emit `claims` only."
+            ),
+            inject=("service", "surface_scan"),
+            emit=("claims",),
+            depends_on=("surface_scan",),
+        ),
+        SubProblem(
+            id="candidate_owners",
+            name="candidate owners",
+            prompt=(
+                "REASONING - candidate owners. Work through these stages out loud:\n"
+                + "\n".join(f"{i}. {s}" for i, s in enumerate(_REFLECT_STEPS[:3], 1))
+                + "\n\nFor each Endpoint, emit one Claim per candidate owner: `subject` "
+                "the Endpoint, `assertion` the matched evidence and the strongest "
+                "competing owner, `evidence` the exact path segment or parameter you "
+                "matched, `verdict` the owner you would choose and your confidence. "
+                "Emit `claims` only; do not propose deltas yet."
+            ),
+            inject=("inventory", "surface", "surface_scan", "prior_insights"),
+            emit=("claims",),
+            depends_on=("surface_scan", "prior_insights"),
+        ),
+        SubProblem(
+            id="assign",
+            name="assign",
+            prompt=(
+                "EXTRACTION - assign. " + _REFLECT_STEPS[3] + "\n\nFrom the claims "
+                "above, emit the `aggregates`: one per Endpoint and owning Service(s), "
+                "each with `confidence` (0..1) and `evidence_refs`. Emit one aggregate "
+                "for EACH genuine owner. Use only `service_slug`s from the inventory; an "
+                "invented owner names nothing. Leave services, systems, system_edges and "
+                "every data-modelling list EMPTY. Put the residue in `claims`: one Claim "
+                "per unplaced Endpoint (`verdict` `residue`)."
+            ),
+            inject=("inventory", "surface", "surface_scan", "candidate_owners"),
+            emit=("aggregates", "claims"),
+            depends_on=("candidate_owners",),
+        ),
+        SubProblem(
+            id="closure",
+            name="modelling closure",
+            prompt=(
+                "CLOSURE - write the modelling-closure note. Summarise what this unit "
+                "closed over: the `Endpoint`s you claimed as `AGGREGATES` (slug, "
+                "confidence, matched evidence) and EXPLICITLY the `Endpoint`s you did "
+                "NOT claim and why each was left in the stale pool. Call the `notes` "
+                "tool once: command=\"write\", action=\"append\", unit = the Service "
+                "slug, note_name=\"modelling-closure\", kind=\"assignment\", body = the "
+                "closure body. Then emit one Claim recording the closure: `subject` the "
+                "Service; `assertion` the claimed and unclaimed counts; `evidence` the "
+                "note key; `verdict` `closed`. Emit `claims` only."
+            ),
+            inject=("service", "surface_scan", "assign"),
+            emit=("claims",),
+            depends_on=("assign",),
+        ),
+    ),
+)
 
-def _system_prompt() -> str:
+
+def _system_prompt(variant: str | None = None) -> str:
     """The STABLE half of the prompt (#34): the role verbatim and the judgment
     discipline. Everything here is invariant across a run so the provider
     prompt-cache prefix survives it; the volatile inventory and the Service unit ride
@@ -544,9 +666,14 @@ def _system_prompt() -> str:
     WebPresentation worked example in one system message and let the model choose.
     Retiring it per-role is ticket #30; the ROLE-SPECIFIC prompt that replaces it for
     the Assigner is the file `prompt_variant.prompt_path` selects
-    (`ANALYSIS_PROMPT_VARIANT`), gated on `ASSIGNER_PROMPT_CONFIG=skill`."""
+    (`ANALYSIS_PROMPT_VARIANT`), gated on `ASSIGNER_PROMPT_CONFIG=skill`.
+
+    `variant` selects that HOW file explicitly: the L1-unit-first default for the
+    `service_sourced` assigner, `legacy` (`assigner.md`) for the streamed per-chunk
+    assigner (whose legacy workflow the L1-unit-first HOW would contradict). Absent,
+    it resolves from the `ANALYSIS_PROMPT_VARIANT` env as before."""
     base = (
-        f"{_ROLE_VERBATIM}\n\n{_load_assigner_skill()}"
+        f"{_ROLE_VERBATIM}\n\n{_load_assigner_skill(variant)}"
         if _assigner_prompt_config() == "skill"
         else f"{_ROLE_VERBATIM}\n\n{_FEW_SHOTS}"
     )
@@ -643,15 +770,19 @@ _FEW_SHOTS = (
 _ASSIGNER_SKILLS: dict[str, str] = {}
 
 
-def _load_assigner_skill() -> str:
+def _load_assigner_skill(variant: str | None = None) -> str:
     """The Assigner's ownership-judgment discipline, read from the file the active
     prompt variant selects (`prompt_variant.prompt_path`): memoized in-process PER
     VARIANT, FAIL-CLOSED on a missing file (raise).
 
+    `variant` overrides the `ANALYSIS_PROMPT_VARIANT` env read; the streamed per-chunk
+    assigner passes `LEGACY` so its HOW matches its legacy workflow. Absent, the env
+    resolves as before (the `service_sourced` L1-unit-first default).
+
     The per-variant memoization is what preserves the provider prompt-cache prefix:
     within a variant the file is read ONCE per process, so `_system_prompt`
     returns byte-identical content for every chunk of a run."""
-    variant = resolve_prompt_variant()
+    variant = variant or resolve_prompt_variant()
     cached = _ASSIGNER_SKILLS.get(variant)
     if cached is None:
         cached = prompt_path("assigner", variant).read_text(encoding="utf-8")
@@ -705,6 +836,7 @@ def assign(
     inventory: dict | None = None,
     existing_slugs: frozenset[str] = frozenset(),
     owned_endpoints=(),
+    unit_first: bool = True,
     bar: float = ASSIGN_CONFIDENCE_BAR,
     run_id: str | None = None,
     tags: list | None = None,
@@ -716,13 +848,24 @@ def assign(
     which existing Service owns each admitted Endpoint, then drop unknown owners and
     SELF-WITHHOLD below the bar, returning the narrowed batch plus its backlog.
 
-    The body runs the role's `WORKFLOW` (harvest_surface -> falsify_harvest ->
-    prior_insights -> candidate_owners -> assign -> closure) through the injected
-    `invoke_fn`, then shapes the extraction turn. The surface is NOT pre-fed: the
-    prompt carries the Service unit (`_unit_context_block`) and the inventory, and
-    the model discovers the surface through the tools. The full admitted endpoint
-    set is still built from the chunk for the deterministic gates (`shape_proposal`),
-    so a harvested Endpoint outside the unit context is validated, never assumed.
+    The body runs ONE of two disciplines, selected by `unit_first`, then shapes the
+    extraction turn. The full admitted endpoint set is always built from the chunk for
+    the deterministic gates (`shape_proposal`), so a harvested Endpoint outside the
+    unit context is validated, never assumed.
+
+    - `unit_first=True` (default; `service_sourced`): the L1-unit-first `WORKFLOW`
+      (harvest_surface -> falsify_harvest -> prior_insights -> candidate_owners ->
+      assign -> closure). The surface is NOT pre-fed: the prompt carries the Service
+      unit (`_unit_context_block`) and the inventory, and the model discovers the
+      surface through the tools, driven by the unit's `service_contract`.
+    - `unit_first=False` (`streamed`): the legacy `WORKFLOW_LEGACY` (surface_scan ->
+      prior_insights -> candidate_owners -> assign -> closure). A job-keyed streamed
+      chunk carries NO Service contract, so the L0 slice (`_slice_repr`) and the
+      inventory ARE pre-fed as the `surface` artifact and the model scans them
+      directly. Selecting the L1-unit-first discipline here is the streamed-mode
+      regression: the job name (e.g. `katana`) resolves to a phantom Service,
+      `harvest_surface` derives no candidate strings, and the run writes zero
+      AGGREGATES - a wiring defect, never a model failure.
 
     `owned_endpoints` is the Service's OWN already-aggregated surface (the per-Service
     unit's `assets`), rendered into the unit card; it is context only, never a write
@@ -735,7 +878,7 @@ def assign(
     `run_workflow` (ADR D31): the global assign pass binds them so its turns'
     unit records one note (an `assignment` note); the streamed per-chunk path
     binds none, so it stays inert and byte-unbroken."""
-    from polymerhus.analysis.pod import _inventory_block
+    from polymerhus.analysis.pod import _inventory_block, _slice_repr
     from polymerhus.analysis.proposer_turn import proposer_batch
     from polymerhus.analysis.reasoning_workflow import run_workflow, to_delta_batch
 
@@ -748,24 +891,43 @@ def assign(
     # cache prefix is a byte-identical leading block on every chunk and the prompt
     # never accumulates in the checkpointed trail. The legacy one-shot seam prepends
     # it into its message list instead.
-    system_prompt = _system_prompt()
-    # The volatile base sources the workflow injects verbatim: the inventory block
-    # (identity reuse) and the Service UNIT context. The settled surface is NOT a
-    # base source - the model DISCOVERS it through the tools (L1-unit-first), so only
-    # the unit travels the prompt. `l0_slice`/`admitted` still feed `shape_proposal`.
-    base_artifacts = {
-        "inventory": _inventory_block(inventory),
-        "service": _unit_context_block(chunk, inventory, owned_endpoints),
-    }
+    # The flavour: `service_sourced` runs the L1-unit-first discipline (unit-block
+    # prompt, contract-driven harvest); `streamed` runs the legacy slice-based one
+    # (L0 surface pre-fed, broad scan). The prompt variant and the workflow move
+    # TOGETHER - an L1-unit-first HOW over a slice-based workflow, or a legacy HOW over
+    # the harvest workflow, is the mismatch this guard fixes. Selected at the call
+    # site (the mode is known there), never sniffed from the chunk shape.
+    variant = resolve_prompt_variant() if unit_first else LEGACY
+    system_prompt = _system_prompt(variant)
+    workflow = WORKFLOW if unit_first else WORKFLOW_LEGACY
+    if unit_first:
+        # The volatile base sources the workflow injects verbatim: the inventory block
+        # (identity reuse) and the Service UNIT context. The settled surface is NOT a
+        # base source - the model DISCOVERS it through the tools (L1-unit-first).
+        base_artifacts = {
+            "inventory": _inventory_block(inventory),
+            "service": _unit_context_block(chunk, inventory, owned_endpoints),
+        }
+        halt_when = _halt_without_surface
+    else:
+        # The streamed flavour pre-feeds the L0 slice as `surface`, so the model scans
+        # the chunk's own endpoints instead of deriving candidates from an absent
+        # contract. Its unit card is the legacy `_service_block`, matching `assigner.md`.
+        base_artifacts = {
+            "inventory": _inventory_block(inventory),
+            "surface": _slice_repr(l0_slice),
+            "service": _service_block(chunk, inventory),
+        }
+        halt_when = None
     # Per-batch memory: the chunk id scopes the whole chain to its own session (the
     # supervisor dispatches one chunk at a time), so the next chunk starts fresh.
     # The scope is inert for the one-shot legacy seam.
     try:
         with proposer_batch(chunk.chunk_id):
-            run = run_workflow(WORKFLOW, invoke_fn=invoke_fn,
+            run = run_workflow(workflow, invoke_fn=invoke_fn,
                                system_prompt=system_prompt,
                                base_artifacts=base_artifacts,
-                               halt_when=_halt_without_surface,
+                               halt_when=halt_when,
                                unit_slug=chunk.chunk_id, memory=memory,
                                project_id=project_id, run_id=run_id,
                                note_kind=note_kind)
@@ -774,15 +936,17 @@ def assign(
         return AssignmentOutcome()
     turn = run.turns.get("assign")
     if turn is None:
-        # The chain halted at `falsify_harvest` because nothing survived: the
-        # Service's surface is not mapped. Record it as a finding, not a failure.
-        falsify = run.turns.get("falsify_harvest")
-        if falsify is not None and _survivor_count(falsify) == 0:
-            logger.info(
-                "assigner chunk=%s no_surface: bounded harvest found nothing; "
-                "halted before candidate_owners", chunk.chunk_id,
-            )
-            return AssignmentOutcome(no_surface=True)
+        if unit_first:
+            # The chain halted at `falsify_harvest` because nothing survived: the
+            # Service's surface is not mapped. Record it as a finding, not a failure.
+            # (The streamed flavour has no falsify turn, so this finding cannot fire.)
+            falsify = run.turns.get("falsify_harvest")
+            if falsify is not None and _survivor_count(falsify) == 0:
+                logger.info(
+                    "assigner chunk=%s no_surface: bounded harvest found nothing; "
+                    "halted before candidate_owners", chunk.chunk_id,
+                )
+                return AssignmentOutcome(no_surface=True)
         # no parseable tool call after retries -> empty outcome
         return AssignmentOutcome()
     raw = to_delta_batch(turn)
@@ -885,6 +1049,11 @@ def make_assigner_body(*, invoke_fn, inventory_fn, bar: float = ASSIGN_CONFIDENC
             invoke_fn=invoke_fn,
             inventory=inventory,
             existing_slugs=frozenset(inventory.get("services") or ()),
+            # The supervisor's chunk-fed path is the STREAMED mode: its chunks are
+            # recon-job-keyed, not Service-keyed, so it runs the legacy slice-based
+            # discipline (unit_first=False). The L1-unit-first discipline is reserved
+            # for the service-sourced passes (`assign_services` / `assign_global`).
+            unit_first=False,
             bar=bar,
             run_id=run_id or None,
             tags=["analysis", getattr(dispatch, "role", "assigner")],
