@@ -16,6 +16,13 @@ MCP session per analysis unit on it:
   * every later call of the unit reuses it (one handshake per unit, not per call),
   * the unit boundary closes it (`proposer_turn.proposer_batch`).
 
+A dead session heals HERE, silently, in the client layer (FM-D): a transport
+death (`ClosedResourceError`, a timeout, an `OSError`) tears the unit session
+down and re-handshakes (bounded retries, exponential backoff), installing the
+fresh session under the unit key - so one transport death costs exactly one
+call, never the rest of the unit. Healing carries no tool result and no model
+chatter; the failed call itself still degrades fail-open.
+
 Every wait is bounded - session open, tool call, and session close - and the
 client carries a streamable-HTTP read timeout, so no single failure can stall a
 turn. Import performs no I/O (CODING_STANDARD section 6): the loop, the client
@@ -26,7 +33,10 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
+import time
 from typing import Any
+
+from anyio import ClosedResourceError
 
 # The streamable-HTTP read timeout handed to the MCP client - the same
 # `sse_read_timeout` the recon exec seam sets (`recon.domain.pod`). Bounds ONE
@@ -38,6 +48,10 @@ _MCP_OPEN_TIMEOUT_S = 60.0
 _MCP_CALL_TIMEOUT_S = 150.0
 # Bounds the session close at the unit boundary.
 _MCP_CLOSE_TIMEOUT_S = 15.0
+# Healing (FM-D): re-handshake attempts after a transport death, and the
+# backoff base between them (sleeps run base, 2*base, 4*base, ...).
+_HEAL_ATTEMPTS = 3
+_HEAL_BACKOFF_S = 1.0
 
 _LOOP: asyncio.AbstractEventLoop | None = None
 _LOOP_LOCK = threading.Lock()
@@ -186,9 +200,54 @@ def close_unit_session() -> None:
         session.close()
 
 
+def _heal_unit_session(project_id: str) -> None:
+    """Tear down the unit's dead MCP session and re-handshake, installing the
+    fresh session under the unit key on success (FM-D).
+
+    Up to `_HEAL_ATTEMPTS` handshakes with exponential backoff from
+    `_HEAL_BACKOFF_S`; every attempt is bounded by `_MCP_OPEN_TIMEOUT_S`.
+    Healing is silent client-layer work: it carries no tool result and no
+    model chatter. Compare-and-swap under the session lock: a concurrent
+    heal (or a fresh unit) that already installed a session wins, and the
+    loser closes its surplus instead of leaking it. When every attempt fails
+    nothing is cached, so the next call heals again."""
+    global _SESSION, _SESSION_KEY
+    from polymerhus.app.config import config
+
+    key = _unit_key(project_id)
+    with _SESSION_LOCK:
+        if _SESSION is not None and _SESSION_KEY != key:
+            return  # another unit owns the cache now; leave it alone
+        dead = _SESSION if _SESSION_KEY == key else None
+        _SESSION, _SESSION_KEY = None, None
+    if dead is not None:
+        dead.close()
+    backoff = _HEAL_BACKOFF_S
+    for _ in range(_HEAL_ATTEMPTS):
+        try:
+            fresh = _UnitSession(config.KALI_MCP_URL)
+        except Exception:  # noqa: BLE001 - back off, retry the handshake
+            time.sleep(backoff)
+            backoff *= 2.0
+            continue
+        with _SESSION_LOCK:
+            if _unit_key(project_id) != key or _SESSION is not None:
+                fresh.close()
+                return
+            _SESSION, _SESSION_KEY = fresh, key
+            return
+
+
 def _call_tool(name: str, args: dict, project_id: str = "") -> dict:
     try:
         return structured_payload(_session(project_id).call(name, args))
+    except (ClosedResourceError, TimeoutError, OSError) as exc:
+        # Transport death: heal the unit session (silent, client-layer only)
+        # so the NEXT call proceeds on a live session; this call still
+        # degrades fail-open, never into the turn.
+        _heal_unit_session(project_id)
+        return {"error": "http_history_failed",
+                "detail": f"{type(exc).__name__}: {exc}"}
     except Exception as exc:  # noqa: BLE001 - fail-open, never into the turn
         return {"error": "http_history_failed",
                 "detail": f"{type(exc).__name__}: {exc}"}

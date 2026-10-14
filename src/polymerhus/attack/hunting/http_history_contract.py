@@ -71,7 +71,11 @@ SEARCH_HTTP_HISTORY_DESCRIPTION: str = (
     "parsed; skip it and continue, it is not evidence about the target. "
     "`unavailable` - the history store could not be reached for this call; "
     "this is NOT evidence that the surface is empty, so continue with other "
-    "evidence and retry later. " + _ARTIFACT_MODEL
+    "evidence and retry later. A `http_history_failed` result means the "
+    "history store could not be reached for THIS call: the target may still "
+    "have history, so treat it as missing evidence, never as proof of an "
+    "empty surface, and continue with `graph_view` and the rest of your "
+    "evidence. " + _ARTIFACT_MODEL
 )
 
 GET_HTTP_ARTIFACT_DESCRIPTION: str = (

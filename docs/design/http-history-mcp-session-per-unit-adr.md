@@ -1,6 +1,7 @@
 # ADR: the HTTP-history MCP session lives per analysis unit
 
 **Status:** FIX, operator-directed (2026-10-13; branch `exp/endpoint-first-prefix`).
+Amended 2026-10-14 (FM-D heal; branch `fix/fm-toolcall-fixes`): a transport death now re-handshakes silently in the client layer - see "Change 4".
 **Related:** `docs/design/endpoint-first-prefix-adr.md` (the arm F trial whose stall exposed this), `docs/design/proposer-per-batch-cache-adr.md` (the per-batch session address this reuses).
 **Touches:** `app/clients/kali_http_history.py`, `recon/control/async_bridge.py`, `analysis/proposer_turn.py`.
 
@@ -48,3 +49,9 @@ The recon exec seam (`recon.domain.pod.default_exec_fn`) already did more: it se
 ## 7. Consequences and the confirmation step
 
 The per-unit session removes the per-call handshake churn (one connection per unit) and the bounded waits remove the stall class entirely. The confirmation step is the re-run arm F trial: units must complete (no freeze) and the kali MCP call count must fall from one-per-call to roughly one-per-unit.
+
+## 8. Change 4 (FM-D, 2026-10-14) - a transport death heals in the client layer
+
+**Rule.** One dead session costs exactly one call, never the rest of the unit. Healing lives entirely in the client layer: silent, no tool result carries healing chatter, and the failed call is never retried (the seam also serves the non-idempotent `replay` - a retry could mint a duplicate artifact).
+
+**Implementation.** `_heal_unit_session` (`app/clients/kali_http_history.py`): on `ClosedResourceError`, a timeout, or an `OSError` out of a call, tear the unit session down and re-handshake - up to 3 attempts with exponential backoff (1s, 2s, 4s), each bounded by the open timeout - installing the fresh session under the unit key on success. Compare-and-swap under the session lock: a concurrent heal that already installed a session wins and the loser closes its surplus. When every attempt fails nothing is cached and the next call heals again. Non-transport errors never heal (the live session is kept). No heartbeat: deaths are occasional (73 in 33h across many units), so heal-on-death bounds the blast radius without a background task to own.

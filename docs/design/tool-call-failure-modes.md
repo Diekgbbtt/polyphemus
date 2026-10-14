@@ -1,6 +1,6 @@
 # Analysis-proposer tool-call failure modes (Langfuse harvest)
 
-Status: FM-C fixed 2026-10-14 (see the fix note under FM-C); FM-A/B/D/E/F still diagnosis - proposed fixes, none applied.
+Status: FM-C and FM-D fixed 2026-10-14 (see the fix notes); FM-A/B/E/F still diagnosis - proposed fixes, none applied.
 Window: 2026-10-13T00:00Z .. 2026-10-14T09:35Z.
 Source: Langfuse v2 observations (`GET /api/public/v2/observations`), project polyphemus (`cmv6cdk12000sad0nbechto7t`).
 Scope: the three L0-grounding tools bound on every analysis proposer turn - `graph_view`, `search_http_history`, `get_http_artifact`.
@@ -91,7 +91,9 @@ Proposed verbatim (insert into `SEARCH_HTTP_HISTORY_DESCRIPTION`):
 
 Proposed code fix: in `_call_tool` (`src/polymerhus/app/clients/kali_http_history.py:189`), map the backend exception to that `category` and never emit an empty `detail`.
 
-### FM-D - MCP session death poisons the rest of the unit
+### FM-D - MCP session death poisons the rest of the unit (FIXED 2026-10-14)
+
+Fix applied (operator-steered: heal-forward, healing entirely in the client layer, no heartbeat): `_heal_unit_session` tears the dead session down and re-handshakes up to 3 times (1/2/4s backoff), installing the fresh session under the unit key on success - one transport death costs exactly one call, and the failed call is never retried (the seam also serves the non-idempotent `replay`). Covers the hunting caller too (it shares the seam outside `proposer_batch`). Regression: transport-death heal, exhausted-heal, and no-heal-on-programming-error tests (red pre-fix, green post-fix); `http_history_failed` missing-evidence verbatim added to the search description; ADR `http-history-mcp-session-per-unit` amended with Change 4.
 
 Count: 73 `http_history_failed` = 58 `ClosedResourceError: ` + 15 `TimeoutError: `, spread over assigner (31), mechanism_typist (17), data_modeller (10).
 Every one has an EMPTY exception string and `output: null` (level ERROR, empty `statusMessage`).
