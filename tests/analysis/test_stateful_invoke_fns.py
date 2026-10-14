@@ -30,7 +30,7 @@ def _capture(monkeypatch):
 
 
 def test_assigner_session_keys_per_run_and_carries_its_schema(monkeypatch):
-    from polymerhus.analysis.reasoning_workflow import AnalysisTurn
+    from polymerhus.analysis.analyser_types import L1DeltaBatch
     from polymerhus.analysis.assigner import stateful_invoke_fn
 
     seen = _capture(monkeypatch)
@@ -38,7 +38,7 @@ def test_assigner_session_keys_per_run_and_carries_its_schema(monkeypatch):
     stateful_invoke_fn("runX", cp)([HumanMessage(content="m")])
     assert seen["role_id"] == "assigner"
     assert seen["thread_id"] == "runX:assigner"     # distinct, per-run thread
-    assert seen["schema"] is AnalysisTurn
+    assert seen["schema"] is L1DeltaBatch
     assert seen["cp"] is cp
 
 
@@ -137,8 +137,7 @@ def test_the_proposers_carry_no_skill_surface(monkeypatch):
         # prose turn; it is never a skill tool.
         tool_names = {getattr(t, "name", "") for t in (seen["tools"] or ())}
         assert "load_skill" not in tool_names, f"{role} must bind no skill tool"
-        assert tool_names <= {"AnalysisTurn", "notes"}, (
-            f"{role} binds only its own structured tool plus the analysis notes tool")
+        assert tool_names <= {"L1DeltaBatch"}, f"{role} binds only its own structured tool"
         assert seen["context"] is None, f"{role} must carry no skill context"
         assert "_skill_index" not in {
             type(mw).__name__ for mw in seen["middleware"] or ()

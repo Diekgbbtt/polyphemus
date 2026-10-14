@@ -381,6 +381,15 @@ class UsageLedger:
         boundary); empty when nothing has been measured yet."""
         return self._last_ids.get(thread_id, set())
 
+    def drop(self, thread_id: str) -> None:
+        """Forget every measurement for the thread (its entry and its boundary),
+        so the next turn measures from scratch. The session-reset half of the
+        per-chunk lifecycle: a reset session must not inherit the previous
+        chunk's occupancy, or the first turn's barrier would compact on stale
+        budget."""
+        self._entries.pop(thread_id, None)
+        self._last_ids.pop(thread_id, None)
+
 
 def _message_ids(messages: list[BaseMessage]) -> set[str]:
     """The message ids of a trail, dropping messages without an id (freshly built
@@ -1102,6 +1111,28 @@ class CompactionManager:
         terminal; the caller reads `summary_status` / `readability` to distinguish."""
         with self._lock:
             return self._last_reports.get(thread_id)
+
+    def reset_thread(self, thread_id: str) -> None:
+        """Forget ALL per-thread compaction state - the pending pass (orphaned; its
+        staged result is never settled, exactly as a lost pass), the running-summary
+        pointer, the streak, the escalation flag, the last report, and the ledger
+        measurements - so the thread's next turn starts unbudgeted with no prior
+        summary. The compaction half of the session reset (`session.reset_session_thread`
+        is the checkpointer half): without it a reset session would inherit the
+        previous chunk's summary pointer (its passes would condense the old chunk's
+        conclusions) and its occupancy (its first barrier would compact on stale
+        budget). Never raises: every drop is keyed-pop on a guarded dict."""
+        with self._lock:
+            self._pending.pop(thread_id, None)
+            self._existing.pop(thread_id, None)
+            self._streak.pop(thread_id, 0)
+            self._last_reports.pop(thread_id, None)
+            self._escalated.pop(thread_id, None)
+        try:
+            self.ledger.drop(thread_id)
+        except Exception:  # noqa: BLE001 - a ledger without a drop seam keeps its entries
+            logger.debug("compaction ledger has no drop seam; keeping entries", exc_info=True)
+        logger.info("compaction: reset thread %s (per-chunk lifecycle)", thread_id)
 
     # -- the D4 spawn ----------------------------------------------------------
 

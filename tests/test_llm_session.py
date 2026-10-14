@@ -1096,3 +1096,29 @@ def test_the_override_model_factory_builds_the_override(monkeypatch):
     assert seen["model_override"] == ("opencode-go", "glm-5.2")
     assert seen["read_timeout"] == 42.0
     assert seen["max_retries"] == 0
+
+
+def test_reset_session_thread_empties_the_thread_and_is_fail_open():
+    """The session-reset half of the per-chunk lifecycle: the thread's checkpoint
+    is gone after the reset (the next turn starts from the initial prompt), a
+    checkpointer without a `delete_thread` seam keeps its state and returns
+    False, and a raising delete degrades to False - the caller always proceeds."""
+    from polymerhus.app.llm import session as S
+    from polymerhus.app.llm.session_address import AnalysisSession
+
+    saver = InMemorySaver()
+    saver.put({"configurable": {"thread_id": "run1:assigner", "checkpoint_ns": ""}},
+              {"v": 1, "id": "ckpt-1", "ts": "2026-10-14T00:00:00",
+               "channel_values": {"messages": ["old trail"]},
+               "channel_versions": {}, "versions_seen": {}}, {}, {})
+    assert S.reset_session_thread(saver, AnalysisSession("run1", "assigner")) is True
+    assert S.read_session_memory(saver, "run1:assigner") is None
+
+    assert S.reset_session_thread(object(), "run1:assigner") is False
+    assert S.reset_session_thread(None, "run1:assigner") is False
+
+    class _RaisingSaver(InMemorySaver):
+        def delete_thread(self, thread_id):
+            raise RuntimeError("store unavailable")
+
+    assert S.reset_session_thread(_RaisingSaver(), "run1:assigner") is False

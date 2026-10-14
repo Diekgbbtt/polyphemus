@@ -1171,3 +1171,28 @@ async def aread_session_memory(checkpointer, thread: SessionAddress | str) -> Se
     if values is None:
         return None
     return _turn_from_state(values, thread_id)
+
+
+def reset_session_thread(checkpointer, thread: SessionAddress | str) -> bool:
+    """Reset one session thread to EMPTY (its next turn starts from the initial
+    system prompt + the next call's messages, never the prior trail).
+
+    The analysis proposers run on ONE `run:role` session and reset it at each
+    streamed-chunk boundary, so a chunk starts fresh while keeping the stable
+    thread identity (the provider prefix cache and the observability/runtime
+    contract key on it). Fail-open: a checkpointer without a `delete_thread`
+    seam, or a delete that raises, keeps the state and returns False - the
+    caller proceeds on the resumed trail exactly as before."""
+    if checkpointer is None:
+        return False
+    thread_id = _as_thread_id(thread)
+    delete = getattr(checkpointer, "delete_thread", None)
+    if not callable(delete):
+        return False
+    try:
+        delete(thread_id)
+        return True
+    except Exception:
+        logger.warning(
+            "reset of session thread %s failed (fail-open, keeping state)", thread_id)
+        return False

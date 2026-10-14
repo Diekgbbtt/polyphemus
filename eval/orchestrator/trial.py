@@ -141,12 +141,6 @@ def _pack_skill_archive(skill_dir: str | Path, files: FileStore) -> bytes:
     return buffer.getvalue()
 
 
-# The analysis-mode values the settings PUT accepts; mirrors
-# `analysis.feed.ANALYSIS_MODES` without pulling the app package into the
-# standalone eval orchestrator (ADR D45).
-ANALYSIS_MODES = ("streamed", "service_sourced")
-
-
 def front_url(config: TrialConfig) -> str:
     """The trial's target front URL: the synthetic Host on the standard port."""
     host = routing.synthetic_host(f"{config.instance_id}/{config.target_id}")
@@ -189,11 +183,6 @@ class TrialConfig:
     # The old batched/post-recon path is obsolete, so this defaults ON: a recon
     # run without it mints no L1 edges (the #321 zero-AGGREGATES root cause).
     streaming_analysis: bool = True
-    # The analysis pipeline selector (settings.recon.analysis_mode, ADR D45):
-    # `streamed` is the untouched default; `service_sourced` runs the global
-    # assign pass then the per-Service loop. Selectable so an eval can arm the
-    # new pipeline; it needs no `streaming_analysis`.
-    analysis_mode: str = "streamed"
     budget_s: float = 7200.0
     poll_s: float = 15.0
     # Resume: reuse an existing project and/or drain an existing recon run.
@@ -457,10 +446,6 @@ class Trial:
             # batched/post-recon path is obsolete, so every fresh trial turns it
             # on. The PUT deep-merges, so this never wipes target_seed/operator_kb.
             settings["streaming_analysis"] = cfg.streaming_analysis
-            # The analysis pipeline selector (ADR D45): streamed is the default;
-            # service_sourced arms the per-Service pipeline (it needs no
-            # streaming_analysis - the terminal marker is its only trigger).
-            settings["analysis_mode"] = cfg.analysis_mode
             steps.append(
                 TrialPlanStep("settings", calls=(api.put_settings(project, settings),))
             )
@@ -687,9 +672,6 @@ class Trial:
                 # The streamed-analysis gate (see TrialConfig.streaming_analysis):
                 # the batched/post-recon path is obsolete, so it is always on.
                 settings["streaming_analysis"] = cfg.streaming_analysis
-                # The analysis pipeline selector (see TrialConfig.analysis_mode,
-                # ADR D45): streamed unless the trial explicitly arms the mode.
-                settings["analysis_mode"] = cfg.analysis_mode
                 self._call(api.put_settings(project_id, settings))
 
             # The pre-built data dependencies land by direct file write through

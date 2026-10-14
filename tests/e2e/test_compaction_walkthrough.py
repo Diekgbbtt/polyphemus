@@ -17,11 +17,11 @@ code path. Everything else is the real deployed wiring: the consumer entry point
 the role middleware builder, and the `create_agent` loop.
 
 The mechanism-typist lane is exercised the way the agent actually runs: the real
-4-sub-problem `type_mechanisms` workflow (`mechanism_hypotheses` ->
-`page_clusters` -> `systems_extract` -> `link`) over TWO realistic `service`
-chunks, all on ONE growing session thread - so this is a genuinely multi-step
-session whose context crosses the budget repeatedly and compacts MULTIPLE times
-into progressively richer running summaries.
+3-call `type_mechanisms` chain (reflection -> systems extraction -> services
+linking) over TWO realistic `service` chunks on the ONE `run:role` session,
+reset at each chunk boundary - so each chunk starts from the initial system
+prompt + its fixed human messages, compacts its own over-budget turns, and
+leaves the next chunk a clean trail.
 
 The hunting hunter lane still runs its one author+judge turn pair (the lane's
 tool-calling reasoning chains await the parallel tool-support work; once tool
@@ -233,15 +233,20 @@ def _scripted_typing_model(summarise_state):
     - the SUMMARISER's structured call (user message opens with the running-summary
       preamble) -> ONE rich, realistic `SummaryUpdate` per pass (its content derives
       from the session material, so the running summary is a genuine condensation);
-    - the typist's reasoning turns (`mechanism_hypotheses`, `page_clusters`) ->
-      `AnalysisTurn` JSON claims, the typed artifact every turn now emits;
-    - the EXTRACTION (`systems_extract`) and LINKING (`link`) turns -> `AnalysisTurn`
-      JSON holding real systems / system_edges.
-    All four sub-problems speak the ONE `AnalysisTurn` envelope, so under the
-    unknown-profile negotiation the fake returns content-JSON on EVERY turn - never
-    tool_calls - and the tool set never toggles (ADR D26).
+    - the typist's REFLECTION turn (free prose) -> a realistic mechanism hypothesis;
+    - the EXTRACTION (`L1DeltaBatch`) and LINKING (`L1DeltaBatch`) structured turns
+      -> tool calls holding real systems / system_edges.
     Realistic per-call usage metadata advances a shared cursor, so the accumulated
     context crosses the budget on repeated turns and compaction fires more than once.
+
+    The structured answers are CHUNK-SENSITIVE: the fake reads the batch scope
+    the body opened (trail-sniffing is unstable - compaction folds the reflection
+    prompt into the summary before the extraction turn runs) and answers with
+    that chunk's systems/edges - the way a real model grounds each chunk in its
+    own slice. The summariser RECORDS its full input per pass, so a test can
+    prove the reset provenance: each chunk's first pass condenses with NO prior
+    summary (the manager's pointer was reset at the chunk boundary), while a
+    never-reset thread would carry the prior summary into every later pass.
     """
     usage_plan = [_usage(1900, output_tokens=320), _usage(2100, output_tokens=280),
                   _usage(2300, output_tokens=300), _usage(2600, output_tokens=340),
@@ -264,6 +269,36 @@ def _scripted_typing_model(summarise_state):
             "artifacts": ["RESTApi", "IdentificationSystem", "AuthenticationMechanism"],
         }
 
+    def _systems_json(checkout):
+        if checkout:
+            return json.dumps({"systems": [
+                {"kind": "RESTApi", "props": {"description": "JSON REST paradigm the app exposes through."}},
+                {"kind": "WebPresentation", "discriminator": "checkout::basket",
+                 "props": {"pages": ["/api/orders", "/api/BasketItems"]}},
+            ]})
+        return json.dumps({"systems": [
+            {"kind": "RESTApi", "props": {"description": "JSON REST paradigm the app exposes through."}},
+            {"kind": "IdentificationSystem", "props": {"description": "Cookie/session identity raft."}},
+            {"kind": "AuthenticationMechanism", "props": {"description": "Credential mint + validate."}},
+            {"kind": "WebPresentation", "discriminator": "account::login",
+             "props": {"pages": ["/rest/user/login", "/rest/user/register"]}},
+        ]})
+
+    def _edges_json(checkout):
+        if checkout:
+            return json.dumps({"system_edges": [
+                {"service_slug": "checkout", "kind": "RESTApi", "rel": "EXPOSED_VIA"},
+                {"service_slug": "checkout", "kind": "WebPresentation", "discriminator": "checkout::basket",
+                 "rel": "EXPOSED_VIA"},
+            ]})
+        return json.dumps({"system_edges": [
+            {"service_slug": "account", "kind": "RESTApi", "rel": "EXPOSED_VIA"},
+            {"service_slug": "account", "kind": "IdentificationSystem", "rel": "IDENTIFIED_BY"},
+            {"service_slug": "account", "kind": "AuthenticationMechanism", "rel": "AUTHENTICATED_BY"},
+            {"service_slug": "account", "kind": "WebPresentation", "discriminator": "account::login",
+             "rel": "EXPOSED_VIA"},
+        ]})
+
     class _TypistModel(BaseChatModel):
         def _generate(self, messages, stop=None, run_manager=None, **kwargs):
             humans = [str(m.content or "") for m in messages if isinstance(m, HumanMessage)]
@@ -272,8 +307,16 @@ def _scripted_typing_model(summarise_state):
             # matching the join makes the LINKING call answer the SYSTEMS branch the
             # moment compaction has not folded the systems prompt away yet.
             task = humans[-1] if humans else ""
+            # The chunk this chain reasons over: the batch scope the body opened
+            # (trail-sniffing is unstable - compaction folds the reflection prompt
+            # into the summary before the extraction turn runs).
+            from polymerhus.analysis.proposer_turn import current_batch
+            batch = current_batch() or ""
+            checkout = "service:1" in batch
             if task.startswith("Prior running summary:"):
                 summarise_state["passes"] = summarise_state.get("passes", 0) + 1
+                full = "\n".join(str(getattr(m, "content", "") or "") for m in messages)
+                summarise_state.setdefault("inputs", []).append(full)
                 args = summarise_args()
                 return ChatResult(generations=[ChatGeneration(message=AIMessage(
                     content="",
@@ -285,54 +328,22 @@ def _scripted_typing_model(summarise_state):
                 # fake must return content-JSON, NOT tool_calls - the Provider
                 # strategy branch parses `output.content` and never looks at
                 # tool_calls (langchain create_agent `_handle_model_output`).
-                systems_json = json.dumps({"systems": [
-                    {"kind": "RESTApi", "props": {"description": "JSON REST paradigm the app exposes through."}},
-                    {"kind": "IdentificationSystem", "props": {"description": "Cookie/session identity raft."}},
-                    {"kind": "AuthenticationMechanism", "props": {"description": "Credential mint + validate."}},
-                    {"kind": "WebPresentation", "discriminator": "account::login",
-                     "props": {"pages": ["/rest/user/login", "/rest/user/register"]}},
-                ]})
                 return ChatResult(generations=[ChatGeneration(
-                    message=AIMessage(content=systems_json))])
+                    message=AIMessage(content=_systems_json(checkout)))])
             if "TASK - LINK SERVICES" in task:
-                edges_json = json.dumps({"system_edges": [
-                    {"service_slug": "account", "kind": "RESTApi", "rel": "EXPOSED_VIA"},
-                    {"service_slug": "account", "kind": "IdentificationSystem", "rel": "IDENTIFIED_BY"},
-                    {"service_slug": "account", "kind": "AuthenticationMechanism", "rel": "AUTHENTICATED_BY"},
-                    {"service_slug": "checkout", "kind": "RESTApi", "rel": "EXPOSED_VIA"},
-                    {"service_slug": "account", "kind": "WebPresentation", "discriminator": "account::login",
-                     "rel": "EXPOSED_VIA"},
-                ]})
                 return ChatResult(generations=[ChatGeneration(
-                    message=AIMessage(content=edges_json))])
+                    message=AIMessage(content=_edges_json(checkout)))])
             i = summarise_state.get("turn", 0)
             summarise_state["turn"] = i + 1
             usage = usage_plan[i % len(usage_plan)]
-            # The reasoning turns (mechanism_hypotheses / page_clusters) emit
-            # `claims` on the AnalysisTurn envelope. Content-JSON, not tool_calls:
-            # the unknown-profile negotiation resolves the native structured method.
-            claims_json = json.dumps({"claims": [
-                {
-                    "subject": "Endpoint /rest/user/login",
-                    "assertion": "RESTApi overlay carrying an IdentificationSystem identity raft",
-                    "evidence": "shared session cookie across login/register/whoami",
-                    "verdict": "new RESTApi; extend the defined IdentificationSystem",
-                },
-                {
-                    "subject": "Endpoint /api/orders",
-                    "assertion": "checkout consumes the same identity it does not mint",
-                    "evidence": "orders/basket share the session cookie, no auth of its own",
-                    "verdict": "extend RESTApi; no AuthenticationMechanism edge for checkout",
-                },
-                {
-                    "subject": "account page cluster",
-                    "assertion": "login/register form pages render from one template",
-                    "evidence": "shared title/structure/size on the auth pages",
-                    "verdict": "account::login cluster, one WebPresentation",
-                },
-            ]})
             return ChatResult(generations=[ChatGeneration(message=AIMessage(
-                content=claims_json, usage_metadata=usage))])
+                content=(
+                    "The login/register/whoami trio with a shared session cookie evidence a RESTApi "
+                    "overlay carrying an IdentificationSystem identity raft, minted through an "
+                    "AuthenticationMechanism on credential exchange; the orders/basket API shares the "
+                    "same identity but owns no auth of its own. No WAF is evidenced on the surface."
+                ),
+                usage_metadata=usage))])
 
         @property
         def _llm_type(self) -> str:
@@ -350,13 +361,13 @@ def _scripted_typing_model(summarise_state):
 
 
 def test_mechanism_typist_chained_lane_compacts_e2e(monkeypatch):
-    """D9 consumer 2 (chained session): the REAL 4-sub-problem mechanism-typist
-    workflow (`type_mechanisms`) runs over TWO realistic `service` chunks on ONE
-    growing session thread - EIGHT prompts on the same thread, multiple over-budget
-    turns, MULTIPLE out-of-band running-summary passes. The chain survives every
-    compaction (both chunks still type real Systems + edges), the compacted thread
-    carries the synthetic running-summary message, and the passes are observable
-    both on the manager's last report and in the number of summariser calls."""
+    """D9 consumer 2 (chained session): the REAL 3-call mechanism-typist chain
+    (`type_mechanisms`) runs over TWO realistic `service` chunks on the ONE
+    `run:role` session, RESET at each chunk boundary - SIX prompts, each chunk
+    starting from the initial system prompt + its fixed human messages. Both
+    chunks still type real Systems + edges under compaction, each chunk's
+    over-budget reflection spawns its own running-summary pass, and the second
+    chunk's trail carries none of the first chunk's slice."""
     import polymerhus.app.llm.providers as P
     import polymerhus.app.llm.roles as R
 
@@ -392,29 +403,36 @@ def test_mechanism_typist_chained_lane_compacts_e2e(monkeypatch):
     batch2 = type_mechanisms(chunk2, invoke_fn=invoke,
                              inventory=_INVENTORY, aggregations=_AGGREGATIONS)
 
-    # The chain survived every compaction: both chunks still typed REAL systems and
-    # edges (this is the observable correctness under compaction).
+    # The chain survived every compaction: both chunks typed REAL systems and
+    # edges grounded in their OWN slice (the fake answers each chunk from its
+    # slice, so chunk-appropriate typing proves each chain reasoned over its
+    # own material).
     kinds1 = {s.kind for s in batch1.systems}
     kinds2 = {s.kind for s in batch2.systems}
     assert "RESTApi" in kinds1 and kinds2
     assert "IdentificationSystem" in kinds1
+    assert "IdentificationSystem" not in kinds2, \
+        "chunk 2's extraction ran on the checkout slice, not chunk 1's account trail"
     assert batch1.system_edges and batch2.system_edges
     assert any(e.rel == "EXPOSED_VIA" and e.service_slug == "checkout"
                for e in batch2.system_edges)
 
-    # The ledger really observed per-turn occupancy (the compact trigger). The
-    # session is per-BATCH since the cache experiment: each streamed chunk gets its
-    # own `run:<chunk>:<role>` thread, so compaction fires within a chunk's
-    # sub-problem chain, not across a run-long trail.
-    from polymerhus.app.llm.session_address import AnalysisSession
-
-    thread_ids = [
-        AnalysisSession("run-e2e-typist", "mechanism_typist", batch=cid).thread_id
-        for cid in ("katana:service:0", "katana:service:1")
-    ]
-    mems = [read_session_memory(saver, tid) for tid in thread_ids]
-    assert all(m is not None for m in mems), "each per-batch thread must persist"
-    contents = [str(m.content) for mem in mems for m in mem.messages]
+    # ONE session thread, reset at the chunk boundary: the running summary the
+    # thread carries condenses the checkout chain, and the passes' recorded
+    # inputs prove the reset provenance directly - each chunk's first pass
+    # condensed with NO prior summary (the manager's pointer was reset at the
+    # boundary), while a never-reset thread would carry the prior summary into
+    # every later pass.
+    thread_id = "run-e2e-typist:mechanism_typist"
+    mem = read_session_memory(saver, thread_id)
+    assert mem is not None
+    joined = "".join(str(m.content) for m in mem.messages)
+    assert "/api/orders" in joined
+    assert "/rest/user/login" not in joined
+    fresh = [i for i in summarise_state.get("inputs", []) if "none yet" in i]
+    assert len(fresh) >= 2, \
+        "each chunk's first pass started with no prior summary (the reset provenance)"
+    contents = [str(m.content) for m in mem.messages]
     assert any(c.startswith("[running summary]") for c in contents), \
         "the compacted thread must carry the synthetic running-summary message"
     # The produced summary is the REALISTIC condensation of the session material
@@ -426,11 +444,10 @@ def test_mechanism_typist_chained_lane_compacts_e2e(monkeypatch):
     assert "- " in joined  # markdown list elements
     assert "RESTApi" in joined
 
-    # MULTIPLE passes: the summariser was called more than once (each call = one
-    # out-of-band running-summary pass), so the multi-turn context compacted more
-    # than a single time.
+    # ONE pass per chunk: each chunk's over-budget reflection spawned its own
+    # out-of-band running-summary pass on the reset session.
     assert summarise_state.get("passes", 0) >= 2, \
-        f"expected multiple compaction passes, saw {summarise_state.get('passes', 0)}"
+        f"expected a compaction pass per chunk, saw {summarise_state.get('passes', 0)}"
 
 
 # --- #210: an over-window thread compacts NEVER-terminal ----------------------

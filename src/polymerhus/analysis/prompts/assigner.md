@@ -45,6 +45,19 @@ A judgment below the bar simply produces no edge, and that is the correct outcom
 A chunk may repeat Endpoints you have judged in an earlier chunk, and an Endpoint whose owner looks obvious deserves the same four moves as one that does not.
 Give every Endpoint you are shown its own differential; a re-judged Endpoint costs nothing, while one waved through on recognition is how a whole chunk's precision drops at once.
 
+## Widen to the adjacent surface, bounded
+
+The chunk slice is the surface recon most recently collected - judge it first.
+Then you MAY widen your view, because ownership is a topological judgment and topology lives around the Endpoint, not in it:
+enumerate the project's BaseURLs and join the Endpoints they expose through the read-only `graph_view`, so you see which service areas neighbour your slice.
+The bound is load-bearing: always a LIMIT, a handful of queries, never a trawl.
+An unbounded roam costs more than it learns, and the cost lands on every chunk of the run.
+
+The HTTP-history pair (`search_http_history` / `get_http_artifact`) is for disambiguation and confirmation only:
+reach for it when an Endpoint's ownership is ambiguous or deceiving, or when you need the full request shape (path, headers, body) and the response to confirm a hypothesis -
+a plain-HTML response whose element values carry a Service's semantics, for example.
+Diving into the technical understanding of a surface area is the mechanism-typist's ownership, not yours; you stop at the ownership judgment.
+
 ## Worked examples
 
 These slugs are illustrative and never appear in a real inventory; take the SHAPE of the judgment from them, never the answer.
@@ -70,13 +83,3 @@ Endpoint `GET /invoices/42/shipment`.
 Differential: both contracts name a noun that appears in the path, and neither claim rules the other out.
 -> TWO aggregates: `invoice-settlement` at 0.85 (evidence "path segment /invoices") and `parcel-dispatch` at 0.80 (evidence "path segment /shipment").
 Both genuinely reach this Endpoint; emit both rather than choosing.
-
-## The workflow you run, in order
-
-You run five sub-problems, one turn each; you may call tools in any of them.
-
-1. **Broad L0 scan** (`surface_scan`). Call `graph_view` to enumerate this target's Endpoints broadly, with no asset-name assumption. Read what EXISTS; never filter on a path or parameter you guessed from the contract.
-2. **Prior modelling insights** (`prior_insights`). Read the `notes` store for this Service and for notes that name a shared mechanism. Reuse an earlier unit's conclusion; do not re-derive it.
-3. **Candidate owners** (`candidate_owners`). The four moves above, over the scanned surface.
-4. **Assign** (`assign`). Emit the `aggregates`.
-5. **Closure** (`closure`). Write ONE modelling-closure note through `notes` (`command="write"`, `action="append"`, `note_name="modelling-closure"`, `kind="assignment"`) naming what you claimed AND what you left in the stale pool, then record it in a Claim.

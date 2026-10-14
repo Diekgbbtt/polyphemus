@@ -79,11 +79,8 @@ def test_assigner_body_threads_run_correlation_to_trace_generation(monkeypatch):
                                                "baseurl": "https://a"}),))
 
     def invoke_fn(messages, *, schema=None, system_prompt=None):
-        from polymerhus.analysis.reasoning_workflow import AnalysisTurn, Claim
-        if "EXTRACTION - assign" in messages[0].content:
-            return AnalysisTurn()
-        return AnalysisTurn(claims=[Claim(subject="GET /x", assertion="found",
-                                          evidence="", verdict="survive")])
+        from polymerhus.analysis.analyser_types import L1DeltaBatch
+        return L1DeltaBatch()
 
     body = make_assigner_body(
         invoke_fn=invoke_fn,

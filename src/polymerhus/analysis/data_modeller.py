@@ -1,22 +1,14 @@
 """The DataPlane Analyser (agent spec #10, ratified `docs/design/dataplane-A1-decisions.md`
 2026-07-30, realised by #48), the `data_modeller` A.1 proposer.
 
-Sole owner of the Tier-1 data substrate. Its analysis object is the L1 UNIT (the
-Service): it reasons DOWN from the unit - the slug, the `service_contract` and the
-Endpoints the Service already aggregates - and DISCOVERS the unit's surface
-through `graph_view` and the HTTP-history tools. From that discovered surface it
-lifts the logical `DataItem`s it evidences, binds each to the concrete L0 sites
-where it appears via `SURFACES_AT`, and maps the `PRODUCES`/`CONSUMES` flows that
-connect those items to the settled Service model, plus the baseline
-surface-observable DataItem-to-DataItem dependencies. No whole-surface asset
-stream is pre-fed. It emits `L1DeltaBatch{data_items, surfaces_at, data_flows,
-data_relationships}` and nothing else - it does not assign Endpoints (the
-Assigner), type mechanisms (the mechanism-typist), or mint Services.
-
-There is NO per-unit `service_slug` write scope on `data_flows`: a flow may name
-ANY live Service as producer or consumer. The only surviving gate is the GLOBAL
-inventory validation (`drop_out_of_inventory_services`): a slug that names no live
-Service is still dropped.
+Sole owner of the Tier-1 data substrate: given a chunk of streamed surface, it
+lifts the logical `DataItem`s that surface evidences, binds each to the concrete
+L0 sites where it appears via `SURFACES_AT`, and maps the `PRODUCES`/`CONSUMES`
+flows that connect those items to the settled Service model, plus the baseline
+surface-observable DataItem-to-DataItem dependencies. It emits
+`L1DeltaBatch{data_items, surfaces_at, data_flows, data_relationships}` and
+nothing else - it does not assign Endpoints (the Assigner), type mechanisms (the
+mechanism-typist), or mint Services.
 
 It never emits Cypher and never sets provenance or identity keys (C17):
 `enrichment_proposals_to_deltas` stamps provenance at the curate boundary, and
@@ -38,21 +30,13 @@ from __future__ import annotations
 import logging
 import os
 from collections import defaultdict
-from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from polymerhus.analysis.analyser_types import L1DeltaBatch
 from polymerhus.analysis.chunking import Chunk, admit_for_role
-from polymerhus.analysis.l1_curator import DATA_RELATIONSHIP_KINDS
 from polymerhus.analysis.l1_types import L0Ref
-from polymerhus.analysis.prompt_variant import prompt_path, resolve_prompt_variant
 from polymerhus.analysis.proposer_reasoning import cot_scaffold, role_header
-from polymerhus.analysis.reasoning_workflow import ReasoningWorkflow, SubProblem
-
-if TYPE_CHECKING:
-    from polymerhus.analysis.memory import AnalysisMemoryStore
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +73,7 @@ class DataPlaneStats(BaseModel):
     admitted_headers: int = 0
     admitted_secrets: int = 0
     observations_attached: int = 0
+    candidate_services: int = 0
 
     # generation side
     reflection_exhausted: bool = False
@@ -171,116 +156,52 @@ def _canonical_label(raw) -> str | None:
     return _LABEL_ALIASES.get(raw.strip().lower())
 
 
-@dataclass(frozen=True)
-class SiteIndex:
-    """The identity index the reference gate resolves against, split into two
-    namespaces so a colliding name can never be silently re-anchored (N1):
-
-    - `exact`: a FULL-identity key (`Parameter`: name + endpoint_path + baseurl;
-      `Header`: name + value + baseurl; `Secret`: value_hash) to the site's identity.
-    - `by_name`: the BARE `(label, name)` (or `(label, value_hash)` for a Secret) to
-      the site's identity, present ONLY when that name maps to a single distinct
-      identity. An ambiguous name is absent, so a bare-name ref is dropped rather than
-      first-wins rewritten onto another Service's path/baseurl."""
-
-    exact: dict[tuple, dict]
-    by_name: dict[tuple, dict]
-
-
-def _full_key(label: str, identity: dict) -> tuple | None:
-    """The full-identity key for a site/ref, or None when it does not supply every
-    identity field. `Secret` has no composite key (its `value_hash` is the whole
-    identity, handled by `_name_key`)."""
-    if label == "Parameter":
-        required = ("name", "endpoint_path", "baseurl")
-    elif label == "Header":
-        required = ("name", "value", "baseurl")
-    else:
-        return None
-    if all(identity.get(k) is not None for k in required):
-        return tuple([label, *(str(identity[k]) for k in required)])
-    return None
-
-
-def _name_key(label: str, identity: dict) -> tuple | None:
-    """The bare-name key: `(label, name)` for Parameter/Header, `(label, value_hash)`
-    for Secret (its whole identity). None when the field is absent."""
-    field = "value_hash" if label == "Secret" else "name"
-    value = identity.get(field)
-    return (label, str(value)) if value is not None else None
-
-
-def site_index(sites) -> SiteIndex:
-    """Index the Parameter/Header/Secret sites the reference gate resolves against.
-    `sites` is the UNION of the unit's admitted chunk and the unit-scoped
-    graph-discovered sites (N1). A complete identity is keyed exactly; a bare name is
-    keyed only when it is unambiguous - a name mapping to more than one distinct
-    identity is dropped from `by_name`, so no collision is resolved first-wins."""
-    exact: dict[tuple, dict] = {}
-    by_name: dict[tuple, dict] = {}
-    ambiguous: set[tuple] = set()
-    for a in sites:
-        if a.type not in _SURFACE_LABELS:
+def site_index(admitted) -> dict[tuple[str, str], dict]:
+    """Index this chunk's admitted Parameter/Header/Secret assets by
+    `(label, the-part-a-model-reliably-gets-right)`, for `resolve_surface_refs` to
+    canonicalise against. Parameter/Header key on `name`; Secret keys on
+    `value_hash` (its whole identity). First match wins on a name collision -
+    ambiguity here is bounded by the chunk (<=100 assets), and the reflection
+    scaffold's HYPOTHESISE step is where ambiguity is meant to be resolved, not
+    this index."""
+    index: dict[tuple[str, str], dict] = {}
+    for a in admitted:
+        ident = a.identity or {}
+        if a.type == "Parameter" or a.type == "Header":
+            name = ident.get("name")
+            if name is None:
+                continue
+            key = (a.type, str(name))
+        elif a.type == "Secret":
+            vh = ident.get("value_hash")
+            if vh is None:
+                continue
+            key = ("Secret", str(vh))
+        else:
             continue
-        ident = dict(a.identity or {})
-        full = _full_key(a.type, ident)
-        if full is not None:
-            exact.setdefault(full, ident)
-        key = _name_key(a.type, ident)
-        if key is None:
-            continue
-        existing = by_name.get(key)
-        if existing is None:
-            by_name[key] = ident
-        elif existing != ident:
-            ambiguous.add(key)
-    for key in ambiguous:
-        by_name.pop(key, None)
-    return SiteIndex(exact=exact, by_name=by_name)
+        index.setdefault(key, dict(ident))
+    return index
 
 
-def _contradicts(label: str, identity: dict, canonical: dict) -> bool:
-    """True when a partially-supplied identity contradicts the resolved site: any
-    supplied `endpoint_path`/`baseurl` (Parameter) or `value`/`baseurl` (Header) that
-    differs from the canonical site. Guards against a silent rewrite when the ref
-    carries some, but not all, of the identity fields."""
-    fields = ("endpoint_path", "baseurl") if label == "Parameter" else ("value", "baseurl")
-    return any(
-        identity.get(k) is not None and str(identity[k]) != str(canonical.get(k))
-        for k in fields
-    )
-
-
-def _resolve_ref(l0: L0Ref, sites: SiteIndex) -> L0Ref | None:
+def _resolve_ref(l0: L0Ref, sites: dict) -> L0Ref | None:
     label = _canonical_label(l0.label)
     identity = l0.identity if isinstance(l0.identity, dict) else {}
     candidates = [label] if label else list(_SURFACE_LABELS)
     for lbl in candidates:
-        # A COMPLETE identity is matched exactly; a miss is a HARD drop, never a
-        # fall-back to the bare name, which would silently re-anchor the ref onto a
-        # different endpoint_path/baseurl (the reproduced N1 defect).
-        full = _full_key(lbl, identity)
-        if full is not None:
-            canonical = sites.exact.get(full)
-            if canonical is not None:
-                return L0Ref(label=lbl, identity=canonical)
+        name = identity.get("value_hash") if lbl == "Secret" else identity.get("name")
+        if name is None:
             continue
-        key = _name_key(lbl, identity)
-        if key is None:
-            continue
-        canonical = sites.by_name.get(key)
-        if canonical is None or _contradicts(lbl, identity, canonical):
-            continue
-        return L0Ref(label=lbl, identity=canonical)
+        canonical = sites.get((lbl, str(name)))
+        if canonical is not None:
+            return L0Ref(label=lbl, identity=canonical)
     return None
 
 
-def resolve_surface_refs(batch: L1DeltaBatch, *, sites: SiteIndex) -> tuple[L1DeltaBatch, int]:
+def resolve_surface_refs(batch: L1DeltaBatch, *, sites: dict) -> tuple[L1DeltaBatch, int]:
     """GATE 3, THE REFERENCE GATE (section 5.1): rewrite every `surfaces_at.l0`
     into the exact `Parameter{name,position,endpoint_path,baseurl}` /
     `Header{name,value,baseurl}` / `Secret{value_hash}` shape, and DROP any that
-    names no site the gate could resolve against (the unit's admitted chunk UNION
-    the unit-scoped graph-discovered sites, N1).
+    names no site this chunk actually streamed.
 
     `_l0_match_clause` MATCHes on exact label + identity and does not distinguish
     a zero-row match from a write (`l1_curator._write_each` counts it as written
@@ -306,11 +227,6 @@ def drop_out_of_inventory_services(
     """GATE 4, THE VALIDATION GATE (section 5.2): drop every `data_flow` whose
     `service_slug` is not a live L1 Service, collecting one backlog description
     per missing slug.
-
-    `existing_slugs` is the FULL live Service inventory, never the unit's own slug
-    alone (T3, L1-unit-first): a flow may name ANY live Service as producer or
-    consumer. Only a slug that names no live Service is dropped - the global gate,
-    which is what stops a hallucinated owner.
 
     `build_data_flow_cypher` merges the Service with provenance-on-mint, so an
     unvalidated `data_flow` naming a slug that does not exist would CREATE a
@@ -417,7 +333,7 @@ def enforce_groundedness(
 
 
 def shape_proposal(
-    raw: L1DeltaBatch, *, sites: SiteIndex, existing_slugs: frozenset[str] = frozenset(),
+    raw: L1DeltaBatch, *, sites: dict, existing_slugs: frozenset[str] = frozenset(),
     known_items: frozenset[str] = frozenset(), observed_names: frozenset[str] = frozenset(),
     existing_fields: dict[str, list[str]] | None = None,
 ) -> DataPlaneOutcome:
@@ -469,16 +385,60 @@ def shape_proposal(
     return DataPlaneOutcome(batch=batch, backlog=backlog, stats=stats)
 
 
-# --- observed vocabulary (section 5.3) -----------------------------------------
+# --- candidate owning Services (section 6) -------------------------------------
 
-def observed_vocabulary(sites) -> frozenset[str]:
-    """The names the observed-only gate may keep (section 5.3): the `name` of every
-    Parameter/Header site, plus any non-identity keys those (and Secret) assets
-    carry in `props`. The `sites` list is the UNION of the unit's admitted chunk
-    and the unit-scoped graph-discovered sites (N1), so a field seen only through
-    `graph_view` on the unit's own BaseURLs is still groundable."""
+def _asset_ref(asset) -> str:
+    ident = asset.identity or {}
+    if asset.type == "Parameter":
+        return f"Parameter:{ident.get('name')}@{ident.get('endpoint_path')}"
+    if asset.type == "Header":
+        return f"Header:{ident.get('name')}@{ident.get('baseurl')}"
+    if asset.type == "Secret":
+        return f"Secret:{ident.get('value_hash')}"
+    return f"{asset.type}:{ident}"
+
+
+def owning_services(admitted, aggregations: list[dict]) -> dict[str, list[str]]:
+    """The candidate-owning-Service join (section 6): a Parameter joins on
+    `endpoint_path` + `baseurl` against the live Service->Endpoint aggregation
+    view; a Header/Secret has no endpoint in its identity, so it joins on
+    `baseurl` alone (deliberately coarser - a response header is origin-scoped
+    rather than endpoint-scoped, and pretending otherwise would manufacture
+    precision the surface does not carry). `aggregations` is
+    `l1_read.read_service_aggregations`'s live view; only rows whose L0 labels
+    include `Endpoint` participate."""
+    by_endpoint: dict[tuple, set[str]] = defaultdict(set)
+    by_baseurl: dict[str, set[str]] = defaultdict(set)
+    for row in aggregations:
+        slug = row.get("slug")
+        labels = row.get("labels") or []
+        if not slug or "Endpoint" not in labels:
+            continue
+        props = row.get("props") or {}
+        path, baseurl = props.get("path"), props.get("baseurl")
+        if path and baseurl:
+            by_endpoint[(path, baseurl)].add(slug)
+        if baseurl:
+            by_baseurl[baseurl].add(slug)
+
+    out: dict[str, list[str]] = {}
+    for a in admitted:
+        ident = a.identity or {}
+        ref = _asset_ref(a)
+        if a.type == "Parameter":
+            key = (ident.get("endpoint_path"), ident.get("baseurl"))
+            out[ref] = sorted(by_endpoint.get(key, ()))
+        elif a.type in ("Header", "Secret"):
+            out[ref] = sorted(by_baseurl.get(ident.get("baseurl"), ()))
+    return out
+
+
+def observed_vocabulary(admitted) -> frozenset[str]:
+    """The names this chunk could actually have observed (section 5.3): the
+    `name` of every admitted Parameter/Header, plus any non-identity keys those
+    (and Secret) assets carry in `props`."""
     names: set[str] = set()
-    for a in sites:
+    for a in admitted:
         ident = a.identity or {}
         if a.type in ("Parameter", "Header") and ident.get("name") is not None:
             names.add(str(ident["name"]))
@@ -490,12 +450,10 @@ def observed_vocabulary(sites) -> frozenset[str]:
 # --- the hypothesis-driven reflection scaffold (section 7.3) -------------------
 
 _REFLECTION_STEPS = [
-    "ORIENT: read the Service unit first - its contract and the Endpoints it already "
-    "aggregates - then each Parameter/Header/Secret the survey DISCOVERED, together "
-    "with the endpoint path it hangs off (where it has one) and the origin-scoped "
-    "adversarial insight; say what the surface alone tells you before you look at the "
-    "known DataItems.",
-    "HYPOTHESISE (define-hypothesis): for each discovered name, state candidate "
+    "ORIENT: read each admitted Parameter/Header/Secret together with the endpoint "
+    "path it hangs off (where it has one) and the origin-scoped adversarial insight; "
+    "say what the surface alone tells you before you look at the known DataItems.",
+    "HYPOTHESISE (define-hypothesis): for each admitted name, state candidate "
     "hypotheses of the form 'this name witnesses business record R'. For an "
     "ambiguous name (id, token, ref) hold MORE THAN ONE candidate record, and state "
     "'this witnesses no business record' as an explicit candidate among them - never "
@@ -513,350 +471,16 @@ _REFLECTION_STEPS = [
     "SHAPE: for each verified record, three low-risk transcriptions of what "
     "verification already settled - Ground (name the exact surface site(s) it "
     "appears at, and which Service produces it and which consumes it, choosing "
-    "service slugs from the LIVE Service inventory you were given - any live Service "
-    "may be named, not only this unit), Trust (for a consumes whose producing Service "
-    "differs from the consumer, state the falsifiable predicate the consumer holds "
-    "about that data, in one surface-readable sentence), Relate (only where the "
-    "surface itself shows it, state a record-to-record dependency using one of the "
-    "allowed kinds, with a shallow predicate).",
+    "service slugs ONLY from the candidate list you were given), Trust (for a "
+    "consumes whose producing Service differs from the consumer, state the "
+    "falsifiable predicate the consumer holds about that data, in one surface-"
+    "readable sentence), Relate (only where the surface itself shows it, state a "
+    "record-to-record dependency using one of the allowed kinds, with a shallow "
+    "predicate).",
     "EMIT / WITHHOLD: report the verified records. Name what you FALSIFIED and why "
     "- a pagination cursor, a CSRF token, a framework header - so withholding is the "
     "loop's demonstrated conclusion, not an assumed default.",
 ]
-
-
-# The data_modeller's eight sub-problems (T3, L1-unit-first): three SURVEY turns
-# (surface_survey discovers the unit's surface, request_shapes reads the recorded
-# requests, insight_recall reads the notes store), the reasoning/extraction turns
-# (record_hypotheses, data_extract, flow_shape, flow_extract), and closure_note.
-# Each maps onto a run of the `_REFLECTION_STEPS` stages: ORIENT+HYPOTHESISE+
-# VERIFY-FALSIFY, INTEGRATE, SHAPE, EMIT-WITHHOLD. The reasoning turns emit
-# `claims`; the extraction turns emit `{data_items, surfaces_at}` and
-# `{data_flows, data_relationships}`. Every turn speaks `AnalysisTurn`, so the tool
-# set never toggles. No turn is fed a whole streamed asset list: the model discovers
-# the surface through `graph_view` and the HTTP-history pair, driven by the unit.
-_ROLE_HEADER = role_header(
-    "the DataPlane Analyser (data_modeller)",
-    "work down from the L1 Service unit to the surface it exposes, lift the Tier-1 "
-    "logical DataItems that surface evidences, bind them to the surface, and ground "
-    "their flows onto the settled Service model",
-)
-
-_RECORD_HYPOTHESES_TASK = (
-    "Emit one Claim per discovered name: `subject` the name, `assertion` the candidate "
-    "business record it witnesses (or 'no record' explicitly), `evidence` the exact "
-    "name/path/endpoint corroboration, `verdict` reuse-vs-coin against the known "
-    "DataItems. Emit `claims` only; do not emit deltas yet."
-)
-
-_DATA_EXTRACT_TASK = (
-    "TASK - EXTRACT THE DATA ITEMS. From the reasoning above, fill `data_items` and "
-    "`surfaces_at` for every record it verified. For a record already listed above, "
-    "REUSE its exact item_key and output the COMPOUNDED fields/notes (fold new insight "
-    "in, never blank or merely restate); coin a new item_key only for a record no "
-    "existing key covers. Reference a surface site as "
-    '{"label": "Parameter"|"Header"|"Secret", "identity": {...the exact fields you '
-    "discovered...}}. `fields` names ONLY fields you actually observed on the "
-    "discovered surface - never a speculative attribute. Fold the adversarial insight "
-    "into each item's `notes` as an adversarial CHARACTERISATION only - never a named "
-    "payload, technique, or vector."
-)
-
-_FLOW_SHAPE_TASK = (
-    "Emit one Claim per verified record's flow shape: `subject` the record, "
-    "`assertion` the Surface site(s) and the producing/consuming Service, `evidence` "
-    "the live Service inventory you chose the slugs from and the shared-surface "
-    "relation, `verdict` the trust assumption predicate and any record-to-record "
-    "relation. Emit `claims` only; do not emit deltas yet."
-)
-
-_FLOW_EXTRACT_TASK = (
-    "TASK - EXTRACT THE FLOWS. From the shape above, fill `data_flows` "
-    "(`service_slug` copied VERBATIM from the live Service inventory - any live "
-    "Service may be named as producer or consumer) and `data_relationships` "
-    "(the fixed allowlist `kind`, one of: "
-    + ", ".join(k for k, _desc in DATA_RELATIONSHIP_KINDS)
-    + ") for every relation the surface itself shows. Name what "
-    "you WITHHELD and why, so withholding is the demonstrated conclusion."
-)
-
-WORKFLOW = ReasoningWorkflow(
-    role_id=ROLE,
-    sub_problems=(
-        SubProblem(
-            id="surface_survey",
-            name="surface survey",
-            prompt=(
-                f"{_ROLE_HEADER}\n\nSURVEY - ORIENT, working DOWNWARD from the Service "
-                "unit. Do not assume anything from an asset name, and do not wait for a "
-                "pre-fed list: the unit (its slug, contract and already-aggregated "
-                "Endpoints) is your only anchor, and you DISCOVER its surface yourself. "
-                "Call `graph_view` with read-only Cypher (always a LIMIT): enumerate the "
-                "Service's aggregated Endpoints, and for each Endpoint its Parameters, "
-                "the Headers and Secrets on the BaseURL it lives on, and any existing "
-                "DataItems already flowed to or from this Service. A path is the address "
-                "you interrogate, never a place data appears. For each surface sighting, "
-                "emit one Claim: `subject` the Service or the endpoint; `assertion` what "
-                "the surface alone tells you (the concrete Parameters, Headers and "
-                "Secrets you found, and their transport position); `evidence` the exact "
-                "Cypher-returned identity; `verdict` whether this is a surface site that "
-                "could witness a business record. A name that merely sounds like a record "
-                "is not evidence yet; record the sighting, do not judge it here. Emit "
-                "`claims` only."
-            ),
-            inject=("service", "inventory"),
-            emit=("claims",),
-        ),
-        SubProblem(
-            id="request_shapes",
-            name="request shapes",
-            prompt=(
-                f"{_ROLE_HEADER}\n\nREAD SHAPES - read the RECORDED REQUEST SHAPES to "
-                "the endpoints you surveyed in step 1 (the unit's aggregated Endpoints "
-                "and any Endpoint you discovered). The survey names the inputs; the HTTP "
-                "history shows how they are actually sent. Call "
-                "`search_http_history` with a conjunctive filter over the request side "
-                "(filter on `url` containing the endpoint path), then call "
-                "`get_http_artifact` on the returned `artifact_id` to inspect one recorded "
-                "transaction. Read the `request` object `{method, url, headers, cookies, "
-                "query, form}`; body content is never visible and secret-bearing values "
-                "are redacted, so the KEYS are what matter. For each request-shape "
-                "observation, emit one Claim: `subject` the endpoint; `assertion` the "
-                "request keys actually sent and their transport (query, form, header, "
-                "cookie); `evidence` the `artifact_id` and the exact key names; `verdict` "
-                "which mapped surface site the shape corroborates. A recorded request is a "
-                "candidate, never a verification. Emit `claims` only."
-            ),
-            inject=("service", "surface_survey"),
-            emit=("claims",),
-            depends_on=("surface_survey",),
-        ),
-        SubProblem(
-            id="insight_recall",
-            name="insight recall",
-            prompt=(
-                f"{_ROLE_HEADER}\n\nRECALL - read the PRIOR MODELLING INSIGHTS from the "
-                "notes store before you enrich. Call `notes` with command=\"read\" for "
-                "this Service's unit slug, and again with a `body_keyword` for the "
-                "modelling closures of other Services that may share a record or a flow. "
-                "Reconcile what prior runs concluded against the surface you just "
-                "surveyed: a prior `data` item that still fits is a REUSE target; a prior "
-                "`open_question` the request shapes now answer is settled here; a prior "
-                "insight the survey contradicts is named and set aside. For each prior "
-                "insight you carry forward, emit one Claim: `subject` the prior item or "
-                "question; `assertion` how the current survey confirms or corrects it; "
-                "`evidence` the note key and the surface corroboration; `verdict` reuse, "
-                "compound, or set aside. Emit `claims` only."
-            ),
-            inject=("service", "inventory", "services", "surface_survey", "request_shapes"),
-            emit=("claims",),
-            depends_on=("surface_survey", "request_shapes"),
-        ),
-        SubProblem(
-            id="record_hypotheses",
-            name="record hypotheses",
-            prompt=(
-                f"{_ROLE_HEADER}\n\n{cot_scaffold(_REFLECTION_STEPS[:3])}\n\n"
-                f"{_RECORD_HYPOTHESES_TASK}"
-            ),
-            inject=(
-                "inventory", "services", "observations",
-                "surface_survey", "request_shapes", "insight_recall",
-            ),
-            emit=("claims",),
-            depends_on=("surface_survey", "request_shapes", "insight_recall"),
-        ),
-        SubProblem(
-            id="data_extract",
-            name="data extract",
-            prompt=(
-                f"{_ROLE_HEADER}\n\n{cot_scaffold(_REFLECTION_STEPS[3:4])}\n\n"
-                f"{_DATA_EXTRACT_TASK}"
-            ),
-            inject=("inventory", "services", "record_hypotheses"),
-            emit=("data_items", "surfaces_at"),
-            depends_on=("record_hypotheses",),
-        ),
-        SubProblem(
-            id="flow_shape",
-            name="flow shape",
-            prompt=(
-                f"{_ROLE_HEADER}\n\n{cot_scaffold(_REFLECTION_STEPS[4:5])}\n\n"
-                f"{_FLOW_SHAPE_TASK}"
-            ),
-            inject=("inventory", "services", "record_hypotheses", "data_extract"),
-            emit=("claims",),
-            depends_on=("data_extract",),
-        ),
-        SubProblem(
-            id="flow_extract",
-            name="flow extract",
-            prompt=(
-                f"{_ROLE_HEADER}\n\n{cot_scaffold(_REFLECTION_STEPS[5:6])}\n\n"
-                f"{_FLOW_EXTRACT_TASK}"
-            ),
-            inject=("inventory", "services", "data_extract", "flow_shape"),
-            emit=("data_flows", "data_relationships"),
-            depends_on=("flow_shape", "data_extract"),
-        ),
-        SubProblem(
-            id="closure_note",
-            name="modelling closure",
-            prompt=(
-                f"{_ROLE_HEADER}\n\nCLOSE - write the modelling-closure note for this "
-                "Service. Call `notes` with command=\"write\", action=\"append\", unit = "
-                "the Service slug, note_name=\"modelling-closure\", kind=\"data\", and a "
-                "body summarising this enrichment. The body MUST name: the DataItems "
-                "lifted and compounded (item_key, fields, anchors, flows); the records "
-                "reused; what you WITHHELD or FALSIFIED and why; the recorded request "
-                "shapes consulted; and any open question the surface left unresolved. "
-                "Then emit one Claim: `subject` the Service; `assertion` the enrichment "
-                "result; `evidence` the note key; `verdict` the residual open question or "
-                "`resolved`. Emit `claims` only."
-            ),
-            inject=("service", "record_hypotheses", "data_extract", "flow_extract", "request_shapes"),
-            emit=("claims",),
-            depends_on=("flow_extract",),
-        ),
-    ),
-)
-
-
-def _service_slug(chunk: Chunk) -> str:
-    """The unit's Service slug: `source_job`'s `service:` suffix, else the chunk id.
-    Mirrors the assigner's `_unit_context_block` so both read the same unit key."""
-    src = str(getattr(chunk, "source_job", "") or "")
-    return src.removeprefix("service:") if src.startswith("service:") else str(chunk.chunk_id)
-
-
-def _contracted_service(chunk: Chunk, inventory: dict | None) -> str:
-    """The unit's non-empty `service_contract` (C-M2): a Service with a contract but
-    no PRE-AGGREGATED surface still discovers its own."""
-    contracts = (inventory or {}).get("service_contracts") or {}
-    return str(contracts.get(_service_slug(chunk), "") or "") if isinstance(contracts, dict) else ""
-
-
-def unit_baseurls(chunk: Chunk, aggregations: list[dict] | None = None) -> set[str]:
-    """The BaseURLs the unit is anchored to: every `baseurl` its chunk assets carry
-    (an Endpoint's origin, a Parameter/Header's origin) plus every `baseurl` on the
-    Endpoints the unit aggregates. This is the N1 scope for graph-discovered sites
-    and the N2 discoverable-surface floor - a Service's `surfaces_at` may only ever
-    resolve to a site on its OWN origins, never another Service's. A Secret carries no
-    baseurl (its identity is the `value_hash`), so Secrets are never scoped here."""
-    out: set[str] = set()
-    for a in chunk.assets or ():
-        b = (a.identity or {}).get("baseurl")
-        if b is not None:
-            out.add(str(b))
-    slug = _service_slug(chunk)
-    for row in aggregations or []:
-        if row.get("slug") != slug:
-            continue
-        b = (row.get("props") or {}).get("baseurl")
-        if b is not None:
-            out.add(str(b))
-    return out
-
-
-def _discovered_sites(read_sites_fn, project_id: str | None, baseurls) -> list:
-    """The graph-discovered sites the reference/observed gates resolve against (N1),
-    UNIT-SCOPED: a Parameter/Header is kept only when its `baseurl` is one of the
-    unit's own BaseURLs (`baseurls`), so discovery can never resolve a ref onto
-    another Service's surface. A Secret is kept unconditionally - its identity is the
-    exact `value_hash`, so it carries no baseurl and no collision risk. Fail-open to
-    the admitted chunk alone on a read blip."""
-    if read_sites_fn is None or not project_id:
-        return []
-    try:
-        sites = read_sites_fn(project_id) or []
-    except Exception:  # noqa: BLE001 - a read blip degrades to the chunk-only index
-        logger.warning("data_modeller: discovered-sites read failed; using the chunk only",
-                       exc_info=True)
-        return []
-    in_scope = {str(b) for b in (baseurls or ())}
-    out = []
-    for a in sites:
-        if a.type == "Secret":
-            out.append(a)
-            continue
-        if a.type not in _SURFACE_LABELS:
-            continue
-        b = (a.identity or {}).get("baseurl")
-        if b is not None and str(b) in in_scope:
-            out.append(a)
-    return out
-
-
-def _aggregated_endpoints_repr(chunk: Chunk, aggregations: list[dict] | None) -> str:
-    """The Service's settled aggregated L0 Endpoints, one `METHOD /path (baseurl)` per
-    entry; a hint to enumerate them with `graph_view` when none are settled. A
-    starting point, never an asset-name filter."""
-    slug = _service_slug(chunk)
-    rows = [
-        a for a in (aggregations or [])
-        if a.get("slug") == slug and "Endpoint" in (a.get("labels") or [])
-    ]
-    if not rows:
-        return "(none settled yet - enumerate them with `graph_view`)"
-    lines = []
-    for a in rows:
-        p = a.get("props") or {}
-        line = " ".join(
-            part for part in (p.get("method", "?"), p.get("path") or p.get("url") or p)
-            if part
-        )
-        if p.get("baseurl"):
-            line = f"{line} ({p['baseurl']})"
-        lines.append(line)
-    return "; ".join(lines)
-
-
-def _service_unit_block(
-    chunk: Chunk, inventory: dict | None = None,
-    aggregations: list[dict] | None = None,
-) -> str:
-    """The `service` base source: the ONE Service unit this workflow enriches - its
-    slug, its `service_contract`, and the Endpoints it already aggregates.
-
-    The whole settled surface is deliberately ABSENT: the model DISCOVERS its own
-    surface through `graph_view` and the HTTP-history pair, driven by the unit
-    (L1-unit-first). A thin KB gets a thin honest contract, and an orphan unit gets an
-    empty aggregated list; both render explicitly rather than as a silently empty
-    prompt."""
-    slug = _service_slug(chunk)
-    contracts = (inventory or {}).get("service_contracts") or {}
-    contract = contracts.get(slug, "") if isinstance(contracts, dict) else ""
-    overview = ((inventory or {}).get("application_overview") or "").strip()
-    framing = f"APPLICATION OVERVIEW: {overview}\n\n" if overview else ""
-    return (
-        f"{framing}"
-        f"SERVICE UNIT: {slug}\n"
-        "This Service - not any asset name - is the reasoning anchor for the data "
-        "plane. Its contract states what it does and owns; its already-aggregated "
-        "Endpoints are a starting point, never a name filter.\n"
-        f"contract: {contract or '(none)'}\n"
-        f"aggregated endpoints: {_aggregated_endpoints_repr(chunk, aggregations)}"
-    )
-
-
-def _live_services_block(inventory: dict | None) -> str:
-    """The `services` base source: the FULL live Service inventory (slug - contract),
-    so a flow may name ANY live Service as producer/consumer - there is NO per-unit
-    write scope. A `service_slug` outside this list is still dropped by the global
-    validation gate."""
-    inv = inventory or {}
-    services = list(inv.get("services") or [])
-    contracts = inv.get("service_contracts") or {}
-    if not services:
-        return "LIVE SERVICE INVENTORY: (none yet)"
-    lines = [
-        "LIVE SERVICE INVENTORY (name ANY of these as a producer/consumer; a slug "
-        "not listed here names nothing and its flow is discarded):",
-    ]
-    for slug in services:
-        note = (contracts or {}).get(slug)
-        lines.append(f"- {slug} - {note}" if note else f"- {slug}")
-    return "\n".join(lines)
 
 
 def _known_items_block(inventory: dict | None) -> str:
@@ -882,6 +506,25 @@ def _known_items_block(inventory: dict | None) -> str:
     return "\n".join(lines)
 
 
+def _candidates_render(candidates: dict[str, list[str]]) -> str:
+    if not candidates:
+        return "  (no admitted surface)"
+    lines = []
+    for ref, slugs in candidates.items():
+        lines.append(f"  - {ref}: {slugs if slugs else '(no candidate owner)'}")
+    return "\n".join(lines)
+
+
+def _admitted_render(admitted) -> str:
+    lines = []
+    for a in admitted:
+        line = f"- {a.type} {dict(a.identity or {})}"
+        if a.props:
+            line += f" props={dict(a.props)}"
+        lines.append(line)
+    return "\n".join(lines) or "(none)"
+
+
 def _origin_observations_block(chunk: Chunk) -> str:
     """Origin-scoped adversarial insight (DPL-DEC-15): observations attach by
     ORIGIN, never per-asset - no Observation is ever anchored to a Parameter or a
@@ -890,7 +533,7 @@ def _origin_observations_block(chunk: Chunk) -> str:
     text-matching refinement (operator-rejected, question 16)."""
     if not chunk.observations:
         return "ORIGIN-SCOPED ADVERSARIAL INSIGHT: (none)"
-    lines = ["ORIGIN-SCOPED ADVERSARIAL INSIGHT (context for every surface site on that origin):"]
+    lines = ["ORIGIN-SCOPED ADVERSARIAL INSIGHT (context for every admitted asset on that origin):"]
     for o in chunk.observations:
         anchor = o.anchor or {}
         lines.append(
@@ -900,30 +543,74 @@ def _origin_observations_block(chunk: Chunk) -> str:
     return "\n".join(lines)
 
 
+def _reflection_prompt(chunk: Chunk, inventory: dict | None, candidates: dict) -> str:
+    from polymerhus.analysis.pod import overview_block
+
+    admitted = admit_for_role(chunk, ROLE)
+    return (
+        f"{overview_block(inventory)}"
+        f"{role_header('the DataPlane Analyser (data_modeller)', 'lift the Tier-1 logical DataItems this streamed surface evidences, bind them to the surface, and ground their flows onto the settled Service model')}\n\n"
+        f"{_known_items_block(inventory)}\n\n"
+        "CANDIDATE OWNING SERVICES (the only valid data_flows.service_slug values; a "
+        "Header/Secret join is origin-coarse, stated for that reason):\n"
+        f"{_candidates_render(candidates)}\n\n"
+        "STREAMED SURFACE (Parameter/Header/Secret only - never an Endpoint, a path is "
+        "an address, not a place data appears):\n"
+        f"{_admitted_render(admitted)}\n\n"
+        f"{_origin_observations_block(chunk)}\n\n"
+        f"{cot_scaffold(_REFLECTION_STEPS)}\n\n"
+        "Write your reasoning as prose. Do not emit JSON or a tool call in this step."
+    )
+
+
+def _extraction_prompt(inventory: dict | None, candidates: dict) -> str:
+    return (
+        f"{_known_items_block(inventory)}\n\n"
+        "CANDIDATE OWNING SERVICES (copy `data_flows.service_slug` VERBATIM from these):\n"
+        f"{_candidates_render(candidates)}\n\n"
+        # The reflection rides the thread as the assistant message this call follows;
+        # re-embedding it would send the same prose twice on the structured call (N3).
+        # POSITIVE framing (DPL-DEC-18): the legacy single data call returned ZERO
+        # data_items under a "leave the other lists EMPTY" litany; state what to
+        # FILL and that empty is wrong when a record was verified.
+        "TASK - EXTRACT THE DATA PLANE FROM YOUR REFLECTION. The assistant message "
+        "immediately above is your reflection: use it - do not ask for it again and do "
+        "not restate it. Fill FOUR lists: "
+        "`data_items`, `surfaces_at`, `data_flows`, `data_relationships` for every "
+        "record your reflection verified - an empty result here is wrong whenever "
+        "your reflection named a record. For a record already listed above, REUSE "
+        "its exact item_key and output the COMPOUNDED fields/notes (fold new insight "
+        "in, never blank or merely restate); coin a new item_key only for a record no "
+        "existing key covers. Reference a surface site as "
+        '{"label": "Parameter"|"Header"|"Secret", "identity": {...the exact fields shown '
+        "above...}}. `fields` names ONLY fields you actually observed on the surface "
+        "above - never a speculative attribute. Fold the adversarial insight into each "
+        "item's `notes` as an adversarial CHARACTERISATION only - never a named "
+        "payload, technique, or vector."
+    )
+
+
 # --- system message: two layers (section 7.2) -----------------------------------
 
 _ROLE_VERBATIM = (
     "You are the DataPlane Analyser (data_modeller) in an attack-surface analyser.\n"
-    "ROLE - DATA MODELLING. You reason DOWN from the L1 Service unit you are given "
-    "and DISCOVER its Parameter/Header/Secret surface through the tools, then judge "
-    "which logical business records (DataItems) that surface evidences, where each one "
-    "appears (`surfaces_at`), which Service produces/consumes it (`data_flows`), and "
-    "shallow record-to-record dependencies (`data_relationships`). You emit these four "
-    "lists and nothing else - never `services`, `systems`, `aggregates`, or "
-    "`system_edges`.\n"
+    "ROLE - DATA MODELLING. You judge which logical business records (DataItems) the "
+    "streamed Parameter/Header/Secret surface evidences, where each one appears "
+    "(`surfaces_at`), which Service produces/consumes it (`data_flows`), and shallow "
+    "record-to-record dependencies (`data_relationships`). You emit these four lists "
+    "and nothing else - never `services`, `systems`, `aggregates`, or `system_edges`.\n"
     "A DataItem is a business record BEHIND the surface (customer account, product "
     "listing, shopping basket, order, delivery address, payment method, coupon), NOT "
     "an endpoint or a parameter itself. A parameter that witnesses no business record "
     "(a pagination cursor, a CSRF token, a framework header) is correctly left alone.\n"
     "REFERENCING A SURFACE SITE: put the site in `surfaces_at.l0` as "
-    '{"label": "Parameter"|"Header"|"Secret", "identity": {...exact fields you '
-    'discovered...}}. NEVER reference an Endpoint - a path is the address you interrogate, '
+    '{"label": "Parameter"|"Header"|"Secret", "identity": {...exact fields shown to '
+    'you...}}. NEVER reference an Endpoint - a path is the address you interrogate, '
     "never a place data appears.\n"
     "`fields` on a DataItem name ONLY fields you actually OBSERVED on the surface "
-    "you discovered; never a speculative or merely-plausible field.\n"
-    "`data_flows.service_slug` is copied VERBATIM from the live Service inventory you "
-    "are given - any live Service may be named as producer or consumer; never a slug "
-    "you invent.\n"
+    "shown to you; never a speculative or merely-plausible field.\n"
+    "`data_flows.service_slug` is copied VERBATIM from the candidate owning-Services "
+    "list you are given - never a slug you invent.\n"
     "`data_relationships.kind` is one of the fixed allowlist; anything else is "
     "discarded.\n"
     "You never set provenance or write status; those are stamped by the system."
@@ -948,25 +635,25 @@ _BASELINE_FEW_SHOTS = (
     '"kind": "derived_from", "rationale": "a basket line is derived from a listed product"}]'
 )
 
-# The data_modeller role prompt, selected by the active prompt variant
-# (`prompt_variant.prompt_path`: `data-plane.md` for `legacy`,
-# `data-plane-batched-l1unit-first.md` for the default), memoized PER VARIANT on
-# first call (no import-time I/O, CODING STANDARD section 6). A missing prompt file
-# is a defect: FAIL-CLOSED (raise).
-_DATA_PLANE_SKILLS: dict[str, str] = {}
+# The data_modeller role prompt (`prompts/data-plane.md`), memoized on first call
+# (no import-time I/O, CODING STANDARD section 6). A missing prompt file is a
+# defect: FAIL-CLOSED (raise).
+_DATA_PLANE_SKILL: str | None = None
 
 
 def _load_skill() -> str:
-    """The data_modeller's HOW, read from the file the active prompt variant selects
-    (DPL-DEC-16): memoized in-process PER VARIANT, FAIL-CLOSED on a missing file
-    (raise). Every HARD invariant survives regardless, because
+    """The data_modeller's HOW, read directly from this module's
+    `prompts/data-plane.md` (DPL-DEC-16): memoized in-process, FAIL-CLOSED on a
+    missing file (raise). Every HARD invariant survives regardless, because
     narrow/resolve/validate/bind/ground are code."""
-    variant = resolve_prompt_variant()
-    cached = _DATA_PLANE_SKILLS.get(variant)
-    if cached is None:
-        cached = prompt_path("data_modeller", variant).read_text(encoding="utf-8")
-        _DATA_PLANE_SKILLS[variant] = cached
-    return cached
+    global _DATA_PLANE_SKILL
+    if _DATA_PLANE_SKILL is None:
+        from pathlib import Path  # noqa: PLC0415
+
+        _DATA_PLANE_SKILL = (
+            Path(__file__).resolve().parent / "prompts" / "data-plane.md"
+        ).read_text(encoding="utf-8")
+    return _DATA_PLANE_SKILL
 
 
 _DATA_MODELLER_PROMPT_CONFIGS = ("baseline", "skill")
@@ -998,6 +685,8 @@ def _default_invoke_fn(messages, *, schema=None, system_prompt=None):
     (the reflection call); a pydantic `schema` returns structured output. The role prompt
     is prepended here, exactly where the stateful seam's `system_prompt=` binding puts
     it. Production now uses `stateful_invoke_fn`."""
+    from langchain_core.messages import HumanMessage, SystemMessage
+
     from polymerhus.analysis.proposer_turn import prepend_prompt
     from polymerhus.app.llm.roles import invoke_role
 
@@ -1006,9 +695,8 @@ def _default_invoke_fn(messages, *, schema=None, system_prompt=None):
 
 def stateful_invoke_fn(run_id: str, checkpointer, project_id: str | None = None):
     """The STATEFUL data-modeller call (#94): the `data_modeller` role runs as a session
-    resuming from its OWN per-run checkpoint (`AnalysisSession(run_id, "data_modeller")`, distinct from every other agent's), so its sub-problem
-    chain and every chunk append to ONE growing context. Every turn goes through the
-    one `AnalysisTurn` envelope. Same `(messages, *, schema)` shape as
+    on its OWN per-run thread (`AnalysisSession(run_id, "data_modeller")`, distinct from every other agent's), reset at each chunk boundary. Structured turns are #44-safe;
+    a `schema=None` turn returns prose. Same `(messages, *, schema)` shape as
     `_default_invoke_fn`. Structurally sync (sequential dispatch).
 
     The role prompt is bound ONCE as the agent's ephemeral leading block (the
@@ -1030,108 +718,75 @@ def stateful_invoke_fn(run_id: str, checkpointer, project_id: str | None = None)
 def model_data(
     chunk: Chunk, *, invoke_fn=None, inventory: dict | None = None,
     aggregations: list[dict] | None = None,
-    read_sites_fn=None,
-    memory: "AnalysisMemoryStore | None" = None, project_id: str | None = None,
-    run_id: str | None = None,
 ) -> DataPlaneOutcome:
-    """The A.1 data_modeller body: the `WORKFLOW` sub-problem chain (surface_survey
-    -> request_shapes -> insight_recall -> record_hypotheses -> data_extract ->
-    flow_shape -> flow_extract -> closure_note) -> the six ordered shaping gates,
-    over one chunk.
+    """The A.1 data_modeller body: reflection (free prose) -> ONE structured
+    extraction call -> the six ordered shaping gates, over one chunk.
 
-    The prompt carries only the Service UNIT (its slug, `service_contract` and
-    aggregated Endpoints), the known DataItems, the FULL live Service inventory and
-    the origin-scoped insight; the model DISCOVERS its own surface through the tools
-    (L1-unit-first). `existing_slugs` at the shaping seam is the full live inventory,
-    so a flow may name ANY live Service - there is no per-unit write scope.
+    `invoke_fn(messages, *, schema) -> str | L1DeltaBatch | None` is injected
+    (unit-testable, no live LLM). FAIL-CLOSED on reflection exhaustion (empty
+    outcome, `stats.reflection_exhausted=True`); empty on extraction exhaustion.
+    Fail-open on any exception - never crashes the caller. An empty admission is a
+    VALID empty result with NO LLM call (DPL-DEC precision-first: nothing to model
+    is not a judgment to make)."""
+    from langchain_core.messages import HumanMessage
 
-    The deterministic reference/observed gates resolve against the unit's admitted
-    chunk UNION the UNIT-SCOPED graph-discovered sites `read_sites_fn(project_id)`
-    returns (N1): a site the model found only through `graph_view` can still ground an
-    item, but only when it lies on one of the unit's own BaseURLs (`unit_baseurls`), so
-    one Service's `surfaces_at` can never resolve to another Service's surface.
-
-    `invoke_fn(messages, *, schema, system_prompt) -> AnalysisTurn | None` is injected
-    (unit-testable, no live LLM). FAIL-CLOSED on hypotheses exhaustion (empty outcome,
-    `stats.reflection_exhausted=True`); empty on extraction exhaustion. Fail-open on
-    any exception - never crashes the caller. An empty admission is a VALID empty
-    result with NO LLM call - EXCEPT for a contracted Service with no pre-aggregated
-    surface, which still DISCOVERS its own (C-M2; DPL-DEC precision-first: nothing to
-    model is not a judgment to make, but discovery is the point)."""
     admitted = admit_for_role(chunk, ROLE)
-    if not admitted and not _contracted_service(chunk, inventory):
+    if not admitted:
         return DataPlaneOutcome()
 
     invoke_fn = invoke_fn or _default_invoke_fn
     system_prompt = _system_prompt()
-    discovered = _discovered_sites(read_sites_fn, project_id, unit_baseurls(chunk, aggregations))
-    sites = [*admitted, *discovered]
-    admitted_counts: dict[str, int] = defaultdict(int)
-    for a in admitted:
-        admitted_counts[a.type] += 1
+    candidates = owning_services(admitted, aggregations or [])
 
-    # The volatile base sources the workflow injects verbatim. The observed L0
-    # surface (endpoint-first) heads the request prefix; the unit context, the known
-    # DataItems, the full live Service inventory and the origin-scoped insight
-    # follow. `sites` still feeds the deterministic gates (reference resolution,
-    # observed vocabulary).
-    from polymerhus.analysis.pod import surface_block
-
-    base_artifacts = {
-        "surface": surface_block(chunk.assets),
-        "service": _service_unit_block(chunk, inventory, aggregations),
-        "inventory": _known_items_block(inventory),
-        "services": _live_services_block(inventory),
-        "observations": _origin_observations_block(chunk),
-    }
-
-    # Per-batch memory: the whole chain of ONE chunk shares a session (the batch
-    # scope), so the reasoning is the extraction's context; the next chunk opens a
-    # fresh thread. The scope is inert for the one-shot leg. The fail-closed gate
-    # halts the chain when the hypotheses turn exhausts.
+    # Per-chunk reset: the reflection and extraction of ONE chunk share the
+    # run:role session (the batch scope), so the reflection's reasoning is the
+    # extraction's context; the seam resets the session at the next chunk.
+    # The scope is inert for the one-shot leg.
     from polymerhus.analysis.proposer_turn import proposer_batch
-    from polymerhus.analysis.reasoning_workflow import AnalysisTurn, run_workflow, to_delta_batch
 
-    try:
-        with proposer_batch(chunk.chunk_id):
-            run = run_workflow(
-                WORKFLOW, invoke_fn=invoke_fn, system_prompt=system_prompt,
-                base_artifacts=base_artifacts,
-                halt_when=lambda sp, turn: sp.id == "record_hypotheses" and turn is None,
-                unit_slug=_service_slug(chunk), memory=memory, project_id=project_id,
-                run_id=run_id, note_kind="data",
+    with proposer_batch(chunk.chunk_id):
+        try:
+            prose = invoke_fn(
+                [HumanMessage(content=_reflection_prompt(chunk, inventory, candidates))],
+                schema=None, system_prompt=system_prompt,
             )
-    except Exception:  # fail-open: LLM error -> empty outcome, never crash (DPL-DEC fail-open)
-        logger.warning("data_modeller: workflow failed; degrading to empty outcome", exc_info=True)
-        return DataPlaneOutcome()
+        except Exception:  # fail-open: LLM error -> empty outcome, never crash (DPL-DEC fail-open)
+            logger.warning("data_modeller: reflection invoke failed; degrading to empty outcome", exc_info=True)
+            return DataPlaneOutcome()
+        admitted_counts: dict[str, int] = defaultdict(int)
+        for a in admitted:
+            admitted_counts[a.type] += 1
+        candidate_slugs = {slug for slugs in candidates.values() for slug in slugs}
 
-    if run.turns.get("record_hypotheses") is None:
-        logger.warning("data_modeller: hypotheses exhausted; fail-closed to empty outcome")
-        return DataPlaneOutcome(stats=DataPlaneStats(
-            admitted_parameters=admitted_counts.get("Parameter", 0),
-            admitted_headers=admitted_counts.get("Header", 0),
-            admitted_secrets=admitted_counts.get("Secret", 0),
-            observations_attached=len(chunk.observations),
-            reflection_exhausted=True,
-        ))
+        if not prose:
+            logger.warning("data_modeller: reflection exhausted; fail-closed to empty outcome")
+            return DataPlaneOutcome(stats=DataPlaneStats(
+                admitted_parameters=admitted_counts.get("Parameter", 0),
+                admitted_headers=admitted_counts.get("Header", 0),
+                admitted_secrets=admitted_counts.get("Secret", 0),
+                observations_attached=len(chunk.observations),
+                candidate_services=len(candidate_slugs),
+                reflection_exhausted=True,
+            ))
 
-    data_turn = run.turns.get("data_extract")
-    flow_turn = run.turns.get("flow_extract")
-    extraction_exhausted = data_turn is None and flow_turn is None
-    raw = to_delta_batch(AnalysisTurn(
-        data_items=list(data_turn.data_items) if data_turn is not None else [],
-        surfaces_at=list(data_turn.surfaces_at) if data_turn is not None else [],
-        data_flows=list(flow_turn.data_flows) if flow_turn is not None else [],
-        data_relationships=list(flow_turn.data_relationships) if flow_turn is not None else [],
-    ))
+        try:
+            raw = invoke_fn(
+                [HumanMessage(content=_extraction_prompt(inventory, candidates))],
+                schema=L1DeltaBatch, system_prompt=system_prompt,
+            )
+        except Exception:  # fail-open: extraction LLM error -> empty outcome, never crash
+            logger.warning("data_modeller: extraction invoke failed; degrading to empty outcome", exc_info=True)
+            return DataPlaneOutcome()
+    extraction_exhausted = raw is None
+    raw = raw or L1DeltaBatch()
 
     inv = inventory or {}
     outcome = shape_proposal(
         raw,
-        sites=site_index(sites),
+        sites=site_index(admitted),
         existing_slugs=frozenset(inv.get("services") or ()),
         known_items=frozenset(inv.get("data_items") or ()),
-        observed_names=observed_vocabulary(sites),
+        observed_names=observed_vocabulary(admitted),
         existing_fields=inv.get("data_item_fields") or {},
     )
     stats = outcome.stats.model_copy(update={
@@ -1139,6 +794,7 @@ def model_data(
         "admitted_headers": admitted_counts.get("Header", 0),
         "admitted_secrets": admitted_counts.get("Secret", 0),
         "observations_attached": len(chunk.observations),
+        "candidate_services": len(candidate_slugs),
         "extraction_exhausted": extraction_exhausted,
     })
     outcome = outcome.model_copy(update={"stats": stats})
@@ -1171,18 +827,12 @@ def _default_read_aggregations(project_id: str) -> list[dict]:
     return read_service_aggregations(project_id)
 
 
-def make_data_modeller_body(
-    *, invoke_fn=None, inventory_fn=None, aggregations_fn=None, read_sites_fn=None,
-    memory=None,
-):
+def make_data_modeller_body(*, invoke_fn=None, inventory_fn=None, aggregations_fn=None):
     """Adapt `model_data` to the supervisor's `ProposerBody` signature
     (`(dispatch, state) -> L1DeltaBatch | None`), a FACTORY binding every
     collaborator once (DPL-DEC-02, the Assigner's precedent - not the typist's
     `functools.partial` shape, so the dispatch-time reads stay explicit here).
 
-    `memory` threads the per-unit analysis backstop into `run_workflow` (ADR D31);
-    it is inert (None) on the streamed default. `read_sites_fn` is the C-M1
-    live-identity seam; absent it, the gates resolve against the chunk alone.
     Returns `None` immediately when `dispatch.phase != "A1"` - the inert A.2 seam
     (DPL-DEC-23): A.2 is `designed-not-built`, never a silent half-implementation.
     Every read is guarded, so this body never raises regardless of what its
@@ -1205,14 +855,9 @@ def make_data_modeller_body(
         try:
             aggregations = read_aggregations(project_id)
         except Exception:
-            logger.warning("data_modeller: aggregation read failed; no live Service context", exc_info=True)
+            logger.warning("data_modeller: aggregation read failed; no candidate owners", exc_info=True)
             aggregations = []
-        outcome = model_data(
-            chunk, invoke_fn=invoke_fn, inventory=inventory, aggregations=aggregations,
-            read_sites_fn=read_sites_fn,
-            memory=memory, project_id=project_id or None,
-            run_id=(state.get("run_id") or "").removeprefix("stream-") or None,
-        )
+        outcome = model_data(chunk, invoke_fn=invoke_fn, inventory=inventory, aggregations=aggregations)
         if outcome.backlog:
             logger.info("data_modeller: %d backlog description(s) not transported (DPL-DEC-22)", len(outcome.backlog))
         return outcome.batch

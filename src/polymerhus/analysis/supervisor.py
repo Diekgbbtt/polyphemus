@@ -394,18 +394,6 @@ class PassCensus(BaseModel):
     terminal: bool = False
     error: str | None = None
 
-    # The WRITE-BASED drained signal (T6, ADR D41): set by the service-sourced pass
-    # to whether it wrote at least one L1 element. `None` means "the pass makes no
-    # write-based claim", so the feed falls back to `dispatches_entered` - which is
-    # what keeps the streamed chunked path byte-unbroken. It is deliberately NOT
-    # dispatch count: a run where every Service degraded must not report drained.
-    wrote: bool | None = None
-    # A mid-pass graceful stop was honoured at a unit boundary (ADR D42): the feed
-    # classifies the run `stopped`, never `drained`.
-    stopped: bool = False
-    # Service units the per-Service loop visited (service-sourced observability).
-    units_processed: int = 0
-
     # Incremental streaming (#feed-decoupling): a pass processes only the surface not
     # already analysed in a PRIOR pass of the same run (`fresh_assets_read`), and reports
     # how much surface is STILL unprocessed after it (`unprocessed_after`). `unprocessed_after
@@ -506,6 +494,7 @@ async def analyse_chunked(
     data_modeller_invoke_fn=None,
     inventory_fn=None,
     aggregations_fn=None,
+    surface_fn=None,
     write_fn=None,
     checkpointer=None,
     store=None,
@@ -612,7 +601,8 @@ async def analyse_chunked(
     typist_invoke_fn = typist_invoke_fn or typist_stateful_invoke_fn(run_id, session_cp, project_id)
     data_modeller_invoke_fn = data_modeller_invoke_fn or dm_stateful_invoke_fn(run_id, session_cp, project_id)
 
-    assigner_inner = make_assigner_body(invoke_fn=invoke_fn, inventory_fn=inventory_fn)
+    assigner_inner = make_assigner_body(invoke_fn=invoke_fn, inventory_fn=inventory_fn,
+                                        surface_fn=surface_fn)
 
     def _counted(inner):
         # Counted HERE rather than from the schedule: a dispatch that was scheduled

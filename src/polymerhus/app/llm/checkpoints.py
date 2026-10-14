@@ -60,11 +60,9 @@ _POOL_MAX = 24
 # reads app; app must never read analysis). Under `LANGGRAPH_STRICT_MSGPACK=true` an
 # unlisted type is BLOCKED at load (`msgpack_blocked`) - a resumed turn silently loses
 # the value - so every structured-output envelope a workflow persists is listed here.
-_ALLOWED_MSGPACK_MODULES: tuple[tuple[str, str], ...] = (
-    # The analysis reasoning workflow's ONE structured envelope (`AnalysisTurn`); the
-    # reasoning state carries it in `turns`, so a resumed proposer re-hydrates it.
-    ("polymerhus.analysis.reasoning_workflow", "AnalysisTurn"),
-)
+# The streamed L0 proposers persist no bespoke envelope, so this family is empty on
+# the L0 trunk; the service-sourced experiment appends its `AnalysisTurn` here.
+_ALLOWED_MSGPACK_MODULES: tuple[tuple[str, str], ...] = ()
 
 
 def checkpoint_serde() -> Any:

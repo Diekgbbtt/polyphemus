@@ -1,15 +1,17 @@
-"""The analysis-proposer tool surface (analysis-unit-first v2).
+"""The analysis-proposer tool surface (the adjacent-surface read seam, D-A2).
 
-The v2 pipeline reasons FROM a unit and enriches it. Every proposer therefore
-needs to query the mapped L0 surface broadly and aggressively, without assuming
-asset names, and to confirm discovered paths against the recorded request shapes.
+The streamed Assigner judges a recently-collected chunk slice, and may widen
+its view to the slice's neighbourhood to gain a topological understanding of
+the services around it. It therefore needs to query the mapped L0 surface
+broadly, without assuming asset names, and to confirm an ambiguous ownership
+against the recorded request shapes.
 
-Three tools are bound on every proposer turn (the constant request shape, the
+Two tools are bound on the Assigner turn (the constant request shape, the
 cache rule):
 
   * `graph_view` - the read-only L0/L1 Cypher view (broad L0 query);
   * `search_http_history` / `get_http_artifact` - the recorded transaction
-    search + fetch (request shapes).
+    search + fetch (request shapes), for disambiguation and confirmation only.
 
 `graph_view` is a light analysis-side binding: the write-shape guard and the
 read seam live here so the analysis module does not import `attack.hunting` for

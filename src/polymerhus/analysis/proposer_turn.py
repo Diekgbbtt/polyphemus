@@ -32,23 +32,27 @@ from __future__ import annotations
 
 import contextlib
 import contextvars
+import logging
 from typing import Any, Iterator, Sequence
 
 from langchain_core.messages import BaseMessage, SystemMessage
 
+logger = logging.getLogger(__name__)
+
 # Distinguishes "the caller passed no schema" (use the role's own default) from
-# "the caller passed schema=None" (a deliberate prose turn). Every analysis proposer
-# now defaults to the one structured envelope `AnalysisTurn`, so a normal turn is
-# always structured; the explicit-None prose path is retained for a caller that
-# genuinely wants free text.
+# "the caller passed schema=None" (a deliberate prose turn). The analysis role's
+# schema is part of its output contract: the assigner is permanently structured,
+# while the reflection-driven proposers alternate prose and structured turns.
 _NO_SCHEMA = object()
 
-# The per-streamed-chunk memory scope (the per-batch discriminator). A proposer body
-# opens it around its invoke chain, so every turn of ONE chunk addresses the same
-# session (within-chunk memory is kept) while the next chunk addresses a FRESH thread
-# (`AnalysisSession(run, role, batch=...)`). It is a ContextVar, the repo's established
-# scoped-ambient pattern (`conversation_scope`, `module_context`), so the invoke
-# contract `(messages, *, schema, system_prompt)` is unchanged.
+# The per-streamed-chunk boundary signal (the per-batch discriminator). A proposer
+# body opens it around its invoke chain, so the seam sees where ONE chunk's turns
+# end and the next begins. It is a ContextVar, the repo's established scoped-ambient
+# pattern (`conversation_scope`, `module_context`), so the invoke contract
+# `(messages, *, schema, system_prompt)` is unchanged. The scope does NOT rename the
+# thread: every chunk runs on the SAME `run:role` session, which the seam resets at
+# each new batch (the reset-per-chunk lifecycle), keeping the stable identity the
+# provider prefix cache and the observability/runtime contract key on.
 _BATCH: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "proposer-batch", default=None)
 
@@ -56,29 +60,12 @@ _BATCH: contextvars.ContextVar[str | None] = contextvars.ContextVar(
 @contextlib.contextmanager
 def proposer_batch(batch_id: str | None) -> Iterator[None]:
     """Scope the turns of ONE streamed chunk as the session batch. A None batch is a
-    no-op scope, so a caller that sets none keeps the `run:role` thread.
-
-    The scope is ALSO the HTTP-history MCP session boundary: the unit's first kali
-    call opens one MCP session (reused for the unit's remaining calls), and this
-    exit closes it, so a unit carries exactly one handshake and never leaks a
-    connection into the next unit."""
+    no-op scope, so a caller that sets none keeps the `run:role` thread."""
     token = _BATCH.set(batch_id)
     try:
         yield
     finally:
         _BATCH.reset(token)
-        _close_http_session()
-
-
-def _close_http_session() -> None:
-    """Close the unit's HTTP-history MCP session at the batch boundary. Fail-open:
-    an unimportable client (or a close error) never breaks the proposer body."""
-    try:
-        from polymerhus.app.clients.kali_http_history import close_unit_session
-
-        close_unit_session()
-    except Exception:  # noqa: BLE001 - the boundary must never raise
-        pass
 
 
 def current_batch() -> str | None:
@@ -96,7 +83,7 @@ def _role_prompt(role_id: str) -> str:
     if role_id == "assigner":
         from polymerhus.analysis.assigner import _system_prompt
 
-        return _system_prompt()
+        return _system_prompt("create")
     if role_id == "mechanism_typist":
         from polymerhus.analysis.mechanism_typist import _load_skill
 
@@ -110,128 +97,81 @@ def _role_prompt(role_id: str) -> str:
 
 
 def _role_default_schema(role_id: str) -> Any:
-    """The role's default structured-output schema. Every analysis proposer now speaks
-    the ONE envelope `AnalysisTurn`: its reasoning sub-problems populate `claims` and
-    its extraction sub-problems populate the delta lists, so a caller that passes no
-    schema still gets the role's output contract."""
-    if role_id in ("assigner", "mechanism_typist", "data_modeller"):
-        from polymerhus.analysis.reasoning_workflow import AnalysisTurn
+    """The role's default structured-output schema, or None for a role that takes
+    prose turns. Part of the role's output contract, not a per-call decision."""
+    if role_id == "assigner":
+        from polymerhus.analysis.analyser_types import L1DeltaBatch
 
-        return AnalysisTurn
+        return L1DeltaBatch
     return None
 
 
 def _role_structured_schema(role_id: str) -> Any:
-    """The schema a role's structured turns use, or None for a role with no structured
-    contract. `AnalysisTurn` is the single structured tool every analysis proposer
-    binds, so the request shape never toggles across its sub-problems (ADR D26)."""
+    """The schema a role's STRUCTURED turns use, or None for a role with no structured
+    contract. Distinct from `_role_default_schema`, which is None for the
+    reflection-driven proposers: their prose turns are deliberate, but they still
+    share this one structured tool so the request shape never toggles."""
     if role_id in ("assigner", "mechanism_typist", "data_modeller"):
-        from polymerhus.analysis.reasoning_workflow import AnalysisTurn
+        from polymerhus.analysis.analyser_types import L1DeltaBatch
 
-        return AnalysisTurn
+        return L1DeltaBatch
     return None
 
 
-def _analysis_notes_tool(project_id: str | None):
-    """The analysis `notes` tool, bound on every proposer turn through the session
-    `tools=` seam - NEVER the skills seam (`skill_agent_binding` would raise for an
-    undeclared role; ADR D33). The store is per-project; the Service slug is a
-    request field, so a later unit reads earlier units' notes. Fail-open: an
-    unbuildable notes tool binds nothing (the session always starts)."""
-    try:
-        from polymerhus.analysis.memory import AnalysisMemoryStore, notes_tool_for
-
-        return notes_tool_for(
-            store=AnalysisMemoryStore(), project_id=project_id or "")
-    except Exception:  # noqa: BLE001 - fail-open: an unbuildable notes tool binds nothing
-        return None
-
-
-# The roles whose harvest needs the recorded request shapes, so they bind the
-# HTTP-history pair on every turn (the constant-tool-set rule). All three analysis
-# proposers harvest a surface now: the data-modeller always did, and the assigner /
-# mechanism-typist discovery phases query paths the history can confirm.
-_HTTP_TOOL_ROLES = frozenset({"assigner", "mechanism_typist", "data_modeller"})
-
-
 def _surface_tools(role_id: str, project_id: str | None) -> tuple:
-    """The L0-grounding tools every proposer binds (analysis-unit-first v2): the
-    read-only `graph_view` (broad L0 query) plus the HTTP-history read pair (recorded
-    request shapes) for the roles that harvest a surface. All three proposers harvest
-    now - the assigner and the mechanism-typist discover their surface too - so they
-    all bind the pair, and it is present on every turn (the cache rule). Fail-open:
-    an unbuildable surface binds nothing. The set is constant across the role's
-    turns."""
+    """D-A2: the adjacent-surface read tools, bound on the Assigner turn alone.
+
+    The assigner's structured turn binds the read-only `graph_view` plus the
+    HTTP-history pair, so its bounded BaseURL-neighbourhood phase has a read
+    seam; the response_format supplies the structured tool beside them (the
+    dev-proven shape). Every other role binds none - adjacent-surface reading
+    is the assigner's ownership. Fail-open: an unbuildable surface, or no
+    project scope, binds nothing (the session always starts)."""
+    if role_id != "assigner" or not project_id:
+        return ()
     try:
         from polymerhus.analysis.graph_tools import build_surface_tools
 
-        return build_surface_tools(
-            role_id, project_id=project_id, with_http=role_id in _HTTP_TOOL_ROLES)
+        return build_surface_tools(role_id, project_id=project_id, with_http=True)
     except Exception:  # noqa: BLE001 - fail-open: no surface tools bound
+        logger.warning("proposer_turn: surface tools unbuildable; binding none",
+                       exc_info=True)
         return ()
 
 
-def _prose_tools(role_id: str, *, project_id: str | None = None) -> tuple:
-    """The tools bound on a PROSE turn, so the tool set is constant across the
-    role's calls (the cache-shape rule): the shared `notes` tool, the
-    L0-grounding surface tools, plus the role's structured-output tool.
+def _prose_tools(role_id: str) -> tuple:
+    """The role's structured tool, bound on a PROSE turn so the tool set is constant
+    across the role's calls (the cache-shape rule).
 
-    The structured turn supplies the structured tool through `response_format`
-    (which `create_agent` appends AFTER the passed tools), so a prose turn binds
-    `(notes, AnalysisTurn)` in that exact order to reproduce the same final bound
-    list. The structured tool is the EXACT tool the ToolStrategy path builds - the
-    agent factory's own `OutputToolBinding.from_schema_spec` derivation, not a
-    hand-built look-alike - so the serialized `tools=` payload is byte-identical
-    between the prose and structured turns. Fail-open: an unbuildable shape binds
-    nothing (the session always starts)."""
+    The structured turn supplies the SAME tool through `response_format`; binding it
+    again there would duplicate it, so only a prose turn (`schema is None`) gets it
+    here. The tool is the exact tool the ToolStrategy path builds when the role's
+    negotiated structured-output method is ToolStrategy (the A6 voluntary rung); a
+    ProviderStrategy method carries no tool, so this returns (). The tool is made
+    inert - the reflection prompt forbids a call, and a stray call then costs one
+    benign tool message instead of a ToolNode error. Fail-open: an unbuildable shape
+    binds nothing (the session always starts)."""
     schema = _role_structured_schema(role_id)
     if schema is None:
         return ()
-    tools: list = []
-    notes = _analysis_notes_tool(project_id)
-    if notes is not None:
-        tools.append(notes)
-    tools.extend(_surface_tools(role_id, project_id))
     try:
-        from langchain.agents.structured_output import OutputToolBinding, ToolStrategy
+        from langchain.agents.structured_output import ToolStrategy
+        from langchain_core.tools import StructuredTool
 
         from polymerhus.app.llm.session import structured_response_format
 
-        # The notes tool is a per-project memory sidecar, NOT the structured-output
-        # carrier: the negotiation axis stays the NO-TOOLS axis (as before the notes
-        # binding), so adding `notes` never flips the negotiated method or the
-        # request shape (ADR D34). The structured turn supplies the structured tool
-        # through `response_format`.
         fmt = structured_response_format(role_id, schema, tools_bound=False)
         if not isinstance(fmt, ToolStrategy):
-            return tuple(tools)
-        # The SAME derivation `create_agent` runs for the structured turn
-        # (`OutputToolBinding.from_schema_spec`), so the two turns cannot drift.
-        tools.append(OutputToolBinding.from_schema_spec(fmt.schema_specs[0]).tool)
+            return ()
+        spec = fmt.schema_specs[0]
+        return (StructuredTool(
+            name=spec.name,
+            description=spec.description,
+            args_schema=spec.json_schema,
+            func=lambda **_: "structured output is only produced on the extraction turn",
+        ),)
     except Exception:  # noqa: BLE001 - fail-open: an unbuildable tool binds nothing
-        return tuple(tools)
-    return tuple(tools)
-
-
-def _turn_tools(role_id: str, project_id: str | None, *,
-                structured_bound: bool) -> tuple:
-    """The constant per-role tool set for ONE turn.
-
-    A structured turn passes only `notes` and lets `response_format` append
-    `AnalysisTurn`; a prose turn passes `(notes, AnalysisTurn)` directly. Both
-    final bound lists are `(notes, AnalysisTurn)`, so the request shape never
-    toggles between a role's reflection and extraction turns (the shape that
-    defeated the provider prefix cache; ADR D26/D34)."""
-    if _role_structured_schema(role_id) is None:
         return ()
-    if structured_bound:
-        tools: list = []
-        notes = _analysis_notes_tool(project_id)
-        if notes is not None:
-            tools.append(notes)
-        tools.extend(_surface_tools(role_id, project_id))
-        return tuple(tools)
-    return _prose_tools(role_id, project_id=project_id)
 
 
 def session_invoke_fn(role_id: str, run_id: str, checkpointer, project_id: str | None = None):
@@ -246,38 +186,71 @@ def session_invoke_fn(role_id: str, run_id: str, checkpointer, project_id: str |
 
     Two cross-call invariants ride this ONE seam:
 
-    - **Constant request shape**: every turn binds the analysis `notes` tool, and a
-      prose turn ALSO binds the role's structured tool via `tools=`, so the tool set
-      never toggles between a role's reflection and extraction turns (the shape that
-      defeated the provider prefix cache; ADR D26/D34).
-    - **Per-batch memory**: the thread is `AnalysisSession(run, role, batch)` where
-      `batch` is the innermost `proposer_batch` scope the body opened (the streamed
-      chunk id) - or None (the `run:role` thread) when none is set.
+    - **Constant request shape**: a prose turn still binds the role's structured tool
+      via `tools=`, so the tool set never toggles between a role's reflection and
+      extraction turns (the shape that defeated the provider prefix cache).
+      The Assigner turn additionally binds its adjacent-surface read tools
+      (D-A2) on every structured turn - it is permanently structured, so its
+      set never toggles either.
+    - **Per-chunk reset on one session**: the thread is always
+      `AnalysisSession(run_id, role_id)` - the documented `run:role` the
+      observability/runtime contract expects. The first turn that arrives under a
+      NEW `proposer_batch` scope resets that session to empty (fail-open), so the
+      chunk starts from the initial system prompt + its fixed human messages
+      instead of resuming the previous chunk's trail, while the turns WITHIN one
+      chunk still share the session (the reflection is the extraction's context).
 
     Structurally sync: the supervisor dispatches the proposers sequentially under
     `ANALYSER_PASS_SEMAPHORE`, so a turn never needs an async entry point."""
     from polymerhus.app.llm import compaction as C  # noqa: PLC0415
-    from polymerhus.app.llm.session import stateful_turn  # noqa: PLC0415
+    from polymerhus.app.llm.session import reset_session_thread, stateful_turn  # noqa: PLC0415
     from polymerhus.app.llm.session_address import AnalysisSession  # noqa: PLC0415
 
     middleware = [C.build_role_compaction_middleware(role_id)]
+    # The chunk-boundary reset cell: the last batch this invoke saw. A turn
+    # arriving under a NEW non-None batch resets the ONE session first, so the
+    # chunk starts from the initial system prompt + its fixed human messages.
+    # Unscoped turns never reset (the back-compat callers keep their trail).
+    last_batch: list[str | None] = [None]
 
     def invoke(messages: Sequence[BaseMessage], *, schema: Any = _NO_SCHEMA,
-              system_prompt: str | None = None):
+               system_prompt: str | None = None):
         # The caller's prompt wins (the pod-agent pattern: the call site owns its
         # skill), so a role whose prompt varies by mode still gets the right one.
         # Absent one, the role's OWN default prompt applies - a proposer therefore
         # can never be built with another proposer's prompt by accident.
         resolved_schema = (_role_default_schema(role_id)
                            if schema is _NO_SCHEMA else schema)
-        # Constant shape: every turn binds the analysis `notes` tool, and a prose
-        # turn ALSO binds the structured tool the structured turn gets through
-        # `response_format`, so the tool set never toggles. Only a non-empty set is
-        # forwarded, so the structured calls stay byte-identical to the pre-change
-        # requests.
-        tools = _turn_tools(
-            role_id, project_id, structured_bound=resolved_schema is not None)
-        address = AnalysisSession(run_id, role_id, batch=current_batch())
+        # Constant shape: a prose turn binds the role's structured tool so the tool
+        # set never toggles; the structured turn supplies it via `response_format`.
+        # Only a non-empty set is forwarded, so the structured calls stay byte-identical
+        # to the pre-change requests. The Assigner turn additionally binds its
+        # adjacent-surface read tools (D-A2); it is permanently structured, so its
+        # set never toggles either.
+        tools = (_surface_tools(role_id, project_id)
+                 if resolved_schema is not None else _prose_tools(role_id))
+        address = AnalysisSession(run_id, role_id)
+        batch = current_batch()
+        if batch is not None and batch != last_batch[0]:
+            # A new chunk on the one session: reset it to empty first, so this
+            # chunk's turns start from the initial system prompt + the fixed
+            # human messages. BOTH halves are reset, fail-open: the checkpointer
+            # trail (`reset_session_thread`) AND the compaction manager's
+            # per-thread state (its running-summary pointer and ledger - without
+            # this the new chunk would inherit the old chunk's summary and its
+            # occupancy). A refused reset keeps the trail.
+            reset_session_thread(checkpointer, address)
+            for mw in middleware:
+                manager = getattr(mw, "manager", None)
+                reset = getattr(manager, "reset_thread", None)
+                if callable(reset):
+                    try:
+                        reset(address.thread_id)
+                    except Exception:  # noqa: BLE001 - fail-open, keeping state
+                        logger.warning(
+                            "reset of compaction state for %s failed "
+                            "(fail-open, keeping state)", address.thread_id)
+        last_batch[0] = batch
         kwargs: dict[str, Any] = {}
         if tools:
             kwargs["tools"] = tools
@@ -286,8 +259,7 @@ def session_invoke_fn(role_id: str, run_id: str, checkpointer, project_id: str |
                              schema=resolved_schema,
                              system_prompt=system_prompt or _role_prompt(role_id),
                              middleware=middleware, extra_tags=[run_id],
-                             usage_scope=project_id,
-                             **kwargs)
+                             usage_scope=project_id, **kwargs)
 
     return invoke
 
