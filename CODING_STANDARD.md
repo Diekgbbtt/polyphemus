@@ -141,7 +141,7 @@ The interface agreements are deliberately narrow typed shapes in `src/polymerhus
 
 - The parser contract: `stdout -> list[AssetDelta]`, i.e. `Callable[[str], list[AssetDelta]]` (`src/polymerhus/recon/domain/parsers/__init__.py:17`).
 - The curate contract: `curate(assets, observations, project_id, *, merge_fn=...)` returning `(assets_merged, observations_merged)` (`src/polymerhus/recon/domain/curator.py:226-234`), mirrored by `l1_curate` returning `(services_merged, systems_merged)` (`src/polymerhus/analysis/l1_curator.py:264`).
-- Interface agreement A (assignment): `AGGREGATES` carrying the full judgment envelope `{confidence, status, evidence_refs, provenance, ts}` (`src/polymerhus/analysis/l1_curator.py:32-39`, `L1D-25`).
+- Interface agreement A (assignment): `AGGREGATES` carrying the judgment envelope `{status, evidence_refs, provenance, ts}` (`src/polymerhus/analysis/l1_curator.py:32-39`, `L1D-25`).
 - Interface agreement B (targeted recon / probe): a backward-recon request routed to the requesting agent (`domain-model.md` §2.6, `L1D-26`).
 - The analyser's pure contract: `f(L0-slice + observations) -> L1-deltas` (`src/polymerhus/analysis/analyser_types.py:11-13`), whose proposals omit provenance and identity by design.
 

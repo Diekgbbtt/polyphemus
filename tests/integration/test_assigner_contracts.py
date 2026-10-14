@@ -547,7 +547,7 @@ def test_C35c_task_names_the_adjacent_phase_and_the_deductive_target():
     user = seen["messages"][0].content
     assert "BaseURL" in user            # the adjacent topology comes from the BaseURL join
     assert "DEDUCTIVE TARGET" in user   # the inventory is what the reasoning reasons TO
-    assert "withheld, not placed" in user
+    assert "left unplaced" in user      # admit-all: an unsupported judgment yields no edge
 
 
 def test_C35d_reference_rule_covers_graph_view_discovered_endpoints():
@@ -604,10 +604,11 @@ def test_C36_stats_name_where_each_judgment_died():
 # default `baseline` until a comparative eval flips it (the bootstrap._PROMPT_CONFIGS
 # discipline: a prompt default is earned by measurement, never by argument).
 
-# The pre-skill prompt, pinned by construction rather than by a copied literal: the
-# rollback arm must stay byte-identical to `_ROLE_VERBATIM` + `_FEW_SHOTS` forever.
-# Both halves lost their confidence text when the score was removed, so this pins the
-# current construction, not the historical bytes.
+# The baseline arm, pinned by construction rather than by a copied literal: it must
+# stay byte-identical to `_ROLE_VERBATIM` + `_FEW_SHOTS` forever. Both halves lost
+# their confidence text when the score was removed, so this pins the CURRENT
+# construction, not a historical byte string - there is no archived baseline literal
+# to compare against.
 _BASELINE_EXPECTED = f"{assigner._ROLE_VERBATIM}\n\n{assigner._FEW_SHOTS}"
 
 
@@ -619,11 +620,10 @@ def _system_for(config, monkeypatch, mode="create"):
     return seen["system_prompt"]
 
 
-def test_C37_baseline_arm_is_byte_identical_to_the_pre_skill_prompt(monkeypatch):
-    """The rollback path is PINNED, not assumed. `baseline` must reproduce the
-    pre-skill prompt as it stands now (minus the removed confidence text), so
-    reverting a `skill` default that measures badly is a one-env-var revert with no
-    prompt drift smuggled in.
+def test_C37_baseline_arm_is_pinned_by_construction(monkeypatch):
+    """The rollback path is PINNED, not assumed. `baseline` must reproduce exactly
+    `_ROLE_VERBATIM` + `_FEW_SHOTS` as they stand now, so reverting a `skill` default
+    that measures badly is a one-env-var revert with no prompt drift smuggled in.
 
     This property survives the default flip unchanged - which is the point of pinning
     it by construction (`_ROLE_VERBATIM` + `_FEW_SHOTS`) rather than against a copied

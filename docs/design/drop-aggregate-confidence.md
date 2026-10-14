@@ -36,7 +36,10 @@ every structurally-valid aggregate (admit-all).
 5. `evaluation` loses `bar_sweep` and the `confidences` / `mean_confidence` read,
    and `ASSIGNMENT_INTEGRITY_KEYS` loses `withheld_rate` and `mean_confidence`.
 6. The observability record no longer persists raw per-aggregate confidences or
-   the bar.
+   the bar. Deliberately, the raw-proposal trace keeps its inspectability by
+   carrying each proposal's `evidence_refs` in place of the removed `confidence`,
+   so a structurally-dropped aggregate still leaves a trace of what the model
+   proposed.
 7. All prompt verbatim about confidence, scores, bars and anchors is removed; the
    scored worked examples are rewritten scoreless.
 

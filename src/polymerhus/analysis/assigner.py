@@ -358,11 +358,10 @@ _FEW_SHOTS = (
 # forbidden to emit, so a GENERALIST skill was worse here than none.
 #
 # There is no degraded stand-in: a missing prompt file is a defect and the read
-# below FAILS CLOSED (raises). Withholding is the only defence against the
-# measured 31-38% over-assignment, so the discipline's null-hypothesis,
-# discriminating-evidence and calibration core must always be present - and every
-# HARD invariant survives regardless, because narrow / resolve / inventory / bar
-# are code, not prompt.
+# below FAILS CLOSED (raises). The withhold gate went with the score (admit-all,
+# docs/design/drop-aggregate-confidence.md), so precision now rests on the prompt
+# discipline - the null hypothesis, discriminating evidence - plus the structural
+# gates (validation / out-of-inventory / unresolvable) that are code, not prompt.
 _ASSIGNER_SKILL: str | None = None
 
 
@@ -442,9 +441,9 @@ def _user_prompt(l0_slice: dict, inventory: dict | None) -> str:
         "neighbour your slice (always a LIMIT; a handful of queries, never a "
         "trawl). The inventory block above is your DEDUCTIVE TARGET: reason FROM "
         "the observed surface TO these listed identities - a judgment that "
-        "cannot cite the surface against a listed Service is withheld, not "
-        "placed. Assign each Endpoint to the Service(s) that own it, each "
-        "aggregate carrying its `evidence_refs`."
+        "cannot cite the surface against a listed Service is left unplaced; the "
+        "endpoint stays in the stale pool. Assign each Endpoint to the Service(s) "
+        "that own it, each aggregate carrying its `evidence_refs`."
     )
 
 
