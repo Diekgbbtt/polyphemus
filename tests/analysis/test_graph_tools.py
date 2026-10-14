@@ -4,10 +4,13 @@ The builder is the trunk's adjacent-surface read seam (D-A2): the assigner
 enumerates BaseURLs and joins their endpoints through it. Pinned here with an
 injected `read_fn` (no live graph): the write-shape guard fails closed to the
 model, every other failure degrades fail-open, and the success shape is
-`{"rows": [...]}`.
+`{"rows": [...]}`. The FM-E node projection is pinned here too: a returned
+whole node reads back as `{labels, properties}`, never an opaque repr.
 """
 from polymerhus.analysis.graph_tools import (
+    GRAPH_VIEW_CONTRACT,
     ReadOnlyGraphViewError,
+    _WRITE_SHAPED,
     build_analysis_graph_view_tool,
     build_surface_tools,
 )
@@ -52,3 +55,56 @@ def test_surface_tools_bind_graph_view_and_the_http_pair_for_the_assigner():
 
 def test_surface_tools_without_a_project_bind_nothing():
     assert build_surface_tools("assigner", project_id=None, with_http=True) == ()
+
+
+class _FakeNode(dict):
+    """A driver-Node stand-in: a property mapping carrying `labels`."""
+
+    def __init__(self, labels, props):
+        super().__init__(props)
+        self._labels = frozenset(labels)
+
+    @property
+    def labels(self):
+        return self._labels
+
+
+def test_guard_tokens_match_the_hunting_seam():
+    from polymerhus.attack.hunting.graph_view_tool import (
+        _WRITE_SHAPED as HUNTING_SHAPED,
+    )
+
+    assert _WRITE_SHAPED.pattern == HUNTING_SHAPED.pattern
+
+
+def test_returned_node_projects_to_labels_and_properties():
+    node = _FakeNode(["Endpoint"], {"path": "/queue", "method": "GET"})
+    tool = build_analysis_graph_view_tool(
+        "p", read_fn=lambda cypher, params: [{"s": node}])
+    out = tool.invoke({"cypher": "MATCH (s) RETURN s", "params": {}})
+    assert out == {"rows": [{"s": {
+        "labels": ["Endpoint"],
+        "properties": {"path": "/queue", "method": "GET"},
+    }}]}
+
+
+def test_collected_nodes_project_element_wise():
+    nodes = [_FakeNode(["Endpoint"], {"path": f"/{i}"}) for i in range(2)]
+    tool = build_analysis_graph_view_tool(
+        "p", read_fn=lambda cypher, params: [{"items": nodes}])
+    out = tool.invoke({"cypher": "MATCH (s) RETURN collect(s) AS items", "params": {}})
+    assert [row["items"][0]["labels"] for row in out["rows"]] == [["Endpoint"]]
+    assert out["rows"][0]["items"][1]["properties"] == {"path": "/1"}
+
+
+def test_scalars_and_plain_rows_pass_through():
+    rows = [{"method": "GET", "path": "/", "n": 3, "flag": True, "x": None}]
+    tool = build_analysis_graph_view_tool(
+        "p", read_fn=lambda cypher, params: rows)
+    assert tool.invoke({"cypher": "MATCH (s) RETURN s.method", "params": {}}) == {
+        "rows": rows}
+
+
+def test_contract_teaches_return_scalars_not_nodes():
+    assert "never a whole node" in GRAPH_VIEW_CONTRACT
+    assert "properties(e) AS props" in GRAPH_VIEW_CONTRACT

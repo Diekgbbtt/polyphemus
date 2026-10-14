@@ -1,6 +1,6 @@
 # Analysis-proposer tool-call failure modes (Langfuse harvest)
 
-Status: FM-C and FM-D fixed 2026-10-14 (see the fix notes); FM-A/B/E/F still diagnosis - proposed fixes, none applied.
+Status: FM-C, FM-D and FM-E fixed 2026-10-14 (see the fix notes); FM-A/B/F still diagnosis - proposed fixes, none applied.
 Window: 2026-10-13T00:00Z .. 2026-10-14T09:35Z.
 Source: Langfuse v2 observations (`GET /api/public/v2/observations`), project polyphemus (`cmv6cdk12000sad0nbechto7t`).
 Scope: the three L0-grounding tools bound on every analysis proposer turn - `graph_view`, `search_http_history`, `get_http_artifact`.
@@ -108,7 +108,9 @@ Proposed verbatim (append to the `http_history_failed` contract in the descripti
 
 > A `http_history_failed` result means the history store could not be reached for THIS call. The target may still have history: treat it as missing evidence, never as proof of an empty surface, and continue with `graph_view` and the rest of your evidence.
 
-### FM-E - `graph_view` returns opaque node reprs (return-shape drift)
+### FM-E - `graph_view` returns opaque node reprs (FIXED 2026-10-14)
+
+Fix applied as proposed: the analysis read seam projects Node-likes to `{labels, properties}` (recursive through dicts/lists, scalars untouched) and the contract teaches RETURN-scalars. Regression: `tests/analysis/test_graph_tools.py` (also pins the write-guard parity with the hunting seam the module comment claims); red pre-fix, green post-fix.
 
 Count: 26 of 744 `graph_view` results returned raw Neo4j node reprs (`<Node element_id=... labels=frozenset({...}) properties={...}>`), because the query was `RETURN s` or `RETURN o`.
 

@@ -23,6 +23,7 @@ Import performs no I/O (CODING_STANDARD section 6); the read seam resolves on ca
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from typing import Any, Callable
 
 from langchain_core.tools import tool
@@ -73,7 +74,11 @@ _QUERY_PRIMITIVES = (
 
 _RETURN_SHAPE = (
     "RETURN SHAPE - on success {\"rows\": [...]} (a list of dict rows); on a "
-    "failure {\"error\": ...} (fail-open, never a raise)."
+    "failure {\"error\": ...} (fail-open, never a raise). RETURN scalars or "
+    "maps, never a whole node: `RETURN properties(e) AS props, labels(e) AS "
+    "labels` reads back as a real row, while `RETURN e` comes back as an "
+    "opaque node repr you cannot index. Prefer `RETURN e.method, e.path, "
+    "properties(e) AS props`."
 )
 
 _EXAMPLE = (
@@ -91,6 +96,29 @@ GRAPH_VIEW_CONTRACT = (
     "reasoning in the target's surface.\n\n"
     f"{_SCHEMA}\n\n{_QUERY_PRIMITIVES}\n\n{f'{_RETURN_SHAPE}'}\n\n{_EXAMPLE}"
 )
+
+
+def _project_value(value: Any) -> Any:
+    """Project a graph element to a model-readable map (FM-E).
+
+    A returned whole node serializes to an opaque repr
+    (`<Node element_id=...>`) the model must scrape, although `_RETURN_SHAPE`
+    promises dict rows. Node-likes (a property mapping carrying `labels`,
+    which is what the driver returns for `RETURN e`) project to
+    `{"labels": [...], "properties": {...}}`; every other mapping projects to
+    a plain dict, and lists/tuples project element-wise, so a `collect()`
+    of nodes reads back too. Scalars pass through untouched."""
+    labels = getattr(value, "labels", None)
+    if labels is not None and isinstance(value, Mapping):
+        return {
+            "labels": sorted(labels),
+            "properties": {k: _project_value(v) for k, v in value.items()},
+        }
+    if isinstance(value, Mapping):
+        return {k: _project_value(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_project_value(v) for v in value]
+    return value
 
 
 def build_analysis_graph_view_tool(project_id: str, *, read_fn: GraphReadFn | None = None):
@@ -114,8 +142,8 @@ def build_analysis_graph_view_tool(project_id: str, *, read_fn: GraphReadFn | No
         try:
             rows = read(cypher, merged)
             if not isinstance(rows, list):
-                return {"rows": [rows] if rows is not None else []}
-            return {"rows": rows}
+                rows = [rows] if rows is not None else []
+            return {"rows": [_project_value(row) for row in rows]}
         except ReadOnlyGraphViewError:
             raise
         except Exception as exc:  # noqa: BLE001 - fail-open
