@@ -199,22 +199,27 @@ def test_C27c_noise_extensions_are_excluded():
 
 
 def test_C27d_noise_directories_excluded_by_segment_not_substring():
-    """`assets` / `static` drop as whole SEGMENTS, never as substrings."""
+    """`assets` / `static` drop as whole SEGMENTS, never as substrings, case-insensitively."""
     assets = [
-        _ep("/assets/api/users"),    # the `assets` segment -> dropped
-        _ep("/static/app"),          # the `static` segment -> dropped
-        _ep("/x/static/y"),          # `static` anywhere as a segment -> dropped
-        _ep("/api/static-data/x"),   # `static-data` is NOT the `static` segment -> kept
-        _ep("/assetsomething/x"),    # substring, NOT a segment -> kept
+        _ep("/assets/api/users"),            # the `assets` segment -> dropped
+        _ep("/static/app"),                  # the `static` segment -> dropped
+        _ep("/x/static/y"),                  # `static` anywhere as a segment -> dropped
+        _ep("/Assets/fonts/roboto.woff2"),   # CASE-insensitive dir rule ONLY (woff2 is not a noise ext) -> dropped
+        _ep("/STATIC/data.json"),            # CASE-insensitive dir rule ONLY (json is not a noise ext) -> dropped
+        _ep("/api/static-data/x"),           # `static-data` is NOT the `static` segment -> kept
+        _ep("/assetsomething/x"),            # substring, NOT a segment -> kept
     ]
     (chunk,) = chunks_for_job(JOB, assets)
     assert {a.identity["path"] for a in chunk.assets} == {"/api/static-data/x", "/assetsomething/x"}
 
 
-def test_C27e_next_static_prefix_pair_is_excluded():
+def test_C27e_next_layout_drops_via_the_static_segment_rule():
+    """The segment rule pins the `_next/static` layout: its `static` segment drops it.
+    `/_next` alone is not noise, and `_next` has no segment of its own in the rule."""
     assets = [
         _ep("/_next/data/orders.json"),        # `_next` alone is not noise -> kept
-        _ep("/_next/static/chunks/main.js"),   # the `_next/static` prefix pair -> dropped
+        _ep("/_next/static/chunks/main.js"),   # the `_next/static` layout -> dropped
+        _ep("/assets/data.json"),              # the `assets` segment -> dropped
     ]
     (chunk,) = chunks_for_job(JOB, assets)
     assert {a.identity["path"] for a in chunk.assets} == {"/_next/data/orders.json"}

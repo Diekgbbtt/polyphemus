@@ -53,11 +53,12 @@ CHUNK_MAX_ASSETS = 100
 # `noise_filter.classify_endpoint`, and it stays inside `chunks_for_job` so recon
 # production (the jsluice input) is untouched.
 # Two independent signals on the bare path (query string and fragment stripped
-# first, so a cache-busted `/app.js?v=2` is still recognised):
-#   - a never-surface FILE EXTENSION (.js/.mjs/.map/.css), matched case-insensitively;
-#   - a presentational path DIRECTORY, matched on whole path SEGMENTS - never
-#     substrings, so `/api/static-data/x` is real API surface and stays - either an
-#     `assets` / `static` segment anywhere, or the `_next/static` prefix segment pair.
+# first, so a cache-busted `/app.js?v=2` is still recognised), both case-insensitive:
+#   - a never-surface FILE EXTENSION (.js/.mjs/.map/.css);
+#   - a presentational path DIRECTORY: a path SEGMENT equal to `assets` or `static`,
+#     matched on whole segments - never substrings, so `/api/static-data/x` is real
+#     API surface and stays. This one signal also covers the `_next/static` layout,
+#     whose `static` segment drops it.
 _NOISE_EXT = re.compile(r"\.(?:js|mjs|map|css)$", re.IGNORECASE)
 _NOISE_SEGMENTS = frozenset({"assets", "static"})
 
@@ -125,8 +126,9 @@ def admit_for_role(chunk: Chunk, role: str) -> tuple[AssetDelta, ...]:
 
 def is_noise_endpoint(asset: AssetDelta) -> bool:
     """True for an Endpoint that is noise from an L1 surface-modelling perspective:
-    a never-surface extension (`*.js`/`*.mjs`/`*.map`/`*.css`, case-insensitive) or a
-    presentational path directory (`assets` / `static`, or the `_next/static` pair).
+    a never-surface extension (`*.js`/`*.mjs`/`*.map`/`*.css`) or a path segment equal
+    to `assets` / `static` (the latter covers the `_next/static` layout). Matching is
+    case-insensitive.
 
     Only Endpoints are judged: a Parameter or Header discovered ON a script is a real
     finding and stays in the stream."""
@@ -135,16 +137,11 @@ def is_noise_endpoint(asset: AssetDelta) -> bool:
     path = (asset.identity or {}).get("path")
     if not isinstance(path, str):
         return False
-    bare = path.split("?", 1)[0].split("#", 1)[0]
+    bare = path.split("?", 1)[0].split("#", 1)[0].lower()
     if _NOISE_EXT.search(bare):
         return True
     segments = [seg for seg in bare.split("/") if seg]
-    if _NOISE_SEGMENTS.intersection(segments):
-        return True
-    return any(
-        segments[i] == "_next" and segments[i + 1] == "static"
-        for i in range(len(segments) - 1)
-    )
+    return bool(_NOISE_SEGMENTS.intersection(segments))
 
 
 def _observations_for(assets: tuple[AssetDelta, ...], observations: list[Observation]) -> tuple[Observation, ...]:
