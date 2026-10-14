@@ -104,12 +104,29 @@ def _sanitize_output(text: str) -> str:
 
 
 def _error_payload(exc: Exception) -> dict:
-    from kali.http_history.service import BodyUnavailableError, NotFoundError
+    import sqlite3
+
+    from kali.http_history.service import (
+        BodyUnavailableError,
+        CorruptRecordError,
+        NotFoundError,
+    )
 
     if isinstance(exc, NotFoundError):
         return {"error": "not_found", "detail": str(exc)}
     if isinstance(exc, BodyUnavailableError):
         return {"error": "body_unavailable", "detail": str(exc)}
+    if isinstance(exc, CorruptRecordError):
+        return {"error": "corrupt_artifact", "detail": str(exc)}
+    if isinstance(exc, ValueError):
+        # Caller-input errors: the filter vocabulary, the limit, the cursor,
+        # the project guard, the refused include_body. The category tells the
+        # model its input is malformed - fix it and retry (FM-C).
+        return {"error": "invalid_filter", "detail": str(exc)}
+    if isinstance(exc, sqlite3.Error):
+        # The store itself was unreachable for THIS call (a lock, a disk, a
+        # WAL state) - not evidence about the target. Retry later (FM-C).
+        return {"error": "unavailable", "detail": f"{type(exc).__name__}: {exc}"}
     return {"error": "invalid_request", "detail": str(exc)}
 
 

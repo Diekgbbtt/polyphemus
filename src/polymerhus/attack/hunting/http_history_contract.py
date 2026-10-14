@@ -63,8 +63,15 @@ SEARCH_HTTP_HISTORY_DESCRIPTION: str = (
     "verification. Inspect one with `get_http_artifact`, then hand its "
     "artifact_id to the pod as `payload_vector_space.request_ref`: replay is the "
     "pod's job, never this tool's. A missing seam, an unavailable store or a "
-    "rejected filter degrades to a denoted error object, never a raise. "
-    + _ARTIFACT_MODEL
+    "rejected filter degrades to a denoted error object, never a raise. Every "
+    "failure carries a `category` that tells you what to do: `invalid_filter` "
+    "- your filter, `text`, `limit` or cursor is malformed; fix it and retry. "
+    "`not_found` - the artifact id is unknown or belongs to another project; "
+    "pick another id. `corrupt_artifact` - that stored record cannot be "
+    "parsed; skip it and continue, it is not evidence about the target. "
+    "`unavailable` - the history store could not be reached for this call; "
+    "this is NOT evidence that the surface is empty, so continue with other "
+    "evidence and retry later. " + _ARTIFACT_MODEL
 )
 
 GET_HTTP_ARTIFACT_DESCRIPTION: str = (
@@ -81,8 +88,9 @@ GET_HTTP_ARTIFACT_DESCRIPTION: str = (
     "is. The record carries `capture_context` {session_id, run_id, spec_id, "
     "variant_ref, exec_id, derived_from, replay_kind} - the join back to the "
     "run, spec and variant that captured it. A missing or cross-project id is "
-    "`not_found` (never leaked), and a failure degrades to a denoted error, "
-    "never a raise. " + _ARTIFACT_MODEL
+    "`not_found` (never leaked), an unreadable stored record is "
+    "`corrupt_artifact` (skip it - not evidence about the target), and a "
+    "failure degrades to a denoted error, never a raise. " + _ARTIFACT_MODEL
 )
 
 REPLAY_HTTP_REQUEST_DESCRIPTION: str = (

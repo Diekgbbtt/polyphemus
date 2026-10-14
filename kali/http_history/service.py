@@ -23,7 +23,7 @@ from kali.http_history.ids import new_ulid
 from kali.http_history.models import CaptureContext
 from kali.http_history.replay import apply_overrides
 from kali.http_history.sanitize import sanitize_artifact, sanitize_summary
-from kali.http_history.store import HttpHistoryStore
+from kali.http_history.store import CorruptRecordError, HttpHistoryStore
 
 RESERVED_PROJECTS = frozenset({UNSCOPED_PROJECT})
 

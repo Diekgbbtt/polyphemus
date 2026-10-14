@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sqlite3
+import threading
 
 import pytest
 
@@ -11,7 +12,11 @@ from kali.http_history.models import (
     RequestRecord,
     ResponseRecord,
 )
-from kali.http_history.store import ArtifactImmutableError, HttpHistoryStore
+from kali.http_history.store import (
+    ArtifactImmutableError,
+    CorruptRecordError,
+    HttpHistoryStore,
+)
 
 
 def _artifact(artifact_id: str = "http_01J0000000000000000000000A", body: bytes = b"hello") -> HttpArtifact:
@@ -131,3 +136,101 @@ def test_optimize_runs_analyze(tmp_path):
     _seed(store)
     store.optimize()
     assert store._conn.execute("SELECT count(*) FROM sqlite_stat1").fetchone()[0] > 0
+
+
+def _fm_artifact(i: int, url: str = "https://target.example/x") -> HttpArtifact:
+    return HttpArtifact(
+        artifact_id=f"http_01J000000000000000002{i:04d}A",
+        project_id="proj-1",
+        capture_context=CaptureContext(exec_id="e1", session_id="s1"),
+        request=RequestRecord(method="GET", url=url),
+        response=ResponseRecord(status=200, reason="OK"),
+        created_at=1000.0 + i,
+    )
+
+
+def _insert_raw_row(store: HttpHistoryStore, artifact_id: str, record_json: str) -> None:
+    conn = sqlite3.connect(store.db_path)
+    conn.execute(
+        "INSERT INTO flows (artifact_id, project_id, created_at,"
+        " schema_version, record_json) VALUES (?,?,?,?,?)",
+        (artifact_id, "proj-1", 500.0, "v1", record_json),
+    )
+    conn.commit()
+    conn.close()
+
+
+def test_concurrent_readers_and_writer_share_one_connection(tmp_path):
+    """FM-C red loop: the MCP server runs tool calls on worker threads against
+    one cached store per project. A lock-free read racing a write surfaced
+    SQLITE_MISUSE as 'bad parameter or other API misuse' (plus transient
+    tuple-index and validation errors) - every read must serialize."""
+    store = HttpHistoryStore(tmp_path, "proj-1")
+    for i in range(5):
+        store.record(_fm_artifact(i), bodies={})
+    errors: list[str] = []
+    done = threading.Event()
+
+    def writer():
+        for i in range(5, 55):
+            try:
+                store.record(_fm_artifact(i, f"https://target.example/w{i}"), bodies={})
+            except Exception as exc:  # noqa: BLE001 - collected, asserted below
+                errors.append(f"{type(exc).__name__}: {exc}")
+        done.set()
+
+    def reader():
+        while not done.is_set():
+            try:
+                store.text_search("/w", limit=20)
+                store.search([], limit=20)
+            except Exception as exc:  # noqa: BLE001 - collected, asserted below
+                errors.append(f"{type(exc).__name__}: {exc}")
+
+    threads = [threading.Thread(target=writer)]
+    threads += [threading.Thread(target=reader) for _ in range(3)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert errors == []
+    assert len(store.search([], limit=100).artifacts) == 55
+
+
+def test_search_skips_unreadable_rows_fail_open(tmp_path):
+    """FM-C: one corrupt stored row never kills the page - the search
+    continues with the rest, and an all-corrupt page is empty."""
+    store = HttpHistoryStore(tmp_path, "proj-1")
+    store.record(_fm_artifact(1), bodies={})
+    store.record(_fm_artifact(2), bodies={})
+    _insert_raw_row(store, "http_CORRUPT", "")
+    page = store.search([], limit=50)
+    assert [a.artifact_id for a in page.artifacts] == [
+        _fm_artifact(1).artifact_id,
+        _fm_artifact(2).artifact_id,
+    ]
+    text_page = store.text_search("target", limit=50)
+    assert len(text_page.artifacts) == 2
+
+
+def test_get_raw_unreadable_row_raises_corrupt_record(tmp_path):
+    """FM-C: the single-record read reports an unreadable record as corrupt,
+    never as missing."""
+    store = HttpHistoryStore(tmp_path, "proj-1")
+    _insert_raw_row(store, "http_CORRUPT", "")
+    with pytest.raises(CorruptRecordError):
+        store.get_raw("http_CORRUPT")
+    assert store.get_raw("http_MISSING") is None
+
+
+def test_gc_blobs_defers_when_a_row_is_unreadable(tmp_path):
+    """FM-C fail-safe: an unreadable row still counts as a potential
+    referrer, so blob deletion is skipped rather than risk bytes a corrupt
+    record may reference."""
+    store = HttpHistoryStore(tmp_path, "proj-1")
+    artifact = _artifact(body=b"hello")
+    store.record(artifact, _bodies(artifact))
+    _insert_raw_row(store, "http_CORRUPT", "")
+    assert store._gc_blobs() == 0
+    blob = next(store.bodies_dir.glob("*.blob"))
+    assert blob.exists()

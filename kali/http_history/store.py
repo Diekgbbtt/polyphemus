@@ -21,6 +21,8 @@ from base64 import urlsafe_b64decode, urlsafe_b64encode
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from pydantic import ValidationError
+
 from kali.http_history.models import SCHEMA_VERSION, HttpArtifact
 
 _PROJECT_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
@@ -73,6 +75,16 @@ CREATE VIRTUAL TABLE IF NOT EXISTS flows_fts USING fts5 (
 
 class ArtifactImmutableError(RuntimeError):
     """Raised when a record attempts to overwrite an existing artifact id."""
+
+
+class CorruptRecordError(ValueError):
+    """A stored row whose ``record_json`` no longer parses as an artifact.
+
+    Raised (never returned as None) so the single-record read reports the
+    record as unreadable rather than as missing; the search path skips such
+    rows fail-open instead (see ``_page_from_rows``). Imported from the
+    service layer so the MCP seam maps it to the ``corrupt_artifact``
+    category."""
 
 
 @dataclass
@@ -216,13 +228,23 @@ class HttpHistoryStore:
     # --- reads ----------------------------------------------------------------
 
     def get_raw(self, artifact_id: str) -> HttpArtifact | None:
-        row = self._conn.execute(
-            "SELECT record_json FROM flows WHERE artifact_id=? AND project_id=?",
-            (artifact_id, self.project_id),
-        ).fetchone()
+        # The lock serializes this read against concurrent writers on the
+        # shared connection (FM-C: the MCP server runs tool calls on worker
+        # threads against one cached store per project; a lock-free read
+        # racing a write surfaced SQLITE_MISUSE as "bad parameter").
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT record_json FROM flows WHERE artifact_id=? AND project_id=?",
+                (artifact_id, self.project_id),
+            ).fetchone()
         if row is None:
             return None
-        return HttpArtifact.model_validate_json(row["record_json"])
+        try:
+            return HttpArtifact.model_validate_json(row["record_json"])
+        except ValidationError as exc:
+            raise CorruptRecordError(
+                f"artifact {artifact_id!r} is stored but unreadable: {exc.errors(include_url=False)}"
+            ) from exc
 
     def get_body(self, body_ref: str | None) -> bytes | None:
         if not body_ref:
@@ -236,7 +258,8 @@ class HttpHistoryStore:
         return (self.bodies_dir / f"{_digest_of(body_ref)}.blob").exists()
 
     def status(self) -> dict:
-        count = self._conn.execute("SELECT COUNT(*) AS n FROM flows").fetchone()["n"]
+        with self._lock:
+            count = self._conn.execute("SELECT COUNT(*) AS n FROM flows").fetchone()["n"]
         blob_count = len(list(self.bodies_dir.glob("*.blob")))
         total_bytes = sum(p.stat().st_size for p in self.bodies_dir.glob("*.blob"))
         writable = os.access(self.directory, os.W_OK)
@@ -285,7 +308,9 @@ class HttpHistoryStore:
         sql, params = self._append_cursor(sql, params, cursor)
         sql += " ORDER BY f.created_at ASC, f.artifact_id ASC LIMIT ?"
         params.append(limit + 1)
-        rows = self._conn.execute(sql, params).fetchall()
+        # Serialized against writers on the shared connection (FM-C).
+        with self._lock:
+            rows = self._conn.execute(sql, params).fetchall()
         return self._page_from_rows(rows, limit)
 
     def _page(
@@ -299,11 +324,22 @@ class HttpHistoryStore:
         sql, all_params = self._append_cursor(sql, all_params, cursor)
         sql += " ORDER BY f.created_at ASC, f.artifact_id ASC LIMIT ?"
         all_params.append(limit + 1)
-        rows = self._conn.execute(sql, all_params).fetchall()
+        # Serialized against writers on the shared connection (FM-C).
+        with self._lock:
+            rows = self._conn.execute(sql, all_params).fetchall()
         return self._page_from_rows(rows, limit)
 
     def _page_from_rows(self, rows, limit: int) -> SearchPage:
-        artifacts = [HttpArtifact.model_validate_json(row["record_json"]) for row in rows[:limit]]
+        # Fail-open (FM-C): one unreadable stored row never kills the page.
+        # Unparseable rows are skipped and the search continues with the rest;
+        # when none survive the page is empty. Paging stays deterministic on
+        # the raw rows, so a corrupt row cannot shift any cursor.
+        artifacts = []
+        for row in rows[:limit]:
+            try:
+                artifacts.append(HttpArtifact.model_validate_json(row["record_json"]))
+            except ValidationError:
+                continue
         next_cursor = None
         if len(rows) > limit and rows:
             last = rows[limit - 1]
@@ -391,9 +427,10 @@ class HttpHistoryStore:
         """Evict oldest artifacts until the stored body bytes fit ``max_bytes``."""
         removed = 0
         while max_bytes > 0 and self._body_bytes() > max_bytes:
-            row = self._conn.execute(
-                "SELECT artifact_id FROM flows ORDER BY created_at ASC, artifact_id ASC LIMIT 1"
-            ).fetchone()
+            with self._lock:
+                row = self._conn.execute(
+                    "SELECT artifact_id FROM flows ORDER BY created_at ASC, artifact_id ASC LIMIT 1"
+                ).fetchone()
             if row is None:
                 break
             removed += self._delete_where("artifact_id = ?", (row["artifact_id"],))
@@ -420,19 +457,32 @@ class HttpHistoryStore:
         return len(ids)
 
     def _body_bytes(self) -> int:
-        row = self._conn.execute("SELECT COALESCE(SUM(size), 0) AS n FROM bodies").fetchone()
+        with self._lock:
+            row = self._conn.execute("SELECT COALESCE(SUM(size), 0) AS n FROM bodies").fetchone()
         return int(row["n"] or 0)
 
     def _gc_blobs(self) -> int:
-        """Delete blobs no live record references (content-addressed dedup)."""
+        """Delete blobs no live record references (content-addressed dedup).
+
+        Fail-safe (FM-C): a row that no longer parses still counts as a
+        potential referrer. When any row is unreadable the deletion phase is
+        skipped outright (returns 0) rather than risk deleting bytes a
+        corrupt record may reference; the next GC retries."""
         with self._lock:
             referenced: set[str] = set()
+            unreadable = False
             for row in self._conn.execute("SELECT record_json FROM flows"):
-                artifact = HttpArtifact.model_validate_json(row["record_json"])
+                try:
+                    artifact = HttpArtifact.model_validate_json(row["record_json"])
+                except ValidationError:
+                    unreadable = True
+                    continue
                 if artifact.request.body_ref:
                     referenced.add(_digest_of(artifact.request.body_ref))
                 if artifact.response is not None and artifact.response.body_ref:
                     referenced.add(_digest_of(artifact.response.body_ref))
+            if unreadable:
+                return 0
             removed = 0
             for blob in self.bodies_dir.glob("*.blob"):
                 if blob.stem not in referenced:
@@ -462,9 +512,10 @@ class HttpHistoryStore:
             )
 
     def last_purge(self) -> str | None:
-        row = self._conn.execute(
-            "SELECT value FROM meta WHERE key='last_purge'"
-        ).fetchone()
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT value FROM meta WHERE key='last_purge'"
+            ).fetchone()
         return None if row is None else row["value"]
 
 

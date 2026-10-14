@@ -182,7 +182,7 @@ def test_http_proxy_history_end_to_end(live_kali):
         "get_http_artifact",
         {"project_id": project_id, "artifact_id": baseline_ref, "include_body": True},
     )
-    assert refused.get("error") == "invalid_request"
+    assert refused.get("error") == "invalid_filter"
 
     # 3) author a real hunter spec and let the deterministic pod resolve the
     #    baseline + declared mutations through its own request_ref path.

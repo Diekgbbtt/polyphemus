@@ -1,6 +1,6 @@
 # Analysis-proposer tool-call failure modes (Langfuse harvest)
 
-Status: diagnosis - proposed fixes, none applied.
+Status: FM-C fixed 2026-10-14 (see the fix note under FM-C); FM-A/B/D/E/F still diagnosis - proposed fixes, none applied.
 Window: 2026-10-13T00:00Z .. 2026-10-14T09:35Z.
 Source: Langfuse v2 observations (`GET /api/public/v2/observations`), project polyphemus (`cmv6cdk12000sad0nbechto7t`).
 Scope: the three L0-grounding tools bound on every analysis proposer turn - `graph_view`, `search_http_history`, `get_http_artifact`.
@@ -67,7 +67,9 @@ Proposed verbatim (insert into `SEARCH_HTTP_HISTORY_DESCRIPTION` before the arti
 
 > Filter vocabulary is exact. `side` and `namespace` are TWO DIFFERENT AXES of one filter `{side, namespace, key, op, value}`: `side` is one of request|response|connection|context|timing, `namespace` is one of core|header|cookie|query|form|body|tls. Never put a namespace value in `side`. Example: `{side:'request', namespace:'query', key:'filename', op:'contains', value:'x'}`. `op` is exactly one of eq|contains|prefix|gte|lte|absent; to require that a key IS present, exclude its `absent` complement - there is no `present` op. `value` is a string or a number; `eq` does not accept booleans. A misspelled op, side or namespace is a filter error (`invalid_filter`), not an empty result.
 
-### FM-C - raw backend errors leak with no actionable category
+### FM-C - raw backend errors leak with no actionable category (FIXED 2026-10-14)
+
+Fix applied: the replay harness proved all four manifestations share one root cause - the MCP server runs tool calls on concurrent worker threads against one cached store connection per project, and the store's reads took no lock, so a read racing a write surfaced SQLITE_MISUSE as `bad parameter` (plus transient tuple-index and validation errors); the FTS phrase handling is innocent (every failing phrase succeeds single-threaded). The fix serializes every connection access on the store's existing RLock, the search skips unreadable rows fail-open (empty page when none survive), `get_raw` raises the typed `CorruptRecordError`, blob GC defers when any row is unreadable, and `_error_payload` maps ValueError to `invalid_filter`, `CorruptRecordError` to `corrupt_artifact`, `sqlite3.Error` to `unavailable` (fallback `invalid_request` kept). Regression: `test_concurrent_readers_and_writer_share_one_connection` (78k race reads, zero errors), skip/corrupt/GC tests, `_error_payload` category test; `tests/kali` + `tests/attack` 902 passed.
 
 Count: 76.
 

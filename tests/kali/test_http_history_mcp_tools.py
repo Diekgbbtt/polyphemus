@@ -161,3 +161,40 @@ def test_search_get_and_status_tools(tmp_path, monkeypatch):
     status = asyncio.run(mcp_server.proxy_status())
     assert status["ok"] is True
     assert status["namespaces"]["pool_size"] == 4
+
+
+def test_error_payload_carries_a_category_per_failure_mode():
+    """FM-C: every failure is a denoted error with a category, never a raw
+    exception string - the category tells the model what to do."""
+    import sqlite3
+
+    from kali.http_history.service import (
+        BodyUnavailableError,
+        CorruptRecordError,
+        NotFoundError,
+    )
+
+    assert mcp_server._error_payload(NotFoundError("artifact 'x' not found")) == {
+        "error": "not_found",
+        "detail": "artifact 'x' not found",
+    }
+    assert mcp_server._error_payload(BodyUnavailableError("bytes missing")) == {
+        "error": "body_unavailable",
+        "detail": "bytes missing",
+    }
+    assert mcp_server._error_payload(CorruptRecordError("stored but unreadable")) == {
+        "error": "corrupt_artifact",
+        "detail": "stored but unreadable",
+    }
+    assert mcp_server._error_payload(ValueError("unknown side 'core'")) == {
+        "error": "invalid_filter",
+        "detail": "unknown side 'core'",
+    }
+    assert mcp_server._error_payload(sqlite3.OperationalError("database is locked")) == {
+        "error": "unavailable",
+        "detail": "OperationalError: database is locked",
+    }
+    assert mcp_server._error_payload(RuntimeError("boom")) == {
+        "error": "invalid_request",
+        "detail": "boom",
+    }
