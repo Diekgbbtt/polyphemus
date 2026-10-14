@@ -44,14 +44,22 @@ logger = logging.getLogger(__name__)
 # Provisional per-chunk asset budget (#13, fork B): tune on a katana-heavy run.
 CHUNK_MAX_ASSETS = 100
 
-# Script Endpoints (`*.js`) are EXCLUDED from the stream for every downstream agent.
-# Recon must keep producing them - jsluice mines them for parameters and endpoints,
-# and they carry technology evidence - but a script file is not itself a surface an
-# attack acts on, so an agent asked to assign or type one is being handed noise. The
-# exclusion is at the STREAM, not per-role: no proposer wants them.
-# The query string is stripped before matching so a cache-busted `/app.js?v=2` is
-# still recognised as a script.
-_SCRIPT_PATH = re.compile(r"\.js$", re.IGNORECASE)
+# Noise Endpoints are EXCLUDED from the stream for every downstream agent. Recon
+# must keep producing them - jsluice mines `.js` bundles for parameters and
+# endpoints, and static files carry technology evidence - but a static asset file or
+# a build-output directory is not itself a surface an attack acts on, so an agent
+# asked to assign or type one is being handed noise. The exclusion is at the STREAM,
+# not per-role: no proposer wants them. This is the L1 counterpart of recon's
+# `noise_filter.classify_endpoint`, and it stays inside `chunks_for_job` so recon
+# production (the jsluice input) is untouched.
+# Two independent signals on the bare path (query string and fragment stripped
+# first, so a cache-busted `/app.js?v=2` is still recognised):
+#   - a never-surface FILE EXTENSION (.js/.mjs/.map/.css), matched case-insensitively;
+#   - a presentational path DIRECTORY, matched on whole path SEGMENTS - never
+#     substrings, so `/api/static-data/x` is real API surface and stays - either an
+#     `assets` / `static` segment anywhere, or the `_next/static` prefix segment pair.
+_NOISE_EXT = re.compile(r"\.(?:js|mjs|map|css)$", re.IGNORECASE)
+_NOISE_SEGMENTS = frozenset({"assets", "static"})
 
 # The sentinel admitting EVERY asset type. Load-bearing, not a convenience: with
 # three allow-sets an asset type no role names would be admitted by nobody and so
@@ -115,8 +123,10 @@ def admit_for_role(chunk: Chunk, role: str) -> tuple[AssetDelta, ...]:
     return tuple(a for a in chunk.assets if a.type in admits)
 
 
-def is_script_endpoint(asset: AssetDelta) -> bool:
-    """True for an Endpoint whose path is a JavaScript file (`*.js`).
+def is_noise_endpoint(asset: AssetDelta) -> bool:
+    """True for an Endpoint that is noise from an L1 surface-modelling perspective:
+    a never-surface extension (`*.js`/`*.mjs`/`*.map`/`*.css`, case-insensitive) or a
+    presentational path directory (`assets` / `static`, or the `_next/static` pair).
 
     Only Endpoints are judged: a Parameter or Header discovered ON a script is a real
     finding and stays in the stream."""
@@ -126,7 +136,15 @@ def is_script_endpoint(asset: AssetDelta) -> bool:
     if not isinstance(path, str):
         return False
     bare = path.split("?", 1)[0].split("#", 1)[0]
-    return bool(_SCRIPT_PATH.search(bare))
+    if _NOISE_EXT.search(bare):
+        return True
+    segments = [seg for seg in bare.split("/") if seg]
+    if _NOISE_SEGMENTS.intersection(segments):
+        return True
+    return any(
+        segments[i] == "_next" and segments[i + 1] == "static"
+        for i in range(len(segments) - 1)
+    )
 
 
 def _observations_for(assets: tuple[AssetDelta, ...], observations: list[Observation]) -> tuple[Observation, ...]:
@@ -175,14 +193,14 @@ def chunks_for_job(
     observations = observations or []
     source_job = job.tool if job is not None else ""
 
-    # 1. filter the stream (malformed assets, script Endpoints).
+    # 1. filter the stream (malformed assets, noise Endpoints).
     items: list[AssetDelta] = []
     for asset in assets:
         try:
             if not getattr(asset, "type", None):
                 continue  # malformed: no type -> exclude, never crash
-            if is_script_endpoint(asset):
-                continue  # script file: kept in L0, never streamed to an agent
+            if is_noise_endpoint(asset):
+                continue  # static asset path: kept in L0, never streamed to an agent
             items.append(asset)
         except Exception:  # any malformed asset degrades to exclusion, not a crash
             logger.warning("chunking: skipped a malformed asset", exc_info=True)

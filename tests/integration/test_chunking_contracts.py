@@ -174,6 +174,64 @@ def test_C27b_non_endpoint_assets_found_on_scripts_survive():
     assert sorted(a.type for a in chunk.assets) == ["Header", "Parameter"]
 
 
+# --- C27c-C27f: the L0 noise gate is GENERALIZED off `*.js` alone -------------
+#
+# The stream-level gate now drops every Endpoint that is noise from an L1
+# surface-modelling perspective, so no proposer is handed one. Two independent
+# signals on the bare path (query/fragment stripped first):
+#   - a never-surface FILE EXTENSION (.js/.mjs/.map/.css, case-insensitive);
+#   - a presentational path DIRECTORY, matched on whole path SEGMENTS - never
+#     substrings, so `/api/static-data/x` is real API surface and stays.
+# Recon production is untouched: it keeps producing `.js` for jsluice, and the
+# exclusion fires only here, inside the stream builder.
+
+def test_C27c_noise_extensions_are_excluded():
+    assets = [
+        _ep("/orders/42"),          # kept
+        _ep("/app.js?v=2"),         # query stripped -> still a script
+        _ep("/x.MJS"),              # case-insensitive .mjs
+        _ep("/style/main.css"),     # stylesheet
+        _ep("/bundle.js.map"),      # sourcemap
+        _ep("/main.css#frag"),      # fragment stripped
+    ]
+    (chunk,) = chunks_for_job(JOB, assets)
+    assert {a.identity["path"] for a in chunk.assets} == {"/orders/42"}
+
+
+def test_C27d_noise_directories_excluded_by_segment_not_substring():
+    """`assets` / `static` drop as whole SEGMENTS, never as substrings."""
+    assets = [
+        _ep("/assets/api/users"),    # the `assets` segment -> dropped
+        _ep("/static/app"),          # the `static` segment -> dropped
+        _ep("/x/static/y"),          # `static` anywhere as a segment -> dropped
+        _ep("/api/static-data/x"),   # `static-data` is NOT the `static` segment -> kept
+        _ep("/assetsomething/x"),    # substring, NOT a segment -> kept
+    ]
+    (chunk,) = chunks_for_job(JOB, assets)
+    assert {a.identity["path"] for a in chunk.assets} == {"/api/static-data/x", "/assetsomething/x"}
+
+
+def test_C27e_next_static_prefix_pair_is_excluded():
+    assets = [
+        _ep("/_next/data/orders.json"),        # `_next` alone is not noise -> kept
+        _ep("/_next/static/chunks/main.js"),   # the `_next/static` prefix pair -> dropped
+    ]
+    (chunk,) = chunks_for_job(JOB, assets)
+    assert {a.identity["path"] for a in chunk.assets} == {"/_next/data/orders.json"}
+
+
+def test_C27f_non_endpoint_assets_on_noise_paths_survive():
+    """A Parameter anchored on `/app.js` (or on an `assets` path) is a real finding."""
+    assets = [
+        _ep("/app.js"),
+        AssetDelta(type="Parameter", identity={"name": "token", "baseurl": BU}),
+        AssetDelta(type="Parameter", identity={"name": "sid", "baseurl": "https://a/assets"}),
+        AssetDelta(type="Header", identity={"name": "X-Api"}),
+    ]
+    (chunk,) = chunks_for_job(JOB, assets)
+    assert sorted(a.type for a in chunk.assets) == ["Header", "Parameter", "Parameter"]
+
+
 def _obs_on(anchor_type, identity):
     return Observation(macro_kind="k", severity="info", evidence="e", rationale="r",
                        anchor={"type": anchor_type, "identity": identity},
