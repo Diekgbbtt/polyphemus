@@ -124,7 +124,7 @@ def _read_context(project_id: str, read_fn, report: CurationReport) -> dict:
     a failure in one still yields the others (partial context survives)."""
     context: dict = {
         "cards": [],
-        "inventory": {"services": [], "systems": [], "data_items": []},
+        "inventory": {"services": [], "systems": []},
         "stale_pool": [],
     }
     try:
@@ -207,8 +207,7 @@ def _curation_prompt(context: dict) -> str:
         "function; keep the better-formed key).\n\n"
         "CURRENT L1 INVENTORY (propose merges / relabels against THESE exact keys):\n"
         f"  Services (business_function_slug): {inv.get('services')}\n"
-        f"  Systems (kind[:discriminator]): {inv.get('systems')}\n"
-        f"  DataItems (item_key): {inv.get('data_items')}\n\n"
+        f"  Systems (kind[:discriminator]): {inv.get('systems')}\n\n"
         f"INDEX CARDS ({len(cards)}): {cards}\n\n"
         f"STALE / UNASSIGNED L0 ELEMENTS ({len(stale)} total, showing "
         f"{min(len(stale), _MAX_STALE_IN_PROMPT)}): {stale[:_MAX_STALE_IN_PROMPT]}\n\n"

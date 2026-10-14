@@ -4,9 +4,8 @@ Source of truth: ``/var/.../langfuse-l1-evidence.md`` - the recovered L0/L1 mode
 of the operator's prior project (moodique.com, a PrestaShop Italian wine
 e-commerce) reconstructed from successful Langfuse analysis traces in session
 ``27386f9c-361d-4084-926f-5e2f5160290d`` (2026-08-02), cross-checked against
-the mechanism-typist ``typist-systems-and-edges`` structured outputs, the
-assigner ``assigner-aggregates`` proposals and the data_modeller
-``data_flows`` / ``data_relationships`` step writes. The scaffold MERGEs the
+the mechanism-typist ``typist-systems-and-edges`` structured outputs and the
+assigner ``assigner-aggregates`` proposals. The scaffold MERGEs the
 recovered model into the live neo4j graph for a given ``project_id`` so the
 hunting orchestrator's read-only projection grounds on a REAL, detailed L1
 (services with contracts, systems with wire witnesses, typed auth/identification

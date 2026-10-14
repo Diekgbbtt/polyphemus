@@ -24,7 +24,6 @@ from polymerhus.recon.domain import curator
 from polymerhus.analysis import l1_curator
 from polymerhus.analysis.l1_types import (
     AggregatesDelta,
-    DataFlowDelta,
     DeleteOp,
     JudgmentEnvelope,
     L0Ref,
@@ -117,16 +116,19 @@ def test_merge_repoints_all_edges(session, project):
          ServiceDelta(business_function_slug="check-out", props={"note": "fromB"}, provenance=PROV)],
         [], project, merge_fn=mf,
     )
-    # A aggregates endpoint1; B aggregates endpoint2 (distinct), PRODUCES a DataItem,
-    # and is AUTHENTICATED_BY a System - three different edge types to re-point.
+    # A aggregates endpoint1; B aggregates endpoint2 (distinct), is
+    # AUTHENTICATED_BY one System and AUTHORIZED_BY another - three different edge
+    # types to re-point.
     _write_l0_endpoint(session, project, _ep("/a"))
     _write_l0_endpoint(session, project, _ep("/b"))
     l1_curator.write_aggregates([AggregatesDelta(service_slug="checkout", l0=L0Ref(label="Endpoint", identity=_ep("/a")), envelope=ENV)], project, merge_fn=mf)
     l1_curator.write_aggregates([AggregatesDelta(service_slug="check-out", l0=L0Ref(label="Endpoint", identity=_ep("/b")), envelope=ENV)], project, merge_fn=mf)
     l1_curator.enrich(
         project,
-        data_flows=[DataFlowDelta(service_slug="check-out", item_key="session_token", direction="produces", provenance=PROV)],
-        system_edges=[SystemEdgeDelta(service_slug="check-out", kind="AuthenticationMechanism", rel="AUTHENTICATED_BY", provenance=PROV)],
+        system_edges=[
+            SystemEdgeDelta(service_slug="check-out", kind="AuthenticationMechanism", rel="AUTHENTICATED_BY", provenance=PROV),
+            SystemEdgeDelta(service_slug="check-out", kind="AuthorizationSystem", rel="AUTHORIZED_BY", provenance=PROV),
+        ],
         merge_fn=mf,
     )
 
@@ -145,12 +147,12 @@ def test_merge_repoints_all_edges(session, project):
         "MATCH (a:L1Service {project_id: $p, business_function_slug: 'checkout'}) "
         "RETURN a.label AS label, a.note AS note, a.superseded_from AS sup, a.superseded_prov_job AS spj, "
         "count { (a)-[:AGGREGATES]->(:Endpoint) } AS aggs, "
-        "count { (a)-[:PRODUCES]->(:L1DataItem {item_key: 'session_token'}) } AS produces, "
+        "count { (a)-[:AUTHORIZED_BY]->(:L1System {kind: 'AuthorizationSystem'}) } AS authorized, "
         "count { (a)-[:AUTHENTICATED_BY]->(:L1System {kind: 'AuthenticationMechanism'}) } AS authn",
         p=project,
     ).single()
     assert rec["aggs"] == 2       # BOTH endpoints now hang off the canonical
-    assert rec["produces"] == 1   # B's PRODUCES re-pointed onto A
+    assert rec["authorized"] == 1  # B's AUTHORIZED_BY re-pointed onto A
     assert rec["authn"] == 1      # B's AUTHENTICATED_BY re-pointed onto A
     assert rec["label"] == "canon"           # A keeps its own prop value
     assert rec["note"] == "fromB"            # A gains B's B-only prop

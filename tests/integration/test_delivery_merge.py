@@ -110,11 +110,6 @@ def _typist_invoke(messages, *, schema=None):
     return None if schema is None else L1DeltaBatch()
 
 
-def _data_modeller_invoke(messages, *, schema=None):
-    # no Parameter/Header surface is admitted in this fixture; a legitimate empty.
-    return "" if schema is None else L1DeltaBatch()
-
-
 def test_redelivery_is_idempotent(session, project):
     endpoint_id = _seed_surface(session, project)
 
@@ -153,9 +148,8 @@ def test_redelivery_is_idempotent(session, project):
         )])
 
     inventory = {
-        "services": [SLUG], "systems": [], "data_items": [],
+        "services": [SLUG], "systems": [],
         "service_contracts": {}, "system_descriptions": {},
-        "data_item_fields": {}, "data_item_notes": {},
     }
 
     # run the analyser TWICE with auto-delivery (observations=None) over the SAME
@@ -170,10 +164,8 @@ def test_redelivery_is_idempotent(session, project):
             project, "run-1",
             deliver_fn=lambda pid: l0_stream.read_observations(pid, read_fn=sess_read),
             invoke_fn=assigner_invoke, typist_invoke_fn=_typist_invoke,
-            data_modeller_invoke_fn=_data_modeller_invoke,
             assets_fn=lambda pid: [AssetDelta(type="Endpoint", identity=dict(endpoint_id))],
             inventory_fn=lambda pid: inventory,
-            aggregations_fn=lambda pid: [],
             write_fn=write_fn, checkpointer=MemorySaver(), observe=False,
         )
         assert export.error is None

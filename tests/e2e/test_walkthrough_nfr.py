@@ -26,8 +26,8 @@ from polymerhus.analysis import l1_curator, sweep, index_card
 from polymerhus.analysis import anatomy
 from polymerhus.analysis.anatomy import webpage_profile, classify_authz, commit_anatomy, WebpageProfileProposal
 from polymerhus.analysis.l1_types import (
-    AggregatesDelta, DataFlowDelta, DataItemDelta, JudgmentEnvelope, L0Ref,
-    Provenance, ServiceDelta, SurfacesAtDelta, SystemDelta, SystemEdgeDelta,
+    AggregatesDelta, JudgmentEnvelope, L0Ref,
+    Provenance, ServiceDelta, SystemDelta, SystemEdgeDelta,
 )
 from polymerhus.recon.domain.types import AssetDelta
 from tests.conftest import wait_for
@@ -116,23 +116,14 @@ def _run_walkthrough(session, project, *, member_endpoints=(CAT_EP, SALES_EP)):
         aggregates.append(AggregatesDelta(service_slug="sales-analysis", l0=L0Ref(label="Endpoint", identity=dict(ep)), envelope=env))
     l1_curator.write_aggregates(aggregates, project, merge_fn=mf)
 
-    # 4. enrichment: systems-as-edges (incl a POPULATED CDN discriminator), Tier-1 flow
+    # 4. enrichment: systems-as-edges (incl a POPULATED CDN discriminator)
     system_edges = [
         SystemEdgeDelta(service_slug="sales-analysis", kind="RESTApi", rel="EXPOSED_VIA", provenance=PROV),
         SystemEdgeDelta(service_slug="sales-analysis", kind="CDN", discriminator="Datadome", rel="FRONTED_BY", provenance=PROV),
         SystemEdgeDelta(service_slug="sales-analysis", kind="WAF", rel="PROTECTED_BY", provenance=PROV),
         SystemEdgeDelta(service_slug="sales-analysis", kind="ReverseProxy", discriminator="Varnish", rel="ROUTED_BY", provenance=PROV),
     ]
-    data_items = [DataItemDelta(item_key="sales_figure", props={"label": "sales figure"}, provenance=PROV)]
-    surfaces_at = [SurfacesAtDelta(item_key="sales_figure", l0=L0Ref(label="Endpoint", identity=dict(SALES_EP)), provenance=PROV)]
-    data_flows = [
-        DataFlowDelta(service_slug="item-creation", item_key="sales_figure", direction="produces", provenance=PROV),
-        DataFlowDelta(service_slug="sales-analysis", item_key="sales_figure", direction="consumes",
-                      assumption="the figure was authorized for THIS user",
-                      assumption_rationale="cross-service financial data rendered in UI", provenance=PROV),
-    ]
-    l1_curator.enrich(project, data_items=data_items, surfaces_at=surfaces_at, data_flows=data_flows,
-                      system_edges=system_edges, merge_fn=mf)
+    l1_curator.enrich(project, system_edges=system_edges, merge_fn=mf)
 
     # 5. webpage-profile anatomy skill: independent SPA + CSR spine slots (canned proposal)
     wp = webpage_profile({"base_url": BASEURL}, service_id="sales-analysis",
@@ -173,11 +164,9 @@ def test_walkthrough_is_idempotent(session, project):
     dup = session.run("MATCH (n:L1Service {project_id:$p}) WITH n.business_function_slug AS k, count(*) AS c "
                       "WHERE c>1 RETURN count(k) AS d", p=project).single()["d"]
     assert dup == 0
-    # one AGGREGATES edge per (service, endpoint), one CONSUMES, one FRONTED_BY, one DataItem
+    # one AGGREGATES edge per (service, endpoint), one FRONTED_BY
     assert c("MATCH (:L1Service {project_id:$p})-[r:AGGREGATES]->() RETURN count(r) AS c") == 3
-    assert c("MATCH (:L1Service {project_id:$p})-[r:CONSUMES]->() RETURN count(r) AS c") == 1
     assert c("MATCH (:L1Service {project_id:$p})-[r:FRONTED_BY]->() RETURN count(r) AS c") == 1
-    assert c("MATCH (d:L1DataItem {project_id:$p}) RETURN count(d) AS c") == 1
     # one AUTHORIZED_BY per authorised role (2), not doubled
     assert c("MATCH (:L1Service {project_id:$p})-[r:AUTHORIZED_BY]->() RETURN count(r) AS c") == 2
 
@@ -201,11 +190,11 @@ def test_singleton_and_populated_discriminator_coexist(session, project):
 def test_provenance_on_every_node_and_edge(session, project):
     _run_walkthrough(session, project)
     # every L1 node carries prov_job
-    noprov = session.run("MATCH (n {project_id:$p}) WHERE (n:L1Service OR n:L1System OR n:L1DataItem) "
+    noprov = session.run("MATCH (n {project_id:$p}) WHERE (n:L1Service OR n:L1System) "
                          "AND n.prov_job IS NULL RETURN count(n) AS c", p=project).single()["c"]
     assert noprov == 0
     # every L1-authored edge carries prov_job
-    for rel in ("AGGREGATES", "CONSUMES", "PRODUCES", "SURFACES_AT", "EXPOSED_VIA", "FRONTED_BY", "AUTHORIZED_BY", "AUTHENTICATED_BY"):
+    for rel in ("AGGREGATES", "EXPOSED_VIA", "FRONTED_BY", "AUTHORIZED_BY", "AUTHENTICATED_BY"):
         bad = session.run(f"MATCH (a {{project_id:$p}})-[r:{rel}]->() WHERE r.prov_job IS NULL RETURN count(r) AS c",
                           p=project).single()["c"]
         assert bad == 0, f"{rel} edge missing prov_job"
@@ -214,13 +203,11 @@ def test_provenance_on_every_node_and_edge(session, project):
                       "RETURN count(r) AS t, sum(CASE WHEN r.confidence IS NOT NULL AND r.status IS NOT NULL "
                       "AND r.evidence_refs IS NOT NULL THEN 1 ELSE 0 END) AS full", p=project).single()
     assert env["t"] == 3 and env["full"] == 3
-    # ON CREATE (not unconditional SET): a bootstrap-minted Service that a later
-    # EDGE writer only touches KEEPS its original provenance (item-creation is
-    # bootstrapped, then the PRODUCES edge writer references it). A regression to
-    # unconditional SET would clobber it to the edge writer's job - this locks it.
+    # ON CREATE (not unconditional SET): a bootstrap-minted Service keeps its
+    # original provenance when a later EDGE writer only references it.
     ic_prov = session.run("MATCH (s:L1Service {project_id:$p, business_function_slug:'item-creation'}) "
                           "RETURN s.prov_job AS j", p=project).single()["j"]
-    assert ic_prov == "bootstrap:walkthrough"  # not overwritten by the PRODUCES edge writer
+    assert ic_prov == "bootstrap:walkthrough"
 
 
 # --- AST-NFR-04: identity ⊥ membership ---
@@ -272,12 +259,9 @@ def test_every_inscope_primitive_fired(session, project):
     def c(q):
         return session.run(q, p=project).single()["c"]
 
-    # assignment envelope, systems-as-edges, Tier-1 flow with assumption, SURFACES_AT
+    # assignment envelope, systems-as-edges
     assert c("MATCH (:L1Service {project_id:$p})-[r:AGGREGATES]->() WHERE r.confidence IS NOT NULL RETURN count(r) AS c") >= 1
     assert c("MATCH (:L1Service {project_id:$p})-[r:EXPOSED_VIA]->(:L1System {kind:'RESTApi'}) RETURN count(r) AS c") == 1
-    assumption = session.run("MATCH (:L1Service {project_id:$p})-[r:CONSUMES]->() RETURN r.assumption AS a", p=project).single()["a"]
-    assert assumption and "authorized" in assumption  # assumption predicate on CONSUMES
-    assert c("MATCH (:L1DataItem {project_id:$p})-[r:SURFACES_AT]->() RETURN count(r) AS c") == 1
     # independent SPA + CSR props on the WebPresentation System the service is
     # EXPOSED_VIA (the mechanism-as-System correction) - NOT stranded as Service props
     wp = session.run("MATCH (:L1Service {project_id:$p, business_function_slug:'sales-analysis'})"

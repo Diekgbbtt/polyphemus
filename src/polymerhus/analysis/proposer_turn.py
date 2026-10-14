@@ -1,6 +1,6 @@
 """The ONE turn seam every analysis proposer goes through (#94, #187 converged).
 
-The three chunk-fed proposers (`assigner`, `mechanism_typist`, `data_modeller`) are
+The two chunk-fed proposers (`assigner`, `mechanism_typist`) are
 structurally identical in how a turn is built: one per-run `AnalysisSession`
 thread, the role's #95 compaction middleware, the run-correlation tag, the project
 usage scope, and the role's OWN prompt. They therefore share one construction seam,
@@ -88,12 +88,8 @@ def _role_prompt(role_id: str) -> str:
         from polymerhus.analysis.mechanism_typist import _load_skill
 
         return _load_skill()
-    if role_id == "data_modeller":
-        from polymerhus.analysis.data_modeller import _system_prompt
-
-        return _system_prompt()
     raise KeyError(f"no registered role prompt for {role_id!r}; the analysis "
-                   f"proposers are assigner, mechanism_typist, data_modeller")
+                   f"proposers are assigner, mechanism_typist")
 
 
 def _role_default_schema(role_id: str) -> Any:
@@ -111,7 +107,7 @@ def _role_structured_schema(role_id: str) -> Any:
     contract. Distinct from `_role_default_schema`, which is None for the
     reflection-driven proposers: their prose turns are deliberate, but they still
     share this one structured tool so the request shape never toggles."""
-    if role_id in ("assigner", "mechanism_typist", "data_modeller"):
+    if role_id in ("assigner", "mechanism_typist"):
         from polymerhus.analysis.analyser_types import L1DeltaBatch
 
         return L1DeltaBatch

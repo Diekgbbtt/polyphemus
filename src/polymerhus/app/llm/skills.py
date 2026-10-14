@@ -217,12 +217,11 @@ ROLE_SKILLS: dict[str, tuple[str, ...]] = {
     "configurator": (),
     "job_orchestrator": (),
     # -- analysis (exempt: local-context reasoning only) ------------------------
-    # The three proposers reason over the published L0/L1 substrate into typed
-    # model deltas; the catalogue carries no modelling discipline for that job,
-    # and their turns never touch an external environment.
+    # The proposers reason over the published L0/L1 substrate into typed model
+    # deltas; the catalogue carries no modelling discipline for that job, and
+    # their turns never touch an external environment.
     "assigner": (),
     "mechanism_typist": (),
-    "data_modeller": (),
     # -- hunting ---------------------------------------------------------------
     # The agent that touches the live target: the KB guide is its retrieval
     # discipline, the browser skill is how a JS-rendered or bot-gated target is

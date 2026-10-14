@@ -2,9 +2,9 @@
 
 The analyser drifts to synonym identities across passes (sign-in / signin / login)
 because the "reuse the existing slug" hint relied on L1 nodes buried in a raw L0
-slice dump that the data-modelling pass drops entirely. `read_l1_inventory` reads
-the CURRENT L1 identities cheaply so every analyser prompt can pin them at the top
-as an explicit, un-truncated "reuse these exact keys" block.
+slice dump. `read_l1_inventory` reads the CURRENT L1 identities cheaply so every
+analyser prompt can pin them at the top as an explicit, un-truncated "reuse these
+exact keys" block.
 
 This is a READ helper (the write counterpart is `l1_curator`); it queries only the
 `:L1*` namespace and never writes. `read_fn` defaults to
@@ -31,9 +31,8 @@ def _resolve_read_fn(read_fn):
 
 
 def _empty() -> dict:
-    return {"services": [], "systems": [], "data_items": [],
+    return {"services": [], "systems": [],
             "service_contracts": {}, "system_descriptions": {},
-            "data_item_fields": {}, "data_item_notes": {},
             "application_overview": ""}
 
 
@@ -51,8 +50,7 @@ def _render_system(row: dict) -> str:
 def read_l1_inventory(project_id: str, *, read_fn=None, settings_fn=None) -> dict:
     """Return the project's current L1 identities as
     `{"services": [business_function_slug,...], "systems": ["kind" | "kind:disc",...],
-    "data_items": [item_key,...], "service_contracts": {slug: service_contract}}`,
-    each list sorted and deduped.
+    "service_contracts": {slug: service_contract}}`, each list sorted and deduped.
 
     `service_contracts` is ADDITIVE (#29): `services` stays a plain list of slugs, so
     the six existing call sites and the four prompts fed by `_inventory_block` are
@@ -71,14 +69,6 @@ def read_l1_inventory(project_id: str, *, read_fn=None, settings_fn=None) -> dic
     the skeleton. It is NOT a graph node (operator decision: a skeleton
     attribute), so it is read from settings, not from a `:L1*` label. It is the
     framing a proposer prepends to the Service it is reasoning about.
-
-    `data_item_fields` (`{item_key: [field, ...]}`) and `data_item_notes`
-    (`{item_key: notes}`) are the SAME additive pattern for DataItems (#48,
-    dataplane-A1-decisions.md DPL-DEC-08/09): the flat `data_items` list stays
-    unchanged, and the data-modeller reads the parallel maps to UNION its proposed
-    `fields` with what is already persisted (so a re-proposal can never shrink the
-    observed set) and to decide reuse-vs-coin against each item's discriminative
-    `notes`.
 
     Fail-open: any read error degrades to the empty inventory shape and never raises
     into the caller."""
@@ -104,18 +94,12 @@ def read_l1_inventory(project_id: str, *, read_fn=None, settings_fn=None) -> dic
             "RETURN n.kind AS kind, n.discriminator AS disc, n.description AS description",
             {"project_id": project_id},
         )
-        data_rows = read_fn(
-            "MATCH (n:L1DataItem) WHERE n.project_id = $project_id "
-            "RETURN n.item_key AS item_key, n.fields AS fields, n.notes AS notes",
-            {"project_id": project_id},
-        )
     except Exception:  # fail-open: a read error degrades to the empty inventory
         logger.warning("read_l1_inventory failed for project=%s; fail-open to empty", project_id, exc_info=True)
         return _empty()
 
     services = sorted({r.get("slug") for r in service_rows if r.get("slug")})
     systems = sorted({_render_system(r) for r in system_rows if r.get("kind")})
-    data_items = sorted({r.get("item_key") for r in data_rows if r.get("item_key")})
     contracts = {
         r["slug"]: r["contract"]
         for r in service_rows
@@ -126,23 +110,10 @@ def read_l1_inventory(project_id: str, *, read_fn=None, settings_fn=None) -> dic
         for r in system_rows
         if r.get("kind") and (r.get("description") or "").strip()
     }
-    data_item_fields = {
-        r["item_key"]: list(r["fields"])
-        for r in data_rows
-        if r.get("item_key") and r.get("fields")
-    }
-    data_item_notes = {
-        r["item_key"]: r["notes"]
-        for r in data_rows
-        if r.get("item_key") and (r.get("notes") or "").strip()
-    }
     return {
         "services": services,
         "systems": systems,
-        "data_items": data_items,
         "service_contracts": contracts,
         "system_descriptions": system_descriptions,
-        "data_item_fields": data_item_fields,
-        "data_item_notes": data_item_notes,
         "application_overview": overview,
     }

@@ -24,11 +24,10 @@ def _drive(schedule, *, builder=None, run_id="r"):
 
 # --- E1: happy N-dispatch sequence --------------------------------------------
 
-def test_E1_three_dispatch_schedule_yields_three_empty_receipts_in_order():
+def test_E1_two_dispatch_schedule_yields_two_empty_receipts_in_order():
     schedule = [
         AgentDispatch(dispatch_id="d1", role="assigner", phase="A1", mode="create", chunk=Chunk(chunk_id="c1")),
         AgentDispatch(dispatch_id="d2", role="mechanism_typist", phase="A1", mode="create", chunk=Chunk(chunk_id="c2")),
-        AgentDispatch(dispatch_id="d3", role="data_modeller", phase="A2", mode="create", chunk=Chunk(chunk_id="c3")),
     ]
     # instrument every proposer to count invocations
     calls = {r: 0 for r in PROPOSER_ROLES}
@@ -38,10 +37,10 @@ def test_E1_three_dispatch_schedule_yields_three_empty_receipts_in_order():
     final = _drive(schedule, builder=builder, run_id="r1")
     receipts = final["receipts"]
 
-    assert [r.dispatch_id for r in receipts] == ["d1", "d2", "d3"]  # schedule order
+    assert [r.dispatch_id for r in receipts] == ["d1", "d2"]  # schedule order
     assert all(r.status == "empty" for r in receipts)
     assert all(r.written.services == 0 and r.written.aggregates == 0 for r in receipts)  # 0 writes
-    assert calls == {"assigner": 1, "mechanism_typist": 1, "data_modeller": 1,
+    assert calls == {"assigner": 1, "mechanism_typist": 1,
                      "bootstrapper": 0, "anti_cluttering": 0}  # each routed proposer once
 
 
@@ -75,7 +74,7 @@ def test_E4_middle_raising_stub_degrades_run_still_terminates():
     schedule = [
         AgentDispatch(dispatch_id="d1", role="assigner", phase="A1", chunk=Chunk(chunk_id="c1")),
         AgentDispatch(dispatch_id="d2", role="mechanism_typist", phase="A1", chunk=Chunk(chunk_id="c2")),
-        AgentDispatch(dispatch_id="d3", role="data_modeller", phase="A2", chunk=Chunk(chunk_id="c3")),
+        AgentDispatch(dispatch_id="d3", role="assigner", phase="A1", chunk=Chunk(chunk_id="c3")),
     ]
     final = _drive(schedule, builder=builder, run_id="r4")
     receipts = final["receipts"]

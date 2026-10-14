@@ -737,7 +737,7 @@ async def run_pipeline(
                 # The endpoint-reprofile pass (`endpoint_profiling`, phase 6) is
                 # EXCLUDED (#9): it re-emits Endpoints the crawl phase already streamed,
                 # adding only each Endpoint's own `profile`. The current proposers
-                # (assigner/typist/data_modeller) do not read that per-endpoint profile,
+                # (assigner/typist) do not read that per-endpoint profile,
                 # so re-streaming those endpoints is a redundant re-analysis of surface
                 # already judged. Nothing is lost: the pushes are exact per-job payloads
                 # and the terminal drain pass is cumulative, so any genuinely-new asset

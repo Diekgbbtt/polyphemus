@@ -10,17 +10,12 @@ fail-open degrade behaviour) and the legacy two-pass prompt/skill-loader
 `pod.py`'s module docstring. The behaviours those tests guarded now live
 elsewhere: per-step fail-open degrade is exercised by `supervisor.analyse_chunked`
 (each read/dispatch/write already guarded, tested in
-`tests/integration/test_control_plane_contracts.py` and the walkthroughs), and the
-positive-recipe / observed-fields-only / reflect-then-extract prompt disciplines
-now live in `data_modeller.py` (`tests/analysis/test_data_modeller.py`,
-`tests/integration/test_data_modeller_contracts.py`).
+`tests/integration/test_control_plane_contracts.py` and the walkthroughs).
 
 Each test names the assertion it encodes (docs/design/L1-MVP-plan.md §5).
 """
 from polymerhus.analysis.analyser_types import (
     AggregatesProposal,
-    DataFlowProposal,
-    DataItemProposal,
     L1DeltaBatch,
     ServiceProposal,
     SystemEdgeProposal,
@@ -105,9 +100,7 @@ def test_default_curate_fn_calls_l1_curator_and_assembles_counts(monkeypatch):
 
 def test_default_curate_with_enrichment_writes_core_and_enrichment(monkeypatch):
     """The default analyser curate collaborator must map+write BOTH the core
-    deltas AND the FR-ENRICH deltas from one batch, with system provenance. No
-    catalogue seeding fires (operator correction 2026-07-20: a DataRelationship
-    kind IS its edge type, so there is no :DataRelationshipKind catalogue). Guards
+    deltas AND the FR-ENRICH deltas from one batch, with system provenance. Guards
     the load-bearing FIX 2 wiring end-to-end (was inspection-only)."""
     calls = {}
 
@@ -122,7 +115,7 @@ def test_default_curate_with_enrichment_writes_core_and_enrichment(monkeypatch):
     def fake_enrich(project_id, **enrich_deltas):
         # capture the per-category delta counts + that provenance was injected
         calls["enrich"] = {k: len(v) for k, v in enrich_deltas.items()}
-        calls["enrich_prov"] = enrich_deltas["data_items"][0].provenance.job if enrich_deltas["data_items"] else None
+        calls["enrich_prov"] = enrich_deltas["system_edges"][0].provenance.job if enrich_deltas["system_edges"] else None
         return {k: len(v) for k, v in enrich_deltas.items()}
 
     monkeypatch.setattr(real_l1_curator, "l1_curate", fake_l1_curate)
@@ -135,9 +128,6 @@ def test_default_curate_with_enrichment_writes_core_and_enrichment(monkeypatch):
         aggregates=[AggregatesProposal(service_slug="sales-analysis",
                                        confidence=0.9,
                                        l0=L0Ref(label="Endpoint", identity={"path": "/s", "method": "GET", "baseurl": "https://a"}))],
-        data_items=[DataItemProposal(item_key="sales_figure")],
-        data_flows=[DataFlowProposal(service_slug="sales-analysis", item_key="sales_figure", direction="consumes",
-                                     assumption="authorized for THIS user")],
         system_edges=[SystemEdgeProposal(service_slug="sales-analysis", kind="RESTApi", rel="EXPOSED_VIA")],
     )
     prov = Provenance(job="analyser:run-77", model="m", prompt_id=None)
@@ -147,8 +137,6 @@ def test_default_curate_with_enrichment_writes_core_and_enrichment(monkeypatch):
     assert calls["l1_curate"] == (1, 1)
     assert calls["write_aggregates"] == 1
     # enrichment written (the FIX 2 seam) with the right per-category counts
-    assert calls["enrich"]["data_items"] == 1
-    assert calls["enrich"]["data_flows"] == 1
     assert calls["enrich"]["system_edges"] == 1
     # provenance is system-supplied (run-scoped), injected at the curate boundary
     assert calls["enrich_prov"] == "analyser:run-77"

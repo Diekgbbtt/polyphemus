@@ -152,8 +152,7 @@ def stale_ownership_prompt(context: dict) -> str:
         "GROUND YOUR JUDGMENT PRIMARILY in what is ALREADY DEFINED for this project "
         "(reuse an existing key; do not coin a new Service):\n"
         f"  Existing Services (business_function_slug): {inv.get('services')}\n"
-        f"  Existing Systems (kind[:discriminator]): {inv.get('systems')}\n"
-        f"  Existing DataItems (item_key): {inv.get('data_items')}\n\n"
+        f"  Existing Systems (kind[:discriminator]): {inv.get('systems')}\n\n"
         "SECONDARILY, if no existing unit fits, you MAY name one of the known "
         f"system kinds (second-order fallback): {known}\n\n"
         f"STALE / UNASSIGNED L0 ASSETS ({len(stale)} total, showing {len(shown)}): "
@@ -217,7 +216,7 @@ def resolve_stale_owners(
         inventory = read_l1_inventory(project_id, read_fn=read_fn)
     except Exception:
         logger.warning("resolve_stale_owners: inventory read failed; fail-open", exc_info=True)
-        inventory = {"services": [], "systems": [], "data_items": []}
+        inventory = {"services": [], "systems": []}
 
     context = {
         "stale_pool": pool,

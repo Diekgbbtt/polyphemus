@@ -49,7 +49,6 @@ EXEMPT_ROLES = {
     "job_orchestrator",
     "assigner",
     "mechanism_typist",
-    "data_modeller",
     "hunting_orchestrator",
 }
 

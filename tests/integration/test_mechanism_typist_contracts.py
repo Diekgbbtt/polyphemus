@@ -104,7 +104,6 @@ def test_N1_narrow_to_typing_only():
     assert [s.kind for s in out.systems] == ["WAF"]
     assert [(e.service_slug, e.rel) for e in out.system_edges] == [("checkout", "FRONTED_BY")]
     assert out.services == [] and out.aggregates == []
-    assert out.data_items == [] and out.surfaces_at == [] and out.data_flows == [] and out.data_relationships == []
 
 
 def test_N1_narrow_pure_shaper_drops_non_typing():
@@ -112,7 +111,7 @@ def test_N1_narrow_pure_shaper_drops_non_typing():
                        systems=[_sys("RESTApi")],
                        system_edges=[_edge("x", "RESTApi", "EXPOSED_VIA")])
     out = narrow_to_typing(raw)
-    assert out.services == [] and out.aggregates == [] and out.data_items == []
+    assert out.services == [] and out.aggregates == []
     assert out.systems and out.system_edges
 
 

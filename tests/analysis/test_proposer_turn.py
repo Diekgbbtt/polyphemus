@@ -1,6 +1,6 @@
 """Unit tier: the ONE converged analysis-proposer turn seam (proposer_turn).
 
-The three analysis proposers (`assigner`, `mechanism_typist`, `data_modeller`) are
+The two analysis proposers (`assigner`, `mechanism_typist`) are
 structurally identical in their turn construction - a per-run session thread, the
 role's compaction middleware, the role prompt. They therefore share ONE seam
 (#187's convergent precedent, already applied to the hunting gate actor): the role
@@ -104,11 +104,11 @@ def test_the_stateful_leg_keys_a_distinct_thread_per_role(monkeypatch):
     cp = object()
 
     threads = set()
-    for role in ("assigner", "mechanism_typist", "data_modeller"):
+    for role in ("assigner", "mechanism_typist"):
         session_invoke_fn(role, "runX", cp)([HumanMessage(content="m")], schema=None)
         threads.add(seam.seen[-1]["thread_id"])
 
-    assert threads == {"runX:assigner", "runX:mechanism_typist", "runX:data_modeller"}
+    assert threads == {"runX:assigner", "runX:mechanism_typist"}
 
 
 def test_the_stateful_leg_threads_the_run_tags_project_and_schema(monkeypatch):
@@ -135,12 +135,11 @@ def test_the_stateful_leg_carries_each_roles_own_prompt(monkeypatch):
     _patch_stateful_turn(monkeypatch, seam)
 
     prompts = {}
-    for role in ("assigner", "mechanism_typist", "data_modeller"):
+    for role in ("assigner", "mechanism_typist"):
         session_invoke_fn(role, "runX", object())([HumanMessage(content="m")])
         prompts[role] = seam.seen[-1]["system_prompt"]
 
     assert prompts["assigner"] != prompts["mechanism_typist"]
-    assert prompts["mechanism_typist"] != prompts["data_modeller"]
     for role, prompt in prompts.items():
         assert isinstance(prompt, str) and prompt.strip()
 
@@ -207,7 +206,7 @@ def test_only_the_assigner_binds_surface_tools(monkeypatch):
     seam = _CapturingSeam()
     _patch_stateful_turn(monkeypatch, seam)
 
-    for role in ("mechanism_typist", "data_modeller"):
+    for role in ("mechanism_typist",):
         session_invoke_fn(role, "runX", object(), project_id="proj-1")(
             [HumanMessage(content="m")])
         tool_names = {getattr(t, "name", "") for t in seam.seen[-1].get("tools") or ()}
@@ -536,9 +535,9 @@ def test_no_batch_scope_keeps_the_run_role_thread(monkeypatch):
     rename of the observability/runtime contract."""
     seam = _CapturingSeam()
     _patch_stateful_turn(monkeypatch, seam)
-    invoke = session_invoke_fn("data_modeller", "runX", object())
+    invoke = session_invoke_fn("mechanism_typist", "runX", object())
     invoke([HumanMessage(content="m")], schema=None)
-    assert seam.seen[-1]["thread_id"] == "runX:data_modeller"
+    assert seam.seen[-1]["thread_id"] == "runX:mechanism_typist"
 
 
 # --- the constant request shape (the cache fix) -------------------------------
@@ -628,7 +627,7 @@ def test_a_roles_tool_set_is_constant_across_reflection_and_extraction(monkeypat
     monkeypatch.setattr(
         "polymerhus.analysis.proposer_turn._role_prompt", lambda role_id: "PROMPT")
 
-    invoke = session_invoke_fn("data_modeller", "runshape", InMemorySaver())
+    invoke = session_invoke_fn("mechanism_typist", "runshape", InMemorySaver())
     with proposer_batch("c1"):
         prose = invoke([HumanMessage(content="reflection")], schema=None)
         invoke([HumanMessage(content="extraction")], schema=L1DeltaBatch)

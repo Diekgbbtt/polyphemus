@@ -175,10 +175,10 @@ def test_per_agent_threshold_env_beats_the_global(monkeypatch):
     """The per-agent env var wins over the global one, so one role's window can be
     tuned without moving every other role's."""
     monkeypatch.setenv(C.COMPACTION_THRESHOLD_ENV, "0.90")
-    monkeypatch.setenv(C.role_threshold_env_name("data_modeller"), "0.30")
-    assert C.resolve_window("data_modeller", threshold=None).threshold == 0.30
+    monkeypatch.setenv(C.role_threshold_env_name("mechanism_typist"), "0.30")
+    assert C.resolve_window("mechanism_typist", threshold=None).threshold == 0.30
     # A role with no per-agent override still reads the global.
-    assert C.resolve_window("mechanism_typist", threshold=None).threshold == 0.90
+    assert C.resolve_window("assigner", threshold=None).threshold == 0.90
 
 
 def test_per_agent_threshold_falls_back_to_the_module_default(monkeypatch):
@@ -187,9 +187,7 @@ def test_per_agent_threshold_falls_back_to_the_module_default(monkeypatch):
     (operator directive 2026-10-13: all agents use the global 0.2), so they fall
     through to the module default rather than compacting early."""
     monkeypatch.delenv(C.COMPACTION_THRESHOLD_ENV, raising=False)
-    monkeypatch.delenv(C.role_threshold_env_name("data_modeller"), raising=False)
     monkeypatch.delenv(C.role_threshold_env_name("mechanism_typist"), raising=False)
-    assert C.resolve_window("data_modeller", threshold=None).threshold == 0.90
     assert C.resolve_window("mechanism_typist", threshold=None).threshold == 0.90
     assert C.resolve_window("assigner", threshold=None).threshold == 0.90
 
@@ -197,9 +195,9 @@ def test_per_agent_threshold_falls_back_to_the_module_default(monkeypatch):
 def test_per_agent_threshold_is_validated_fail_fast(monkeypatch):
     """An unusable per-agent value is the same config lie as the global: fail fast."""
     for bad in ("abc", "0", "1.5", "-0.5"):
-        monkeypatch.setenv(C.role_threshold_env_name("data_modeller"), bad)
+        monkeypatch.setenv(C.role_threshold_env_name("mechanism_typist"), bad)
         try:
-            C.resolve_window("data_modeller", threshold=None)
+            C.resolve_window("mechanism_typist", threshold=None)
         except LLMConfigError:
             continue
         raise AssertionError(f"per-agent threshold {bad!r} did not raise LLMConfigError")
@@ -209,8 +207,8 @@ def test_role_compaction_middleware_reads_the_resolved_threshold(monkeypatch):
     """The wiring half: a middleware built for a role is bound to that role's
     resolved threshold. With no role default and no env, that is the module 0.90."""
     monkeypatch.delenv(C.COMPACTION_THRESHOLD_ENV, raising=False)
-    monkeypatch.delenv(C.role_threshold_env_name("data_modeller"), raising=False)
-    mw = C.create_compaction_middleware("data_modeller")
+    monkeypatch.delenv(C.role_threshold_env_name("mechanism_typist"), raising=False)
+    mw = C.create_compaction_middleware("mechanism_typist")
     assert mw.window.threshold == 0.90
 
 

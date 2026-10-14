@@ -131,13 +131,6 @@ def test_C9_assigner_admits_endpoints_only():
     assert admitted[0].type == "Endpoint"
 
 
-def test_C10_data_modeller_admits_parameter_header_and_secret():
-    """Widened to include Secret (#48 section 6, ratified 2026-07-30) - a
-    jsluice-mined Secret is Tier-1 trust substrate too."""
-    admitted = admit_for_role(_mixed_chunk(extra=(_asset("Secret", value_hash="h"),)), "data_modeller")
-    assert [a.type for a in admitted] == ["Parameter", "Header", "Secret"]  # stream order kept
-
-
 def test_C11_mechanism_typist_admits_everything_including_unmapped():
     chunk = _mixed_chunk(extra=(_asset("Frobnicate", x="1"),))
     admitted = admit_for_role(chunk, "mechanism_typist")

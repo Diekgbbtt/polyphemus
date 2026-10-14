@@ -43,9 +43,9 @@ def _assert_compaction_middleware(mw):
     assert isinstance(mw.manager, C.CompactionManager)
 
 
-# --- the three analysis proposers pass the middleware through stateful_turn -----
+# --- the analysis proposers pass the middleware through stateful_turn -----------
 
-def test_all_three_proposers_pass_compaction_middleware(monkeypatch):
+def test_all_proposers_pass_compaction_middleware(monkeypatch):
     seen = {}
 
     def fake_stateful_turn(role_id, thread, messages, *, checkpointer, schema=None,
@@ -55,14 +55,12 @@ def test_all_three_proposers_pass_compaction_middleware(monkeypatch):
 
     monkeypatch.setattr(S, "stateful_turn", fake_stateful_turn)
     from polymerhus.analysis.assigner import stateful_invoke_fn as a
-    from polymerhus.analysis.data_modeller import stateful_invoke_fn as d
     from polymerhus.analysis.mechanism_typist import stateful_invoke_fn as t
 
     a("run", object())([HumanMessage(content="m")])
-    d("run", object())([HumanMessage(content="m")])
     t("run", object())([HumanMessage(content="m")], schema=None)
 
-    assert set(seen) == {"assigner", "data_modeller", "mechanism_typist"}
+    assert set(seen) == {"assigner", "mechanism_typist"}
     for role in seen:
         # Compaction is the WHOLE chain for an analysis proposer: it is
         # skill-exempt (ADR A9 exemption amendment), so no L1 index rides it.

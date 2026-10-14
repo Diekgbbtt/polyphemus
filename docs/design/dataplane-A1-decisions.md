@@ -1,6 +1,10 @@
 # DataPlane Analyser (A.1) - agent specification and decision record
 
-Status: RATIFIED by the operator, 2026-07-30, through a direct grilling pass (not the drafting agent's own judgment - every DPL-DEC below and the open questions in section 17 were put to the operator individually or in a bounded batch and answered; several corrected the drafting pass's own claims).
+Status: SUPERSEDED, 2026-10-15 - the DataPlane Analyser (`data_modeller`) and the analysis L1 DataItem substrate it fed were REMOVED in full; see `docs/design/drop-data-modeller.md` for the decision and the impact map.
+This record is retained as HISTORY: the ratified A.1 specification of the shaping gates, output shapes and groundedness discipline, and the reasoning behind them.
+The build it specified no longer exists.
+
+Status (original): RATIFIED by the operator, 2026-07-30, through a direct grilling pass (not the drafting agent's own judgment - every DPL-DEC below and the open questions in section 17 were put to the operator individually or in a bounded batch and answered; several corrected the drafting pass's own claims).
 Ticket: #10 (`Agent spec: DataPlane Analyser`), executed together with #42 (the 2b schedule flip).
 Base: `feat/dataplane-analyser`, branched off `dev` at 5c1fed4 (which carries the mechanism-typist work).
 

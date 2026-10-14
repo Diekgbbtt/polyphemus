@@ -75,7 +75,6 @@ def test_N1_narrow_to_typing_only():
     )
     out = narrow_to_typing(raw)
     assert out.services == [] and out.aggregates == []
-    assert out.data_items == [] and out.data_flows == []
     assert out.systems and out.system_edges
 
 
