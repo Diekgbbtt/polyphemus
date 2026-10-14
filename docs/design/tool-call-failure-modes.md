@@ -1,6 +1,6 @@
 # Analysis-proposer tool-call failure modes (Langfuse harvest)
 
-Status: FM-C, FM-D and FM-E fixed 2026-10-14 (see the fix notes); FM-A/B/F still diagnosis - proposed fixes, none applied.
+Status: FM-B, FM-C, FM-D and FM-E fixed 2026-10-14 (see the fix notes); FM-A/F still diagnosis - proposed fixes, none applied.
 Window: 2026-10-13T00:00Z .. 2026-10-14T09:35Z.
 Source: Langfuse v2 observations (`GET /api/public/v2/observations`), project polyphemus (`cmv6cdk12000sad0nbechto7t`).
 Scope: the three L0-grounding tools bound on every analysis proposer turn - `graph_view`, `search_http_history`, `get_http_artifact`.
@@ -48,7 +48,9 @@ Proposed verbatim (append to `_QUERY_PRIMITIVES` in `graph_tools.py`):
 
 > Text inside a string literal is DATA, not Cypher. A path or value filter that happens to contain a write word is legal and always allowed: `WHERE e.path CONTAINS 'create'`, `WHERE e.path STARTS WITH '/users'`. The guard refuses a write word only where it stands as a Cypher keyword. Always quote your literals.
 
-### FM-B - `search_http_history` filter-vocabulary misuse
+### FM-B - `search_http_history` filter-vocabulary misuse (FIXED 2026-10-14)
+
+Fix applied as proposed (prompt-only): the search description now teaches the side/namespace axes split, the closed op enum with no `present`, and the `eq`-no-booleans rule, each pinned by a contract assertion. No code change - the store already rejects misspellings with a denoted error, now categorized `invalid_filter` by the FM-C mapping.
 
 Count: 12.
 

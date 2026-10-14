@@ -104,6 +104,10 @@ def test_every_http_history_description_states_the_contract_and_the_model():
     assert "next_cursor" in search
     assert "absent" in search
     assert "request_ref" in search
+    # FM-B: the filter-vocabulary anti-patterns are taught, not just listed
+    assert "TWO DIFFERENT AXES" in search
+    assert "no `present` op" in search
+    assert "does not accept booleans" in search
 
     # get: what makes a baseline replayable, and what is visible
     get = GET_HTTP_ARTIFACT_DESCRIPTION
