@@ -1,6 +1,6 @@
 # Analysis-proposer tool-call failure modes (Langfuse harvest)
 
-Status: FM-A, FM-B, FM-C, FM-D and FM-E fixed 2026-10-14 (see the fix notes); FM-F still diagnosis - recorded for the harness owner.
+Status: FM-A, FM-B, FM-C, FM-D and FM-E fixed 2026-10-14 (see the fix notes); FM-F recorded (probe-only, mechanism diagnosed, operator chose record-only).
 Window: 2026-10-13T00:00Z .. 2026-10-14T09:35Z.
 Source: Langfuse v2 observations (`GET /api/public/v2/observations`), project polyphemus (`cmv6cdk12000sad0nbechto7t`).
 Scope: the three L0-grounding tools bound on every analysis proposer turn - `graph_view`, `search_http_history`, `get_http_artifact`.
@@ -126,11 +126,11 @@ Proposed verbatim (append to `_RETURN_SHAPE` / `_EXAMPLE` in `graph_tools.py`):
 
 Proposed code fix: project `Node` values to `{labels: [...], properties: {...}}` in the read seam before returning.
 
-### FM-F - `StructuredTool does not support sync invocation`
+### FM-F - `StructuredTool does not support sync invocation` (RECORDED 2026-10-14, no code change)
 
-Count: 3, on the `tools` chain when the `AnalysisTurn` tool is invoked through the sync tool node.
-Root: a structured-output tool routed through a synchronous tool-call path.
-This is a harness-level binding fault, not a prompt-knowledge gap; no prompt verbatim applies. Recorded for the harness owner.
+Single occurrence, probe session `lat-probe2:assigner` only. Mechanism now precisely diagnosed (no LLM needed to reproduce): the prose-bound `AnalysisTurn` tool is the raw `OutputToolBinding` derivation - a wire-shape-only tool with neither sync nor async func, so even `ainvoke` raises. It is always intercepted by `ToolStrategy` before `ToolNode` on structured turns; but a `schema=None` prose turn binds it via `tools=` with no `response_format`, so a model-emitted `AnalysisTurn` call reaches `ToolNode`, which tries to execute it and the turn crashes - on both streams. Fix options (echo shim vs teaching rejection vs record-only) were put to the operator, who chose record-only: the trigger needs a prose turn emitting a structured call, seen once in a probe. Revisit if it ever appears in a real trial.
+
+(Supersedes the original count of 3: two of those rows are FM-A write-guard refusals surfacing in the parent chain, leaving one true FM-F occurrence.)
 
 ### Context - provider rate limit (not a tool-call failure)
 
@@ -146,4 +146,4 @@ Environmental, not a tool contract issue; the affected turns abort and are retri
 | FM-C | code + prompt | `kali_http_history.py`, `http_history_contract.py` | error `category` mapping + the category verbatim |
 | FM-D | code + prompt | `kali_http_history.py` | reopen the unit session on `ClosedResourceError`; add the missing-evidence verbatim |
 | FM-E | code + prompt | `graph_tools.py` | project nodes to `{labels, properties}`; add the RETURN-scalars verbatim |
-| FM-F | code | harness | route the structured `AnalysisTurn` tool to the async path |
+| FM-F | recorded | - | probe-only `AnalysisTurn` sync execution; mechanism diagnosed, operator chose record-only |
