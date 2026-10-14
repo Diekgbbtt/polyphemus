@@ -494,6 +494,7 @@ async def analyse_chunked(
     data_modeller_invoke_fn=None,
     inventory_fn=None,
     aggregations_fn=None,
+    surface_fn=None,
     write_fn=None,
     checkpointer=None,
     store=None,
@@ -600,7 +601,8 @@ async def analyse_chunked(
     typist_invoke_fn = typist_invoke_fn or typist_stateful_invoke_fn(run_id, session_cp, project_id)
     data_modeller_invoke_fn = data_modeller_invoke_fn or dm_stateful_invoke_fn(run_id, session_cp, project_id)
 
-    assigner_inner = make_assigner_body(invoke_fn=invoke_fn, inventory_fn=inventory_fn)
+    assigner_inner = make_assigner_body(invoke_fn=invoke_fn, inventory_fn=inventory_fn,
+                                        surface_fn=surface_fn)
 
     def _counted(inner):
         # Counted HERE rather than from the schedule: a dispatch that was scheduled

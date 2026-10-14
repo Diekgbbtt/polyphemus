@@ -278,6 +278,41 @@ def test_analyse_chunked_threads_delivered_observations_into_the_chunk_builder(m
     assert result.census.unprocessed_after == 0
 
 
+def test_analyse_chunked_threads_surface_fn_into_the_assigner_body(monkeypatch):
+    """D-A4 wiring: the pass threads the settled-surface reader into the
+    assigner body, beside `inventory_fn`. Spy on `make_assigner_body`
+    (returning a no-op body short-circuits before the graph/DB) to capture
+    what it got."""
+    from polymerhus.analysis import assigner, chunking, supervisor
+    from polymerhus.analysis.chunking import Chunk
+    from polymerhus.analysis.feed import AssetDelta, L0Chunk
+    from polymerhus.recon.domain.types import AssetDelta as ReconAssetDelta
+
+    captured = {}
+
+    def spy_make_assigner_body(*, invoke_fn, inventory_fn, **kw):
+        captured.update(kw)
+        return lambda dispatch, state: None
+
+    acost = Chunk(chunk_id="c0", assets=(ReconAssetDelta(
+        type="Endpoint", identity={"path": "/x", "baseurl": "https://a"}),))
+    monkeypatch.setattr(assigner, "make_assigner_body", spy_make_assigner_body)
+    monkeypatch.setattr(chunking, "chunks_for_job",
+                        lambda job, assets, observations=None, **kw: [acost])
+    marker = lambda project_id: []  # noqa: E731
+    chunk = L0Chunk(project_id="p", run_id="run1",
+                    assets=[AssetDelta(type="Endpoint", identity={"path": "/x", "baseurl": "https://a"})])
+    asyncio.run(supervisor.analyse_chunked(
+        chunk,
+        invoke_fn=lambda messages: None,
+        typist_invoke_fn=lambda *a, **k: None,
+        data_modeller_invoke_fn=lambda *a, **k: None,
+        surface_fn=marker,
+        observe=False,
+    ))
+    assert captured["surface_fn"] is marker
+
+
 # NOTE (merge, #74): the regression test `test_analyse_chunked_incremental_key_...`
 # was DROPPED here. It pinned `_key`/`analysed_keys` - the cross-pass dedup machinery
 # #74 deletes from `analyse_chunked` (it now consumes exactly the pushed `L0Chunk`,

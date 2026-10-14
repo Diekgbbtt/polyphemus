@@ -118,6 +118,27 @@ def _role_structured_schema(role_id: str) -> Any:
     return None
 
 
+def _surface_tools(role_id: str, project_id: str | None) -> tuple:
+    """D-A2: the adjacent-surface read tools, bound on the Assigner turn alone.
+
+    The assigner's structured turn binds the read-only `graph_view` plus the
+    HTTP-history pair, so its bounded BaseURL-neighbourhood phase has a read
+    seam; the response_format supplies the structured tool beside them (the
+    dev-proven shape). Every other role binds none - adjacent-surface reading
+    is the assigner's ownership. Fail-open: an unbuildable surface, or no
+    project scope, binds nothing (the session always starts)."""
+    if role_id != "assigner" or not project_id:
+        return ()
+    try:
+        from polymerhus.analysis.graph_tools import build_surface_tools
+
+        return build_surface_tools(role_id, project_id=project_id, with_http=True)
+    except Exception:  # noqa: BLE001 - fail-open: no surface tools bound
+        logger.warning("proposer_turn: surface tools unbuildable; binding none",
+                       exc_info=True)
+        return ()
+
+
 def _prose_tools(role_id: str) -> tuple:
     """The role's structured tool, bound on a PROSE turn so the tool set is constant
     across the role's calls (the cache-shape rule).
@@ -168,6 +189,9 @@ def session_invoke_fn(role_id: str, run_id: str, checkpointer, project_id: str |
     - **Constant request shape**: a prose turn still binds the role's structured tool
       via `tools=`, so the tool set never toggles between a role's reflection and
       extraction turns (the shape that defeated the provider prefix cache).
+      The Assigner turn additionally binds its adjacent-surface read tools
+      (D-A2) on every structured turn - it is permanently structured, so its
+      set never toggles either.
     - **Per-chunk reset on one session**: the thread is always
       `AnalysisSession(run_id, role_id)` - the documented `run:role` the
       observability/runtime contract expects. The first turn that arrives under a
@@ -200,8 +224,11 @@ def session_invoke_fn(role_id: str, run_id: str, checkpointer, project_id: str |
         # Constant shape: a prose turn binds the role's structured tool so the tool
         # set never toggles; the structured turn supplies it via `response_format`.
         # Only a non-empty set is forwarded, so the structured calls stay byte-identical
-        # to the pre-change requests.
-        tools = () if resolved_schema is not None else _prose_tools(role_id)
+        # to the pre-change requests. The Assigner turn additionally binds its
+        # adjacent-surface read tools (D-A2); it is permanently structured, so its
+        # set never toggles either.
+        tools = (_surface_tools(role_id, project_id)
+                 if resolved_schema is not None else _prose_tools(role_id))
         address = AnalysisSession(run_id, role_id)
         batch = current_batch()
         if batch is not None and batch != last_batch[0]:

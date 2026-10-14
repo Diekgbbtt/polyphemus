@@ -44,6 +44,7 @@ class _CapturingSeam:
             "extra_tags": kw.get("extra_tags"),
             "usage_scope": kw.get("usage_scope"),
             "middleware": kw.get("middleware"),
+            "tools": kw.get("tools"),
         })
         return None
 
@@ -180,6 +181,37 @@ def test_the_stateful_leg_carries_no_skill_surface(monkeypatch):
     assert "context" not in bound or bound.get("context") is None
     assert "_skill_index" not in {type(m).__name__ for m in bound["middleware"] or ()}
     assert roles == ["mechanism_typist"], "one middleware per turn, for its OWN role"
+
+
+def test_the_assigner_structured_turn_binds_the_adjacent_surface_tools(monkeypatch):
+    """D-A2 on the turn seam: the assigner's structured turn binds the
+    read-only `graph_view` plus the HTTP-history pair, so the adjacent-surface
+    phase has a read seam. Fail-open: without a project scope it binds
+    nothing."""
+    seam = _CapturingSeam()
+    _patch_stateful_turn(monkeypatch, seam)
+
+    session_invoke_fn("assigner", "runX", object(), project_id="proj-1")(
+        [HumanMessage(content="the per-chunk task")])
+    tool_names = {getattr(t, "name", "") for t in seam.seen[-1].get("tools") or ()}
+    assert {"graph_view", "search_http_history", "get_http_artifact"} <= tool_names
+
+    session_invoke_fn("assigner", "runX", object())(
+        [HumanMessage(content="the per-chunk task")])
+    assert not seam.seen[-1].get("tools")
+
+
+def test_only_the_assigner_binds_surface_tools(monkeypatch):
+    """The adjacent-surface read is the assigner's ownership (D-A2); the other
+    roles' structured turns bind no surface tools."""
+    seam = _CapturingSeam()
+    _patch_stateful_turn(monkeypatch, seam)
+
+    for role in ("mechanism_typist", "data_modeller"):
+        session_invoke_fn(role, "runX", object(), project_id="proj-1")(
+            [HumanMessage(content="m")])
+        tool_names = {getattr(t, "name", "") for t in seam.seen[-1].get("tools") or ()}
+        assert "graph_view" not in tool_names, role
 
 
 # --- the one-shot legacy leg: the same prompt, headed -------------------------

@@ -393,7 +393,10 @@ def test_C32_model_formatted_label_is_repaired_not_dropped():
     assert fixed.confidence == 0.9 and fixed.evidence_refs == ["path segment /user"]
 
 
-def test_C33_reference_to_surface_not_in_the_chunk_is_dropped():
+def test_C33_reference_to_unknown_surface_is_dropped():
+    """D-A4: the out-of-chunk write gate is dropped, but a reference to surface
+    NOBODY knows is still a reference to nothing - its own chunk judges it when
+    recon collects it."""
     from polymerhus.analysis.assigner import resolve_l0_refs
 
     ghost = AggregatesProposal(
@@ -402,6 +405,80 @@ def test_C33_reference_to_surface_not_in_the_chunk_is_dropped():
         confidence=0.99,
     )
     out = resolve_l0_refs(L1DeltaBatch(aggregates=[ghost]), endpoints=(_ep_asset("/real"),))
+    assert out.aggregates == []
+
+
+def test_C33b_reference_to_settled_surface_outside_the_chunk_is_kept():
+    """D-A4: the out-of-chunk write gate is dropped. A reference to an endpoint
+    the chunk never carried but the KNOWN surface (chunk slice UNION settled
+    surface) holds resolves and survives shaping."""
+    raw = L1DeltaBatch(aggregates=[_agg("/neighbour", 0.85)])
+    out = shape_proposal(raw, existing_slugs=SLUGS, endpoints=(_ep_asset("/real"),),
+                         surface=(_ep_asset("/neighbour"),))
+    (kept,) = out.batch.aggregates
+    assert kept.l0.label == "Endpoint"
+    assert kept.l0.identity == {"path": "/neighbour", "method": "GET", "baseurl": BU}
+    assert out.stats.unresolvable == 0
+
+
+def test_C33c_reference_to_unknown_surface_is_still_dropped_end_to_end():
+    """The guard beside C33b: with a known surface supplied, a reference to
+    surface in NEITHER the chunk NOR the settled surface still dies as
+    unresolvable."""
+    raw = L1DeltaBatch(aggregates=[_agg("/invented", 0.99)])
+    out = shape_proposal(raw, existing_slugs=SLUGS, endpoints=(_ep_asset("/real"),),
+                         surface=(_ep_asset("/neighbour"),))
+    assert out.batch.aggregates == []
+    assert out.stats.unresolvable == 1
+
+
+def test_C34b_assign_resolves_against_the_supplied_known_surface():
+    """D-A4 end to end through `assign`: the chunk carries one endpoint, the
+    model judges an adjacent settled one, and the judgment survives."""
+    chunk = Chunk(chunk_id="katana:0", assets=(_ep_asset("/real"),))
+    raw = L1DeltaBatch(aggregates=[_agg("/neighbour", 0.85)])
+    out = assign(chunk, invoke_fn=lambda m, **_: raw, inventory=INVENTORY,
+                 existing_slugs=SLUGS, bar=0.75, surface=(_ep_asset("/neighbour"),))
+    (kept,) = out.batch.aggregates
+    assert kept.l0.identity["path"] == "/neighbour"
+    assert out.stats.unresolvable == 0
+
+
+def test_C34c_assigner_body_resolves_against_the_injected_surface():
+    """D-A4 wiring: the body reads the settled surface at DISPATCH time (never
+    frozen on the chunk) and hands it to the judgment, so an adjacent settled
+    endpoint survives the pass."""
+    from polymerhus.analysis.assigner import make_assigner_body
+    from polymerhus.analysis.messages import AgentDispatch
+
+    raw = L1DeltaBatch(aggregates=[_agg("/neighbour", 0.85)])
+    body = make_assigner_body(
+        invoke_fn=lambda m, **_: raw,
+        inventory_fn=lambda project_id: INVENTORY,
+        surface_fn=lambda project_id: (_ep("/neighbour"),),
+        bar=0.75,
+    )
+    out = body(AgentDispatch(dispatch_id="d1", role="assigner", phase="A1",
+                             mode="create", chunk=_chunk("/real")),
+               {"project_id": "p1", "run_id": "r1"})
+    assert {a.l0.identity["path"] for a in out.aggregates} == {"/neighbour"}
+
+
+def test_C34d_assigner_body_without_a_surface_degrades_to_the_chunk_slice():
+    """The fail-open guard beside C34c: no surface reader means the judgment
+    resolves against the chunk alone - today's behaviour, never a crash."""
+    from polymerhus.analysis.assigner import make_assigner_body
+    from polymerhus.analysis.messages import AgentDispatch
+
+    raw = L1DeltaBatch(aggregates=[_agg("/neighbour", 0.85)])
+    body = make_assigner_body(
+        invoke_fn=lambda m, **_: raw,
+        inventory_fn=lambda project_id: INVENTORY,
+        bar=0.75,
+    )
+    out = body(AgentDispatch(dispatch_id="d1", role="assigner", phase="A1",
+                             mode="create", chunk=_chunk("/real")),
+               {"project_id": "p1", "run_id": "r1"})
     assert out.aggregates == []
 
 
@@ -456,6 +533,44 @@ def test_C35b_prompt_states_the_identity_shape_the_repair_depends_on():
     assert "l0.identity" in system
     for key in ("path", "method", "baseurl"):
         assert f'"{key}"' in system
+
+
+# --- C35c: the adjacent-surface phase + the deductive target (D-A2/D-A3) ------
+
+def test_C35c_task_names_the_adjacent_phase_and_the_deductive_target():
+    """D-A2/D-A3: the volatile task frames the slice as the primary subject,
+    licenses the BOUNDED BaseURL-adjacent widening through `graph_view`, and
+    names the inventory block as the deductive target."""
+    seen, make = _capture()
+    assign(_chunk("/x"), invoke_fn=make(L1DeltaBatch()), inventory=INVENTORY, existing_slugs=SLUGS)
+    user = seen["messages"][0].content
+    assert "BaseURL" in user            # the adjacent topology comes from the BaseURL join
+    assert "DEDUCTIVE TARGET" in user   # the inventory is what the reasoning reasons TO
+    assert "withheld, not placed" in user
+
+
+def test_C35d_reference_rule_covers_graph_view_discovered_endpoints():
+    """D-A4 in the role verbatim: a reference is legal when the endpoint was
+    seen - in the slice OR returned by `graph_view` - and only an invented one
+    names nothing."""
+    seen, make = _capture()
+    assign(_chunk("/x"), invoke_fn=make(L1DeltaBatch()), inventory=INVENTORY, existing_slugs=SLUGS)
+    system = seen["system_prompt"]
+    assert "graph_view" in system
+    assert "you invent" in system
+
+
+def test_C35e_skill_bounds_the_adjacent_phase_and_the_http_pair():
+    """D-A2 in the HOW file: the adjacent widening is bounded, the HTTP pair is
+    disambiguation/confirmation only, and deep technical understanding belongs
+    to the mechanism-typist."""
+    from polymerhus.analysis.assigner import _load_assigner_skill
+
+    skill = _load_assigner_skill()
+    assert "adjacent surface" in skill
+    assert "LIMIT" in skill
+    assert "confirm a hypothesis" in skill
+    assert "mechanism-typist" in skill
 
 
 # --- C36: the gate census (the instrumentation gap) ---------------------------
