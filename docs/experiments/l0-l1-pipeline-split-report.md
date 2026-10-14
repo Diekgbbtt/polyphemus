@@ -51,21 +51,62 @@ The shared analysis churn is re-applied on top.
 
 ### D-1 Tool surface: does the assigner need `graph_view`?
 
-The L0 proposer receives the settled L0 surface and the L1 inventory in its first human message, so it does not need to rediscover the surface through `graph_view`.
-The last eval trial (the regression run) measured the graph-capable assigner on the `streamed` path:
+REVISED 2026-10-14 after the httpx:0 forensics (this section's first version is
+retained below as the superseded reading). The evidence overturns the verdict
+but keeps one of its premises - see the assessment.
 
-| Chunk | admitted (chunk endpoints) | proposed | kept | refused `unresolvable` |
-|---|---|---|---|---|
-| `httpx:0` | 1 | 37 | 0 | 37 |
-| `katana:0` | 9 | 0 | 0 | 0 |
+**The forensics.** The httpx:0 assigner session
+(`a1c1f6ea-fe80-4d8e-ae83-0dd73bcf69c8:httpx_0:assigner`, 08:58:17-09:06:27Z,
+`opencode-go/deepseek-v4-flash`) ran a 21-turn loop: 9 `graph_view` calls, 63
+`search_http_history` calls, 7 `notes` calls, input tokens growing 7.6k to
+205k (~1.9M input tokens total, ~8 minutes) for ONE chunk whose admitted slice
+was a single endpoint (`GET /`, the ComfyUI front page).
 
-The graph traversal let the model enumerate the WHOLE project, so its 37 proposals on `httpx:0` referenced endpoints outside the chunk and every one was refused by the chunk-scoped `resolve_l0_refs` gate.
-On `katana:0` it proposed nothing.
-Kept `AGGREGATES` from the tool-capable assigner: 0.
-By contrast arm A (the one-shot, pre-fed surface, NO `graph_view`) placed 41 `AGGREGATES` over 290 endpoints (~14%).
+**Proposal quality: 37/37 correct.** Every proposed endpoint exists verbatim in
+the project graph (290 endpoints, verified against Neo4j - zero
+hallucinations); every slug is a real inventory Service; every pairing is
+contract-correct by inspection (`/object_info` to node-registry, `/prompt` +
+`/queue` + `/free` to workflow-submission, `/upload/image` + `/upload/mask` to
+image-upload, `/cloud/login` + `/signup` + `/forgot-password` to sign-in +
+register + password-recovery, and so on). Each carries a path segment, a quoted
+contract clause, an HTTP artifact id, and where relevant a prior note witness.
+The two root-`/` judgments were correctly WITHHELD at 0.3-0.35; the speculative
+tail (`/internal`, trailing-slash variants, an EXPR-templated path) is honestly
+scored 0.5-0.65. `out_of_inventory` was 0 - no invented slugs.
 
-Decision: on the L0 trunk the assigner does NOT bind `graph_view`; the pre-fed surface is the ground truth and the chunk-scoped gate is the correct scope.
-The quantitative sample is small (two chunks) because the trial timed out, so this is the decision with the evidence available; a wider arm comparison is a follow-up.
+**Thought-process coherence: exemplary.** The nine graph queries are the sound
+discovery sequence (BaseURLs, full endpoint+parameter enumeration, existing
+`AGGREGATES`, orphan check, static/non-static split). The model recorded
+surface claims before judging ownership, consulted the notes priors (quoting
+back "path existence is not route existence"), retried the flaky history store,
+and ran the candidate-owner differential endpoint by endpoint. The reasoning is
+the strongest part of the run.
+
+**The real defect: scope mismatch by design, plus silent loss.** The workflow
+prompt MANDATES project-wide enumeration ("BROAD L0 SCAN - ... enumerate the L0
+`Endpoint`s this target exposes") while `resolve_l0_refs` resolves
+chunk-locally, so all 37 correct proposals died as `unresolvable`. The model
+obeyed its work order; the pipeline contradicts itself. And the backlog is
+carried but NOT transported (#34 D6), so the 37 edges are lost entirely - the
+run paid ~1.9M tokens and banked nothing. Contrast katana:0 (9 turns, no
+history probes, 0 proposals): per-chunk agentic yield is high-variance on top
+of being expensive, and the trial later drowned in provider 429s.
+
+**The coupling answer: yes, but split by level.** The evidence supports a
+once-per-run project census (graph enumeration + history sampling, cached as
+the shared surface dump) feeding a per-chunk one-shot that judges only its
+slice against census + inventory - with correct out-of-chunk proposals
+TRANSPORTED (backlog or a project-close assignment pass), never dropped. The
+graph query capability earns its keep at the census level; per-chunk roaming is
+the cost sink. What D-1 got right stands: the per-chunk turn must not roam the
+project. What it got wrong is retracted: the 37 were not graph_view
+misfiring, they were the pipeline discarding its own best work.
+
+SUPERSEDED first reading: "the graph-capable assigner produced httpx:0 37
+proposed / 0 kept / 37 unresolvable; katana:0 0 proposed. Zero kept, versus arm
+A's 41 placed / 290. So on L0 the assigner does not bind graph_view." The kept
+count measured the gate, not the proposals - a hasty generalisation from a
+downstream zero.
 
 ### D-2 CoT drift
 
