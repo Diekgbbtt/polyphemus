@@ -76,6 +76,8 @@ GraphReadFn = Callable[[str, dict], list]
 def _schema_surface() -> str:
     """The schema half of the contract, derived from the live enums in
     `analysis/l1_curator.py` so the description cannot drift (#197)."""
+    # RETAINED (dormant legacy: nothing writes L1DataItem/data edges after the
+    # data-plane removal) -> docs/design/drop-data-modeller.md
     labels_l1 = ", ".join(sorted(L1_ALLOWED_LABELS)) + \
         (" + L1DataItem" if "L1DataItem" in L1_RECONCILE_LABELS else "")
     sys_rels = ", ".join(sorted(SYSTEM_EDGE_RELS))

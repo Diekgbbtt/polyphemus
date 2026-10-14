@@ -1,7 +1,7 @@
 """Reusable proposer-reasoning pattern (#26 Q1): composable prompt fragments + a
 two-call reason->extract runner that any analyser proposer adopts.
 
-The Bootstrapper is the first adopter; the Assigner / DataPlane / TechnicalSystem
+The Bootstrapper is the first adopter; the Assigner / TechnicalSystem
 reuse these fragments with their own content. The pattern applies the ratified
 prompt-engineering primitives - system-prompt role design, an explicit
 chain-of-thought scaffold, few-shot CoT exemplars (show-don't-tell), and a

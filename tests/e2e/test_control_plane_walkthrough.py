@@ -114,5 +114,5 @@ def test_E6_single_dispatch_runs_only_the_routed_proposer():
 
     final = _drive(schedule, builder=builder, run_id="r6")
     assert calls["assigner"] == 1
-    assert sum(calls.values()) == 1  # exactly one of the five proposers ran
+    assert sum(calls.values()) == 1  # exactly one proposer ran
     assert len(final["receipts"]) == 1

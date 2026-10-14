@@ -32,7 +32,7 @@ def test_service_props_keeps_only_exposure_and_contract():
     shell = ServiceShell(
         business_function_slug="checkout", exposure="public",
         service_contract="Take a basket to a paid order.",
-        label="Checkout", salience="high", aggregates=[{"x": 1}], data_flows=[{"y": 2}],
+        label="Checkout", salience="high", aggregates=[{"x": 1}],
     )
     assert _service_props(shell) == {
         "exposure": "public",

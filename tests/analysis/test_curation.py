@@ -413,7 +413,7 @@ def test_curation_prompt_defines_dedup_as_semantic_not_exact_key():
     NO LONGER carry the old exact-key `iff they share a business_function_slug
     intent` rule."""
     ctx = {"inventory": {"services": ["account", "account-management"],
-                         "systems": [], "data_items": []},
+                         "systems": []},
            "cards": [], "stale_pool": []}
     p = curation._curation_prompt(ctx)
     low = p.lower()

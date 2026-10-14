@@ -113,9 +113,8 @@ DATA_RELATIONSHIP_KINDS: tuple[tuple[str, str], ...] = (
     ("concatenation_of", "The source item is a concatenation involving the target item."),
     ("subset_of", "The source item is a subset/projection of the target item."),
 )
-_KNOWN_DATA_REL_KINDS = frozenset(k for k, _d in DATA_RELATIONSHIP_KINDS)
-# kind -> the uppercase edge TYPE it becomes. Single source; reused by the builder
-# and the merge re-point allowlist. Every value is a safe identifier by construction.
+# kind -> the uppercase edge TYPE it becomes. RETAINED for the merge re-point
+# allowlist (`_REPOINT_REL_TYPES`); every value is a safe identifier by construction.
 _DATA_REL_EDGE_TYPES: dict[str, str] = {k: k.upper() for k, _d in DATA_RELATIONSHIP_KINDS}
 
 # Edge-label allowlists (rel labels are interpolated into Cypher, so they are
@@ -158,9 +157,13 @@ def vocabulary_prompt() -> str:
     """The controlled vocabularies the analyser LLM MUST draw from, rendered for
     the prompt. Single-sourced from the catalogues below so it never drifts: a
     proposal using a name outside these sets is rejected by the builders and
-    silently dropped, so the LLM must be told the exact allowed values."""
+    silently dropped, so the LLM must be told the exact allowed values.
+
+    Only the vocabularies a LIVE proposer can actually emit are rendered: the
+    surviving roles emit `systems` / `system_edges`, so the data-relationship
+    catalogue is NOT advertised here (nothing can emit one; see
+    `docs/design/drop-data-modeller.md`)."""
     kinds = ", ".join(sorted(_KNOWN_KINDS))
-    rel_kinds = ", ".join(sorted(_KNOWN_DATA_REL_KINDS))
     sys_rels = ", ".join(sorted(SYSTEM_EDGE_RELS))
     return (
         "CONTROLLED VOCABULARIES - use these EXACT values only:\n"
@@ -168,8 +171,6 @@ def vocabulary_prompt() -> str:
         "e.g. the authentication mechanism is `AuthenticationMechanism` (NOT "
         "'Authentication'); the authorization system is `AuthorizationSystem`.\n"
         f"- System-edge `rel` must be one of: {sys_rels}.\n"
-        f"- a DataRelationship `kind` must be one of: {rel_kinds} (the kind becomes "
-        "the edge type; anything else is rejected).\n"
         "- A System's `discriminator` defaults to the literal string "
         "'__singleton__' unless the target genuinely has multiple instances of "
         "that kind (e.g. two different CDN products)."

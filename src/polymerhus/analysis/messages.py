@@ -27,8 +27,8 @@ from polymerhus.analysis.anatomy import AnatomyResult
 from polymerhus.analysis.chunking import Chunk  # the real #13 Chunk (increment 1)
 from polymerhus.analysis.curation_types import CurationBatch
 
-# The five DISPATCHABLE proposer roles plus the auditor (the fixed checker stage,
-# never dispatched - #17 DP-7: "wrapper-node subgraph for all five proposers").
+# The four DISPATCHABLE proposer roles plus the auditor (the fixed checker stage,
+# never dispatched - #17 DP-7: "wrapper-node subgraph for all proposers").
 Role = Literal[
     "bootstrapper", "assigner", "mechanism_typist", "anti_cluttering", "auditor",
 ]

@@ -348,7 +348,7 @@ def build_schedule(
     step as if it were work. The default stays `("assigner",)` for the callers that
     want assignment alone; the chunk-fed analyser (`analyse_chunked`) passes
     `("assigner", "mechanism_typist")` so the typist types each chunk right after the
-    assigner has aggregated it (the data-modeller is still unbuilt).
+    assigner has aggregated it.
 
     `dispatch_id` is a pure function of run + chunk + role, so a replayed run
     produces the same ids and the receipts reducer dedups rather than doubling."""

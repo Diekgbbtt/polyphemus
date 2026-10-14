@@ -78,6 +78,12 @@ Retained (analysis, for the out-of-scope hunting read-only projection):
 - `l1_curator._REPOINT_REL_TYPES` keeps the data edge labels for legacy merge re-point.
 
 These are vocabulary constants, not write paths; they are commented as retained.
+The hunting and recon readers of the now-unwritable substrate carry a one-line
+`# RETAINED (dormant legacy ...) -> docs/design/drop-data-modeller.md` marker at the
+point of read (`attack/hunting/{unit_projection,predicate,fault_source,graph_view_tool,llm,hunt_orchestrator}.py`,
+`recon/domain/graph_read.py`).
+`l1_curator.vocabulary_prompt()` no longer renders the DataRelationship kind catalogue
+into the live proposer prompts: nothing can emit one.
 
 ## The fork-H guarantee holds with two roles
 
@@ -105,6 +111,10 @@ reworded from "three allow-sets" to "more than one allow-set".
   `assigner.narrow_to_assignment` and `mechanism_typist.narrow_to_typing` are
   harmless (`model_copy` ignores unknown keys) and were left untouched to respect the
   scope guard on those two files' shaping logic.
+- Other tracks own `assigner.py` / `mechanism_typist.py` (their `:91` / `:77` comment
+  refs) and `tests/integration/test_assigner_contracts.py:32` /
+  `tests/e2e/test_assigner_walkthrough.py:26` (vestigial inventory dict keys); the
+  coordinator resolves those at merge.
 
 ## Consequences
 

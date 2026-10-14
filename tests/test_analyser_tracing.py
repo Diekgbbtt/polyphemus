@@ -1,6 +1,6 @@
 """Unit tier for the analyser Langfuse step records (#18/#9, convergence).
 
-The A.1 proposers (Assigner / mechanism-typist / DataPlane data-modeller) run
+The A.1 proposers (Assigner / mechanism-typist) run
 under the run-sessioned supervisor graph, so no hand-written agent span is
 opened here - the surviving helpers are thin-exception step records fed
 explicit run correlation. Fakes the `langfuse` module (the helpers import it

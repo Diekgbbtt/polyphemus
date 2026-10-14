@@ -175,8 +175,9 @@ def test_vocabulary_prompt_lists_controlled_values():
     assert "AuthenticationMechanism" in v and "AuthorizationSystem" in v
     assert "RESTApi" in v
     assert "EXPOSED_VIA" in v and "AUTHORIZED_BY" in v  # system-edge rels
-    assert "equals_hash_of" in v  # data-relationship kinds
     assert "__singleton__" in v
+    # the data-relationship catalogue is NOT advertised: no live proposer can emit one
+    assert "equals_hash_of" not in v and "DataRelationship" not in v
 
 
 def test_slice_repr_is_untruncated():
