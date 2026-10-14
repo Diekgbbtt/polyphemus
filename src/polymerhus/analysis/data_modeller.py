@@ -695,8 +695,7 @@ def _default_invoke_fn(messages, *, schema=None, system_prompt=None):
 
 def stateful_invoke_fn(run_id: str, checkpointer, project_id: str | None = None):
     """The STATEFUL data-modeller call (#94): the `data_modeller` role runs as a session
-    resuming from its OWN per-run checkpoint (`AnalysisSession(run_id, "data_modeller")`, distinct from every other agent's), so its call chain and
-    every chunk append to ONE growing context. Structured turns are #44-safe;
+    on its OWN per-run thread (`AnalysisSession(run_id, "data_modeller")`, distinct from every other agent's), reset at each chunk boundary. Structured turns are #44-safe;
     a `schema=None` turn returns prose. Same `(messages, *, schema)` shape as
     `_default_invoke_fn`. Structurally sync (sequential dispatch).
 
@@ -739,9 +738,10 @@ def model_data(
     system_prompt = _system_prompt()
     candidates = owning_services(admitted, aggregations or [])
 
-    # Per-batch memory: the reflection and extraction of ONE chunk share a session
-    # (the batch scope), so the reflection's reasoning is the extraction's context;
-    # the next chunk opens a fresh thread. The scope is inert for the one-shot leg.
+    # Per-chunk reset: the reflection and extraction of ONE chunk share the
+    # run:role session (the batch scope), so the reflection's reasoning is the
+    # extraction's context; the seam resets the session at the next chunk.
+    # The scope is inert for the one-shot leg.
     from polymerhus.analysis.proposer_turn import proposer_batch
 
     with proposer_batch(chunk.chunk_id):

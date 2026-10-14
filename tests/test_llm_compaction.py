@@ -1328,3 +1328,30 @@ def test_complete_fold_leaves_no_dangling_tool_calls():
     assert "FIRST-GROUP-BODY" in fake.seen["user"]
     assert "SECOND-GROUP-BODY" in fake.seen["user"]
     assert C._tool_pairs_adjacent(res.messages)
+
+
+def test_manager_reset_thread_forgets_all_per_thread_state():
+    """The per-chunk lifecycle's compaction half: `reset_thread` drops the
+    pending pass, the running-summary pointer, the streak, the escalation flag,
+    the last report, and the ledger measurements - the next turn starts
+    unbudgeted with no prior summary. Unknown threads are a no-op."""
+    window = C.CompactionWindow(context_limit=1000, threshold=0.9)
+    manager = C.CompactionManager(window=window)
+    tid = "run1:mechanism_typist"
+    manager._pending[tid] = object()
+    manager._existing[tid] = object()
+    manager._streak[tid] = 2
+    manager._last_reports[tid] = object()
+    manager._escalated[tid] = True
+    manager.ledger.update(tid, [HumanMessage(content="old chunk trail")])
+
+    manager.reset_thread(tid)
+
+    assert manager.pending(tid) is None
+    assert manager.last_report(tid) is None
+    assert manager.streak(tid) == 0
+    assert not manager.is_escalated(tid)
+    assert manager.ledger.entry(tid) is None
+    assert manager.ledger.last_ids(tid) == set()
+    # A thread that was never seen resets silently.
+    manager.reset_thread("run1:never-seen")

@@ -412,13 +412,14 @@ def test_the_stateful_leg_is_read_through_the_real_seam(monkeypatch):
     assert model._seen[0][0].content == "P"
 
 
-# --- per-batch memory: each streamed chunk starts a FRESH context -------------
+# --- per-chunk reset: ONE session, reset at each chunk boundary ---------------
 
-def test_per_batch_scope_gives_each_chunk_a_fresh_thread(monkeypatch):
-    """Change 2, end to end through the REAL seam: two chunks on one run, each
-    scoped by `proposer_batch`, persist to two DISTINCT threads, and chunk N+1's
-    first request carries none of chunk N's messages - the fresh-context guarantee
-    that stops the vertical growth under a single run-long thread."""
+def test_a_new_chunk_resets_the_one_session_thread(monkeypatch):
+    """Reset-per-chunk, end to end through the REAL seam: two chunks on one run
+    share the ONE `run:role` session; chunk N+1's first turn resets it, so its
+    request carries none of chunk N's messages and the old trail is gone - the
+    fresh-start guarantee without a per-chunk thread rename (the stable identity
+    the prefix cache and the observability contract key on)."""
     from polymerhus.app.llm.session import read_session_memory
     from polymerhus.analysis.proposer_turn import proposer_batch, session_invoke_fn
 
@@ -435,16 +436,66 @@ def test_per_batch_scope_gives_each_chunk_a_fresh_thread(monkeypatch):
     with proposer_batch("chunk-2"):
         invoke([HumanMessage(content="chunk 2 reflection")], schema=None)
 
-    # Two distinct, independently persisted threads.
-    first = read_session_memory(saver, "runbatch:chunk-1:mechanism_typist")
-    second = read_session_memory(saver, "runbatch:chunk-2:mechanism_typist")
-    assert first is not None and second is not None
-    assert first.messages and second.messages
+    # ONE thread, and it holds the second chunk's trail only.
+    mem = read_session_memory(saver, "runbatch:mechanism_typist")
+    assert mem is not None and mem.messages
+    trail = " ".join(str(getattr(m, "content", "")) for m in mem.messages)
+    assert "chunk 2 reflection" in trail
+    assert "chunk 1 reflection" not in trail
+    # No per-chunk thread was ever persisted.
+    assert read_session_memory(saver, "runbatch:chunk-1:mechanism_typist") is None
+    assert read_session_memory(saver, "runbatch:chunk-2:mechanism_typist") is None
 
     # Chunk 2's request is its OWN trail: none of chunk 1's messages ride it.
     contents = [getattr(m, "content", "") for m in model._seen[-1]]
     assert "chunk 2 reflection" in contents
     assert "chunk 1 reflection" not in contents
+
+
+def test_turns_within_one_chunk_share_the_session(monkeypatch):
+    """Within a chunk there is NO reset: the second turn's request still carries
+    the first turn's messages (the reflection is the extraction's context)."""
+    from polymerhus.analysis.proposer_turn import proposer_batch, session_invoke_fn
+
+    model = _RecordingModel()
+    monkeypatch.setattr(
+        "polymerhus.app.llm.session._default_model_factory", lambda role_id: model)
+    monkeypatch.setattr(
+        "polymerhus.analysis.proposer_turn._role_prompt", lambda role_id: "PROMPT")
+
+    invoke = session_invoke_fn("mechanism_typist", "runshare", InMemorySaver())
+    with proposer_batch("chunk-1"):
+        invoke([HumanMessage(content="chunk 1 reflection")], schema=None)
+        invoke([HumanMessage(content="chunk 1 extraction")], schema=None)
+
+    contents = [getattr(m, "content", "") for m in model._seen[-1]]
+    assert "chunk 1 extraction" in contents
+    assert "chunk 1 reflection" in contents, \
+        "the extraction turn still sees the reflection's messages"
+
+
+def test_reset_is_fail_open_when_the_checkpointer_cannot_delete(monkeypatch):
+    """A checkpointer without a `delete_thread` seam keeps the trail and the turn
+    still runs - the reset never breaks a caller."""
+    from polymerhus.analysis.proposer_turn import proposer_batch, session_invoke_fn
+
+    model = _RecordingModel()
+    monkeypatch.setattr(
+        "polymerhus.app.llm.session._default_model_factory", lambda role_id: model)
+    monkeypatch.setattr(
+        "polymerhus.analysis.proposer_turn._role_prompt", lambda role_id: "PROMPT")
+
+    class _NoDeleteSaver(InMemorySaver):
+        def __getattribute__(self, name):
+            if name == "delete_thread":
+                raise AttributeError("no delete_thread seam")
+            return super().__getattribute__(name)
+
+    invoke = session_invoke_fn("mechanism_typist", "runfailopen", _NoDeleteSaver())
+    with proposer_batch("chunk-1"):
+        assert invoke([HumanMessage(content="hello")], schema=None) == "ok"
+    with proposer_batch("chunk-2"):
+        assert invoke([HumanMessage(content="world")], schema=None) == "ok"
 
 
 def test_no_batch_scope_keeps_the_run_role_thread(monkeypatch):

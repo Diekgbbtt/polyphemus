@@ -524,8 +524,9 @@ def assign(
     # never accumulates in the checkpointed trail. The legacy one-shot seam prepends
     # it into its message list instead.
     system_prompt = _system_prompt(mode)
-    # Per-batch memory: the chunk id scopes this turn to its own session (the
-    # supervisor dispatches one chunk at a time), so the next chunk starts fresh.
+    # Per-chunk reset: the chunk id marks this turn's chunk on the ONE run:role
+    # session (the supervisor dispatches one chunk at a time); the seam resets
+    # the session at each new chunk, so the next chunk starts fresh.
     # The scope is inert for the one-shot legacy seam.
     from polymerhus.analysis.proposer_turn import proposer_batch
 
@@ -583,10 +584,10 @@ def default_invoke_fn():
 
 
 def stateful_invoke_fn(run_id: str, checkpointer, project_id: str | None = None):
-    """The STATEFUL Assigner call (#94): the `assigner` role runs as a session whose
-    context PROGRESSES across the run's chunks, resuming from its own per-run checkpoint
-    (`AnalysisSession(run_id, "assigner")`, distinct from every other agent's
-    thread). Structured output is `L1DeltaBatch` (#44-safe). Same `(messages)` shape as
+    """The STATEFUL Assigner call (#94): the `assigner` role runs as a session on its
+    own per-run thread (`AnalysisSession(run_id, "assigner")`, distinct from every
+    other agent's thread), reset at each chunk boundary. Structured output is
+    `L1DeltaBatch` (#44-safe). Same `(messages)` shape as
     the legacy seam, so `make_assigner_body` is unchanged.
 
     The role prompt is bound ONCE as the agent's ephemeral leading block (the
@@ -595,8 +596,8 @@ def stateful_invoke_fn(run_id: str, checkpointer, project_id: str | None = None)
 
     The Assigner is dispatched sequentially (the supervisor's chunk-major schedule holds
     `ANALYSER_PASS_SEMAPHORE`), so this structurally-sync stateful turn needs no async;
-    its statefulness is what lets chunk N+1 reason with what it proposed for chunk N,
-    not merely re-read the graph.
+    its statefulness is what lets the turn resume its checkpointed trail, while the
+    per-chunk reset keeps each chunk's reasoning scoped to its own slice.
 
     Context-window compaction (#95 H/D9): the run's turns run COMPACTED - the
     analysis-side compaction middleware is built once per run and passed through

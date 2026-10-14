@@ -408,8 +408,8 @@ def _default_invoke_fn(messages, *, schema=None, system_prompt=None):
 
 def stateful_invoke_fn(run_id: str, checkpointer, project_id: str | None = None):
     """The STATEFUL mechanism-typist call (#94): the `mechanism_typist` role runs as a
-    session resuming from its OWN per-run checkpoint (`AnalysisSession(run_id, "mechanism_typist")`, distinct from every other agent's), so its 3-call
-    chain and every chunk append to ONE growing context. Structured turns go through
+    session on its OWN per-run thread (`AnalysisSession(run_id, "mechanism_typist")`, distinct from every other agent's), so its 3-call
+    chain shares ONE session that resets at each chunk boundary. Structured turns go through
     `ToolStrategy` (#44-safe); the reflection turn (`schema=None`) returns prose. Same
     `(messages, *, schema)` shape as `_default_invoke_fn`. Structurally sync (sequential
     dispatch under `ANALYSER_PASS_SEMAPHORE`).
@@ -478,9 +478,10 @@ def type_mechanisms(
     # checkpointed trail. The legacy one-shot seam prepends it itself.
     skill = _load_skill()
 
-    # Per-batch memory: the three calls of ONE chunk share a session (the batch
-    # scope), so the reflection's reasoning is the extraction's context; the next
-    # chunk opens a fresh thread. The scope is inert for the one-shot legacy seam.
+    # Per-chunk reset: the three calls of ONE chunk share the run:role session
+    # (the batch scope), so the reflection's reasoning is the extraction's
+    # context; the seam resets the session at the next chunk. The scope is
+    # inert for the one-shot legacy seam.
     from polymerhus.analysis.proposer_turn import proposer_batch
 
     with proposer_batch(chunk.chunk_id):

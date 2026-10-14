@@ -32,9 +32,12 @@ from __future__ import annotations
 
 import contextlib
 import contextvars
+import logging
 from typing import Any, Iterator, Sequence
 
 from langchain_core.messages import BaseMessage, SystemMessage
+
+logger = logging.getLogger(__name__)
 
 # Distinguishes "the caller passed no schema" (use the role's own default) from
 # "the caller passed schema=None" (a deliberate prose turn). The analysis role's
@@ -42,12 +45,14 @@ from langchain_core.messages import BaseMessage, SystemMessage
 # while the reflection-driven proposers alternate prose and structured turns.
 _NO_SCHEMA = object()
 
-# The per-streamed-chunk memory scope (the per-batch discriminator). A proposer body
-# opens it around its invoke chain, so every turn of ONE chunk addresses the same
-# session (within-chunk memory is kept) while the next chunk addresses a FRESH thread
-# (`AnalysisSession(run, role, batch=...)`). It is a ContextVar, the repo's established
-# scoped-ambient pattern (`conversation_scope`, `module_context`), so the invoke
-# contract `(messages, *, schema, system_prompt)` is unchanged.
+# The per-streamed-chunk boundary signal (the per-batch discriminator). A proposer
+# body opens it around its invoke chain, so the seam sees where ONE chunk's turns
+# end and the next begins. It is a ContextVar, the repo's established scoped-ambient
+# pattern (`conversation_scope`, `module_context`), so the invoke contract
+# `(messages, *, schema, system_prompt)` is unchanged. The scope does NOT rename the
+# thread: every chunk runs on the SAME `run:role` session, which the seam resets at
+# each new batch (the reset-per-chunk lifecycle), keeping the stable identity the
+# provider prefix cache and the observability/runtime contract key on.
 _BATCH: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "proposer-batch", default=None)
 
@@ -163,20 +168,29 @@ def session_invoke_fn(role_id: str, run_id: str, checkpointer, project_id: str |
     - **Constant request shape**: a prose turn still binds the role's structured tool
       via `tools=`, so the tool set never toggles between a role's reflection and
       extraction turns (the shape that defeated the provider prefix cache).
-    - **Per-batch memory**: the thread is `AnalysisSession(run, role, batch)` where
-      `batch` is the innermost `proposer_batch` scope the body opened (the streamed
-      chunk id) - or None (the `run:role` thread) when none is set.
+    - **Per-chunk reset on one session**: the thread is always
+      `AnalysisSession(run_id, role_id)` - the documented `run:role` the
+      observability/runtime contract expects. The first turn that arrives under a
+      NEW `proposer_batch` scope resets that session to empty (fail-open), so the
+      chunk starts from the initial system prompt + its fixed human messages
+      instead of resuming the previous chunk's trail, while the turns WITHIN one
+      chunk still share the session (the reflection is the extraction's context).
 
     Structurally sync: the supervisor dispatches the proposers sequentially under
     `ANALYSER_PASS_SEMAPHORE`, so a turn never needs an async entry point."""
     from polymerhus.app.llm import compaction as C  # noqa: PLC0415
-    from polymerhus.app.llm.session import stateful_turn  # noqa: PLC0415
+    from polymerhus.app.llm.session import reset_session_thread, stateful_turn  # noqa: PLC0415
     from polymerhus.app.llm.session_address import AnalysisSession  # noqa: PLC0415
 
     middleware = [C.build_role_compaction_middleware(role_id)]
+    # The chunk-boundary reset cell: the last batch this invoke saw. A turn
+    # arriving under a NEW non-None batch resets the ONE session first, so the
+    # chunk starts from the initial system prompt + its fixed human messages.
+    # Unscoped turns never reset (the back-compat callers keep their trail).
+    last_batch: list[str | None] = [None]
 
     def invoke(messages: Sequence[BaseMessage], *, schema: Any = _NO_SCHEMA,
-              system_prompt: str | None = None):
+               system_prompt: str | None = None):
         # The caller's prompt wins (the pod-agent pattern: the call site owns its
         # skill), so a role whose prompt varies by mode still gets the right one.
         # Absent one, the role's OWN default prompt applies - a proposer therefore
@@ -188,7 +202,28 @@ def session_invoke_fn(role_id: str, run_id: str, checkpointer, project_id: str |
         # Only a non-empty set is forwarded, so the structured calls stay byte-identical
         # to the pre-change requests.
         tools = () if resolved_schema is not None else _prose_tools(role_id)
-        address = AnalysisSession(run_id, role_id, batch=current_batch())
+        address = AnalysisSession(run_id, role_id)
+        batch = current_batch()
+        if batch is not None and batch != last_batch[0]:
+            # A new chunk on the one session: reset it to empty first, so this
+            # chunk's turns start from the initial system prompt + the fixed
+            # human messages. BOTH halves are reset, fail-open: the checkpointer
+            # trail (`reset_session_thread`) AND the compaction manager's
+            # per-thread state (its running-summary pointer and ledger - without
+            # this the new chunk would inherit the old chunk's summary and its
+            # occupancy). A refused reset keeps the trail.
+            reset_session_thread(checkpointer, address)
+            for mw in middleware:
+                manager = getattr(mw, "manager", None)
+                reset = getattr(manager, "reset_thread", None)
+                if callable(reset):
+                    try:
+                        reset(address.thread_id)
+                    except Exception:  # noqa: BLE001 - fail-open, keeping state
+                        logger.warning(
+                            "reset of compaction state for %s failed "
+                            "(fail-open, keeping state)", address.thread_id)
+        last_batch[0] = batch
         kwargs: dict[str, Any] = {}
         if tools:
             kwargs["tools"] = tools
