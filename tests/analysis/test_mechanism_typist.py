@@ -213,14 +213,19 @@ def test_N6_extend_prompt_shows_existing_description_and_demands_enrichment():
     captured = {}
 
     def invoke(messages, *, schema=None, system_prompt=None):
-        if "EXTRACT SYSTEMS" in messages[-1].content:
-            captured["systems_prompt"] = messages[-1].content
+        content = messages[-1].content
+        if "ORIENT FROM THE CATALOG" in content:
+            captured["first"] = content
+        if "EXTRACT SYSTEMS" in content:
+            captured["systems_prompt"] = content
         return AnalysisTurn()
     inventory = {"services": [], "systems": ["AuthenticationMechanism"],
                  "system_descriptions": {"AuthenticationMechanism": "bearer-token auth"}}
     type_mechanisms(_service_chunk(), invoke_fn=invoke, inventory=inventory)
     p = captured["systems_prompt"]
-    assert "bearer-token auth" in p            # the existing description is shown
+    # The existing description rides the hoisted base block in the FIRST turn (the
+    # stable cached prefix), so it is shown on every later turn too.
+    assert "bearer-token auth" in captured["first"]  # the existing description is shown
     assert "ENRICHED" in p and "never blank" in p  # enrich-not-clobber is directed
 
 
@@ -252,21 +257,20 @@ def test_N8_observations_feed_the_hypotheses_turn_only():
 
     def invoke(messages, *, schema=None, system_prompt=None):
         content = messages[-1].content
-        if "EXTRACT SYSTEMS" in content:
+        if "ORIENT FROM THE CATALOG" in content:
+            captured["first"] = content
+        elif "EXTRACT SYSTEMS" in content:
             captured["systems"] = content
-        elif ("LINK SERVICES" not in content and "CLUSTER PAGES" not in content
-              and "ORIENT FROM THE CATALOG" not in content and "HARVEST THE SURFACE" not in content
-              and "RECALL PRIOR INSIGHTS" not in content
-              and "CLOSE." not in content):
-            captured["hypotheses"] = content
         return AnalysisTurn()
     obs = Observation(macro_kind="header", severity="info", evidence="Set-Cookie: sid",
                       rationale="session cookie missing Secure",
                       anchor={"type": "Endpoint", "identity": {"path": "/x", "baseurl": "https://a"}},
                       source_job="triager", source_tool="triager")
     type_mechanisms(_service_chunk(_endpoint("/x"), observations=(obs,)), invoke_fn=invoke)
-    assert "session cookie missing Secure" in captured["hypotheses"]   # insight in the surface
-    assert "session cookie missing Secure" not in captured["systems"]  # NOT re-shown to extract
+    # The observation insight rides the hoisted base block in the FIRST turn (the stable
+    # cached prefix), and is NOT re-shown in the extraction turn's own message.
+    assert "session cookie missing Secure" in captured["first"]
+    assert "session cookie missing Secure" not in captured["systems"]
 
 
 def test_baseurl_anchored_observation_reaches_its_endpoint_insight():
@@ -282,11 +286,8 @@ def test_baseurl_anchored_observation_reaches_its_endpoint_insight():
 
     def invoke(messages, *, schema=None, system_prompt=None):
         content = messages[-1].content
-        if ("EXTRACT SYSTEMS" not in content and "LINK SERVICES" not in content
-                and "CLUSTER PAGES" not in content and "ORIENT FROM THE CATALOG" not in content
-                and "HARVEST THE SURFACE" not in content
-                and "RECALL PRIOR INSIGHTS" not in content and "CLOSE." not in content):
-            captured["hypotheses"] = content
+        if "ORIENT FROM THE CATALOG" in content:
+            captured["first"] = content
         return AnalysisTurn()
 
     obs = Observation(macro_kind="cors", severity="high",
@@ -298,7 +299,7 @@ def test_baseurl_anchored_observation_reaches_its_endpoint_insight():
         _service_chunk(_endpoint("/rest/admin", baseurl="https://a"), observations=(obs,)),
         invoke_fn=invoke,
     )
-    assert "wide-open CORS enables cross-origin exfiltration" in captured["hypotheses"]
+    assert "wide-open CORS enables cross-origin exfiltration" in captured["first"]
 
 
 def test_response_evidence_props_reach_the_hypotheses_turn_not_path_alone():
@@ -313,11 +314,8 @@ def test_response_evidence_props_reach_the_hypotheses_turn_not_path_alone():
 
     def invoke(messages, *, schema=None, system_prompt=None):
         content = messages[-1].content
-        if ("EXTRACT SYSTEMS" not in content and "LINK SERVICES" not in content
-                and "CLUSTER PAGES" not in content and "ORIENT FROM THE CATALOG" not in content
-                and "HARVEST THE SURFACE" not in content
-                and "RECALL PRIOR INSIGHTS" not in content and "CLOSE." not in content):
-            captured["hypotheses"] = content
+        if "ORIENT FROM THE CATALOG" in content:
+            captured["first"] = content
         return AnalysisTurn()
 
     shell = AssetDelta(
@@ -327,11 +325,11 @@ def test_response_evidence_props_reach_the_hypotheses_turn_not_path_alone():
                "server": "AmazonS3", "profile": "webapp", "source": "httpx"},
     )
     type_mechanisms(_service_chunk(shell), invoke_fn=invoke)
-    hypotheses = captured["hypotheses"]
-    assert "content_type=text/html" in hypotheses      # the discriminating evidence reaches it
-    assert "title=Daytona" in hypotheses
-    assert "profile=webapp" not in hypotheses           # pipeline plumbing filtered out (no-noise)
-    assert "source=httpx" not in hypotheses
+    first = captured["first"]
+    assert "content_type=text/html" in first      # the discriminating evidence reaches it
+    assert "title=Daytona" in first
+    assert "profile=webapp" not in first           # pipeline plumbing filtered out (no-noise)
+    assert "source=httpx" not in first
 
 
 def test_webpresentation_per_service_cluster_survives_shaping():
@@ -611,7 +609,7 @@ def test_unit_base_artifact_carries_the_service_contract_and_aggregated_endpoint
 
     def invoke(messages, *, schema=None, system_prompt=None):
         content = messages[-1].content
-        if "CENTRAL QUESTION" in content:
+        if "ORIENT FROM THE CATALOG" in content:
             captured["unit"] = content
         return AnalysisTurn()
 
@@ -624,6 +622,7 @@ def test_unit_base_artifact_carries_the_service_contract_and_aggregated_endpoint
                   assets=(_endpoint("/orders"),))
     type_mechanisms(chunk, invoke_fn=invoke, inventory=inventory,
                     aggregations=aggregations)
+    # The `unit` base artifact is hoisted into the FIRST turn (the stable prefix).
     unit = captured["unit"]
     assert "UNIT KIND: Service" in unit
     assert "takes a basket to a paid order" in unit          # the service_contract

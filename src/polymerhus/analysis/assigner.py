@@ -878,7 +878,7 @@ def assign(
     `run_workflow` (ADR D31): the global assign pass binds them so its turns'
     unit records one note (an `assignment` note); the streamed per-chunk path
     binds none, so it stays inert and byte-unbroken."""
-    from polymerhus.analysis.pod import _inventory_block, _slice_repr
+    from polymerhus.analysis.pod import _inventory_block, _slice_repr, surface_block
     from polymerhus.analysis.proposer_turn import proposer_batch
     from polymerhus.analysis.reasoning_workflow import run_workflow, to_delta_batch
 
@@ -901,10 +901,15 @@ def assign(
     system_prompt = _system_prompt(variant)
     workflow = WORKFLOW if unit_first else WORKFLOW_LEGACY
     if unit_first:
-        # The volatile base sources the workflow injects verbatim: the inventory block
-        # (identity reuse) and the Service UNIT context. The settled surface is NOT a
-        # base source - the model DISCOVERS it through the tools (L1-unit-first).
+        # The volatile base sources the workflow injects verbatim, led by the observed
+        # L0 surface: the endpoint-first block the model now reads directly. `surface`
+        # is listed FIRST so the largest, most-shared block heads the request prefix -
+        # for `assign_services` the chunk carries the WHOLE settled surface, so this
+        # block is identical across every Service unit and the provider caches it once
+        # for the whole pass. The inventory block (identity reuse) and the Service UNIT
+        # context follow. `l0_slice`/`admitted` still feed `shape_proposal`.
         base_artifacts = {
+            "surface": surface_block(admitted),
             "inventory": _inventory_block(inventory),
             "service": _unit_context_block(chunk, inventory, owned_endpoints),
         }

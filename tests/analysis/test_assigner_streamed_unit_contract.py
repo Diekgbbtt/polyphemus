@@ -85,8 +85,12 @@ def test_service_sourced_feeds_unit_and_runs_l1unit_first(monkeypatch):
     cap = _capture(monkeypatch)
     assign(_service_chunk(), invoke_fn=lambda *a, **k: None, inventory=INVENTORY, unit_first=True)
 
-    # No pre-fed surface: the model discovers it through the tools (L1-unit-first).
-    assert "surface" not in cap["base_artifacts"]
+    # Endpoint-first (aecac71): the whole settled surface IS pre-fed, as the FIRST base
+    # artifact, so the shared request prefix caches once across the Service loop. The
+    # L1-unit-first workflow itself is unchanged - it still harvests and falsifies.
+    assert next(iter(cap["base_artifacts"])) == "surface"
+    assert cap["base_artifacts"]["surface"].startswith("OBSERVED L0 SURFACE")
+    assert "/prompt" in cap["base_artifacts"]["surface"]
     assert cap["base_artifacts"]["service"].startswith("SERVICE UNIT: workflow-submission")
     assert "contract: Submits a node-graph prompt" in cap["base_artifacts"]["service"]
     # The L1-unit-first workflow.

@@ -158,12 +158,12 @@ def test_the_whole_surface_is_grouped_into_one_pass():
     # the Assigner's six v2 sub-problems: harvest_surface, falsify_harvest,
     # prior_insights, candidate_owners, assign, closure
     assert len(invoker.calls) == 6
-    # the WHOLE surface is admitted in the one pass (the deterministic gates see it),
-    # but it is NOT pre-fed: the model discovers it through the tools
+    # the WHOLE surface is admitted in the one pass (the deterministic gates see it)
+    # AND it is now pre-fed in the hoisted endpoint-first block of the first turn.
     assert census.admitted == 3
     first_user = invoker.calls[0][0][-1].content
     assert "checkout" in first_user
-    assert "/a" not in first_user and "/b" not in first_user and "/c" not in first_user
+    assert "/a" in first_user and "/b" in first_user and "/c" in first_user
 
 
 def test_global_pass_turns_bind_notes_and_the_backstop_writes_an_assignment_note(

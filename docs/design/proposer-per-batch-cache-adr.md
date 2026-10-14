@@ -47,9 +47,11 @@ A secondary amplifier: under a run-long thread, each chunk RE-INJECTED the strea
 
 **Rule.** Resolution order: an explicit builder param > the per-agent env var `LLM_COMPACTION_THRESHOLD_<ROLE_ID_UPPER>` > the global `LLM_COMPACTION_THRESHOLD` > the role's declared default (`providers.Role.compaction_threshold`) > `0.90`.
 
-**Implementation.** `providers.Role` gained `compaction_threshold: float | None = None`, set for the two mined proposers (`data_modeller` `0.016`, `mechanism_typist` `0.08` - 2x headroom over the mined per-batch occupancy of ~8,162 and ~41,424 tokens on the 1M window). `compaction.resolve_threshold` owns the order and `resolve_window` calls it; `build_role_compaction_middleware` inherits it. The global `LLM_COMPACTION_THRESHOLD` stays the fallback (back-compatible), and every path fails fast on an unusable value.
+**Implementation.** `providers.Role` gained `compaction_threshold: float | None = None`, originally set for the two mined proposers (`data_modeller` `0.016`, `mechanism_typist` `0.08` - 2x headroom over the mined per-batch occupancy of ~8,162 and ~41,424 tokens on the 1M window). `compaction.resolve_threshold` owns the order and `resolve_window` calls it; `build_role_compaction_middleware` inherits it. The global `LLM_COMPACTION_THRESHOLD` stays the fallback (back-compatible), and every path fails fast on an unusable value.
 
-**Tests.** `tests/test_llm_compaction.py::test_per_agent_threshold_env_beats_the_global`, `::test_per_agent_threshold_falls_back_to_the_role_default`, `::test_per_agent_threshold_is_validated_fail_fast`, `::test_role_compaction_middleware_reads_the_role_default`.
+**SUPERSEDED 2026-10-13** (`endpoint-first-prefix-adr.md`): the two per-role defaults are REMOVED. The arm E trial (same threshold values) measured a regression - compaction churn (8 `consecutive-pass cap` warnings against 0) rewrote the request prefix, dropping cache hygiene to 76.2% against arm D's 87.8%, and quality fell with it (29 aggregates against 70). The operator directed a reset to the global 0.2 for all agents, so no role carries a default and the global env is authoritative. The resolution MECHANISM is unchanged (a role default is still honoured if one is ever declared); only the two analysis defaults are gone.
+
+**Tests.** `tests/test_llm_compaction.py::test_per_agent_threshold_env_beats_the_global`, `::test_per_agent_threshold_falls_back_to_the_module_default`, `::test_per_agent_threshold_is_validated_fail_fast`, `::test_role_compaction_middleware_reads_the_resolved_threshold`.
 
 ## 6. What this does NOT change
 

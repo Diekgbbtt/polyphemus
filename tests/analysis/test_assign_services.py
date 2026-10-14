@@ -130,11 +130,11 @@ def test_per_service_pass_still_drops_an_unknown_service_slug():
     assert {a.service_slug for a in writer.batches[0].aggregates} == {"checkout"}
 
 
-def test_the_unit_context_does_not_carry_the_whole_settled_surface():
-    # T1: the settled surface is NOT pre-fed. The first turn (harvest_surface)
-    # carries the Service unit and the inventory, and the model discovers the
-    # endpoints through the tools - so a multi-Service target's paths never ride
-    # the prompt.
+def test_the_unit_context_carries_the_whole_settled_surface():
+    # Endpoint-first: the settled surface IS pre-fed in the hoisted base block of the
+    # FIRST turn, so the model reads the endpoints directly instead of rediscovering
+    # them through the tools. For the per-Service pass the whole settled surface rides
+    # the chunk, so every Service unit's prefix carries the same block (the cache win).
     seen = {}
 
     def invoke(messages, *, schema=None, system_prompt=None):
@@ -151,7 +151,7 @@ def test_the_unit_context_does_not_carry_the_whole_settled_surface():
 
     first = seen["first"]
     for path in ("/a", "/b", "/c"):
-        assert path not in first, f"{path} must be discovered, not pre-fed"
+        assert path in first, f"{path} must be pre-fed in the endpoint-first block"
     assert "checkout" in first
 
 

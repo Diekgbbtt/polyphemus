@@ -148,14 +148,32 @@ def render_emitted(sub_problem: SubProblem, turn: AnalysisTurn | None) -> str:
     return "\n".join(render_artifact(name, turn) for name in sub_problem.emit)
 
 
-def render_turn(sub_problem: SubProblem, artifacts: Mapping[str, str]) -> str:
+def render_turn(sub_problem: SubProblem, artifacts: Mapping[str, str], *,
+                base_names: frozenset[str] = frozenset()) -> str:
     """The human message for one sub-problem: its prompt, then each injected
-    source rendered verbatim, in declared order."""
+    source rendered verbatim, in declared order.
+
+    A source named in `base_names` is SKIPPED: the base artifacts (the unit's
+    surface, inventory and unit context) are hoisted ONCE into the FIRST human
+    message of the session (`run_workflow`), so re-rendering them into every
+    later turn would duplicate the volatile prefix and defeat the provider cache.
+    Derived artifacts (an earlier sub-problem's id) are still injected verbatim."""
     parts = [sub_problem.prompt]
     for name in sub_problem.inject:
+        if name in base_names:
+            continue
         rendered = artifacts.get(name)
         if rendered:
             parts.append(rendered)
+    return "\n\n".join(parts)
+
+
+def render_base_block(base_artifacts: Mapping[str, str] | None) -> str:
+    """Render the hoisted base artifacts ONCE, in declared order, for the FIRST
+    human message of a session. This is the stable leading block of the request
+    that every later sub-problem turn re-reads from the provider prefix cache.
+    Empty values are dropped, so a role with no base context renders nothing."""
+    parts = [value for value in (base_artifacts or {}).values() if value]
     return "\n\n".join(parts)
 
 
@@ -195,10 +213,21 @@ def run_workflow(
     from langchain_core.messages import HumanMessage
 
     artifacts: dict[str, str] = dict(base_artifacts or {})
+    base_names = frozenset((base_artifacts or {}).keys())
+    # Hoist the base artifacts (the unit's surface, inventory and unit context) into
+    # the FIRST human message ONLY. Within one session they then ride the stateful
+    # trail as the stable leading prefix of every later request, so the provider
+    # prefix cache re-reads them instead of paying for them on each turn (the
+    # endpoint-first cache discipline). Later sub-problems inject only their
+    # derived dependencies, which are small and unit-specific.
+    base_block = render_base_block(base_artifacts)
     turns: dict[str, AnalysisTurn | None] = {}
     try:
-        for sub_problem in workflow.sub_problems:
-            message = HumanMessage(content=render_turn(sub_problem, artifacts))
+        for index, sub_problem in enumerate(workflow.sub_problems):
+            content = render_turn(sub_problem, artifacts, base_names=base_names)
+            if index == 0 and base_block:
+                content = f"{base_block}\n\n{content}"
+            message = HumanMessage(content=content)
             turn = invoke_fn([message], schema=AnalysisTurn, system_prompt=system_prompt)
             turns[sub_problem.id] = turn
             artifacts[sub_problem.id] = render_emitted(sub_problem, turn)

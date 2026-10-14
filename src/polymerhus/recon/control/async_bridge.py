@@ -24,12 +24,15 @@ from __future__ import annotations
 
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 from typing import Any, Coroutine, TypeVar
 
 T = TypeVar("T")
 
 
-def run_coro_blocking(coro: "Coroutine[Any, Any, T]") -> T:
+def run_coro_blocking(
+    coro: "Coroutine[Any, Any, T]", *, timeout_s: float | None = None
+) -> T:
     """Run `coro` to completion from a sync context and return its result.
 
     If no event loop is running on this thread, this is equivalent to
@@ -40,10 +43,25 @@ def run_coro_blocking(coro: "Coroutine[Any, Any, T]") -> T:
 
     `coro` must be a coroutine object that has not yet been awaited/run -
     it is consumed exactly once, on whichever path is taken.
+
+    `timeout_s` (default None = unbounded) caps the wait on the separate-thread
+    path. A collaborator that never returns (a hung MCP read, for instance)
+    would otherwise block the calling turn forever; on expiry this raises
+    `TimeoutError` so the caller degrades fail-open. The worker is NEVER joined:
+    a hung coroutine sits in its own loop, and `shutdown(wait=True)` would
+    re-block the caller on the very task we just gave up on.
     """
     try:
         asyncio.get_running_loop()
     except RuntimeError:
         return asyncio.run(coro)
-    with ThreadPoolExecutor(max_workers=1) as ex:
-        return ex.submit(lambda: asyncio.run(coro)).result()
+    ex = ThreadPoolExecutor(max_workers=1)
+    future = ex.submit(lambda: asyncio.run(coro))
+    try:
+        return future.result(timeout=timeout_s)
+    except FuturesTimeoutError as exc:
+        raise TimeoutError(
+            f"coroutine did not complete within {timeout_s}s"
+        ) from exc
+    finally:
+        ex.shutdown(wait=False, cancel_futures=True)

@@ -56,12 +56,29 @@ _BATCH: contextvars.ContextVar[str | None] = contextvars.ContextVar(
 @contextlib.contextmanager
 def proposer_batch(batch_id: str | None) -> Iterator[None]:
     """Scope the turns of ONE streamed chunk as the session batch. A None batch is a
-    no-op scope, so a caller that sets none keeps the `run:role` thread."""
+    no-op scope, so a caller that sets none keeps the `run:role` thread.
+
+    The scope is ALSO the HTTP-history MCP session boundary: the unit's first kali
+    call opens one MCP session (reused for the unit's remaining calls), and this
+    exit closes it, so a unit carries exactly one handshake and never leaks a
+    connection into the next unit."""
     token = _BATCH.set(batch_id)
     try:
         yield
     finally:
         _BATCH.reset(token)
+        _close_http_session()
+
+
+def _close_http_session() -> None:
+    """Close the unit's HTTP-history MCP session at the batch boundary. Fail-open:
+    an unimportable client (or a close error) never breaks the proposer body."""
+    try:
+        from polymerhus.app.clients.kali_http_history import close_unit_session
+
+        close_unit_session()
+    except Exception:  # noqa: BLE001 - the boundary must never raise
+        pass
 
 
 def current_batch() -> str | None:
