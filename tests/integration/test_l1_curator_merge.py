@@ -42,7 +42,7 @@ from tests.conftest import neo4j_target
 # inside the Docker network.
 URI, AUTH = neo4j_target()
 PROV = Provenance(job="it", model="m", prompt_id="p")
-ENV = JudgmentEnvelope(confidence=0.82, status="committed", evidence_refs=["obs:cat-params"], provenance=PROV)
+ENV = JudgmentEnvelope(status="committed", evidence_refs=["obs:cat-params"], provenance=PROV)
 ENDPOINT_ID = {"path": "/categories/{id}/parameters", "method": "GET", "baseurl": "https://a"}
 
 
@@ -244,12 +244,11 @@ def test_aggregates_envelope_persisted_and_idempotent(session, project):
     rec = session.run(
         "MATCH (:L1Service {project_id: $p, business_function_slug: 'product-introspection'})"
         "-[r:AGGREGATES]->(e:Endpoint {project_id: $p}) "
-        "RETURN count(r) AS c, collect(r.confidence)[0] AS conf, collect(r.status)[0] AS st, "
+        "RETURN count(r) AS c, collect(r.status)[0] AS st, "
         "collect(r.evidence_refs)[0] AS ev, collect(r.prov_job)[0] AS j, collect(r.ts)[0] AS ts",
         p=project,
     ).single()
     assert rec["c"] == 1  # idempotent: one edge, not two
-    assert rec["conf"] == 0.82
     assert rec["st"] == "committed"
     assert rec["ev"] == ["obs:cat-params"]
     assert rec["j"] == "it"  # envelope provenance (module PROV.job)

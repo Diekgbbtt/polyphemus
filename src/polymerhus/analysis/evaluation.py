@@ -35,8 +35,9 @@ volume must NOT be read as a score, because this agent's measured failure is
 over-production rather than under-production. So `compare()` takes the primary key
 and the integrity columns as parameters, and the Assigner supplies its own
 (`ASSIGNMENT_INTEGRITY_KEYS`), in which a LARGER stale pool is a positive signal.
-It also brings `bar_sweep`, which turns `ASSIGN_CONFIDENCE_BAR` from an unexamined
-constant into a curve read off one run's real confidences.
+The confidence score and its bar were removed (see
+`docs/design/drop-aggregate-confidence.md`), so the harness no longer sweeps a
+confidence bar and the integrity columns are the structural gates alone.
 
 RUNTIME FIDELITY. The supplied Bootstrapper adapter drives the REAL system end to
 end - `POST /projects` -> `PUT settings` -> `POST bootstrap` -> the agent -> the
@@ -341,25 +342,20 @@ def evaluate_bootstrapper(
 #   - `stale_rate` is a POSITIVE signal here. A run that leaves nothing unassigned has
 #     almost certainly assigned surface no Service owns; `stale_pool == 0` was recorded
 #     live as a warning sign, not a win.
-#   - `withheld_rate` is the withholding discipline actually firing. An arm that keeps
-#     everything it proposes is not confident, it is uncalibrated.
 #   - `out_of_inventory_rate` counts owners the model invented. Non-zero means the
 #     inventory-only instruction is not landing.
 #   - `unresolvable_rate` counts references that named no Endpoint in the chunk. This
 #     should sit near zero now that `resolve_l0_refs` repairs the model's formatting;
 #     a rise means the repair's happy path stopped firing.
+#
+# No confidence column survives: the score and its bar were removed, so admit-all is
+# the write policy and the structural gates above are the only columns left to read
+# noise off (`docs/design/drop-aggregate-confidence.md`).
 ASSIGNMENT_INTEGRITY_KEYS = (
     "coverage", "stale_pool", "stale_rate",
-    "withheld_rate", "out_of_inventory_rate", "unresolvable_rate",
-    "mean_confidence", "multi_owner_endpoints",
+    "out_of_inventory_rate", "unresolvable_rate",
+    "multi_owner_endpoints",
 )
-
-# Bars swept by `bar_sweep`. `ASSIGN_CONFIDENCE_BAR` is documented in `assigner.py` as
-# "an OUTPUT of the assertion suite, not a reasoned input" - but nothing swept it, so
-# the value was in practice an unexamined constant. The sweep is cheap because it needs
-# no extra LLM calls: withholding is a pure function of confidences already collected,
-# so one run yields the whole curve.
-DEFAULT_BARS = (0.5, 0.6, 0.7, 0.75, 0.8, 0.9)
 
 
 def _rate(numerator: int, denominator: int) -> float:
@@ -389,31 +385,13 @@ def assignment_metrics(census: dict) -> dict:
         # integrity: what the volume cost
         "stale_pool": stale,
         "stale_rate": _rate(stale, endpoints),
-        "withheld_rate": _rate(census.get("withheld", 0), proposed),
         "out_of_inventory_rate": _rate(census.get("out_of_inventory", 0), proposed),
         "unresolvable_rate": _rate(census.get("unresolvable", 0), proposed),
-        "mean_confidence": census.get("mean_confidence", 0.0),
         # an Endpoint owned by more than one Service - real (D3), but a run where it
         # is common is a run that stopped discriminating between contracts
         "multi_owner_endpoints": census.get("multi_owner_endpoints", 0),
         "admitted": admitted,
         "proposed": proposed,
-    }
-
-
-def bar_sweep(confidences: Sequence[float], bars: Sequence[float] = DEFAULT_BARS) -> dict:
-    """How many judgments survive each candidate confidence bar.
-
-    This is what makes `ASSIGN_CONFIDENCE_BAR` an output rather than a guess: run the
-    agent once, collect the confidences it actually produced, and read off what each
-    bar would keep. A bar where the curve is FLAT is buying nothing; a bar on a cliff
-    is throwing away a cluster of judgments the model felt similarly about."""
-    kept = {bar: sum(1 for c in confidences if c >= bar) for bar in bars}
-    total = len(confidences)
-    return {
-        "n": total,
-        "kept": {str(bar): kept[bar] for bar in bars},
-        "kept_rate": {str(bar): _rate(kept[bar], total) for bar in bars},
     }
 
 
@@ -441,21 +419,11 @@ def read_assignment(project_id: str, *, read_fn=None) -> dict:
     census = dict(rows[0]) if rows else {
         "endpoints": 0, "aggregates": 0, "assigned_endpoints": 0, "multi_owner_endpoints": 0,
     }
-
-    confidences = [
-        r["c"] for r in read_fn(
-            "MATCH (:L1Service)-[r:AGGREGATES]->(e) WHERE e.project_id = $p "
-            "AND r.confidence IS NOT NULL RETURN r.confidence AS c",
-            {"p": project_id},
-        )
-    ]
-    census["confidences"] = confidences
-    census["mean_confidence"] = round(statistics.mean(confidences), 3) if confidences else 0.0
     return census
 
 
 def evaluate_assigner(
-    project_ids: dict[str, Sequence[str]], *, read_fn=None, bars: Sequence[float] = DEFAULT_BARS,
+    project_ids: dict[str, Sequence[str]], *, read_fn=None,
 ) -> dict:
     """Compare Assigner arms over projects that have ALREADY been run.
 
@@ -470,23 +438,15 @@ def evaluate_assigner(
     `{"skill": ["p1", "p2"], "baseline": ["p3"]}`.
     """
     outcomes: list[EvalOutcome] = []
-    sweeps: dict[str, dict] = {}
     for config, projects in project_ids.items():
-        confidences: list[float] = []
         for repeat, project_id in enumerate(projects, start=1):
             try:
                 census = read_assignment(project_id, read_fn=read_fn)
-                confidences.extend(census.get("confidences", []))
                 outcomes.append(EvalOutcome(config, repeat, project_id, 0.0,
                                             assignment_metrics(census)))
             except Exception as exc:  # one unreadable project must not lose the matrix
                 logger.warning("assigner eval cell %s r%d failed", config, repeat, exc_info=True)
                 outcomes.append(EvalOutcome(config, repeat, project_id, 0.0, error=str(exc)))
-        sweeps[config] = bar_sweep(confidences, bars)
 
-    summary = compare(outcomes, primary_key="n_aggregates",
-                      integrity_keys=ASSIGNMENT_INTEGRITY_KEYS)
-    for config, entry in summary.items():
-        if entry.get("n"):
-            entry["bar_sweep"] = sweeps.get(config, {})
-    return summary
+    return compare(outcomes, primary_key="n_aggregates",
+                   integrity_keys=ASSIGNMENT_INTEGRITY_KEYS)

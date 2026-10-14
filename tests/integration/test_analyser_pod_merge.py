@@ -76,7 +76,7 @@ SLUG = "product-introspection"
 def _assigner_invoke(endpoint_id):
     def invoke(messages):
         return L1DeltaBatch(aggregates=[AggregatesProposal(
-            service_slug=SLUG, confidence=0.82, evidence_refs=["obs:cat"],
+            service_slug=SLUG, evidence_refs=["obs:cat"],
             l0=L0Ref(label="Endpoint", identity=dict(endpoint_id)),
         )])
     return invoke
@@ -167,10 +167,10 @@ def test_analyser_writes_l1_idempotently_via_curator(session, project):
         p=project,
     ).single()["c"]
     assert edges == 1
-    # the AGGREGATES envelope carries the analyser's confidence + system provenance
+    # the AGGREGATES envelope carries the analyser's evidence + system provenance
     env = session.run(
-        "MATCH (:L1Service {project_id: $p})-[r:AGGREGATES]->() RETURN r.confidence AS c, r.prov_job AS j",
+        "MATCH (:L1Service {project_id: $p})-[r:AGGREGATES]->() RETURN r.evidence_refs AS ev, r.prov_job AS j",
         p=project,
     ).single()
-    assert env["c"] == 0.82
+    assert env["ev"] == ["obs:cat"]
     assert env["j"] == "analyser:run-1"

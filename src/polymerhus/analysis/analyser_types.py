@@ -10,7 +10,7 @@ identity/provenance. So the proposal models deliberately omit `provenance`, and
 
 This keeps the analyser a pure `f(L0-slice + observations) -> L1-deltas` whose
 writes are idempotent MERGEs (L1D-22), with the judgment envelope (L1D-25) built
-here from the LLM's `confidence`/`evidence_refs` plus system provenance.
+here from the LLM's `evidence_refs` plus system provenance.
 """
 from __future__ import annotations
 
@@ -52,22 +52,17 @@ class SystemProposal(BaseModel):
 
 class AggregatesProposal(BaseModel):
     """One assignment judgment (L1D-25): the Service `service_slug` aggregates the
-    L0 element `l0`, with the analyser's `confidence` and `evidence_refs`. The MVP
-    commits every assignment (status='committed'); the envelope's provenance is
-    injected by the curate boundary, not the LLM.
+    L0 element `l0`, with the analyser's `evidence_refs` as the grounding anchor.
+    The MVP commits every structurally-valid assignment (status='committed'); the
+    envelope's provenance is injected by the curate boundary, not the LLM.
 
-    `confidence` is REQUIRED (no default): an omission previously defaulted to
-    0.0 and silently cleared the withholding gate (the 2026-08-28 defect - the
-    model emitted `service_slug`/`l0` but skipped the then-optional confidence,
-    the default 0.0 filled it, and the 0.75 bar withheld every aggregate). The
-    withholding gate is correct in principle but its calibration is NOT yet
-    backed by empirical test evidence (`evaluation.bar_sweep` over real
-    confidences); making the field required forces the model to emit a value so
-    the sweep can eventually run on real data."""
+    The `confidence` score was removed with the withholding gate: admit-all writes
+    every structurally-valid aggregate
+    (`docs/design/drop-aggregate-confidence.md`), so a gradable field has no
+    consumer left."""
 
     service_slug: str
     l0: L0Ref
-    confidence: float
     evidence_refs: list[str] = Field(default_factory=list)
 
 
@@ -145,7 +140,7 @@ def proposals_to_deltas(
     """Map LLM proposals to the curator's provenance-carrying deltas, stamping
     the system-supplied `provenance` (the LLM never sets it). The judgment
     envelope is built here: MVP writes status='committed' (L1R-4) while always
-    carrying the LLM's confidence + evidence_refs."""
+    carrying the LLM's evidence_refs."""
     services = [
         ServiceDelta(business_function_slug=s.business_function_slug, props=s.props, provenance=provenance)
         for s in batch.services
@@ -159,7 +154,6 @@ def proposals_to_deltas(
             service_slug=a.service_slug,
             l0=a.l0,
             envelope=JudgmentEnvelope(
-                confidence=a.confidence,
                 status="committed",
                 evidence_refs=a.evidence_refs,
                 provenance=provenance,

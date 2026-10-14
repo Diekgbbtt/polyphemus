@@ -60,10 +60,11 @@ class Provenance(BaseModel):
 class JudgmentEnvelope(BaseModel):
     """Interface agreement A (L1D-25): the judgment an `AGGREGATES` reference
     carries from day one. The MVP writes `status="committed"` only, but always
-    carries `confidence`/`evidence_refs` so a low-confidence assignment can never
-    masquerade as authoritative (L1R-4)."""
+    carries `evidence_refs` as the grounding anchor. The `confidence` field was
+    removed with the withholding gate
+    (`docs/design/drop-aggregate-confidence.md`); the MVP commits every
+    structurally-valid assignment."""
 
-    confidence: float = 0.0
     status: Literal["provisional", "committed"] = "committed"
     evidence_refs: list[str] = Field(default_factory=list)
     provenance: Provenance

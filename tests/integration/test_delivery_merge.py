@@ -148,7 +148,7 @@ def test_redelivery_is_idempotent(session, project):
 
     def assigner_invoke(messages):
         return L1DeltaBatch(aggregates=[AggregatesProposal(
-            service_slug=SLUG, confidence=0.9,
+            service_slug=SLUG,
             l0=L0Ref(label="Endpoint", identity=dict(endpoint_id)),
         )])
 

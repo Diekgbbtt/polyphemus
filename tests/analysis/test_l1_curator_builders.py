@@ -22,7 +22,7 @@ from polymerhus.analysis.l1_types import (
 )
 
 PROV = Provenance(job="bootstrap", model="m", prompt_id="p")
-ENV = JudgmentEnvelope(confidence=0.82, evidence_refs=["obs:1"], provenance=PROV)
+ENV = JudgmentEnvelope(evidence_refs=["obs:1"], provenance=PROV)
 
 
 # --- AST-LCUR-01 / AST-LCUR-07: Service builder is pure, deterministic, keyed ---
@@ -217,8 +217,8 @@ def test_aggregates_edge_carries_full_envelope():
     assert "MERGE (s:L1TestableUnit:L1Service {business_function_slug: $slug, project_id: $project_id})" in cy
     assert "MERGE (s)-[r:AGGREGATES]->(l0)" in cy
     assert "MERGE (l0" not in cy  # the L0 target is only ever MATCHed here
-    # full envelope on the edge (L1D-25); MVP writes status="committed"
-    assert params["confidence"] == 0.82
+    # envelope on the edge (L1D-25); MVP writes status="committed" (no confidence)
+    assert "confidence" not in params
     assert params["status"] == "committed"
     assert params["evidence_refs"] == ["obs:1"]
     assert params["prov_job"] == "bootstrap"

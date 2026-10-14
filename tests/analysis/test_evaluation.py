@@ -179,7 +179,7 @@ def test_format_comparison_renders_every_arm():
 def _census(**kw):
     base = dict(endpoints=100, aggregates=40, assigned_endpoints=38,
                 multi_owner_endpoints=2, admitted=100, proposed=60,
-                unresolvable=2, out_of_inventory=3, withheld=15, mean_confidence=0.86)
+                unresolvable=2, out_of_inventory=3)
     base.update(kw)
     return base
 
@@ -198,12 +198,15 @@ def test_assignment_metrics_report_the_stale_pool_as_a_first_class_number():
 
 
 def test_assignment_metrics_expose_where_each_judgment_died():
+    """The structural gates are what remain once the confidence score is gone: a
+    non-existent owner and an unknown reference are dropped and counted, and no
+    confidence column survives."""
     from polymerhus.analysis.evaluation import assignment_metrics
 
     m = assignment_metrics(_census())
-    assert m["withheld_rate"] == 0.25            # 15/60 - the discipline firing
     assert m["out_of_inventory_rate"] == 0.05    # 3/60  - invented owners
     assert m["unresolvable_rate"] == round(2 / 60, 3)
+    assert "withheld_rate" not in m and "mean_confidence" not in m
 
 
 def test_assignment_metrics_rates_are_zero_not_none_on_an_empty_run():
@@ -212,21 +215,8 @@ def test_assignment_metrics_rates_are_zero_not_none_on_an_empty_run():
     from polymerhus.analysis.evaluation import assignment_metrics
 
     m = assignment_metrics({})
-    assert m["withheld_rate"] == 0.0 and m["coverage"] == 0.0 and m["stale_pool"] == 0
-
-
-def test_bar_sweep_makes_the_confidence_bar_an_output():
-    """ASSIGN_CONFIDENCE_BAR is documented as 'an OUTPUT of the assertion suite' but
-    nothing swept it. The sweep needs no extra LLM calls - withholding is a pure
-    function of confidences already collected - so one run yields the whole curve."""
-    from polymerhus.analysis.evaluation import bar_sweep
-
-    out = bar_sweep([0.95, 0.9, 0.8, 0.76, 0.74, 0.6, 0.55], bars=(0.5, 0.75, 0.9))
-    assert out["n"] == 7
-    assert out["kept"]["0.5"] == 7
-    assert out["kept"]["0.75"] == 4       # the cliff sits between 0.74 and 0.76
-    assert out["kept"]["0.9"] == 2
-    assert out["kept_rate"]["0.9"] == round(2 / 7, 3)
+    assert m["coverage"] == 0.0 and m["stale_pool"] == 0
+    assert m["out_of_inventory_rate"] == 0.0 and m["unresolvable_rate"] == 0.0
 
 
 def test_compare_uses_the_assigner_primary_axis_and_integrity_columns():
@@ -241,7 +231,7 @@ def test_compare_uses_the_assigner_primary_axis_and_integrity_columns():
         # coverage win while its stale pool collapses to zero
         EvalOutcome("baseline", 1, "p3", 1.0,
                     assignment_metrics(_census(aggregates=130, assigned_endpoints=100,
-                                               withheld=0, proposed=130))),
+                                               proposed=130))),
     ]
     summary = compare(cells, primary_key="n_aggregates",
                       integrity_keys=ASSIGNMENT_INTEGRITY_KEYS)
@@ -251,7 +241,7 @@ def test_compare_uses_the_assigner_primary_axis_and_integrity_columns():
     # baseline "wins" the primary axis while its integrity columns give it away
     assert summary["baseline"]["breadth"]["mean"] == 130
     assert summary["baseline"]["integrity"]["stale_pool"] == [0]
-    assert summary["baseline"]["integrity"]["withheld_rate"] == [0.0]
+    assert summary["baseline"]["integrity"]["multi_owner_endpoints"] == [2]
     # granularity_note is Bootstrapper-only: an agent without it gets no such column
     assert "granularity_note" not in summary["skill"]
 
@@ -273,18 +263,17 @@ def test_evaluate_assigner_labels_each_project_with_the_arm_it_ran_under(monkeyp
 
     graphs = {
         "p-skill": _census(aggregates=40),
-        "p-base": _census(aggregates=120, assigned_endpoints=99, withheld=0),
+        "p-base": _census(aggregates=120, assigned_endpoints=99),
     }
 
     def fake_read(project_id, *, read_fn=None):
-        c = dict(graphs[project_id])
-        c["confidences"] = [0.9, 0.8, 0.7]
-        return c
+        return dict(graphs[project_id])
 
     monkeypatch.setattr(evaluation, "read_assignment", fake_read)
     summary = evaluation.evaluate_assigner({"skill": ["p-skill"], "baseline": ["p-base"]})
 
     assert summary["skill"]["projects"] == ["p-skill"]
     assert summary["baseline"]["projects"] == ["p-base"]
-    assert summary["skill"]["bar_sweep"]["n"] == 3     # the sweep rides each arm
-    assert summary["baseline"]["integrity"]["withheld_rate"] == [0.0]
+    # no confidence-bar sweep survives: the score and its bar are gone
+    assert "bar_sweep" not in summary["skill"]
+    assert summary["baseline"]["integrity"]["stale_pool"] == [1]  # 100 - 99

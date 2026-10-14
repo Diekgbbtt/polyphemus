@@ -2,8 +2,8 @@
 proposer slice, reshaped to classification-only by #34.
 
 Sole owner of the `AGGREGATES` hinge and of exactly ONE judgment: given an Endpoint
-recon streamed into a chunk, which EXISTING Service owns it, with what confidence,
-on what evidence. Three shaping rules realise that:
+recon streamed into a chunk, which EXISTING Service owns it, on what evidence. Two
+shaping rules realise that:
 
   - NARROW (#34 D4): the emitted batch carries `aggregates` and nothing else.
     Minting is NOT the Assigner's responsibility - the Bootstrapper read the whole
@@ -11,22 +11,21 @@ on what evidence. Three shaping rules realise that:
     of surface, so a chunk-local mint competes with a far better-informed source and
     is the measured origin of cross-run identity drift (AMV-12).
   - VALIDATE (#34 D9): a proposed `service_slug` outside the live inventory is
-    dropped BEFORE the confidence gate, so a high confidence cannot rescue a
-    hallucinated owner, and the reach is retained as a backlog description naming
-    the Service that may be missing.
-  - WITHHOLD (#8 crux): a below-bar ownership judgment yields NO aggregates entry and
-    the element stays in the stale pool (absence IS the withholding; no "withheld"
-    edge exists, AMV-14). This is what stops the measured over-assignment from
-    becoming permanent edges.
+    dropped, so a hallucinated owner never lands, and the reach is retained as a
+    backlog description naming the Service that may be missing.
+
+ADMIT-ALL (2026-10-15, `docs/design/drop-aggregate-confidence.md`): the confidence
+score and its withholding gate were removed, so every structurally-valid aggregate
+is written. The structural gates STAY - an out-of-inventory owner, an unresolvable
+`l0` reference, or a malformed proposal still drops, because each names a reference
+to nothing rather than a weak judgment.
 
 Several Services may legitimately own the same Endpoint (#34 D3): there is no
-single-owner invariant, so each genuine owner is emitted with its own independent
-confidence and the bar filters each edge separately.
+single-owner invariant, so each genuine owner is emitted on its own evidence.
 
 Standalone + injected `invoke_fn` (unit-testable, no live LLM). Maker/checker
-division (#8 DP-5, for #12): the Assigner SELF-withholds on its own confidence; it
-does NOT hard-reject empty-evidence proposals (that rung is the Auditor's,
-increment 3).
+division (#8 DP-5, for #12): the Auditor is the separate check over survivors
+(increment 3); this role only applies the structural gates.
 """
 from __future__ import annotations
 
@@ -43,13 +42,6 @@ logger = logging.getLogger(__name__)
 
 ROLE = "assigner"
 
-# The withholding bar (#8 DP-1): 0.75 is an EMPIRICAL PLACEHOLDER, not a reasoned
-# number (#34). It is an OUTPUT of the assertion suite - a run sweeps it and the
-# measured assignment quality picks the value - and stays env-tunable for that
-# purpose. Prior evidence only bounds it: 0.80 starves coverage before A.2 exists,
-# 0.70 is too permissive given the ~31-38% over-assignment prior.
-ASSIGN_CONFIDENCE_BAR = float(os.environ.get("ANALYSER_ASSIGN_BAR", "0.75"))
-
 
 class AssignmentStats(BaseModel):
     """Per-chunk gate census - what the Assigner was handed and where each judgment
@@ -64,8 +56,6 @@ class AssignmentStats(BaseModel):
     proposed: int = 0        # aggregates the model returned
     unresolvable: int = 0    # dropped: named no Endpoint in the known surface
     out_of_inventory: int = 0  # dropped: named no live Service
-    rescaled: int = 0        # repaired: confidence was a percentage, not a 0..1 value
-    withheld: int = 0        # dropped: below the confidence bar
     kept: int = 0            # aggregates handed to the curator
 
 
@@ -101,10 +91,9 @@ def drop_out_of_inventory(
     """THE VALIDATION GATE (#34 D9): drop every aggregate whose `service_slug` is not
     a live L1 identity, and return one backlog description per dropped slug.
 
-    Runs BEFORE the confidence gate on purpose - an owner that does not exist is not
-    a weak judgment to be scored, it is a reference to nothing, and scoring it would
-    let a confident hallucination through. The reach is kept as evidence: the model
-    saw surface it could not place, which is the signal a Service may be missing."""
+    An owner that does not exist is not a weak judgment, it is a reference to
+    nothing. The reach is kept as evidence: the model saw surface it could not
+    place, which is the signal a Service may be missing."""
     kept, missing = [], []
     for agg in batch.aggregates:
         if agg.service_slug in existing_slugs:
@@ -201,79 +190,30 @@ def resolve_l0_refs(batch: L1DeltaBatch, *, endpoints) -> L1DeltaBatch:
     return batch.model_copy(update={"aggregates": kept})
 
 
-def normalise_confidence(batch: L1DeltaBatch) -> tuple[L1DeltaBatch, int]:
-    """THE SCALE GATE: rewrite any confidence expressed as a PERCENTAGE into 0..1,
-    and clamp what remains into range. Returns the batch and the count rescaled.
-
-    Found live, in the graph, by the eval harness: 213 of 675 `AGGREGATES` edges
-    carried confidences between 30.0 and 95.0. `AggregatesProposal.confidence` is a
-    bare `float` with no bound, so a model that answers `85` instead of `0.85` is
-    accepted verbatim - and then `withhold_below_bar` keeps it, because 85.0 >= 0.75.
-
-    That is the whole withholding gate silently bypassed: the ONE mechanism defending
-    against the measured 31-38% over-assignment stops rejecting anything at all, and
-    nothing anywhere says so. It is the same defect class as the `l0.label` failure
-    that wrote zero of 114 sound assignments - correctness must not depend on the
-    model's formatting - so it gets the same treatment: repaired in the shaping seam
-    rather than instructed in the prompt and hoped for.
-
-    1.0 is left alone: it is a legitimate maximum, not an ambiguous percentage."""
-    rescaled = 0
-    fixed = []
-    for agg in batch.aggregates:
-        c = agg.confidence
-        if c > 1.0:
-            c = c / 100.0 if c <= 100.0 else 1.0
-            rescaled += 1
-        elif c < 0.0:
-            c = 0.0
-            rescaled += 1
-        fixed.append(agg if c == agg.confidence else agg.model_copy(update={"confidence": c}))
-    return batch.model_copy(update={"aggregates": fixed}), rescaled
-
-
-def withhold_below_bar(batch: L1DeltaBatch, bar: float = ASSIGN_CONFIDENCE_BAR) -> L1DeltaBatch:
-    """THE WITHHOLDING GATE (#8 crux): drop every aggregate whose `confidence < bar`
-    so it never reaches `write_aggregates`; the L0 element stays in the stale pool.
-    A SHAPING rule - a below-bar element yields no aggregates entry (no "withheld"
-    edge exists, AMV-14). Placed in the Assigner seam, NEVER in the shared
-    `l1_curator` (the sole-writer stays policy-free)."""
-    kept = [a for a in batch.aggregates if a.confidence >= bar]
-    return batch.model_copy(update={"aggregates": kept})
-
-
 def shape_proposal(
     raw: L1DeltaBatch, *, existing_slugs: frozenset[str], endpoints=(), surface=(),
-    bar: float = ASSIGN_CONFIDENCE_BAR,
 ) -> AssignmentOutcome:
     """Apply the Assigner's ordered shaping to a raw LLM proposal: narrow to
     assignment-only, canonicalise the L0 references against the KNOWN surface,
-    drop owners that do not exist (collecting the backlog), put every
-    confidence onto the 0..1 scale, then self-withhold below the bar.
+    then drop owners that do not exist (collecting the backlog). ADMIT-ALL: no
+    confidence gate follows the structural gates
+    (`docs/design/drop-aggregate-confidence.md`).
 
     `endpoints` is the chunk's admitted slice; `surface` is the settled project
     surface the caller supplies (D-A4: the adjacent areas the model may have
     roamed). References resolve against their UNION - the out-of-chunk write
     gate is dropped - while `admitted` stays chunk-scoped so the census still
-    says what this pass was handed.
-
-    ORDER IS LOAD-BEARING. Normalisation must precede withholding: a percentage-scale
-    confidence clears any bar in 0..1, so withholding a batch that has not been
-    normalised is a no-op wearing the appearance of a gate."""
+    says what this pass was handed."""
     batch = narrow_to_assignment(raw)
     proposed = len(batch.aggregates)
     batch = resolve_l0_refs(batch, endpoints=(*tuple(endpoints), *tuple(surface)))
     resolved = len(batch.aggregates)
     batch, backlog = drop_out_of_inventory(batch, existing_slugs=existing_slugs)
     in_inventory = len(batch.aggregates)
-    batch, rescaled = normalise_confidence(batch)
-    batch = withhold_below_bar(batch, bar)
     stats = AssignmentStats(
         admitted=len(tuple(endpoints)), proposed=proposed,
         unresolvable=proposed - resolved,
         out_of_inventory=resolved - in_inventory,
-        rescaled=rescaled,
-        withheld=in_inventory - len(batch.aggregates),
         kept=len(batch.aggregates),
     )
     return AssignmentOutcome(batch=batch, backlog=backlog, stats=stats)
@@ -312,8 +252,8 @@ _REFLECT_VERBATIM = (
     "it genuinely also owns the element, emit it too rather than discarding it. If you "
     "cannot name any competitor, that means the inventory is thin, not that you are "
     "confident.\n"
-    "3. CALIBRATE: state each confidence, whether it clears the bar, and what specific "
-    "evidence would move it.\n"
+    "3. GROUND: quote the exact surface each aggregate is anchored to, and drop any "
+    "whose evidence restates the slug instead of the surface.\n"
     "4. RESIDUE: list the Endpoints you could not place, one short sentence each."
 )
 
@@ -356,11 +296,8 @@ _ROLE_VERBATIM = (
     "path or parameter you matched in `evidence_refs`.\n"
     "SHARED OWNERSHIP IS REAL: more than one Service may genuinely own the same "
     "Endpoint. When two contracts both fit, emit an aggregate for EACH, every one "
-    "carrying its own honest confidence. Do not pick a winner and do not discount a "
-    "confidence merely because ownership is shared.\n"
-    "CONFIDENCE: give each aggregate the confidence you actually hold. A judgment you "
-    "would not defend belongs low, and a low one simply produces no edge - that is the "
-    "correct outcome, not a failure.\n"
+    "carrying its own grounding evidence. Do not pick a winner and do not discard a "
+    "genuine owner merely because ownership is shared.\n"
     "USE ONLY THE SLUGS LISTED IN THE INVENTORY. You cannot create a Service: a slug "
     "that is not listed names nothing and its aggregate will be discarded. If surface "
     "fits no listed Service, leave it unassigned rather than inventing an owner.\n"
@@ -380,9 +317,11 @@ _ROLE_VERBATIM = (
     "data-modelling list EMPTY - other proposers own those."
 )
 
-# Three worked examples (#34). The WITHHOLDING one is load-bearing: the measured
-# 31-38% over-assignment says the model does not withhold unprompted, so the
-# behaviour has to be demonstrated rather than only instructed.
+# Three worked examples (#34), rewritten scoreless when the confidence score was
+# removed (docs/design/drop-aggregate-confidence.md). The NON-ASSIGNMENT one is
+# load-bearing: the measured 31-38% over-assignment says the model does not leave
+# surface unowned unprompted, so the behaviour has to be demonstrated rather than
+# only instructed.
 #
 # The example slugs are deliberately UNLIKE anything a real inventory holds. A worked
 # example sharing a slug with a live identity invites the model to echo the example's
@@ -393,19 +332,17 @@ _FEW_SHOTS = (
     "1. CLEAR ASSIGNMENT. Inventory has `invoice-settlement - Takes a draft invoice to "
     "a settled payment; owns invoices and payment intents.` Endpoint "
     "`POST /invoices/42/settle`. -> one aggregate, service_slug `invoice-settlement`, "
-    "confidence 0.93, evidence_refs [\"path segment /invoices\", "
-    "\"path segment /settle\"]. The path nouns name records the contract says the "
-    "Service owns.\n"
-    "2. DELIBERATE WITHHOLDING. Inventory has `invoice-settlement` and "
+    "evidence_refs [\"path segment /invoices\", \"path segment /settle\"]. The path "
+    "nouns name records the contract says the Service owns.\n"
+    "2. NO OWNER. Inventory has `invoice-settlement` and "
     "`brochure-pages - Presents marketing pages and categories.` Endpoint "
-    "`GET /internal/health`. -> one aggregate at MOST, confidence 0.2, or none at all. "
-    "Nothing in either contract mentions health or internal probes; topical proximity "
-    "to a web app is not evidence. The low confidence is the right answer, and the "
-    "element correctly ends up with no owner.\n"
+    "`GET /internal/health`. -> no aggregate. Nothing in either contract mentions "
+    "health or internal probes; topical proximity to a web app is not evidence, and "
+    "the element correctly ends up with no owner.\n"
     "3. SHARED OWNERSHIP. Inventory has `invoice-settlement - owns invoices` and "
     "`parcel-dispatch - owns shipments and dispatch of settled invoices.` Endpoint "
-    "`GET /invoices/42/shipment`. -> TWO aggregates: `invoice-settlement` at 0.85 "
-    "(evidence \"path segment /invoices\") and `parcel-dispatch` at 0.80 (evidence "
+    "`GET /invoices/42/shipment`. -> TWO aggregates: `invoice-settlement` (evidence "
+    "\"path segment /invoices\") and `parcel-dispatch` (evidence "
     "\"path segment /shipment\"). Both contracts genuinely reach this Endpoint; emit "
     "both rather than choosing."
 )
@@ -459,17 +396,16 @@ def _load_assigner_skill() -> str:
 # against the baseline run's 11 - and an Assigner cannot assign to an owner that does not
 # exist, so inventory size, not the prompt arm, is the likeliest explanation of that gap.
 # The measured claim is therefore only "no regression"; the flip rests on the operator's
-# judgment of the skill's CONTENT (the no-owner null hypothesis, the confidence anchors,
-# the differential over candidate owners), not on the numbers.
+# judgment of the skill's CONTENT (the no-owner null hypothesis, the grounded-evidence
+# discipline, the differential over candidate owners), not on the numbers.
 #
-# `baseline` reproduces the pre-skill prompt BYTE-FOR-BYTE and remains the rollback path,
-# one env var away, and `_FEW_SHOTS` is retained for it and must not be deleted.
+# `baseline` reproduces the pre-skill prompt and remains the rollback path, one env var
+# away, and `_FEW_SHOTS` is retained for it and must not be deleted.
 #
 # The harness for a proper comparison is `evaluation.evaluate_assigner` - assignment
 # volume against the integrity columns that stop volume being read as a score (stale
-# pool, withheld rate, out-of-inventory rate), plus the confidence-bar sweep that makes
-# `ASSIGN_CONFIDENCE_BAR` an output rather than a guess. It needs a FIXED inventory and
-# repeats to settle this, and three of its columns are still unpopulated because
+# pool, out-of-inventory rate, unresolvable rate). It needs a FIXED inventory and
+# repeats to settle this, and some of its columns are still unpopulated because
 # `AssignmentStats` is persisted nowhere (design doc section 14.1).
 _ASSIGNER_PROMPT_CONFIGS = ("baseline", "skill")
 _DEFAULT_ASSIGNER_PROMPT_CONFIG = "skill"
@@ -508,7 +444,7 @@ def _user_prompt(l0_slice: dict, inventory: dict | None) -> str:
         "the observed surface TO these listed identities - a judgment that "
         "cannot cite the surface against a listed Service is withheld, not "
         "placed. Assign each Endpoint to the Service(s) that own it, each "
-        "aggregate carrying your `confidence` (0..1) and `evidence_refs`."
+        "aggregate carrying its `evidence_refs`."
     )
 
 
@@ -518,15 +454,15 @@ def assign(
     invoke_fn,
     inventory: dict | None = None,
     existing_slugs: frozenset[str] = frozenset(),
-    bar: float = ASSIGN_CONFIDENCE_BAR,
     mode: str = "create",
     run_id: str | None = None,
     tags: list | None = None,
     surface=(),
 ) -> AssignmentOutcome:
     """The Assigner proposer body (#8): from a `Chunk` + the LIVE inventory, judge
-    which existing Service owns each admitted Endpoint, then drop unknown owners and
-    SELF-WITHHOLD below the bar, returning the narrowed batch plus its backlog.
+    which existing Service owns each admitted Endpoint, drop unknown owners and
+    unresolvable references, and return the narrowed batch plus its backlog. ADMIT-ALL:
+    every structurally-valid aggregate is kept.
 
     `surface` is the settled project surface the judgment may roam (D-A4): the
     model's adjacent-surface phase can name endpoints outside the chunk, and
@@ -565,26 +501,26 @@ def assign(
     if raw is None:  # no parseable tool call after retries -> empty outcome
         return AssignmentOutcome()
     outcome = shape_proposal(
-        raw, existing_slugs=existing_slugs, endpoints=admitted, surface=surface, bar=bar,
+        raw, existing_slugs=existing_slugs, endpoints=admitted, surface=surface,
     )
     st = outcome.stats
-    # #18/observability: persist the RAW proposals + their confidences (and the bar they were
-    # judged against) to Langfuse - otherwise a withheld aggregate leaves no inspectable trace
-    # and "did the Assigner withhold on confidence?" is unanswerable post-hoc (moodique cc29fd4a).
+    # #18/observability: persist the RAW proposals to Langfuse so a structurally-dropped
+    # aggregate leaves an inspectable trace. No confidence is persisted: the score and
+    # its gate were removed (docs/design/drop-aggregate-confidence.md).
     from polymerhus.app.observability import trace_generation
-    trace_generation("assigner-aggregates", input={"chunk": chunk.chunk_id, "bar": bar},
+    trace_generation("assigner-aggregates", input={"chunk": chunk.chunk_id},
                      run_id=run_id, tags=tags,
                      output={"proposed": [{"service_slug": getattr(a, "service_slug", None),
-                                           "confidence": getattr(a, "confidence", None)}
+                                           "evidence_refs": list(getattr(a, "evidence_refs", []) or [])}
                                           for a in (raw.aggregates or [])],
                              "stats": st.model_dump()})
     # ONE structured line per chunk. A zero-kept step now names its cause instead of
     # looking identical to a model that found nothing.
     logger.info(
         "assigner chunk=%s admitted=%d proposed=%d -> kept=%d "
-        "(unresolvable=%d out_of_inventory=%d withheld=%d) backlog=%d",
+        "(unresolvable=%d out_of_inventory=%d) backlog=%d",
         chunk.chunk_id, st.admitted, st.proposed, st.kept,
-        st.unresolvable, st.out_of_inventory, st.withheld, len(outcome.backlog),
+        st.unresolvable, st.out_of_inventory, len(outcome.backlog),
     )
     return outcome
 
@@ -648,8 +584,7 @@ def _default_surface_fn(project_id: str):
         return []
 
 
-def make_assigner_body(*, invoke_fn, inventory_fn, bar: float = ASSIGN_CONFIDENCE_BAR,
-                       surface_fn=None):
+def make_assigner_body(*, invoke_fn, inventory_fn, surface_fn=None):
     """Adapt `assign` to the supervisor's `ProposerBody` signature
     (`(dispatch, state) -> L1DeltaBatch | None`).
 
@@ -685,7 +620,6 @@ def make_assigner_body(*, invoke_fn, inventory_fn, bar: float = ASSIGN_CONFIDENC
             invoke_fn=invoke_fn,
             inventory=inventory,
             existing_slugs=frozenset(inventory.get("services") or ()),
-            bar=bar,
             mode=getattr(dispatch, "mode", "create"),
             run_id=run_id or None,
             tags=["analysis", getattr(dispatch, "role", "assigner")],

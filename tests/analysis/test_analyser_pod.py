@@ -46,15 +46,14 @@ def test_proposals_to_deltas_injects_provenance_llm_cannot_set():
         services=[ServiceProposal(business_function_slug="checkout", props={"label": "Checkout"})],
         systems=[SystemProposal(kind="RESTApi")],
         aggregates=[AggregatesProposal(
-            service_slug="checkout", confidence=0.8, evidence_refs=["obs:1"],
+            service_slug="checkout", evidence_refs=["obs:1"],
             l0=L0Ref(label="Endpoint", identity={"path": "/pay", "method": "POST", "baseurl": "https://a"}),
         )],
     )
     services, systems, aggregates = proposals_to_deltas(batch, PROV)
     assert services[0].provenance is PROV  # injected, not from the LLM proposal
     assert systems[0].provenance is PROV
-    # the judgment envelope is built here: confidence carried, status committed (MVP)
-    assert aggregates[0].envelope.confidence == 0.8
+    # the judgment envelope is built here: evidence carried, status committed (MVP)
     assert aggregates[0].envelope.status == "committed"
     assert aggregates[0].envelope.evidence_refs == ["obs:1"]
     assert aggregates[0].envelope.provenance is PROV
@@ -133,7 +132,6 @@ def test_default_curate_with_enrichment_writes_core_and_enrichment(monkeypatch):
         services=[ServiceProposal(business_function_slug="sales-analysis")],
         systems=[SystemProposal(kind="RESTApi")],
         aggregates=[AggregatesProposal(service_slug="sales-analysis",
-                                       confidence=0.9,
                                        l0=L0Ref(label="Endpoint", identity={"path": "/s", "method": "GET", "baseurl": "https://a"}))],
         data_items=[DataItemProposal(item_key="sales_figure")],
         data_flows=[DataFlowProposal(service_slug="sales-analysis", item_key="sales_figure", direction="consumes",
