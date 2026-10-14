@@ -238,17 +238,17 @@ def test_the_typist_reflection_turn_binds_the_same_surface_tools(monkeypatch):
     assert reflection - {"L1DeltaBatch"} == extraction, "the same surface set on both turn kinds"
 
 
-def test_the_data_modeller_binds_no_surface_tools(monkeypatch):
-    """The adjacent-surface read and the exec probe are the assigner's and the
-    mechanism-typist's ownership; the data-modeller's turns bind neither."""
-    seam = _CapturingSeam()
-    _patch_stateful_turn(monkeypatch, seam)
+def test_only_the_adjacent_surface_owners_bind_surface_tools():
+    """The end state: exactly the two adjacent-surface owners (assigner,
+    mechanism_typist) bind surface tools; every other role binds none. The seam
+    gates on the role, so a role outside that set gets an empty tuple whatever
+    the project scope - and an owner with no project scope fails open to none."""
+    from polymerhus.analysis.proposer_turn import _surface_tools
 
-    for schema in (None, "THE-SCHEMA"):
-        session_invoke_fn("data_modeller", "runX", object(), project_id="proj-1")(
-            [HumanMessage(content="m")], schema=schema)
-        tool_names = {getattr(t, "name", "") for t in seam.seen[-1].get("tools") or ()}
-        assert not ({"graph_view", "search_http_history", "get_http_artifact", "exec"} & tool_names)
+    for owner in ("assigner", "mechanism_typist"):
+        assert _surface_tools(owner, "proj-1"), f"{owner} binds the surface"
+    assert _surface_tools("some-other-role", "proj-1") == ()
+    assert _surface_tools("assigner", None) == ()
 
 
 def test_the_typist_turn_degrades_fail_open_when_surface_tools_are_unbuildable(monkeypatch):
@@ -755,7 +755,3 @@ def test_the_typist_surface_tools_keep_the_request_shape_byte_identical(monkeypa
     names = {t.name for t in model._bound[0][0]}
     assert {"graph_view", "search_http_history", "get_http_artifact", "exec",
             "L1DeltaBatch"} <= names
-
-
-
-

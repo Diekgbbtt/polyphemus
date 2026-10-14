@@ -67,7 +67,7 @@ This change amends it in two directions:
 
 - **Reach.** `proposer_turn._surface_tools` now binds the read tools on the Assigner AND the mechanism-typist turns.
   The typist's turn additionally binds the bounded `exec` term.
-  The data-modeller still binds none: adjacent-surface reading and probing are not its ownership.
+  No other role binds surface tools: adjacent-surface reading and probing are not their ownership.
 - **Remit.** The HTTP-history pair is no longer disambiguation/confirmation only: when a collected Endpoint looks even adjacently promising for a candidate Service, the Assigner MAY pull its fuller response (one endpoint often embeds several features - iframes in HTML, menu entries, tabs).
 
 The D-A2 ownership fence is unchanged: deep TECHNICAL understanding stays the mechanism-typist's; the Assigner stops at the ownership judgment.
@@ -93,13 +93,13 @@ The `exec` term reuses the SAME execution seam the hunting agents use:
 - The seam is the pod's `default_exec_fn` (`attack/hunting/pod/tools.py`), which delegates to recon's `default_exec_fn` (`recon/domain/pod.py`), which runs `execute_command` through the kali MCP (`app/clients/kali_mcp.py`).
 - The tool is `attack/hunting/hunter_tools.ExecTool`, the hunting agent's exec tool, bound by `build_hunter_tools` and wired in production with `exec_fn=default_exec_fn` (`attack/hunting/runtime.py::_default_hunter_builder`).
 
-`analysis/graph_tools.build_analysis_exec_tool` returns a THIN subclass of `hunter_tools.ExecTool`.
-It overrides exactly two things, both analysis-side:
+`analysis/graph_tools.build_analysis_exec_tool` returns a THIN wrapper over the hunting `exec` tool.
+It adds exactly two things, both analysis-side:
 
 - the model-facing description (`ANALYSIS_EXEC_CONTRACT`) - the hunter's description is written for a spec-holding probe agent (the partition guard, the replay lineage) and would mislead the typist;
-- a per-turn call budget - the typist is a bounded read phase, and an unbounded exec loop must not sit on the analysis critical path.
+- a per-call call budget - the typist is a bounded read phase, and an unbounded exec loop must not sit on the analysis critical path.
 
-Everything else is the hunting tool verbatim: the same `exec_fn(command, timeout_s)` seam, the same `ExecArgs` schema, the same fail-open result shaping, and the same tool name (`exec`).
+Everything else is the hunting tool verbatim: it holds an `hunter_tools.ExecTool` and delegates each call to it, so the same `exec_fn(command, timeout_s)` seam, the same `ExecArgs` schema, the same fail-open result shaping, and the same tool name (`exec`) are reused unchanged.
 The budget defaults to 6 (`ANALYSIS_TYPIST_EXEC_BUDGET`, env-overridable) and degrades to a denoted `exec_budget_exhausted` result, never a raise.
 
 ### Prompt delivery and the 4c dedup

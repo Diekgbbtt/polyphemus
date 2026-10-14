@@ -125,8 +125,8 @@ def _surface_tools(role_id: str, project_id: str | None) -> tuple:
     pair, so its bounded BaseURL-neighbourhood phase has a read seam. The
     mechanism-typist's turn binds the same pair PLUS the bounded `exec` term, so
     its ORIENT / VERIFY phases can witness a mechanism in the target's real
-    response. The data-modeller's turn binds none - adjacent-surface reading and
-    probing are not its ownership. Fail-open: an unbuildable surface, or no
+    response. No other role binds surface tools - adjacent-surface reading and
+    probing are not their ownership. Fail-open: an unbuildable surface, or no
     project scope, binds nothing (the session always starts)."""
     if role_id not in ("assigner", "mechanism_typist") or not project_id:
         return ()
