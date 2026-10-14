@@ -1,6 +1,6 @@
 # Analysis-proposer tool-call failure modes (Langfuse harvest)
 
-Status: FM-B, FM-C, FM-D and FM-E fixed 2026-10-14 (see the fix notes); FM-A/F still diagnosis - proposed fixes, none applied.
+Status: FM-A, FM-B, FM-C, FM-D and FM-E fixed 2026-10-14 (see the fix notes); FM-F still diagnosis - recorded for the harness owner.
 Window: 2026-10-13T00:00Z .. 2026-10-14T09:35Z.
 Source: Langfuse v2 observations (`GET /api/public/v2/observations`), project polyphemus (`cmv6cdk12000sad0nbechto7t`).
 Scope: the three L0-grounding tools bound on every analysis proposer turn - `graph_view`, `search_http_history`, `get_http_artifact`.
@@ -26,7 +26,9 @@ By proposer: assigner, mechanism_typist, data_modeller dominate; the triager mak
 
 ## Failure modes
 
-### FM-A - `graph_view` write-guard false positive (`ReadOnlyGraphViewError`)
+### FM-A - `graph_view` write-guard false positive (FIXED 2026-10-14)
+
+Fix applied as proposed, on both seams (the 4 chain-surfaced refusals share the hunting guard): the write-shape guard now scans `_strip_cypher_for_guard` output - string literals, backtick-quoted identifiers and `//`/`/* */` comments blanked - single-sourced in `attack/hunting/graph_view_tool.py` and reused by the analysis seam through a lazy import (fail-closed fallback to the raw text), plus the literal-safety verbatim in both contracts. An unbalanced quote still fails closed. Known residual: an unquoted identifier that IS a write word (`RETURN e.create`) still refuses - quoting is the model's lever. Regression: literal/comment/backtick acceptance + genuine-keyword refusal on both seams; red pre-fix, green post-fix.
 
 Count: 6 refusals (2 as `graph_view` ERROR observations, 4 surfaced in the parent `tools` chain).
 Example cypher that was refused (it is a pure read):

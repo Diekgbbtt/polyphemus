@@ -120,3 +120,39 @@ def test_description_carries_the_full_contract():
     desc = build_graph_view_tool(_rows).description
     assert desc == GRAPH_VIEW_CONTRACT or GRAPH_VIEW_CONTRACT in desc
     assert "no graph view configured" not in desc  # contract, not the stub
+
+def test_write_word_inside_a_string_literal_is_allowed():
+    """FM-A: text inside a literal is DATA - `CONTAINS 'create'` is a legal
+    path filter, not a write."""
+    tool = build_graph_view_tool(_rows)
+    out = tool.invoke({"cypher": "MATCH (b:BaseURL)-[:HAS_ENDPOINT]->(e:Endpoint) "
+                                 "WHERE e.path CONTAINS 'account' OR e.path CONTAINS 'create' "
+                                 "RETURN e.path LIMIT 50", "params": {}})
+    assert "rows" in out
+
+
+def test_write_word_inside_comments_or_backticks_is_allowed():
+    """FM-A: comments and quoted identifiers carry no keywords either."""
+    tool = build_graph_view_tool(_rows)
+    for query in ("MATCH (n) // delete this later\nRETURN n",
+                  "MATCH (n) /* create table */ RETURN n",
+                  "MATCH (n:`create`) RETURN n"):
+        assert "rows" in tool.invoke({"cypher": query, "params": {}})
+
+
+def test_real_write_keywords_still_refused_after_stripping():
+    """FM-A fails closed: stripping never lets a genuine keyword through."""
+    from polymerhus.attack.hunting.hunt_orchestrator import ReadOnlyGraphViewError
+
+    tool = build_graph_view_tool(_rows)
+    for query in ("MATCH (n) SET n.x = 1 RETURN n",
+                  "MATCH (n) WHERE n.x = 'a' CREATE (m) RETURN m"):
+        try:
+            tool.invoke({"cypher": query, "params": {}})
+            raise AssertionError(f"write-shaped query not rejected: {query}")
+        except ReadOnlyGraphViewError:
+            pass
+
+
+def test_contract_teaches_literal_safety():
+    assert "always quote your literals" in GRAPH_VIEW_CONTRACT

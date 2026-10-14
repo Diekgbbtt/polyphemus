@@ -46,6 +46,28 @@ from polymerhus.attack.hunting.hunt_orchestrator import ReadOnlyGraphViewError
 # both derive from this; the view's own guard stays as defense-in-depth).
 _WRITE_SHAPED = re.compile(r"\b(?:MERGE|CREATE|DELETE|SET|REMOVE|FOREACH|LOAD\s+CSV)\b")
 
+# String literals (and comments) blanked before the guard search (FM-A): text
+# inside a literal is DATA, not Cypher, so `WHERE e.path CONTAINS 'create'`
+# must not trip on the write word. Single quotes allow the `''` and `\`
+# escapes, backticks quote identifiers, `//` and `/* */` are comments.
+_CYPHER_LITERAL_OR_COMMENT = re.compile(
+    r"'(?:[^'\\]|\\.|'')*'"
+    r'|"(?:[^"\\]|\\.)*"'
+    r"|`(?:[^`\\]|\\.)*`"
+    r"|//[^\n]*"
+    r"|/\*.*?\*/",
+    re.DOTALL,
+)
+
+
+def _strip_cypher_for_guard(cypher: str) -> str:
+    """Blank literals and comments so the write-shape guard sees code only.
+
+    Single-sourced here; the analysis seam reuses it through a lazy import
+    (the parity test pins both). An unbalanced quote is left in place, so a
+    malformed query fails closed (refused) rather than slipping through."""
+    return _CYPHER_LITERAL_OR_COMMENT.sub(" ", cypher or "")
+
 # The read seam contract: `(cypher, params) -> list[dict]` - the
 # `neo4j_client.read` shape that `ReadOnlyGraphView.read` mirrors.
 GraphReadFn = Callable[[str, dict], list]
@@ -78,7 +100,11 @@ _QUERY_PRIMITIVES = (
     "WHERE, RETURN, ORDER BY, LIMIT, DISTINCT, labels(), type(), properties(), "
     "relationship patterns (a)-[:REL]->(b), collect(...), and $param parameters. "
     "Write-shaped tokens (MERGE / CREATE / DELETE / SET / REMOVE / FOREACH / "
-    "LOAD CSV) are refused. Always LIMIT: the view returns no cap."
+    "LOAD CSV) are refused. Text inside a string literal is DATA, not Cypher: "
+    "a path filter that happens to contain a write word is legal and always "
+    "allowed (`WHERE e.path CONTAINS 'create'`) - the guard refuses a write "
+    "word only where it stands as a Cypher keyword, so always quote your "
+    "literals. Always LIMIT: the view returns no cap."
 )
 
 _READ_ONLY_GUARD = (
@@ -127,7 +153,7 @@ def build_graph_view_tool(read_fn: GraphReadFn | None):
         """Placeholder - the real contract is assigned below (the `@tool`
         decorator reads the docstring at decoration time, so the interpolated
         `GRAPH_VIEW_CONTRACT` is set on the returned tool explicitly)."""
-        if _WRITE_SHAPED.search(cypher.upper()):
+        if _WRITE_SHAPED.search(_strip_cypher_for_guard(cypher).upper()):
             raise ReadOnlyGraphViewError(
                 "the graph view is read-only: refusing write-shaped cypher "
                 f"{cypher[:120]!r}"
@@ -156,5 +182,6 @@ __all__ = [
     "GRAPH_VIEW_CONTRACT",
     "GraphReadFn",
     "_WRITE_SHAPED",
+    "_strip_cypher_for_guard",
     "build_graph_view_tool",
 ]

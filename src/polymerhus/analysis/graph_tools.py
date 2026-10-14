@@ -68,6 +68,10 @@ _QUERY_PRIMITIVES = (
     "RETURN, ORDER BY, LIMIT, DISTINCT, count(), collect(), labels(), type(). "
     "Scope every query with {project_id: $project_id}. Write-shaped tokens "
     "(MERGE / CREATE / DELETE / SET / REMOVE / FOREACH / LOAD CSV) are refused. "
+    "Text inside a string literal is DATA, not Cypher: a path filter that "
+    "happens to contain a write word is legal and always allowed "
+    "(`WHERE e.path CONTAINS 'create'`) - the guard refuses a write word only "
+    "where it stands as a Cypher keyword, so always quote your literals. "
     "Always LIMIT: the view returns no cap. Query BROADLY first (enumerate the "
     "surface) and only then narrow - never assume an asset name."
 )
@@ -133,7 +137,19 @@ def build_analysis_graph_view_tool(project_id: str, *, read_fn: GraphReadFn | No
     @tool
     def graph_view(cypher: str, params: dict | None = None) -> dict:
         """Placeholder - the contract is assigned below."""
-        if _WRITE_SHAPED.search(cypher.upper()):
+        # The literal/comment stripper is single-sourced on the hunting seam
+        # and reused here through a lazy import (this module never imports
+        # `attack.hunting` at import time). If the import ever fails the
+        # check falls back to the unstripped text: fail-closed, as before.
+        try:
+            from polymerhus.attack.hunting.graph_view_tool import (
+                _strip_cypher_for_guard,
+            )
+        except Exception:  # noqa: BLE001 - fail-closed on the raw text
+            _strip_cypher_for_guard = None
+        scanned = _strip_cypher_for_guard(cypher) \
+            if _strip_cypher_for_guard is not None else cypher
+        if _WRITE_SHAPED.search(scanned.upper()):
             raise ReadOnlyGraphViewError(
                 "the graph view is read-only: refusing write-shaped cypher "
                 f"{cypher[:120]!r}"

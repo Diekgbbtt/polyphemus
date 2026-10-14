@@ -108,3 +108,38 @@ def test_scalars_and_plain_rows_pass_through():
 def test_contract_teaches_return_scalars_not_nodes():
     assert "never a whole node" in GRAPH_VIEW_CONTRACT
     assert "properties(e) AS props" in GRAPH_VIEW_CONTRACT
+
+
+def test_write_word_inside_a_string_literal_is_allowed():
+    """FM-A: the analysis seam reuses the single-sourced strip - `CONTAINS
+    'create'` is a legal path filter, not a write."""
+    tool = build_analysis_graph_view_tool(
+        "p", read_fn=lambda cypher, params: [{"path": "/create"}])
+    out = tool.invoke({"cypher": "MATCH (e:Endpoint) WHERE e.path CONTAINS 'create' "
+                                 "RETURN e.path LIMIT 50", "params": {}})
+    assert out == {"rows": [{"path": "/create"}]}
+
+
+def test_strip_behavior_matches_the_hunting_seam():
+    """FM-A parity: both seams take the same verdict on literal-bearing and
+    genuinely write-shaped queries."""
+    from polymerhus.attack.hunting.graph_view_tool import build_graph_view_tool
+
+    rows = lambda cypher, params: [{"ok": True}]
+    analysis = build_analysis_graph_view_tool("p", read_fn=rows)
+    hunting = build_graph_view_tool(rows)
+    for query in ("MATCH (e:Endpoint) WHERE e.path CONTAINS 'create' RETURN e.path",
+                  "MATCH (n) /* delete me */ RETURN n",
+                  "MATCH (n) SET n.x = 1 RETURN n"):
+        try:
+            analysis.invoke({"cypher": query, "params": {}})
+            analysis_verdict = "rows"
+        except Exception as exc:  # noqa: BLE001 - verdict comparison only
+            analysis_verdict = type(exc).__name__
+        try:
+            hunting.invoke({"cypher": query, "params": {}})
+            hunting_verdict = "rows"
+        except Exception as exc:  # noqa: BLE001 - verdict comparison only
+            hunting_verdict = type(exc).__name__
+        assert analysis_verdict == hunting_verdict == (
+            "rows" if "SET n.x" not in query else "ReadOnlyGraphViewError")
