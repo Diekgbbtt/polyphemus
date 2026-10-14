@@ -114,10 +114,11 @@ def test_all_three_proposers_thread_the_project_id_as_usage_scope(monkeypatch):
 
 
 def test_the_proposers_carry_no_skill_surface(monkeypatch):
-    """Operator ruling (2026-09-17): the analysis proposers interact with LOCAL
-    context only (the published L0/L1 substrate), never with an external
-    environment, so they bind neither the `load_skill` tool nor the L1 index
-    middleware nor a skill context - their turns carry structure, not skills."""
+    """Operator ruling (2026-09-17): the analysis proposers carry no SKILL
+    surface - no `load_skill` tool, no L1 index middleware, no skill context.
+    (Their adjacent-surface read/probe tools are a separate binding, D-A2, and
+    are not skill surfaces.) The constant-shape fix may bind the role's OWN
+    structured-output tool on a prose turn; it is never a skill tool."""
     from polymerhus.analysis.assigner import stateful_invoke_fn as a
     from polymerhus.analysis.data_modeller import stateful_invoke_fn as d
     from polymerhus.analysis.mechanism_typist import stateful_invoke_fn as t
@@ -128,6 +129,8 @@ def test_the_proposers_carry_no_skill_surface(monkeypatch):
         ("data_modeller", d, lambda f: f([HumanMessage(content="m")], schema=None)),
     ):
         seen = _capture(monkeypatch)
+        # No project scope, so the D-A2 surface tools are absent too: this pins the
+        # no-skill guarantee in isolation.
         call(build("runX", object()))
 
         assert seen["role_id"] == role

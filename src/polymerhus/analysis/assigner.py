@@ -493,22 +493,24 @@ def _user_prompt(l0_slice: dict, inventory: dict | None) -> str:
 
     The inventory sits here rather than in the system prefix ON PURPOSE: it mutates
     as the run proceeds, so hoisting it into the cacheable prefix would invalidate
-    that prefix at every step and buy nothing."""
+    that prefix at every step and buy nothing.
+
+    The adjacent-surface widening is deliberately NOT restated here: it is the
+    SYSTEM prompt's job (`prompts/assigner.md`, D-A2), so the volatile half carries
+    only the task and the deductive target instead of duplicating the read policy
+    on every chunk."""
     from polymerhus.analysis.pod import _inventory_block, _slice_repr, overview_block
 
     return (
         f"{overview_block(inventory)}"
         f"{_inventory_block(inventory)}\n\n{_slice_repr(l0_slice)}\n\n"
         "TASK: judge the Endpoints above. The slice above is the chunk recon most "
-        "recently collected - it is your primary subject. You MAY widen your view "
-        "with the read-only `graph_view`: enumerate the project's BaseURLs and "
-        "join the Endpoints they expose, so you learn which service areas "
-        "neighbour your slice (always a LIMIT; a handful of queries, never a "
-        "trawl). The inventory block above is your DEDUCTIVE TARGET: reason FROM "
-        "the observed surface TO these listed identities - a judgment that "
-        "cannot cite the surface against a listed Service is withheld, not "
-        "placed. Assign each Endpoint to the Service(s) that own it, each "
-        "aggregate carrying your `confidence` (0..1) and `evidence_refs`."
+        "recently collected - it is your primary subject. The inventory block "
+        "above is your DEDUCTIVE TARGET: reason FROM the observed surface TO "
+        "these listed identities - a judgment that cannot cite the surface "
+        "against a listed Service is withheld, not placed. Assign each Endpoint "
+        "to the Service(s) that own it, each aggregate carrying your "
+        "`confidence` (0..1) and `evidence_refs`."
     )
 
 

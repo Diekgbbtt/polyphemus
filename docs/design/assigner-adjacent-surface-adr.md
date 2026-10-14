@@ -38,18 +38,26 @@ this order and within these bounds:
 2. Enumerate the BaseURLs of the project and join the endpoints they expose
    (`graph_view`, read-only, always a LIMIT), so the slice's neighbourhood -
    which service areas surround it - is read, not guessed.
-3. The HTTP-history pair (`search_http_history` / `get_http_artifact`) is for
-   DISAMBIGUATION AND CONFIRMATION ONLY: an endpoint whose ownership is
-   ambiguous or deceiving, or a hypothesis that needs the full request shape
-   (path, headers, body) and the response to confirm (a plain-HTML response
-   whose element values carry the service's semantics, for example). Diving
-   into the technical understanding of a surface area is the
+3. The HTTP-history pair (`search_http_history` / `get_http_artifact`) is the
+   recorded-transaction read, in two modes: DISAMBIGUATION AND CONFIRMATION (an
+   endpoint whose ownership is ambiguous or deceiving, or a surface whose full
+   request shape and response are needed to confirm a hypothesis) AND AN
+   ADJACENTLY PROMISING SURFACE (an endpoint that looks even minimally promising
+   for a candidate Service - one endpoint often embeds several features, iframes
+   in HTML, menu entries, tabs - may be read for its fuller response before the
+   judgment). Diving into the technical understanding of a surface area is the
    mechanism-typist's ownership, not the assigner's; the assigner stops at the
    ownership judgment.
 
 The bound is load-bearing: unbounded roaming is what cost httpx:0 ~1.9M input
 tokens for one chunk. A handful of bounded graph queries per chunk is the
 budget; the firehose stays shut.
+
+**AMENDED 2026-10-15** (proposer-tool-workflows rework): item 3's remit widened
+from disambiguation/confirmation only to the two modes above, and the read tools
+plus a bounded `exec` are now also bound on the mechanism-typist's turn. See
+`docs/design/typist-tool-workflows.md` for the trace evidence, the state model,
+and the binding decisions.
 
 **D-A3. The L1 dump in the first HumanMessage is the deductive target.**
 The inventory block (overview, services with contracts, live systems) is

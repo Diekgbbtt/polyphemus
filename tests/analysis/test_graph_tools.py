@@ -7,13 +7,17 @@ model, every other failure degrades fail-open, and the success shape is
 `{"rows": [...]}`. The FM-E node projection is pinned here too: a returned
 whole node reads back as `{labels, properties}`, never an opaque repr.
 """
+import json
+
 from polymerhus.analysis.graph_tools import (
     GRAPH_VIEW_CONTRACT,
     ReadOnlyGraphViewError,
     _WRITE_SHAPED,
+    build_analysis_exec_tool,
     build_analysis_graph_view_tool,
     build_surface_tools,
 )
+from polymerhus.recon.domain.types import ExecResult
 
 
 def test_write_shaped_cypher_raises_fail_closed():
@@ -53,8 +57,61 @@ def test_surface_tools_bind_graph_view_and_the_http_pair_for_the_assigner():
     assert {t.name for t in tools} == {"graph_view", "search_http_history", "get_http_artifact"}
 
 
-def test_surface_tools_without_a_project_bind_nothing():
+def test_surface_tools_bind_the_exec_tool_for_the_typist_turn():
+    """The mechanism-typist's bounded read phase reaches the live target through
+    the SAME `exec` term the hunting agents use (the shared `execute_command`
+    seam), bound beside the read-only graph view and the HTTP-history pair."""
+    tools = build_surface_tools(
+        "mechanism_typist", project_id="p1", with_http=True, with_exec=True)
+    assert {t.name for t in tools} == {
+        "graph_view", "search_http_history", "get_http_artifact", "exec"}
+
+
+def test_surface_tools_omit_exec_unless_requested():
+    """The assigner's turn is read-only (its adjacent-surface phase is bounded
+    reading, never probing), so it binds no exec term."""
+    tools = build_surface_tools("assigner", project_id="p1", with_http=True)
+    assert "exec" not in {t.name for t in tools}
+
+
+def test_surface_tools_bind_nothing_without_a_project():
     assert build_surface_tools("assigner", project_id=None, with_http=True) == ()
+
+
+def test_analysis_exec_tool_reuses_the_injected_exec_seam_and_bounds_calls():
+    """The analysis exec tool is a THIN wrapper over the hunting exec contract:
+    it delegates to the SAME `exec_fn(command, timeout_s)` seam (`default_exec_fn`
+    in production) and only adds the per-turn call budget that makes it bounded.
+    Past the budget it degrades to a denoted error, never a raise."""
+    seen: list[str] = []
+
+    def exec_fn(command, timeout_s):
+        seen.append(command)
+        return ExecResult(stdout="ok", stderr="", returncode=0, duration_ms=1)
+
+    tool = build_analysis_exec_tool(exec_fn=exec_fn, budget=2)
+    assert tool.name == "exec"
+    first = json.loads(tool.invoke({"command": "curl -s http://t/a"}))
+    assert first["returncode"] == 0 and first["stdout"] == "ok"
+    tool.invoke({"command": "curl -s http://t/b"})
+    third = json.loads(tool.invoke({"command": "curl -s http://t/c"}))
+    assert third.get("error") == "exec_budget_exhausted"
+    assert seen == ["curl -s http://t/a", "curl -s http://t/b"], "the seam is not re-hit past budget"
+
+
+def test_the_exec_tool_build_degrades_fail_open_keeping_the_read_tools(monkeypatch):
+    """An unbuildable exec tool must not take the read tools down with it: the
+    typist still gets `graph_view` + the HTTP pair, and the turn still runs."""
+    import polymerhus.analysis.graph_tools as G
+
+    def boom(**kwargs):
+        raise RuntimeError("exec seam unbuildable")
+
+    monkeypatch.setattr(G, "build_analysis_exec_tool", boom)
+    tools = G.build_surface_tools(
+        "mechanism_typist", project_id="p1", with_http=True, with_exec=True)
+    assert {t.name for t in tools} == {
+        "graph_view", "search_http_history", "get_http_artifact"}
 
 
 class _FakeNode(dict):

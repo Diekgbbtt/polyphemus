@@ -537,16 +537,21 @@ def test_C35b_prompt_states_the_identity_shape_the_repair_depends_on():
 
 # --- C35c: the adjacent-surface phase + the deductive target (D-A2/D-A3) ------
 
-def test_C35c_task_names_the_adjacent_phase_and_the_deductive_target():
-    """D-A2/D-A3: the volatile task frames the slice as the primary subject,
-    licenses the BOUNDED BaseURL-adjacent widening through `graph_view`, and
-    names the inventory block as the deductive target."""
+def test_C35c_task_names_the_deductive_target_and_leaves_the_widening_to_the_system_prompt():
+    """D-A2/D-A3 after the prompt-layer dedup: the volatile task frames the slice
+    as the primary subject and names the inventory as the deductive target. The
+    bounded BaseURL-adjacent widening lives in the SYSTEM prompt (C35d/C35e), so
+    the user turn no longer repeats the `graph_view` verbatim on every chunk -
+    the duplication the dedup removed."""
     seen, make = _capture()
     assign(_chunk("/x"), invoke_fn=make(L1DeltaBatch()), inventory=INVENTORY, existing_slugs=SLUGS)
     user = seen["messages"][0].content
-    assert "BaseURL" in user            # the adjacent topology comes from the BaseURL join
     assert "DEDUCTIVE TARGET" in user   # the inventory is what the reasoning reasons TO
     assert "withheld, not placed" in user
+    assert "graph_view" not in user     # the widening is the system prompt's job, not restated here
+    system = seen["system_prompt"]
+    assert "BaseURL" in system          # the adjacent topology comes from the BaseURL join
+    assert "graph_view" in system
 
 
 def test_C35d_reference_rule_covers_graph_view_discovered_endpoints():
@@ -560,16 +565,18 @@ def test_C35d_reference_rule_covers_graph_view_discovered_endpoints():
     assert "you invent" in system
 
 
-def test_C35e_skill_bounds_the_adjacent_phase_and_the_http_pair():
-    """D-A2 in the HOW file: the adjacent widening is bounded, the HTTP pair is
-    disambiguation/confirmation only, and deep technical understanding belongs
-    to the mechanism-typist."""
+def test_C35e_skill_bounds_the_adjacent_phase_and_widens_the_http_pair():
+    """D-A2 in the HOW file: the adjacent widening is bounded; the HTTP pair's remit
+    is widened past disambiguation-only to an adjacently promising endpoint's fuller
+    response; deep technical understanding still belongs to the mechanism-typist."""
     from polymerhus.analysis.assigner import _load_assigner_skill
 
     skill = _load_assigner_skill()
     assert "adjacent surface" in skill
     assert "LIMIT" in skill
     assert "confirm a hypothesis" in skill
+    assert "promising" in skill          # the widened HTTP-history remit
+    assert "never a trawl" in skill
     assert "mechanism-typist" in skill
 
 
