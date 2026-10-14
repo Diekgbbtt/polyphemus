@@ -96,21 +96,6 @@ def read_l0_assets(project_id: str, *, read_fn=None) -> list[AssetDelta]:
         return []
 
 
-# The L0 labels a data-modeller `surfaces_at` may ground on (DPL-DEC-10).
-_SURFACE_LABELS: tuple[str, ...] = ("Parameter", "Header", "Secret")
-
-
-def read_surface_sites(project_id: str, *, read_fn=None) -> list[AssetDelta]:
-    """The live Parameter/Header/Secret sites for the WHOLE project (C-M1), the raw
-    read the data-modeller's discovered index starts from. It is deliberately NOT
-    unit-scoped: the caller (`data_modeller._discovered_sites`) filters it to the
-    unit's own BaseURLs (N1), so the reference/observed gates resolve against the
-    UNION of the unit's admitted chunk and only the discovered sites on that unit's
-    origins. This read itself is memoized once per run by `service_slice` (N3).
-    Reuses the same fail-open `read_l0_assets` read, filtered to the surface labels."""
-    return [a for a in read_l0_assets(project_id, read_fn=read_fn) if a.type in _SURFACE_LABELS]
-
-
 def read_observations(project_id: str, *, read_fn=None) -> list[Observation]:
     """The project's triager `Observation`s, with their ANCHOR reconstructed, for
     the chunk builder (dataplane-A1-decisions.md §11 step 0).

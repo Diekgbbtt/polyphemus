@@ -7,6 +7,12 @@ This context is a physically independent module at `src/polymerhus/analysis/` (e
 
 Vocabulary derived from `docs/design/domain-model.md` (esp. §2.2-2.6, §4, §6); see also `docs/design/l1-domain-model-catalogue.md`.
 
+## Trunk scope
+
+This context is the L0-chunk-sourced pipeline.
+Recon pushes one job-keyed chunk per producing job (`chunking.chunks_for_job`); the supervisor runs a chunk-major schedule of the three proposers (assigner, mechanism-typist, data-modeller), and each proposer reasons over the chunk's admitted slice plus the live L1 inventory.
+The service-sourced pipeline (a per-Service reasoning workflow with `graph_view`/HTTP-history tools and episodic memory) is a separate experiment and does not live on this trunk; see `docs/design/l0-l1-pipeline-split-adr.md`.
+
 ## The stores and the crossing
 
 **Layer 1 (L1)**:
@@ -34,6 +40,11 @@ Never an Endpoint (#48, DPL-DEC-10): a path is the address a tester interrogates
 
 **EVIDENCED_BY**:
 The cross-layer edge from an L1 `System` to the L0 node that fingerprints it (a `Server:` header, a cookie); carries provenance and timestamps only.
+
+**Application Overview**:
+The operator_kb `## Overview` paragraph - the macro description of the deployed solution: its product category, deployment model, and audiences.
+It is a SKELETON ATTRIBUTE, not a graph node, so it is carried as `settings.application_overview` and surfaced on the inventory dict (`read_l1_inventory`), never a `:L1*` label.
+Each proposer prepends it (`pod.overview_block`) to its human message, so a Service is reasoned inside the application it lives in rather than from its contract alone.
 
 ## The tripartition
 
@@ -175,11 +186,6 @@ Its system message is TWO layers: a stable base prompt in code (identity, pipeli
 WHICH TURN the discipline rides in is configurable (`BOOTSTRAP_PROMPT_CONFIG`, `_PROMPT_CONFIGS`) and was settled empirically, not by argument: the default `skill_in_prompt` puts it in the USER turn beside the task, which measured best on both breadth mean and breadth floor over 15 live runs (operator-ratified 2026-07-27; see the agent-configuration eval below).
 The base layer is always the system message in every arm.
 
-**Application overview** (`settings.application_overview`; W-d, ADR `operator-kb-overview-attribute-adr.md`):
-The `## Overview` paragraph of the `operator_kb.md` - the macro description of the deployed SOLUTION (product category, deployment model, audiences) - carried as a SKELETON ATTRIBUTE (not a graph node), persisted by the deterministic scaffold, surfaced by `read_l1_inventory`, and prepended to each Service's reasoning as `APPLICATION OVERVIEW: ...`.
-It is the framing a Service contract alone cannot give: what the application IS, so a proposer harvests inside the right picture.
-_Avoid_: summary, description (that is a System's discriminative attribute).
-
 **Service contract**:
 A brief functional profile of a business-function Service - what it DOES and what it OWNS - written in the application's own domain nouns and action verbs, and persisted as the `service_contract` prop.
 Written by the Bootstrapper for every Service, and by the Bootstrapper alone since #34 D4 retired Assigner minting; it is the PRIMARY evidence the cross-layer Assigner consumes, matching the nouns and actions in an observed endpoint path against it to judge ownership.
@@ -279,130 +285,23 @@ The driver opens an `AsyncPostgresStore` (`setup()`) alongside the `AsyncPostgre
 
 The legacy two-pass analyser monolith dissolves into responsibility-scoped proposers, each consuming a `Chunk` narrowed by its own admission set and writing through the sole-writer. Built as standalone slices (flag OFF) then wired, and fully retired in #48.
 
-All three chunk-fed proposers are **STATEFUL session agents as of #94** (`agent_mode="session"`), and **per-BATCH as of the 2026-10-10 cache experiment**: `assigner` / `mechanism_typist` / `data_modeller` run their structured turn via `app/llm/session.py::stateful_turn` on a per-(RUN, CHUNK) `AnalysisSession(run_id, role_id, batch=<chunk_id>)` thread, so the turns WITHIN one chunk share the agent's memory (the reflection is the extraction's context) while the NEXT chunk starts a FRESH context. The per-batch discriminator is set by a `proposer_batch(chunk.chunk_id)` scope the proposer body opens around its invoke chain (`analysis/proposer_turn.py`) - a scoped ContextVar, so the `(messages, *, schema, system_prompt)` invoke contract is unchanged; an unscoped caller keeps the `run:role` thread, preserving the observability/runtime contract. In the service-sourced mode the batch discriminator is the sanitised Service slug instead of the chunk id, giving `run:<service-slug>:<role>` (`analysis/service_slice.py`, ADR D17/D18); the seam is the same one. The shared process-wide pooled checkpointer (`app/llm/checkpoints.py`) is the memory store. The one_shot roles (bootstrapper, anatomy, curation, sweep, anti-cluttering) externalise their reasoning to the graph and stay on `invoke_role`.
+All three chunk-fed proposers are **STATEFUL session agents as of #94** (`agent_mode="session"`), and **per-BATCH as of the 2026-10-10 cache experiment**: `assigner` / `mechanism_typist` / `data_modeller` run their structured turn via `app/llm/session.py::stateful_turn` on a per-(RUN, CHUNK) `AnalysisSession(run_id, role_id, batch=<chunk_id>)` thread, so the turns WITHIN one chunk share the agent's memory (the reflection is the extraction's context) while the NEXT chunk starts a FRESH context. The per-batch discriminator is set by a `proposer_batch(chunk.chunk_id)` scope the proposer body opens around its invoke chain (`analysis/proposer_turn.py`) - a scoped ContextVar, so the `(messages, *, schema, system_prompt)` invoke contract is unchanged; an unscoped caller keeps the `run:role` thread, preserving the observability/runtime contract. The shared process-wide pooled checkpointer (`app/llm/checkpoints.py`) is the memory store. The one_shot roles (bootstrapper, anatomy, curation, sweep, anti-cluttering) externalise their reasoning to the graph and stay on `invoke_role`.
 
-**Constant request shape (2026-10-10 cache experiment, extended by the reasoning workflow and T3):** every turn of a proposer role binds the SAME tool set - the `AnalysisTurn` envelope plus the shared analysis `notes` tool - so the request shape never toggles and the provider prefix cache matches across a role's whole sub-problem chain. Before this the reflection bound NO tool and the extraction bound one, so `data_modeller`'s strict `P,S,P,S` schedule toggled the tool set every call and the provider prefix cache never matched (`cache_read=0`). `mechanism_typist`'s `P,S,S` shared an `S,S` tool set and cached, which was the asymmetry that named the fix. The structured tool is derived with the native LangGraph primitive `langchain.agents.structured_output.OutputToolBinding.from_schema_spec(...)` - the SAME derivation `create_agent` runs, never a hand-built look-alike - so the serialized `tools=` payload cannot drift between the turns. `notes` is bound through the session `tools=` seam, never the skills seam (`skill_agent_binding` would raise for an undeclared role; ADR D33).
-
-**HTTP-history MCP session (per unit)** (`app/clients/kali_http_history.py`, ADR `http-history-mcp-session-per-unit`):
-The single kali MCP session a unit's proposer holds for its HTTP-history reads.
-The unit's first `search_http_history` / `get_http_artifact` call opens one `ClientSession` on a process-wide background loop and loads its tools; every later call of the same unit reuses it; the unit boundary (the `proposer_batch` exit) closes it.
-It replaces the prior one-session-per-call shape, so a unit pays ONE MCP handshake rather than one per tool call.
-Every wait (open, call, close) is bounded, so a session that cannot return degrades to the `http_history_failed` bundle instead of stalling the turn.
-_Why a background loop_: a `ClientSession` is bound to the loop it opened on, so a per-call bridge (a fresh loop each time) could never reuse one.
-
-**Analysis episodic memory** (`analysis/memory.py`, ADR D27-D32):
-The durable per-Service memory the proposers write through the shared `notes` tool, at `data/<project_id>/analysis/memory.yaml`.
-One whole-file YAML list of note records keyed by the Service slug (`<unit>:<note_name>`), bounded by the shared `retain_bounded_records` with `MEMORY_NOTES_MAX_RECORDS` / `MEMORY_NOTES_MAX_BYTES`.
-The store builds on the shared `app.memory.BoundedRecordStore` and never imports `attack.hunting`.
-Read-back is within-run (a later Service reads earlier Services' notes) and cross-run, because the store is per-project and durable.
-
-**Note kind** (`analysis/memory.py`, closed enum, ADR D30):
-One of `assignment`, `system`, `data`, `refusal`, `open_question` - L1-modelling only.
-The phase-3 hunting vocabulary (fault hypothesis, payload, technique, vector) stays unratified in this context, so no note kind may speak it.
-
-**Per-unit backstop** (`analysis/memory.py::ensure_unit_note`, ADR D31):
-After a unit's `ReasoningWorkflow` chain the executor writes ONE note for the unit when the proposer wrote none, so "one note per Service exists after the run" is an auditable coverage guarantee, not merely a prompt instruction.
-The backstop runs in a `finally`, so a unit whose turns RAISE still leaves its note (`ensure_unit_note` is itself fail-open, so the original error still propagates to the caller's degradation policy).
-The note kind defaults to `open_question`; the global assign pass passes `assignment`, so its coverage note carries the kind that pass owns.
-Inert without a bound unit or memory store; fail-open on a write failure.
-
-
-**Reasoning workflow** (`analysis/reasoning_workflow.py`):
-A role's reasoning is a `ReasoningWorkflow`: an ordered list of `SubProblem`s, one LLM turn each, every turn speaking the ONE `AnalysisTurn` envelope.
-A `SubProblem` declares an `id` and `name`, the `prompt` (the volatile task text), the `inject` sources rendered VERBATIM into its human message (the base sources the body seeds - the Service slice, the inventory - plus the earlier sub-problems it `depends_on`), the `emit` artifact(s) it populates, and its `depends_on` edges.
-Construction validates strictly: a duplicate id, a `depends_on` naming a non-earlier sub-problem, or an undeclared `emit` raises.
-The executor injects each dependency's artifact from the RECORDED turns, never from the session trail, so compaction can never evict a dependency.
-**Endpoint-first prefix** (2026-10-13, `endpoint-first-prefix-adr.md`): the BASE artifacts (the observed L0 `surface`, the inventory, the unit context) are hoisted ONCE into the FIRST sub-problem's human message and skipped on every later turn (`render_turn`'s `base_names`), so the largest, most-shared block is the stable leading prefix of the session and the provider prefix cache re-reads it instead of paying for it on each turn. Only the derived dependencies are still re-injected per turn.
-A `halt_when` predicate preserves a role's fail-closed gate (e.g. the typist's hypotheses turn).
-
-**Analysis turn** (`AnalysisTurn`):
-The single LLM-facing structured envelope every proposer turn binds: a strict SUPERSET of the curator's `L1DeltaBatch` (all delta lists) plus `claims: list[Claim]`.
-`L1DeltaBatch` stays the pure curator input; `to_delta_batch` maps an `AnalysisTurn` to it, dropping `claims`.
-A reasoning sub-problem populates `claims`; an extraction sub-problem populates the delta lists.
-
-**Claim**:
-One compact structured judgment from a reasoning sub-problem: `subject`, `assertion`, `evidence`, `verdict`.
-It is the typed datum a dependency hands to a dependent sub-problem (ADR D23/D24), in place of prose that compaction could summarise away.
-
-A role's sub-problems map onto the stages its `_REFLECTION_STEPS` already enumerate; the mapping is explicit (ADR D22), so no boundary is invented.
-
-**Analysis graph tools** (`analysis/graph_tools.py`; v2, ADR D46):
-The read-only tool bundle every proposer turn binds, alongside `notes` and the structured tool: `graph_view` (bounded read-only Cypher over the mapped L0/L1 surface, with its own write-shape guard) and the HTTP-history read pair (`search_http_history` / `get_http_artifact`), bound for every harvesting proposer (data-modeller always; assigner and mechanism-typist since T1).
-It is what makes the broad "no asset-name assumption" query possible: a proposer enumerates the surface rather than trusting a pre-filtered slice.
-Fail-open: an unbuildable tool binds nothing.
-
-**Modelling-closure note** (v2, ADR D46):
-The episodic memory a proposer writes at its `closure` phase, through the shared `notes` tool, keyed `<unit>:modelling-closure` (kind `assignment` for the assigner, `system` for the mechanism-typist, `data` for the data-modeller).
-The `note_name` is the canonical `modelling-closure` for every role; the data-modeller's earlier `modelling_closure` underscore variant was corrected to it (`batched-l1unit-first-adr.md` decision 22).
-It records what the unit closed over, what it withheld and why, and the open questions - so a later unit reads prior modelling insight (`prior_insights`) instead of re-deriving it.
-The per-unit backstop `ensure_unit_note` remains the coverage guarantee.
-
-## The service-sourced pipeline
-
-**Service-sourced mode** (`analysis/feed.py::resolve_analysis_mode`; ADR D2, D45):
-The analysis mode selected by `settings.recon.analysis_mode`, one of `streamed` (the untouched default) and `service_sourced`.
-It is read at ONE seam alongside `resolve_feed_mode`; `service_sourced` fires the QUEUED feed on its own and does NOT require `streaming_analysis`, so the mode can never recur as a silent no-op.
-The mode's `pass_fn` is `analysis/service_sourced.py::service_sourced_pass`: the terminal marker is its only trigger, it gates on recon reaching `complete`, and it is guarded once per run.
-The eval selects it through `TrialConfig.analysis_mode`, written into the settings PUT (ADR D45).
-
-**Batched L1-unit-first variant** (`ANALYSIS_PROMPT_VARIANT`; T0, ADR `batched-l1unit-first-adr.md`):
-The NEW default prompt arrangement for `service_sourced`: each proposer reasons from the L1 unit (identifier, kind, description) and discovers its own surface, rather than reading a pre-fed asset slice.
-It is a PROMPT-FILE variant, not a settings key and not a new analysis mode: the mode value stays `service_sourced`.
-`legacy` selects the original `<role>.md` files and is the rollback; `batched_l1unit_first` selects `<role>-batched-l1unit-first.md`.
-The selector is read ON CALL, never at import, and an unknown value warns and coerces to the default.
-`analysis/prompt_variant.py::prompt_path(role_id, variant=None)` is the ONE role-to-file map; the three role loaders resolve through it and memoize PER VARIANT, so the system prefix stays byte-identical across a run.
-_Avoid_: prompt version, prompt tag (it is a whole-file variant, not a revision counter).
-_Status_: the seam is built (T0); T1 rewrote the assigner, T2 the mechanism-typist, T3 the data-modeller.
-
-**Pipeline unit (the Service)**:
-The `service_sourced` pipeline's unit of reasoning is the business Service, not the recon job's surface.
-This is the UP/DOWN CLASSING (plan section 2.4; `docs/design/domain-model.md` section 4.6), and it is a READING DISCIPLINE, not a new node class: the Service is promoted to the first-class pipeline unit, and the L0 surface is demoted to lower-class evidence reachable only through the hinge edges (`AGGREGATES`, `SURFACES_AT`, `EVIDENCED_BY`).
-No L0 or L1 node type is added; the same graph is read Service-first.
-
-**Global assign pass** (`analysis/assigner.py::assign_global`; T4, ADR D7-D11):
-Stage 1 of the v1 service-sourced pass: a plain awaited call (not a supervisor dispatch) that re-reads the SETTLED L0 and the Service inventory, runs the Assigner's L1-unit-first workflow over the whole surface, and writes `AGGREGATES` through the no-mint writer.
-SUPERSEDED as the service-sourced default by `assign_services` (v2, ADR D46; AMENDED by `batched-l1unit-first-adr.md` T1): the v2 consumption filter is EACH SERVICE, so stage 1 is one awaited pass per Service. It is NO LONGER write-scoped to its own slug - each Service is judged with the FULL live inventory and may name ANY live Service as owner (shared ownership stays possible - two Services may claim the same endpoint independently) - and only the GLOBAL inventory validation remains.
-Both passes reuse the SAME `assign` body, prompt and five shaping gates; they differ only in the unit set and the validation set.
-It is a proposer too: its default turn seam is the SAME notes-bound proposer seam the per-Service proposers use, so both sub-problem turns bind `{AnalysisTurn, notes}` (spec 3.2/5, ADR D26); with a memory store bound, the per-unit backstop records one `assignment` note for `global:<run_id>` (ADR D31).
-It reuses the five shaping gates unchanged and reports a census (admitted, proposed, unresolvable, out-of-inventory, rescaled, withheld, kept, written, and the residual `stale` pool), persisted to `analysis_runs.stats`.
-It never mints a Service: the Bootstrapper remains the sole Service source.
-
-**Service slice** (`analysis/service_slice.py::build_service_slices`; T5, ADR D14, D20, D39):
-The pure builder that groups the settled L0 surface into one `Chunk` per Service - its `chunk_id` is the sanitised `business_function_slug` - sorted by slug, plus one RESIDUAL unit (`__residual__`) carrying the surface no Service aggregates.
-A Service with no aggregated surface still gets an empty unit, so its absence is an explicit `no_surface` outcome, never a silent skip (ADR D15).
-AMENDED (`batched-l1unit-first-adr.md` decision 20): under the batched L1-unit-first variant a Service unit with a NON-EMPTY `service_contract` is dispatched even when it aggregates nothing, because discovering its own surface is the point; a unit with neither a contract nor assets stays `no_surface`, and the `legacy` variant keeps the hard skip.
-
-**Per-Service loop** (`analysis/service_slice.py::run_service_loop`; T5, ADR D12-D20, D38-D42):
-Stage 2 of the service-sourced pass: for each unit it runs mechanism_typist then data_modeller (each role's full `ReasoningWorkflow` scoped to the unit's slice) through the supervisor control plane.
-It is fail-open per unit with a bounded per-unit retry; a stop is honoured at a unit boundary and reported `stopped`.
-The pass's drained signal is WRITE-BASED (ADR D41): `wrote` is true only when a step actually wrote, so a run where every Service degraded is reported `withheld`, never `drained`.
-
+**Constant request shape (2026-10-10 cache experiment):** every turn of a proposer role binds the SAME structured tool. The reflection (prose) turn binds the role's `L1DeltaBatch` tool through the seam's `tools=` while keeping `response_format` prose; the extraction turn supplies the same tool through `response_format`. Before this the reflection bound NO tool and the extraction bound one, so `data_modeller`'s strict `P,S,P,S` schedule toggled the tool set every call and the provider prefix cache never matched (`cache_read=0`). `mechanism_typist`'s `P,S,S` shared an `S,S` tool set and cached, which was the asymmetry that named the fix.
 
 Since **#187** all three build their turn through ONE seam, `analysis/proposer_turn.py`: the per-run thread, the role's #95 compaction middleware, the run-correlation tag, the project usage scope, and the role's OWN prompt. A proposer can therefore never be built with another proposer's prompt - the role_id selects all of it.
 
 **Prompt delivery (load-bearing):** the role prompt rides the `system_prompt=` binding of `create_agent`, NOT a `SystemMessage` in the turn's messages. The agent factory prepends it ephemerally at each model invocation and never writes it into the checkpoint state, so the trail carries only the volatile task and the request's leading block is byte-identical on every call. Re-adding it as a trail message instead stacks a fresh copy per call at a shifting position, which is what produced the `mechanism_typist` quadratic input growth. This is the client half of the gateway's cache contract (`llm-gateway-100-decisions.md` D8). Reasoning: `docs/design/converged-agent-turn-adr.md`; the reusable rule: `statefulness-pattern-matrix.md` OUTLIER-5. The one-shot legacy leg (`prepend_prompt`) heads a message list with the same prompt at the same position, so the request does not depend on which leg a call site takes.
 
-**Assigner** (built, #8/#34/#30; L1-unit-first T1):
+**Assigner** (built, #8/#34/#30):
 Sole owner of the `AGGREGATES` hinge: high-precision classification of an observed `Endpoint` onto an EXISTING Service. A.1-only - no minting, no re-assignment, no retraction.
-Its L1-unit-first workflow is `harvest_surface -> falsify_harvest -> prior_insights -> candidate_owners -> assign -> closure`: it HARVESTS its own surface from the Service contract through the tools, FALSIFIES the harvest against that contract, then runs the differential over the survivors.
 
-It runs in TWO flavours, selected by the analysis mode (`assign(unit_first=...)`; ADR `batched-l1unit-first-adr.md` T5):
-`service_sourced` (`unit_first=True`, the `assign_services` / `assign_global` passes) runs that L1-unit-first chain over a Service-keyed unit; `streamed` (`unit_first=False`, `make_assigner_body`, the DEFAULT mode) runs the legacy slice-based chain `surface_scan -> prior_insights -> candidate_owners -> assign -> closure` over a recon-job-keyed chunk, with the mapped L0 surface pre-fed as the `surface` artifact.
-The split is load-bearing: a streamed chunk carries no Service `contract`, so the L1-unit-first discipline resolved its job name (`katana`) to a phantom Service, halted at `falsify_harvest`, and wrote zero `AGGREGATES` (no `L1Service -> L0` edges).
-The mode is chosen at the call site, never sniffed from the chunk shape.
+*Contracts.* In: a `Chunk` narrowed by `admit_for_role` to `Endpoint` alone, plus the live L1 inventory with its `service_contract`s (the primary routing evidence). Out: `L1DeltaBatch{aggregates}`, each `AggregatesProposal{service_slug, l0: L0Ref, confidence, evidence_refs}`. Writes only through `l1_curator.write_aggregates`.
 
-**Absent-surface degradation** (W-b, `assigner.py::_halt_without_surface`; ADR `assigner-absent-surface-degradation-adr.md`):
-The harvest is bounded and surgical (`graph_view` probed narrowly per candidate; `search_http_history` called only with a url-path filter derived from the contract), and when nothing survives falsification the chain HALTS before `candidate_owners` rather than running the reasoning/assign turns on an empty premise.
-The outcome is the finding `AssignmentOutcome.no_surface` - the Service's surface is not mapped - never a failure to search hard enough.
-It is what stops the escalation to the unbounded HTTP firehose when a Service's surface is genuinely absent (the comfyui Manager Services; the eval `surface_gap` failure mode).
-_Avoid_: empty outcome (that is a model that found nothing, not a recorded absence).
-
-*Contracts.* In: a `Chunk` narrowed by `admit_for_role` to `Endpoint` alone, plus the live L1 inventory with its `service_contract`s (the primary routing evidence). Under `service_sourced` the whole settled surface is NOT pre-fed: the prompt carries the Service UNIT context (slug, `contract`, the Service's own already-aggregated endpoints) and the model discovers the surface through `graph_view` and the HTTP-history pair. Under `streamed` the settled L0 surface IS pre-fed, as the `surface` artifact (`pod._slice_repr`), because a job-keyed chunk carries no contract to harvest from. In both flavours the full admitted set still runs the deterministic gates. Out: `L1DeltaBatch{aggregates}`, each `AggregatesProposal{service_slug, l0: L0Ref, confidence, evidence_refs}`. Writes only through `l1_curator.write_aggregates`.
-
-*Prompt.* TWO layers, the Bootstrapper's split: the role verbatim in code (identity, the aggregates-only contract, the `l0.identity` shape - the WHAT, which must hold with no prompt file) plus the HOW file `ANALYSIS_PROMPT_VARIANT` selects - `analysis/prompts/assigner-batched-l1unit-first.md` (the default L1-unit-first discipline: harvest aggressively, falsify the harvest, assign the survivors, with the no-owner null hypothesis and the confidence anchors) or `analysis/prompts/assigner.md` (the legacy rollback). The `service_sourced` flavour resolves the file through `ANALYSIS_PROMPT_VARIANT`; the `streamed` flavour forces `assigner.md` (`assign(unit_first=False)` passes `LEGACY` to `_load_assigner_skill` / `_system_prompt`), so its HOW never drifts from its legacy workflow. The shared analyser skill was never a fit here: it addresses a generalist proposer and instructs the System and data modelling D4/D18 forbid this role (the #30 per-role retirement).
+*Prompt.* TWO layers, the Bootstrapper's split: the role verbatim in code (identity, the aggregates-only contract, the `l0.identity` shape - the WHAT, which must hold with no prompt file) plus `analysis/prompts/assigner.md` (the no-owner null hypothesis, the differential over candidate owners, discriminating evidence, confidence anchors - the HOW). The shared analyser skill was never a fit here: it addresses a generalist proposer and instructs the System and data modelling D4/D18 forbid this role (the #30 per-role retirement).
 `ASSIGNER_PROMPT_CONFIG` selects; **`skill` is the default** (operator-ratified 2026-07-29), `baseline` a byte-identical rollback. The default was NOT earned on measurement - the comparison was confounded by inventory size (23 vs 11 Services) and supports only "no regression".
 The system half is byte-stable so the provider prompt-cache survives a run; inventory and chunk ride the volatile user turn.
-Its structured output is the role's DEFAULT (`AnalysisTurn`), so no call site may drop it by omission: the shared seam treats an absent `schema` as the role's own contract; only a deliberate `None` selects the legacy prose turn.
+Its structured output is the role's DEFAULT, so no call site may drop it by omission: the shared seam treats an absent `schema` as the role's own contract and only a deliberate `None` selects a prose turn.
 
 *Shaping* (deterministic, post-LLM, ORDER load-bearing): `narrow_to_assignment` -> `resolve_l0_refs` -> `drop_out_of_inventory` -> `normalise_confidence` -> `withhold_below_bar`.
 Correctness never depends on the model's formatting: an `l0.label` the model coined is repaired against the streamed chunk, and a percentage-scale confidence is rescaled BEFORE the bar - an unrescaled `85` clears a 0.75 bar and silently voids the withholding gate, as it did on 213 live edges.
@@ -416,23 +315,17 @@ _Avoid_: analyser (the whole-model term).
 - **Ground** (output side, epistemic; #48): the DataPlane Analyser's substitute for Withhold, forced by the envelope asymmetry - the four data proposal shapes carry NO `confidence` field (reserved for `AGGREGATES` alone), so there is no bar to calibrate against. The epistemic control is anchoring in observed surface (a surviving `SURFACES_AT`) rather than a calibrated threshold; an ungrounded lift is dropped by code (`enforce_groundedness`), never merely discouraged by prompt.
 
 **TechnicalSystem / mechanism-typist**:
-The sole owner of mechanism TYPING (agent spec #9) - it defines/extends the cross-cutting `System`s a unit relies on (or overlays) and links them to Services as typed `Service->System` edges, never Service props. BREADTH-ONLY: it emits `L1DeltaBatch{systems, system_edges}`; all System DEEPENING (WebPresentation rendering/navigation, authz inverse-pyramid, backward-recon probes, the `AnatomyResult` triple) is Phase B (epic #39).
-Its analysis object is the L1 UNIT - a Service OR a System - and the question has TWO DIRECTIONS: a Service unit asks FORWARD (given the catalog, which Systems could this Service rely on to offer its contract, and how is it implemented; which relied-upon Systems are not yet mapped); a System unit asks the SAME question in REVERSE (which Services rely on this overlay, and how).
-It runs an EIGHT-sub-problem `ReasoningWorkflow` (T2, `batched-l1unit-first-adr.md`) over one unit delivered AFTER the Assigner: `orient_from_catalog` (read the RDF catalog, the bootstrapped Systems, and the unit; state the mechanism landscape -> `claims`) -> `harvest_surface` (DISCOVER the unit's surface through `graph_view` and the bound HTTP-history pair, driven by the unit identifier/description -> `claims`; replaces the old `unit_surface_read`) -> `prior_insights` (read the notes store -> `claims`) -> `mechanism_hypotheses` (the direction-dependent central question + HYPOTHESISE -> `claims`) -> `page_clusters` (CLUSTER PAGES -> `claims`) -> `systems_extract` (VERIFY-FALSIFY + INTEGRATE -> `systems`, depending on both reasoning turns) -> `link` (EMIT -> `system_edges`, depending on `systems_extract`) -> `closure` (write the `system` modelling-closure note -> `claims`). Each turn speaks the ONE `AnalysisTurn` envelope; exhaustion of the hypotheses turn fails the step CLOSED (the chain halts), a later step's exhaustion is a soft pass-through.
-The `surface`/`unit`/`inventory`/`vocabulary`/`observations`/`candidates` base artifacts ride the FIRST HumanMessage (never the stable system prompt) and are hoisted there once (`endpoint-first-prefix-adr.md`): the observed L0 surface (the unit's settled endpoints, read directly rather than rediscovered), the catalog (every System `kind` and System-edge `rel`), the bootstrapped Systems WITH their descriptions plus the live Service list, the unit subject with its description (the `service_contract` for a Service, the System `description` for a System) and the Service's aggregated L0 endpoints.
-The "read what EXISTS; never filter on a path or parameter you guessed from the contract" rule of the old `unit_surface_read` is REVERTED for this role: the typist starts FROM the contract and hypothesises, then VERIFIES against the graph and the HTTP history. The `link` turn carries NO per-unit `service_slug` write scope - a Service unit may link a System to ANY live Service it genuinely overlays, and a System unit to any rider; only the curator's global `kind`/`rel` validation remains.
+The sole owner of mechanism TYPING (agent spec #9) - it defines/extends the cross-cutting `System`s the streamed surface evidences and links them to Services as typed `Service->System` edges, never Service props. BREADTH-ONLY: it emits `L1DeltaBatch{systems, system_edges}`; all System DEEPENING (WebPresentation rendering/navigation, authz inverse-pyramid, backward-recon probes, the `AnatomyResult` triple) is Phase B (epic #39).
+It runs a THREE-call chain over one `service` chunk delivered AFTER the Assigner: a hypothesis-driven free-text **reflection** (define which Systems the assets impact, verify soundly - overthink + critical-thinking + define/debug-hypothesis; exhaustion fails the step CLOSED), then structured **systems extraction**, then structured **services linking** (soft pass-through on later-step exhaustion).
 _Avoid_: analyser (the whole-model term); anatomy (the Phase-B deepening path).
 
 **System description (discriminative attribute)**:
 The System-side counterpart of `service_contract`: a System's brief adversarially-oriented NL `description` prop is its DISCRIMINATIVE attribute - the mechanism-typist reads the currently-defined Systems WITH their descriptions (the additive `read_l1_inventory` `system_descriptions` map) to decide new-vs-extend, and on extend it COMPOUNDS the description (reads the existing one, emits the enriched superset), never emptied. Contrast the Assigner's never-re-emit `service_contract`: there the Bootstrapper is the better whole-architecture author, whereas the mechanism-typist is the SOLE incremental author of System descriptions, so compounding is correct, not clobbering.
 _Status_: NL description is the sole carrier at breadth; a richer type-based System specification is Phase B (#40, the L1-System under-typing gap).
 
-**DataPlane Analyser / data-modeller** (#48, `docs/design/dataplane-A1-decisions.md`; L1-unit-first T3, ADR `batched-l1unit-first-adr.md`):
-The sole owner of the Tier-1 data substrate.
-Its analysis object is the L1 UNIT (the Service), not a pre-fed asset slice: it reasons DOWN from the unit - the slug, the `service_contract`, and the Endpoints the Service already aggregates - and DISCOVERS the unit's `Parameter`/`Header`/`Secret` surface through `graph_view` and the bound HTTP-history pair.
-From that discovered surface it lifts logical `DataItem`s (business records), binds them with `SURFACES_AT`, and maps `PRODUCES`/`CONSUMES` flows onto the settled Service model plus surface-observable `DataItem`-to-`DataItem` dependencies.
-Emits `L1DeltaBatch{data_items, surfaces_at, data_flows, data_relationships}` and nothing else; its chain is `surface_survey -> request_shapes -> insight_recall -> record_hypotheses -> data_extract -> flow_shape -> flow_extract -> closure_note` (eight sub-problems, each speaking the ONE `AnalysisTurn` envelope). It runs LAST in the per-Service loop (after the Assigner and the mechanism-typist) so its flow-onto-Service join has a live `AGGREGATES` answer.
-It carries NO per-unit `service_slug` write scope: a `data_flow` may name ANY live Service as producer or consumer, and only the GLOBAL inventory validation (`drop_out_of_inventory_services`) still drops a slug that names no live Service. The deterministic reference and observed gates resolve against the admitted surface UNION a UNIT-SCOPED graph-backed site index: `read_surface_sites` is read once per run and filtered per unit to the unit's own BaseURLs, so a site discovered only through `graph_view` on that unit's origins can ground an item, but one Service can never resolve to another Service's surface (`batched-l1unit-first-adr.md` decisions 19, 23). The index is ambiguity-aware: a full identity is matched exactly and a bare name is dropped when it maps to more than one distinct identity, so a colliding name is never silently re-anchored. A contracted Service with no pre-aggregated surface is dispatched only when it has a non-empty BaseURL set, so discovery is possible but the empty-unit fan-out is bounded (decisions 20, 24).
+**DataPlane Analyser / data-modeller** (#48, `docs/design/dataplane-A1-decisions.md`):
+The sole owner of the Tier-1 data substrate - lifts logical `DataItem`s (business records) from streamed `Parameter`/`Header`/`Secret` surface, binds them with `SURFACES_AT`, and maps `PRODUCES`/`CONSUMES` flows onto the settled Service model plus surface-observable `DataItem`-to-`DataItem` dependencies.
+Emits `L1DeltaBatch{data_items, surfaces_at, data_flows, data_relationships}` and nothing else; runs LAST in the per-chunk schedule (after the Assigner and the mechanism-typist) so its Parameter-to-owning-Service join has a live `AGGREGATES` answer.
 A.1 is BUILT; A.2 (a batched completeness sweep per user-controllable datum) is `designed-not-built` - the phase guard in `make_data_modeller_body` returns `None` for any phase but `"A1"`, an inert dormant seam, never a silent half-implementation.
 _Avoid_: analyser (the whole-model term).
 
@@ -551,11 +444,3 @@ _Status_: withdrawn - an unbuilt, deferred extension, not a live primitive.
 **Context-memory scaffold**:
 Cross-phase operational-failure memory (`recon_signals`), grounded coverage verdicts, and finding-triggered extension - all specified, none built.
 _Status_: designed-not-built (`recon-pipeline-design.md` §9).
-
-**Hunt-after-analysis chain**:
-The policy that chains ONE hunting run off a genuinely `drained` analysis (never `withheld`/`stopped`), gated by `settings.recon.hunt_after_analysis` (default-ON as of ADR D46; an explicit `false` opts out), read through `feed.resolve_hunt_after_analysis`.
-The default was flipped ON so the `recon -> analysis -> hunting` chain is deterministic without the caller sequencing it; the chain is idempotent (a second launch is refused 409).
-The trigger is the analysis supervisor's terminal write (`lifecycle.py`); it reuses the SAME operator-intent launch seam as `POST /projects/{id}/hunting` (`project_management.api.launch_hunting`), so the one-live-run guard refuses a second live run (409, the idempotent no-op).
-It is opt-in because the eval trial sequences the `recon -> analysis -> hunting` chain itself; an unconditional app-side launch would collide with the trial's own hunting launch.
-It resolves `attack.hunting`/`project_management` lazily (never at import time) and fails open loudly.
-See `docs/design/hunting-at-analysis-finish-adr.md`.

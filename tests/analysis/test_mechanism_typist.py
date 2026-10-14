@@ -18,14 +18,12 @@ from polymerhus.analysis.analyser_types import (
 )
 from polymerhus.analysis.chunking import Chunk
 from polymerhus.analysis.mechanism_typist import (
-    _unit_block,
     drop_unknown_vocabulary,
     mechanism_typist_body,
     narrow_to_typing,
     partition_services,
     type_mechanisms,
 )
-from polymerhus.analysis.reasoning_workflow import AnalysisTurn, Claim
 from polymerhus.recon.domain.types import AssetDelta, Observation
 
 _KINDS = frozenset({"WebPresentation", "RESTApi", "AuthenticationMechanism", "WAF", "CDN"})
@@ -41,55 +39,29 @@ def _service_chunk(*assets, observations=()):
                  observations=tuple(observations))
 
 
-def _claims(*subjects):
-    return AnalysisTurn(claims=[Claim(subject=s, assertion="a", evidence="e", verdict="v")
-                                for s in subjects])
-
-
 class _Recorder:
-    """A per-turn `invoke_fn` honouring the `schema` kwarg (always `AnalysisTurn`
-    here): routes by the sub-problem marker in the prompt and returns a crafted turn.
-    Records the call order for the sequence assertion. `halt_hypotheses` forces the
-    mechanism_hypotheses turn to exhaust (the fail-closed signal)."""
+    """A 3-call `invoke_fn` honouring the `schema` kwarg: `schema=None` -> prose
+    (reflection); a schema -> a crafted batch keyed by the task marker in the prompt.
+    Records the call order for the sequence assertion (N2)."""
 
-    def __init__(self, hypotheses=None, clusters=None, systems=None, edges=None,
-                 halt_hypotheses=False, systems_none=False, linking_none=False):
+    def __init__(self, prose="I reason about the mechanisms.", systems=None, edges=None):
         self.calls: list[str] = []
-        self.hypotheses = _claims("asset-x") if hypotheses is None else hypotheses
-        self.clusters = _claims("svc") if clusters is None else clusters
-        self.systems = (AnalysisTurn(systems=[SystemProposal(kind="RESTApi", props={"description": "REST surface"})])
-                        if systems is None else systems)
-        self.edges = (AnalysisTurn(system_edges=[SystemEdgeProposal(service_slug="checkout", kind="RESTApi", rel="EXPOSED_VIA")])
-                      if edges is None else edges)
-        self.halt_hypotheses = halt_hypotheses
-        self.systems_none = systems_none
-        self.linking_none = linking_none
+        self.prose = prose
+        self.systems = systems if systems is not None else L1DeltaBatch(
+            systems=[SystemProposal(kind="RESTApi", props={"description": "REST surface"})])
+        self.edges = edges if edges is not None else L1DeltaBatch(
+            system_edges=[SystemEdgeProposal(service_slug="checkout", kind="RESTApi", rel="EXPOSED_VIA")])
 
     def __call__(self, messages, *, schema=None, system_prompt=None):
         content = messages[-1].content
+        if schema is None:
+            self.calls.append("reflect")
+            return self.prose
         if "EXTRACT SYSTEMS" in content:
             self.calls.append("systems")
-            return None if self.systems_none else self.systems
-        if "LINK SERVICES" in content:
-            self.calls.append("link")
-            return None if self.linking_none else self.edges
-        if "CLUSTER PAGES" in content:
-            self.calls.append("clusters")
-            return self.clusters
-        if "ORIENT FROM THE CATALOG" in content:
-            self.calls.append("orient")
-            return self.hypotheses
-        if "HARVEST THE SURFACE" in content:
-            self.calls.append("harvest")
-            return self.hypotheses
-        if "RECALL PRIOR INSIGHTS" in content:
-            self.calls.append("prior")
-            return self.hypotheses
-        if "CLOSE." in content:
-            self.calls.append("closure")
-            return self.hypotheses
-        self.calls.append("hypotheses")
-        return None if self.halt_hypotheses else self.hypotheses
+            return self.systems
+        self.calls.append("link")
+        return self.edges
 
 
 # --- pure shaping -------------------------------------------------------------
@@ -140,9 +112,9 @@ def test_N7_partition_primary_secondary_and_asset_less_excluded():
 
 # --- the 3-call chain (N2 order, N3 fail-closed, N4 soft pass-through) ---------
 
-def test_the_eight_subproblems_share_the_chunk_batch_scope():
-    """Per-batch memory: the whole sub-problem chain runs under ONE batch scope (the
-    chunk id), so its turns share a context and the next chunk resets."""
+def test_the_three_calls_share_the_chunk_batch_scope():
+    """Per-batch memory: the 3-call chain runs under ONE batch scope (the chunk id),
+    so reflection + extraction + linking share a context and the next chunk resets."""
     from polymerhus.analysis.proposer_turn import current_batch
 
     seen: list[str | None] = []
@@ -153,49 +125,50 @@ def test_the_eight_subproblems_share_the_chunk_batch_scope():
             return super().__call__(messages, schema=schema, system_prompt=system_prompt)
 
     type_mechanisms(_service_chunk(), invoke_fn=_ScopeRecorder())
-    assert seen == ["c"] * 8
+    assert seen == ["c", "c", "c"]
 
 
-def test_N2_eight_subproblem_sequence_in_order():
+def test_N2_three_call_sequence_in_order():
     rec = _Recorder()
     out = type_mechanisms(_service_chunk(), invoke_fn=rec)
-    assert rec.calls == [
-        "orient", "harvest", "prior", "hypotheses", "clusters", "systems", "link", "closure",
-    ]
+    assert rec.calls == ["reflect", "systems", "link"]
     assert [s.kind for s in out.systems] == ["RESTApi"]
     assert [(e.service_slug, e.rel) for e in out.system_edges] == [("checkout", "EXPOSED_VIA")]
 
 
-def test_N3_hypotheses_exhaustion_fails_closed():
-    """A None hypotheses turn halts the chain (the fail-closed reflection gate): the
-    later turns are NEVER attempted."""
-    rec = _Recorder(halt_hypotheses=True)
-    out = type_mechanisms(_service_chunk(), invoke_fn=rec)
-    assert out == L1DeltaBatch()  # no hypotheses -> whole step empty
-    assert rec.calls == ["orient", "harvest", "prior", "hypotheses"]
+def test_N3_reflection_exhaustion_fails_closed():
+    def invoke(messages, *, schema=None, system_prompt=None):
+        return None if schema is None else L1DeltaBatch(systems=[SystemProposal(kind="RESTApi")])
+
+    out = type_mechanisms(_service_chunk(), invoke_fn=invoke)
+    assert out == L1DeltaBatch()  # no reflection -> whole step empty, no systems/edges
 
 
 def test_N4_systems_exhaustion_soft_passthrough_no_systems():
-    rec = _Recorder(systems_none=True, linking_none=True)
-    out = type_mechanisms(_service_chunk(), invoke_fn=rec)
+    def invoke(messages, *, schema=None, system_prompt=None):
+        if schema is None:
+            return "prose"
+        return None  # both structured calls exhaust
+    out = type_mechanisms(_service_chunk(), invoke_fn=invoke)
     assert out.systems == [] and out.system_edges == []  # degraded, never crashed
-    assert "link" in rec.calls  # soft pass-through: linking STILL attempted
 
 
 def test_N4_linking_exhaustion_keeps_systems_drops_edges():
-    rec = _Recorder(
-        systems=AnalysisTurn(systems=[SystemProposal(kind="CDN", props={"description": "edge"})]),
-        linking_none=True,
-    )
-    out = type_mechanisms(_service_chunk(), invoke_fn=rec)
+    def invoke(messages, *, schema=None, system_prompt=None):
+        if schema is None:
+            return "prose"
+        if "EXTRACT SYSTEMS" in messages[-1].content:
+            return L1DeltaBatch(systems=[SystemProposal(kind="CDN", props={"description": "edge"})])
+        return None  # linking exhausts
+    out = type_mechanisms(_service_chunk(), invoke_fn=invoke)
     assert [s.kind for s in out.systems] == ["CDN"]
     assert out.system_edges == []  # soft pass-through: systems survive, edges degrade
 
 
 def test_N5_end_to_end_emits_only_valid_vocabulary():
     rec = _Recorder(
-        systems=AnalysisTurn(systems=[SystemProposal(kind="RESTApi"), SystemProposal(kind="Nonsense")]),
-        edges=AnalysisTurn(system_edges=[
+        systems=L1DeltaBatch(systems=[SystemProposal(kind="RESTApi"), SystemProposal(kind="Nonsense")]),
+        edges=L1DeltaBatch(system_edges=[
             SystemEdgeProposal(service_slug="s", kind="RESTApi", rel="EXPOSED_VIA"),
             SystemEdgeProposal(service_slug="s", kind="RESTApi", rel="RENDERED_BY"),
         ]),
@@ -207,25 +180,22 @@ def test_N5_end_to_end_emits_only_valid_vocabulary():
 
 
 def test_N6_extend_prompt_shows_existing_description_and_demands_enrichment():
-    """Compounding (grilled #9 Q7): the systems_extract prompt must surface the currently-
+    """Compounding (grilled #9 Q7): the extraction prompt must surface the currently-
     defined System WITH its description AND instruct enrich-never-blank, or the model
     cannot compound and would clobber."""
     captured = {}
 
     def invoke(messages, *, schema=None, system_prompt=None):
-        content = messages[-1].content
-        if "ORIENT FROM THE CATALOG" in content:
-            captured["first"] = content
-        if "EXTRACT SYSTEMS" in content:
-            captured["systems_prompt"] = content
-        return AnalysisTurn()
+        if schema is None:
+            return "prose"
+        if "EXTRACT SYSTEMS" in messages[-1].content:
+            captured["systems_prompt"] = messages[-1].content
+        return L1DeltaBatch()
     inventory = {"services": [], "systems": ["AuthenticationMechanism"],
                  "system_descriptions": {"AuthenticationMechanism": "bearer-token auth"}}
     type_mechanisms(_service_chunk(), invoke_fn=invoke, inventory=inventory)
     p = captured["systems_prompt"]
-    # The existing description rides the hoisted base block in the FIRST turn (the
-    # stable cached prefix), so it is shown on every later turn too.
-    assert "bearer-token auth" in captured["first"]  # the existing description is shown
+    assert "bearer-token auth" in p            # the existing description is shown
     assert "ENRICHED" in p and "never blank" in p  # enrich-not-clobber is directed
 
 
@@ -236,15 +206,14 @@ def test_co_produced_systems_from_linking_are_captured_not_discarded():
     never discarded - else the graph gets edge-materialised bare Systems with no
     description (the discriminative attribute)."""
     def invoke(messages, *, schema=None, system_prompt=None):
-        content = messages[-1].content
-        if "EXTRACT SYSTEMS" in content:
-            return AnalysisTurn()  # extraction empty (observed live)
-        if "LINK SERVICES" in content:
-            return AnalysisTurn(  # linking co-produces both
-                systems=[SystemProposal(kind="RESTApi", props={"description": "unified REST API"})],
-                system_edges=[SystemEdgeProposal(service_slug="checkout", kind="RESTApi", rel="EXPOSED_VIA")],
-            )
-        return _claims("asset")
+        if schema is None:
+            return "prose naming a REST API"
+        if "EXTRACT SYSTEMS" in messages[-1].content:
+            return L1DeltaBatch()  # extraction empty (observed live)
+        return L1DeltaBatch(  # linking co-produces both
+            systems=[SystemProposal(kind="RESTApi", props={"description": "unified REST API"})],
+            system_edges=[SystemEdgeProposal(service_slug="checkout", kind="RESTApi", rel="EXPOSED_VIA")],
+        )
     out = type_mechanisms(_service_chunk(), invoke_fn=invoke,
                           inventory={"services": ["checkout"]}, aggregations=[])
     assert [s.kind for s in out.systems] == ["RESTApi"]                 # captured
@@ -252,25 +221,23 @@ def test_co_produced_systems_from_linking_are_captured_not_discarded():
     assert any(e.kind == "RESTApi" for e in out.system_edges)
 
 
-def test_N8_observations_feed_the_hypotheses_turn_only():
+def test_N8_observations_feed_reflection_only():
     captured = {}
 
     def invoke(messages, *, schema=None, system_prompt=None):
         content = messages[-1].content
-        if "ORIENT FROM THE CATALOG" in content:
-            captured["first"] = content
+        if schema is None:
+            captured["reflect"] = content
         elif "EXTRACT SYSTEMS" in content:
             captured["systems"] = content
-        return AnalysisTurn()
+        return "prose" if schema is None else L1DeltaBatch()
     obs = Observation(macro_kind="header", severity="info", evidence="Set-Cookie: sid",
                       rationale="session cookie missing Secure",
                       anchor={"type": "Endpoint", "identity": {"path": "/x", "baseurl": "https://a"}},
                       source_job="triager", source_tool="triager")
     type_mechanisms(_service_chunk(_endpoint("/x"), observations=(obs,)), invoke_fn=invoke)
-    # The observation insight rides the hoisted base block in the FIRST turn (the stable
-    # cached prefix), and is NOT re-shown in the extraction turn's own message.
-    assert "session cookie missing Secure" in captured["first"]
-    assert "session cookie missing Secure" not in captured["systems"]
+    assert "session cookie missing Secure" in captured["reflect"]   # insight in reflection
+    assert "session cookie missing Secure" not in captured["systems"]  # NOT re-shown to extract
 
 
 def test_baseurl_anchored_observation_reaches_its_endpoint_insight():
@@ -285,10 +252,9 @@ def test_baseurl_anchored_observation_reaches_its_endpoint_insight():
     captured = {}
 
     def invoke(messages, *, schema=None, system_prompt=None):
-        content = messages[-1].content
-        if "ORIENT FROM THE CATALOG" in content:
-            captured["first"] = content
-        return AnalysisTurn()
+        if schema is None:
+            captured["reflect"] = messages[-1].content
+        return "prose" if schema is None else L1DeltaBatch()
 
     obs = Observation(macro_kind="cors", severity="high",
                       evidence="access_control_allow_origin: *",
@@ -299,24 +265,23 @@ def test_baseurl_anchored_observation_reaches_its_endpoint_insight():
         _service_chunk(_endpoint("/rest/admin", baseurl="https://a"), observations=(obs,)),
         invoke_fn=invoke,
     )
-    assert "wide-open CORS enables cross-origin exfiltration" in captured["first"]
+    assert "wide-open CORS enables cross-origin exfiltration" in captured["reflect"]
 
 
-def test_response_evidence_props_reach_the_hypotheses_turn_not_path_alone():
+def test_response_evidence_props_reach_reflection_not_path_alone():
     """REGRESSION (typist blind to content_type). The mechanism a path evidences is
     discriminated by what it SERVES - content_type / title / status / server - not by
     its path string. The renderer used to emit the identity dict ALONE, so an
     API-looking path returning text/html (a client-routed SPA view) was
     indistinguishable from a REST endpoint and no WebPresentation could be typed. The
-    hypotheses prompt must carry the discriminative props AND drop pipeline plumbing
-    (profile/source) so the surface stays no-noise."""
+    reflection prompt must now carry the discriminative props AND drop pipeline
+    plumbing (profile/source) so the surface stays no-noise."""
     captured = {}
 
     def invoke(messages, *, schema=None, system_prompt=None):
-        content = messages[-1].content
-        if "ORIENT FROM THE CATALOG" in content:
-            captured["first"] = content
-        return AnalysisTurn()
+        if schema is None:
+            captured["reflect"] = messages[-1].content
+        return "prose" if schema is None else L1DeltaBatch()
 
     shell = AssetDelta(
         type="Endpoint",
@@ -325,11 +290,11 @@ def test_response_evidence_props_reach_the_hypotheses_turn_not_path_alone():
                "server": "AmazonS3", "profile": "webapp", "source": "httpx"},
     )
     type_mechanisms(_service_chunk(shell), invoke_fn=invoke)
-    first = captured["first"]
-    assert "content_type=text/html" in first      # the discriminating evidence reaches it
-    assert "title=Daytona" in first
-    assert "profile=webapp" not in first           # pipeline plumbing filtered out (no-noise)
-    assert "source=httpx" not in first
+    reflect = captured["reflect"]
+    assert "content_type=text/html" in reflect      # the discriminating evidence reaches it
+    assert "title=Daytona" in reflect
+    assert "profile=webapp" not in reflect           # pipeline plumbing filtered out (no-noise)
+    assert "source=httpx" not in reflect
 
 
 def test_webpresentation_per_service_cluster_survives_shaping():
@@ -374,12 +339,12 @@ def test_webpresentation_singleton_duplicate_and_orphan_edge_reconciled():
     channel is EXPOSED_VIA, never FRONTED_BY, so the rel is coerced."""
     desc = "PrestaShop-rendered HTML homepage at GET / (redirects to /it/)."
     chunk = _service_chunk(_endpoint("/"))
-    systems = AnalysisTurn(systems=[SystemProposal(
+    systems = L1DeltaBatch(systems=[SystemProposal(
         kind="WebPresentation", discriminator="catalogue_and_discovery::homepage",
         props={"description": desc, "pages": ["/"]})])
     # linking call co-produces the SAME system at the default discriminator + a MISLABELLED
     # (FRONTED_BY) edge to it - both the discriminator drift and the wrong rel must be repaired.
-    link = AnalysisTurn(
+    link = L1DeltaBatch(
         systems=[SystemProposal(kind="WebPresentation", props={"description": desc})],  # discriminator=__singleton__
         system_edges=[SystemEdgeProposal(
             service_slug="catalogue_and_discovery", kind="WebPresentation", rel="FRONTED_BY")])  # discriminator=__singleton__
@@ -505,11 +470,12 @@ def test_read_service_aggregations_shape():
 # --- the converged turn shape (#187, converged-agent-turn ADR) -----------------
 #
 # The role prompt is bound ONCE as the agent's ephemeral leading block and NEVER
-# enters the checkpointed trail, so the per-call request is a stable append-only
-# prefix instead of one that re-stacks the prompt.
+# enters the checkpointed trail, and the reflection prose is not re-embedded into
+# the later prompts. Both are what make the per-call request a stable append-only
+# prefix instead of a prefix that re-stacks the prompt and triplicates the prose.
 
 def test_the_typist_puts_no_role_prompt_in_the_messages():
-    """Every turn of the sub-problem chain forwards ONLY its per-call task: the
+    """Every call of the 3-call chain forwards ONLY its per-call task: the
     `technical-system.md` skill rides the `system_prompt=` binding, not a
     `SystemMessage` in the forwarded list."""
     from langchain_core.messages import SystemMessage
@@ -521,311 +487,37 @@ def test_the_typist_puts_no_role_prompt_in_the_messages():
 
         def __call__(self, messages, *, schema=None, system_prompt=None):
             self.msgs.append(list(messages))
-            return AnalysisTurn()
+            return "prose" if schema is None else L1DeltaBatch()
 
     rec = _Rec()
     type_mechanisms(_service_chunk(), invoke_fn=rec)
 
-    assert len(rec.msgs) == 8, "the eight-sub-problem chain"
+    assert len(rec.msgs) == 3, "the 3-call chain is unchanged"
     for messages in rec.msgs:
         assert not any(isinstance(m, SystemMessage) for m in messages), (
             "no role prompt in the forwarded trail (it rides system_prompt=)")
         assert messages[0].content != _load_skill(), "the prompt is not message[0]"
 
 
-def test_the_typist_injects_the_dependency_artifacts_verbatim():
-    """ADR D24: the extraction turn carries the reasoning turn's `claims` injected
-    VERBATIM - no dependency rides the session trail. The surface, which
-    systems_extract does NOT declare, is not injected into it."""
+def test_the_typist_does_not_reembed_the_reflection_prose():
+    """The prose is triplicated today: once as an assistant message and once inside
+    each of the two structured prompts. With a stable prefix that is fresh-input
+    inflation on every structured call, so the prompts must reference the reflection
+    WITHOUT re-embedding it."""
     class _Rec:
         def __init__(self):
-            self.by_prompt = {}
+            self.prompts = []
 
         def __call__(self, messages, *, schema=None, system_prompt=None):
-            content = messages[-1].content
-            if "LINK SERVICES" in content:
-                self.by_prompt["link"] = content
-            elif "EXTRACT SYSTEMS" in content:
-                self.by_prompt["systems_extract"] = content
-            elif "CLUSTER PAGES" in content:
-                self.by_prompt["page_clusters"] = content
-            else:
-                self.by_prompt["hypotheses"] = content
-            if "EXTRACT SYSTEMS" in content or "LINK SERVICES" in content \
-                    or "CLUSTER PAGES" in content:
-                return AnalysisTurn()
-            return AnalysisTurn(claims=[Claim(
-                subject="asset-a", assertion="witnesses a REST API",
-                evidence="content_type application/json", verdict="new RESTApi")])
+            if schema is None:
+                return "UNIQUE-PROSE-MARKER-xyzzy"
+            self.prompts.append(messages[-1].content)
+            return L1DeltaBatch()
 
     rec = _Rec()
-    shell = AssetDelta(
-        type="Endpoint",
-        identity={"path": "/x", "baseurl": "https://a"},
-        props={"server": "SURFACE-ONLY-MARKER"},
-    )
-    type_mechanisms(_service_chunk(shell), invoke_fn=rec)
+    type_mechanisms(_service_chunk(), invoke_fn=rec)
 
-    systems = rec.by_prompt["systems_extract"]
-    assert "witnesses a REST API" in systems   # the dependency claim is injected
-    assert "new RESTApi" in systems
-    # systems_extract declares no raw-response injection: the asset's response prop is absent.
-    assert "SURFACE-ONLY-MARKER" not in systems
-
-
-# --- T2: the unit-first workflow, the two directions, the fed artifacts ---------
-
-def test_workflow_ids_dependencies_and_emits():
-    """T2: the typist chain is the unit-first one, and each SubProblem declares the
-    correct `depends_on` / `emit` (the structural contract the rework rests on)."""
-    from polymerhus.analysis.mechanism_typist import WORKFLOW
-
-    by_id = {sp.id: sp for sp in WORKFLOW.sub_problems}
-    assert [sp.id for sp in WORKFLOW.sub_problems] == [
-        "orient_from_catalog", "harvest_surface", "prior_insights",
-        "mechanism_hypotheses", "page_clusters", "systems_extract", "link", "closure",
-    ]
-    assert by_id["orient_from_catalog"].depends_on == ()
-    assert by_id["harvest_surface"].depends_on == ()
-    assert by_id["prior_insights"].depends_on == ("harvest_surface",)
-    assert by_id["mechanism_hypotheses"].depends_on == (
-        "orient_from_catalog", "harvest_surface", "prior_insights")
-    assert by_id["page_clusters"].depends_on == ("harvest_surface",)
-    assert by_id["systems_extract"].depends_on == ("mechanism_hypotheses", "page_clusters")
-    assert by_id["link"].depends_on == ("systems_extract",)
-    assert by_id["closure"].depends_on == ("systems_extract", "link")
-    # every reasoning turn emits claims; the two extraction turns emit deltas.
-    for sid in ("orient_from_catalog", "harvest_surface", "prior_insights",
-                "mechanism_hypotheses", "page_clusters", "closure"):
-        assert by_id[sid].emit == ("claims",)
-    assert by_id["systems_extract"].emit == ("systems",)
-    assert by_id["link"].emit == ("system_edges",)
-
-
-def test_unit_base_artifact_carries_the_service_contract_and_aggregated_endpoints():
-    """T2: a Service unit's `unit` artifact carries the contract AND the endpoints the
-    Service already aggregates, so the typist reasons FROM the contract."""
-    captured = {}
-
-    def invoke(messages, *, schema=None, system_prompt=None):
-        content = messages[-1].content
-        if "ORIENT FROM THE CATALOG" in content:
-            captured["unit"] = content
-        return AnalysisTurn()
-
-    inventory = {"services": ["checkout"], "systems": [],
-                 "service_contracts": {"checkout": "takes a basket to a paid order"},
-                 "system_descriptions": {}}
-    aggregations = [{"slug": "checkout", "labels": ["Endpoint"],
-                     "props": {"path": "/orders", "method": "POST", "baseurl": "https://a"}}]
-    chunk = Chunk(chunk_id="checkout", source_job="service:checkout",
-                  assets=(_endpoint("/orders"),))
-    type_mechanisms(chunk, invoke_fn=invoke, inventory=inventory,
-                    aggregations=aggregations)
-    # The `unit` base artifact is hoisted into the FIRST turn (the stable prefix).
-    unit = captured["unit"]
-    assert "UNIT KIND: Service" in unit
-    assert "takes a basket to a paid order" in unit          # the service_contract
-    assert "POST /orders" in unit                            # the aggregated endpoint
-    assert "https://a" in unit
-
-
-def test_unit_base_artifact_carries_the_system_description():
-    """T2: a System unit's `unit` artifact carries the System's own description and is
-    framed as the inverse (System) direction."""
-    chunk = Chunk(chunk_id="RESTApi", source_job="system:RESTApi",
-                  assets=(_endpoint("/x"),))
-    inv = {"services": ["checkout"], "systems": ["RESTApi"],
-           "service_contracts": {},
-           "system_descriptions": {"RESTApi": "unified REST API overlay"}}
-    block = _unit_block(chunk, inventory=inv)
-    assert "UNIT KIND: System" in block
-    assert "unified REST API overlay" in block
-    assert "which Services rely on this technical overlay" in block
-
-
-def test_service_unit_and_system_unit_take_the_two_directions():
-    """T2: the central question is direction-dependent - Service forward, System
-    inverse. The rendered unit block carries the matching framing."""
-    service = _unit_block(
-        Chunk(chunk_id="checkout", source_job="service:checkout",
-              assets=(_endpoint("/x"),)),
-        inventory={"services": ["checkout"], "service_contracts": {"checkout": "c"}})
-    system = _unit_block(
-        Chunk(chunk_id="RESTApi", source_job="system:RESTApi", assets=(_endpoint("/x"),)),
-        inventory={"services": ["checkout"]})
-    assert "which technical Systems could this Service rely on to offer its contract" in service
-    assert "which Services rely on this technical overlay" in system
-    assert service != system
-
-
-def test_vocabulary_artifact_carries_system_kinds_and_edge_rels():
-    """T2: the RDF catalog (every System kind and every System-edge rel) rides the
-    `vocabulary` base artifact, rendered by `l1_curator.vocabulary_prompt`."""
-    from polymerhus.analysis.l1_curator import SYSTEM_EDGE_RELS, _KNOWN_KINDS
-    from polymerhus.analysis.mechanism_typist import type_mechanisms
-
-    captured = {}
-
-    def invoke(messages, *, schema=None, system_prompt=None):
-        content = messages[-1].content
-        if "ORIENT FROM THE CATALOG" in content:
-            captured["vocab"] = content
-        return AnalysisTurn()
-
-    type_mechanisms(_service_chunk(), invoke_fn=invoke)
-    vocab = captured["vocab"]
-    assert "CONTROLLED VOCABULARIES" in vocab
-    for kind in sorted(_KNOWN_KINDS):
-        assert kind in vocab
-    for rel in sorted(SYSTEM_EDGE_RELS):
-        assert rel in vocab
-
-
-def test_link_to_another_live_service_survives_not_scoped_to_the_unit_slug():
-    """T2: the `link` turn carries NO per-unit write scope, so a System unit may link
-    its overlay to a rider Service other than the unit's own slug - the edge survives."""
-    rec = _Recorder(
-        systems=AnalysisTurn(systems=[SystemProposal(kind="RESTApi", props={"description": "REST"})]),
-        edges=AnalysisTurn(system_edges=[
-            SystemEdgeProposal(service_slug="other-live-service", kind="RESTApi", rel="EXPOSED_VIA")]),
-    )
-    out = type_mechanisms(_service_chunk(), invoke_fn=rec,
-                          inventory={"services": ["checkout", "other-live-service"]})
-    # the non-unit owner survives shaping: no per-unit slug filter is applied.
-    assert [(e.service_slug, e.rel) for e in out.system_edges] == [
-        ("other-live-service", "EXPOSED_VIA")]
-
-
-def test_rewritten_prompt_file_loads_under_default_and_differs_from_legacy(monkeypatch):
-    """T2: the default variant loads the rewritten (unit-first) file, distinct from
-    the legacy L0-stream file retained for rollback."""
-    from pathlib import Path
-
-    monkeypatch.delenv("ANALYSIS_PROMPT_VARIANT", raising=False)
-    from polymerhus.analysis import mechanism_typist
-
-    monkeypatch.setattr(mechanism_typist, "_TECHNICAL_SYSTEM_SKILLS", {})
-    batched = mechanism_typist._load_skill()
-    legacy = (Path(mechanism_typist.__file__).resolve().parent
-              / "prompts" / "technical-system.md").read_text(encoding="utf-8")
-    assert batched != legacy
-    assert "streamed slice" not in batched          # the obsolete L0-stream framing is gone
-    assert "Read what EXISTS" not in batched        # the "never filter" rule is reverted
-    assert "L1 unit" in batched                     # the unit-first framing is present
-    assert "per-unit write scope" in batched        # the link scope is removed
-
-
-def test_batched_prompt_edge_catalogue_cannot_contradict_the_fed_vocabulary(monkeypatch):
-    """B-M1/N8: the prompt's edge-label catalogue must be EXACTLY the catalogue the
-    `vocabulary` artifact feeds (`l1_curator.SYSTEM_EDGE_RELS`, 10 values) - no rel
-    missing AND no rel outside it, so the model can never be told "exactly" a subset
-    the code then rejects, nor offered a label the writer would discard."""
-    import re
-
-    from polymerhus.analysis import mechanism_typist
-    from polymerhus.analysis.l1_curator import SYSTEM_EDGE_RELS
-
-    monkeypatch.delenv("ANALYSIS_PROMPT_VARIANT", raising=False)
-    monkeypatch.setattr(mechanism_typist, "_TECHNICAL_SYSTEM_SKILLS", {})
-    batched = mechanism_typist._load_skill()
-    # the edge-label catalogue sentence, from its lead-in to the `service_slug` note.
-    catalogue = batched.split("Edge labels are the FULL catalogue", 1)[1].split("Copy each", 1)[0]
-    named = set(re.findall(r"`([A-Z][A-Z_]+)`", catalogue))
-    assert named == set(SYSTEM_EDGE_RELS), (
-        f"missing={sorted(set(SYSTEM_EDGE_RELS) - named)} extra={sorted(named - set(SYSTEM_EDGE_RELS))}")
-    # the gloss must cover BOTH EXPOSED_VIA carriers (B-m7)
-    assert "WebPresentation" in batched
-
-
-def test_batched_prompt_states_six_stages_and_names_get_http_artifact(monkeypatch):
-    """B-m4/B-m5: the prompt says SIX stages (CLUSTER PAGES included) and names
-    `get_http_artifact` in the harvest step, matching `_REFLECTION_STEPS` and the
-    bound HTTP pair."""
-    from polymerhus.analysis import mechanism_typist
-
-    monkeypatch.delenv("ANALYSIS_PROMPT_VARIANT", raising=False)
-    monkeypatch.setattr(mechanism_typist, "_TECHNICAL_SYSTEM_SKILLS", {})
-    batched = mechanism_typist._load_skill()
-    assert "six stages" in batched
-    assert "Cluster pages" in batched
-    assert "get_http_artifact" in batched
-
-
-def test_link_sub_problem_injects_the_unit_and_the_vocabulary():
-    """B-m6/B-M1: the `link` turn carries the `unit` (so the direction survives
-    compaction) and the `vocabulary` (the same catalogue the static prompt names)."""
-    from polymerhus.analysis.mechanism_typist import WORKFLOW
-
-    link = next(sp for sp in WORKFLOW.sub_problems if sp.id == "link")
-    assert "unit" in link.inject
-    assert "vocabulary" in link.inject
-
-
-def test_system_unit_block_omits_the_service_aggregation_line():
-    """B-m9: a System unit's key never matches a Service aggregation, so the
-    "UNIT ALREADY AGGREGATES" line would always read (none) and is omitted."""
-    block = _unit_block(
-        Chunk(chunk_id="RESTApi", source_job="system:RESTApi", assets=(_endpoint("/x"),)),
-        inventory={"services": ["checkout"]})
-    assert "UNIT ALREADY AGGREGATES" not in block
-
-
-def test_residual_unit_is_framed_neutrally_not_as_a_forward_service():
-    """B-m8: the residual unit is the surface NO Service aggregates - it must not
-    be typed as a forward Service with an empty contract."""
-    from polymerhus.analysis.service_slice import RESIDUAL_UNIT
-
-    block = _unit_block(
-        Chunk(chunk_id=RESIDUAL_UNIT, source_job="residual", assets=(_endpoint("/health"),)),
-        inventory={"services": ["checkout"], "service_contracts": {"checkout": "c"}})
-    assert "UNIT KIND: Residual" in block
-    assert "no Service" in block
-    assert "which technical Systems could this Service rely on" not in block
-
-
-def test_contracted_empty_service_runs_the_typist_workflow():
-    """C-M2 (typist side): a contracted Service with no PRE-AGGREGATED assets still
-    runs the full chain so it can discover its own surface."""
-    calls = {"n": 0}
-
-    def invoke(messages, *, schema=None, system_prompt=None):
-        calls["n"] += 1
-        return AnalysisTurn()
-
-    chunk = Chunk(chunk_id="empty-svc", source_job="service:empty-svc", assets=())
-    out = type_mechanisms(chunk, invoke_fn=invoke,
-                          inventory={"services": ["empty-svc"],
-                                     "service_contracts": {"empty-svc": "does x"}})
-    assert calls["n"] == 8
-    assert out == L1DeltaBatch()   # discovery found nothing -> genuinely empty
-
-
-def test_empty_unit_without_a_contract_is_a_no_call_empty():
-    calls = {"n": 0}
-
-    def invoke(messages, *, schema=None, system_prompt=None):
-        calls["n"] += 1
-        return AnalysisTurn()
-
-    chunk = Chunk(chunk_id="orphan", source_job="service:orphan", assets=())
-    assert type_mechanisms(chunk, invoke_fn=invoke, inventory={}) == L1DeltaBatch()
-    assert calls["n"] == 0
-
-
-def test_typist_backstop_and_unit_block_name_the_real_service_slug(tmp_path):
-    """N7: the prompt's UNIT line and the backstop `unit_slug` use the real Service
-    slug (`_service_slug`), not the sanitised `chunk_id`, matching the data-modeller.
-    A slug that sanitises differently (here `svc:admin` -> `svc-admin`) proves it."""
-    from polymerhus.analysis.memory import AnalysisMemoryStore
-
-    store = AnalysisMemoryStore(root_dir=tmp_path)
-    chunk = Chunk(chunk_id="svc-admin", source_job="service:svc:admin",
-                  assets=(_endpoint("/x"),))
-    block = _unit_block(chunk, inventory={"services": ["svc:admin"]})
-    assert block.startswith("UNIT: svc:admin")          # the real slug, not svc-admin
-    type_mechanisms(chunk, invoke_fn=lambda *a, **k: AnalysisTurn(),
-                    inventory={"services": ["svc:admin"]},
-                    memory=store, project_id="p1", run_id="r1")
-    assert store.has_note("p1", "svc:admin")
-    assert not store.has_note("p1", "svc-admin")
+    assert len(rec.prompts) == 2
+    for prompt in rec.prompts:
+        assert "UNIQUE-PROSE-MARKER-xyzzy" not in prompt, (
+            "the reflection prose must not be re-embedded into a later prompt")

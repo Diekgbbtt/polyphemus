@@ -474,28 +474,14 @@ def test_flush_all_indexes_covers_every_live_module(monkeypatch):
     assert C._module_index("analysis").committed_ids() == []
 
 
-# --- the checkpoint serde allow-list (strict msgpack + checkpointed entities) ---
+# --- the checkpoint serde (strict msgpack) ----------------------------------
 
 
-def test_checkpoint_serde_allows_the_analysis_turn_entity() -> None:
-    # Under LANGGRAPH_STRICT_MSGPACK an unlisted msgpack type is BLOCKED at load
-    # (msgpack_blocked), silently defeating a resumed turn's re-hydration. The
-    # analysis reasoning workflow's `AnalysisTurn` is checkpointed in the reasoning
-    # state's `turns`, so it must be on the allow-list - and `app` must name it by
-    # its dotted path, never import the analysis context.
+def test_checkpoint_serde_constructs() -> None:
+    # The L0 trunk persists no bespoke envelope, so the allow-list family is empty;
+    # the ONE serde still constructs and every construction point uses it.
     serde = C.checkpoint_serde()
-    assert ("polymerhus.analysis.reasoning_workflow", "AnalysisTurn") in (
-        serde._allowed_msgpack_modules
-    )
-
-
-def test_checkpoint_serde_round_trips_an_analysis_turn() -> None:
-    from polymerhus.analysis.reasoning_workflow import AnalysisTurn
-
-    serde = C.checkpoint_serde()
-    turn = AnalysisTurn()
-    type_, blob = serde.dumps_typed(turn)
-    assert serde.loads_typed((type_, blob)) == turn
+    assert serde is not None
 
 
 def test_the_module_scoped_saver_carries_the_serde_allowlist() -> None:
@@ -503,6 +489,4 @@ def test_the_module_scoped_saver_carries_the_serde_allowlist() -> None:
     # + the version scratch saver) uses the ONE serde, so no load path can run
     # under a different allow-list.
     saver = C._module_scoped_saver(C._module_index("analysis"))
-    assert ("polymerhus.analysis.reasoning_workflow", "AnalysisTurn") in (
-        saver.serde._allowed_msgpack_modules
-    )
+    assert saver.serde._allowed_msgpack_modules == C._ALLOWED_MSGPACK_MODULES

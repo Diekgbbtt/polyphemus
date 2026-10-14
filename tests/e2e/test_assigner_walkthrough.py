@@ -9,12 +9,12 @@ Verifier-gated.
 """
 from polymerhus.analysis.analyser_types import (
     AggregatesProposal,
+    L1DeltaBatch,
     ServiceProposal,
 )
 from polymerhus.analysis.assigner import assign, make_assigner_body
 from polymerhus.analysis.chunking import admit_for_role, chunks_for_job
 from polymerhus.analysis.l1_types import L0Ref
-from polymerhus.analysis.reasoning_workflow import AnalysisTurn
 from polymerhus.recon.domain.types import AssetDelta, JobSpec
 
 JOB = JobSpec(tool="katana", skill="crawl", command_template="t",
@@ -56,7 +56,7 @@ def _l0(path, baseurl):
 def _proposal():
     """What the model returns: two genuine owners of /orders/42, a weak guess on
     /ship/7, and a confident reach for a Service that does not exist."""
-    return AnalysisTurn(
+    return L1DeltaBatch(
         services=[ServiceProposal(business_function_slug="ghost", props={"exposure": "public"})],
         aggregates=[
             AggregatesProposal(service_slug="checkout", l0=_l0("/orders/42", A),
@@ -96,7 +96,7 @@ def test_E1_katana_delta_through_admission_to_assignment():
     # --- assignment
     seen = {}
 
-    def invoke(messages, *, schema=AnalysisTurn, system_prompt=None):
+    def invoke(messages, *, schema=L1DeltaBatch, system_prompt=None):
         seen["messages"] = messages
         seen["system_prompt"] = system_prompt
         return _proposal()

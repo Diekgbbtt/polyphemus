@@ -38,13 +38,6 @@ from pydantic import BaseModel, ConfigDict, Field
 from polymerhus.analysis.analyser_types import L1DeltaBatch
 from polymerhus.analysis.chunking import Chunk, admit_for_role
 from polymerhus.analysis.l1_types import L0Ref
-from polymerhus.analysis.prompt_variant import (
-    BATCHED_L1UNIT_FIRST,
-    LEGACY,
-    prompt_path,
-    resolve_prompt_variant,
-)
-from polymerhus.analysis.reasoning_workflow import ReasoningWorkflow, SubProblem
 
 logger = logging.getLogger(__name__)
 
@@ -90,34 +83,6 @@ class AssignmentOutcome(BaseModel):
     batch: L1DeltaBatch = Field(default_factory=L1DeltaBatch)
     backlog: tuple[str, ...] = ()
     stats: AssignmentStats = Field(default_factory=AssignmentStats)
-    # The absent-surface degradation: the bounded harvest found nothing relevant
-    # to the contract, so the chain halted before `candidate_owners`. This is a
-    # finding (the Service's surface is not mapped), never a failure to search
-    # hard enough - it is what stops the escalation to the HTTP firehose.
-    no_surface: bool = False
-
-
-class AssignmentCensus(BaseModel):
-    """What the GLOBAL assign pass observed over the whole SETTLED surface (T4,
-    ADR D10/D11).
-
-    `AssignmentStats` counts the gates for one chunk; the census counts the same
-    five gates across the one global pass and adds the residual `stale` pool - the
-    admitted Endpoints that ended with no kept owner. It is returned AND persisted
-    to `analysis_runs.stats`, so coverage and withholding stay answerable after the
-    run (the signal `AssignmentStats` had no home for)."""
-
-    model_config = ConfigDict(frozen=True)
-
-    admitted: int = 0          # Endpoints on the settled L0 surface
-    proposed: int = 0          # aggregates the model returned
-    unresolvable: int = 0      # dropped: named no Endpoint on the surface
-    out_of_inventory: int = 0  # dropped: named no live Service
-    rescaled: int = 0          # repaired: confidence was a percentage
-    withheld: int = 0          # dropped: below the confidence bar
-    kept: int = 0              # aggregates handed to the writer
-    written: int = 0           # aggregates the writer actually wrote
-    stale: int = 0             # admitted Endpoints left with no owner
 
 
 def narrow_to_assignment(batch: L1DeltaBatch) -> L1DeltaBatch:
@@ -305,12 +270,9 @@ def shape_proposal(
 
 
 def _chunk_slice(chunk: Chunk) -> dict:
-    """Build the admitted-Endpoint view (`{nodes, links}`) this role narrows the
-    chunk to (#34 D2/D7) - for the Assigner, Endpoints alone.
-
-    Solely the "nothing to act on" gate: when it is empty the pass is a valid
-    empty with no LLM call. The prompt no longer renders a surface slice, so this
-    view exists only for that gate and for `shape_proposal`'s deterministic checks."""
+    """Adapt a chunk's immutable L0 delta to the prompt slice shape
+    (`{nodes, links}`) the assignment verbatim reads, narrowed to the types this
+    role admits (#34 D2/D7) - for the Assigner, Endpoints alone."""
     nodes = [
         {"type": a.type, "identity": a.identity, "properties": dict(a.props or {})}
         for a in admit_for_role(chunk, ROLE)
@@ -318,346 +280,39 @@ def _chunk_slice(chunk: Chunk) -> dict:
     return {"nodes": nodes, "links": []}
 
 
-def _owned_endpoints_repr(endpoints) -> str:
-    """Render the Service's OWN already-aggregated endpoints, one
-    `METHOD /path (baseurl)` per entry; `(none)` when it aggregates nothing yet."""
-    lines = []
-    for asset in endpoints or ():
-        ident = getattr(asset, "identity", None) or {}
-        path = ident.get("path")
-        if not isinstance(path, str):
-            continue
-        method = str(ident.get("method") or "").upper()
-        baseurl = ident.get("baseurl")
-        line = " ".join(part for part in (method, path) if part)
-        if baseurl:
-            line = f"{line} ({baseurl})"
-        lines.append(line)
-    return "; ".join(lines) if lines else "(none)"
-
-
-def _unit_context_block(chunk: Chunk, inventory: dict | None, owned_endpoints=()) -> str:
-    """The ONLY per-unit context the assigner is fed (L1-unit-first): the Service's
-    slug, its `service_contract` (the primary routing evidence) and the endpoints it
-    ALREADY aggregates, if any.
-
-    The whole settled surface is deliberately ABSENT: the model discovers its own
-    surface by querying the tools, driven by the contract (`harvest_surface`). A thin
-    KB gets a thin honest contract, and an orphan Service gets an empty owned list;
-    both render explicitly rather than as a silently empty prompt."""
-    slug = str(getattr(chunk, "source_job", "") or "").removeprefix("service:") or chunk.chunk_id
-    contracts = (inventory or {}).get("service_contracts") or {}
-    contract = contracts.get(slug, "") if isinstance(contracts, dict) else ""
-    overview = (inventory or {}).get("application_overview") or ""
-    framing = f"APPLICATION OVERVIEW: {overview}\n\n" if overview else ""
-    return (
-        f"{framing}"
-        f"SERVICE UNIT: {slug}\n"
-        f"contract: {contract or '(none)'}\n"
-        f"already aggregated endpoints: {_owned_endpoints_repr(owned_endpoints)}"
-    )
-
-
-def _service_block(chunk: Chunk, inventory: dict | None) -> str:
-    """The STREAMED per-chunk unit context (the pre-T1 rendering, restored for the
-    `streamed` mode). It names the chunk's source job and its `service_contract` when
-    one exists; a job-keyed chunk has no Service of that name, so it renders
-    `service_contract: (none)` - harmless, because the streamed workflow anchors on the
-    fed L0 `surface` and the inventory, never on the contract (see `assign`).
-
-    Distinct from `_unit_context_block`: this is the legacy slice-based flavour's unit
-    card (`service_contract:` label, no framed overview, no owned-endpoints line), kept
-    in sync with the `assigner.md` prompt file that flavour loads."""
-    slug = str(getattr(chunk, "source_job", "") or "").removeprefix("service:") or chunk.chunk_id
-    contracts = (inventory or {}).get("service_contracts") or {}
-    contract = contracts.get(slug, "") if isinstance(contracts, dict) else ""
-    return f"SERVICE UNIT: {slug}\nservice_contract: {contract or '(none)'}"
-
-
-# The four reflect stages (#34), merging the load-bearing primitives of the
+# The four-step reflect verbatim (#34), merging the load-bearing primitives of the
 # `overthink` and `critical-thinking-logical-reasoning` disciplines down to what this
-# role needs. `candidate_owners` and `assign` each cover a subset of them (spec 3.3).
+# role needs. Fires ONLY on `mode="reflect"`, so the create-pass system prefix stays
+# byte-stable and provider prompt-caching holds across the run.
 #
-# REVIVED IN PRODUCTION (ADR D25): the 2026-07-28 ratification recorded reflection as
-# deliberately unreached. The reasoning workflow now runs the first three stages
-# (`candidate_owners`) on every pass and the RESIDUE stage inside `assign`, so the
-# reflection is no longer dead weight. The stages stay TESTED on both prompt arms.
-#
-# RECONCILED (T7): reflection was always carried TWICE - once by the workflow's
-# sub-problem prompts (below) and once by a `mode="reflect"` append to the STABLE
-# system prompt. Because the workflow now runs the stages on EVERY pass, the
-# `mode` append was pure duplication; it is retired and the workflow is the single
-# carrier. See `docs/design/assigner-A1-decisions.md` section 5.
-_REFLECT_STEPS = (
-    "RESTATE AS EVIDENCE: for each aggregate, quote the exact path segment or "
+# NOT REACHED IN PRODUCTION, deliberately (operator-ratified 2026-07-28). `Mode` is
+# declared at `analysis/messages.py:36` and read only by `_system_prompt`; no
+# dispatcher ever sets `"reflect"`. Like the curation pass, reflection is legacy
+# under the analysis rewrite and degrades ORGANICALLY as the pipeline completes - it
+# is neither wired up nor deleted here. It stays TESTED (C25, C40b on both prompt
+# arms) so that whoever does wire it inherits a pinned contract rather than a guess,
+# and so its cost is visible: it is dead weight until then, not a working feature.
+_REFLECT_VERBATIM = (
+    "\n\nREFLECT PASS. Before emitting any revised proposal, write these four steps out:\n"
+    "1. RESTATE AS EVIDENCE: for each aggregate, quote the exact path segment or "
     "parameter name you matched and the clause of the Service's contract it matched "
     "against. An aggregate whose evidence restates the slug instead of the surface is "
-    "self-refuting - drop it.",
-    "COMPETING OWNER: name the strongest competing Service and say why it lost. If "
+    "self-refuting - drop it.\n"
+    "2. COMPETING OWNER: name the strongest competing Service and say why it lost. If "
     "it genuinely also owns the element, emit it too rather than discarding it. If you "
     "cannot name any competitor, that means the inventory is thin, not that you are "
-    "confident.",
-    "CALIBRATE: state each confidence, whether it clears the bar, and what specific "
-    "evidence would move it.",
-    "RESIDUE: list the Endpoints you could not place, one short sentence each.",
-)
-
-# The absent-surface degradation (W-b). The harvest is bounded (surgical
-# `graph_view` probes, url-path-filtered `search_http_history`), and when it
-# finds nothing the chain HALTS before `candidate_owners` rather than running
-# the reasoning/assign turns on an empty premise. This is what stops the model
-# escalating to the HTTP firehose when a Service's surface is simply not mapped.
-def _survivor_count(turn) -> int:
-    """The harvested Endpoints that survived falsification (verdict `survive`)."""
-    if turn is None:
-        return 0
-    return sum(1 for c in (getattr(turn, "claims", None) or []) if c.verdict == "survive")
-
-
-def _halt_without_surface(sub_problem, turn) -> bool:
-    """The `halt_when` predicate: stop after `falsify_harvest` when nothing
-    survived, so `candidate_owners`/`assign` never run on an absent surface."""
-    if sub_problem.id != "falsify_harvest":
-        return False
-    return _survivor_count(turn) == 0
-
-
-
-# unit's surface through the tools, `falsify_harvest` tries to throw the harvest out
-# against the contract, `candidate_owners` is the reasoning differential over the
-# SURVIVORS, `assign` is the extraction turn, and `closure` writes the note. Each
-# turn speaks the ONE envelope `AnalysisTurn`, so the tool set never toggles.
-WORKFLOW = ReasoningWorkflow(
-    role_id=ROLE,
-    sub_problems=(
-        SubProblem(
-            id="harvest_surface",
-            name="harvest the surface",
-            prompt=(
-                "HARVEST THE SURFACE - the unit is your only anchor. You are given ONE "
-                "Service (its slug and `contract`). Derive MULTIPLE candidate strings "
-                "from that contract: the nouns it owns, the actions it performs, and "
-                "path-word fragments of each. For EVERY candidate string query "
-                "`graph_view` with bounded read-only Cypher (always a LIMIT): enumerate "
-                "the `:BaseURL`s and their `:Endpoint`s broadly, and run a path-substring "
-                "probe per candidate. Where a candidate suggests a path, call "
-                "`search_http_history` and then `get_http_artifact` to read a specific "
-                "recorded request shape. Query "
-                "BROADLY and AGGRESSIVELY; a candidate that returns nothing is a valid "
-                "miss, not a failure. Emit one Claim per harvested Endpoint: `subject` "
-                "`METHOD /path`; `assertion` the raw surface facts (path segments, "
-                "method, trailing segment, parameter names, baseurl) AND which candidate "
-                "string found it; `evidence` the Cypher/filter you ran; `verdict` "
-                "`harvested`. Do not decide ownership here. Emit `claims` only."
-            ),
-            inject=("service", "inventory"),
-            emit=("claims",),
-        ),
-        SubProblem(
-            id="falsify_harvest",
-            name="falsify the harvest",
-            prompt=(
-                "FALSIFY THE HARVEST - reduce the wrong-aggregation risk before you "
-                "decide anything. For EACH harvested Endpoint, try hard to falsify that "
-                "it is relevant AND correct for THIS Service's contract: does a noun or "
-                "action in the path actually match a clause this contract claims, or is "
-                "the match only topical? Is the candidate string that found it one the "
-                "contract really names, or a coincidence? Emit one Claim per harvested "
-                "Endpoint: `subject` the Endpoint; `assertion` the reason; `evidence` the "
-                "path segment or contract clause you tested it against; `verdict` "
-                "`survive` or `reject`. An Endpoint whose only link is topical or "
-                "technological is `reject`. Lean strict: a rejected real Endpoint costs a "
-                "later pass, while an admitted wrong one hangs a false edge that looks "
-                "answered. Emit `claims` only."
-            ),
-            inject=("service", "harvest_surface"),
-            emit=("claims",),
-            depends_on=("harvest_surface",),
-        ),
-        SubProblem(
-            id="prior_insights",
-            name="prior modelling insights",
-            prompt=(
-                "PRIOR MODELLING INSIGHTS - read before you enrich. Call the `notes` "
-                "tool with command=\"read\" to surface what earlier units concluded "
-                "about this Service and its neighbours. Read this Service's own notes "
-                "(`unit` = the slug), notes whose body mentions the path nouns you "
-                "harvested, and any note naming a Service that may be missing. For each "
-                "relevant note emit one Claim: `subject` the note key; `assertion` the "
-                "recorded insight; `evidence` the note body excerpt; `verdict` `reuse`, "
-                "`avoid`, or `competing-owner`. A run with no prior notes is a valid "
-                "result - say so. Emit `claims` only."
-            ),
-            inject=("service", "falsify_harvest"),
-            emit=("claims",),
-            depends_on=("falsify_harvest",),
-        ),
-        SubProblem(
-            id="candidate_owners",
-            name="candidate owners",
-            prompt=(
-                "REASONING - candidate owners, over the SURVIVORS only. Work through "
-                "these stages out loud:\n"
-                + "\n".join(f"{i}. {s}" for i, s in enumerate(_REFLECT_STEPS[:3], 1))
-                + "\n\nFor each surviving Endpoint (`verdict` `survive`), emit one Claim "
-                "per candidate owner: `subject` the Endpoint, `assertion` the matched "
-                "evidence and the strongest competing owner, `evidence` the exact path "
-                "segment or parameter you matched, `verdict` the owner you would choose "
-                "and your confidence. Emit `claims` only; do not propose deltas yet."
-            ),
-            inject=("inventory", "service", "falsify_harvest", "prior_insights"),
-            emit=("claims",),
-            depends_on=("falsify_harvest", "prior_insights"),
-        ),
-        SubProblem(
-            id="assign",
-            name="assign",
-            prompt=(
-                "EXTRACTION - assign. " + _REFLECT_STEPS[3] + "\n\nFrom the claims "
-                "above, over the survivors only, emit the `aggregates`: one per Endpoint "
-                "and owning Service(s), each with `confidence` (0..1) and "
-                "`evidence_refs`. Emit one aggregate for EACH genuine owner; a Service "
-                "may name ANY live Service as the owner, not only this unit. Use only "
-                "`service_slug`s from the inventory; an invented owner names nothing. "
-                "Leave services, systems, system_edges and every data-modelling list "
-                "EMPTY. Put the residue in `claims`: one Claim per unplaced Endpoint "
-                "(`verdict` `residue`)."
-            ),
-            inject=("inventory", "service", "falsify_harvest", "candidate_owners"),
-            emit=("aggregates", "claims"),
-            depends_on=("candidate_owners",),
-        ),
-        SubProblem(
-            id="closure",
-            name="modelling closure",
-            prompt=(
-                "CLOSURE - write the modelling-closure note. Summarise what this unit "
-                "closed over: the `Endpoint`s you claimed as `AGGREGATES` (slug, "
-                "confidence, matched evidence) and EXPLICITLY the `Endpoint`s you did "
-                "NOT claim and why each was left in the stale pool. Call the `notes` "
-                "tool once: command=\"write\", action=\"append\", unit = the Service "
-                "slug, note_name=\"modelling-closure\", kind=\"assignment\", body = the "
-                "closure body. Then emit one Claim recording the closure: `subject` the "
-                "Service; `assertion` the claimed and unclaimed counts; `evidence` the "
-                "note key; `verdict` `closed`. Emit `claims` only."
-            ),
-            inject=("service", "harvest_surface", "assign"),
-            emit=("claims",),
-            depends_on=("assign",),
-        ),
-    ),
+    "confident.\n"
+    "3. CALIBRATE: state each confidence, whether it clears the bar, and what specific "
+    "evidence would move it.\n"
+    "4. RESIDUE: list the Endpoints you could not place, one short sentence each."
 )
 
 
-# The STREAMED flavour's workflow (the pre-T1 chain, restored for `streamed`).
-# Unlike `WORKFLOW`, it does NOT anchor on the unit's contract: it scans the broad L0
-# surface fed as the `surface` artifact, reads prior notes, reasons over candidate
-# owners, then extracts the aggregates. This is the discipline a job-keyed (streamed)
-# chunk needs, because such a chunk carries no Service contract to harvest from.
-WORKFLOW_LEGACY = ReasoningWorkflow(
-    role_id=ROLE,
-    sub_problems=(
-        SubProblem(
-            id="surface_scan",
-            name="broad L0 surface scan",
-            prompt=(
-                "BROAD L0 SCAN - no asset-name assumptions. You are given ONE Service "
-                "(its slug and `service_contract`). Before you judge ownership, "
-                "establish the raw surface: call `graph_view` with bounded read-only "
-                "Cypher (always a LIMIT) to enumerate the L0 `Endpoint`s this target "
-                "exposes. Do NOT query for a specific path or parameter you guessed from "
-                "the contract; enumerate what EXISTS. Suggested queries: (1) every "
-                "`:BaseURL` in the project; (2) every `:Endpoint` reachable from those "
-                "BaseURLs via `:HAS_ENDPOINT`, with its method/path/url and its "
-                "`:Parameter` names; (3) the `:Endpoint`s any Service already "
-                "`AGGREGATES`. Emit one Claim per discovered Endpoint: `subject` "
-                "`METHOD /path`; `assertion` the raw surface facts (path segments, "
-                "method, trailing segment, parameter names, baseurl); `evidence` the "
-                "Cypher you ran; `verdict` `seen`. Do not decide ownership here. Emit "
-                "`claims` only."
-            ),
-            inject=("service", "inventory", "surface"),
-            emit=("claims",),
-        ),
-        SubProblem(
-            id="prior_insights",
-            name="prior modelling insights",
-            prompt=(
-                "PRIOR MODELLING INSIGHTS - read before you enrich. Call the `notes` "
-                "tool with command=\"read\" to surface what earlier units concluded "
-                "about this Service and its neighbours. Read this Service's own notes "
-                "(`unit` = the slug), notes whose body mentions the path nouns you found "
-                "in the scan, and any note naming a Service that may be missing. For "
-                "each relevant note emit one Claim: `subject` the note key; `assertion` "
-                "the recorded insight; `evidence` the note body excerpt; `verdict` "
-                "`reuse`, `avoid`, or `competing-owner`. A run with no prior notes is a "
-                "valid result - say so. Emit `claims` only."
-            ),
-            inject=("service", "surface_scan"),
-            emit=("claims",),
-            depends_on=("surface_scan",),
-        ),
-        SubProblem(
-            id="candidate_owners",
-            name="candidate owners",
-            prompt=(
-                "REASONING - candidate owners. Work through these stages out loud:\n"
-                + "\n".join(f"{i}. {s}" for i, s in enumerate(_REFLECT_STEPS[:3], 1))
-                + "\n\nFor each Endpoint, emit one Claim per candidate owner: `subject` "
-                "the Endpoint, `assertion` the matched evidence and the strongest "
-                "competing owner, `evidence` the exact path segment or parameter you "
-                "matched, `verdict` the owner you would choose and your confidence. "
-                "Emit `claims` only; do not propose deltas yet."
-            ),
-            inject=("inventory", "surface", "surface_scan", "prior_insights"),
-            emit=("claims",),
-            depends_on=("surface_scan", "prior_insights"),
-        ),
-        SubProblem(
-            id="assign",
-            name="assign",
-            prompt=(
-                "EXTRACTION - assign. " + _REFLECT_STEPS[3] + "\n\nFrom the claims "
-                "above, emit the `aggregates`: one per Endpoint and owning Service(s), "
-                "each with `confidence` (0..1) and `evidence_refs`. Emit one aggregate "
-                "for EACH genuine owner. Use only `service_slug`s from the inventory; an "
-                "invented owner names nothing. Leave services, systems, system_edges and "
-                "every data-modelling list EMPTY. Put the residue in `claims`: one Claim "
-                "per unplaced Endpoint (`verdict` `residue`)."
-            ),
-            inject=("inventory", "surface", "surface_scan", "candidate_owners"),
-            emit=("aggregates", "claims"),
-            depends_on=("candidate_owners",),
-        ),
-        SubProblem(
-            id="closure",
-            name="modelling closure",
-            prompt=(
-                "CLOSURE - write the modelling-closure note. Summarise what this unit "
-                "closed over: the `Endpoint`s you claimed as `AGGREGATES` (slug, "
-                "confidence, matched evidence) and EXPLICITLY the `Endpoint`s you did "
-                "NOT claim and why each was left in the stale pool. Call the `notes` "
-                "tool once: command=\"write\", action=\"append\", unit = the Service "
-                "slug, note_name=\"modelling-closure\", kind=\"assignment\", body = the "
-                "closure body. Then emit one Claim recording the closure: `subject` the "
-                "Service; `assertion` the claimed and unclaimed counts; `evidence` the "
-                "note key; `verdict` `closed`. Emit `claims` only."
-            ),
-            inject=("service", "surface_scan", "assign"),
-            emit=("claims",),
-            depends_on=("assign",),
-        ),
-    ),
-)
-
-
-def _system_prompt(variant: str | None = None) -> str:
-    """The STABLE half of the prompt (#34): the role verbatim and the judgment
-    discipline. Everything here is invariant across a run so the provider
-    prompt-cache prefix survives it; the volatile inventory and the Service unit ride
-    the user message instead. The reflection stages are NOT appended here: the
-    workflow's sub-problem prompts are their single carrier (T7 reconciliation),
-    so the stable prefix is byte-identical on every pass, reflect or create.
+def _system_prompt(mode: str = "create") -> str:
+    """The STABLE half of the prompt (#34): the role verbatim, the judgment
+    discipline, and under `reflect` the reflection protocol. Everything here is
+    invariant across a run so the provider prompt-cache prefix survives it; the
+    volatile inventory and chunk ride the user message instead.
 
     It deliberately does NOT load the shared legacy analyser skill. That skill is
     L0-oriented and addresses a generalist proposer: it instructs System modelling,
@@ -665,25 +320,20 @@ def _system_prompt(variant: str | None = None) -> str:
     from emitting. Carrying it here would put "emit aggregates only" and a
     WebPresentation worked example in one system message and let the model choose.
     Retiring it per-role is ticket #30; the ROLE-SPECIFIC prompt that replaces it for
-    the Assigner is the file `prompt_variant.prompt_path` selects
-    (`ANALYSIS_PROMPT_VARIANT`), gated on `ASSIGNER_PROMPT_CONFIG=skill`.
-
-    `variant` selects that HOW file explicitly: the L1-unit-first default for the
-    `service_sourced` assigner, `legacy` (`assigner.md`) for the streamed per-chunk
-    assigner (whose legacy workflow the L1-unit-first HOW would contradict). Absent,
-    it resolves from the `ANALYSIS_PROMPT_VARIANT` env as before."""
+    the Assigner is `prompts/assigner.md`, selected by
+    `ASSIGNER_PROMPT_CONFIG=skill`."""
     base = (
-        f"{_ROLE_VERBATIM}\n\n{_load_assigner_skill(variant)}"
+        f"{_ROLE_VERBATIM}\n\n{_load_assigner_skill()}"
         if _assigner_prompt_config() == "skill"
         else f"{_ROLE_VERBATIM}\n\n{_FEW_SHOTS}"
     )
-    return base
+    return base + _REFLECT_VERBATIM if mode == "reflect" else base
 
 
 _ROLE_VERBATIM = (
     "You are the cross-layer Assigner in an attack-surface analyser.\n"
     "ROLE - SURFACE ASSIGNMENT. You judge ONE thing: which EXISTING Service owns each "
-    "Endpoint you discover. You propose `aggregates` and nothing else.\n"
+    "Endpoint you are shown. You propose `aggregates` and nothing else.\n"
     # The contract is the PRIMARY routing evidence (#29). Before it existed the
     # inventory offered only slugs, so matching fell back to guessing what an opaque
     # slug (`byoc`, `agent-tool`) might mean - the assignment noise the withholding
@@ -712,8 +362,8 @@ _ROLE_VERBATIM = (
     # fire, because `_candidate_path` reads `identity["path"]` first.
     "REFERENCING AN ENDPOINT: put the endpoint in `l0.identity` as "
     "`{\"path\": \"/api/Users\", \"method\": \"GET\", "
-    "\"baseurl\": \"<the baseurl the tool returned>\"}`, with `l0.label` set to `Endpoint`. "
-    "Only reference endpoints you discovered through the tools; one you invent names nothing and "
+    "\"baseurl\": \"<the baseurl shown>\"}`, with `l0.label` set to `Endpoint`. "
+    "Only reference endpoints that appear above; one you invent names nothing and "
     "is discarded.\n"
     "Emit `aggregates` only. Leave services, systems, system_edges and every "
     "data-modelling list EMPTY - other proposers own those."
@@ -753,13 +403,11 @@ _FEW_SHOTS = (
 # The Assigner's system message is TWO layers, mirroring the Bootstrapper
 # (`bootstrap.py::_BOOTSTRAPPER_BASE_SYSTEM`): `_ROLE_VERBATIM` above is the WHAT
 # (identity, the aggregates-only output contract, the reference shape) and holds
-# unconditionally, while the HOW (the ownership-judgment discipline and its worked
-# examples) is the file `prompt_variant.prompt_path` selects - `assigner.md` for the
-# `legacy` variant, `assigner-batched-l1unit-first.md` for the default. Either way
-# it is operator-tunable without a code change. This is the per-role retirement of
-# the shared analyser skill promised by #30: that skill instructs System modelling
-# and data relationships this role is forbidden to emit, so a GENERALIST skill was
-# worse here than none.
+# unconditionally, while `prompts/assigner.md` is the HOW (the
+# ownership-judgment discipline and its worked examples), operator-tunable without a
+# code change. This is the per-role retirement of the shared analyser skill promised by
+# #30: that skill instructs System modelling and data relationships this role is
+# forbidden to emit, so a GENERALIST skill was worse here than none.
 #
 # There is no degraded stand-in: a missing prompt file is a defect and the read
 # below FAILS CLOSED (raises). Withholding is the only defence against the
@@ -767,27 +415,25 @@ _FEW_SHOTS = (
 # discriminating-evidence and calibration core must always be present - and every
 # HARD invariant survives regardless, because narrow / resolve / inventory / bar
 # are code, not prompt.
-_ASSIGNER_SKILLS: dict[str, str] = {}
+_ASSIGNER_SKILL: str | None = None
 
 
-def _load_assigner_skill(variant: str | None = None) -> str:
-    """The Assigner's ownership-judgment discipline, read from the file the active
-    prompt variant selects (`prompt_variant.prompt_path`): memoized in-process PER
-    VARIANT, FAIL-CLOSED on a missing file (raise).
+def _load_assigner_skill() -> str:
+    """The Assigner's ownership-judgment discipline, read directly from this
+    module's `prompts/assigner.md`: memoized in-process, FAIL-CLOSED on a
+    missing file (raise).
 
-    `variant` overrides the `ANALYSIS_PROMPT_VARIANT` env read; the streamed per-chunk
-    assigner passes `LEGACY` so its HOW matches its legacy workflow. Absent, the env
-    resolves as before (the `service_sourced` L1-unit-first default).
+    That memoization is what preserves the provider prompt-cache prefix: the file
+    is read ONCE per process, so `_system_prompt` returns byte-identical content
+    for every chunk of a run."""
+    global _ASSIGNER_SKILL
+    if _ASSIGNER_SKILL is None:
+        from pathlib import Path  # noqa: PLC0415
 
-    The per-variant memoization is what preserves the provider prompt-cache prefix:
-    within a variant the file is read ONCE per process, so `_system_prompt`
-    returns byte-identical content for every chunk of a run."""
-    variant = variant or resolve_prompt_variant()
-    cached = _ASSIGNER_SKILLS.get(variant)
-    if cached is None:
-        cached = prompt_path("assigner", variant).read_text(encoding="utf-8")
-        _ASSIGNER_SKILLS[variant] = cached
-    return cached
+        _ASSIGNER_SKILL = (
+            Path(__file__).resolve().parent / "prompts" / "assigner.md"
+        ).read_text(encoding="utf-8")
+    return _ASSIGNER_SKILL
 
 
 # The assignment prompt is the highest-variance surface in the analyser: the SAME
@@ -829,58 +475,44 @@ def _assigner_prompt_config() -> str:
     return cfg
 
 
+def _user_prompt(l0_slice: dict, inventory: dict | None) -> str:
+    """The VOLATILE half of the prompt (#34): the un-truncated L1 identities block
+    FIRST (the FR-INVENTORY discipline - identity reuse enforced at write time),
+    then the rendered chunk.
+
+    The inventory sits here rather than in the system prefix ON PURPOSE: it mutates
+    as the run proceeds, so hoisting it into the cacheable prefix would invalidate
+    that prefix at every step and buy nothing."""
+    from polymerhus.analysis.pod import _inventory_block, _slice_repr, overview_block
+
+    return (
+        f"{overview_block(inventory)}"
+        f"{_inventory_block(inventory)}\n\n{_slice_repr(l0_slice)}\n\n"
+        "TASK: assign each Endpoint above to the Service(s) that own it, each "
+        "aggregate carrying your `confidence` (0..1) and `evidence_refs`."
+    )
+
+
 def assign(
     chunk: Chunk,
     *,
     invoke_fn,
     inventory: dict | None = None,
     existing_slugs: frozenset[str] = frozenset(),
-    owned_endpoints=(),
-    unit_first: bool = True,
     bar: float = ASSIGN_CONFIDENCE_BAR,
+    mode: str = "create",
     run_id: str | None = None,
     tags: list | None = None,
-    memory=None,
-    project_id: str | None = None,
-    note_kind: str = "open_question",
 ) -> AssignmentOutcome:
     """The Assigner proposer body (#8): from a `Chunk` + the LIVE inventory, judge
     which existing Service owns each admitted Endpoint, then drop unknown owners and
     SELF-WITHHOLD below the bar, returning the narrowed batch plus its backlog.
 
-    The body runs ONE of two disciplines, selected by `unit_first`, then shapes the
-    extraction turn. The full admitted endpoint set is always built from the chunk for
-    the deterministic gates (`shape_proposal`), so a harvested Endpoint outside the
-    unit context is validated, never assumed.
-
-    - `unit_first=True` (default; `service_sourced`): the L1-unit-first `WORKFLOW`
-      (harvest_surface -> falsify_harvest -> prior_insights -> candidate_owners ->
-      assign -> closure). The surface is NOT pre-fed: the prompt carries the Service
-      unit (`_unit_context_block`) and the inventory, and the model discovers the
-      surface through the tools, driven by the unit's `service_contract`.
-    - `unit_first=False` (`streamed`): the legacy `WORKFLOW_LEGACY` (surface_scan ->
-      prior_insights -> candidate_owners -> assign -> closure). A job-keyed streamed
-      chunk carries NO Service contract, so the L0 slice (`_slice_repr`) and the
-      inventory ARE pre-fed as the `surface` artifact and the model scans them
-      directly. Selecting the L1-unit-first discipline here is the streamed-mode
-      regression: the job name (e.g. `katana`) resolves to a phantom Service,
-      `harvest_surface` derives no candidate strings, and the run writes zero
-      AGGREGATES - a wiring defect, never a model failure.
-
-    `owned_endpoints` is the Service's OWN already-aggregated surface (the per-Service
-    unit's `assets`), rendered into the unit card; it is context only, never a write
-    scope. `invoke_fn(messages, *, schema, system_prompt) -> AnalysisTurn | None` is
-    injected (unit-testable, no live LLM). Fail-open: a `None`/raising `invoke_fn`
-    (or a chunk with no Endpoint in it) degrades to an empty outcome. Pure given its
-    inputs.
-
-    `memory` / `project_id` / `note_kind` thread the per-unit backstop into
-    `run_workflow` (ADR D31): the global assign pass binds them so its turns'
-    unit records one note (an `assignment` note); the streamed per-chunk path
-    binds none, so it stays inert and byte-unbroken."""
-    from polymerhus.analysis.pod import _inventory_block, _slice_repr, surface_block
-    from polymerhus.analysis.proposer_turn import proposer_batch
-    from polymerhus.analysis.reasoning_workflow import run_workflow, to_delta_batch
+    `invoke_fn(messages) -> L1DeltaBatch | None` is injected (unit-testable, no live
+    LLM). Fail-open: a `None`/raising `invoke_fn` (or a chunk with no Endpoint in it)
+    degrades to an empty outcome. Pure given its inputs (a replayed chunk yields the
+    same outcome)."""
+    from langchain_core.messages import HumanMessage
 
     admitted = admit_for_role(chunk, ROLE)
     l0_slice = _chunk_slice(chunk)
@@ -891,70 +523,22 @@ def assign(
     # cache prefix is a byte-identical leading block on every chunk and the prompt
     # never accumulates in the checkpointed trail. The legacy one-shot seam prepends
     # it into its message list instead.
-    # The flavour: `service_sourced` runs the L1-unit-first discipline (unit-block
-    # prompt, contract-driven harvest); `streamed` runs the legacy slice-based one
-    # (L0 surface pre-fed, broad scan). The prompt variant and the workflow move
-    # TOGETHER - an L1-unit-first HOW over a slice-based workflow, or a legacy HOW over
-    # the harvest workflow, is the mismatch this guard fixes. Selected at the call
-    # site (the mode is known there), never sniffed from the chunk shape.
-    variant = resolve_prompt_variant() if unit_first else LEGACY
-    system_prompt = _system_prompt(variant)
-    workflow = WORKFLOW if unit_first else WORKFLOW_LEGACY
-    if unit_first:
-        # The volatile base sources the workflow injects verbatim, led by the observed
-        # L0 surface: the endpoint-first block the model now reads directly. `surface`
-        # is listed FIRST so the largest, most-shared block heads the request prefix -
-        # for `assign_services` the chunk carries the WHOLE settled surface, so this
-        # block is identical across every Service unit and the provider caches it once
-        # for the whole pass. The inventory block (identity reuse) and the Service UNIT
-        # context follow. `l0_slice`/`admitted` still feed `shape_proposal`.
-        base_artifacts = {
-            "surface": surface_block(admitted),
-            "inventory": _inventory_block(inventory),
-            "service": _unit_context_block(chunk, inventory, owned_endpoints),
-        }
-        halt_when = _halt_without_surface
-    else:
-        # The streamed flavour pre-feeds the L0 slice as `surface`, so the model scans
-        # the chunk's own endpoints instead of deriving candidates from an absent
-        # contract. Its unit card is the legacy `_service_block`, matching `assigner.md`.
-        base_artifacts = {
-            "inventory": _inventory_block(inventory),
-            "surface": _slice_repr(l0_slice),
-            "service": _service_block(chunk, inventory),
-        }
-        halt_when = None
-    # Per-batch memory: the chunk id scopes the whole chain to its own session (the
+    system_prompt = _system_prompt(mode)
+    # Per-batch memory: the chunk id scopes this turn to its own session (the
     # supervisor dispatches one chunk at a time), so the next chunk starts fresh.
     # The scope is inert for the one-shot legacy seam.
+    from polymerhus.analysis.proposer_turn import proposer_batch
+
     try:
         with proposer_batch(chunk.chunk_id):
-            run = run_workflow(workflow, invoke_fn=invoke_fn,
-                               system_prompt=system_prompt,
-                               base_artifacts=base_artifacts,
-                               halt_when=halt_when,
-                               unit_slug=chunk.chunk_id, memory=memory,
-                               project_id=project_id, run_id=run_id,
-                               note_kind=note_kind)
+            raw = invoke_fn([
+                HumanMessage(content=_user_prompt(l0_slice, inventory)),
+            ], schema=L1DeltaBatch, system_prompt=system_prompt)
     except Exception:  # LLM error -> fail-open to no assignment, never crash
-        logger.warning("assigner: workflow failed; degrading to empty outcome", exc_info=True)
+        logger.warning("assigner: invoke failed; degrading to empty outcome", exc_info=True)
         return AssignmentOutcome()
-    turn = run.turns.get("assign")
-    if turn is None:
-        if unit_first:
-            # The chain halted at `falsify_harvest` because nothing survived: the
-            # Service's surface is not mapped. Record it as a finding, not a failure.
-            # (The streamed flavour has no falsify turn, so this finding cannot fire.)
-            falsify = run.turns.get("falsify_harvest")
-            if falsify is not None and _survivor_count(falsify) == 0:
-                logger.info(
-                    "assigner chunk=%s no_surface: bounded harvest found nothing; "
-                    "halted before candidate_owners", chunk.chunk_id,
-                )
-                return AssignmentOutcome(no_surface=True)
-        # no parseable tool call after retries -> empty outcome
+    if raw is None:  # no parseable tool call after retries -> empty outcome
         return AssignmentOutcome()
-    raw = to_delta_batch(turn)
     outcome = shape_proposal(
         raw, existing_slugs=existing_slugs, endpoints=admitted, bar=bar,
     )
@@ -982,20 +566,15 @@ def assign(
 
 def default_invoke_fn():
     """The legacy stateless call, retained for callers/tests that want the one-shot
-    seam: the `analyser` role bound to the `AnalysisTurn` envelope via function-calling
-    through the #73 escalating retry (`invoke_role`); `None` = no parseable tool call,
-    which `assign` treats as a valid empty outcome. The role prompt is prepended into
-    the message list here, exactly where the stateful seam's `system_prompt=` binding
-    puts it.
-
-    It is NOT the global assign pass's production seam: that one is notes-bound
-    (`stateful_invoke_fn` / the per-Service proposer turn seam) so the
-    constant-tool-set contract holds (spec 3.2/5, ADR D26). This one-shot seam binds
-    no `notes` and stays for the contract tier."""
+    seam: the `analyser` role bound to `L1DeltaBatch` via function-calling through the
+    #73 escalating retry (`invoke_role`); `None` = no parseable tool call, which
+    `assign` treats as a valid empty outcome. The role prompt is prepended into the
+    message list here, exactly where the stateful seam's `system_prompt=` binding puts
+    it. Production now uses `stateful_invoke_fn` (below)."""
     from polymerhus.analysis.proposer_turn import prepend_prompt
-    from polymerhus.analysis.reasoning_workflow import AnalysisTurn
+    from polymerhus.app.llm.roles import invoke_role
 
-    def invoke(messages, *, schema=AnalysisTurn, system_prompt=None):
+    def invoke(messages, *, schema=L1DeltaBatch, system_prompt=None):
         from polymerhus.app.llm.roles import invoke_role
 
         return invoke_role("analyser", prepend_prompt(messages, system_prompt), schema=schema)
@@ -1007,9 +586,8 @@ def stateful_invoke_fn(run_id: str, checkpointer, project_id: str | None = None)
     """The STATEFUL Assigner call (#94): the `assigner` role runs as a session whose
     context PROGRESSES across the run's chunks, resuming from its own per-run checkpoint
     (`AnalysisSession(run_id, "assigner")`, distinct from every other agent's
-    thread). Structured output is the `AnalysisTurn` envelope (#44-safe). Same
-    `(messages, *, schema)` shape as the legacy seam, so `make_assigner_body` is
-    unchanged.
+    thread). Structured output is `L1DeltaBatch` (#44-safe). Same `(messages)` shape as
+    the legacy seam, so `make_assigner_body` is unchanged.
 
     The role prompt is bound ONCE as the agent's ephemeral leading block (the
     converged seam, `proposer_turn.session_invoke_fn`), so it is the stable prefix of
@@ -1054,12 +632,8 @@ def make_assigner_body(*, invoke_fn, inventory_fn, bar: float = ASSIGN_CONFIDENC
             invoke_fn=invoke_fn,
             inventory=inventory,
             existing_slugs=frozenset(inventory.get("services") or ()),
-            # The supervisor's chunk-fed path is the STREAMED mode: its chunks are
-            # recon-job-keyed, not Service-keyed, so it runs the legacy slice-based
-            # discipline (unit_first=False). The L1-unit-first discipline is reserved
-            # for the service-sourced passes (`assign_services` / `assign_global`).
-            unit_first=False,
             bar=bar,
+            mode=getattr(dispatch, "mode", "create"),
             run_id=run_id or None,
             tags=["analysis", getattr(dispatch, "role", "assigner")],
         )
@@ -1068,325 +642,3 @@ def make_assigner_body(*, invoke_fn, inventory_fn, bar: float = ASSIGN_CONFIDENC
         return outcome.batch
 
     return body
-
-
-# --- T4: the global assign pass over the settled surface ----------------------
-
-
-def _default_write_fn(batch: L1DeltaBatch, project_id: str) -> int:
-    """The global pass's curator collaborator: write `AGGREGATES` and nothing else.
-
-    It routes through `proposals_to_deltas` + `l1_curator.write_aggregates`, never
-    `l1_curate`: a writer that could create a Service would quietly restore the
-    minting path the Bootstrapper owns alone (ADR D37, "the pass no-mints")."""
-    from polymerhus.analysis import l1_curator
-    from polymerhus.analysis.analyser_types import proposals_to_deltas
-    from polymerhus.analysis.l1_types import Provenance
-
-    _, _, aggregates = proposals_to_deltas(batch, Provenance(job="analyser:global"))
-    return l1_curator.write_aggregates(aggregates, project_id)
-
-
-# The analysis run is `draining` for the whole of stage 1: the global pass runs
-# first, at the head of the run. Re-stamping that same live status is truthful and
-# idempotent (it never stamps `finished_at`), and the census rides the additive
-# `stats` JSONB merge (ADR D11).
-_CENSUS_STATUS = "draining"
-
-
-def _persist_census(run_id: str, census: AssignmentCensus) -> None:
-    """Merge the census onto the analysis run's `stats` (ADR D11)."""
-    from polymerhus.app.clients import pg
-
-    pg.set_analysis_run_status(
-        run_id, _CENSUS_STATUS, stats={"assignment_census": census.model_dump()})
-
-
-def _endpoint_key(identity: dict) -> tuple[str, str, str]:
-    """A stable key for an Endpoint identity, method-normalised: `_endpoint_index`
-    keys the pair on the UPPERCASED method while the canonical identity keeps the
-    original case, so the two must agree here."""
-    ident = identity or {}
-    return (
-        str(ident.get("path") or ""),
-        str(ident.get("method") or "").upper(),
-        str(ident.get("baseurl") or ""),
-    )
-
-
-def _stale_count(admitted, batch: L1DeltaBatch) -> int:
-    """The residual stale pool: the admitted Endpoints that received no kept
-    aggregate. Distinct keys, because several Services may own one Endpoint without
-    that counting as two covered elements."""
-    admitted_keys = {_endpoint_key(a.identity) for a in admitted}
-    kept_keys = {_endpoint_key(a.l0.identity) for a in batch.aggregates}
-    return len(admitted_keys - kept_keys)
-
-
-def _global_invoke_fn(run_id: str, project_id: str, checkpointer):
-    """The global assign pass's production turn seam: the SAME notes-bound
-    `session_invoke_fn` the per-Service proposers use (spec 3.2/5, ADR D26/D34),
-    with the `assigner` role, so both sub-problem turns bind `{AnalysisTurn,
-    notes}` and the tool set never toggles. Fail-open: an unbuildable seam falls
-    back to the legacy one-shot call, so a degraded pass writes nothing rather
-    than crashing the run."""
-    try:
-        return stateful_invoke_fn(run_id, checkpointer, project_id)
-    except Exception:  # noqa: BLE001 - fail-open to the notes-less one-shot seam
-        logger.warning("assigner: global pass seam unavailable; using the one-shot seam",
-                       exc_info=True)
-        return default_invoke_fn()
-
-
-async def assign_global(
-    project_id: str,
-    run_id: str,
-    *,
-    read_fn=None,
-    invoke_fn=None,
-    write_fn=None,
-    inventory_fn=None,
-    persist_fn=None,
-    memory=None,
-    checkpointer=None,
-    bar: float = ASSIGN_CONFIDENCE_BAR,
-) -> AssignmentCensus:
-    """THE GLOBAL ASSIGN PASS (T4, spec 4.2, ADR D7-D11): re-read the settled L0
-    surface and the Service inventory, run the Assigner's L1-unit-first workflow
-    (harvest_surface -> falsify_harvest -> prior_insights -> candidate_owners ->
-    assign -> closure) over the WHOLE surface, write `AGGREGATES` through the no-mint
-    writer, and return (and persist) the census.
-
-    A plain awaited call, NOT a supervisor dispatch (ADR D9): `AgentDispatch`
-    rejects a slice-less non-slice-less role, and the pass is a whole-graph single
-    step anyway. It assembles its own input from the graph - there is no pushed
-    chunk and no FIFO (ADR D1/D3); the surface is grouped into ONE chunk-shaped
-    slice so the SAME prompt and the SAME five shaping gates run unchanged (ADR
-    D7).
-
-    Every collaborator is injected, so the pass is unit-testable with no Neo4j and
-    no LLM:
-
-    - `read_fn(project_id) -> {nodes, links}`: the pod-shaped L0 read.
-    - `inventory_fn(project_id) -> inventory`: the live Service inventory.
-    - `invoke_fn(messages, *, schema, system_prompt)`: the Assigner's LLM seam.
-    - `write_fn(batch, project_id) -> int`: the no-mint `AGGREGATES` writer.
-    - `persist_fn(run_id, census)`: the `analysis_runs.stats` write.
-    - `memory` / `checkpointer`: the notes store and session checkpointer the
-      notes-bound default seam and the per-unit backstop use. Both are optional:
-      absent a `memory` store the backstop is inert, and absent a `checkpointer`
-      one is resolved from the session checkpointer.
-
-    The default `invoke_fn` is the SAME notes-bound proposer seam the per-Service
-    proposers use (spec 3.2/5, ADR D26), NOT the notes-less one-shot call, so
-    both sub-problem turns bind `{AnalysisTurn, notes}`. When a `memory` store is
-    bound, the pass's turns carry `unit_slug="global:<run_id>"` so `run_workflow`'s
-    backstop records one `assignment` note for the pass (ADR D31) - making the
-    `assignment` kind reachable in `service_sourced`.
-
-    Fail-open: a degraded or empty result yields a census with zero writes and
-    NEVER raises into the caller. Persistence is best-effort, exactly like the
-    lifecycle's own stats write."""
-    from polymerhus.analysis.l0_stream import read_l0_assets
-    from polymerhus.analysis.l1_inventory import read_l1_inventory
-
-    if invoke_fn is None:
-        if checkpointer is None:
-            try:
-                from polymerhus.app.llm.checkpoints import get_session_checkpointer
-
-                checkpointer = get_session_checkpointer()
-            except Exception:  # noqa: BLE001 - a null checkpointer degrades the seam
-                checkpointer = None
-        invoke_fn = _global_invoke_fn(run_id, project_id, checkpointer)
-    if write_fn is None:
-        write_fn = _default_write_fn
-    if inventory_fn is None:
-        inventory_fn = read_l1_inventory
-    if persist_fn is None:
-        persist_fn = _persist_census
-
-    census = AssignmentCensus()
-    try:
-        assets = read_l0_assets(project_id, read_fn=read_fn)
-        # ONE grouped slice for the whole surface: the session scope is the run's
-        # global pass, so the two sub-problems share a single session.
-        chunk = Chunk(chunk_id=f"global:{run_id}", assets=tuple(assets))
-        admitted = admit_for_role(chunk, ROLE)
-        inventory = inventory_fn(project_id) or {}
-        outcome = assign(
-            chunk,
-            invoke_fn=invoke_fn,
-            inventory=inventory,
-            existing_slugs=frozenset(inventory.get("services") or ()),
-            bar=bar,
-            run_id=run_id,
-            tags=["analysis", "assigner", "service_sourced", "global"],
-            memory=memory,
-            project_id=project_id,
-            note_kind="assignment",
-        )
-        written = 0
-        if outcome.batch.aggregates:  # an empty result writes NOTHING, not a null
-            written = int(write_fn(outcome.batch, project_id) or 0)
-        st = outcome.stats
-        census = AssignmentCensus(
-            # `admitted` is the surface READ, not the LLM's view of it: on a degraded
-            # turn (`st` all zero) reporting the surface is what says "there was work
-            # and none of it was done". The gate counts below stay the LLM's.
-            admitted=len(admitted),
-            proposed=st.proposed,
-            unresolvable=st.unresolvable,
-            out_of_inventory=st.out_of_inventory,
-            rescaled=st.rescaled,
-            withheld=st.withheld,
-            kept=st.kept,
-            written=written,
-            stale=_stale_count(admitted, outcome.batch),
-        )
-    except Exception:  # noqa: BLE001 - a degraded pass must never crash the run
-        logger.warning("assign_global: pass degraded; returning a zero census", exc_info=True)
-        census = AssignmentCensus()
-
-    try:
-        persist_fn(run_id, census)
-    except Exception:  # noqa: BLE001 - persistence is best-effort (mirrors lifecycle)
-        logger.warning("assign_global: census persistence failed", exc_info=True)
-
-    logger.info(
-        "assign_global run=%s admitted=%d kept=%d written=%d stale=%d "
-        "(unresolvable=%d out_of_inventory=%d withheld=%d)",
-        run_id, census.admitted, census.kept, census.written, census.stale,
-        census.unresolvable, census.out_of_inventory, census.withheld,
-    )
-    return census
-
-
-async def assign_services(
-    project_id: str,
-    run_id: str,
-    *,
-    read_fn=None,
-    invoke_fn=None,
-    write_fn=None,
-    inventory_fn=None,
-    persist_fn=None,
-    memory=None,
-    checkpointer=None,
-    units=None,
-    read_slices_fn=None,
-    bar: float = ASSIGN_CONFIDENCE_BAR,
-) -> AssignmentCensus:
-    """THE PER-SERVICE ASSIGN PASS (v2, spec 2.1, ADR D46): one awaited call per
-    Service unit.
-
-    The v2 consumption filter for the Assigner is EACH SERVICE (v2 spec section 2):
-    the assigner grounds ownership on the L0 surface THROUGH one Service at a time,
-    rather than grouping the whole surface into one pass. Each Service unit carries
-    the settled L0 surface as the candidate set the deterministic gates validate
-    against, and its OWN aggregated endpoints as the unit context; the model
-    DISCOVERS its relevant surface through the tools, driven by the contract. A
-    Service is judged with the FULL live inventory as `existing_slugs`, so it may
-    name ANY live Service as an owner - there is NO per-Service write filter. The
-    only surviving gate is the GLOBAL inventory validation: a slug not in the live
-    inventory is still dropped by `drop_out_of_inventory`.
-
-    It reuses the SAME `assign` body, prompt and five shaping gates as the global
-    pass - only the unit set and the unit context differ - and sums the per-Service
-    censuses into one. Fail-open per Service: a unit that raises contributes zero and
-    the next unit runs. Persistence mirrors `assign_global` (best-effort)."""
-    from polymerhus.analysis.l0_stream import read_l0_assets
-
-    if inventory_fn is None:
-        from polymerhus.analysis.l1_inventory import read_l1_inventory
-
-        inventory_fn = read_l1_inventory
-    if write_fn is None:
-        write_fn = _default_write_fn
-    if persist_fn is None:
-        persist_fn = _persist_census
-    if units is None:
-        from polymerhus.analysis.service_slice import (
-            RESIDUAL_UNIT,
-            build_service_slices,
-        )
-
-        all_units = build_service_slices(project_id, read_fn=read_slices_fn)
-        units = [u for u in all_units if u.chunk_id != RESIDUAL_UNIT]
-
-    if invoke_fn is None:
-        if checkpointer is None:
-            try:
-                from polymerhus.app.llm.checkpoints import get_session_checkpointer
-
-                checkpointer = get_session_checkpointer()
-            except Exception:  # noqa: BLE001 - a null checkpointer degrades the seam
-                checkpointer = None
-        invoke_fn = _global_invoke_fn(run_id, project_id, checkpointer)
-
-    totals = {
-        "admitted": 0, "proposed": 0, "unresolvable": 0, "out_of_inventory": 0,
-        "rescaled": 0, "withheld": 0, "kept": 0, "written": 0, "stale": 0,
-    }
-    try:
-        assets = tuple(read_l0_assets(project_id, read_fn=read_fn))
-        inventory = inventory_fn(project_id) or {}
-        all_slugs = frozenset(inventory.get("services") or ())
-    except Exception:  # noqa: BLE001 - a degraded read yields a zero census
-        logger.warning("assign_services: read failed; returning a zero census", exc_info=True)
-        units, assets, inventory, all_slugs = [], (), {}, frozenset()
-
-    for unit in units:
-        slug = str(unit.source_job or "").removeprefix("service:") or unit.chunk_id
-        if slug not in all_slugs:
-            continue
-        # The unit is the prompt anchor; the whole settled surface rides the chunk so
-        # the deterministic gates can validate a harvested Endpoint. `unit.assets` is
-        # the Service's OWN already-aggregated surface, fed as context. The FULL live
-        # inventory is the validation set, so no per-Service write filter remains.
-        chunk = Chunk(
-            chunk_id=unit.chunk_id, source_job=f"service:{slug}", assets=assets,
-        )
-        try:
-            admitted = admit_for_role(chunk, ROLE)
-            outcome = assign(
-                chunk,
-                invoke_fn=invoke_fn,
-                inventory=inventory,
-                existing_slugs=all_slugs,
-                owned_endpoints=tuple(unit.assets),
-                bar=bar,
-                run_id=run_id,
-                tags=["analysis", "assigner", "service_sourced", "per_service"],
-                memory=memory,
-                project_id=project_id,
-                note_kind="assignment",
-            )
-            written = 0
-            if outcome.batch.aggregates:  # an empty result writes NOTHING
-                written = int(write_fn(outcome.batch, project_id) or 0)
-            st = outcome.stats
-            totals["admitted"] += len(admitted)
-            totals["proposed"] += st.proposed
-            totals["unresolvable"] += st.unresolvable
-            totals["out_of_inventory"] += st.out_of_inventory
-            totals["rescaled"] += st.rescaled
-            totals["withheld"] += st.withheld
-            totals["kept"] += st.kept
-            totals["written"] += written
-            totals["stale"] += _stale_count(admitted, outcome.batch)
-        except Exception:  # noqa: BLE001 - fail-open per Service, the loop continues
-            logger.warning("assign_services: unit %s degraded; continuing", unit.chunk_id,
-                           exc_info=True)
-
-    census = AssignmentCensus(**totals)
-    try:
-        persist_fn(run_id, census)
-    except Exception:  # noqa: BLE001 - persistence is best-effort (mirrors lifecycle)
-        logger.warning("assign_services: census persistence failed", exc_info=True)
-
-    logger.info(
-        "assign_services run=%s units=%d kept=%d written=%d stale=%d",
-        run_id, len(units), census.kept, census.written, census.stale,
-    )
-    return census

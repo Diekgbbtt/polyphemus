@@ -20,8 +20,7 @@ from polymerhus.analysis.analyser_types import (
 )
 from polymerhus.analysis.chunking import Chunk
 from polymerhus.analysis.data_modeller import (
-    _live_services_block,
-    _service_unit_block,
+    DataPlaneOutcome,
     bind_fields_to_observed,
     drop_out_of_inventory_services,
     drop_unknown_relationship_kinds,
@@ -30,12 +29,12 @@ from polymerhus.analysis.data_modeller import (
     model_data,
     narrow_to_data,
     observed_vocabulary,
+    owning_services,
     resolve_surface_refs,
     shape_proposal,
     site_index,
 )
 from polymerhus.analysis.l1_types import L0Ref
-from polymerhus.analysis.reasoning_workflow import AnalysisTurn
 from polymerhus.recon.domain.types import AssetDelta
 
 
@@ -252,31 +251,46 @@ def test_shape_proposal_census_end_to_end():
     assert outcome.stats.reused_item_keys == 0
 
 
-# --- owning_services (candidate-owner join) -------------------------------------
-#
-# RETIRED (C-m1): the per-asset owner join is dead under the L1-unit-first survey -
-# the candidate list is no longer fed to the prompt, and the `candidate_services`
-# census counter had no other consumer. The function and its two unit tests are
-# removed with it; the live Service inventory (the `services` artifact) is the
-# surviving validation surface.
+# --- owning_services (candidate owner join, section 6) --------------------------
+
+def test_owning_services_parameter_joins_endpoint_and_baseurl():
+    admitted = [_param("ProductId", endpoint_path="/api/basket", baseurl="B")]
+    aggregations = [
+        {"slug": "cart", "labels": ["Endpoint"], "props": {"path": "/api/basket", "baseurl": "B"}},
+        {"slug": "other", "labels": ["Endpoint"], "props": {"path": "/api/other", "baseurl": "B"}},
+    ]
+    candidates = owning_services(admitted, aggregations)
+    ref = list(candidates)[0]
+    assert candidates[ref] == ["cart"]
+
+
+def test_owning_services_header_joins_baseurl_only():
+    admitted = [_header("X-Cart-Token", baseurl="B")]
+    aggregations = [
+        {"slug": "cart", "labels": ["Endpoint"], "props": {"path": "/api/basket", "baseurl": "B"}},
+        {"slug": "orders", "labels": ["Endpoint"], "props": {"path": "/api/orders", "baseurl": "B"}},
+    ]
+    candidates = owning_services(admitted, aggregations)
+    ref = list(candidates)[0]
+    assert candidates[ref] == ["cart", "orders"]  # coarse: every Service on that origin
+
 
 # --- make_data_modeller_body / model_data: valid-empty + degradation (C13/C14) --
 
 def test_model_data_scopes_its_invokes_by_the_chunk_batch():
     """Per-batch memory: the body sets the streamed chunk id as the session batch
-    around the WHOLE sub-problem chain (hypotheses -> data_extract -> flow_shape ->
-    flow_extract), so the chain shares one context and the next chunk starts fresh."""
+    around BOTH turns, so the reflection and extraction share one context and the
+    next chunk (a new batch) starts fresh."""
     from polymerhus.analysis.proposer_turn import current_batch
-    from polymerhus.analysis.reasoning_workflow import AnalysisTurn
 
     seen: list[str | None] = []
 
     def invoke_fn(messages, *, schema=None, system_prompt=None):
         seen.append(current_batch())
-        return AnalysisTurn()
+        return "reflected" if schema is None else L1DeltaBatch()
 
     model_data(_chunk([_param("a")]), invoke_fn=invoke_fn, inventory={}, aggregations=[])
-    assert seen == ["stream:0"] * 8
+    assert seen == ["stream:0", "stream:0"]
 
 
 def test_empty_admission_no_llm_call():
@@ -316,7 +330,7 @@ def test_degradation_inventory_read_raises():
         raise RuntimeError("neo4j down")
 
     body = make_data_modeller_body(
-        invoke_fn=lambda *a, **k: AnalysisTurn(),
+        invoke_fn=lambda *a, **k: L1DeltaBatch() if k.get("schema") else "reflected",
         inventory_fn=boom_inventory, aggregations_fn=lambda pid: [],
     )
     dispatch = type("D", (), {"phase": "A1", "chunk": _chunk([_param("a")])})()
@@ -329,7 +343,7 @@ def test_degradation_aggregation_read_raises():
         raise RuntimeError("neo4j down")
 
     body = make_data_modeller_body(
-        invoke_fn=lambda *a, **k: AnalysisTurn(),
+        invoke_fn=lambda *a, **k: L1DeltaBatch() if k.get("schema") else "reflected",
         inventory_fn=lambda pid: {}, aggregations_fn=boom_aggregations,
     )
     dispatch = type("D", (), {"phase": "A1", "chunk": _chunk([_param("a")])})()
@@ -348,282 +362,3 @@ def test_no_cypher_no_provenance():
     assert "MERGE" not in source
     for cls in (DataItemProposal, SurfacesAtProposal, DataFlowProposal, DataRelationshipProposal):
         assert "provenance" not in cls.model_fields
-
-
-# --- T3: the L1-unit-first survey, the unit feed, the global validation --------
-
-def test_workflow_injects_the_unit_not_a_prefed_surface():
-    """T3: no sub-problem is fed a whole streamed asset list. The old `surface`
-    (the admitted-asset render) and `candidates` sources are gone; the survey starts
-    from the `service` unit and the model discovers the rest through the tools."""
-    from polymerhus.analysis.data_modeller import WORKFLOW
-
-    by_id = {sp.id: sp for sp in WORKFLOW.sub_problems}
-    for sp in WORKFLOW.sub_problems:
-        assert "surface" not in sp.inject, sp.id
-        assert "candidates" not in sp.inject, sp.id
-    assert by_id["surface_survey"].inject == ("service", "inventory")
-    assert "services" in by_id["record_hypotheses"].inject
-    assert "services" in by_id["flow_extract"].inject
-    assert "services" in by_id["flow_shape"].inject
-    # the unit itself is the anchor every reasoning turn reads.
-    assert "service" in by_id["surface_survey"].inject
-    assert "service" in by_id["insight_recall"].inject
-
-
-def test_service_unit_block_carries_contract_and_aggregated_endpoints():
-    """T3: the `service` base artifact is the UNIT - slug, `service_contract`, and the
-    Endpoints the Service already aggregates - not an admitted-asset list."""
-    chunk = Chunk(
-        chunk_id="checkout", source_job="service:checkout",
-        assets=(_param("ProductId", endpoint_path="/orders", baseurl="B"),),
-    )
-    aggregations = [{
-        "slug": "checkout", "labels": ["Endpoint"],
-        "props": {"path": "/orders", "method": "POST", "url": "https://a/orders", "baseurl": "B"},
-    }]
-    inventory = {"service_contracts": {"checkout": "takes a basket to a paid order"}}
-    block = _service_unit_block(chunk, inventory, aggregations)
-    assert "SERVICE UNIT: checkout" in block
-    assert "takes a basket to a paid order" in block   # the service_contract
-    assert "POST /orders" in block                     # the aggregated endpoint
-    assert "B" in block
-
-
-def test_live_services_block_lists_the_full_inventory():
-    """T3: the `services` artifact is the FULL live Service inventory, so a flow may
-    name ANY live Service as producer/consumer - not only the unit's own slug."""
-    block = _live_services_block({
-        "services": ["checkout", "catalogue"],
-        "service_contracts": {"checkout": "takes a basket to a paid order"},
-    })
-    assert "checkout" in block
-    assert "catalogue" in block
-    assert "takes a basket to a paid order" in block
-
-
-def test_the_prefed_surface_stream_reaches_the_first_turn():
-    """Endpoint-first: the admitted Parameter IS rendered into the hoisted base block
-    of the FIRST turn, so the model reads the surface directly instead of having to
-    rediscover it through `graph_view`."""
-    captured = {}
-
-    def invoke(messages, *, schema=None, system_prompt=None):
-        content = messages[-1].content
-        if "SURVEY - ORIENT" in content:
-            captured["survey"] = content
-        return AnalysisTurn()
-
-    model_data(_chunk([_param("SURFACE_MARKER_PARAM")]), invoke_fn=invoke,
-               inventory={}, aggregations=[])
-    prompt = captured["survey"]
-    assert "SERVICE UNIT" in prompt
-    assert "SURFACE_MARKER_PARAM" in prompt   # the endpoint-first surface block
-
-
-def test_a_flow_naming_another_live_service_survives_and_a_ghost_is_dropped():
-    """T3: the FULL live inventory is the validation set, so a cross-Service flow
-    survives; a slug that names no live Service is still dropped (global gate kept)."""
-    def invoke(messages, *, schema=None, system_prompt=None):
-        content = messages[-1].content
-        if "TASK - EXTRACT THE FLOWS" in content:
-            return AnalysisTurn(data_flows=[
-                DataFlowProposal(service_slug="other-live-service", item_key="basket",
-                                 direction="consumes"),
-                DataFlowProposal(service_slug="ghost", item_key="basket", direction="produces"),
-            ])
-        if "TASK - EXTRACT THE DATA ITEMS" in content:
-            return AnalysisTurn(
-                data_items=[DataItemProposal(item_key="basket")],
-                surfaces_at=[SurfacesAtProposal(
-                    item_key="basket",
-                    l0=L0Ref(label="Parameter", identity={"name": "ProductId"}))],
-            )
-        return AnalysisTurn()
-
-    inventory = {"services": ["checkout", "other-live-service"]}
-    outcome = model_data(_chunk([_param("ProductId")]), invoke_fn=invoke,
-                         inventory=inventory, aggregations=[])
-    assert [f.service_slug for f in outcome.batch.data_flows] == ["other-live-service"]
-    assert outcome.stats.out_of_inventory_flows == 1   # the ghost is still dropped
-
-
-def test_hypothesise_verify_loop_and_observed_only_fields_still_hold():
-    """T3: the staged hypothesise/verify loop survives the rewrite, and an
-    unobserved field is still stripped by the observed-only gate."""
-    captured = {}
-
-    def invoke(messages, *, schema=None, system_prompt=None):
-        content = messages[-1].content
-        if "HYPOTHESISE" in content and "TASK - EXTRACT THE DATA ITEMS" not in content:
-            captured["hypotheses"] = content
-        if "TASK - EXTRACT THE DATA ITEMS" in content:
-            return AnalysisTurn(
-                data_items=[DataItemProposal(
-                    item_key="basket", props={"fields": ["ProductId", "price"]})],
-                surfaces_at=[SurfacesAtProposal(
-                    item_key="basket",
-                    l0=L0Ref(label="Parameter", identity={"name": "ProductId"}))],
-            )
-        return AnalysisTurn()
-
-    outcome = model_data(_chunk([_param("ProductId")]), invoke_fn=invoke,
-                         inventory={}, aggregations=[])
-    assert "VERIFY / FALSIFY" in captured["hypotheses"]
-    assert "no business record" in captured["hypotheses"]
-    # `price` was never observed, so it is stripped; `ProductId` survives.
-    assert outcome.batch.data_items[0].props["fields"] == ["ProductId"]
-
-
-# --- C-M1: the reference gate is fed the graph-discovered sites ----------------
-
-def test_graph_discovered_site_grounds_an_item_not_in_the_chunk():
-    """C-M1: a site the model discovers through `graph_view` (here injected via the
-    `read_sites_fn` live index) can ground an item even when the unit's chunk never
-    carried it - the gate is no longer bounded by the pre-fed admitted set. N1:
-    discovery is scoped to the unit's own BaseURLs, so the discovered site shares the
-    unit chunk's origin (a different name on the same BaseURL)."""
-    discovered = _param("graphOnlyField", endpoint_path="/discovered", baseurl="https://a")
-
-    def invoke(messages, *, schema=None, system_prompt=None):
-        content = messages[-1].content
-        if "TASK - EXTRACT THE DATA ITEMS" in content:
-            return AnalysisTurn(
-                data_items=[DataItemProposal(item_key="discovered_record")],
-                surfaces_at=[SurfacesAtProposal(
-                    item_key="discovered_record",
-                    l0=L0Ref(label="Parameter", identity={"name": "graphOnlyField"}))],
-            )
-        return AnalysisTurn()
-
-    outcome = model_data(
-        _chunk([_param("chunkOnlyField")]), invoke_fn=invoke,
-        inventory={}, aggregations=[],
-        read_sites_fn=lambda pid: [discovered], project_id="p1",
-    )
-    assert outcome.stats.kept_surfaces == 1
-    assert outcome.stats.kept_items == 1
-    assert outcome.batch.surfaces_at[0].l0.identity["name"] == "graphOnlyField"
-
-    # CONTROL: without the live index the graph-discovered site is unresolvable and
-    # the item it grounded is dropped - the defect C-M1 fixes.
-    control = model_data(_chunk([_param("chunkOnlyField")]), invoke_fn=invoke,
-                         inventory={}, aggregations=[])
-    assert control.stats.unresolvable_surfaces == 1
-    assert control.stats.kept_surfaces == 0
-
-
-# --- C-M2: a contracted Service with no pre-aggregated surface still discovers --
-
-def test_contracted_empty_service_dispatches_the_modeller():
-    """C-M2: no pre-aggregated assets is not a skip when the Service has a
-    contract - discovery is the point."""
-    calls = {"n": 0}
-
-    def invoke(messages, *, schema=None, system_prompt=None):
-        calls["n"] += 1
-        return AnalysisTurn()
-
-    chunk = Chunk(chunk_id="empty-svc", source_job="service:empty-svc", assets=())
-    model_data(chunk, invoke_fn=invoke,
-               inventory={"services": ["empty-svc"],
-                          "service_contracts": {"empty-svc": "does x"}})
-    assert calls["n"] == 8   # the whole chain ran; discovery found nothing -> empty
-
-
-def test_serviceless_empty_unit_stays_a_no_call_empty():
-    """C-M2: neither contract nor assets is a valid no-op with no LLM call."""
-    calls = {"n": 0}
-
-    def invoke(messages, *, schema=None, system_prompt=None):
-        calls["n"] += 1
-        return AnalysisTurn()
-
-    chunk = Chunk(chunk_id="orphan", source_job="service:orphan", assets=())
-    outcome = model_data(chunk, invoke_fn=invoke, inventory={})
-    assert calls["n"] == 0
-    assert outcome.batch == L1DeltaBatch()
-
-
-# --- N1: unit-scoped discovery and ambiguity-aware resolution -------------------
-
-def test_site_index_does_not_silently_reanchor_a_colliding_name():
-    """N1: a Parameter name colliding across two Services' endpoints must NOT be
-    first-wins re-anchored. The model's full identity (name + endpoint_path +
-    baseurl) decides; a bare ambiguous name is dropped, never rewritten to B's site
-    from A's (the reproduced C-M1 defect)."""
-    sites = site_index([
-        _param("id", endpoint_path="/serviceA/thing", baseurl="https://a"),
-        _param("id", endpoint_path="/serviceB/thing", baseurl="https://b"),
-    ])
-    full = L1DeltaBatch(surfaces_at=[
-        SurfacesAtProposal(item_key="k", l0=L0Ref(label="Parameter", identity={
-            "name": "id", "endpoint_path": "/serviceB/thing", "baseurl": "https://b"})),
-    ])
-    shaped, dropped = resolve_surface_refs(full, sites=sites)
-    assert dropped == 0
-    assert shaped.surfaces_at[0].l0.identity == {
-        "name": "id", "position": "query",
-        "endpoint_path": "/serviceB/thing", "baseurl": "https://b"}
-    # a bare name that maps to two distinct identities is ambiguous -> dropped.
-    bare = L1DeltaBatch(surfaces_at=[
-        SurfacesAtProposal(item_key="k", l0=L0Ref(label="Parameter", identity={"name": "id"})),
-    ])
-    shaped_bare, dropped_bare = resolve_surface_refs(bare, sites=sites)
-    assert shaped_bare.surfaces_at == []
-    assert dropped_bare == 1
-
-
-def test_site_index_full_identity_mismatch_is_dropped_not_reanchored():
-    """N1: a complete identity naming no known site is a HARD miss - the gate never
-    falls back to a bare-name match that would rewrite a differing path/baseurl."""
-    sites = site_index([_param("id", endpoint_path="/serviceA/thing", baseurl="https://a")])
-    batch = L1DeltaBatch(surfaces_at=[
-        SurfacesAtProposal(item_key="k", l0=L0Ref(label="Parameter", identity={
-            "name": "id", "endpoint_path": "/serviceB/thing", "baseurl": "https://b"})),
-    ])
-    shaped, dropped = resolve_surface_refs(batch, sites=sites)
-    assert shaped.surfaces_at == []
-    assert dropped == 1
-
-
-def test_graph_discovered_site_outside_the_unit_baseurls_is_not_grounded():
-    """N1: discovery is UNIT-SCOPED - a site on a different BaseURL than the unit's
-    chunk is out of scope and cannot ground an item, so one Service's `surfaces_at`
-    can never resolve to another Service's surface."""
-    other = _param("otherServiceField", endpoint_path="/serviceB/thing", baseurl="https://b")
-
-    def invoke(messages, *, schema=None, system_prompt=None):
-        content = messages[-1].content
-        if "TASK - EXTRACT THE DATA ITEMS" in content:
-            return AnalysisTurn(
-                data_items=[DataItemProposal(item_key="record")],
-                surfaces_at=[SurfacesAtProposal(
-                    item_key="record",
-                    l0=L0Ref(label="Parameter", identity={"name": "otherServiceField"}))],
-            )
-        return AnalysisTurn()
-
-    outcome = model_data(
-        _chunk([_param("unitField", endpoint_path="/serviceA/thing", baseurl="https://a")]),
-        invoke_fn=invoke, inventory={}, aggregations=[],
-        read_sites_fn=lambda pid: [other], project_id="p1",
-    )
-    assert outcome.stats.kept_surfaces == 0
-    assert outcome.stats.unresolvable_surfaces == 1
-
-
-# --- C-m6: the canonical modelling-closure note name ---------------------------
-
-def test_modelling_closure_note_name_is_canonical(monkeypatch):
-    """C-m6: the canonical key is `<unit>:modelling-closure`; the data-modeller
-    (code and both prompt files) must not use the underscore variant."""
-    monkeypatch.delenv("ANALYSIS_PROMPT_VARIANT", raising=False)
-    from polymerhus.analysis import data_modeller as dm
-
-    batched = dm._load_skill()
-    assert 'note_name="modelling-closure"' in batched
-    assert "modelling_closure" not in batched
-    closure = next(sp for sp in dm.WORKFLOW.sub_problems if sp.id == "closure_note")
-    assert 'note_name="modelling-closure"' in closure.prompt
-    assert "modelling_closure" not in closure.prompt

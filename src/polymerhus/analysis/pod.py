@@ -116,47 +116,16 @@ def _inventory_block(inventory: dict | None) -> str:
     )
 
 
-def surface_block(assets) -> str:
-    """Render the settled L0 surface for one unit as a deterministic, byte-stable
-    block for the FIRST human message of a proposer session.
+def overview_block(inventory: dict | None) -> str:
+    """The operator_kb `## Overview`, the macro framing of the whole solution,
+    rendered as the leading line of a proposer's human message (or "" when absent).
 
-    This is the "all endpoints in the first human message" block: the proposer reads
-    the unit's observed surface DIRECTLY, rather than having to rediscover it through
-    the tools. It is hoisted into the session's stable prefix by
-    `reasoning_workflow.run_workflow`, so the (large, stable) surface is cached once
-    and every later sub-problem turn re-reads it from the provider prefix cache
-    instead of paying for it again.
-
-    Determinism is load-bearing: rows are de-duplicated and sorted, so the block is
-    byte-identical for the same surface across runs (the property the prefix cache
-    rests on). An Endpoint renders as `METHOD /path (baseurl)`; any other asset
-    renders as `Type key=value, ...` over its sorted identity keys. An empty surface
-    renders an explicit `(none)`, never a blank line."""
-    rows: list[str] = []
-    for asset in assets or ():
-        ident = getattr(asset, "identity", None) or {}
-        typ = str(getattr(asset, "type", "") or "")
-        method = str(ident.get("method") or "").upper()
-        path = ident.get("path")
-        if typ == "Endpoint" and isinstance(path, str):
-            line = " ".join(part for part in (method, path) if part)
-            baseurl = ident.get("baseurl")
-            if baseurl:
-                line = f"{line} ({baseurl})"
-        else:
-            detail = ", ".join(f"{k}={v}" for k, v in sorted(ident.items()))
-            line = f"{typ} {detail}".strip()
-        rows.append(line)
-    unique = sorted(set(r for r in rows if r))
-    if not unique:
-        return "OBSERVED L0 SURFACE: (none)"
-    body = "\n".join(f"  - {row}" for row in unique)
-    return (
-        "OBSERVED L0 SURFACE - the unit's settled attack surface. Read this FIRST; "
-        "it is the ground truth the tools would otherwise have to rediscover. Do not "
-        "invent an asset that is not listed here.\n"
-        f"{body}"
-    )
+    The Overview is a SKELETON ATTRIBUTE (operator decision), not a graph node, so it
+    rides the inventory dict (`application_overview`). It frames what the target IS,
+    so a proposer reasons about a Service inside the application it lives in rather
+    than from a bare contract."""
+    overview = str((inventory or {}).get("application_overview") or "").strip()
+    return f"APPLICATION OVERVIEW: {overview}\n\n" if overview else ""
 
 
 # `_invoke_with_retry` was RETIRED (#73): structured analyser calls now go through

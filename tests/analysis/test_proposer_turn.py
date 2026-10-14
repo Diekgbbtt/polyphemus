@@ -176,8 +176,7 @@ def test_the_stateful_leg_carries_no_skill_surface(monkeypatch):
 
     tool_names = {getattr(t, "name", "") for t in bound.get("tools") or ()}
     assert "load_skill" not in tool_names, "no skill tool"
-    assert tool_names <= {"AnalysisTurn", "notes", "graph_view"}, (
-        "only the role's own structured-output tool plus the analysis notes tool")
+    assert tool_names <= {"L1DeltaBatch"}, "only the role's own structured-output tool"
     assert "context" not in bound or bound.get("context") is None
     assert "_skill_index" not in {type(m).__name__ for m in bound["middleware"] or ()}
     assert roles == ["mechanism_typist"], "one middleware per turn, for its OWN role"
@@ -448,22 +447,6 @@ def test_per_batch_scope_gives_each_chunk_a_fresh_thread(monkeypatch):
     assert "chunk 1 reflection" not in contents
 
 
-def test_per_batch_scope_closes_the_http_history_session(monkeypatch):
-    """The batch scope is ALSO the HTTP-history MCP session boundary: the unit's
-    first kali call opens one session and the scope's exit closes it, so a unit
-    carries one handshake and never leaks a connection into the next unit."""
-    from polymerhus.analysis.proposer_turn import proposer_batch
-
-    closed: list[int] = []
-    monkeypatch.setattr(
-        "polymerhus.app.clients.kali_http_history.close_unit_session",
-        lambda: closed.append(1),
-    )
-    with proposer_batch("chunk-1"):
-        pass
-    assert closed == [1]
-
-
 def test_no_batch_scope_keeps_the_run_role_thread(monkeypatch):
     """Back-compat: an unscoped invoke (the existing callers) keeps the documented
     `run:role` thread - the per-batch discriminator is additive, never a forced
@@ -486,7 +469,6 @@ class _ToolRecordingModel(BaseChatModel):
     def __init__(self):
         super().__init__()
         self._bound: list[tuple] = []
-        self._calls = 0
 
     def bind_tools(self, tools, **kwargs):
         self._bound.append((list(tools), dict(kwargs)))
@@ -498,12 +480,9 @@ class _ToolRecordingModel(BaseChatModel):
         content = getattr(last, "content", "")
         return isinstance(content, str) and "reflect" in content.lower()
 
-    def _tool_call(self):
-        # A unique id per call: a repeated tool-call id on one shared thread makes
-        # the agent re-enter the same call instead of terminating the turn.
-        self._calls += 1
-        return {"name": "AnalysisTurn", "args": {}, "id": f"call-{self._calls}",
-                "type": "tool_call"}
+    @staticmethod
+    def _tool_call():
+        return {"name": "L1DeltaBatch", "args": {}, "id": "call-1", "type": "tool_call"}
 
     def _generate(self, messages, stop=None, run_manager=None, **kwargs):
         if self._is_reflection(messages):
@@ -516,11 +495,10 @@ class _ToolRecordingModel(BaseChatModel):
         if self._is_reflection(messages):
             yield ChatGenerationChunk(message=AIMessageChunk(content="prose answer"))
         else:
-            call = self._tool_call()
             yield ChatGenerationChunk(message=AIMessageChunk(
                 content="",
-                tool_call_chunks=[{"name": "AnalysisTurn", "args": "{}",
-                                   "id": call["id"], "index": 0,
+                tool_call_chunks=[{"name": "L1DeltaBatch", "args": "{}",
+                                   "id": "call-1", "index": 0,
                                    "type": "tool_call_chunk"}],
             ))
 
@@ -550,15 +528,15 @@ def _force_voluntary_rung(monkeypatch):
     monkeypatch.setattr(S, "resolve_capability", lambda p, m: profile)
 
 
-def test_a_roles_tool_set_is_constant_across_its_turns(monkeypatch):
-    """Change 1, end to end through the REAL seam, on the new turn shape: every turn
-    of a role binds the SAME structured tool (`AnalysisTurn`) plus the analysis
-    `notes` tool, so the request shape - and the provider prefix - never toggles
-    across its sub-problems."""
+def test_a_roles_tool_set_is_constant_across_reflection_and_extraction(monkeypatch):
+    """Change 1, end to end through the REAL seam: the tool set bound on a role's
+    PROSE (reflection) turn is byte-identical to the one bound on its STRUCTURED
+    (extraction) turn, so the request shape - and the provider prefix - never
+    toggles. The prose turn still returns prose."""
     from langchain_core.utils.function_calling import convert_to_openai_tool
 
+    from polymerhus.analysis.analyser_types import L1DeltaBatch
     from polymerhus.analysis.proposer_turn import proposer_batch, session_invoke_fn
-    from polymerhus.analysis.reasoning_workflow import AnalysisTurn
 
     _force_voluntary_rung(monkeypatch)
     model = _ToolRecordingModel()
@@ -567,97 +545,27 @@ def test_a_roles_tool_set_is_constant_across_its_turns(monkeypatch):
     monkeypatch.setattr(
         "polymerhus.analysis.proposer_turn._role_prompt", lambda role_id: "PROMPT")
 
-    invoke = session_invoke_fn("data_modeller", "runshape", InMemorySaver(), project_id="proj-1")
+    invoke = session_invoke_fn("data_modeller", "runshape", InMemorySaver())
     with proposer_batch("c1"):
-        invoke([HumanMessage(content="record hypotheses")], schema=AnalysisTurn)
-        invoke([HumanMessage(content="data extract")], schema=AnalysisTurn)
-        invoke([HumanMessage(content="flow shape")], schema=AnalysisTurn)
-        invoke([HumanMessage(content="flow extract")], schema=AnalysisTurn)
+        prose = invoke([HumanMessage(content="reflection")], schema=None)
+        invoke([HumanMessage(content="extraction")], schema=L1DeltaBatch)
 
-    assert len(model._bound) == 4, "one bind per turn"
-    tool_sets = [tuple(t.name for t in tools) for tools, _ in model._bound]
-    # The set is constant across the chain (the cache rule): notes + the role's
-    # L0-grounding tools first, the structured tool (`AnalysisTurn`) last. The
-    # data-modeller additionally binds the HTTP-history read pair.
-    assert tool_sets[0][:2] == ("notes", "graph_view"), "notes + graph_view first"
-    assert tool_sets[0][-1] == "AnalysisTurn", "structured tool last"
-    assert all(s == tool_sets[0] for s in tool_sets), "the tool set never toggles"
+    assert prose == "prose answer", "the prose turn still returns prose"
+    assert len(model._bound) == 2, "one bind per turn"
+    (reflect_tools, _reflect_kwargs), (extract_tools, _extract_kwargs) = model._bound
+    assert reflect_tools, "the prose turn binds the structured tool"
+    assert [t.name for t in reflect_tools] == [t.name for t in extract_tools]
     # Byte-identical tool DEFINITIONS - what the provider's prefix cache sees.
-    first = model._bound[0][0]
-    for tools, _ in model._bound[1:]:
-        assert [convert_to_openai_tool(t) for t in tools] == [
-            convert_to_openai_tool(t) for t in first]
-
-
-def test_binding_notes_keeps_the_structured_method_constant(monkeypatch):
-    """ADR D34: a second bound tool changes the negotiation axis; the analysis
-    seam pins the structured negotiation to its PRE-notes no-tools axis, so the
-    second tool never flips the negotiated method. On the deployed voluntary rung
-    the axis still lands on ToolStrategy; on an unknown profile it still lands on
-    the json_schema rung (ProviderStrategy) - exactly as before `notes` was
-    bound."""
-    from langchain.agents.structured_output import ProviderStrategy, ToolStrategy
-
-    from polymerhus.analysis.proposer_turn import _prose_tools, _role_structured_schema
-    from polymerhus.analysis.reasoning_workflow import AnalysisTurn
-    from polymerhus.app.llm.session import structured_response_format
-
-    schema = _role_structured_schema("mechanism_typist")
-    assert schema is AnalysisTurn
-
-    # Unknown profile (no forced rung): the no-tools axis keeps the json_schema rung.
-    monkeypatch.setattr(
-        "polymerhus.app.llm.providers.resolve_role", lambda role: ("provider", "model"))
-    import polymerhus.app.llm.capability as cap
-    import polymerhus.app.llm.session as S
-    monkeypatch.setattr(cap, "resolve_capability", lambda p, m: None)
-    monkeypatch.setattr(S, "resolve_capability", lambda p, m: None)
-    assert isinstance(
-        structured_response_format("mechanism_typist", schema, tools_bound=False),
-        ProviderStrategy)
-
-    # Deployed voluntary rung: the same no-tools axis lands on ToolStrategy.
-    _force_voluntary_rung(monkeypatch)
-    assert isinstance(
-        structured_response_format("mechanism_typist", schema, tools_bound=False),
-        ToolStrategy)
-    # The prose turn binds the same final set the structured turn will bind:
-    # (notes, graph_view, http pair, AnalysisTurn) - the structured turn passes only
-    # notes and lets `response_format` append AnalysisTurn last. The mechanism-typist
-    # harvests a surface, so it binds the HTTP-history pair too (T1/T2).
-    prose_tools = _prose_tools("mechanism_typist", project_id="proj-1")
-    assert tuple(t.name for t in prose_tools) == (
-        "notes", "graph_view", "search_http_history", "get_http_artifact",
-        "AnalysisTurn")
-
-
-def test_a_prose_turn_binds_notes_too(monkeypatch):
-    """The notes tool is bound on a PROSE turn as well, so the tool set is
-    constant whether the role's turn is structured or free-text."""
-    _force_voluntary_rung(monkeypatch)
-    from polymerhus.analysis.proposer_turn import _prose_tools
-
-    names = tuple(t.name for t in _prose_tools("assigner", project_id="proj-1"))
-    assert names == ("notes", "graph_view", "search_http_history",
-                     "get_http_artifact", "AnalysisTurn")
-
-
-def test_the_assigners_bound_tool_set_includes_the_http_pair(monkeypatch):
-    """T1: the assigner's harvest queries paths, so it binds the HTTP-history pair
-    on every turn - the set matches the tools its rewritten workflow tells it to
-    call, and stays constant across the chain (the cache rule)."""
-    _force_voluntary_rung(monkeypatch)
-    from polymerhus.analysis.proposer_turn import _prose_tools
-
-    names = {t.name for t in _prose_tools("assigner", project_id="proj-1")}
-    assert {"search_http_history", "get_http_artifact"} <= names
+    assert [convert_to_openai_tool(t) for t in reflect_tools] == [
+        convert_to_openai_tool(t) for t in extract_tools]
 
 
 def test_the_constant_shape_covers_the_whole_mechanism_typist_chain(monkeypatch):
-    """The same rule over the typist's four-sub-problem chain: all four turns bind
-    the same tool set, so the prefix cache is shared across the whole chain."""
+    """The same rule over the typist's 3-call chain (P,S,S): all three turns bind
+    the same tool set, so the S,S pair keeps caching AND the P->S transition now
+    shares the shape too."""
+    from polymerhus.analysis.analyser_types import L1DeltaBatch
     from polymerhus.analysis.proposer_turn import proposer_batch, session_invoke_fn
-    from polymerhus.analysis.reasoning_workflow import AnalysisTurn
 
     _force_voluntary_rung(monkeypatch)
     model = _ToolRecordingModel()
@@ -668,45 +576,13 @@ def test_the_constant_shape_covers_the_whole_mechanism_typist_chain(monkeypatch)
 
     invoke = session_invoke_fn("mechanism_typist", "runshape", InMemorySaver())
     with proposer_batch("c1"):
-        invoke([HumanMessage(content="mechanism hypotheses")], schema=AnalysisTurn)
-        invoke([HumanMessage(content="page clusters")], schema=AnalysisTurn)
-        invoke([HumanMessage(content="systems extract")], schema=AnalysisTurn)
-        invoke([HumanMessage(content="link")], schema=AnalysisTurn)
+        invoke([HumanMessage(content="reflect")], schema=None)
+        invoke([HumanMessage(content="extract")], schema=L1DeltaBatch)
+        invoke([HumanMessage(content="link")], schema=L1DeltaBatch)
 
     tool_sets = [tuple(t.name for t in tools) for tools, _ in model._bound]
-    assert tool_sets == [tool_sets[0]] * 4, "the tool set never toggles across the chain"
+    assert tool_sets == [tool_sets[0]] * 3, "the tool set never toggles across the chain"
 
 
-def test_within_a_batch_the_reflection_user_is_the_shared_prefix(monkeypatch):
-    """Change 3: within ONE batch the reflection `user` message is the leading
-    trail message of the extraction request, carried once and never rebuilt. A new
-    chunk opens a FRESH thread, so the harness entities cannot accumulate run-long."""
-    from polymerhus.analysis.analyser_types import L1DeltaBatch
-    from polymerhus.analysis.proposer_turn import proposer_batch, session_invoke_fn
 
-    model = _RecordingModel()
-    monkeypatch.setattr(
-        "polymerhus.app.llm.session._default_model_factory", lambda role_id: model)
-    monkeypatch.setattr(
-        "polymerhus.analysis.proposer_turn._role_prompt", lambda role_id: "PROMPT")
-
-    saver = InMemorySaver()
-    invoke = session_invoke_fn("data_modeller", "runprefix", saver)
-    with proposer_batch("chunk-1"):
-        invoke([HumanMessage(content="reflection user")], schema=None)
-        invoke([HumanMessage(content="extraction user")], schema=L1DeltaBatch)
-    with proposer_batch("chunk-2"):
-        invoke([HumanMessage(content="chunk 2 reflection")], schema=None)
-
-    prose_request, extraction_request = model._seen[0], model._seen[1]
-    # The reflection `user` leads the extraction request: shared, not re-injected.
-    assert prose_request[1].content == "reflection user"
-    assert extraction_request[1].content == "reflection user"
-    assert sum(1 for m in extraction_request
-               if m.content == "reflection user") == 1, "carried once"
-    assert extraction_request[-1].content == "extraction user"
-    # The next chunk's request carries none of chunk 1's messages.
-    chunk_two = model._seen[-1]
-    assert chunk_two[1].content == "chunk 2 reflection"
-    assert all("reflection user" != getattr(m, "content", "") for m in chunk_two)
 

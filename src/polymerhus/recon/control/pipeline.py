@@ -397,22 +397,10 @@ async def run_pipeline(
     # reproduces today's blocking behaviour verbatim (the rollback path); `queued`
     # hands the pass to a per-run consumer so recon never waits on an LLM. The mode
     # is a settings flag, so this call site does not branch and rollback is a flip.
-    #
-    # The analysis MODE is read at this ONE seam (ADR D2). `service_sourced` fires
-    # the queued feed on its own (no `streaming_analysis`), pushes NO per-job chunk
-    # (ADR D1), and selects the service-sourced pass_fn; the terminal marker recon
-    # still enqueues in its `finally` is the only trigger.
     from polymerhus.analysis.feed import (
-        InlineAnalysisFeed, L0Chunk, get_or_create_feed, resolve_analysis_mode,
-        resolve_analysis_pass_fn, resolve_feed_mode,
+        InlineAnalysisFeed, L0Chunk, get_or_create_feed, resolve_feed_mode,
     )
-    analysis_mode = resolve_analysis_mode(settings)
-    service_sourced = analysis_mode == "service_sourced"
-    if pass_fn is None:
-        pass_fn = resolve_analysis_pass_fn(settings)
-    # service_sourced is only ever the decoupled queued feed (its terminal marker
-    # is the sole trigger); the inline rollback shape is never admissible for it.
-    _mode = "queued" if service_sourced else (feed_mode or resolve_feed_mode(settings))
+    _mode = feed_mode or resolve_feed_mode(settings)
     # #75: recon is the PRODUCER. For the `queued` (decoupled) mode it pushes onto
     # the run's per-run FIFO in the process-level registry - a feed that OUTLIVES
     # this task, so analysis can drain it independently. Recon starts the analysis
@@ -420,7 +408,7 @@ async def run_pipeline(
     # dispatch leaves the chunks for a later analysis-only dispatch. `inline` is the
     # coupled rollback path (analysis runs on this task), unchanged.
     feed = None
-    if streaming or service_sourced:
+    if streaming:
         if _mode == "inline":
             feed = InlineAnalysisFeed(project_id, run_id, pass_fn=pass_fn)
         else:
@@ -755,12 +743,7 @@ async def run_pipeline(
                 # and the terminal drain pass is cumulative, so any genuinely-new asset
                 # the reprofile probe incidentally mints is still observed by the next
                 # produced job's pass or the terminal drain pass.
-                # service_sourced (ADR D1): the pass re-reads the settled graph at
-                # the terminal marker, so a per-job payload push would be pure
-                # overhead - the terminal marker recon still enqueues in `finally`
-                # is the ONLY push.
-                if feed is not None and not service_sourced \
-                        and (produced_assets or produced_observations) \
+                if feed is not None and (produced_assets or produced_observations) \
                         and not job.endpoint_profiling:
                     chunk = L0Chunk(
                         project_id=project_id,

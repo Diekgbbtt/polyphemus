@@ -130,24 +130,13 @@ def _start_analysis_sync(project_id: str, run_id: str, pass_fn=None) -> str | No
                        run_id, exc_info=True)
 
     # The analysis-only dispatch (`POST /analysis`) does not carry the recon
-    # settings; read them once here for both the mode-selected pass_fn and the
-    # hunt-after-analysis policy. A combined dispatch already supplies the
-    # pass_fn (and the feed, if it exists, wins), but the policy still needs the
-    # read. Fail-open: an unreachable read degrades to the default pass and the
-    # automatic chain OFF.
+    # settings; read them once here for the hunt-after-analysis policy. Fail-open:
+    # an unreachable read degrades to the automatic chain OFF.
     try:
         settings = pg.load_settings(project_id)
     except Exception:  # noqa: BLE001
         settings = None
-    if pass_fn is None:
-        try:
-            from polymerhus.analysis.feed import resolve_analysis_pass_fn
-
-            pass_fn = resolve_analysis_pass_fn(settings)
-        except Exception:  # noqa: BLE001 - unresolvable mode degrades to the default pass
-            pass_fn = None
     hunt_after_analysis = resolve_hunt_after_analysis(settings)
-
     feed = get_or_create_feed(project_id, run_id, pass_fn=pass_fn).start()
 
     async def _supervise() -> None:

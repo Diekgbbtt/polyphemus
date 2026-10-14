@@ -1,15 +1,12 @@
-"""Contract predicates (integration tier) for the TechnicalSystem Analyser
-(`mechanism_typist`, agent spec #9) after the T2 reasoning-workflow rewrite.
+"""Contract predicates (integration tier) for the REWRITTEN TechnicalSystem Analyser
+(`mechanism_typist`, agent spec #9) - the GRILLED 3-call design.
 
-Mechanises N1-N11 of the build spec (§10) against the DECOMPOSED 4-sub-problem
-chain (mechanism_hypotheses -> page_clusters -> systems_extract -> link), every
-turn speaking the ONE structured envelope `AnalysisTurn`. The retired 3-call
-prompt helpers are gone; the tests exercise the workflow's own rendered prompts.
+Mechanises N1-N11 of the build spec (§10). Replaces the retired A.1a catalogue
+(the per-service-WebPresentation predicates M1-M9 are VOID - WebPresentation is Phase B).
 
-Injected `invoke_fn(messages, *, schema, system_prompt)` + injected reads: no
-live LLM/graph (mirrors `test_assigner_contracts`). Expected values come from
-the spec, never recomputed the way the code computes them. Verifier-gated; not
-selected by the tdd loop.
+Injected `invoke_fn(messages, *, schema)` + injected reads: no live LLM/graph
+(mirrors `test_assigner_contracts`). Expected values come from the spec, never
+recomputed the way the code computes them. Verifier-gated; not selected by the tdd loop.
 """
 import inspect
 
@@ -21,19 +18,14 @@ from polymerhus.analysis.analyser_types import (
 )
 from polymerhus.analysis.chunking import Chunk
 from polymerhus.analysis.mechanism_typist import (
-    WORKFLOW,
-    _defined_systems_block,
-    _linking_context,
+    _linking_prompt,
+    _reflection_prompt,
+    _systems_prompt,
     drop_unknown_vocabulary,
     mechanism_typist_body,
     narrow_to_typing,
     partition_services,
     type_mechanisms,
-)
-from polymerhus.analysis.reasoning_workflow import (
-    AnalysisTurn,
-    Claim,
-    render_turn,
 )
 from polymerhus.recon.domain.types import AssetDelta, Observation
 
@@ -43,43 +35,31 @@ _SYSTEMS_MARKER = "TASK - EXTRACT SYSTEMS"
 _LINKING_MARKER = "TASK - LINK SERVICES"
 
 
-def _turn(*, systems=(), edges=(), claims=False):
-    """An `AnalysisTurn` carrying the fields a sub-problem emits."""
-    return AnalysisTurn(
-        systems=list(systems),
-        system_edges=list(edges),
-        claims=[Claim(subject="asset", assertion="candidate", evidence="e",
-                      verdict="v")] if claims else [],
-    )
-
-
 class ScriptedInvoke:
-    """A fake `invoke_fn(messages, *, schema, system_prompt)` matching the real
-    seam. Routes by the SUB-PROBLEM (the prompt marker): a reasoning turn
-    (`prose=None` forces the first to exhaust), the systems-extraction turn, and
-    the linking turn. Records every (schema, prompt) call for order/degradation
-    predicates."""
+    """A fake `invoke_fn(messages, *, schema)` matching the real seam. Routes by the
+    STEP (not raw call count, since `bounded_retry` may re-call a step): schema=None
+    -> the reflection prose; the systems-extraction prompt -> `systems`; the linking
+    prompt -> `linking`. Passing `False` for a step forces it to exhaust (bounded_retry
+    returns None). Records every (schema, prompt) call for order/degradation predicates."""
 
     def __init__(self, *, prose="reflected: WAF + REST evidenced", systems=None, linking=None):
-        self.prose_none = prose is None
+        self.prose = prose
         self.systems_none = systems is False
         self.linking_none = linking is False
-        self.systems = AnalysisTurn() if systems in (None, False) else systems
-        self.linking = AnalysisTurn() if linking in (None, False) else linking
+        self.systems = L1DeltaBatch() if systems in (None, False) else systems
+        self.linking = L1DeltaBatch() if linking in (None, False) else linking
         self.calls: list[tuple] = []
 
     def __call__(self, messages, *, schema=None, system_prompt=None):
         prompt = messages[-1].content
         self.calls.append((schema, prompt))
-        assert schema is AnalysisTurn, "every turn speaks the one structured envelope"
+        if schema is None:
+            return self.prose
         if _SYSTEMS_MARKER in prompt:
             return None if self.systems_none else self.systems
         if _LINKING_MARKER in prompt:
             return None if self.linking_none else self.linking
-        # a reasoning sub-problem (mechanism_hypotheses / page_clusters)
-        if self.prose_none:
-            return None
-        return _turn(claims=True)
+        return None
 
     @property
     def schemas(self):
@@ -110,35 +90,15 @@ def _edge(slug, kind, rel):
     return SystemEdgeProposal(service_slug=slug, kind=kind, rel=rel)
 
 
-def _systems_workflow_prompt(inventory):
-    """The systems_extract sub-problem's rendered human message."""
-    return render_turn(WORKFLOW.sub_problems[5], {
-        "inventory": _defined_systems_block(inventory),
-        "vocabulary": "",
-    })
-
-
-def _linking_workflow_prompt(primary, secondary, owned, all_services=()):
-    """The link sub-problem's rendered human message."""
-    return render_turn(WORKFLOW.sub_problems[6], {
-        "candidates": _linking_context(primary, secondary, owned, all_services),
-    })
-
-
 # --- N1: narrow-to-typing -----------------------------------------------------
 
 def test_N1_narrow_to_typing_only():
     """The typist owns ONLY {systems, system_edges}; any stray service/aggregate/data
     a call leaks is dropped."""
     inv = ScriptedInvoke(
-        systems=_turn(systems=[_sys("WAF")],
-                      claims=False),
-        linking=_turn(edges=[_edge("checkout", "WAF", "FRONTED_BY")]),
-    )
-    # a leaked service on the systems turn is dropped by narrow_to_typing
-    inv.systems = AnalysisTurn(
-        systems=[_sys("WAF")],
-        services=[ServiceProposal(business_function_slug="leak")],
+        systems=L1DeltaBatch(systems=[_sys("WAF")],
+                             services=[ServiceProposal(business_function_slug="leak")]),
+        linking=L1DeltaBatch(system_edges=[_edge("checkout", "WAF", "FRONTED_BY")]),
     )
     out = type_mechanisms(_service_chunk(), invoke_fn=inv)
     assert [s.kind for s in out.systems] == ["WAF"]
@@ -156,36 +116,35 @@ def test_N1_narrow_pure_shaper_drops_non_typing():
     assert out.systems and out.system_edges
 
 
-# --- N2: the eight-call unit-first sequence in order --------------------------
+# --- N2: three-call sequence in order -----------------------------------------
 
-def test_N2_eight_call_unit_first_sequence_reasoning_then_extract_then_link():
-    inv = ScriptedInvoke(systems=_turn(systems=[_sys("WAF")]),
-                         linking=_turn(edges=[_edge("checkout", "WAF", "FRONTED_BY")]))
+def test_N2_three_call_sequence_reflection_then_extract_then_link():
+    inv = ScriptedInvoke(systems=L1DeltaBatch(systems=[_sys("WAF")]),
+                         linking=L1DeltaBatch(system_edges=[_edge("checkout", "WAF", "FRONTED_BY")]))
     type_mechanisms(_service_chunk(), invoke_fn=inv)
-    # orient -> harvest -> prior -> hypotheses -> clusters -> systems -> link -> closure
-    assert inv.schemas == [AnalysisTurn] * 8
-    assert _SYSTEMS_MARKER in inv.calls[5][1]
-    assert _LINKING_MARKER in inv.calls[6][1]
+    assert inv.schemas == [None, L1DeltaBatch, L1DeltaBatch]      # reflect -> extract -> link
+    assert _SYSTEMS_MARKER in inv.calls[1][1]
+    assert _LINKING_MARKER in inv.calls[2][1]
 
 
 # --- N3: reflection fail-closed -----------------------------------------------
 
 def test_N3_reflection_exhaustion_fails_closed():
-    """A None first reasoning turn (after bounded_retry) degrades the WHOLE step
-    to empty; the extraction/linking calls are NEVER made (fail-closed, not
-    soft)."""
+    """A None reflection (after bounded_retry) degrades the WHOLE step to empty; the
+    extraction/linking calls are NEVER made (fail-closed, not soft)."""
     inv = ScriptedInvoke(prose=None,
-                         systems=_turn(systems=[_sys("WAF")]),
-                         linking=_turn(edges=[_edge("x", "WAF", "FRONTED_BY")]))
+                         systems=L1DeltaBatch(systems=[_sys("WAF")]),
+                         linking=L1DeltaBatch(system_edges=[_edge("x", "WAF", "FRONTED_BY")]))
     out = type_mechanisms(_service_chunk(), invoke_fn=inv)
     assert out == L1DeltaBatch()                                  # empty
+    assert all(s is None for s in inv.schemas)                    # only reflection attempted
     assert not any(_SYSTEMS_MARKER in c[1] or _LINKING_MARKER in c[1] for c in inv.calls)
 
 
 # --- N4: soft pass-through for later steps ------------------------------------
 
 def test_N4_linking_exhaustion_keeps_systems_drops_edges():
-    inv = ScriptedInvoke(systems=_turn(systems=[_sys("WAF"), _sys("RESTApi")]),
+    inv = ScriptedInvoke(systems=L1DeltaBatch(systems=[_sys("WAF"), _sys("RESTApi")]),
                          linking=False)  # linking exhausts
     out = type_mechanisms(_service_chunk(), invoke_fn=inv)
     assert {s.kind for s in out.systems} == {"WAF", "RESTApi"}    # earlier step survives
@@ -193,7 +152,7 @@ def test_N4_linking_exhaustion_keeps_systems_drops_edges():
 
 
 def test_N4_systems_exhaustion_yields_no_systems_but_does_not_crash():
-    inv = ScriptedInvoke(systems=False, linking=_turn())   # systems exhausts, linking empty
+    inv = ScriptedInvoke(systems=False, linking=L1DeltaBatch())   # systems exhausts, linking empty
     out = type_mechanisms(_service_chunk(), invoke_fn=inv)
     assert out.systems == []                                      # degraded
     assert any(_LINKING_MARKER in c[1] for c in inv.calls)        # linking STILL attempted (soft, not fail-closed)
@@ -203,8 +162,8 @@ def test_N4_systems_exhaustion_yields_no_systems_but_does_not_crash():
 
 def test_N5_out_of_vocabulary_systems_and_edges_dropped_end_to_end():
     inv = ScriptedInvoke(
-        systems=_turn(systems=[_sys("RESTApi"), _sys("RenderingSystem_CSR_JSMap")]),  # 2nd is Phase-B-retired
-        linking=_turn(edges=[
+        systems=L1DeltaBatch(systems=[_sys("RESTApi"), _sys("RenderingSystem_CSR_JSMap")]),  # 2nd is Phase-B-retired
+        linking=L1DeltaBatch(system_edges=[
             _edge("x", "RESTApi", "EXPOSED_VIA"),
             _edge("x", "RESTApi", "RENDERED_BY"),     # deleted rel
             _edge("x", "BogusKind", "EXPOSED_VIA"),   # unknown kind
@@ -234,7 +193,7 @@ def test_N6_extract_prompt_shows_existing_description_and_demands_enrichment():
     description and DIRECT enrichment - else the model cannot compound."""
     inv = {"systems": ["AuthenticationMechanism"],
            "system_descriptions": {"AuthenticationMechanism": "Mints session cookies; no MFA seen."}}
-    prompt = _systems_workflow_prompt(inv)
+    prompt = _systems_prompt(inv)
     assert "Mints session cookies; no MFA seen." in prompt        # existing description shown
     assert "AuthenticationMechanism" in prompt                     # by its exact key
     assert "enrich" in prompt.lower()                              # enrichment directed
@@ -242,7 +201,7 @@ def test_N6_extract_prompt_shows_existing_description_and_demands_enrichment():
 
 
 def test_N6_extract_prompt_without_existing_systems_offers_no_extend_target():
-    prompt = _systems_workflow_prompt({"systems": [], "system_descriptions": {}})
+    prompt = _systems_prompt({"systems": [], "system_descriptions": {}})
     assert "(none yet)" in prompt                                  # nothing to extend -> mint fresh
 
 
@@ -263,19 +222,18 @@ def test_N7_partition_primary_secondary_and_asset_less_excluded():
 
 
 def test_N7_linking_prompt_prefers_primary_and_shows_their_assets():
-    prompt = _linking_workflow_prompt(
-        ["checkout"], ["search"], {"checkout": ["Endpoint:/a"]},
-        all_services=("checkout", "search", "profile"))
+    prompt = _linking_prompt(L1DeltaBatch(systems=[_sys("WAF")]),
+                             primary=["checkout"], secondary=["search"],
+                             owned={"checkout": ["Endpoint:/a"]}, inventory=None)
     assert "PRIMARY services" in prompt and "checkout" in prompt
     assert "Endpoint:/a" in prompt                               # the owned asset shown as evidence
-    assert "search" in prompt                                    # shared-surface listed
-    assert "profile" in prompt                                   # the FULL live inventory (no write scope)
-    assert "PRIORITY, not a restriction" in prompt               # primary is a hint, never a scope
+    assert "search" in prompt                                    # secondary listed
+    assert "prefer PRIMARY" in prompt
 
 
-# --- N8: observations feed reasoning ONLY -------------------------------------
+# --- N8: observations feed reflection ONLY ------------------------------------
 
-def test_N8_observations_feed_reasoning_not_extract_or_link():
+def test_N8_observations_feed_reflection_not_extract_or_link():
     marker = "SESSION_FIXATION_ADVERSARIAL_INSIGHT"
     obs = Observation(macro_kind="header_analysis", severity="info",
                       evidence="Set-Cookie: sid=..; missing HttpOnly", rationale=marker,
@@ -283,21 +241,19 @@ def test_N8_observations_feed_reasoning_not_extract_or_link():
                       source_job="triager", source_tool="triager")
     chunk = Chunk(chunk_id="c", source_job="katana", concern="service",
                   assets=(_endpoint("/a"),), observations=(obs,))
-    from polymerhus.analysis.mechanism_typist import _asset_observation_paragraphs
-
-    reflection = _asset_observation_paragraphs(chunk)
-    assert marker in reflection                                   # insight drives reasoning
+    reflection = _reflection_prompt(chunk, None)
+    assert marker in reflection                                   # insight drives reflection
     assert "/a" in reflection                                     # paired with its asset
-    # calls 3 & 4 see only the rendered digests, never the raw observation insight
-    assert marker not in _systems_workflow_prompt(None)
-    assert marker not in _linking_workflow_prompt([], [], {})
+    # calls 2 & 3 see only the prose digest, never the raw observation insight
+    assert marker not in _systems_prompt(None)
+    assert marker not in _linking_prompt(L1DeltaBatch(), [], [], {}, None)
 
 
 # --- N9: idempotent identity --------------------------------------------------
 
 def test_N9_idempotent_same_inputs_same_identities():
-    cfg = dict(systems=_turn(systems=[_sys("WAF"), _sys("RESTApi")]),
-               linking=_turn(edges=[_edge("checkout", "WAF", "FRONTED_BY")]))
+    cfg = dict(systems=L1DeltaBatch(systems=[_sys("WAF"), _sys("RESTApi")]),
+               linking=L1DeltaBatch(system_edges=[_edge("checkout", "WAF", "FRONTED_BY")]))
     a = type_mechanisms(_service_chunk(), invoke_fn=ScriptedInvoke(**cfg))
     b = type_mechanisms(_service_chunk(), invoke_fn=ScriptedInvoke(**cfg))
     assert {(s.kind, s.discriminator) for s in a.systems} == {(s.kind, s.discriminator) for s in b.systems}
@@ -344,8 +300,8 @@ def test_N11_body_routes_a1_and_reads_live_inventory_and_aggregations():
         seen["agg"] = pid
         return [{"slug": "checkout", "labels": ["Endpoint"], "props": {"path": "/a", "baseurl": "https://a"}}]
 
-    inv = ScriptedInvoke(systems=_turn(systems=[_sys("WAF")]),
-                         linking=_turn(edges=[_edge("checkout", "WAF", "FRONTED_BY")]))
+    inv = ScriptedInvoke(systems=L1DeltaBatch(systems=[_sys("WAF")]),
+                         linking=L1DeltaBatch(system_edges=[_edge("checkout", "WAF", "FRONTED_BY")]))
     out = mechanism_typist_body(_Dispatch("A1", _service_chunk()), {"project_id": "proj-1"},
                                 invoke_fn=inv, read_inventory=read_inventory, read_aggregations=read_aggregations)
     assert seen == {"inv": "proj-1", "agg": "proj-1"}             # LIVE reads, not a frozen snapshot

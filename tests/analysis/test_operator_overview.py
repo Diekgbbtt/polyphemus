@@ -6,7 +6,6 @@ Service's reasoning (the assigner's unit context).
 """
 from __future__ import annotations
 
-from polymerhus.analysis.assigner import _unit_context_block
 from polymerhus.analysis.chunking import Chunk
 from polymerhus.analysis.l1_inventory import read_l1_inventory
 from polymerhus.analysis.scaffold import parse_overview, scaffold_project
@@ -67,45 +66,47 @@ def test_read_l1_inventory_defaults_the_overview_to_empty():
     assert inv["application_overview"] == ""
 
 
-def test_unit_context_block_prepends_the_application_overview():
-    chunk = Chunk(chunk_id="checkout", source_job="service:checkout", assets=())
+def test_overview_block_prepends_the_application_overview():
+    from polymerhus.analysis.pod import overview_block
+
+    inv = {"application_overview": "A single web service for node-graph editing."}
+    assert overview_block(inv).startswith("APPLICATION OVERVIEW: A single web service")
+    assert overview_block(inv).endswith("\n\n")
+
+
+def test_overview_block_omits_the_framing_when_absent():
+    from polymerhus.analysis.pod import overview_block
+
+    assert overview_block({}) == ""
+    assert overview_block(None) == ""
+
+
+def test_assigner_user_prompt_is_framed_by_the_overview():
+    from polymerhus.analysis.assigner import _user_prompt
+
     inventory = {
         "service_contracts": {"checkout": "Take a basket to a paid order."},
         "application_overview": "A single web service for node-graph editing.",
     }
-    block = _unit_context_block(chunk, inventory, ())
-    assert block.startswith("APPLICATION OVERVIEW: A single web service")
-    assert "SERVICE UNIT: checkout" in block
+    prompt = _user_prompt({"nodes": [], "edges": []}, inventory)
+    assert prompt.startswith("APPLICATION OVERVIEW: A single web service")
 
 
-def test_unit_context_block_omits_the_framing_when_absent():
-    chunk = Chunk(chunk_id="checkout", source_job="service:checkout", assets=())
-    inventory = {"service_contracts": {"checkout": "X."}}
-    block = _unit_context_block(chunk, inventory, ())
-    assert block.startswith("SERVICE UNIT: checkout")
+def test_typist_reflection_prompt_is_framed_by_the_overview():
+    from polymerhus.analysis.mechanism_typist import _reflection_prompt
+
+    chunk = Chunk(chunk_id="katana_0", source_job="katana", assets=())
+    inventory = {"application_overview": "A single web service for node-graph editing."}
+    assert _reflection_prompt(chunk, inventory).startswith(
+        "APPLICATION OVERVIEW: A single web service"
+    )
 
 
-def test_mechanism_typist_unit_block_prepends_the_overview():
-    from polymerhus.analysis.mechanism_typist import _unit_block
+def test_data_modeller_reflection_prompt_is_framed_by_the_overview():
+    from polymerhus.analysis.data_modeller import _reflection_prompt
 
-    chunk = Chunk(chunk_id="checkout", source_job="service:checkout", assets=())
-    inventory = {
-        "service_contracts": {"checkout": "Take a basket to a paid order."},
-        "application_overview": "A single web service for node-graph editing.",
-    }
-    block = _unit_block(chunk, inventory=inventory)
-    assert block.startswith("APPLICATION OVERVIEW: A single web service")
-    assert "UNIT: checkout" in block
-
-
-def test_data_modeller_unit_block_prepends_the_overview():
-    from polymerhus.analysis.data_modeller import _service_unit_block
-
-    chunk = Chunk(chunk_id="checkout", source_job="service:checkout", assets=())
-    inventory = {
-        "service_contracts": {"checkout": "Take a basket to a paid order."},
-        "application_overview": "A single web service for node-graph editing.",
-    }
-    block = _service_unit_block(chunk, inventory)
-    assert block.startswith("APPLICATION OVERVIEW: A single web service")
-    assert "SERVICE UNIT: checkout" in block
+    chunk = Chunk(chunk_id="katana_0", source_job="katana", assets=())
+    inventory = {"application_overview": "A single web service for node-graph editing."}
+    assert _reflection_prompt(chunk, inventory, {}).startswith(
+        "APPLICATION OVERVIEW: A single web service"
+    )

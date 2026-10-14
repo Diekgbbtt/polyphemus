@@ -44,15 +44,3 @@ Technical Systems are ubiquitous across application domains, so these span *asse
 **Example 5 - EXTEND an existing System (compounding).** Currently-defined: `AuthenticationMechanism :: bearer-token auth`. New asset this batch: `/oauth/authorize` + `Set-Cookie: idp_session=…`. Observation: "OAuth authorize endpoint." Hypothesise: this EXTENDS the existing `AuthenticationMechanism` (not a new System) - an OAuth/IdP realm on the same mechanism. Verify: same mechanism, new realm. Type: reuse key `AuthenticationMechanism`, output the ENRICHED description "bearer-token auth AND an OAuth/IdP authorize flow; token issuance now spans two realms → confused-deputy surface"; link `AUTHENTICATED_BY` from the newly-touched service.
 
 **Example 6 - a role-gated response (define AuthorizationSystem, no deep pyramid).** Asset: `/admin/users` returns 403 for a normal principal. Observation: "role-gated admin surface." Hypothesise an authorization System overlaying the admin service. Verify: the 403 witnesses enforcement; do NOT reverse-engineer the role hierarchy (that is deep profiling, a later phase). Type: new `AuthorizationSystem`, description "role-gated admin surface; the gate itself is the boundary to probe"; link `AUTHORIZED_BY`. Stop at existence + linkage.
-
-## The workflow you run, in order
-
-You run seven sub-problems, one turn each; you may call tools in any of them.
-
-1. **Read the unit** (`unit_surface_read`). Call `graph_view` to enumerate the unit's Endpoints broadly, with no asset-name assumption; read the response evidence (`content_type`, `title`, `status_code`, `server`) and the triager Observations anchored to them.
-2. **Prior insights** (`prior_insights`). Read the `notes` store for this unit and for shared mechanism nouns; reuse what an earlier unit already characterised.
-3. **Mechanism hypotheses** (`mechanism_hypotheses`). ORIENT then HYPOTHESISE a candidate System kind per endpoint+observation.
-4. **Page clusters** (`page_clusters`). Group the navigable `text/html` pages by rendered similarity.
-5. **Systems extract** (`systems_extract`). VERIFY/FALSIFY, then emit the `systems` (define-new vs extend-existing, by exact key).
-6. **Link** (`link`). Emit the `system_edges`.
-7. **Closure** (`closure`). Write ONE modelling-closure note through `notes` (`command="write"`, `action="append"`, `note_name="modelling-closure"`, `kind="system"`) naming the Systems defined and extended and what you could not decide, then record it in a Claim.
