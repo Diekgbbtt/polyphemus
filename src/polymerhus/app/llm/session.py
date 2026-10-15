@@ -857,6 +857,21 @@ def stateful_turn(
             )
             if recovered is not None:
                 return recovered
+        # A6 runtime (2026-10-15): a tool-choice rejection is a REQUEST defect
+        # (the upstream refused the structured call), not the exhausted-
+        # generation signal `None` is for. The client layer already relaxes and
+        # replays on first sight; reaching this point means that replay did not
+        # engage (or failed again), and laundering the rejection into `None`
+        # would let a proposer record a clean empty batch for a turn that never
+        # ran. Re-raise so the failure stays visible - the pod-level wrapper is
+        # the fail-open boundary.
+        from polymerhus.app.llm.providers import is_tool_choice_rejection
+
+        if is_tool_choice_rejection(exc):
+            logger.error(
+                "stateful_turn %s hit a tool-choice rejection the client could "
+                "not relax (%s); re-raising", role_id, exc)
+            raise
         # FAIL-OPEN (the invariant the recon context owns, mirrored from the
         # one-shot `invoke_role` seam, which already degrades to None): a
         # structured-output PARSE failure must never kill a stateful turn. The
