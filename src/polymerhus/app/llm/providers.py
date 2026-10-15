@@ -611,6 +611,35 @@ def _is_forced_tool_choice(tool_choice) -> bool:
     return False
 
 
+# A6 runtime (2026-10-15): the wire-observed rejection the static rung cannot
+# always prevent. The relay's backends are heterogeneous, so a profile that
+# declares support (or an unset capability override, as in the local dev stack)
+# can still meet a backend that refuses a forced `tool_choice`. The captured
+# shape (local gateway, `opencode-go/deepseek-v4.1-flash`) is HTTP 400 with
+# `Thinking mode does not support this tool_choice` in the litellm-wrapped error
+# body. The markers are deliberately narrow - a 400 that NAMES tool_choice as
+# the refused field - so unrelated bad requests keep their own handling (see
+# docs/design/capability-adaptive-client-99-decisions.md, A6).
+_TOOL_CHOICE_REJECTION_MARKERS = (
+    "does not support this tool_choice",
+    "tool_choice is not supported",
+)
+
+
+def is_tool_choice_rejection(exc: BaseException) -> bool:
+    """Whether `exc` is the upstream's refusal of a forced `tool_choice` (A6 runtime)."""
+    status = getattr(exc, "status_code", None)
+    if status is None:
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+    if status != 400:
+        return False
+    text = str(exc).lower()
+    body = getattr(exc, "body", None)
+    if body is not None:
+        text = f"{text} {body}".lower()
+    return any(marker in text for marker in _TOOL_CHOICE_REJECTION_MARKERS)
+
+
 class ReasoningPreservingChatOpenAI(ChatOpenAI):
     """The T6 reasoning-replay seam (D11 items 3-5): a ChatOpenAI subclass
     that preserves the wire reasoning fields the pinned langchain-openai
@@ -643,6 +672,16 @@ class ReasoningPreservingChatOpenAI(ChatOpenAI):
     config drops extra fields) popped in `__init__`, so unrelaxed
     construction stays byte-identical.
 
+    The A6 runtime half (2026-10-15): a forced choice the static rung did not
+    relax (no declared constraint, a matcher that missed, or a backend that
+    refuses despite the profile) is still caught AT THIS CLIENT. The four wire
+    entry points (`_generate`/`_stream`/`_agenerate`/`_astream`) watch for the
+    relay's refusal (HTTP 400 naming `tool_choice`), flip this instance to
+    `"auto"` once, and replay the request - the deferred "automatic
+    wire-observation channel" of the A6 record, bounded to one replay per
+    instance so a rejection can never loop, and never surfacing upward to the
+    agentic layer.
+
     The subclass is the ticket-sanctioned role-construction path fix (D4
     additive: the seam lives in `app/llm`, no agent module touched). It is
     pinned to langchain-openai 1.3.x's internals (`_create_chat_result`,
@@ -652,6 +691,7 @@ class ReasoningPreservingChatOpenAI(ChatOpenAI):
 
     _relax_forced_tool_choice: bool = PrivateAttr(default=False)
     _relax_logged: bool = PrivateAttr(default=False)
+    _runtime_relaxed_tool_choice: bool = PrivateAttr(default=False)
 
     def __init__(self, *args, relax_forced_tool_choice: bool = False, **kwargs):
         super().__init__(*args, **kwargs)
@@ -677,6 +717,65 @@ class ReasoningPreservingChatOpenAI(ChatOpenAI):
                 # meaning when tools are bound.
                 tool_choice = "auto"
         return super().bind_tools(tools, tool_choice=tool_choice, **kwargs)
+
+    def _replay_after_tool_choice_rejection(self, exc: BaseException) -> bool:
+        """A6 runtime: adjust THIS client for a bounded replay, or decline.
+
+        True only when `exc` is the relay's refusal of a forced `tool_choice`
+        and this instance has not been relaxed yet. The flip is instance-scoped
+        (the agent's own client configuration), so every later request from the
+        agent sends `"auto"` and the rejection cannot recur. False = not a
+        choice refusal, or already relaxed - the caller re-raises, so a
+        rejection can never loop."""
+        if self._runtime_relaxed_tool_choice or not is_tool_choice_rejection(exc):
+            return False
+        self._runtime_relaxed_tool_choice = True
+        logger.warning(
+            "upstream refused a forced tool_choice (%s); relaxing this client to "
+            "'auto' and replaying the request once (A6 runtime)", exc)
+        return True
+
+    def _generate(self, *args, **kwargs):
+        try:
+            return super()._generate(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 - re-raised unless the A6 runtime case
+            if not self._replay_after_tool_choice_rejection(exc):
+                raise
+            return super()._generate(*args, **kwargs)
+
+    def _stream(self, *args, **kwargs):
+        # A replay is only safe before ANY chunk was yielded: a mid-stream
+        # failure must not duplicate output the caller already consumed.
+        started = False
+        try:
+            for chunk in super()._stream(*args, **kwargs):
+                started = True
+                yield chunk
+        except Exception as exc:  # noqa: BLE001
+            if started or not self._replay_after_tool_choice_rejection(exc):
+                raise
+            yield from super()._stream(*args, **kwargs)
+
+    async def _agenerate(self, *args, **kwargs):
+        try:
+            return await super()._agenerate(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 - re-raised unless the A6 runtime case
+            if not self._replay_after_tool_choice_rejection(exc):
+                raise
+            return await super()._agenerate(*args, **kwargs)
+
+    async def _astream(self, *args, **kwargs):
+        # Same pre-chunk-only replay rule as `_stream`.
+        started = False
+        try:
+            async for chunk in super()._astream(*args, **kwargs):
+                started = True
+                yield chunk
+        except Exception as exc:  # noqa: BLE001
+            if started or not self._replay_after_tool_choice_rejection(exc):
+                raise
+            async for chunk in super()._astream(*args, **kwargs):
+                yield chunk
 
     def _create_chat_result(self, response, generation_info=None):
         result = super()._create_chat_result(response, generation_info)
@@ -746,6 +845,13 @@ class ReasoningPreservingChatOpenAI(ChatOpenAI):
         # it. Never strips a non-empty binding (real crawl/hunting tools).
         if payload.get("tools") == []:
             payload.pop("tools")
+        # A6 runtime (2026-10-15): once the upstream refused a forced choice,
+        # every later request from this client is relaxed to "auto" - the
+        # rejection cannot recur, and the wire value stays uniform.
+        if self._runtime_relaxed_tool_choice and _is_forced_tool_choice(
+                payload.get("tool_choice")):
+            payload = dict(payload)
+            payload["tool_choice"] = "auto"
         messages = payload.get("messages")
         if not isinstance(messages, list):
             return payload
