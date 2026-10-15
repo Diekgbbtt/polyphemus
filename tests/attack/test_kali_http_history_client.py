@@ -2,6 +2,8 @@
 client (no live MCP)."""
 from __future__ import annotations
 
+import threading
+
 import pytest
 from anyio import ClosedResourceError
 
@@ -55,6 +57,67 @@ def test_session_replaced_when_the_unit_changes(fake_sessions, monkeypatch):
     assert first.closed
     assert second is not first
     assert len(fake_sessions.instances) == 2
+
+
+def test_parallel_calls_share_one_winner_and_never_kill_a_live_session(monkeypatch):
+    """A turn's tool calls run on worker threads. When several miss the cache
+    together they all open; the install is install-or-yield, so ONE winner lands,
+    every loser closes only its OWN surplus and reuses the winner. Pre-fix the
+    second install closed the winner's session out from under its caller - the
+    arm H `ClosedResourceError` that appeared in every assigner turn."""
+    instances, barrier = [], threading.Barrier(2)
+
+    class _ConcurrentSession:
+        def __init__(self, url):
+            self.closed = False
+            instances.append(self)
+            barrier.wait(timeout=10)   # hold BOTH opens open: both callers missed the cache
+
+        def call(self, name, args):
+            return {"summaries": []}
+
+        def close(self):
+            self.closed = True
+
+    monkeypatch.setattr(H, "_UnitSession", _ConcurrentSession)
+    monkeypatch.setattr(H, "_SESSION", None)
+    monkeypatch.setattr(H, "_SESSION_KEY", None)
+    got, errors = [], []
+
+    def worker():
+        try:
+            got.append(_session("p"))
+        except Exception as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker) for _ in range(2)]
+    [t.start() for t in threads]
+    [t.join() for t in threads]
+
+    assert not errors
+    assert len(instances) == 2, "both callers opened (a miss gives no cheaper way)"
+    assert len({id(s) for s in got}) == 1, "one session survives for the unit"
+    winner = got[0]
+    assert not winner.closed, "the winner's live session is never closed"
+    assert all(s.closed for s in instances if s is not winner), "the surplus closes"
+
+
+def test_the_unit_boundary_closes_the_session_and_the_next_unit_opens_fresh(fake_sessions):
+    """T2: `proposer_batch` is the unit scope - leaving it closes the MCP session
+    at the same boundary where the agent session is reset (reset, not torn
+    down). The next chunk then opens a fresh session instead of reusing a
+    closed one."""
+    from polymerhus.analysis.proposer_turn import proposer_batch
+
+    with proposer_batch("katana:0"):
+        opened = _session("p")
+        assert not opened.closed
+    assert opened.closed, "the unit's session closed at its boundary"
+
+    with proposer_batch("katana:1"):
+        assert _session("p") is not opened
+        assert len(fake_sessions.instances) == 2
+    assert fake_sessions.instances[1].closed
 
 
 def test_close_unit_session_closes_and_is_idempotent(fake_sessions):
@@ -142,6 +205,27 @@ def test_heal_gives_up_after_three_handshakes(fake_sessions, monkeypatch):
     out = default_http_search_fn("p", [], None, 50, None)
     assert out["error"] == "http_history_failed"
     assert H._SESSION is None, "nothing cached after an exhausted heal"
+
+
+def test_a_stale_heal_never_tears_down_a_fresh_session(fake_sessions, monkeypatch):
+    """Two calls die on the same dead session; the first heal installs a fresh
+    one. The second (stale) heal must find a DIFFERENT session under the key and
+    leave it alive. Pre-fix it tore down whatever sat under the key, so every
+    heal killed the replacement, which died, which healed again - the kill
+    cascade behind the arm H churn (268 handshakes in one analysis window)."""
+    monkeypatch.setattr(H, "_HEAL_BACKOFF_S", 0)
+    dead = _session("p")
+
+    H._heal_unit_session("p", dead)
+    fresh = H._SESSION
+    assert fresh is not dead
+    assert dead.closed, "the session the call actually used is torn down"
+    assert len(fake_sessions.instances) == 2, "one fresh handshake"
+
+    H._heal_unit_session("p", dead)  # the stale healer arrives late
+    assert H._SESSION is fresh, "the live replacement survives a stale heal"
+    assert not fresh.closed
+    assert len(fake_sessions.instances) == 2, "a stale heal spends no handshake"
 
 
 def test_non_transport_error_does_not_heal(fake_sessions):

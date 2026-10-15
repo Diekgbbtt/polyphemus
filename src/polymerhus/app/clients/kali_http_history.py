@@ -12,16 +12,18 @@ That pays a full handshake per call, and - bridged through an unbounded
 This module instead owns ONE background event loop for the process and keeps ONE
 MCP session per analysis unit on it:
 
-  * the unit's first HTTP call opens the session (that is the unit's singleton),
+  * the unit's first HTTP call opens the session (that is the unit's singleton;
+    a turn's parallel calls race the open, and all but the winner yield to it),
   * every later call of the unit reuses it (one handshake per unit, not per call),
   * the unit boundary closes it (`proposer_turn.proposer_batch`).
 
 A dead session heals HERE, silently, in the client layer (FM-D): a transport
-death (`ClosedResourceError`, a timeout, an `OSError`) tears the unit session
-down and re-handshakes (bounded retries, exponential backoff), installing the
-fresh session under the unit key - so one transport death costs exactly one
-call, never the rest of the unit. Healing carries no tool result and no model
-chatter; the failed call itself still degrades fail-open.
+death (`ClosedResourceError`, a timeout, an `OSError`) tears down the session
+the failing call USED (identity-checked, so a stale healer can never kill a
+fresh replacement) and re-handshakes (bounded retries, exponential backoff),
+installing the fresh session under the unit key - so one transport death costs
+exactly one call, never the rest of the unit. Healing carries no tool result
+and no model chatter; the failed call itself still degrades fail-open.
 
 Every wait is bounded - session open, tool call, and session close - and the
 client carries a streamable-HTTP read timeout, so no single failure can stall a
@@ -171,8 +173,17 @@ def _unit_key(project_id: str) -> tuple[Any, ...]:
 
 
 def _session(project_id: str) -> _UnitSession:
-    """The current unit's MCP session, opening it on first use and replacing the
-    prior unit's on a key change (the sequential analysis never holds two)."""
+    """The current unit's MCP session, opened on first use - install-or-yield.
+
+    Several tool calls of ONE turn can run in parallel (the agent executor runs
+    a turn's tool calls on worker threads) and can miss the cache together. The
+    open stays OUTSIDE the lock (the slow network path); the install re-checks
+    under it: the first same-key session to land wins, and every later opener
+    closes only its OWN surplus and returns the winner. A caller never closes a
+    same-key session it did not open - the pre-fix install retired whatever sat
+    under the key, so the winner's live session died under its own caller (the
+    arm H `ClosedResourceError`, in every assigner turn). A session under an OLD
+    key is the previous unit's, retired here."""
     global _SESSION, _SESSION_KEY
     from polymerhus.app.config import config
 
@@ -180,13 +191,18 @@ def _session(project_id: str) -> _UnitSession:
     with _SESSION_LOCK:
         if _SESSION is not None and _SESSION_KEY == key:
             return _SESSION
-    # The analysis is sequential (one unit at a time), so opening outside the lock
-    # is race-free in practice and keeps the lock off the slow network path.
     session = _UnitSession(config.KALI_MCP_URL)
     with _SESSION_LOCK:
-        previous, _SESSION, _SESSION_KEY = _SESSION, session, key
+        if _SESSION is not None and _SESSION_KEY == key:
+            yield_to, previous = _SESSION, None   # a sibling won the install
+        else:
+            yield_to, previous = None, _SESSION   # we install; the old key retires
+            _SESSION, _SESSION_KEY = session, key
     if previous is not None:
         previous.close()
+    if yield_to is not None:
+        session.close()                            # our surplus, never the winner
+        return yield_to
     return session
 
 
@@ -200,25 +216,36 @@ def close_unit_session() -> None:
         session.close()
 
 
-def _heal_unit_session(project_id: str) -> None:
-    """Tear down the unit's dead MCP session and re-handshake, installing the
-    fresh session under the unit key on success (FM-D).
+def _heal_unit_session(project_id: str, dead: Any) -> None:
+    """Tear down the session the failing call actually USED (`dead`) and
+    re-handshake, installing the fresh session under the unit key (FM-D).
+
+    Identity-checked: only `dead` is torn down, and only while it is still the
+    unit's cached session. A second healer from the same death - or one racing a
+    fresh install - finds a DIFFERENT session under the key and returns without
+    touching it; nothing cached under the key proceeds to the re-handshake (the
+    open itself failed, so there is nothing to tear down). Pre-fix the heal tore
+    down whatever sat under the key, so every heal killed the previous heal's
+    live replacement, which died, which healed again: the cascade behind the arm
+    H churn (268 handshakes in one analysis window).
 
     Up to `_HEAL_ATTEMPTS` handshakes with exponential backoff from
     `_HEAL_BACKOFF_S`; every attempt is bounded by `_MCP_OPEN_TIMEOUT_S`.
     Healing is silent client-layer work: it carries no tool result and no
-    model chatter. Compare-and-swap under the session lock: a concurrent
-    heal (or a fresh unit) that already installed a session wins, and the
-    loser closes its surplus instead of leaking it. When every attempt fails
-    nothing is cached, so the next call heals again."""
+    model chatter. Installing is install-or-yield under the session lock: a
+    concurrent fresh session wins, and the loser closes its surplus instead of
+    leaking it. When every attempt fails nothing is cached, so the next call
+    heals again."""
     global _SESSION, _SESSION_KEY
     from polymerhus.app.config import config
 
     key = _unit_key(project_id)
     with _SESSION_LOCK:
-        if _SESSION is not None and _SESSION_KEY != key:
+        cached = _SESSION
+        if cached is not None and _SESSION_KEY != key:
             return  # another unit owns the cache now; leave it alone
-        dead = _SESSION if _SESSION_KEY == key else None
+        if cached is not None and cached is not dead:
+            return  # a newer session already replaced the dead one; keep it alive
         _SESSION, _SESSION_KEY = None, None
     if dead is not None:
         dead.close()
@@ -239,13 +266,17 @@ def _heal_unit_session(project_id: str) -> None:
 
 
 def _call_tool(name: str, args: dict, project_id: str = "") -> dict:
+    session = None
     try:
-        return structured_payload(_session(project_id).call(name, args))
+        session = _session(project_id)
+        return structured_payload(session.call(name, args))
     except (ClosedResourceError, TimeoutError, OSError) as exc:
         # Transport death: heal the unit session (silent, client-layer only)
         # so the NEXT call proceeds on a live session; this call still
-        # degrades fail-open, never into the turn.
-        _heal_unit_session(project_id)
+        # degrades fail-open, never into the turn. `session` is the session
+        # this call USED (None when the open itself died): the heal is
+        # identity-checked, so a stale healer cannot kill a live replacement.
+        _heal_unit_session(project_id, session)
         return {"error": "http_history_failed",
                 "detail": f"{type(exc).__name__}: {exc}"}
     except Exception as exc:  # noqa: BLE001 - fail-open, never into the turn

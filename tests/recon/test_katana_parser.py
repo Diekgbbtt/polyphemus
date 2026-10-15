@@ -149,3 +149,20 @@ def test_katana_get_form_parameters_are_query_position():
     out = parse(line)
     params = {(d.identity["name"], d.identity["position"]) for d in out if d.type == "Parameter"}
     assert ("q", "query") in params
+
+
+def test_header_names_canonicalize_underscores_to_dashes():
+    """T3/E5 (`docs/experiments/typist-feed-quality-diagnosis.md`): a `Header`
+    anchors on `{name, baseurl}`, so one real header must have ONE identity across
+    tools. httpx `-irh` emits `content_type`; the shared canonical rule folds it
+    onto the wire form `content-type` katana emits, so both observations merge
+    instead of minting two L0 nodes."""
+    from polymerhus.recon.domain.parsers.katana_parser import parse
+    line = (
+        '{"request":{"endpoint":"https://h/page","method":"GET"},'
+        '"response":{"status_code":200,'
+        '"headers":{"Content_Type":"text/html","X_Request_Id":"abc"}}}\n'
+    )
+    out = parse(line)
+    names = {d.identity["name"] for d in out if d.type == "Header"}
+    assert names == {"content-type", "x-request-id"}

@@ -139,7 +139,7 @@ def test_AST_DEC_07_two_consecutive_passes_write_no_new_identities(project):
     _seed_l0(project, ["/orders/42", "/orders/43"])
     _seed_l1_service(project, "checkout")
 
-    def fake_llm(messages):
+    def fake_llm(messages, *, schema=None, system_prompt=None):
         # A deterministic proposal naming BOTH seeded Endpoints.
         return L1DeltaBatch(aggregates=[
             AggregatesProposal(

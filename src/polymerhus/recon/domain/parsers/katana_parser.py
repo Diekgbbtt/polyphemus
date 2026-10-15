@@ -18,6 +18,7 @@ Pure, deterministic, tolerant of malformed/missing-key lines - never raises.
 from urllib.parse import urljoin
 
 from polymerhus.recon.domain.noise_filter import classify_profile
+from polymerhus.recon.domain.parsers._headers import canonical_header_name
 from polymerhus.recon.domain.parsers._jsonlines import iter_json_dicts, safe_str
 from polymerhus.recon.domain.parsers._urls import url_to_deltas
 from polymerhus.recon.domain.types import AssetDelta, Edge
@@ -83,14 +84,19 @@ def parse(stdout: str) -> list[AssetDelta]:
             if response_headers:
                 # Same structural contract as httpx_parser: response headers
                 # carry direction="response" (observed surface, never replayed
-                # into requests - see the httpx_parser seam note).
+                # into requests - see the httpx_parser seam note). The canonical
+                # name rule is shared too (`_headers.py`), so a Header observed by
+                # katana and by httpx MERGEs onto one node.
                 for name, value in response_headers.items():
                     if not name or not isinstance(name, str):
+                        continue
+                    canonical = canonical_header_name(name)
+                    if not canonical:
                         continue
                     deltas.append(
                         AssetDelta(
                             type="Header",
-                            identity={"name": name.lower(), "baseurl": baseurl_identity["url"]},
+                            identity={"name": canonical, "baseurl": baseurl_identity["url"]},
                             props={"value": str(value), "direction": "response"},
                             edges=[
                                 Edge(

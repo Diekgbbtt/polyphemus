@@ -18,7 +18,7 @@ from polymerhus.analysis.chunking import (
     admit_for_role,
     chunks_for_job,
 )
-from polymerhus.recon.domain.types import AssetDelta, JobSpec, Observation
+from polymerhus.recon.domain.types import AssetDelta, Edge, JobSpec, Observation
 
 JOB = JobSpec(tool="katana", skill="crawl", command_template="t", produces=["BaseURL", "Endpoint"], consumes="BaseURL")
 BU = "https://a"
@@ -46,7 +46,7 @@ def test_C1_single_stream_no_concern_partition():
         _param("q"), _asset("Header", name="X-Api"), _asset("Secret", key="tok"),
         _asset("Subdomain", host="s.a"), _asset("Certificate", cn="a"),
     ]
-    chunks = chunks_for_job(JOB, assets, max_assets=100)
+    chunks = chunks_for_job(JOB, assets, target_assets=100)
     assert len(chunks) == 1
     (chunk,) = chunks
     assert chunk.chunk_id == "katana:0"          # no concern segment
@@ -75,20 +75,41 @@ def test_C3_parameter_streams_regardless_of_profile():
     assert {a.identity["name"] for a in chunk.assets} == {"q", "r"}
 
 
-# --- C5: D2 - every type is streamed, pre-HTTP included -----------------------
+# --- C5: REWRITTEN 2026-10-15 (stream hygiene) - the connectivity types do not stream
 
-def test_C5_prehttp_types_are_streamed():
-    assets = [_asset("Subdomain", host="s.a"), _asset("IP", addr="1.2.3.4"), _asset("Port", num="443")]
-    chunks = chunks_for_job(JOB, assets)
-    assert len(chunks) == 1
-    assert sorted(a.type for a in chunks[0].assets) == ["IP", "Port", "Subdomain"]
+# Supersedes the pre-2026-10-15 contract ("every type is streamed, pre-HTTP
+# included", #34 D8 - kept in git history). The operator decision
+# (`docs/design/plans/2026-10-15-streamed-pipeline-corrections.md`, T1) grounds on
+# the arm H read: Domain, IP, Port and Service streamed through this filter, but
+# the chunks they formed were not harmless. The assigner yielded no turn (it
+# admits Endpoint alone), while the typist typed mechanism noise off them - a
+# Domain chunk produced `RESTApi core-rest` plus singletons, and a port-scan chunk
+# produced `RESTApi polymerhus-agent` and `IntegrationSystem postgresql` from port
+# numbers. Those four types are the stream's connectivity scaffolding, not surface
+# a proposer acts on. L0 keeps them (the topology needs them) and the exclusion is
+# at the STREAM, not per-role: no proposer is handed one.
+
+def test_C5_connectivity_types_are_excluded_from_the_stream():
+    assets = [_asset("Subdomain", host="s.a"), _asset("IP", address="1.2.3.4"),
+              _asset("Port", number=443), _asset("Domain", name="a"),
+              _asset("Service", name="http", port="443"), _ep("/x")]
+    (chunk,) = chunks_for_job(JOB, assets)
+    assert {a.type for a in chunk.assets} == {"Subdomain", "Endpoint"}
+
+
+def test_C5b_only_connectivity_assets_queue_no_chunk():
+    """A delta of connectivity assets alone builds no chunk, so the pass schedules
+    no dispatch and no agent turn can be yielded from it."""
+    assets = [_asset("Domain", name="a"), _asset("IP", address="1.2.3.4"),
+              _asset("Port", number=443), _asset("Service", name="http")]
+    assert chunks_for_job(JOB, assets) == []
 
 
 # --- C6: ordering / overflow --------------------------------------------------
 
 def test_C6_overflow_ordered_tail_kept():
     assets = [_asset("Technology", name=f"t{i}") for i in range(250)]
-    chunks = chunks_for_job(JOB, assets, max_assets=100)
+    chunks = chunks_for_job(JOB, assets, target_assets=100)
     assert len(chunks) == 3
     assert [c.batch_index for c in chunks] == [0, 1, 2]
     assert all(c.batch_total == 3 for c in chunks)
@@ -252,3 +273,147 @@ def test_C28_baseurl_anchored_observation_rides_via_its_endpoints_parent():
     riding = [(o.anchor["type"], o.anchor["identity"]) for o in chunk.observations]
     assert ("BaseURL", {"url": BU}) in riding          # inherited from the endpoint's parent
     assert ("BaseURL", {"url": BU2}) not in riding      # unrelated BaseURL excluded
+
+
+# --- D1-D8 (2026-10-15, T3): the topology-cohesive family chunker --------------
+#
+# The diagnosis (`docs/experiments/typist-feed-quality-diagnosis.md`) showed the
+# positional 100-slice turning katana's per-transaction repeats into 12 chunks of
+# ~10 facts x10, ~144k chars each. The builder now: keeps the FIRST occurrence of
+# each (type, identity); groups the stream into topology families - a host's
+# metadata family (BaseURL + Headers + Technologies + Certificates + host-level
+# Secrets) and one endpoints family per (baseurl, content-class bucket)
+# (Endpoints + their Parameters + endpoint-anchored Secrets); and closes a chunk
+# once the accumulated families cross the SOFT target, so a family is atomic and
+# chunks follow the graph, never an array position.
+
+def _hdr(name, baseurl=BU):
+    return AssetDelta(type="Header", identity={"name": name, "baseurl": baseurl})
+
+
+def _tech(name, baseurl=BU):
+    return AssetDelta(
+        type="Technology", identity={"name": name, "version": ""},
+        edges=[Edge(rel="USES_TECHNOLOGY", dir="in", node_type="BaseURL",
+                    node_identity={"url": baseurl})],
+    )
+
+
+def _ep_ct(path, content_type, baseurl=BU):
+    return AssetDelta(
+        type="Endpoint", identity={"path": path, "method": "GET", "baseurl": baseurl},
+        props={"content_type": content_type},
+    )
+
+
+def _param_on(name, endpoint_path, baseurl=BU):
+    return AssetDelta(
+        type="Parameter",
+        identity={"name": name, "position": "query", "endpoint_path": endpoint_path,
+                  "baseurl": baseurl},
+    )
+
+
+def test_D1_identity_dedup_first_occurrence_wins():
+    """A crawled transaction re-emits its BaseURL, Headers and Technologies for
+    every request. The stream keeps the FIRST occurrence of each (type, identity)
+    and drops the repeats - the very asset object the first transaction streamed."""
+    first = _hdr("server")
+    assets = [first, *[_hdr("server") for _ in range(9)], _ep("/x"), _ep("/x")]
+    (chunk,) = chunks_for_job(JOB, assets)
+    assert len(chunk.assets) == 2
+    assert chunk.assets[0] is first
+    assert sum(1 for a in chunk.assets if a.type == "Header") == 1
+
+
+def test_D2_a_family_never_splits_and_the_chunk_closes_after_it():
+    """Families are atomic: the chunk closes once the families added so far cross
+    the soft target, never mid-family (the positional slice split at exactly 100)."""
+    host_a_meta = [_asset("BaseURL", url=BU)] + [_hdr(f"h{i}") for i in range(59)]
+    host_a_endpoints = [_ep(f"/p{i}") for i in range(60)]
+    host_b_meta = [_asset("BaseURL", url=BU2)] + [_hdr(f"b{i}", BU2) for i in range(59)]
+    chunks = chunks_for_job(JOB, host_a_meta + host_a_endpoints + host_b_meta,
+                            target_assets=100)
+    assert [len(c.assets) for c in chunks] == [120, 60]   # 60+60 crosses 100; the tail closes
+    assert {a.identity["path"] for a in chunks[0].assets if a.type == "Endpoint"} \
+        == {f"/p{i}" for i in range(60)}
+    assert all(a.type != "Endpoint" for a in chunks[1].assets)
+
+
+def test_D3_a_family_larger_than_the_target_goes_whole():
+    """No static cap: one bucket family of 150 Endpoints is ONE cohesive chunk,
+    not a 100+50 slice (cohesion wins over the target)."""
+    chunks = chunks_for_job(JOB, [_ep(f"/pg{i}") for i in range(150)], target_assets=100)
+    assert [len(c.assets) for c in chunks] == [150]
+
+
+def test_D4_endpoints_split_into_sub_buckets_by_content_class():
+    """Endpoints of one host split by what they SERVE (html / client-side code /
+    UI visuals / data / other), so a chunk is homogeneous in surface class."""
+    assets = [
+        _ep_ct("/", "text/html; charset=utf-8"),
+        _ep_ct("/app-widget", "application/javascript"),
+        _ep_ct("/logo.png", "image/png"),
+        _ep_ct("/config", "application/json"),
+        _ep_ct("/mystery", "application/octet-stream"),
+    ]
+    got = {a.identity["path"]: i
+           for i, c in enumerate(chunks_for_job(JOB, assets, target_assets=1))
+           for a in c.assets}
+    assert got == {"/": 0, "/app-widget": 1, "/logo.png": 2, "/config": 3, "/mystery": 4}
+    # a small surface still lands in ONE chunk: families never split for size
+    assert len(chunks_for_job(JOB, assets)) == 1
+
+
+def test_D5_parameters_ride_their_endpoints_bucket_parent_first():
+    chunks = chunks_for_job(JOB, [
+        _ep_ct("/page", "text/html"), _param_on("q", "/page"),
+        _ep_ct("/chunk", "application/javascript"), _param_on("v", "/chunk"),
+    ], target_assets=1)
+    assert len(chunks) == 2
+    assert [a.type for a in chunks[0].assets] == ["Endpoint", "Parameter"]   # parent first
+    assert chunks[0].assets[1].identity["name"] == "q"
+    assert [a.type for a in chunks[1].assets] == ["Endpoint", "Parameter"]
+    assert chunks[1].assets[1].identity["name"] == "v"
+
+
+def test_D6_katana_shaped_stream_collapses_to_one_cohesive_chunk():
+    """The arm H regression: 30 crawled transactions of one host, each re-emitting
+    the BaseURL, 8 response headers and one Technology, plus a gated `.js`
+    Endpoint. The positional builder produced 12 chunks of ~144k chars; the
+    family builder produces ONE chunk of the 10 unique assets."""
+    assets = []
+    for i in range(30):
+        assets.append(_asset("BaseURL", url=BU))
+        assets.append(_ep(f"/assets/chunk{i}.js"))
+        for name in ("content-type", "content-length", "date", "server", "etag",
+                     "cache-control", "expires", "connection"):
+            assets.append(_hdr(name))
+        assets.append(_tech("Nginx:1.31.6"))
+    (chunk,) = chunks_for_job(JOB, assets)
+    assert len(chunk.assets) == 10
+    assert chunk.assets[0].type == "BaseURL"      # the host anchor leads its family
+    assert {a.type for a in chunk.assets} == {"BaseURL", "Header", "Technology"}
+    assert sum(1 for a in chunk.assets if a.type == "Header") == 8
+
+
+def test_D7_unattached_assets_keep_their_own_family_and_still_stream():
+    """Fork-H: an asset whose identity carries no topology anchor keeps its own
+    singleton family - it is never withheld, only deduped."""
+    assets = [_asset("Subdomain", name="s.a"), _asset("Subdomain", name="s.a"), _ep("/x")]
+    (chunk,) = chunks_for_job(JOB, assets)
+    assert {a.type for a in chunk.assets} == {"Subdomain", "Endpoint"}
+    assert len(chunk.assets) == 2
+
+
+def test_D8_host_level_secret_rides_the_host_family_via_its_edge():
+    """jsluice Secrets carry no identity anchor; their inbound HAS_SECRET edge is
+    the topology signal. The asset rides its BaseURL's metadata family."""
+    secret = AssetDelta(
+        type="Secret", identity={"value_hash": "h1"},
+        edges=[Edge(rel="HAS_SECRET", dir="in", node_type="BaseURL",
+                    node_identity={"url": BU})],
+    )
+    (chunk,) = chunks_for_job(JOB, [_asset("BaseURL", url=BU), secret, _hdr("server")])
+    assert {a.type for a in chunk.assets} == {"BaseURL", "Secret", "Header"}
+    assert chunk.assets[0].type == "BaseURL"

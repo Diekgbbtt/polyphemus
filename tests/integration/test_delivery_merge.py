@@ -141,7 +141,7 @@ def test_redelivery_is_idempotent(session, project):
         counts = l1_curator.enrich(project, merge_fn=merge_fn, **enrich_deltas) if any(enrich_deltas.values()) else {}
         return AnalyserExport(services_written=sw, systems_written=syw, aggregates_written=aw, enrichment=counts)
 
-    def assigner_invoke(messages):
+    def assigner_invoke(messages, *, schema=None, system_prompt=None):
         return L1DeltaBatch(aggregates=[AggregatesProposal(
             service_slug=SLUG,
             l0=L0Ref(label="Endpoint", identity=dict(endpoint_id)),

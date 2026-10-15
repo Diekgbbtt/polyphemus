@@ -52,9 +52,12 @@ def test_malformed_line_skipped():
 
 def test_parse_emits_headers_with_baseurl_edge():
     # httpx `-irh` includes response headers under the `header` key (a map of
-    # already-lowercased name -> value). Each becomes a Header node keyed on
-    # {name, baseurl} with the value as a prop and an inbound HAS_HEADER edge
-    # from the BaseURL: (BaseURL)-[:HAS_HEADER]->(Header).
+    # lowercased name -> value; the marshaler emits UNDERSCORE keys - verified
+    # live 2026-10-15). Each becomes a Header node keyed on the CANONICAL
+    # {name, baseurl} (`_headers.canonical_header_name`: lowercase-with-dashes)
+    # with the value as a prop and an inbound HAS_HEADER edge from the BaseURL:
+    # (BaseURL)-[:HAS_HEADER]->(Header). The canonical rule is what makes an
+    # httpx `content_type` MERGE with katana's wire-form `content-type`.
     line = (
         '{"url":"https://h.example.com","status_code":200,'
         '"header":{"server":"nginx","content_type":"text/html","cf_ray":"abc123"}}\n'
@@ -63,7 +66,7 @@ def test_parse_emits_headers_with_baseurl_edge():
 
     headers = [d for d in deltas if d.type == "Header"]
     by_name = {d.identity["name"]: d for d in headers}
-    assert set(by_name) == {"server", "content_type", "cf_ray"}
+    assert set(by_name) == {"server", "content-type", "cf-ray"}
     assert by_name["server"].identity == {"name": "server", "baseurl": "https://h.example.com"}
     assert by_name["server"].props == {"value": "nginx", "direction": "response"}
     # Every minted Header is marked response-side: observed surface, never

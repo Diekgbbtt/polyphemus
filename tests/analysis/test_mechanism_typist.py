@@ -520,3 +520,40 @@ def test_the_typist_does_not_reembed_the_reflection_prose():
     for prompt in rec.prompts:
         assert "UNIQUE-PROSE-MARKER-xyzzy" not in prompt, (
             "the reflection prose must not be re-embedded into a later prompt")
+
+
+def test_repeated_identities_render_one_row_after_the_stream_collapse():
+    """T3 header aftercare, renderer side: the typist's prompt renders whatever the
+    chunk carries, and the family builder collapses per-transaction repeats, so N
+    identical Header observations render ONE row that keeps the owning baseurl -
+    not the N near-identical rows the arm H feed carried (every identity x10)."""
+    from polymerhus.analysis.chunking import chunks_for_job
+    from polymerhus.recon.domain.types import Edge, JobSpec
+
+    captured = {}
+
+    def invoke(messages, *, schema=None, system_prompt=None):
+        if schema is None:
+            captured["reflect"] = messages[-1].content
+        return "prose" if schema is None else L1DeltaBatch()
+
+    job = JobSpec(tool="katana", skill="crawl", command_template="t",
+                  produces=["BaseURL", "Endpoint"], consumes="BaseURL")
+    bu = "http://t-1fc05262.target"
+    assets = []
+    for _ in range(10):
+        assets.append(AssetDelta(type="BaseURL", identity={"url": bu}))
+        assets.append(AssetDelta(
+            type="Header", identity={"name": "server", "baseurl": bu},
+            props={"value": "nginx/1.31.6", "direction": "response"}))
+        assets.append(AssetDelta(
+            type="Technology", identity={"name": "Nginx:1.31.6", "version": ""},
+            edges=[Edge(rel="USES_TECHNOLOGY", dir="in", node_type="BaseURL",
+                        node_identity={"url": bu})]))
+    (chunk,) = chunks_for_job(job, assets)
+    type_mechanisms(chunk, invoke_fn=invoke)
+
+    reflect = captured["reflect"]
+    assert reflect.count("Header {'name': 'server'") == 1
+    assert reflect.count(f"BaseURL {{'url': '{bu}'}}") == 1
+    assert bu in reflect, "the row keeps the owning baseurl visible (the topology link)"
