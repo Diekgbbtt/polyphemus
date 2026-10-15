@@ -62,6 +62,21 @@ CHUNK_MAX_ASSETS = 100
 _NOISE_EXT = re.compile(r"\.(?:js|mjs|map|css)$", re.IGNORECASE)
 _NOISE_SEGMENTS = frozenset({"assets", "static"})
 
+# The CONNECTIVITY types are EXCLUDED from the stream for every downstream agent
+# (operator decision 2026-10-15: `docs/design/plans/2026-10-15-streamed-pipeline-corrections.md`
+# T1, grounded on the arm H read). `Domain` / `IP` / `Port` / `Service` are how the
+# target is REACHED, not surface an agent acts on - they are the topology's join
+# keys between names, addresses and listeners. Before this gate they streamed, and
+# the chunks they formed were not harmless: the assigner yielded no judgment on
+# them (it admits `Endpoint` alone) while the typist typed mechanisms OFF them - a
+# Domain chunk produced `RESTApi core-rest` plus singleton systems, and a port-scan
+# chunk produced `RESTApi polymerhus-agent` and `IntegrationSystem postgresql`
+# inferred from port numbers alone. Recon production stays untouched (L0 keeps the
+# topology); the exclusion is at the STREAM, not per-role: no proposer is handed
+# one. The list is deliberately NAMED: the `ADMIT_ALL` fork-H guarantee still holds
+# for every NEW type a future recon tool emits - only these four are withheld.
+_CONNECTIVITY_TYPES = frozenset({"Domain", "IP", "Port", "Service"})
+
 # The sentinel admitting EVERY asset type. Load-bearing, not a convenience: with
 # more than one allow-set an asset type no role names would be admitted by nobody
 # and so silently dropped, losing the increment-1 fork-H guarantee. The generalist
@@ -138,6 +153,13 @@ def is_noise_endpoint(asset: AssetDelta) -> bool:
     return bool(_NOISE_SEGMENTS.intersection(segments))
 
 
+def is_connectivity_asset(asset: AssetDelta) -> bool:
+    """True for a connectivity-scaffolding asset type (`Domain` / `IP` / `Port` /
+    `Service`): the type is kept in L0 - the topology's join keys - and never
+    streamed to any proposer (see `_CONNECTIVITY_TYPES` for the decision record)."""
+    return getattr(asset, "type", None) in _CONNECTIVITY_TYPES
+
+
 def _observations_for(assets: tuple[AssetDelta, ...], observations: list[Observation]) -> tuple[Observation, ...]:
     """The observations that belong to this chunk. An observation rides the chunk
     when its anchor is either an asset in the chunk OR the PARENT broad anchor of one
@@ -175,15 +197,16 @@ def chunks_for_job(
 ) -> list[Chunk]:
     """Stream a job's L0 delta into ONE ordered, size-bounded `Chunk` sequence
     (#13, reshaped by #34 D8, the profile gate removed by #48 section 6). EVERY
-    asset type is streamed; the consuming role narrows via `admit_for_role`.
-    Pure: the deltas are read by the caller and passed in. Total delivery
-    semantics: an empty delta -> []; a malformed asset is excluded (never
-    crashes); replay is deterministic (the `chunk_id` is a pure function of
-    source_job + batch_index)."""
+    asset type that survives the stream-hygiene gate is streamed (malformed
+    assets, noise Endpoints and the connectivity types never enter a chunk); the
+    consuming role then narrows via `admit_for_role`. Pure: the deltas are read by
+    the caller and passed in. Total delivery semantics: an empty delta -> []; a
+    malformed asset is excluded (never crashes); replay is deterministic (the
+    `chunk_id` is a pure function of source_job + batch_index)."""
     observations = observations or []
     source_job = job.tool if job is not None else ""
 
-    # 1. filter the stream (malformed assets, noise Endpoints).
+    # 1. filter the stream (malformed assets, noise Endpoints, connectivity types).
     items: list[AssetDelta] = []
     for asset in assets:
         try:
@@ -191,6 +214,8 @@ def chunks_for_job(
                 continue  # malformed: no type -> exclude, never crash
             if is_noise_endpoint(asset):
                 continue  # static asset path: kept in L0, never streamed to an agent
+            if is_connectivity_asset(asset):
+                continue  # Domain/IP/Port/Service: kept in L0, never streamed to an agent
             items.append(asset)
         except Exception:  # any malformed asset degrades to exclusion, not a crash
             logger.warning("chunking: skipped a malformed asset", exc_info=True)

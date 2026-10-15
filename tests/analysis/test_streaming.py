@@ -311,6 +311,28 @@ def test_analyse_chunked_threads_no_surface_reader_into_the_assigner_body(monkey
     assert captured == {}, "no surface reader reaches the assigner body"
 
 
+def test_analyse_chunked_connectivity_only_payload_schedules_no_dispatch():
+    """T1 (plan 2026-10-15): a pushed payload of connectivity assets only (Domain /
+    IP / Port / Service) builds NO chunk, so the pass enters no dispatch at all -
+    the queued-chunk-with-nothing-to-judge shape the arm H reads exposed. The
+    census still reports the pushed payload size honestly, and the drain claim
+    holds (`unprocessed_after=0`): every pushed asset was consumed by the filter."""
+    from polymerhus.analysis import supervisor
+    from polymerhus.analysis.feed import L0Chunk
+    from polymerhus.recon.domain.types import AssetDelta
+
+    chunk = L0Chunk(project_id="p", run_id="run1", assets=[
+        AssetDelta(type="IP", identity={"address": "1.2.3.4"}),
+        AssetDelta(type="Port", identity={"number": 443}),
+    ])
+    result = asyncio.run(supervisor.analyse_chunked(chunk, observe=False))
+    assert result.census.chunks_built == 0
+    assert result.census.dispatches_scheduled == 0
+    assert result.census.dispatches_entered == 0
+    assert result.census.l0_assets_read == 2       # the pushed payload, reported honestly
+    assert result.census.unprocessed_after == 0    # consumed by the filter, not dropped unread
+
+
 # NOTE (merge, #74): the regression test `test_analyse_chunked_incremental_key_...`
 # was DROPPED here. It pinned `_key`/`analysed_keys` - the cross-pass dedup machinery
 # #74 deletes from `analyse_chunked` (it now consumes exactly the pushed `L0Chunk`,

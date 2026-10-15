@@ -75,13 +75,34 @@ def test_C3_parameter_streams_regardless_of_profile():
     assert {a.identity["name"] for a in chunk.assets} == {"q", "r"}
 
 
-# --- C5: D2 - every type is streamed, pre-HTTP included -----------------------
+# --- C5: REWRITTEN 2026-10-15 (stream hygiene) - the connectivity types do not stream
 
-def test_C5_prehttp_types_are_streamed():
-    assets = [_asset("Subdomain", host="s.a"), _asset("IP", addr="1.2.3.4"), _asset("Port", num="443")]
-    chunks = chunks_for_job(JOB, assets)
-    assert len(chunks) == 1
-    assert sorted(a.type for a in chunks[0].assets) == ["IP", "Port", "Subdomain"]
+# Supersedes the pre-2026-10-15 contract ("every type is streamed, pre-HTTP
+# included", #34 D8 - kept in git history). The operator decision
+# (`docs/design/plans/2026-10-15-streamed-pipeline-corrections.md`, T1) grounds on
+# the arm H read: Domain, IP, Port and Service streamed through this filter, but
+# the chunks they formed were not harmless. The assigner yielded no turn (it
+# admits Endpoint alone), while the typist typed mechanism noise off them - a
+# Domain chunk produced `RESTApi core-rest` plus singletons, and a port-scan chunk
+# produced `RESTApi polymerhus-agent` and `IntegrationSystem postgresql` from port
+# numbers. Those four types are the stream's connectivity scaffolding, not surface
+# a proposer acts on. L0 keeps them (the topology needs them) and the exclusion is
+# at the STREAM, not per-role: no proposer is handed one.
+
+def test_C5_connectivity_types_are_excluded_from_the_stream():
+    assets = [_asset("Subdomain", host="s.a"), _asset("IP", address="1.2.3.4"),
+              _asset("Port", number=443), _asset("Domain", name="a"),
+              _asset("Service", name="http", port="443"), _ep("/x")]
+    (chunk,) = chunks_for_job(JOB, assets)
+    assert {a.type for a in chunk.assets} == {"Subdomain", "Endpoint"}
+
+
+def test_C5b_only_connectivity_assets_queue_no_chunk():
+    """A delta of connectivity assets alone builds no chunk, so the pass schedules
+    no dispatch and no agent turn can be yielded from it."""
+    assets = [_asset("Domain", name="a"), _asset("IP", address="1.2.3.4"),
+              _asset("Port", number=443), _asset("Service", name="http")]
+    assert chunks_for_job(JOB, assets) == []
 
 
 # --- C6: ordering / overflow --------------------------------------------------

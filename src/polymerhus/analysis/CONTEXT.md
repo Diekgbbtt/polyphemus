@@ -313,7 +313,7 @@ Correctness never depends on the model's formatting: an `l0.label` the model coi
 _Avoid_: analyser (the whole-model term).
 
 **Three "no edge is written" mechanisms** (named apart 2026-07-27, #34; a fourth added #48, 2026-07-30 - one word for all of them hid a decision never taken behind a decision taken and declined; two removed 2026-10-15):
-- **Gate** (input side): the element never reaches the agent, so no judgment is formed. The per-role admission set, and the stream-level noise gate (`is_noise_endpoint`: script/style/map bundles and `assets/`/`static/` paths never stream). (The httpx-profile delivery gate on the data path was REMOVED by #48, not merely retired as an instance of this mechanism - see "Chunk feeding" below.)
+- **Gate** (input side): the element never reaches the agent, so no judgment is formed. The per-role admission set, and the stream-level gate in `chunks_for_job` (`is_noise_endpoint`: script/style/map bundles and `assets/`/`static/` paths never stream; `is_connectivity_asset`: `Domain`/`IP`/`Port`/`Service` never stream - the 2026-10-15 arm-H decision, `docs/design/plans/2026-10-15-streamed-pipeline-corrections.md` T1). (The httpx-profile delivery gate on the data path was REMOVED by #48, not merely retired as an instance of this mechanism - see "Chunk feeding" below.)
 - **Narrow** (output side, structural): the agent may not emit a class of delta at all, whatever the model returned.
 - **Withhold** (output side, epistemic) - REMOVED 2026-10-15 with the confidence score (`docs/design/drop-aggregate-confidence.md`): the agent looked, judged, and declined below the bar. Assignment is admit-all now.
 - **Ground** (output side, epistemic; #48) - REMOVED 2026-10-15 with the data plane (`docs/design/drop-data-modeller.md`): the DataPlane Analyser's substitute for Withhold is gone with the analyser.
@@ -388,7 +388,7 @@ It carries only the L0 delta; all L1 context is re-derived LIVE at the proposer,
 _Avoid_: batch (a batch is the overflow unit, below), payload.
 
 **Role admission set** (`ROLE_ADMITS` / `admit_for_role`, #34 D2/D7 - the lever #15 called asset-type-driven agent scoping):
-Every asset type a recon job produces is STREAMED; each proposer role then narrows the stream to the types it can meaningfully consume.
+Every asset type a recon job produces is STREAMED unless a stream-level gate withholds it (noise Endpoints; the connectivity types `Domain`/`IP`/`Port`/`Service`); each proposer role then narrows the stream to the types it can meaningfully consume.
 `assigner` admits `Endpoint` alone; `mechanism_typist` holds the `ADMIT_ALL` sentinel.
 The sentinel is load-bearing, not shorthand: with two allow-sets an asset type no role names would be admitted by nobody and silently dropped, losing the fork-H guarantee, so the generalist role always catches a new recon tool's output.
 A role admitting nothing from a chunk yields an empty batch, which is a valid outcome rather than an error.
@@ -399,7 +399,7 @@ The two-way `service` / `data` partition fixed "which asset types matter" once a
 
 **Chunk-builder**:
 `chunks_for_job` - streams a job's `AssetDelta` list into ONE ordered sequence, size-bounded by batch-overflow.
-The stream-level noise gate (`is_noise_endpoint`) drops what no L1 judgment can use before batching: script/style/map bundles (`.js`, `.mjs`, `.map`, `.css`, case-insensitive, query/fragment stripped) and whole-segment `assets/`/`static/` paths; non-Endpoint assets found on those paths stay in the stream.
+The stream-level gates (`is_noise_endpoint`, `is_connectivity_asset`) drop what no L1 judgment can use before batching: script/style/map bundles (`.js`, `.mjs`, `.map`, `.css`, case-insensitive, query/fragment stripped) and whole-segment `assets/`/`static/` paths; non-Endpoint assets found on those paths stay in the stream. The connectivity types (`Domain`, `IP`, `Port`, `Service`) are how the target is REACHED, not surface an agent acts on: they stay in L0 (the topology's join keys) and never enter a chunk (2026-10-15, arm H: the assigner yielded no judgment on them while the typist typed mechanism noise off them).
 
 **Batch-overflow**:
 The sizing lever: a stream longer than the per-chunk asset budget splits into ordered chunks (`batch_index` / `batch_total`), the tail never dropped - replacing the retired silent 400-cap truncation.
