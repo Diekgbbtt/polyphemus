@@ -40,3 +40,14 @@ The test deletes `LLM_GATEWAY_BUDGET_*` env vars and expects minted virtual keys
 The gateway cost guard was DISABLED by default as the mitigation for `docs/tickets/gateway-cost-guard-mistracks-spend.md` (2026-10-12), so a default sync now mints keys WITHOUT budget windows and the old expectation is stale.
 The fix is a decision-aware rewrite: assert the disabled-by-default shape (no `budget_limits`), and keep a second case that sets the env vars and asserts the windows are provisioned and converge.
 Blocked-by-nature: this assertion encodes a product decision, so the operator should confirm the intended default before the test is rewritten.
+
+## Adjacent finding - the full-suite run also picks up three live-infrastructure tests
+
+Filed 2026-10-15 during the T3/T4 verification, when a bare `pytest tests --ignore=tests/e2e` run was used as the gate.
+
+- `tests/test_agent_health.py::test_agent_health_all_backends_ok` fails with a subprocess error without live agent backends.
+- `tests/test_stack_smoke.py::test_full_stack_comes_up_and_connects` fails with a subprocess error without the running compose stack.
+- `tests/test_steel_exec_live.py::test_live_run_uses_no_cloud_key` passed in isolation and failed inside the full run (`AssertionError`), so it is order- or environment-sensitive.
+
+None of the three carries a skip gate, so a full-suite run reports them as reds outside the verifier gate's scope.
+This is not caused by the streamed-pipeline corrections; it is noted so the next full-suite reader does not misattribute them.
