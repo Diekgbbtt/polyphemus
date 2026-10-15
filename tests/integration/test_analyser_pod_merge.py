@@ -74,7 +74,7 @@ SLUG = "product-introspection"
 
 
 def _assigner_invoke(endpoint_id):
-    def invoke(messages):
+    def invoke(messages, *, schema=None, system_prompt=None):
         return L1DeltaBatch(aggregates=[AggregatesProposal(
             service_slug=SLUG, evidence_refs=["obs:cat"],
             l0=L0Ref(label="Endpoint", identity=dict(endpoint_id)),
