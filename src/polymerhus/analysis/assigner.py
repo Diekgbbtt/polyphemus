@@ -54,7 +54,7 @@ class AssignmentStats(BaseModel):
 
     admitted: int = 0        # Endpoints this role was given
     proposed: int = 0        # aggregates the model returned
-    unresolvable: int = 0    # dropped: named no Endpoint in the known surface
+    unresolvable: int = 0    # dropped: named no Endpoint in this chunk's slice
     out_of_inventory: int = 0  # dropped: named no live Service
     kept: int = 0            # aggregates handed to the curator
 
@@ -156,9 +156,10 @@ def _candidate_path(l0) -> tuple[str | None, str]:
 
 
 def resolve_l0_refs(batch: L1DeltaBatch, *, endpoints) -> L1DeltaBatch:
-    """THE REFERENCE GATE: rewrite every aggregate's `l0` into the canonical
-    `Endpoint{path, method, baseurl}` form, and DROP any that names no Endpoint
-    in the KNOWN surface handed in.
+    """THE REFERENCE GATE (the out-of-scope filter, restored): rewrite every
+    aggregate's `l0` into the canonical `Endpoint{path, method, baseurl}`
+    form, and DROP any that names no Endpoint in THIS chunk's admitted
+    slice.
 
     The sole-writer MATCHes an L0 node by exact label + identity and refuses an
     unsafe label, so a reference the model formatted its own way is silently
@@ -168,13 +169,15 @@ def resolve_l0_refs(batch: L1DeltaBatch, *, endpoints) -> L1DeltaBatch:
     knows the label is `Endpoint` and holds the exact identities it streamed, so it
     repairs the reference here rather than instructing and hoping.
 
-    The handed surface is the chunk's slice UNION the settled project surface
-    (D-A4): the out-of-chunk write gate is dropped, so a reference the model
-    discovered through its adjacent-surface phase resolves like a chunk-local
-    one. Dropping an unmatchable reference is the same discipline as the
-    out-of-inventory gate: a reference to surface NOBODY knows is a reference to
-    nothing, not a weak judgment - its own chunk judges it when recon collects
-    it."""
+    The handed surface is the chunk's slice ONLY: a reference outside the
+    chunk is out of this turn's scope - a reference to nothing this judgment
+    may place - and drops as `unresolvable`, even when the settled project
+    surface holds it. Its own chunk judges it when recon collects it (the
+    D-A4 union is rolled back: the adjacent-surface phase that licensed
+    out-of-chunk discovery is gone with the `graph_view` binding). Dropping
+    an unmatchable reference is the same discipline as the out-of-inventory
+    gate: a reference to surface NOBODY knows is a reference to nothing."""
+
     by_pair, by_path = _endpoint_index(endpoints)
     kept = []
     for agg in batch.aggregates:
@@ -189,22 +192,21 @@ def resolve_l0_refs(batch: L1DeltaBatch, *, endpoints) -> L1DeltaBatch:
 
 
 def shape_proposal(
-    raw: L1DeltaBatch, *, existing_slugs: frozenset[str], endpoints=(), surface=(),
+    raw: L1DeltaBatch, *, existing_slugs: frozenset[str], endpoints=(),
 ) -> AssignmentOutcome:
     """Apply the Assigner's ordered shaping to a raw LLM proposal: narrow to
-    assignment-only, canonicalise the L0 references against the KNOWN surface,
-    then drop owners that do not exist (collecting the backlog). ADMIT-ALL: no
-    confidence gate follows the structural gates
+    assignment-only, canonicalise the L0 references against THIS chunk's
+    admitted slice, then drop owners that do not exist (collecting the
+    backlog). ADMIT-ALL: no confidence gate follows the structural gates
     (`docs/design/drop-aggregate-confidence.md`).
 
-    `endpoints` is the chunk's admitted slice; `surface` is the settled project
-    surface the caller supplies (D-A4: the adjacent areas the model may have
-    roamed). References resolve against their UNION - the out-of-chunk write
-    gate is dropped - while `admitted` stays chunk-scoped so the census still
-    says what this pass was handed."""
+    `endpoints` is the chunk's admitted slice and the ONLY surface a
+    reference may name (the out-of-scope filter): the settled project
+    surface is not consulted, so `admitted` both scopes the census and
+    bounds the judgment."""
     batch = narrow_to_assignment(raw)
     proposed = len(batch.aggregates)
-    batch = resolve_l0_refs(batch, endpoints=(*tuple(endpoints), *tuple(surface)))
+    batch = resolve_l0_refs(batch, endpoints=tuple(endpoints))
     resolved = len(batch.aggregates)
     batch, backlog = drop_out_of_inventory(batch, existing_slugs=existing_slugs)
     in_inventory = len(batch.aggregates)
@@ -308,9 +310,9 @@ _ROLE_VERBATIM = (
     "REFERENCING AN ENDPOINT: put the endpoint in `l0.identity` as "
     "`{\"path\": \"/api/Users\", \"method\": \"GET\", "
     "\"baseurl\": \"<the baseurl shown>\"}`, with `l0.label` set to `Endpoint`. "
-    "Only reference endpoints you have seen - in the slice above or returned by "
-    "`graph_view` through your adjacent-surface phase; one you invent names "
-    "nothing and is discarded.\n"
+    "Only reference endpoints you have seen - in the slice above or read through "
+    "the HTTP-history pair (`search_http_history` / `get_http_artifact`); one "
+    "you invent names nothing and is discarded.\n"
     "Emit `aggregates` only. Leave services, systems, system_edges and every "
     "data-modelling list EMPTY - other proposers own those."
 )
@@ -456,16 +458,11 @@ def assign(
     mode: str = "create",
     run_id: str | None = None,
     tags: list | None = None,
-    surface=(),
 ) -> AssignmentOutcome:
     """The Assigner proposer body (#8): from a `Chunk` + the LIVE inventory, judge
     which existing Service owns each admitted Endpoint, drop unknown owners and
-    unresolvable references, and return the narrowed batch plus its backlog. ADMIT-ALL:
+    out-of-scope references, and return the narrowed batch plus its backlog. ADMIT-ALL:
     every structurally-valid aggregate is kept.
-
-    `surface` is the settled project surface the judgment may roam (D-A4): the
-    model's adjacent-surface phase can name endpoints outside the chunk, and
-    those resolve against this surface instead of dying as unresolvable.
 
     `invoke_fn(messages) -> L1DeltaBatch | None` is injected (unit-testable, no live
     LLM). Fail-open: a `None`/raising `invoke_fn` (or a chunk with no Endpoint in it)
@@ -500,7 +497,7 @@ def assign(
     if raw is None:  # no parseable tool call after retries -> empty outcome
         return AssignmentOutcome()
     outcome = shape_proposal(
-        raw, existing_slugs=existing_slugs, endpoints=admitted, surface=surface,
+        raw, existing_slugs=existing_slugs, endpoints=admitted,
     )
     st = outcome.stats
     # #18/observability: persist the RAW proposals to Langfuse so a structurally-dropped
@@ -568,22 +565,7 @@ def stateful_invoke_fn(run_id: str, checkpointer, project_id: str | None = None)
     return session_invoke_fn("assigner", run_id, checkpointer, project_id)
 
 
-def _default_surface_fn(project_id: str):
-    """The live settled-surface read (D-A4): the project's CURRENT Endpoint
-    surface, so the judgment resolves references the model discovered through
-    its adjacent-surface phase. Fail-open to the chunk slice alone: a read blip
-    degrades to today's behaviour, never a crash."""
-    try:
-        from polymerhus.analysis.l0_stream import read_l0_assets
-
-        return [a for a in read_l0_assets(project_id) if a.type == "Endpoint"]
-    except Exception:  # noqa: BLE001 - fail-open, keeping the chunk slice
-        logger.warning("assigner: settled-surface read failed; resolving chunk-only",
-                       exc_info=True)
-        return []
-
-
-def make_assigner_body(*, invoke_fn, inventory_fn, surface_fn=None):
+def make_assigner_body(*, invoke_fn, inventory_fn):
     """Adapt `assign` to the supervisor's `ProposerBody` signature
     (`(dispatch, state) -> L1DeltaBatch | None`).
 
@@ -592,10 +574,9 @@ def make_assigner_body(*, invoke_fn, inventory_fn, surface_fn=None):
     live or chunk N+1 would not see what chunk N wrote. The identities block and the
     validation set both come from that one read, so they cannot disagree.
 
-    `surface_fn(project_id) -> endpoints` is the same discipline for L0 (D-A4):
-    the settled surface is re-read live at dispatch, so the judgment resolves
-    references outside the chunk against what recon has settled SO FAR. Defaults
-    to the live settled read, fail-open to the chunk slice alone.
+    References resolve against the chunk's admitted slice ONLY (the
+    out-of-scope filter): no settled-surface reader is threaded, because no
+    out-of-chunk discovery seam remains to feed it.
 
     The backlog is dropped here rather than transported (#34 D6): the envelope has no
     field to carry it yet."""
@@ -608,12 +589,6 @@ def make_assigner_body(*, invoke_fn, inventory_fn, surface_fn=None):
         # Convergence: the supervisor no longer opens an agent span, so the
         # structured-output record carries its own explicit run correlation.
         run_id = (state.get("run_id") or "").removeprefix("stream-")
-        read_surface = surface_fn or _default_surface_fn
-        try:
-            surface = read_surface(project_id) or ()
-        except Exception:  # noqa: BLE001 - fail-open, keeping the chunk slice
-            logger.warning("assigner: surface_fn failed; resolving chunk-only", exc_info=True)
-            surface = ()
         outcome = assign(
             dispatch.chunk,
             invoke_fn=invoke_fn,
@@ -622,7 +597,6 @@ def make_assigner_body(*, invoke_fn, inventory_fn, surface_fn=None):
             mode=getattr(dispatch, "mode", "create"),
             run_id=run_id or None,
             tags=["analysis", getattr(dispatch, "role", "assigner")],
-            surface=surface,
         )
         if outcome.backlog:
             logger.info("assigner: %d backlog description(s) not transported (D6)", len(outcome.backlog))

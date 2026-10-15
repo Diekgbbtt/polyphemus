@@ -2,12 +2,12 @@
 
 Two surfaces are pinned here, both from the proposer-tool-workflows rework:
 
-- **The Assigner's prompt layering.** The adjacent-surface read policy lives in
-  the SYSTEM prompt (`prompts/assigner.md`, D-A2/D-A3); the volatile user turn
-  carries the task and the deductive target, and no longer repeats the
-  `graph_view` verbatim. The HTTP-history pair's remit is widened past
-  disambiguation-only: an adjacently promising endpoint may be read for its
-  fuller response before ownership is judged.
+- **The Assigner's prompt layering.** The recorded-response read policy lives in
+  the SYSTEM prompt (`prompts/assigner.md`); the volatile user turn
+  carries the task and the deductive target, and repeats no tooling
+  verbatim. The HTTP-history pair is the central widening seam: its remit
+  reaches past disambiguation-only to an adjacently promising endpoint's
+  fuller response, while the judgment stays chunk-scoped.
 - **The mechanism-typist's tool-use specs.** The when+how for `graph_view`, the
   HTTP-history pair, and the bounded `exec` term are stated in both the skill
   (`prompts/technical-system.md`) and the reflection scaffold, and the 2nd/3rd

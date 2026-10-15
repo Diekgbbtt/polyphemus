@@ -115,17 +115,29 @@ def _role_structured_schema(role_id: str) -> Any:
 
 
 def _surface_tools(role_id: str, project_id: str | None) -> tuple:
-    """D-A2 (extended past assigner-only): the adjacent-surface read/probe tools.
+    """The adjacent-surface read/probe tools bound on a proposer turn.
 
-    The assigner's turn binds the read-only `graph_view` plus the HTTP-history
-    pair, so its bounded BaseURL-neighbourhood phase has a read seam. The
-    mechanism-typist's turn binds the same pair PLUS the bounded `exec` term, so
-    its ORIENT / VERIFY phases can witness a mechanism in the target's real
-    response. No other role binds surface tools - adjacent-surface reading and
-    probing are not their ownership. Fail-open: an unbuildable surface, or no
-    project scope, binds nothing (the session always starts)."""
+    The mechanism-typist's turn binds the read-only `graph_view`, the
+    HTTP-history pair, and the bounded `exec` term, so its ORIENT / VERIFY
+    phases can witness a mechanism in the target's real response. The
+    assigner's turn binds ONLY the HTTP-history pair
+    (`search_http_history` / `get_http_artifact`) - the `graph_view`
+    binding is rolled back (the concentration failure it licensed), and
+    the recorded-transaction read is the assigner's whole widening seam,
+    kept central. No other role binds surface tools. Fail-open: an
+    unbuildable surface, or no project scope, binds nothing (the session
+    always starts)."""
     if role_id not in ("assigner", "mechanism_typist") or not project_id:
         return ()
+    if role_id == "assigner":
+        try:
+            from polymerhus.analysis.graph_tools import build_http_history_tools
+
+            return build_http_history_tools(project_id)
+        except Exception:  # noqa: BLE001 - fail-open: no surface tools bound
+            logger.warning("proposer_turn: assigner http-history unbuildable; binding none",
+                           exc_info=True)
+            return ()
     try:
         from polymerhus.analysis.graph_tools import build_surface_tools
 
@@ -193,10 +205,11 @@ def session_invoke_fn(role_id: str, run_id: str, checkpointer, project_id: str |
     - **Constant request shape**: a prose turn still binds the role's structured tool
       via `tools=`, so the tool set never toggles between a role's reflection and
       extraction turns (the shape that defeated the provider prefix cache). The
-      Assigner and mechanism-typist turns additionally bind their adjacent-surface
-      read tools (D-A2) on EVERY turn, the typist's bounded `exec` included; the
-      assigner is permanently structured, and the typist's reflection turn carries
-      the same surface set as its structured turns, so neither set toggles.
+      mechanism-typist turns additionally bind their surface read/probe tools
+      (D-A2) on EVERY turn, the bounded `exec` included; the assigner binds the
+      HTTP-history pair on its (always structured) turn. The typist's reflection
+      turn carries the same surface set as its structured turns, so neither set
+      toggles.
     - **Per-chunk reset on one session**: the thread is always
       `AnalysisSession(run_id, role_id)` - the documented `run:role` the
       observability/runtime contract expects. The first turn that arrives under a
@@ -228,10 +241,10 @@ def session_invoke_fn(role_id: str, run_id: str, checkpointer, project_id: str |
                            if schema is _NO_SCHEMA else schema)
         # Constant shape: a prose turn binds the role's structured tool so the tool
         # set never toggles; the structured turn supplies it via `response_format`.
-        # The role's adjacent-surface read/probe tools (D-A2) ride EVERY turn - the
-        # prose reflection turn included - so the reflection can call them (its tool
-        # calls are the evidence phase) and the P->S request shape still shares one
-        # tool set. `bool(surface)` is the negotiation axis the structured turn will
+        # The role's surface tools ride EVERY turn - the typist's prose reflection
+        # turn included - so the reflection can call them (its tool calls are the
+        # evidence phase) and the P->S request shape still shares one tool set.
+        # `bool(surface)` is the negotiation axis the structured turn will
         # read, so the prose turn carries exactly the structured tool that turn's
         # `response_format` will produce. Only a non-empty set is forwarded, so a
         # role with no surface tools stays byte-identical to the pre-change requests.

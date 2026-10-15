@@ -183,18 +183,18 @@ def test_the_stateful_leg_carries_no_skill_surface(monkeypatch):
     assert roles == ["mechanism_typist"], "one middleware per turn, for its OWN role"
 
 
-def test_the_assigner_structured_turn_binds_the_adjacent_surface_tools(monkeypatch):
-    """D-A2 on the turn seam: the assigner's structured turn binds the
-    read-only `graph_view` plus the HTTP-history pair, so the adjacent-surface
-    phase has a read seam. Fail-open: without a project scope it binds
-    nothing."""
+def test_the_assigner_structured_turn_binds_only_the_http_history_pair(monkeypatch):
+    """Rollback on the turn seam: the assigner's structured turn binds ONLY
+    the HTTP-history pair - no `graph_view`. The recorded-transaction read
+    is the assigner's whole widening seam. Fail-open: without a project
+    scope it binds nothing."""
     seam = _CapturingSeam()
     _patch_stateful_turn(monkeypatch, seam)
 
     session_invoke_fn("assigner", "runX", object(), project_id="proj-1")(
         [HumanMessage(content="the per-chunk task")])
     tool_names = {getattr(t, "name", "") for t in seam.seen[-1].get("tools") or ()}
-    assert {"graph_view", "search_http_history", "get_http_artifact"} <= tool_names
+    assert tool_names == {"search_http_history", "get_http_artifact"}
 
     session_invoke_fn("assigner", "runX", object())(
         [HumanMessage(content="the per-chunk task")])
@@ -237,15 +237,17 @@ def test_the_typist_reflection_turn_binds_the_same_surface_tools(monkeypatch):
     assert reflection - {"L1DeltaBatch"} == extraction, "the same surface set on both turn kinds"
 
 
-def test_only_the_adjacent_surface_owners_bind_surface_tools():
-    """The end state: exactly the two adjacent-surface owners (assigner,
-    mechanism_typist) bind surface tools; every other role binds none. The seam
-    gates on the role, so a role outside that set gets an empty tuple whatever
-    the project scope - and an owner with no project scope fails open to none."""
+def test_only_the_surface_owners_bind_surface_tools():
+    """The end state: the mechanism-typist binds the full surface
+    (graph_view + HTTP pair + exec) and the assigner binds the HTTP-history
+    pair alone; every other role binds none. The seam gates on the role, so
+    a role outside that set gets an empty tuple whatever the project scope -
+    and an owner with no project scope fails open to none."""
     from polymerhus.analysis.proposer_turn import _surface_tools
 
-    for owner in ("assigner", "mechanism_typist"):
-        assert _surface_tools(owner, "proj-1"), f"{owner} binds the surface"
+    assert {getattr(t, "name", "") for t in _surface_tools("assigner", "proj-1")} == {
+        "search_http_history", "get_http_artifact"}
+    assert _surface_tools("mechanism_typist", "proj-1"), "typist binds the surface"
     assert _surface_tools("some-other-role", "proj-1") == ()
     assert _surface_tools("assigner", None) == ()
 
