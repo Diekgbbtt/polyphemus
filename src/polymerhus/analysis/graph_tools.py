@@ -11,7 +11,15 @@ cache rule):
 
   * `graph_view` - the read-only L0/L1 Cypher view (broad L0 query);
   * `search_http_history` / `get_http_artifact` - the recorded transaction
-    search + fetch (request shapes), for disambiguation and confirmation only.
+    search + fetch (request shapes), for disambiguation, confirmation, and an
+    adjacently promising endpoint's fuller response.
+
+The mechanism-typist turn binds the same three plus a bounded `exec`
+(`build_analysis_exec_tool`), so its ORIENT / VERIFY phases can witness a
+mechanism in the target's real response. The exec tool wraps the hunting `exec`
+tool (the SAME `execute_command` execution seam, args schema and tool name);
+only its model-facing description and its per-call budget are analysis-local,
+so no second tooling stack is built.
 
 `graph_view` is a light analysis-side binding: the write-shape guard and the
 read seam live here so the analysis module does not import `attack.hunting` for
@@ -22,11 +30,16 @@ Import performs no I/O (CODING_STANDARD section 6); the read seam resolves on ca
 """
 from __future__ import annotations
 
+import json
+import logging
+import os
 import re
 from collections.abc import Mapping
 from typing import Any, Callable
 
-from langchain_core.tools import tool
+from langchain_core.tools import BaseTool, tool
+
+logger = logging.getLogger(__name__)
 
 # The write-shaped tokens the read-only view refuses. The same set the hunting
 # `graph_view` guards (`attack/hunting/graph_view_tool.py`); kept in step by the
@@ -194,10 +207,94 @@ def build_http_history_tools(project_id: str):
         return ()
 
 
+# The mechanism-typist's `exec` contract. It is deliberately NOT the hunter's
+# `exec` description: that one is written for a hunting probe agent (the
+# partition guard, the spec's replay lineage), and the typist never holds a
+# spec. What is shared is the EXECUTION seam - the SAME `exec_fn` the hunter
+# binds (in production the pod's `default_exec_fn`, which runs `execute_command`
+# through the kali MCP). Only the model-facing contract and the call budget are
+# analysis-local; the tooling stack is not rebuilt.
+ANALYSIS_EXEC_CONTRACT = (
+    "Run a bounded, READ-ONLY command against the target through the SAME kali "
+    "`execute_command` surface the hunting agents use. Reach for it when a "
+    "mechanism hypothesis hinges on what a page RESPONSE actually contains and "
+    "the mapped surface does not carry it: fetch one known endpoint's rendered "
+    "body to see its embedded features (iframes, menu entries, tabs), or read a "
+    "response header the recon pass did not record. One endpoint often embeds "
+    "several features, and a rendered body is a witness a path noun cannot give. "
+    "READ-ONLY means read-only: a `curl` of a known endpoint, never a scan, a "
+    "mutation, or an exploitation step. A handful of probes per call is the "
+    "budget (the tool refuses past it); the mapped graph is the substrate you "
+    "reason over and the probe is the exception."
+)
+
+# The per-call probe budget (env-overridable, fail-open). A typist turn that
+# burns its budget degrades to a denoted error, never a raise and never a hang
+# on the analysis critical path.
+_DEFAULT_EXEC_BUDGET = 6
+
+
+class _BoundedAnalysisExec(BaseTool):
+    """The bounded, typist-scoped `exec` term (module level, defined once).
+
+    A THIN composition over the hunting `exec` tool: it holds an
+    `hunter_tools.ExecTool` and delegates each call to it, so the execution
+    seam, the `ExecArgs` schema and the fail-open result shaping are the hunting
+    tool's, unchanged. It adds exactly two analysis-side things:
+
+    * the typist-scoped when+how description (`ANALYSIS_EXEC_CONTRACT`) - the
+      hunter's description is written for a spec-holding probe agent;
+    * a per-call call budget - the typist is a bounded read phase, not a hunting
+      agent, so an unbounded exec loop must not sit on the analysis path.
+
+    The hunting base is resolved lazily (the analysis module never imports
+    `attack.hunting` at import time). Past the budget the tool returns a denoted
+    error, never a raise."""
+
+    name: str = "exec"
+    description: str = ANALYSIS_EXEC_CONTRACT
+
+    def __init__(self, *, exec_fn=None, budget: int = _DEFAULT_EXEC_BUDGET, **kwargs):
+        from polymerhus.attack.hunting.hunter_tools import ExecArgs, ExecTool
+
+        if exec_fn is None:
+            from polymerhus.attack.hunting.pod.tools import default_exec_fn
+
+            exec_fn = default_exec_fn
+        super().__init__(args_schema=ExecArgs, **kwargs)
+        self._inner = ExecTool(exec_fn=exec_fn)
+        self._remaining = budget
+
+    def _run(self, **kwargs):
+        if self._remaining <= 0:
+            return json.dumps({
+                "ok": False, "error": "exec_budget_exhausted", "degraded": True,
+                "detail": "this call's probe budget is spent; continue with "
+                          "graph_view and the mapped surface",
+            })
+        self._remaining -= 1
+        return self._inner._run(**kwargs)
+
+
+def build_analysis_exec_tool(*, exec_fn=None, budget: int | None = None):
+    """Build the mechanism-typist's bounded `exec` tool.
+
+    `exec_fn` defaults to the pod's `default_exec_fn` (`execute_command` through
+    the kali MCP); `budget` defaults to `ANALYSIS_TYPIST_EXEC_BUDGET` (fail-open
+    to `_DEFAULT_EXEC_BUDGET`). Fail-open: an unbuildable tool is the caller's
+    `build_surface_tools` to drop, never a raise into the turn."""
+    cap = budget if budget is not None else int(
+        os.environ.get("ANALYSIS_TYPIST_EXEC_BUDGET", _DEFAULT_EXEC_BUDGET)
+    )
+    return _BoundedAnalysisExec(exec_fn=exec_fn, budget=cap)
+
+
 def build_surface_tools(role_id: str, *, project_id: str | None = None,
-                        with_http: bool = False) -> tuple:
-    """The L0-grounding tools bound on a proposer turn: `graph_view` always, and
-    the HTTP-history pair when `with_http` (every harvesting proposer)."""
+                        with_http: bool = False, with_exec: bool = False) -> tuple:
+    """The L0-grounding tools bound on a proposer turn: `graph_view` always, the
+    HTTP-history pair when `with_http`, and the bounded `exec` term when
+    `with_exec`. Fail-open at every seam: an unbuildable `graph_view` binds
+    nothing, an unbuildable `exec` is simply omitted (the read tools remain)."""
     if not project_id:
         return ()
     tools: list[Any] = []
@@ -207,12 +304,22 @@ def build_surface_tools(role_id: str, *, project_id: str | None = None,
         return ()
     if with_http:
         tools.extend(build_http_history_tools(project_id))
+    if with_exec:
+        try:
+            tools.append(build_analysis_exec_tool())
+        except Exception:  # noqa: BLE001 - fail-open: no exec, read tools remain
+            logger.warning(
+                "graph_tools: exec tool unbuildable; binding the read tools only",
+                exc_info=True,
+            )
     return tuple(tools)
 
 
 __all__ = [
+    "ANALYSIS_EXEC_CONTRACT",
     "GRAPH_VIEW_CONTRACT",
     "ReadOnlyGraphViewError",
+    "build_analysis_exec_tool",
     "build_analysis_graph_view_tool",
     "build_http_history_tools",
     "build_surface_tools",

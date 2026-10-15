@@ -145,9 +145,10 @@ def test_the_stateful_leg_carries_each_roles_own_prompt(monkeypatch):
 
 
 def test_the_stateful_leg_carries_no_skill_surface(monkeypatch):
-    """Operator ruling (2026-09-17), preserved: the analysis proposers interact
-    with LOCAL context only, so they bind no skill tool, no skill context, and no
-    L1 skill-index middleware - their turns carry structure, not skills.
+    """Operator ruling (2026-09-17), preserved: the analysis proposers carry no
+    SKILL surface - no skill tool, no skill context, and no L1 skill-index
+    middleware. Their adjacent-surface read/probe tools (D-A2) are a separate
+    binding, never a skill surface.
 
     The cross-call constant-shape fix binds the role's OWN structured-output tool on
     a prose turn; that is not a skill tool, and the assertion below pins exactly
@@ -200,17 +201,73 @@ def test_the_assigner_structured_turn_binds_the_adjacent_surface_tools(monkeypat
     assert not seam.seen[-1].get("tools")
 
 
-def test_only_the_assigner_binds_surface_tools(monkeypatch):
-    """The adjacent-surface read is the assigner's ownership (D-A2); the other
-    roles' structured turns bind no surface tools."""
+def test_the_typist_structured_turn_binds_the_surface_and_exec_tools(monkeypatch):
+    """D-A2 extended past assigner-only: the mechanism-typist's structured turns
+    bind the read-only `graph_view`, the HTTP-history pair, and the bounded
+    `exec` term, so its ORIENT / VERIFY phases can ground a hypothesis in the
+    target's real responses rather than path nouns alone."""
     seam = _CapturingSeam()
     _patch_stateful_turn(monkeypatch, seam)
+    from polymerhus.analysis.analyser_types import L1DeltaBatch
 
-    for role in ("mechanism_typist",):
-        session_invoke_fn(role, "runX", object(), project_id="proj-1")(
-            [HumanMessage(content="m")])
-        tool_names = {getattr(t, "name", "") for t in seam.seen[-1].get("tools") or ()}
-        assert "graph_view" not in tool_names, role
+    session_invoke_fn("mechanism_typist", "runX", object(), project_id="proj-1")(
+        [HumanMessage(content="extraction")], schema=L1DeltaBatch)
+    tool_names = {getattr(t, "name", "") for t in seam.seen[-1].get("tools") or ()}
+    assert {"graph_view", "search_http_history", "get_http_artifact", "exec"} <= tool_names
+
+
+def test_the_typist_reflection_turn_binds_the_same_surface_tools(monkeypatch):
+    """The constant-request-shape rule across the typist's 3-call chain: the
+    PROSE reflection turn binds the same surface tools as the structured turns,
+    so the tool set never toggles P->S and the provider prefix cache survives.
+    The reflection turn additionally carries the role's structured tool, which
+    the structured turns supply through `response_format`."""
+    seam = _CapturingSeam()
+    _patch_stateful_turn(monkeypatch, seam)
+    from polymerhus.analysis.analyser_types import L1DeltaBatch
+
+    invoke = session_invoke_fn("mechanism_typist", "runX", object(), project_id="proj-1")
+    invoke([HumanMessage(content="reflection")], schema=None)
+    reflection = {getattr(t, "name", "") for t in seam.seen[-1].get("tools") or ()}
+    invoke([HumanMessage(content="extraction")], schema=L1DeltaBatch)
+    extraction = {getattr(t, "name", "") for t in seam.seen[-1].get("tools") or ()}
+
+    surface = {"graph_view", "search_http_history", "get_http_artifact", "exec"}
+    assert surface <= reflection
+    assert reflection - {"L1DeltaBatch"} == extraction, "the same surface set on both turn kinds"
+
+
+def test_only_the_adjacent_surface_owners_bind_surface_tools():
+    """The end state: exactly the two adjacent-surface owners (assigner,
+    mechanism_typist) bind surface tools; every other role binds none. The seam
+    gates on the role, so a role outside that set gets an empty tuple whatever
+    the project scope - and an owner with no project scope fails open to none."""
+    from polymerhus.analysis.proposer_turn import _surface_tools
+
+    for owner in ("assigner", "mechanism_typist"):
+        assert _surface_tools(owner, "proj-1"), f"{owner} binds the surface"
+    assert _surface_tools("some-other-role", "proj-1") == ()
+    assert _surface_tools("assigner", None) == ()
+
+
+def test_the_typist_turn_degrades_fail_open_when_surface_tools_are_unbuildable(monkeypatch):
+    """Fail-open: an unbuildable surface binds no tools and the turn STILL runs -
+    the session always starts, with or without its read/probe seam."""
+    seam = _CapturingSeam()
+    _patch_stateful_turn(monkeypatch, seam)
+    import polymerhus.analysis.graph_tools as G
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("surface tools unbuildable")
+
+    monkeypatch.setattr(G, "build_surface_tools", boom)
+    from polymerhus.analysis.analyser_types import L1DeltaBatch
+
+    invoke = session_invoke_fn("mechanism_typist", "runX", object(), project_id="proj-1")
+    invoke([HumanMessage(content="extraction")], schema=L1DeltaBatch)  # must not raise
+    tool_names = {getattr(t, "name", "") for t in seam.seen[-1].get("tools") or ()}
+    assert not ({"graph_view", "search_http_history", "get_http_artifact", "exec"} & tool_names)
+>>>>>>> feat/proposer-tool-workflows
 
 
 # --- the one-shot legacy leg: the same prompt, headed -------------------------
@@ -666,5 +723,35 @@ def test_the_constant_shape_covers_the_whole_mechanism_typist_chain(monkeypatch)
     assert tool_sets == [tool_sets[0]] * 3, "the tool set never toggles across the chain"
 
 
+def test_the_typist_surface_tools_keep_the_request_shape_byte_identical(monkeypatch):
+    """The cache-shape guarantee END TO END with the new D-A2 binding: with the
+    surface tools bound (graph_view + HTTP pair + bounded exec), the tool set the
+    provider sees is byte-identical across the typist's prose reflection turn and
+    its two structured turns - the reflection turn carries the structured tool via
+    `tools=`, the structured turns supply the same one via `response_format`, and
+    both add the same surface terms."""
+    from langchain_core.utils.function_calling import convert_to_openai_tool
 
+    from polymerhus.analysis.analyser_types import L1DeltaBatch
+    from polymerhus.analysis.proposer_turn import proposer_batch, session_invoke_fn
 
+    _force_voluntary_rung(monkeypatch)
+    model = _ToolRecordingModel()
+    monkeypatch.setattr(
+        "polymerhus.app.llm.session._default_model_factory", lambda role_id: model)
+    monkeypatch.setattr(
+        "polymerhus.analysis.proposer_turn._role_prompt", lambda role_id: "PROMPT")
+
+    invoke = session_invoke_fn(
+        "mechanism_typist", "runshape", InMemorySaver(), project_id="proj-1")
+    with proposer_batch("c1"):
+        invoke([HumanMessage(content="reflect")], schema=None)
+        invoke([HumanMessage(content="extract")], schema=L1DeltaBatch)
+        invoke([HumanMessage(content="link")], schema=L1DeltaBatch)
+
+    assert len(model._bound) == 3
+    defs = [[convert_to_openai_tool(t) for t in tools] for tools, _ in model._bound]
+    assert defs[0] == defs[1] == defs[2], "byte-identical tool definitions across P,S,S"
+    names = {t.name for t in model._bound[0][0]}
+    assert {"graph_view", "search_http_history", "get_http_artifact", "exec",
+            "L1DeltaBatch"} <= names

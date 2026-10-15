@@ -53,10 +53,19 @@ enumerate the project's BaseURLs and join the Endpoints they expose through the 
 The bound is load-bearing: always a LIMIT, a handful of queries, never a trawl.
 An unbounded roam costs more than it learns, and the cost lands on every chunk of the run.
 
-The HTTP-history pair (`search_http_history` / `get_http_artifact`) is for disambiguation and confirmation only:
-reach for it when an Endpoint's ownership is ambiguous or deceiving, or when you need the full request shape (path, headers, body) and the response to confirm a hypothesis -
-a plain-HTML response whose element values carry a Service's semantics, for example.
-Diving into the technical understanding of a surface area is the mechanism-typist's ownership, not yours; you stop at the ownership judgment.
+### Read the recorded response when a surface looks promising
+
+The HTTP-history pair (`search_http_history` / `get_http_artifact`) reads the recorded transactions behind the Endpoints you are judging.
+Reach for it in two situations, both READ-ONLY (it never replays or mutates a request):
+
+- **Disambiguation and confirmation.** An Endpoint whose ownership is ambiguous or deceiving, or a surface whose full request shape (path, headers, body) and response are needed to confirm a hypothesis - a plain-HTML response whose element values carry a Service's semantics, for example.
+- **An adjacently promising surface.** When a collected Endpoint looks even minimally promising for a candidate Service, pull its fuller response before you decide.
+  One Endpoint often embeds more than one feature: an HTML page carries iframes, menu entries and tabs, and a JSON response names sibling records and resources.
+  What the response actually CONTAINS is evidence a path noun alone cannot give you, and it can promote a weak topical match into a supported one - or dismiss it.
+
+The bound still holds: a handful of lookups, never a trawl, and the cost lands on every chunk of the run.
+Diving into the technical understanding of a surface area (its mechanisms, its rendering model) is the mechanism-typist's ownership, not yours; you stop at the ownership judgment.
+A response that names a business noun or action a candidate's contract claims is evidence for that owner; one that shows none is evidence against.
 
 ## Worked examples
 

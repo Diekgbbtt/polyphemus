@@ -27,6 +27,14 @@ AFTER the Assigner (`chunking.CONCERN_ROLES["service"] = ("assigner", "mechanism
 Standalone + injected `invoke_fn` / reads (unit-testable, no live LLM/graph); the body
 matches the `supervisor.ProposerBody` protocol EXACTLY (like the Assigner) - it is
 register-ready in `proposer_bodies["mechanism_typist"]`. Fail-open throughout.
+
+TOOL SURFACE (D-A2, extended past assigner-only): every turn of the chain binds the
+read-only `graph_view`, the HTTP-history pair (`search_http_history` /
+`get_http_artifact`), and a bounded `exec` (the SAME kali `execute_command` seam the
+hunting agents use, `analysis/graph_tools.build_analysis_exec_tool`). The when+how
+lives in `prompts/technical-system.md` and the `_REFLECTION_STEPS` scaffold; the
+binding lives in `proposer_turn._surface_tools`. See
+`docs/design/typist-tool-workflows.md`.
 """
 from __future__ import annotations
 
@@ -49,7 +57,11 @@ _REFLECTION_STEPS = [
     "Read each asset with its adversarial observation insight AND its response evidence "
     "(content type, title, status, server). What a path SERVES outweighs what its name "
     "suggests: an API-looking path returning text/html is a client-routed web-presentation "
-    "view, not a REST endpoint.",
+    "view, not a REST endpoint. Where the slice's own evidence is thin, READ THE UNIT'S "
+    "MAPPED SURFACE with the read-only `graph_view` (broad first, always a LIMIT): the "
+    "endpoints this unit aggregates, each one's content_type / title / status_code / server, "
+    "the Headers and Technologies on the owning BaseURL, and the Observations anchored to "
+    "it. Never assume an asset name - enumerate it.",
     "HYPOTHESISE: for each asset+observation, define candidate hypotheses of the form "
     "'this asset impacts a System of kind K - newly-defined, OR extending currently-defined "
     "System X'. Hold more than one candidate kind for an ambiguous asset.",
@@ -57,10 +69,19 @@ _REFLECTION_STEPS = [
     "text/html; exclude API/XHR/JSON responses and static assets), group them by rendered "
     "similarity (shared title/structure/size) into page CLUSTERS - a templated set (e.g. many "
     "product pages) or a single not-found/error page is ONE cluster, not many. Note which "
-    "service each cluster serves; each (service, cluster) is one WebPresentation.",
+    "service each cluster serves; each (service, cluster) is one WebPresentation. Use the "
+    "`graph_view` text/html census when the slice does not already carry the pages.",
     "VERIFY / FALSIFY: test each hypothesis against the evidence actually present. A "
     "framework fingerprint alone is NOT the mechanism-in-use; separate the claim from its "
-    "support; decide new-vs-extend against the currently-defined Systems listed.",
+    "support; decide new-vs-extend against the currently-defined Systems listed. BEFORE you "
+    "commit, read the live graph: enumerate the currently-defined Systems and the edges this "
+    "unit ALREADY carries (`graph_view`), so an extension reuses the exact key instead of "
+    "minting a synonym and a committed edge is not duplicated. When a hypothesis hinges on "
+    "what a response ACTUALLY contains, read the recorded transaction with "
+    "`search_http_history` then `get_http_artifact`; when it hinges on what a page RENDERS "
+    "(embedded iframes, menu entries, tabs the path noun cannot show), run ONE bounded "
+    "READ-ONLY `exec` fetch of a known endpoint. A tool-call observation is a witness; say "
+    "where it came from.",
     "INTEGRATE the adversarial observation insight into the surviving System's "
     "characterisation - what makes that mechanism attackable.",
     "EMIT a prose delta overview: the verified NEW and EXTENDED Systems and their "
@@ -324,7 +345,11 @@ def _reflection_prompt(chunk: Chunk, inventory: dict | None) -> str:
         "STREAMED SURFACE (each asset with its adversarial observation insight):\n"
         f"{_asset_observation_paragraphs(chunk)}\n\n"
         f"{cot_scaffold(_REFLECTION_STEPS)}\n\n"
-        "Write your reasoning as prose. Do not emit JSON or a tool call in this step."
+        "Write your reasoning as prose. You MAY call `graph_view`, "
+        "`search_http_history` / `get_http_artifact`, and the bounded `exec` while "
+        "you work - use them to ground a hypothesis in the target's real evidence. "
+        "Do NOT emit the structured `systems` / `system_edges` output in this step; "
+        "that is the next call."
     )
 
 
@@ -397,13 +422,19 @@ def _default_invoke_fn(messages, *, schema=None, system_prompt=None):
     analyser-role model behind the #73 escalating retry. `schema=None` returns free-text
     (the reflection call); a pydantic `schema` returns structured output. Production now
     uses `session_invoke_fn`, which binds the same prompt as the agent's leading block
-    instead of a trail message."""
+    instead of a trail message.
+
+    An absent/empty `system_prompt` resolves the role's OWN skill, so the one-shot leg
+    stays byte-identical to the stateful seam (which defaults `system_prompt` to
+    `_role_prompt(role_id)`) - a call site may therefore omit it and still send the
+    role prompt on every call."""
     from langchain_core.messages import HumanMessage, SystemMessage
 
     from polymerhus.analysis.proposer_turn import prepend_prompt
     from polymerhus.app.llm.roles import invoke_role
 
-    return invoke_role("analyser", prepend_prompt(messages, system_prompt), schema=schema)
+    prompt = system_prompt or _load_skill()
+    return invoke_role("analyser", prepend_prompt(messages, prompt), schema=schema)
 
 
 def stateful_invoke_fn(run_id: str, checkpointer, project_id: str | None = None):
@@ -506,9 +537,12 @@ def type_mechanisms(
         trace_reasoning(prose, call="typist-reflection", run_id=run_id, tags=tags)
 
         # Call 2 - SYSTEMS EXTRACTION (extract). Soft pass-through on exhaustion.
+        # The skill is omitted here (and on the linking call): the seam defaults
+        # `system_prompt` to `_load_skill()` - the exact same memoized string - so
+        # the request is byte-identical while the call site stops restating it.
         systems_batch = invoke_fn(
             [HumanMessage(content=_systems_prompt(inventory))],
-            schema=L1DeltaBatch, system_prompt=skill,
+            schema=L1DeltaBatch,
         ) or L1DeltaBatch()
 
         # Call 3 - SERVICES LINKING (extract). Soft pass-through on exhaustion.
@@ -516,7 +550,7 @@ def type_mechanisms(
         primary, secondary, owned = partition_services(chunk.assets, aggregations or [], all_services)
         link_batch = invoke_fn(
             [HumanMessage(content=_linking_prompt(systems_batch, primary, secondary, owned, inventory))],
-            schema=L1DeltaBatch, system_prompt=skill,
+            schema=L1DeltaBatch,
         ) or L1DeltaBatch()
 
     # #18/observability: persist the typist's STRUCTURED output (systems + edges, with each
