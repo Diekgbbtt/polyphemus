@@ -85,8 +85,7 @@ _REFLECTION_STEPS = [
     "INTEGRATE the adversarial observation insight into the surviving System's "
     "characterisation - what makes that mechanism attackable.",
     "EMIT a prose delta overview: the verified NEW and EXTENDED Systems and their "
-    "adversarial characterisations. Do NOT deep-profile (no rendering/navigation model, "
-    "no authorization pyramid) - that is a later phase.",
+    "adversarial characterisations.",
 ]
 
 

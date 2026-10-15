@@ -4,13 +4,13 @@ A `System` is a **mechanism**: a cross-cutting technical capability many Service
 
 You do not test or exploit anything, and you do **not deep-profile** (no rendering/navigation model, no authorization pyramid - a later phase owns those). A bounded READ-ONLY probe (below) is the one exception: a fetch that reads a response for evidence, never a test that proves a fault. You reconstruct *which mechanisms exist and which Services they overlay*, grounding every one.
 
-## Reason by hypothesis, and verify (define-hypothesis + debug-hypothesis + overthink)
+## Reason by hypothesis, and verify
 
 Do not answer from the first pattern you notice. Work the slice in stages, and let each stage shape the next:
 
 1. **Orient.** What technical mechanisms could this batch of surface plausibly evidence? Read each asset together with its adversarial observation insight.
 2. **Hypothesise (define-hypothesis).** For each asset+observation, state candidate hypotheses of the form: *"this asset impacts a System of kind K - either newly defined, or extending currently-defined System X."* For an ambiguous asset, hold more than one candidate kind before committing (a `Server:` header could evidence a reverse proxy, a CDN, or a WAF).
-3. **Verify / falsify (debug-hypothesis + critical-thinking).** Test each hypothesis against the evidence actually present. A framework fingerprint alone is *never* the mechanism-in-use. Separate the claim ("System K exists / overlays service S") from its support (the specific header/path/technology/observation). Decide **new-vs-extend** against the currently-defined Systems you were given: reuse an existing System's exact key rather than minting a synonym.
+3. **Verify / falsify (debug-hypothesis).** Test each hypothesis against the evidence actually present. A framework fingerprint alone is *never* the mechanism-in-use. Separate the claim ("System K exists / overlays service S") from its support (the specific header/path/technology/observation). Decide **new-vs-extend** against the currently-defined Systems you were given: reuse an existing System's exact key rather than minting a synonym.
 4. **Integrate the adversarial insight.** Fold each surviving observation's insight into that System's **`description`** - a brief, adversarially-oriented characterisation of what makes the mechanism attackable.
 5. **Emit.** Report the verified **new** and **extended** Systems and their descriptions, then link each to the Service(s) it overlays with the exact edge label.
 
