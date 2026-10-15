@@ -179,6 +179,9 @@ Provenance is therefore not metadata; it is the concept that lets "an LLM said s
 
 ### 3.2 Confidence - the strength of a judgment
 
+> AMENDED 2026-10-15: the graded confidence score and its withholding gate were REMOVED from the pipeline (`docs/design/drop-aggregate-confidence.md`).
+> Assignment is admit-all now; the reasoning below is retained as the history of why the score existed and what its removal gives up.
+
 An inference is not a fact, and a model that records only the inference loses the one thing that lets a reader weigh it.
 
 The `AGGREGATES` assignment edge carries a **judgment envelope** from day one - `{confidence, status, evidence_refs, provenance, ts}` (`src/polymerhus/analysis/l1_types.py:48-58`, `L1D-25`) - even though the MVP only ever writes `status="committed"`.
@@ -329,8 +332,8 @@ Three cross-layer edges carry claims from the observed store into the judged sto
 
 | Edge | From -> To | Carries | Epistemic role |
 |---|---|---|---|
-| `AGGREGATES` | `L1Service` -> L0 node | full judgment envelope `{confidence, status, evidence_refs, prov_*, ts, endpoint_template?}` | the assignment judgment: "I judge element e belongs to service S, this confident, on this evidence" (`L1D-25`, `src/polymerhus/analysis/l1_curator.py:351-409`) |
-| `SURFACES_AT` | `L1DataItem` -> L0 Parameter/Header/field | `prov_job`, `first/last_seen` | where a judged logical data item appears on the observed surface (`src/polymerhus/analysis/l1_curator.py:478-496`) |
+| `AGGREGATES` | `L1Service` -> L0 node | judgment envelope `{status, evidence_refs, prov_*, ts, endpoint_template?}` (the graded `confidence` member REMOVED 2026-10-15, `docs/design/drop-aggregate-confidence.md`) | the assignment judgment: "I judge element e belongs to service S, on this evidence" (`L1D-25`, `src/polymerhus/analysis/l1_curator.py:351-409`) |
+| `SURFACES_AT` | `L1DataItem` -> L0 Parameter/Header/field | `prov_job`, `first/last_seen` | RETIRED 2026-10-15 with the data plane (`docs/design/drop-data-modeller.md`); legacy graphs may still carry it (read-only) |
 | `EVIDENCED_BY` | `L1System` -> L0 node | `prov_job`, `first/last_seen` | the observed fingerprint that grounds a judged mechanism (a `Server:` header, a cookie) (`l1-domain-model-catalogue.md` §5.1) |
 
 Crossing this boundary means an inference is being anchored to the observations that license it, which is what keeps L1 defeasible: pull the evidence and the judgment loses its ground.
@@ -419,7 +422,8 @@ Its authority is epistemic: nothing is "done" until a separate agent has reprodu
 
 **The loop** is the meta-process that plans bounded work areas, runs them one worktree at a time, and records what was learned in the STATE ledger; it is the actor that accumulates the empirical findings this ontology mines.
 
-**The auditor** is a designed-not-built actor (`AMV-16`): a separate checker that would vet proposals *before* they are written - a confidence gate, a noise classifier, an identity-reuse check - moving the maker/checker discipline upstream from repair-after-the-fact to prevention-at-creation.
+**The auditor** is a designed-not-built actor (`AMV-16`): a separate checker that would vet proposals *before* they are written - a noise classifier, an identity-reuse check - moving the maker/checker discipline upstream from repair-after-the-fact to prevention-at-creation.
+(The confidence gate once listed here was REMOVED 2026-10-15 with the score; see `docs/design/drop-aggregate-confidence.md`.)
 
 It is recorded here because it is the natural home for the currently-orphaned confidence and absence policies (Sections 3.2, 3.5), and because the model's own history argues both for it and for caution: prevention at creation is what actually kept the batch graph clean, but an auditor that is a no-op on good input rots undetected exactly as the broken curation stage did.
 

@@ -267,7 +267,6 @@ def test_the_typist_turn_degrades_fail_open_when_surface_tools_are_unbuildable(m
     invoke([HumanMessage(content="extraction")], schema=L1DeltaBatch)  # must not raise
     tool_names = {getattr(t, "name", "") for t in seam.seen[-1].get("tools") or ()}
     assert not ({"graph_view", "search_http_history", "get_http_artifact", "exec"} & tool_names)
->>>>>>> feat/proposer-tool-workflows
 
 
 # --- the one-shot legacy leg: the same prompt, headed -------------------------

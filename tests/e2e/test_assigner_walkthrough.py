@@ -23,7 +23,7 @@ A = "https://a"
 B = "https://b"
 
 INVENTORY = {
-    "services": ["checkout", "fulfilment"], "systems": [], "data_items": [],
+    "services": ["checkout", "fulfilment"], "systems": [],
     "service_contracts": {
         "checkout": "Takes a basket to a paid order; owns orders and payment intents.",
         "fulfilment": "Owns shipments and dispatch of placed orders.",

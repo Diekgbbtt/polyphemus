@@ -77,11 +77,9 @@ class AssignmentOutcome(BaseModel):
 
 def narrow_to_assignment(batch: L1DeltaBatch) -> L1DeltaBatch:
     """Leg 4 (#8, tightened by #34 D4): the Assigner owns ONLY `aggregates`. Drop
-    `services` (-> Bootstrapper), `systems` / `system_edges` (-> TechnicalSystem)
-    and every data list (-> DataPlane)."""
+    `services` (-> Bootstrapper) and `systems` / `system_edges` (-> TechnicalSystem)."""
     return batch.model_copy(update={
         "services": [], "systems": [], "system_edges": [],
-        "data_items": [], "surfaces_at": [], "data_flows": [], "data_relationships": [],
     })
 
 

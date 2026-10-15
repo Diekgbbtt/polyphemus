@@ -156,7 +156,9 @@ For the A.2 `SPLIT` op each subordinate leaf MUST get its OWN contract; copying 
   - kind-specific mechanism attributes, e.g. on `WebPresentation`: `rendering_model`, `navigation_model` (each + `_confidence` + `_evidence`); these are the mechanism classifications that used to be mis-stored on the Service.
   - `salience` / NL handles.
 
-### 4.3 `:L1DataItem`
+### 4.3 `:L1DataItem` - RETIRED 2026-10-15 (`docs/design/drop-data-modeller.md`)
+
+> Nothing writes `:L1DataItem` or its edges anymore; the catalogue below is retained as the history of the removed plane, and legacy graphs may still carry it (read-only).
 
 - **Identity:** `(project_id, item_key)` (flexible semantic key, resolving `L1OP-1`); `identity` NOT keyed on the L0 sites it surfaces at (`L1D-11`).
 - **Encodes:** a logical business data record (customer account, shopping basket, order, payment method) - the Tier-1 trust substrate (`L1D-13`).

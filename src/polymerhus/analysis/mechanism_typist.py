@@ -95,10 +95,9 @@ _REFLECTION_STEPS = [
 def narrow_to_typing(batch: L1DeltaBatch) -> L1DeltaBatch:
     """The mechanism-typist owns ONLY `{systems, system_edges}` (mirrors
     `assigner.narrow_to_assignment` from the other side of the `service` chunk):
-    drop the assignment lists (-> Assigner) and every data list (-> Data-modeller)."""
+    drop the assignment lists (-> Assigner)."""
     return batch.model_copy(update={
         "services": [], "aggregates": [],
-        "data_items": [], "surfaces_at": [], "data_flows": [], "data_relationships": [],
     })
 
 

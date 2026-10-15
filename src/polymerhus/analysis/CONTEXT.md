@@ -1,8 +1,9 @@
 # Analysis
 
 Layer-1 interpretive abstraction.
-This context reconstructs, from the observed L0 attack surface, a judged model of what the target *is* - its business targets (Service), its shared mechanisms (System), and its logical data (DataItem) - and anchors every judgment back onto the L0 evidence that licenses it.
+This context reconstructs, from the observed L0 attack surface, a judged model of what the target *is* - its business targets (Service) and its shared mechanisms (System) - and anchors every judgment back onto the L0 evidence that licenses it.
 Nothing here is witnessed; every node is an analyst-role LLM's proposal that the L1 sole-writer turns into a fact.
+(The logical-data plane - `DataItem`, `SURFACES_AT`, `CONSUMES`/`PRODUCES` - was REMOVED 2026-10-15; see the RETIRED entries below and `docs/design/drop-data-modeller.md`.)
 This context is a physically independent module at `src/polymerhus/analysis/` (extracted from under `recon/` in the 2026-07 `src/` restructure). Its only structural tie to recon is the published L0 vocabulary in `recon.domain.types` - the anti-corruption seam.
 
 Vocabulary derived from `docs/design/domain-model.md` (esp. §2.2-2.6, §4, §6); see also `docs/design/l1-domain-model-catalogue.md`.
@@ -10,7 +11,7 @@ Vocabulary derived from `docs/design/domain-model.md` (esp. §2.2-2.6, §4, §6)
 ## Trunk scope
 
 This context is the L0-chunk-sourced pipeline.
-Recon pushes one job-keyed chunk per producing job (`chunking.chunks_for_job`); the supervisor runs a chunk-major schedule of the three proposers (assigner, mechanism-typist, data-modeller), and each proposer reasons over the chunk's admitted slice plus the live L1 inventory.
+Recon pushes one job-keyed chunk per producing job (`chunking.chunks_for_job`); the supervisor runs a chunk-major schedule of the two proposers (assigner, mechanism-typist), and each proposer reasons over the chunk's admitted slice plus the live L1 inventory.
 The service-sourced pipeline (a per-Service reasoning workflow with `graph_view`/HTTP-history tools and episodic memory) is a separate experiment and does not live on this trunk; see `docs/design/l0-l1-pipeline-split-adr.md`.
 
 ## The stores and the crossing
@@ -27,16 +28,16 @@ _Avoid_: reading, fact (a fact is what the sole-writer has committed).
 
 **Cross-layer edge**:
 An edge from an L1 (judged) node down onto an L0 (observed) node, anchoring an inference to the observations that license it; the L0 target is always `MATCH`ed, never `MERGE`d.
-The three are `AGGREGATES`, `SURFACES_AT`, `EVIDENCED_BY`.
+The live ones are `AGGREGATES` (assignment) and `EVIDENCED_BY` (reconcile); `SURFACES_AT` is legacy (RETIRED below).
 
 **AGGREGATES**:
-The assignment edge from an L1 `Service` to an L0 node, carrying the full judgment envelope: "I judge element e belongs to service S, this confident, on this evidence".
-It is the load-bearing L0/L1 hinge and the only cross-layer edge that carries a graded judgment.
+The assignment edge from an L1 `Service` to an L0 node, carrying the judgment envelope: "I judge element e belongs to service S, on this evidence".
+It is the load-bearing L0/L1 hinge.
 _Avoid_: contains, owns, has (membership is N:M and non-possessive).
 
-**SURFACES_AT**:
-The cross-layer edge from an L1 `DataItem` to the L0 Parameter / Header / Secret where that logical item appears on the observed surface; carries provenance and timestamps only.
-Never an Endpoint (#48, DPL-DEC-10): a path is the address a tester interrogates, never a place data appears, so a path noun alone never grounds a lift.
+**SURFACES_AT** - RETIRED 2026-10-15 (`docs/design/drop-data-modeller.md`):
+Formerly the cross-layer edge from an L1 `DataItem` to the L0 Parameter / Header / Secret where that logical item appeared on the observed surface.
+Nothing writes it anymore; legacy graphs may still carry it (read-only).
 
 **EVIDENCED_BY**:
 The cross-layer edge from an L1 `System` to the L0 node that fingerprints it (a `Server:` header, a cookie); carries provenance and timestamps only.
@@ -78,40 +79,39 @@ A System's intrinsic identity attribute, validated against the fixed `SYSTEM_KIN
 (Resolved: the `SystemKind` catalogue *node* of the older spec no longer exists; kind is an attribute, not a node.)
 _Avoid_: type, category, SystemKind (the node).
 
-**DataItem**:
-A logical data record (a session token, an order, a `sales_figure`) as a first-class L1 node, keyed on a semantic `item_key`, with identity independent of the many L0 sites it surfaces at.
-It is the Tier-1 trust locus and the noise filter for concretisation.
-_Avoid_: field, parameter, value.
+**DataItem** - RETIRED 2026-10-15 (`docs/design/drop-data-modeller.md`):
+Formerly a logical data record (a session token, an order, a `sales_figure`) as a first-class L1 node, the Tier-1 trust locus.
+Nothing writes it anymore; legacy graphs may still carry it (read-only).
 
-**Trust boundary**:
-Where trust changes hands; not a node but an edge - a `CONSUMES` edge from a service to a data item it did not produce.
-The impactful faults live on these boundaries and in shared mechanisms, not inside a single target.
+**Trust boundary** - RETIRED with `DataItem` (same date/ADR):
+Formerly where trust changed hands - a `CONSUMES` edge from a service to a data item it did not produce.
+Unmodelled now; the impactful faults still live in shared mechanisms, not inside a single target.
 
-**Trust assumption**:
-The falsifiable predicate a consuming service holds about data it did not produce (e.g. "this field was authorised for this user"), carried on a `CONSUMES` edge.
-Representable only when it hangs on a derived flow `A -CONSUMES-> D <-PRODUCES- B`, so assertion-without-a-dataflow is structurally unrepresentable.
-It is the one *persisted* seed instance of the general phase-3 fault-hypothesis, read as input by a testing technique.
+**Trust assumption** - RETIRED with `DataItem` (same date/ADR):
+Formerly the falsifiable predicate a consuming service held about data it did not produce, carried on a `CONSUMES` edge, and the one persisted seed instance of the phase-3 fault-hypothesis.
+Phase 3 will need a new seed; none is persisted now.
 
 ## Intra-L1 edges
 
 **EXPOSED_VIA**:
 The edge from a Service to the System that presents it (WebPresentation, a REST or GraphQL API).
 
-**CONSUMES / PRODUCES**:
-The data-flow edges between a Service and a DataItem; a `CONSUMES` on data the service did not `PRODUCES` is a trust boundary.
+**CONSUMES / PRODUCES** - RETIRED with `DataItem` (same date/ADR):
+Formerly the data-flow edges between a Service and a DataItem.
+Nothing writes them anymore; legacy graphs may still carry them (read-only).
 
 **AUTHENTICATED_BY / AUTHORIZED_BY**:
 System edges binding a Service to its authentication and authorization mechanisms (kept distinct: who you are versus what you may do).
 
-**DATA_RELATIONSHIP edge**:
-The edge between two DataItems whose type *is* the uppercased kind from a fixed six-value allowlist (`DERIVED_FROM`, `REFLECTED_IN`, `EQUALS_HASH_OF`, `COPY_OF`, `CONCATENATION_OF`, `SUBSET_OF`).
-(Resolved: the `DataRelationshipKind` catalogue node of the older spec no longer exists; the kind is the edge type itself.)
+**DATA_RELATIONSHIP edge** - RETIRED with `DataItem` (same date/ADR):
+Formerly the edge between two DataItems whose type was the uppercased kind from a fixed six-value allowlist.
+Nothing writes it anymore.
 
 ## The reasoning vocabulary
 
 **Judgment envelope**:
-The `{confidence, status, evidence_refs, provenance, ts}` bundle carried on the `AGGREGATES` assignment edge from day one, even though the MVP only ever writes `status="committed"`.
-Reserved for `AGGREGATES` alone because assignment is a graded judgment, while data-surfacing and mechanism-fingerprinting are near-mechanical bindings (the deliberate envelope asymmetry).
+The `{status, evidence_refs, provenance, ts}` bundle carried on the `AGGREGATES` assignment edge, even though the MVP only ever writes `status="committed"`.
+(The graded `confidence` member was REMOVED 2026-10-15 with its withholding gate; see `docs/design/drop-aggregate-confidence.md`.)
 
 **Provenance**:
 Who or what made a claim: `prov_job` / `prov_model` / `prov_prompt_id`, stamped by the sole-writer and structurally forbidden to the proposer.
@@ -119,11 +119,10 @@ The concept that lets "an LLM said so" and "a tool measured it" be different kin
 (Also stamped by the L0 curator in Recon; defined here as it is core to weighing L1 judgments.)
 _Avoid_: metadata, source tag.
 
-**Confidence**:
-The strength of a judgment, carried in the envelope; orthogonal to provenance (who asserted) - both are needed to weigh a claim.
-It is now ACTED ON for assignment: `withhold_below_bar` drops an aggregate below `ASSIGN_CONFIDENCE_BAR` (0.75) in the Assigner seam, and `evaluation.bar_sweep` reads the kept-vs-bar curve off a run's real confidences, so the bar is an output rather than a guess.
-The scale is 0..1 and is ENFORCED, not assumed - see the Assigner's `normalise_confidence`.
-_Status_: acted on for `AGGREGATES`; no other L1 edge carries a graded judgment to gate.
+**Confidence** - REMOVED 2026-10-15 (`docs/design/drop-aggregate-confidence.md`):
+Formerly the strength of a judgment, carried in the envelope and acted on for assignment (`withhold_below_bar` under `ASSIGN_CONFIDENCE_BAR`, swept by `evaluation.bar_sweep`).
+Assignment is admit-all now: every structurally-valid aggregate is written, and precision rests on prompt discipline plus the structural gates.
+_Status_: no L1 edge carries a graded judgment.
 
 **Evidence**:
 The L0 nodes an L1 node's cross-layer edges anchor to; pulling the evidence defeats the judgment.
@@ -170,7 +169,7 @@ Retyping it is a one-way door.
 **Analyser**:
 The whole-model proposer role that reconstructs the L1 Service/System/DataItem model.
 AMENDED (#48, 2026-07-30): the "run in two passes - an assignment pass and a dedicated data-modelling pass" description is RETIRED with the monolith.
-The analyser is now the chunk-fed, per-responsibility proposer decomposition behind the supervisor - `Assigner` (AGGREGATES), `TechnicalSystem`/mechanism-typist (Systems), `DataPlane Analyser`/data_modeller (DataItems) - each a standalone A.1 proposer dispatched per chunk (see "Proposer decomposition" below).
+The analyser is now the chunk-fed, per-responsibility proposer decomposition behind the supervisor - `Assigner` (AGGREGATES) and `TechnicalSystem`/mechanism-typist (Systems) - each a standalone A.1 proposer dispatched per chunk (see "Proposer decomposition" below).
 _Avoid_: analyst, modeller.
 
 **l1_curator (L1 sole-writer)**:
@@ -204,7 +203,7 @@ Runs drive the REAL system through the faithful entry path (API -> use-case -> a
 Every evaluated project is LEFT IN THE GRAPH (start-only wipes) - a teardown wipe deletes the artifact the operator needs to inspect.
 GENERAL by construction: `run_matrix` / `compare` take an injected `invoke_fn` + `read_fn`, so another analysis proposer adopts the harness by supplying its own pair and may extend `skeleton_metrics` for the slice of L1 it owns; the Bootstrapper is the first adopter.
 The **Assigner is the second** (`evaluate_assigner`), and it shows what agent-agnostic has to mean: its primary axis is assignment VOLUME, which - unlike breadth - must never be read as a score, because this agent's measured failure is over-production. So `compare` takes the primary key and integrity columns as parameters, and the Assigner supplies `ASSIGNMENT_INTEGRITY_KEYS`, in which a LARGER stale pool is a POSITIVE signal.
-CAVEAT (2026-07-29): its `withheld_rate` / `out_of_inventory_rate` / `unresolvable_rate` columns read `0.0` because `AssignmentStats` is persisted nowhere and `read_assignment` reads the graph. Read them as **not measured**, never as zero - the real values (withheld 30 of 53, then 56 of 87) exist only in per-chunk logs.
+CAVEAT (2026-07-29): its `out_of_inventory_rate` / `unresolvable_rate` columns read `0.0` because `AssignmentStats` is persisted nowhere and `read_assignment` reads the graph. Read them as **not measured**, never as zero - the real values exist only in per-chunk logs.
 The live targets these runs execute against are held in the eval dataset `tests/e2e/fixtures/eval-targets.yaml` (each target's `operator_kb` bootstraps the L1 skeleton the harness then measures).
 _Not to be confused with_: the assertion catalogues (fixed contract/walkthrough predicates that pass or fail), or the #19 regression oracle. This ranks configurations; it never passes or fails one.
 
@@ -240,7 +239,7 @@ The pass that derives the stale pool (the L0 assets with no inbound `AGGREGATES`
 Dedicated procedures (`webpage-profile`, `authorization-pyramid`) that *classify* spine slots that cannot be read off the surface, emitting the triple typed-classification -> spine slot, evidence -> Observation, deeper probe -> backward-recon request.
 
 **Auditor**:
-The checker that vets proposals *before* they are written (a confidence gate, a noise classifier, an identity-reuse check), moving the maker/checker discipline upstream from repair to prevention.
+The checker that vets proposals *before* they are written (a noise classifier, an identity-reuse check), moving the maker/checker discipline upstream from repair to prevention.
 It is the FIXED stage after every proposer in the control-plane pipeline (never itself dispatched), not one of the routed proposers.
 _Status_: the hollow stub exists as of increment 0 (score-and-annotate mode is increment 3, `AMV-16`); the natural home for the orphaned confidence and absence policies.
 
@@ -285,79 +284,74 @@ The driver opens an `AsyncPostgresStore` (`setup()`) alongside the `AsyncPostgre
 
 The legacy two-pass analyser monolith dissolves into responsibility-scoped proposers, each consuming a `Chunk` narrowed by its own admission set and writing through the sole-writer. Built as standalone slices (flag OFF) then wired, and fully retired in #48.
 
-All three chunk-fed proposers are **STATEFUL session agents as of #94** (`agent_mode="session"`), and **reset-per-chunk as of the 2026-10-14 context-lifecycle change**: `assigner` / `mechanism_typist` / `data_modeller` run their structured turn via `app/llm/session.py::stateful_turn` on the ONE per-(RUN, ROLE) `AnalysisSession(run_id, role_id)` thread, which the seam resets to empty at each new chunk (`proposer_turn.session_invoke_fn` resets on a new `proposer_batch(chunk.chunk_id)` scope), so the turns WITHIN one chunk share the agent's memory (the reflection is the extraction's context) while the NEXT chunk starts from the initial system prompt + its fixed human messages instead of resuming the previous trail. The stable thread identity is what the provider prefix cache and the observability/runtime contract key on. The per-batch discriminator is the chunk-boundary signal carried by a `proposer_batch(chunk.chunk_id)` scope the proposer body opens around its invoke chain (`analysis/proposer_turn.py`) - a scoped ContextVar, so the `(messages, *, schema, system_prompt)` invoke contract is unchanged; an unscoped caller keeps its trail, preserving the observability/runtime contract. The shared process-wide pooled checkpointer (`app/llm/checkpoints.py`) is the memory store. The one_shot roles (bootstrapper, anatomy, curation, sweep, anti-cluttering) externalise their reasoning to the graph and stay on `invoke_role`.
+All two chunk-fed proposers are **STATEFUL session agents as of #94** (`agent_mode="session"`), and **reset-per-chunk as of the 2026-10-14 context-lifecycle change**: `assigner` / `mechanism_typist` run their structured turn via `app/llm/session.py::stateful_turn` on the ONE per-(RUN, ROLE) `AnalysisSession(run_id, role_id)` thread, which the seam resets to empty at each new chunk (`proposer_turn.session_invoke_fn` resets on a new `proposer_batch(chunk.chunk_id)` scope), so the turns WITHIN one chunk share the agent's memory (the reflection is the extraction's context) while the NEXT chunk starts from the initial system prompt + its fixed human messages instead of resuming the previous trail. The stable thread identity is what the provider prefix cache and the observability/runtime contract key on. The per-batch discriminator is the chunk-boundary signal carried by a `proposer_batch(chunk.chunk_id)` scope the proposer body opens around its invoke chain (`analysis/proposer_turn.py`) - a scoped ContextVar, so the `(messages, *, schema, system_prompt)` invoke contract is unchanged; an unscoped caller keeps its trail, preserving the observability/runtime contract. The shared process-wide pooled checkpointer (`app/llm/checkpoints.py`) is the memory store. The one_shot roles (bootstrapper, anatomy, curation, sweep, anti-cluttering) externalise their reasoning to the graph and stay on `invoke_role`.
 
 **Constant request shape (2026-10-10 cache experiment):** every turn of a proposer role binds the SAME structured tool. The reflection (prose) turn binds the role's `L1DeltaBatch` tool through the seam's `tools=` while keeping `response_format` prose; the extraction turn supplies the same tool through `response_format`. Before this the reflection bound NO tool and the extraction bound one, so `data_modeller`'s strict `P,S,P,S` schedule toggled the tool set every call and the provider prefix cache never matched (`cache_read=0`). `mechanism_typist`'s `P,S,S` shared an `S,S` tool set and cached, which was the asymmetry that named the fix.
 
-Since **#187** all three build their turn through ONE seam, `analysis/proposer_turn.py`: the per-run thread, the role's #95 compaction middleware, the run-correlation tag, the project usage scope, and the role's OWN prompt. A proposer can therefore never be built with another proposer's prompt - the role_id selects all of it.
+Since **#187** both build their turn through ONE seam, `analysis/proposer_turn.py`: the per-run thread, the role's #95 compaction middleware, the run-correlation tag, the project usage scope, and the role's OWN prompt. A proposer can therefore never be built with another proposer's prompt - the role_id selects all of it.
 
 **Prompt delivery (load-bearing):** the role prompt rides the `system_prompt=` binding of `create_agent`, NOT a `SystemMessage` in the turn's messages. The agent factory prepends it ephemerally at each model invocation and never writes it into the checkpoint state, so the trail carries only the volatile task and the request's leading block is byte-identical on every call. Re-adding it as a trail message instead stacks a fresh copy per call at a shifting position, which is what produced the `mechanism_typist` quadratic input growth. This is the client half of the gateway's cache contract (`llm-gateway-100-decisions.md` D8). Reasoning: `docs/design/converged-agent-turn-adr.md`; the reusable rule: `statefulness-pattern-matrix.md` OUTLIER-5. The one-shot legacy leg (`prepend_prompt`) heads a message list with the same prompt at the same position, so the request does not depend on which leg a call site takes.
 
 **Assigner** (built, #8/#34/#30; adjacent-surface D-A1..D-A4):
 Sole owner of the `AGGREGATES` hinge: high-precision classification of an observed `Endpoint` onto an EXISTING Service. A.1-only - no minting, no re-assignment, no retraction.
-The chunk is the slice recon most recently collected and stays the unit of work; before judging, the assigner MAY run a bounded adjacent-surface phase (BaseURLs of all, joined with the endpoints they expose, through the read-only `graph_view`; the HTTP-history pair for disambiguation and confirmation only - deep technical understanding is the mechanism-typist's ownership), so ownership is judged with a topological understanding of the slice's neighbourhood.
+The chunk is the slice recon most recently collected and stays the unit of work; before judging, the assigner MAY run a bounded adjacent-surface phase (BaseURLs of all, joined with the endpoints they expose, through the read-only `graph_view`; the HTTP-history pair for disambiguation, confirmation, AND an adjacently promising endpoint's fuller response - one endpoint often embeds several features, so a minimally promising surface is worth a read - while deep technical understanding stays the mechanism-typist's ownership), so ownership is judged with a topological understanding of the slice's neighbourhood.
 The inventory block re-read live at every chunk dispatch is the deductive target: the assigner reasons FROM the observed surface TO those listed identities.
 
-*Contracts.* In: a `Chunk` narrowed by `admit_for_role` to `Endpoint` alone, plus the live L1 inventory with its `service_contract`s (the primary routing evidence), plus the settled Endpoint surface re-read live at dispatch. Out: `L1DeltaBatch{aggregates}`, each `AggregatesProposal{service_slug, l0: L0Ref, confidence, evidence_refs}`. Writes only through `l1_curator.write_aggregates`.
+*Contracts.* In: a `Chunk` narrowed by `admit_for_role` to `Endpoint` alone, plus the live L1 inventory with its `service_contract`s (the primary routing evidence), plus the settled Endpoint surface re-read live at dispatch. Out: `L1DeltaBatch{aggregates}`, each `AggregatesProposal{service_slug, l0: L0Ref, evidence_refs}`. Writes only through `l1_curator.write_aggregates`.
 
-*Prompt.* TWO layers, the Bootstrapper's split: the role verbatim in code (identity, the aggregates-only contract, the `l0.identity` shape - the WHAT, which must hold with no prompt file) plus `analysis/prompts/assigner.md` (the no-owner null hypothesis, the differential over candidate owners, discriminating evidence, confidence anchors - the HOW). The shared analyser skill was never a fit here: it addresses a generalist proposer and instructs the System and data modelling D4/D18 forbid this role (the #30 per-role retirement).
+*Prompt.* TWO layers, the Bootstrapper's split: the role verbatim in code (identity, the aggregates-only contract, the `l0.identity` shape - the WHAT, which must hold with no prompt file) plus `analysis/prompts/assigner.md` (the no-owner null hypothesis, the differential over candidate owners, discriminating evidence - the HOW). The shared analyser skill was never a fit here: it addresses a generalist proposer and instructs the System and data modelling D4/D18 forbid this role (the #30 per-role retirement).
 `ASSIGNER_PROMPT_CONFIG` selects; **`skill` is the default** (operator-ratified 2026-07-29), `baseline` a byte-identical rollback. The default was NOT earned on measurement - the comparison was confounded by inventory size (23 vs 11 Services) and supports only "no regression".
 The system half is byte-stable so the provider prompt-cache survives a run; inventory and chunk ride the volatile user turn.
 Its structured output is the role's DEFAULT, so no call site may drop it by omission: the shared seam treats an absent `schema` as the role's own contract and only a deliberate `None` selects a prose turn.
 
-*Shaping* (deterministic, post-LLM, ORDER load-bearing): `narrow_to_assignment` -> `resolve_l0_refs` -> `drop_out_of_inventory` -> `normalise_confidence` -> `withhold_below_bar`.
-Correctness never depends on the model's formatting: an `l0.label` the model coined is repaired against the known surface, and a percentage-scale confidence is rescaled BEFORE the bar - an unrescaled `85` clears a 0.75 bar and silently voids the withholding gate, as it did on 213 live edges.
+*Shaping* (deterministic, post-LLM, ORDER load-bearing): `narrow_to_assignment` -> `resolve_l0_refs` -> `drop_out_of_inventory`.
+Correctness never depends on the model's formatting: an `l0.label` the model coined is repaired against the known surface.
 `resolve_l0_refs` resolves against the KNOWN surface (chunk slice UNION settled surface): the out-of-chunk write gate is dropped (D-A4), so only a reference to surface nobody knows is unresolvable - its own chunk judges it when recon collects it.
 `AssignmentStats` counts every gate, so "found nothing" stays distinguishable from "discarded everything".
 _Avoid_: analyser (the whole-model term).
 
-**Four "no edge is written" mechanisms** (named apart 2026-07-27, #34; a fourth added #48, 2026-07-30 - one word for all of them hid a decision never taken behind a decision taken and declined):
-- **Gate** (input side): the element never reaches the agent, so no judgment is formed. The per-role admission set. (The httpx-profile delivery gate on the data path was REMOVED by #48, not merely retired as an instance of this mechanism - see "Chunk feeding" below.)
+**Three "no edge is written" mechanisms** (named apart 2026-07-27, #34; a fourth added #48, 2026-07-30 - one word for all of them hid a decision never taken behind a decision taken and declined; two removed 2026-10-15):
+- **Gate** (input side): the element never reaches the agent, so no judgment is formed. The per-role admission set, and the stream-level noise gate (`is_noise_endpoint`: script/style/map bundles and `assets/`/`static/` paths never stream). (The httpx-profile delivery gate on the data path was REMOVED by #48, not merely retired as an instance of this mechanism - see "Chunk feeding" below.)
 - **Narrow** (output side, structural): the agent may not emit a class of delta at all, whatever the model returned.
-- **Withhold** (output side, epistemic): the agent looked, judged, and declined below the bar. The Assigner's mechanism; requires a graded `confidence`.
-- **Ground** (output side, epistemic; #48): the DataPlane Analyser's substitute for Withhold, forced by the envelope asymmetry - the four data proposal shapes carry NO `confidence` field (reserved for `AGGREGATES` alone), so there is no bar to calibrate against. The epistemic control is anchoring in observed surface (a surviving `SURFACES_AT`) rather than a calibrated threshold; an ungrounded lift is dropped by code (`enforce_groundedness`), never merely discouraged by prompt.
+- **Withhold** (output side, epistemic) - REMOVED 2026-10-15 with the confidence score (`docs/design/drop-aggregate-confidence.md`): the agent looked, judged, and declined below the bar. Assignment is admit-all now.
+- **Ground** (output side, epistemic; #48) - REMOVED 2026-10-15 with the data plane (`docs/design/drop-data-modeller.md`): the DataPlane Analyser's substitute for Withhold is gone with the analyser.
 
 **TechnicalSystem / mechanism-typist**:
 The sole owner of mechanism TYPING (agent spec #9) - it defines/extends the cross-cutting `System`s the streamed surface evidences and links them to Services as typed `Service->System` edges, never Service props. BREADTH-ONLY: it emits `L1DeltaBatch{systems, system_edges}`; all System DEEPENING (WebPresentation rendering/navigation, authz inverse-pyramid, backward-recon probes, the `AnatomyResult` triple) is Phase B (epic #39).
-It runs a THREE-call chain over one `service` chunk delivered AFTER the Assigner: a hypothesis-driven free-text **reflection** (define which Systems the assets impact, verify soundly - overthink + critical-thinking + define/debug-hypothesis; exhaustion fails the step CLOSED), then structured **systems extraction**, then structured **services linking** (soft pass-through on later-step exhaustion).
+It runs a THREE-call chain over one chunk delivered AFTER the Assigner: a hypothesis-driven free-text **reflection** (define which Systems the assets impact, verify soundly against tool-grounded evidence - exhaustion fails the step CLOSED), then structured **systems extraction**, then structured **services linking** (soft pass-through on later-step exhaustion).
+Every turn binds the read-only `graph_view`, the HTTP-history pair, and the bounded `exec` tool (D-A2 extended past assigner-only; see `docs/design/typist-tool-workflows.md`); the reflection turn carries them as tools while keeping `response_format` prose, so the request shape never toggles.
+The role prompt rides the seam default on all three calls (byte-identical, cache-safe).
 _Avoid_: analyser (the whole-model term); anatomy (the Phase-B deepening path).
 
 **System description (discriminative attribute)**:
 The System-side counterpart of `service_contract`: a System's brief adversarially-oriented NL `description` prop is its DISCRIMINATIVE attribute - the mechanism-typist reads the currently-defined Systems WITH their descriptions (the additive `read_l1_inventory` `system_descriptions` map) to decide new-vs-extend, and on extend it COMPOUNDS the description (reads the existing one, emits the enriched superset), never emptied. Contrast the Assigner's never-re-emit `service_contract`: there the Bootstrapper is the better whole-architecture author, whereas the mechanism-typist is the SOLE incremental author of System descriptions, so compounding is correct, not clobbering.
 _Status_: NL description is the sole carrier at breadth; a richer type-based System specification is Phase B (#40, the L1-System under-typing gap).
 
-**DataPlane Analyser / data-modeller** (#48, `docs/design/dataplane-A1-decisions.md`):
-The sole owner of the Tier-1 data substrate - lifts logical `DataItem`s (business records) from streamed `Parameter`/`Header`/`Secret` surface, binds them with `SURFACES_AT`, and maps `PRODUCES`/`CONSUMES` flows onto the settled Service model plus surface-observable `DataItem`-to-`DataItem` dependencies.
-Emits `L1DeltaBatch{data_items, surfaces_at, data_flows, data_relationships}` and nothing else; runs LAST in the per-chunk schedule (after the Assigner and the mechanism-typist) so its Parameter-to-owning-Service join has a live `AGGREGATES` answer.
-A.1 is BUILT; A.2 (a batched completeness sweep per user-controllable datum) is `designed-not-built` - the phase guard in `make_data_modeller_body` returns `None` for any phase but `"A1"`, an inert dormant seam, never a silent half-implementation.
-_Avoid_: analyser (the whole-model term).
+**DataPlane Analyser / data-modeller** - REMOVED 2026-10-15 (`docs/design/drop-data-modeller.md`, supersedes #48, `docs/design/dataplane-A1-decisions.md` retained as history):
+Formerly the sole owner of the Tier-1 data substrate - lifted logical `DataItem`s from streamed `Parameter`/`Header`/`Secret` surface, bound them with `SURFACES_AT`, and mapped `PRODUCES`/`CONSUMES` flows onto the settled Service model.
+The per-chunk schedule is `assigner -> mechanism_typist`; the admission table is `{assigner: Endpoint, mechanism_typist: ADMIT_ALL}`, and the fork-H guarantee holds with two roles (the generalist still catches any unnamed asset type).
 
-**Observed-only fields**:
-A DataItem's `fields` prop names ONLY fields observed on the surface; enforced in the proposer's shaping seam (`bind_fields_to_observed`) by intersecting the proposal with the observed vocabulary and UNIONING with the item's already-persisted `fields`, never by instruction alone.
-The union is required, not defensive: the sole-writer's `SET d += $props` replaces `fields` wholesale, so a re-proposal from a later chunk observing a different subset would otherwise LOSE what an earlier chunk observed.
+**Observed-only fields** - REMOVED with the data plane (same date/ADR):
+Formerly the rule that a DataItem's `fields` prop named ONLY surface-observed fields, enforced by intersecting the proposal with the observed vocabulary in the shaping seam.
 
-**Grounded DataItem** (#48, T1's deliverable predicate):
-A DataItem with at least one `SURFACES_AT` AND at least one `PRODUCES`/`CONSUMES` flow.
-The surface half is REQUIRED per chunk (ratified 2026-07-30: a path noun alone never grounds a lift, so `enforce_groundedness` drops every NEW item with no surviving `SURFACES_AT`); the flow half is a GRAPH-LEVEL acceptance predicate, checked across chunks rather than per-chunk, because a flow needs the Assigner's ownership to have settled and the Assigner may legitimately WITHHOLD it in a later chunk.
-An item already in the live inventory is not re-tested (it was grounded when it was written).
+**Grounded DataItem** - REMOVED with the data plane (same date/ADR):
+Formerly the deliverable predicate (at least one `SURFACES_AT` AND at least one `PRODUCES`/`CONSUMES` flow), with the surface half enforced per chunk and the flow half checked graph-level.
 
-**DataItem notes (discriminative attribute)**:
-The DataItem-side counterpart of `service_contract` and of a System's `description`: an ADVERSARIAL CHARACTERISATION of the record - what it is, whose trust it carries, what breaks - compounded by the data-modeller as its sole incremental author, never blanked.
-Carries NO named payload, technique, or vector (stays inside A.1's descriptive fence, off the unratified phase-3 fault-hypothesis vocabulary).
+**DataItem notes (discriminative attribute)** - REMOVED with the data plane (same date/ADR):
+Formerly the DataItem-side counterpart of `service_contract` and of a System's `description`, compounded by the data-modeller as its sole incremental author.
 
-**Withholding gate**:
-The Assigner's crux (AMV-14): a below-bar ownership judgment (confidence < the 0.75 bar) yields NO `AGGREGATES` entry - the L0 element stays in the stale pool.
-The withholding is a SHAPING rule (absence IS the withholding; no "withheld" edge exists), lives in the Assigner seam not the shared sole-writer, and is the Assigner's SELF-check (maker); the Auditor is the separate check over survivors (checker).
-The bar is an EMPIRICAL OUTPUT, not a reasoned input, and is now actually swept: `evaluation.bar_sweep` reads the kept-vs-bar curve off one run's real confidences (no extra LLM calls - withholding is a pure function of confidences already collected). A bar where the curve is FLAT is buying nothing; a bar on a cliff discards a cluster the model felt alike about.
+**Withholding gate** - REMOVED 2026-10-15 (`docs/design/drop-aggregate-confidence.md`):
+Formerly the Assigner's crux (AMV-14): a below-bar ownership judgment yielded NO `AGGREGATES` entry, so the L0 element stayed in the stale pool.
+Assignment is admit-all now; an unplaced Endpoint still ends the run with no owner and stays in the stale pool, but no graded gate puts it there.
 
 **Validation gate** (#34 D9):
-An aggregate whose `service_slug` is not a live L1 identity is dropped BEFORE the confidence gate - an owner that does not exist is a reference to nothing, not a weak judgment to be scored, so a confident hallucination must not be scoreable.
+An aggregate whose `service_slug` is not a live L1 identity is dropped - an owner that does not exist is a reference to nothing, so a hallucinated owner must not be writable.
 The reach is retained as a **backlog description**: ONE short sentence naming the business function that may be missing, with the candidate slug embedded inline.
 Carried, not transported (#34 D6): no envelope field carries it upward yet.
 
 **Shared ownership** (#34 D3):
 There is no single-owner invariant - several Services may aggregate the same L0 asset.
-Each genuine owner is emitted with its own independent confidence, and the bar filters each edge separately.
+Each genuine owner is emitted as its own edge.
 
 **Service minting** (RETIRED from the Assigner 2026-07-27, #34 D4):
 The Bootstrapper is the sole source of the Service population and of `service_contract`.
@@ -378,7 +372,7 @@ The supervisor stamps the terminal status only AFTER archiving ONLY this run's p
 
 **analysis.supervisor_enabled (coexistence flag, RETIRED)**:
 The orthogonal flag that used to select legacy-pod vs the supervisor at the one analyser entry (`run_analyser`).
-RETIRED (#48 section 11 step 6, ratified 2026-07-30): the legacy two-pass pod it selected away from is deleted, so the flag branch is gone - `run_analyser` always drives the chunk-fed supervised path (`analyse_chunked`, the `assigner -> mechanism_typist -> data_modeller` schedule).
+RETIRED (#48 section 11 step 6, ratified 2026-07-30): the legacy two-pass pod it selected away from is deleted, so the flag branch is gone - `run_analyser` always drives the chunk-fed supervised path (`analyse_chunked`, the `assigner -> mechanism_typist` schedule).
 A project settings blob may still carry the key from before this change; it is simply no longer read.
 
 ## Chunk feeding (increment 1; the delivery gate was REMOVED by #48)
@@ -393,8 +387,8 @@ _Avoid_: batch (a batch is the overflow unit, below), payload.
 
 **Role admission set** (`ROLE_ADMITS` / `admit_for_role`, #34 D2/D7 - the lever #15 called asset-type-driven agent scoping):
 Every asset type a recon job produces is STREAMED; each proposer role then narrows the stream to the types it can meaningfully consume.
-`assigner` admits `Endpoint` alone; `data_modeller` admits `Parameter` + `Header` + `Secret` (widened #48, 2026-07-30 - a jsluice-mined Secret is Tier-1 trust substrate too); `mechanism_typist` holds the `ADMIT_ALL` sentinel.
-The sentinel is load-bearing, not shorthand: with three allow-sets an asset type no role names would be admitted by nobody and silently dropped, losing the fork-H guarantee, so the generalist role always catches a new recon tool's output.
+`assigner` admits `Endpoint` alone; `mechanism_typist` holds the `ADMIT_ALL` sentinel.
+The sentinel is load-bearing, not shorthand: with two allow-sets an asset type no role names would be admitted by nobody and silently dropped, losing the fork-H guarantee, so the generalist role always catches a new recon tool's output.
 A role admitting nothing from a chunk yields an empty batch, which is a valid outcome rather than an error.
 This is a SEPARATE, later-stage mechanism from the httpx-profile delivery gate below (verified NOT to be affected by that gate's removal).
 
@@ -403,6 +397,7 @@ The two-way `service` / `data` partition fixed "which asset types matter" once a
 
 **Chunk-builder**:
 `chunks_for_job` - streams a job's `AssetDelta` list into ONE ordered sequence, size-bounded by batch-overflow.
+The stream-level noise gate (`is_noise_endpoint`) drops what no L1 judgment can use before batching: script/style/map bundles (`.js`, `.mjs`, `.map`, `.css`, case-insensitive, query/fragment stripped) and whole-segment `assets/`/`static/` paths; non-Endpoint assets found on those paths stay in the stream.
 
 **Batch-overflow**:
 The sizing lever: a stream longer than the per-chunk asset budget splits into ordered chunks (`batch_index` / `batch_total`), the tail never dropped - replacing the retired silent 400-cap truncation.
@@ -417,7 +412,7 @@ Profile classification is now absent from every proposer's context entirely; the
 **Fault-hypothesis**:
 A defeasible, falsifiable claim that "unit U, at locus L, could exhibit fault-class F, because property P is assumed there and P may not hold" - the top rung of the epistemic ladder.
 It is a **phase-3 testing primitive**, not graph structure: it lives in the reasoning of a testing technique for the duration of a test and is NEVER a node or edge in the L0/L1 graph.
-The one *persisted* seed instance is the `CONSUMES` trust assumption, which a phase-3 technique reads as input; the general primitive belongs to the deferred phase 3 (Stage-3, `NM-8`).
+No seed instance is persisted now (the `CONSUMES` trust assumption was removed with the data plane); the general primitive belongs to the deferred phase 3 (Stage-3, `NM-8`).
 _Status_: **designed-not-built and name-not-ratified** - the operator has ruled out the earlier `:L1FaultHypothesis` node / `POSITS_FAULT_AT` edge framing (`domain-model.md` §2.6/§8).
 _Not to be confused with_: a vulnerability (a *confirmed* fault); an Observation (Recon, a low inference).
 
