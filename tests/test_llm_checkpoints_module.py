@@ -487,6 +487,16 @@ def test_checkpoint_serde_constructs() -> None:
 def test_the_module_scoped_saver_carries_the_serde_allowlist() -> None:
     # Every construction point (the module facade + the per-thread bounded savers
     # + the version scratch saver) uses the ONE serde, so no load path can run
-    # under a different allow-list.
+    # under a different allow-list. The serde NORMALIZES that allowlist (an empty
+    # tuple becomes `None` = "safe types only" on langgraph-checkpoint 4.1.1), so
+    # the assertion compares the normalized form the saver observably carries.
+    from langgraph.checkpoint.serde.jsonplus import _normalize_allowlist
+
     saver = C._module_scoped_saver(C._module_index("analysis"))
-    assert saver.serde._allowed_msgpack_modules == C._ALLOWED_MSGPACK_MODULES
+    assert saver.serde._allowed_msgpack_modules == _normalize_allowlist(
+        C._ALLOWED_MSGPACK_MODULES
+    )
+    if not C._ALLOWED_MSGPACK_MODULES:
+        # The empty allowlist means STRICT (safe types only); the serde must
+        # never represent it as "allow all" (`True`).
+        assert saver.serde._allowed_msgpack_modules is None
