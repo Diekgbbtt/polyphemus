@@ -133,6 +133,8 @@ A rough bound: with about 42% of turn 7's judgments single-candidate and the cla
 Adopt Move A now, and Move B behind guards 1 and 2. Keep Move C out until a trial measures the first two.
 This buys throughput where the differential is provably idle. It closes the class-blindness that produced this assessment's quirk, at the cost of a bounded rise in proposals that the placement and aggregation metrics must hold.
 
+Specified in `docs/design/plans/2026-10-15-T5-class-first-candidate-pull.md`: the exact prompt edits, the formal two-signal guard (uniqueness, two independent matches, no class competition, artifact held, signal independence), the motivating-case walkthrough, and the measurement plan.
+
 ## 8. Arm H keep/drop rows (the precision baseline)
 
 | Metric | Value |
