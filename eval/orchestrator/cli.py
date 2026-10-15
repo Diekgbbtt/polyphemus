@@ -720,6 +720,9 @@ def _run_trial(args, setup: EvalSetup, config: OrchestratorConfig, out: TextIO, 
         )
     # #349: the per-agent token spectrum, read from the durable ledger, so the
     # operator sees the cached/uncached split without leaving the terminal.
+    # `cache_detail_omitted` (N5) is the count of calls whose cache detail the
+    # provider never reported: when it equals `calls`, the cached axis says
+    # nothing (silence, not a measured miss).
     for agent, spectrum in (record.token_spectrum or {}).items():
         print(
             f"  spectrum {agent}: visible {spectrum['visible']} "
@@ -727,7 +730,8 @@ def _run_trial(args, setup: EvalSetup, config: OrchestratorConfig, out: TextIO, 
             f"cached_input {spectrum['cached_input']} "
             f"uncached_input {spectrum['uncached_input']} "
             f"generated {spectrum['generated']} total {spectrum['total']} "
-            f"capped {spectrum['capped']} calls {spectrum['calls']}",
+            f"capped {spectrum['capped']} calls {spectrum['calls']} "
+            f"cache_detail_omitted {spectrum['cache_detail_omitted']}",
             file=out,
         )
     # I2: a failed or timed-out run is a handled failure (the record is written

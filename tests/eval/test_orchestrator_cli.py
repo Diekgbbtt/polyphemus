@@ -490,6 +490,7 @@ def test_trial_outcome_prints_the_per_agent_token_spectrum(monkeypatch) -> None:
                 "total": 62100,
                 "capped": 44100,
                 "calls": 24,
+                "cache_detail_omitted": 3,
             }
         },
     )
@@ -523,3 +524,4 @@ def test_trial_outcome_prints_the_per_agent_token_spectrum(monkeypatch) -> None:
     assert "spectrum mechanism_typist:" in line
     assert "cached_input 19000" in line
     assert "uncached_input 43100" in line
+    assert "cache_detail_omitted 3" in line

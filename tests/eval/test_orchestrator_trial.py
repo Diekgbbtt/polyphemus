@@ -522,6 +522,7 @@ _TYPIST_SURFACE = {
     "total_tokens": 62_100_000,
     "capped_tokens": 44_100_000,
     "calls": 24,
+    "cache_detail_omitted": 3,
 }
 
 
@@ -553,6 +554,7 @@ def test_a_trial_records_the_per_agent_token_spectrum(tmp_path) -> None:
         "total": 62_100_000,
         "capped": 44_100_000,
         "calls": 24,
+        "cache_detail_omitted": 3,
     }
     assert record.token_spectrum == {"mechanism_typist": expected}
     written = yaml.safe_load(Path(record.trial_dir, "trial.yaml").read_text())
@@ -593,6 +595,7 @@ def test_a_budget_stop_records_the_spectrum_from_the_stop_read(tmp_path) -> None
             "total": 62_100_000,
             "capped": 44_100_000,
             "calls": 24,
+            "cache_detail_omitted": 3,
         }
     }
 

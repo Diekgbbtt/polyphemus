@@ -34,7 +34,15 @@ token_spectrum:
     total:          int   # cached + uncached + generated
     capped:         int   # generated + uncached (the budget axis)
     calls:          int   # model calls attributed to the agent
+    cache_detail_omitted: int  # calls whose cache detail the provider never reported (N5)
 ```
+
+### Amendment (2026-10-15): the N5 omission count joins the schema
+
+The schema gains `cache_detail_omitted`, the ledger's N5 count of calls whose cache detail the provider never reported.
+A cached share read against `cache_detail_omitted == calls` is UNAUDITED - silence about caching is not a measured miss - and the trial file must be able to say which one it is.
+The count comes from the same ledger entry as the rest of the spectrum; no new read is added.
+The amendment follows the gateway measurement fix: pinned litellm 1.96.0 dropped the streamed cache detail whenever the provider attached `usage` to a choice-bearing finish chunk, and the arm-G2 typist's "0.0% cached" was exactly that silence read as a miss (`docs/experiments/typist-cache-collapse-diagnosis.md`, `docs/design/cache-spectrum-measurement-research.md`).
 
 ### Source of truth: the durable ledger, decoded once at the terminal
 
@@ -49,7 +57,7 @@ The spectrum is therefore never re-derived from traces or spend logs.
 
 ### Schema and fail-open
 
-`SPECTRUM_FIELDS` in `api.py` fixes the eight-field order as the schema contract.
+`SPECTRUM_FIELDS` in `api.py` fixes the nine-field order as the schema contract.
 A malformed or absent agent entry reads as zeros (advisory), a bool is not an int, and a negative count reads as zero - the same discipline as `usage_total` / `usage_capped`.
 When the usage surface is unreachable the terminal read fails open, the record still writes, and `token_spectrum` is `None` (never a fabricated zero entry).
 
@@ -68,7 +76,7 @@ Every artifact, schema, attribute, endpoint, consumer, doc, and test the change 
 | 7 | `eval/CONTEXT.md` | vocabulary | New **Token spectrum** term; the trial-data-model glossary a reader uses. | additive |
 | 8 | `docs/design/eval-bugs-map.md` EV-35 | register | Marks the failure fixed by #349 with the decode/schema/doc pointers. | status |
 | 9 | `docs/design/eval-token-spectrum-349-adr.md` | decision | This record. | new |
-| 10 | `tests/eval/test_orchestrator_api.py` | test | Pins the decoder: the ledger surface maps to the eight fields, the schema order, and fail-open/malformed/negative cases. | new |
+| 10 | `tests/eval/test_orchestrator_api.py` | test | Pins the decoder: the ledger surface maps to the nine fields, the schema order, the N5 count, and fail-open/malformed/negative cases. | new |
 | 11 | `tests/eval/test_orchestrator_trial.py` | test | Pins the record: a terminal snapshot and a budget stop both write the flat spectrum to `trial.yaml`; a failed usage read leaves it None. | new |
 | 12 | `app/llm/usage.py`, `project_management/api.py`, `GET /projects/{id}/usage` | source | Unchanged: the durable ledger and its endpoint are the source of truth; the harness only decodes them. | unchanged |
 
@@ -87,7 +95,7 @@ Every artifact, schema, attribute, endpoint, consumer, doc, and test the change 
 
 ## Acceptance criteria
 
-- (a) The trial record reports per-agent `visible`, `reasoning`, `cached_input`, `uncached_input`, plus `generated` / `total` / `capped` / `calls` - covered by the record test and the schema-order assertion.
+- (a) The trial record reports per-agent `visible`, `reasoning`, `cached_input`, `uncached_input`, plus `generated` / `total` / `capped` / `calls` and the `cache_detail_omitted` N5 count - covered by the record test and the schema-order assertion.
 - (b) The values come from the durable ledger, not a re-derivation - the decoder reads the `by_agent` the spend read; no trace or spend-log path exists.
 - (c) A trial's cached/uncached spectrum is readable from the trial file alone - covered by the written-`trial.yaml` assertion.
 - (d) Docs + ADR updated; a regression test pins the schema - `eval/CONTEXT.md`, the assessment prompt, the bugs map, this ADR, and the two test files.
