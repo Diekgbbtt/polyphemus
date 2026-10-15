@@ -101,6 +101,7 @@ Step 1 - fix in `chunking.py`, shaped by the diagnosis:
 - Families over topology: group the stream into families anchored on the graph topology the deltas carry (a `BaseURL` anchor with its Endpoints, its Headers, its Technologies; an Endpoint with its Parameters and Secrets, via `identity` keys `baseurl`/`endpoint_path` and the deltas' `edges`).
 - Endpoint sub-buckets: classify Endpoints into client-side code, UI visuals, and HTML (from the recorded props: content type and path), so a chunk is homogeneous.
 - Header aftercare: a header row names the owning Endpoint(s) it was seen on, and duplicates across endpoints collapse to one row (chunk builder dedup plus the typist renderer's row shape).
+  Evidence correction (2026-10-15, after the diagnosis read the graph): a Header's only parent is its BaseURL (`HAS_HEADER`); no endpoint-level link exists to name. T3 therefore collapses the duplicates and the row keeps the owning BASEURL. See the diagnosis section 7.
 - Sizing: `CHUNK_MAX_ASSETS` becomes a SOFT target (`CHUNK_TARGET_ASSETS`); families are atomic; the builder closes a chunk once the count exceeds the target AND the current family is complete; the tail is never dropped.
 
 Acceptance:
@@ -136,5 +137,5 @@ blocked_by: T1-T3 (it reads the same run evidence; last in order).
 
 1. Proposer traces show zero `ClosedResourceError` and zero `http_history_failed` from install races.
 2. Kali session opens are on the order of units plus exec calls, not multiples per unit.
-3. Every katana-pass chunk either carries at least one assigner-admissible Endpoint or is not queued.
-4. The typist feed shows collapsed header rows with their owning endpoints named.
+3. The katana pass yields cohesive family chunks, not a per-transaction repeat: its chunk count falls to the family count and no chunk repeats another chunk's identities.
+4. The typist feed shows collapsed header rows, each naming its owning baseurl.
