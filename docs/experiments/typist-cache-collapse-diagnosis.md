@@ -122,6 +122,7 @@ The original text, kept for the record:
 ## Follow-ups (status 2026-10-15)
 
 The two provider-side follow-ups are resolved: the deterministic repro is the captured-bytes replay (95.9% cached) in "Falsification evidence" above, and the gateway capture is the in-container A/B plus the direct source read of litellm 1.96.0 (`cache-spectrum-measurement-research.md`).
+Resolved empirically by arm H (2026-10-15): the first clean re-run measured the typist at 91.0% cached over 304 calls (2,362,165 capped tokens, `cache_detail_omitted` 0/304), against arm G2's recorded 0% over 58 calls - the per-chunk prompt is cache-friendly, and the streamed-usage fix carried the detail end to end for all 420 calls of the run.
 Resolved in the app: `usageDetails` absence of `input_cache_read` versus explicit zero are now two facts in the ledger (`cache_detail_omitted`, N5), threaded into the eval trial record by this branch.
 Still open (observability debt noticed along the way, unrelated to caching): the recorded prompt bytes alternate between raw `...` (U+2026) and its `\u2026`-escaped rendering across observations (two recorder serializations disagree on `ensure_ascii`), and several large generation IO records are truncated with `[truncated N bytes]` markers, which corrupts byte-level prefix analysis past ~261k chars.
 The 21:14:19Z OTLP `Bad Gateway` span-export warning remains unrelated.

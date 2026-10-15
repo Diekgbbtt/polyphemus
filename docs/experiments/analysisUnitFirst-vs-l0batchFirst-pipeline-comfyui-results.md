@@ -766,6 +766,126 @@ Per-proposal confidences are unrecoverable (`assigner-aggregates` traces persist
 
 ---
 
+## Arm H - streamed L0 with the noise gate, the HTTP-history assigner and the measured cache
+
+Arm H re-runs arm G2's variables with the three fixes the G forensics named: the L0 noise gate (`3162d3f`, `353f003`), the streamed-usage continuity fix at the gateway (`bd341fd`) with the N5 omission count in the token spectrum (`913552d`), and the assigner rollback to the HTTP-history disambiguation surface (`99b400e`, R-A1..R-A3 of the assigner-surface ADR).
+It also carries the four-track analysis integration (aggregate-confidence drop, `data_modeller` drop, typist tool-surface trim) and the A6 runtime relax-and-replay (`8a8907b`).
+Same setup as G2 (`eval/setups/webexploitbench-8-run2.yaml`, target `comfyui-1`, `--budget-s 7200`), same environment, config 0.2, 3M token cap, `v4.1-flash` in every role.
+
+| Attribute | Value |
+|-----------|-------|
+| Trial | `comfyui-1-20261015T143534-1fc05262` (`trial.yaml` written; the dir name carries the finish time - started `12:28:03Z`, finished `14:35:34Z`, terminal `stopped`) |
+| Project | `a9bb42f9-6255-4f1e-87ee-fc09e2388024` |
+| Recon run | `d09748ab-92ef-4046-89c4-517f813d24e9` (complete) |
+| `eval_sha` | `a088730dd0bd5d5f42075eaf0ef7d312e8c859fd` (`dev` merge of the streamed-usage and N5 landings) |
+| `stack_fingerprint` | `613d2f7cc8490deac7cf7b7a5d6fdce6cea623379e3aeb5942e8948b650ff9de` |
+| `analysis_mode` | `streamed` |
+| Models | `opencode-go:deepseek-v4.1-flash` (every role) |
+| Token budget | 3,000,000 capped |
+| Terminal | phases `recon: complete`, `analysis: drained`, `hunting: stopped`; spend 3,017,307 at the stop (+17,307 over); the hunting run started and was stopped by the spend guard as the 7200s wall budget expired |
+
+**H hypothesis:**
+
+> We believed that gating L0 noise before queueing, restoring the HTTP-history surface to the assigner and fixing the streamed-usage accounting would keep the placement volume the G forensics pointed to without G's single-owner collapse - and would finally yield a cost reading without the gateway artifact.
+
+**What ran (~2h03m, 12:28Z-14:31Z):** recon settled 290 Endpoints (httpx 183, katana 105, jsluice 1, steel 1) and the KB skeleton (23 Services, 15 scaffold Systems).
+The L0 stream arrived in 7 passes: 26 chunks, 52 role dispatches, 2,280 L0 assets.
+
+| Pass | Source | Chunks | L0 assets | Aggregates | Systems |
+|------|--------|-------:|----------:|-----------:|--------:|
+| P1 | Domain | 1 | 1 | 0 | 4 |
+| P2 | IP/Port/Service | 1 | 13 | 0 | 3 |
+| P3 | httpx | 1 | 13 | 0 | 3 |
+| P4 | katana | 12 | 1,240 | 1 | 12 |
+| P5 | ffuf | 1 | 22 | 7 | 2 |
+| P6 | steel_crawl | 1 | 4 | 0 | 1 |
+| P7 | jsluice | 9 | 987 | 97 | 22 |
+
+The assigner census over the run: **admitted 298, proposed 105, kept 105, `unresolvable` 0, `out_of_inventory` 0** over 14 turns.
+193 admitted endpoints were declined into the stale pool, so the discrimination G lost operated again at the admitted-to-proposed step (35.2% proposal rate).
+The ffuf and jsluice passes carry the volume (104 of the 105 kept aggregates, from endpoint-rich wordlist and JS findings).
+The katana pass is the mechanical counter-example: only 2 of its Endpoint deltas are admissible after the noise gate (the gate drops the static-bundle `*.js` paths), the pass's other ~1.2k assets are metadata deltas (header/technology/BaseURL baskets for already-known endpoints) that the assigner cannot use, and 10 of its 12 chunks spend a typist turn with no admissible Endpoint for the assigner.
+
+### Comparison table (A, F, G, H)
+
+| Criterion | Metric | A streamed | F endpoint-first | G adjacent-surface | H gate + HTTP-surface |
+|---|---|---:|---:|---:|---:|
+| C1 | `service_aggregation_coverage` | 68.0% | 52.2% | 2/25 = 8.0% | 14/23 = 60.9% |
+| C1 | `endpoint_placement` | 28.3% | 11.0% | 75/290 = 25.9% | 78/290 = 26.9% |
+| C1 | `orphan_services` | 8 | 11 | 23 | 9 |
+| C1 | `gt_service_aggregation` | 92.9% | 64.3% | 1/14 = 7.1% | 10/14 = 71.4% |
+| C2 | `system_attachment_coverage` | 69.2% | 65.2% | 5/25 = 20.0% | 18/27 = 66.7% |
+| C2 | `system_anchoring_coverage` | 50.0% | 30.4% (partial) | 4/25 = 16.0% | 11/27 = 40.7% |
+| C2 | `orphan_systems` | 8 | 8 | 20 | 9 |
+| C3 | `service_recall` | 100% | 100% | 14/14 = 100% | 14/14 = 100% |
+| C3 | `service_precision` | 56.0% | 60.9% | 14/25 = 56.0% | 14/23 = 60.9% |
+| C3 | `dataitem_recall` | 0/8 | 0/8 | 0/8 | 0/8 |
+| C3 | `spine_depth` | 60.0% | 60.0% | 60.0% | 60.0% (`api_paradigm`/`auth_methods` absent on all 23) |
+| C3 | `gt_service_system_exposure` | 100% | 100% | 1/14 = 7.1% | 14/14 = 100% |
+| C4 | `cached_share_total` | 70.6% | 88.2% | 30.2% (unaudited) | 90.0% (measured) |
+| C4 | `input_uncached_tokens` | 4,492,641 | 2,071,438 | 2,972,981 (inflated) | 2,151,348 |
+| C4 | `generated_output_tokens` | 547,505 | 551,217 | 262,894 | 867,442 |
+| C4 | `capped_tokens` | 5,036,246 | 2,622,655 | 3,235,875 (3M, +235,875; inflated) | 3,018,790 (3M, +18,790; measured) |
+
+H's `gt_service_system_exposure` uses the same source-side reading as arm F ("every ground-truth Service carries a `ROUTED_BY`/`EXPOSED_VIA` System edge"); the staged measure script's target-side variant of this one query reads 0 on this schema and is an inverted-direction artifact.
+
+C4 per-role (capped tokens / calls / cached share):
+
+| Role | H capped | H calls | H cached |
+|------|---------:|--------:|---------:|
+| triager | 117,977 | 30 | 69.1% |
+| assigner | 324,340 | 59 | 74.3% |
+| mechanism_typist | 2,362,165 | 304 | 91.0% |
+| hunting_orchestrator | 115,911 | 19 | 93.4% |
+| hunting_hunter | 98,397 | 8 | 75.2% |
+| **total** | **3,018,790** | **420** | **90.0%** |
+
+No row is unaudited: `cache_detail_omitted` is 0 for all 420 calls, the first arm where the streamed-usage path carried cache detail end to end.
+Three readings:
+
+- The typist's real cost shape is now measured: 304 calls at 91.0% cached (2,362,165 capped, ~7.8k per call) - a cache-friendly per-chunk prompt, not G's recorded 0%-cached 58-call artifact. The four-track integration turned the typist into many small turns, and the recorded axis is trustworthy.
+- The worst proposer is the assigner at 74.3%, above the 70% bar; the total is 90.0% - the first clean crossing of the C4 hygiene bar in the streamed line.
+- The budget stop is readable: the analysis roles total 2,804,482 (93.5% of the cap) and hunting adds 214,308; the stop was the spend guard, not an inflated axis. (The usage pull taken after the stop reads +1,483 over the `trial.yaml` figure from two late orchestrator calls.)
+
+### C5 - L1 surface structure and L0 grounding
+
+| Metric | H |
+|--------|--:|
+| `l1_nodes_by_kind` | L1Service 23, L1System 27, L1DataItem 0 |
+| `l1_edges_by_type` | AUTHENTICATED_BY 12, DEPENDS_ON 1, EXPOSED_VIA 24, IDENTIFIED_BY 9, ROUTED_BY 20 |
+| `l1_l0_grounded_nodes` | 14/50 = 28.0% |
+| `l0_unreferenced` (Endpoints) | 212 |
+
+The vocabulary is the widest of any arm (six edge types; `AUTHENTICATED_BY`/`IDENTIFIED_BY` arrive with the four-track integration) and is entirely analyser-written: 66 L1-to-L1 edges, with the scaffold contributing nodes only.
+Grounding is the best measured so far (28.0% against F's 26.1%, E's 23.9%, D's 22.4% and G's 4.0%): exactly the 14 aggregating Services are grounded, and no System carries L0 evidence.
+The 212 unreferenced endpoints are the reconnaissance bulk no pass reaches, dominated by the httpx fuzz/probe deltas and the katana feed's bundle and metadata endpoints.
+
+### C6 - proposer trajectory fidelity (arm H)
+
+The assigner session persisted full message IO (803 observations, 59 generations, 14 turns - one per chunk that admitted surface).
+The typist session was read as a census of its last 1,000 observations (the 13:56-14:31 tail, six full turns).
+
+| Axis | H (assigner) | Evidence |
+|------|--:|----------|
+| `workflow_adherence` | pass | 14/14 turns ran the prompt's sequence - surface-first reading, history widening, differential, `L1DeltaBatch` commit; the "history unreachable -> retry once -> judge on the slice" degradation plan appears on the degraded turns |
+| `tool_call_completeness` | pass | the bound set was called on every turn (`search_http_history` always, `get_http_artifact` where a candidate artifact existed); widening stayed bounded (limits 5-60) |
+| `interface_adherence` | agent pass / seam fail | the agent's calls are read-only and correctly shaped (filter and text forms, limits); the seam returned 39 error-level tool results across 14/14 turns (4 `TimeoutError` at the 150s client bound; `ClosedResourceError` on freshly opened sessions; ~10 `invalid_request`/validation results including two `HttpArtifact` validation errors) |
+| `reasoning_coherence` | partial | explicit candidate -> discrimination -> commit/drop on every turn, and the discipline operated (193/298 admitted endpoints declined); one quirk: the `/experiment/models` keep ran its differential only against noun-adjacent candidates (`model-download`) and never against the rival whose contract names the observed payload class (`server-diagnostics`, "the folder-path map") - candidate generation is path-noun-driven |
+| `tool_output_fidelity` | pass | every `http_history_failed` result was read as "missing evidence, not an empty surface" (verbatim in six turns); 404-with-empty-body artifacts were read correctly; no mechanism was invented from a tool response |
+
+Typist: the sampled tail shows six turns at 9-14 generations each running the complete tool set (`graph_view`, the HTTP pair, `exec`) and closing with `L1DeltaBatch`, with zero errors or warnings; combined with the live pass-table reading (P1-P4) and the per-chunk reset markers in the agent log (one `run:mechanism_typist` thread, reset at every chunk boundary), the typist trajectory reads as the cleanest of the line.
+`data_modeller`: dropped from the pipeline by the four-track integration, so no verdict.
+
+### Verdict for arm H
+
+- **The hypothesis holds in the form tested.** The streamed trunk with the noise gate and the HTTP-history assigner pairs volume with discrimination for the first time since the split: `endpoint_placement` 26.9% (at arm A's level), 14 of 23 Services aggregating, `gt_service_aggregation` 71.4% against G's 7.1%, 193 of 298 admitted endpoints declined rather than pinned, `unresolvable` 0 throughout. G's collapse does not reproduce.
+- **The cost reading is finally clean.** 90.0% cached across 420 calls with zero omissions, worst proposer the assigner at 74.3%; the budget stop is legible without an inflation footnote. The typist's G-era 0% is confirmed dead as a measurement artifact; its true shape is many small cache-friendly calls.
+- **The next feed defect is named and mechanical.** The noise gate gates Endpoints only; the katana metadata deltas (~1.2k header/technology/BaseURL baskets) still stream and still buy typist turns, while the assigner starves on the same chunks. The next iteration gates the remaining feed forms (Domain/IP/Port/Service) at queue time and rebuilds chunks as endpoint-anchored cohesive families.
+- **The next reliability defect is the MCP session lifecycle.** Fresh sessions die for most of the run (`ClosedResourceError` in 14/14 assigner turns; the kali server log shows `DELETE /mcp` followed by `POST /mcp` 404); the fix direction is a deterministic close when a unit's processing completes and a fresh session per streamed chunk, replacing the reuse of failed sessions.
+- **One differentiation quirk stays open.** `/experiment/models` is the folder-path map (live probe, 15 Oct 2026); its judgment ran noun-to-noun and never reconciled the payload's other route identity (`/folder_paths`, kept under `server-diagnostics`). The relaxation analysis is scoped to the next iteration, not decided here.
+
+---
+
 ## Cumulative per-target registry
 
 This table is the extension point.
@@ -780,6 +900,7 @@ Every future target run appends one row, so the criteria accumulate evidence acr
 | comfyui | E | D + tuned per-proposer compaction | 10.0% | 12 | 17.4% (partial loop) | 14/14 | 0/8 | 76.2% | 3,903,682 | 529,165 | 4,432,847 | 11/46 = 23.9% | fail (interface, reasoning) | 2026-10-13 |
 | comfyui | F | endpoint-first prefix + MCP seam fix, config 0.2 | 11.0% | 11 | 30.4% (partial loop) | 14/14 | 0/8 | 88.2% | 2,071,438 | 551,217 | 2,622,655 | 12/46 = 26.1% | partial (assigner pass) | 2026-10-13 |
 | comfyui | G | streamed + adjacent-surface assigner, no out-of-chunk gate, config 0.2, 3M cap, v4.1-flash | 25.9% | 23 | 16.0% (budget stop) | 14/14 | 0/8 | 30.2% (unaudited) | 2,972,981 | 262,894 | 3,235,875 | 2/50 = 4.0% | structural (coherence fail) | 2026-10-14 |
+| comfyui | H | streamed + L0 noise gate + HTTP-history assigner + streamed-usage fix, config 0.2, 3M cap, v4.1-flash | 26.9% | 9 | 40.7% (analysis drained; hunting stopped on spend) | 14/14 | 0/8 | 90.0% (measured, 0 omissions) | 2,151,348 | 867,442 | 3,018,790 (+18,790) | 14/50 = 28.0% | partial (assigner pass; seam errors; one quirk) | 2026-10-15 |
 | `<target>` | | | | | | | | | | | | | | |
 | `<target>` | | | | | | | | | | | | | | |
 
@@ -857,6 +978,12 @@ The regression is uniform, not concentrated.
     Arm G dropped the out-of-chunk write gate and recovered volume (placement 25.9%, zero unresolvable) but collapsed discrimination (74/75 edges to one non-GT owner, bar never fired in 11 chunks). A gate that looks like a scope bug may be load-bearing friction; its removal needs a counterweight (calibration, competition, per-owner caps), tested one change at a time.
 13. **Cost has a per-role shape, and the mean hides it.**
     Arm G's 30.2% cache share is the typist's recorded 0%-cached 2.67M alone (unaudited - a gateway artifact, corrected 2026-10-15); the assigner ran at 76.7% cached. A hygiene bar on the mean misdirects the fix - the per-role floor names the anomaly, and here it named one whose number was wrong.
+14. **A gate must gate the feed's noise forms, not one asset type.**
+    Arm H's L0 gate removed the katana static-bundle Endpoints but left the metadata deltas (headers, technologies, per-transaction BaseURL baskets) streaming; 10 of its 12 chunks bought a typist turn while the assigner starved, and the pass wrote 1 aggregate. Noise gated for one role is still noise for the other.
+15. **A measured axis changes the verdict.**
+    With the gateway continuity fix, arm H reads 90.0% cached over 420 calls with zero omissions and a legible budget stop - the first readable C4 in the streamed line. Arm G's 30.2% had been silence read as a miss, and its budget stop fired early on that inflation.
+16. **Candidate generation is path-noun-driven, and payload-class rivals escape the differential.**
+    Arm H's assigner declined 193 of 298 admitted endpoints, yet one payload's route identities split across two Services (`/experiment/models` -> `model-inventory`; `/folder_paths` -> `server-diagnostics`) because no path noun pulled the rival whose contract names the payload class. Relaxing this is a separate, risk-accounted change (next iteration).
 
 ### Surprising Findings
 
@@ -888,6 +1015,7 @@ Arm C (enriched v2) also loses C1 and C4 and wins only C2 against arm B.
 Arm D (the W-a..W-d surface-integrity fixes) recovers most of the placement (`endpoint_placement` 24.1%, `gt_service_aggregation` 100%) and arm E's compaction tuning regresses it again.
 Arm F (endpoint-first prefix + MCP seam fix) is the cheapest and best-cached run of the six and fixes the MCP hang, but its `endpoint_placement` (11.0%) and `gt_service_aggregation` (64.3%) regress against arm D in the completed assign pass.
 Arm G (adjacent-surface assigner, no out-of-chunk gate) recovers placement volume (25.9%) but collapses discrimination (74/75 edges to non-GT `editor-shell`, GT aggregation 7.1%); its apparent cache-bar break (typist 0%, 30.2% total) is a gateway measurement artifact, not a cache failure (corrected 2026-10-15).
+Arm H (streamed + L0 noise gate + HTTP-history assigner + streamed-usage fix) is the first post-split arm to pair volume with discrimination (`endpoint_placement` 26.9%, `gt_service_aggregation` 71.4%, 193/298 admitted endpoints declined, zero `unresolvable`) and clears the C4 bar on a correct measurement (90.0%, zero omissions); its open defects are feed cohesion, the MCP session lifecycle and one differential quirk, all scoped to the next iteration rather than a redesign.
 Neither analysis-unit-first formulation beats the incumbent on the criteria that orient a hunting agent, so neither should proceed to further targets as-is.
 
 ### If Iterating (precondition for re-testing)
@@ -908,6 +1036,8 @@ Neither analysis-unit-first formulation beats the incumbent on the criteria that
 |--------|-------|-----|
 | Write the connectivity fix as a design change (assign pass and slice builder) | implementing agent | next change |
 | Land the `hunting-at-analysis-finish` ordering fix | implementing agent | next change |
+| Gate the non-Endpoint feed forms (Domain/IP/Port/Service) at queue time and rebuild chunks as endpoint-anchored families | implementing agent | next change |
+| Move the MCP session lifecycle to unit completion (close on unit done, fresh session per chunk) | implementing agent | next change |
 | Fix the Langfuse `403` export auth on the eval instance | operator | next change |
 | Run the connectivity fix on comfyui and re-score the four criteria | operator | after the fix |
 | Extend the registry with a second target to test generality | operator | after comfyui passes |
@@ -1013,6 +1143,11 @@ A verdict is an axis-by-axis pass or fail with the trace evidence that shows it;
 - Arm F's agent log is post-restart, so its C6 warning counts undercount the run; the C6 reading is taken from the Langfuse trace instead.
 - Arm F's `data_modeller` ran (16 calls) but the loop was stopped before the DataItem layer could be written, so `dataitem_recall` is 0/8 as in every other arm.
 - Arm G ended at its 3M token budget (3,235,875 capped / 198 calls, overshoot 235,875) with no `trial.yaml` (the orchestrator timed out without writing one - the arm F precedent); graph + ledger + log are the sources. Its first attempt the same day ended early on provider quota exhaustion (`quota_exhausted=true`, 0 calls) and was superseded by the re-run; the attempt's record (`...-185850-1fc05262`) stays on disk for provenance.
+- Arm H wrote `trial.yaml` again (first completed record since arm C): `recon: complete`, `analysis: drained`, `hunting: stopped`, spend 3,017,307 (+17,307) at the wall-budget stop. Its `usage` field is null, so C4 is read from the usage pull (3,018,790; two late orchestrator calls add 1,483 over the stop figure).
+- Arm H's `gt_service_system_exposure` follows arm F's source-side reading (the ground-truth Service carries the System edge); the staged measure script's target-side query reads 0 on this schema and is an inverted-direction artifact.
+- Arm H's katana pass streamed ~1.2k metadata deltas against 2 admissible Endpoints; 10 of its 12 chunks spent a typist turn with nothing for the assigner, and the pass wrote 1 aggregate in total.
+- Arm H's kali MCP sessions failed on freshly opened sessions for most of the run (`ClosedResourceError` in 14/14 assigner turns; the kali server log shows `DELETE /mcp` then `POST /mcp` 404).
+- `/experiment/models` (arm H) returns the folder-path map (live probe, 15 Oct 2026); `model-inventory` and `server-diagnostics` both carry contract text that can claim it, and the nouns-only differential never reconciled the payload's other route identity (`/folder_paths`). Scoped for the next iteration.
 - Pre-existing (found during the arm G merge verification, unrelated to any arm): `tests/test_llm_checkpoints_module.py::test_the_module_scoped_saver_carries_the_serde_allowlist` fails on the installed langgraph (`JsonPlusSerializer(allowed_msgpack_modules=())` yields `serde._allowed_msgpack_modules is None`). It fails identically on the pre-merge trunk, so it is environment/version drift, not a regression; recorded here so a future red suite is not misread.
 
 ---
@@ -1020,3 +1155,4 @@ A verdict is an axis-by-axis pass or fail with the trace evidence that shows it;
 *Results documented on 2026-10-11. Decision to kill the current batched formulation recorded with the document.*
 *Arm F appended on 2026-10-13: the MCP seam fix holds, the endpoint-first prefix trades placement for cost, and the graceful project-execution stop does not settle a mid-pass analysis.*
 *Arm G appended on 2026-10-14: the adjacent-surface assigner recovers placement volume (25.9%, zero unresolvable) but collapses discrimination (74/75 edges to non-GT `editor-shell`, GT 1/14) - the dropped gate was load-bearing friction; the typist's recorded 0%-cached 2.67M appeared to break the cache bar on its own - CORRECTED 2026-10-15: that reading is a gateway artifact (the same bytes replay at 95.9-100% cached), so the break is unaudited. First G attempt (quota exhaustion) superseded by the re-run.*
+*Arm H appended on 2026-10-15: the L0 noise gate + HTTP-history assigner + streamed-usage fix pair volume with discrimination (placement 26.9%, GT aggregation 71.4%, 193/298 declined, zero unresolvable) and C4 reads 90.0% with zero omissions - the first clean crossing. Open defects: feed cohesion on the katana metadata deltas, the kali MCP session lifecycle, and the path-noun-driven candidate generation at `/experiment/models`.*
