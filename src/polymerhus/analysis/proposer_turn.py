@@ -60,12 +60,33 @@ _BATCH: contextvars.ContextVar[str | None] = contextvars.ContextVar(
 @contextlib.contextmanager
 def proposer_batch(batch_id: str | None) -> Iterator[None]:
     """Scope the turns of ONE streamed chunk as the session batch. A None batch is a
-    no-op scope, so a caller that sets none keeps the `run:role` thread."""
+    no-op scope, so a caller that sets none keeps the `run:role` thread.
+
+    Leaving the scope is the unit boundary for the chunk-sourced side effects: the
+    kali MCP session the turns used closes HERE, at the same point the agent session
+    is reset (reset, not torn down - the seam keeps `run:role`'s stable identity and
+    empties it for the next chunk). The next chunk therefore opens a FRESH MCP
+    session instead of reusing one whose turns are over, and no connection leaks
+    into the next unit. Fail-open: the close is best-effort and never breaks a
+    proposer body."""
     token = _BATCH.set(batch_id)
     try:
         yield
     finally:
         _BATCH.reset(token)
+        if batch_id is not None:
+            _close_unit_session()
+
+
+def _close_unit_session() -> None:
+    """Close the unit's kali MCP session at the batch boundary (fail-open; an
+    unimportable or unhappy client must never break a proposer body)."""
+    try:
+        from polymerhus.app.clients.kali_http_history import close_unit_session
+
+        close_unit_session()
+    except Exception:  # noqa: BLE001 - the boundary close is best-effort
+        logger.warning("proposer_turn: unit session close failed", exc_info=True)
 
 
 def current_batch() -> str | None:
