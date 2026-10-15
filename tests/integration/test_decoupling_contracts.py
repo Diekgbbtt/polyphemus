@@ -140,13 +140,13 @@ def test_AST_DEC_07_two_consecutive_passes_write_no_new_identities(project):
     _seed_l1_service(project, "checkout")
 
     def fake_llm(messages):
-        # A deterministic proposal naming BOTH seeded Endpoints, above the bar.
+        # A deterministic proposal naming BOTH seeded Endpoints.
         return L1DeltaBatch(aggregates=[
             AggregatesProposal(
                 service_slug="checkout",
                 l0=L0Ref(label="Endpoint",
                          identity={"path": p, "method": "GET", "baseurl": BU}),
-                confidence=0.95, evidence_refs=[f"path segment {p}"],
+                evidence_refs=[f"path segment {p}"],
             ) for p in ("/orders/42", "/orders/43")
         ])
 

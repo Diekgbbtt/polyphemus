@@ -36,7 +36,7 @@ from tests.conftest import neo4j_target
 # inside the Docker network.
 URI, AUTH = neo4j_target()
 PROV = Provenance(job="it", model="m", prompt_id="p")
-ENV = JudgmentEnvelope(confidence=0.8, status="committed", evidence_refs=["o"], provenance=PROV)
+ENV = JudgmentEnvelope(status="committed", evidence_refs=["o"], provenance=PROV)
 
 
 def _driver():

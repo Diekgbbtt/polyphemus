@@ -1,7 +1,7 @@
 """Contract predicates (integration tier) for the classification-only Assigner.
 Mechanises C13-C26 of the catalogue attached to #34 (agent spec #8, slice #25).
 
-The validation gate, the withholding gate, multi-ownership, the structural
+The validation gate, admit-all, multi-ownership, the structural
 narrowing, the prompt's volatility split and the supervisor receipt - over crafted
 proposals and an injected invoke_fn (no live LLM/graph). Expected values from the
 spec. Verifier-gated; not selected by the tdd unit loop.
@@ -22,7 +22,6 @@ from polymerhus.analysis.assigner import (
     drop_out_of_inventory,
     narrow_to_assignment,
     shape_proposal,
-    withhold_below_bar,
 )
 from polymerhus.analysis.chunking import Chunk
 from polymerhus.analysis.l1_types import L0Ref
@@ -40,11 +39,11 @@ def _ep(path):
     return AssetDelta(type="Endpoint", identity={"path": path, "method": "GET", "baseurl": BU})
 
 
-def _agg(path, conf, service="checkout"):
+def _agg(path, service="checkout"):
     return AggregatesProposal(
         service_slug=service,
         l0=L0Ref(label="Endpoint", identity={"path": path, "method": "GET", "baseurl": BU}),
-        confidence=conf, evidence_refs=[f"path segment {path}"],
+        evidence_refs=[f"path segment {path}"],
     )
 
 
@@ -67,30 +66,35 @@ def _capture():
     return seen, make
 
 
-# --- C13: the withholding gate ------------------------------------------------
+# --- C13: admit-all (the withholding gate and the confidence score were removed
+# on 2026-10-15, docs/design/drop-aggregate-confidence.md). The structural gates
+# below are all that remain. --------------------------------------------------
 
-def test_C13_withhold_below_bar_keeps_evidence():
-    batch = L1DeltaBatch(aggregates=[_agg("/x", 0.90), _agg("/y", 0.50), _agg("/z", 0.75)])
-    out = withhold_below_bar(batch, bar=0.75)
-    assert {a.l0.identity["path"] for a in out.aggregates} == {"/x", "/z"}  # /y dropped
-    survivor = next(a for a in out.aggregates if a.l0.identity["path"] == "/x")
-    assert survivor.confidence == 0.90
+def test_C13_every_structurally_valid_aggregate_is_kept():
+    """Admit-all: no confidence gate follows the structural gates, so every
+    aggregate that names a live Service and a known Endpoint survives with its
+    evidence intact."""
+    ep = AssetDelta(type="Endpoint", identity={"path": "/x", "method": "GET", "baseurl": BU})
+    raw = L1DeltaBatch(aggregates=[_agg("/x"), _agg("/x", service="fulfilment")])
+    out = shape_proposal(raw, existing_slugs=SLUGS, endpoints=(ep,))
+    assert {a.service_slug for a in out.batch.aggregates} == {"checkout", "fulfilment"}
+    survivor = next(a for a in out.batch.aggregates if a.service_slug == "checkout")
     assert survivor.evidence_refs == ["path segment /x"]
 
 
 # --- C14 / C15: D9 - the validation gate + the backlog ------------------------
 
-def test_C14_out_of_inventory_slug_dropped_at_any_confidence():
-    batch = L1DeltaBatch(aggregates=[_agg("/x", 0.99, service="ghost-service")])
+def test_C14_out_of_inventory_slug_is_dropped():
+    batch = L1DeltaBatch(aggregates=[_agg("/x", service="ghost-service")])
     out = assign(_chunk("/x"), invoke_fn=lambda m, **_: batch, inventory=INVENTORY,
-                 existing_slugs=SLUGS, bar=0.75)
-    assert out.batch.aggregates == []  # a high confidence does not rescue it
+                 existing_slugs=SLUGS)
+    assert out.batch.aggregates == []  # a non-existent owner never lands
 
 
 def test_C15_out_of_inventory_slug_becomes_backlog_description():
-    batch = L1DeltaBatch(aggregates=[_agg("/x", 0.99, service="ghost-service")])
+    batch = L1DeltaBatch(aggregates=[_agg("/x", service="ghost-service")])
     out = assign(_chunk("/x"), invoke_fn=lambda m, **_: batch, inventory=INVENTORY,
-                 existing_slugs=SLUGS, bar=0.75)
+                 existing_slugs=SLUGS)
     assert len(out.backlog) == 1
     (item,) = out.backlog
     assert isinstance(item, str)
@@ -98,9 +102,9 @@ def test_C15_out_of_inventory_slug_becomes_backlog_description():
     assert out.batch.services == []
 
 
-def test_C15b_validation_precedes_the_confidence_gate():
-    """A ghost owner is a reference to nothing, not a weak judgment to be scored."""
-    batch = L1DeltaBatch(aggregates=[_agg("/x", 0.10, service="ghost")])
+def test_C15b_validation_gate_drops_a_ghost_owner():
+    """A ghost owner is a reference to nothing, not a weak judgment."""
+    batch = L1DeltaBatch(aggregates=[_agg("/x", service="ghost")])
     kept, backlog = drop_out_of_inventory(batch, existing_slugs=SLUGS)
     assert kept.aggregates == []
     assert len(backlog) == 1 and "ghost" in backlog[0]
@@ -110,11 +114,11 @@ def test_C15b_validation_precedes_the_confidence_gate():
 
 def test_C16_two_services_may_own_the_same_endpoint():
     batch = L1DeltaBatch(aggregates=[
-        _agg("/orders/42", 0.85, service="checkout"),
-        _agg("/orders/42", 0.80, service="fulfilment"),
+        _agg("/orders/42", service="checkout"),
+        _agg("/orders/42", service="fulfilment"),
     ])
     out = assign(_chunk("/orders/42"), invoke_fn=lambda m, **_: batch, inventory=INVENTORY,
-                 existing_slugs=SLUGS, bar=0.75)
+                 existing_slugs=SLUGS)
     assert len(out.batch.aggregates) == 2
     assert {a.service_slug for a in out.batch.aggregates} == {"checkout", "fulfilment"}
     assert {a.l0.identity["path"] for a in out.batch.aggregates} == {"/orders/42"}
@@ -128,10 +132,10 @@ def test_C17_assigner_never_emits_services():
             ServiceProposal(business_function_slug="checkout", props={"exposure": "public"}),
             ServiceProposal(business_function_slug="brand-new", props={"exposure": "public"}),
         ],
-        aggregates=[_agg("/x", 0.90)],
+        aggregates=[_agg("/x")],
     )
     out = assign(_chunk("/x"), invoke_fn=lambda m, **_: batch, inventory=INVENTORY,
-                 existing_slugs=SLUGS, bar=0.75)
+                 existing_slugs=SLUGS)
     assert out.batch.services == []          # reused AND would-be-minted both dropped
     assert len(out.batch.aggregates) == 1    # the assignment survives
 
@@ -143,7 +147,7 @@ def test_C18_narrow_drops_non_assignment_lists():
         services=[ServiceProposal(business_function_slug="x")],
         systems=[SystemProposal(kind="RESTApi")],
         data_items=[DataItemProposal(item_key="order")],
-        aggregates=[_agg("/x", 0.90)],
+        aggregates=[_agg("/x")],
     )
     out = narrow_to_assignment(raw)
     assert out.services == [] and out.systems == [] and out.system_edges == []
@@ -170,7 +174,7 @@ def test_C19_degrades_to_empty_outcome():
 # --- C20: idempotent ----------------------------------------------------------
 
 def test_C20_idempotent_same_inputs_same_result():
-    batch = L1DeltaBatch(aggregates=[_agg("/x", 0.90)])
+    batch = L1DeltaBatch(aggregates=[_agg("/x")])
     a = assign(_chunk("/x"), invoke_fn=lambda m, **_: batch, inventory=INVENTORY, existing_slugs=SLUGS)
     b = assign(_chunk("/x"), invoke_fn=lambda m, **_: batch, inventory=INVENTORY, existing_slugs=SLUGS)
     assert a == b
@@ -272,7 +276,7 @@ def test_C26_proposer_carrying_cargo_reports_written():
     captured = {}
 
     def body(dispatch, state):
-        return L1DeltaBatch(aggregates=[_agg("/x", 0.90)])
+        return L1DeltaBatch(aggregates=[_agg("/x")])
 
     def curator(state):
         captured["status"] = state["inflight"].status
@@ -295,7 +299,7 @@ def test_C26b_hollow_curator_never_reports_a_write_that_did_not_happen():
     from polymerhus.analysis.supervisor import build_supervisor_graph
 
     def body(dispatch, state):
-        return L1DeltaBatch(aggregates=[_agg("/x", 0.90)])
+        return L1DeltaBatch(aggregates=[_agg("/x")])
 
     graph = build_supervisor_graph(proposer_bodies={"assigner": body}).compile()
     state = graph.invoke({
@@ -345,7 +349,7 @@ def test_C30_aggregates_write_fn_never_writes_services_or_systems(monkeypatch):
 
     batch = L1DeltaBatch(
         services=[ServiceProposal(business_function_slug="smuggled")],
-        aggregates=[_agg("/x", 0.90)],
+        aggregates=[_agg("/x")],
     )
     export = _aggregates_write_fn(batch, "p1", Provenance(job="analyser:r1"))
 
@@ -383,14 +387,14 @@ def test_C32_model_formatted_label_is_repaired_not_dropped():
     bad = AggregatesProposal(
         service_slug="sign-in",
         l0=L0Ref(label="GET /rest/user/whoami", identity={"x": "y"}),
-        confidence=0.9, evidence_refs=["path segment /user"],
+        evidence_refs=["path segment /user"],
     )
     out = resolve_l0_refs(L1DeltaBatch(aggregates=[bad]),
                           endpoints=(_ep_asset("/rest/user/whoami"),))
     (fixed,) = out.aggregates
     assert fixed.l0.label == "Endpoint"
     assert fixed.l0.identity == {"path": "/rest/user/whoami", "method": "GET", "baseurl": BU}
-    assert fixed.confidence == 0.9 and fixed.evidence_refs == ["path segment /user"]
+    assert fixed.evidence_refs == ["path segment /user"]
 
 
 def test_C33_reference_to_unknown_surface_is_dropped():
@@ -402,7 +406,6 @@ def test_C33_reference_to_unknown_surface_is_dropped():
     ghost = AggregatesProposal(
         service_slug="sign-in",
         l0=L0Ref(label="Endpoint", identity={"path": "/invented", "method": "GET", "baseurl": BU}),
-        confidence=0.99,
     )
     out = resolve_l0_refs(L1DeltaBatch(aggregates=[ghost]), endpoints=(_ep_asset("/real"),))
     assert out.aggregates == []
@@ -412,7 +415,7 @@ def test_C33b_reference_to_settled_surface_outside_the_chunk_is_kept():
     """D-A4: the out-of-chunk write gate is dropped. A reference to an endpoint
     the chunk never carried but the KNOWN surface (chunk slice UNION settled
     surface) holds resolves and survives shaping."""
-    raw = L1DeltaBatch(aggregates=[_agg("/neighbour", 0.85)])
+    raw = L1DeltaBatch(aggregates=[_agg("/neighbour")])
     out = shape_proposal(raw, existing_slugs=SLUGS, endpoints=(_ep_asset("/real"),),
                          surface=(_ep_asset("/neighbour"),))
     (kept,) = out.batch.aggregates
@@ -425,7 +428,7 @@ def test_C33c_reference_to_unknown_surface_is_still_dropped_end_to_end():
     """The guard beside C33b: with a known surface supplied, a reference to
     surface in NEITHER the chunk NOR the settled surface still dies as
     unresolvable."""
-    raw = L1DeltaBatch(aggregates=[_agg("/invented", 0.99)])
+    raw = L1DeltaBatch(aggregates=[_agg("/invented")])
     out = shape_proposal(raw, existing_slugs=SLUGS, endpoints=(_ep_asset("/real"),),
                          surface=(_ep_asset("/neighbour"),))
     assert out.batch.aggregates == []
@@ -436,9 +439,9 @@ def test_C34b_assign_resolves_against_the_supplied_known_surface():
     """D-A4 end to end through `assign`: the chunk carries one endpoint, the
     model judges an adjacent settled one, and the judgment survives."""
     chunk = Chunk(chunk_id="katana:0", assets=(_ep_asset("/real"),))
-    raw = L1DeltaBatch(aggregates=[_agg("/neighbour", 0.85)])
+    raw = L1DeltaBatch(aggregates=[_agg("/neighbour")])
     out = assign(chunk, invoke_fn=lambda m, **_: raw, inventory=INVENTORY,
-                 existing_slugs=SLUGS, bar=0.75, surface=(_ep_asset("/neighbour"),))
+                 existing_slugs=SLUGS, surface=(_ep_asset("/neighbour"),))
     (kept,) = out.batch.aggregates
     assert kept.l0.identity["path"] == "/neighbour"
     assert out.stats.unresolvable == 0
@@ -451,12 +454,11 @@ def test_C34c_assigner_body_resolves_against_the_injected_surface():
     from polymerhus.analysis.assigner import make_assigner_body
     from polymerhus.analysis.messages import AgentDispatch
 
-    raw = L1DeltaBatch(aggregates=[_agg("/neighbour", 0.85)])
+    raw = L1DeltaBatch(aggregates=[_agg("/neighbour")])
     body = make_assigner_body(
         invoke_fn=lambda m, **_: raw,
         inventory_fn=lambda project_id: INVENTORY,
         surface_fn=lambda project_id: (_ep("/neighbour"),),
-        bar=0.75,
     )
     out = body(AgentDispatch(dispatch_id="d1", role="assigner", phase="A1",
                              mode="create", chunk=_chunk("/real")),
@@ -470,11 +472,10 @@ def test_C34d_assigner_body_without_a_surface_degrades_to_the_chunk_slice():
     from polymerhus.analysis.assigner import make_assigner_body
     from polymerhus.analysis.messages import AgentDispatch
 
-    raw = L1DeltaBatch(aggregates=[_agg("/neighbour", 0.85)])
+    raw = L1DeltaBatch(aggregates=[_agg("/neighbour")])
     body = make_assigner_body(
         invoke_fn=lambda m, **_: raw,
         inventory_fn=lambda project_id: INVENTORY,
-        bar=0.75,
     )
     out = body(AgentDispatch(dispatch_id="d1", role="assigner", phase="A1",
                              mode="create", chunk=_chunk("/real")),
@@ -486,10 +487,10 @@ def test_C34_repaired_reference_survives_the_full_shaping_end_to_end():
     chunk = Chunk(chunk_id="katana:0", assets=(_ep_asset("/api/Complaints"),))
     raw = L1DeltaBatch(aggregates=[AggregatesProposal(
         service_slug="checkout", l0=L0Ref(label="GET /api/Complaints", identity={}),
-        confidence=0.88, evidence_refs=["path segment /api/Complaints"],
+        evidence_refs=["path segment /api/Complaints"],
     )])
     out = assign(chunk, invoke_fn=lambda m, **_: raw, inventory=INVENTORY,
-                 existing_slugs=SLUGS, bar=0.75)
+                 existing_slugs=SLUGS)
     (agg,) = out.batch.aggregates
     assert agg.l0.label == "Endpoint"
     assert agg.l0.identity["path"] == "/api/Complaints"
@@ -511,14 +512,14 @@ def test_C35_a_well_formed_reference_survives_the_gate_untouched():
         service_slug="sign-in",
         l0=L0Ref(label="Endpoint",
                  identity={"path": "/rest/user/whoami", "method": "GET", "baseurl": BU}),
-        confidence=0.9, evidence_refs=["path segment /user"],
+        evidence_refs=["path segment /user"],
     )
     out = resolve_l0_refs(L1DeltaBatch(aggregates=[good]),
                           endpoints=(_ep_asset("/rest/user/whoami"),))
     (kept,) = out.aggregates
     assert kept.l0.label == "Endpoint"
     assert kept.l0.identity == {"path": "/rest/user/whoami", "method": "GET", "baseurl": BU}
-    assert kept.confidence == 0.9 and kept.evidence_refs == ["path segment /user"]
+    assert kept.evidence_refs == ["path segment /user"]
 
 
 def test_C35b_prompt_states_the_identity_shape_the_repair_depends_on():
@@ -546,7 +547,7 @@ def test_C35c_task_names_the_adjacent_phase_and_the_deductive_target():
     user = seen["messages"][0].content
     assert "BaseURL" in user            # the adjacent topology comes from the BaseURL join
     assert "DEDUCTIVE TARGET" in user   # the inventory is what the reasoning reasons TO
-    assert "withheld, not placed" in user
+    assert "left unplaced" in user      # admit-all: an unsupported judgment yields no edge
 
 
 def test_C35d_reference_rule_covers_graph_view_discovered_endpoints():
@@ -581,18 +582,19 @@ def test_C36_stats_name_where_each_judgment_died():
     proposed 114 assignments, wrote zero, and reported success."""
     ep = AssetDelta(type="Endpoint", identity={"path": "/a", "method": "GET", "baseurl": BU})
     raw = L1DeltaBatch(aggregates=[
-        AggregatesProposal(service_slug="checkout", l0=L0Ref(label="GET /a", identity={}), confidence=0.9),
-        AggregatesProposal(service_slug="ghost", l0=L0Ref(label="GET /a", identity={}), confidence=0.9),
-        AggregatesProposal(service_slug="checkout", l0=L0Ref(label="GET /gone", identity={}), confidence=0.9),
-        AggregatesProposal(service_slug="checkout", l0=L0Ref(label="GET /a", identity={}), confidence=0.1),
+        AggregatesProposal(service_slug="checkout", l0=L0Ref(label="GET /a", identity={})),
+        AggregatesProposal(service_slug="ghost", l0=L0Ref(label="GET /a", identity={})),
+        AggregatesProposal(service_slug="checkout", l0=L0Ref(label="GET /gone", identity={})),
+        AggregatesProposal(service_slug="checkout", l0=L0Ref(label="GET /a", identity={})),
     ])
     out = assign(Chunk(chunk_id="c0", assets=(ep,)), invoke_fn=lambda m, **_: raw,
-                 inventory=INVENTORY, existing_slugs=SLUGS, bar=0.75)
+                 inventory=INVENTORY, existing_slugs=SLUGS)
     st = out.stats
-    assert (st.admitted, st.proposed, st.kept) == (1, 4, 1)
+    # admit-all: the two structurally-valid checkout aggregates survive; the ghost
+    # owner and the unknown /gone reference die on the structural gates.
+    assert (st.admitted, st.proposed, st.kept) == (1, 4, 2)
     assert st.unresolvable == 1        # /gone was never in the chunk
     assert st.out_of_inventory == 1    # ghost is not a live Service
-    assert st.withheld == 1            # 0.1 is below the bar
 
 
 # --- C37-C40: the role-specific skill seam (#30 retirement for the Assigner) ---
@@ -602,8 +604,11 @@ def test_C36_stats_name_where_each_judgment_died():
 # default `baseline` until a comparative eval flips it (the bootstrap._PROMPT_CONFIGS
 # discipline: a prompt default is earned by measurement, never by argument).
 
-# The pre-skill prompt, pinned by construction rather than by a copied literal: the
-# rollback arm must stay byte-identical to `_ROLE_VERBATIM` + `_FEW_SHOTS` forever.
+# The baseline arm, pinned by construction rather than by a copied literal: it must
+# stay byte-identical to `_ROLE_VERBATIM` + `_FEW_SHOTS` forever. Both halves lost
+# their confidence text when the score was removed, so this pins the CURRENT
+# construction, not a historical byte string - there is no archived baseline literal
+# to compare against.
 _BASELINE_EXPECTED = f"{assigner._ROLE_VERBATIM}\n\n{assigner._FEW_SHOTS}"
 
 
@@ -615,9 +620,9 @@ def _system_for(config, monkeypatch, mode="create"):
     return seen["system_prompt"]
 
 
-def test_C37_baseline_arm_is_byte_identical_to_the_pre_skill_prompt(monkeypatch):
-    """The rollback path is PINNED, not assumed. `baseline` must reproduce the prompt
-    exactly as it stood before the skill seam existed, so reverting a `skill` default
+def test_C37_baseline_arm_is_pinned_by_construction(monkeypatch):
+    """The rollback path is PINNED, not assumed. `baseline` must reproduce exactly
+    `_ROLE_VERBATIM` + `_FEW_SHOTS` as they stand now, so reverting a `skill` default
     that measures badly is a one-env-var revert with no prompt drift smuggled in.
 
     This property survives the default flip unchanged - which is the point of pinning
@@ -715,61 +720,3 @@ def test_C40b_reflect_appends_without_disturbing_the_cacheable_prefix(config, mo
     assert reflect.startswith(create)
     assert "RESTATE AS EVIDENCE" in reflect
     assert "RESTATE AS EVIDENCE" not in create
-
-
-# --- C41: the scale gate (found live, in the graph, by the eval harness) -------
-
-def test_C41_percentage_confidence_is_rescaled_not_waved_through():
-    """213 of 675 live AGGREGATES edges carried confidences between 30.0 and 95.0:
-    the model answered `85` where the contract is 0..1, and nothing rejected it.
-
-    The consequence is not cosmetic. `withhold_below_bar(0.75)` keeps 85.0, so the
-    ONE mechanism defending against the measured 31-38% over-assignment stops
-    rejecting anything at all, silently. Same defect class as the `l0.label` failure
-    that wrote zero of 114 sound assignments, and the same remedy: repair it in the
-    shaping seam rather than instruct the model and hope."""
-    from polymerhus.analysis.assigner import normalise_confidence
-
-    batch = L1DeltaBatch(aggregates=[
-        AggregatesProposal(service_slug="checkout", l0=L0Ref(label="Endpoint", identity={}),
-                           confidence=85.0),
-        AggregatesProposal(service_slug="checkout", l0=L0Ref(label="Endpoint", identity={}),
-                           confidence=30.0),
-        AggregatesProposal(service_slug="checkout", l0=L0Ref(label="Endpoint", identity={}),
-                           confidence=0.9),      # already in range: untouched
-        AggregatesProposal(service_slug="checkout", l0=L0Ref(label="Endpoint", identity={}),
-                           confidence=1.0),      # a legitimate maximum, not a percentage
-    ])
-    out, rescaled = normalise_confidence(batch)
-    assert [a.confidence for a in out.aggregates] == [0.85, 0.3, 0.9, 1.0]
-    assert rescaled == 2
-
-
-def test_C41b_the_withholding_gate_actually_bites_after_rescaling():
-    """The property that matters, stated end to end: a percentage-scale 30.0 means
-    LOW confidence and must be withheld, where before the fix it cleared every bar."""
-    ep = AssetDelta(type="Endpoint", identity={"path": "/a", "method": "GET", "baseurl": BU})
-    raw = L1DeltaBatch(aggregates=[
-        AggregatesProposal(service_slug="checkout", l0=L0Ref(label="GET /a", identity={}),
-                           confidence=95.0),     # -> 0.95, kept
-        AggregatesProposal(service_slug="checkout", l0=L0Ref(label="GET /a", identity={}),
-                           confidence=30.0),     # -> 0.30, withheld
-    ])
-    outcome = shape_proposal(raw, existing_slugs=SLUGS, endpoints=(ep,), bar=0.75)
-    assert outcome.stats.rescaled == 2
-    assert outcome.stats.withheld == 1
-    assert outcome.stats.kept == 1
-    assert outcome.batch.aggregates[0].confidence == 0.95
-
-
-def test_C41c_normalisation_precedes_withholding_in_the_shaping_order():
-    """Order is load-bearing: withholding a batch that has not been normalised is a
-    no-op wearing the appearance of a gate. Pinned by the one input that can only
-    survive if the order is wrong - a 200.0 that clamps to 1.0 rather than to 2.0."""
-    ep = AssetDelta(type="Endpoint", identity={"path": "/a", "method": "GET", "baseurl": BU})
-    raw = L1DeltaBatch(aggregates=[
-        AggregatesProposal(service_slug="checkout", l0=L0Ref(label="GET /a", identity={}),
-                           confidence=200.0),
-    ])
-    outcome = shape_proposal(raw, existing_slugs=SLUGS, endpoints=(ep,))
-    assert outcome.batch.aggregates[0].confidence == 1.0   # clamped, in range

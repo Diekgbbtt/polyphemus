@@ -23,22 +23,22 @@ An Endpoint hung on the wrong Service is worse than unowned, because it looks an
    A candidate that arrived with no competition is usually the first pattern you noticed rather than the best-supported one, so name the runner-up even when you are sure.
 3. **DISCRIMINATE.**
    For each candidate ask whether the evidence fits THIS contract and not the others.
-   Evidence that fits three Services equally is evidence for none of them - park it at a low confidence, never a confident pick among the three.
-   Two contracts that genuinely both reach the Endpoint are two owners rather than a tie to break - emit an aggregate for each, every one carrying its own honest confidence, and never discount a confidence merely because ownership is shared.
-4. **CALIBRATE, THEN COMMIT OR WITHHOLD.**
-   Give each aggregate the confidence step 3 earned it, and quote the exact path segment or parameter you matched as its evidence.
+   Evidence that fits three Services equally is evidence for none of them - do not make a pick among the three.
+   Two contracts that genuinely both reach the Endpoint are two owners rather than a tie to break - emit an aggregate for each, every one carrying its own grounding evidence, and never discard a genuine owner merely because ownership is shared.
+4. **GROUND, THEN COMMIT OR DROP.**
+   Give each aggregate the exact path segment or parameter you matched as its evidence.
    Evidence that restates the slug instead of the surface is self-refuting; if the only thing you can say is that the Service sounds related, you have not matched anything.
 
-## What the confidence numbers mean
+## What the ownership evidence is
 
-Calibrate against the evidence you actually hold, not against how much surface you would like to place.
+Judge against the evidence you actually hold, not against how much surface you would like to place.
 
-- **Around 0.9** - a path noun names a record or an action the contract explicitly says that Service owns.
-- **Around 0.8** - the method plus a trailing segment or a parameter name matches an action the contract describes, though the noun is generic.
-- **Around 0.5** - the Endpoint sits in the same business area as the contract, but no specific noun or action in it matches anything the contract claims.
-- **Around 0.2** - the only link is topical or technological proximity: it is an HTTP endpoint on a web application, so a web-ish Service feels adjacent.
+- A path noun that names a record or an action the contract explicitly says that Service owns is strong evidence.
+- The method plus a trailing segment or a parameter name that matches an action the contract describes is evidence, though the noun may be generic.
+- An Endpoint that merely sits in the same business area as the contract, with no specific noun or action matching anything the contract claims, is not evidence.
+- Topical or technological proximity alone - it is an HTTP endpoint on a web application, so a web-ish Service feels adjacent - is not evidence.
 
-A judgment below the bar simply produces no edge, and that is the correct outcome rather than a failure.
+A judgment with no evidence simply produces no aggregate, and that is the correct outcome rather than a failure.
 
 ## Judge the surface in front of you, freshly
 
@@ -67,19 +67,19 @@ Inventory has `invoice-settlement - Takes a draft invoice to a settled payment; 
 Endpoint `POST /invoices/42/settle`.
 Surface first: nouns *invoice*, action *settle*.
 Differential: only `invoice-settlement` claims either.
--> one aggregate, service_slug `invoice-settlement`, confidence 0.93, evidence_refs `["path segment /invoices", "path segment /settle"]`.
+-> one aggregate, service_slug `invoice-settlement`, evidence_refs `["path segment /invoices", "path segment /settle"]`.
 
-**2. Deliberate withholding.**
+**2. No owner.**
 Inventory has `invoice-settlement` and `brochure-pages - Presents marketing pages and categories.`
 Endpoint `GET /internal/health`.
 Surface first: nouns *internal*, *health*; no business record and no business action.
 Differential: neither contract mentions health, probes or internal operations.
--> confidence 0.2, or no aggregate at all.
-The low confidence is the right answer, and the Endpoint correctly ends the run with no owner.
+-> no aggregate.
+The element correctly ends the run with no owner.
 
 **3. Shared ownership.**
 Inventory has `invoice-settlement - owns invoices` and `parcel-dispatch - owns shipments and the dispatch of settled invoices.`
 Endpoint `GET /invoices/42/shipment`.
 Differential: both contracts name a noun that appears in the path, and neither claim rules the other out.
--> TWO aggregates: `invoice-settlement` at 0.85 (evidence "path segment /invoices") and `parcel-dispatch` at 0.80 (evidence "path segment /shipment").
+-> TWO aggregates: `invoice-settlement` (evidence "path segment /invoices") and `parcel-dispatch` (evidence "path segment /shipment").
 Both genuinely reach this Endpoint; emit both rather than choosing.

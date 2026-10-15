@@ -194,7 +194,7 @@ def test_elicited_service_can_receive_aggregates_assignment(session, project):
         [AggregatesDelta(
             service_slug="product-introspection",
             l0=L0Ref(label="Endpoint", identity=endpoint_id),
-            envelope=JudgmentEnvelope(confidence=0.8, status="committed", evidence_refs=["obs"],
+            envelope=JudgmentEnvelope(status="committed", evidence_refs=["obs"],
                                       provenance=Provenance(job="analyser:run-1")),
         )],
         project, merge_fn=mf,

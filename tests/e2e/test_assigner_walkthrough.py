@@ -54,19 +54,19 @@ def _l0(path, baseurl):
 
 
 def _proposal():
-    """What the model returns: two genuine owners of /orders/42, a weak guess on
-    /ship/7, and a confident reach for a Service that does not exist."""
+    """What the model returns: two genuine owners of /orders/42, a guess on
+    /ship/7, and a reach for a Service that does not exist."""
     return L1DeltaBatch(
         services=[ServiceProposal(business_function_slug="ghost", props={"exposure": "public"})],
         aggregates=[
             AggregatesProposal(service_slug="checkout", l0=_l0("/orders/42", A),
-                               confidence=0.90, evidence_refs=["path segment /orders"]),
+                               evidence_refs=["path segment /orders"]),
             AggregatesProposal(service_slug="fulfilment", l0=_l0("/orders/42", A),
-                               confidence=0.80, evidence_refs=["path segment /orders"]),
+                               evidence_refs=["path segment /orders"]),
             AggregatesProposal(service_slug="checkout", l0=_l0("/ship/7", B),
-                               confidence=0.60, evidence_refs=["topical guess"]),
+                               evidence_refs=["topical guess"]),
             AggregatesProposal(service_slug="ghost", l0=_l0("/ship/7", B),
-                               confidence=0.99, evidence_refs=["path segment /ship"]),
+                               evidence_refs=["path segment /ship"]),
         ],
     )
 
@@ -102,7 +102,7 @@ def test_E1_katana_delta_through_admission_to_assignment():
         return _proposal()
 
     out = assign(chunk, invoke_fn=invoke, inventory=INVENTORY,
-                 existing_slugs=frozenset(INVENTORY["services"]), bar=0.75)
+                 existing_slugs=frozenset(INVENTORY["services"]))
 
     # The role prompt rides the stateful seam's `system_prompt=` binding, so the
     # forwarded trail is the per-call task ALONE (never a re-added SystemMessage):
@@ -114,11 +114,11 @@ def test_E1_katana_delta_through_admission_to_assignment():
     for leaked in ("name': 'q", "X-Api", "tok", "s.a"):
         assert leaked not in user
 
-    # terminal quantities
-    assert len(out.batch.aggregates) == 2
-    assert {a.l0.identity["path"] for a in out.batch.aggregates} == {"/orders/42"}
+    # terminal quantities. ADMIT-ALL: the weak /ship/7 guess is kept too, because
+    # no confidence gate follows the structural gates; only the ghost owner dies.
+    assert len(out.batch.aggregates) == 3
+    assert {a.l0.identity["path"] for a in out.batch.aggregates} == {"/orders/42", "/ship/7"}
     assert {a.service_slug for a in out.batch.aggregates} == {"checkout", "fulfilment"}
-    assert sorted(a.confidence for a in out.batch.aggregates) == [0.80, 0.90]
     assert out.batch.services == []                     # D4: never mints
     assert out.batch.systems == [] and out.batch.system_edges == []
     assert out.batch.data_items == [] and out.batch.surfaces_at == []
@@ -138,7 +138,7 @@ def test_E2_assigner_through_the_supervisor_reports_written():
     class _Export:
         services_written = 0
         systems_written = 0
-        aggregates_written = 2
+        aggregates_written = 3
         enrichment: dict = {}
 
     def write_fn(deltas, project_id, provenance):
@@ -148,7 +148,6 @@ def test_E2_assigner_through_the_supervisor_reports_written():
     body = make_assigner_body(
         invoke_fn=lambda messages, *, schema=None, system_prompt=None: _proposal(),
         inventory_fn=lambda project_id: INVENTORY,
-        bar=0.75,
     )
     graph = build_supervisor_graph(
         proposer_bodies={"assigner": body}, write_fn=write_fn,
@@ -169,8 +168,8 @@ def test_E2_assigner_through_the_supervisor_reports_written():
     assert receipt.role == "assigner"
     assert receipt.phase == "A1"
     assert receipt.status == "written"
-    assert receipt.written.aggregates == 2
+    assert receipt.written.aggregates == 3
     assert receipt.written.services == 0
 
     assert written["batch"].services == []
-    assert len(written["batch"].aggregates) == 2
+    assert len(written["batch"].aggregates) == 3   # admit-all keeps the /ship/7 guess too

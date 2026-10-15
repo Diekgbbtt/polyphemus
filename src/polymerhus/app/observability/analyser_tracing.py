@@ -53,14 +53,13 @@ def trace_reasoning(prose: str, *, call: str = "reason", run_id: str | None = No
 
 def trace_generation(call: str, *, input=None, output=None, run_id: str | None = None,
                      tags: list | None = None) -> None:
-    """Persist a proposer's STRUCTURED generation (its input slice + the batch it returned,
-    incl. per-item confidences) as a child `generation` observation under the current agent
-    span.
+    """Persist a proposer's STRUCTURED generation (its input slice + the batch it returned)
+    as a child `generation` observation under the current agent span.
 
     Closes the observability hole surfaced on moodique (run cc29fd4a): a proposer's structured
-    output - the Assigner's aggregate proposals and their confidences, the typist's systems/edges
-    - reached Langfuse only as anonymous, output-less LLM runs, so a post-hoc question like "did
-    the Assigner withhold on confidence?" was unanswerable from the traces. `trace_reasoning`
+    output - the Assigner's aggregate proposals, the typist's systems/edges - reached Langfuse
+    only as anonymous, output-less LLM runs, so a post-hoc question like "what did the proposer
+    return before the gates dropped it?" was unanswerable from the traces. `trace_reasoning`
     overwrites the AGENT span's own input/output (used for free-text prose), so structured output
     rides its OWN nested observation instead of clobbering it. With explicit `run_id` the
     observation opens under an explicit correlation context (convergence: no agent span to

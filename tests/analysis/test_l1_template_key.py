@@ -10,7 +10,7 @@ from polymerhus.analysis.l1_types import (
 )
 
 PROV = Provenance(job="analyser:run-1", model="m", prompt_id="p")
-ENV = JudgmentEnvelope(confidence=0.8, status="committed", evidence_refs=["o"], provenance=PROV)
+ENV = JudgmentEnvelope(status="committed", evidence_refs=["o"], provenance=PROV)
 
 
 # --- the pure derivation: numeric + uuid segments -> {id} ---

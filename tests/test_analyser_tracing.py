@@ -42,21 +42,21 @@ def _fake_langfuse(calls):
 
 def test_trace_generation_records_structured_output_as_nested_observation(monkeypatch):
     """The observability fix (moodique cc29fd4a): a proposer's structured output - e.g. the
-    Assigner's aggregates with confidences - must reach Langfuse as its OWN generation
+    Assigner's raw aggregate proposals - must reach Langfuse as its OWN generation
     observation, not clobber the agent span's prose I/O."""
     calls = []
     monkeypatch.setitem(sys.modules, "langfuse", _fake_langfuse(calls))
 
     analyser_tracing.trace_generation(
-        "assigner-aggregates", input={"chunk": "c0", "bar": 0.75},
-        output={"proposed": [{"service_slug": "catalogue", "confidence": 0.6}], "stats": {"withheld": 1}})
+        "assigner-aggregates", input={"chunk": "c0"},
+        output={"proposed": [{"service_slug": "catalogue", "evidence_refs": ["path segment /c"]}],
+                "stats": {"out_of_inventory": 1}})
 
     obs = [c for c in calls if c[0] == "observation"]
     assert len(obs) == 1                                        # a dedicated nested observation
     kw = dict(obs[0][1])
     assert kw["as_type"] == "generation" and kw["name"] == "assigner-aggregates"
-    assert kw["input"]["bar"] == 0.75                           # input slice captured
-    # the confidence that explains a withhold is now inspectable in the trace
+    # the input slice is captured, and the raw proposal is inspectable in the trace
     assert calls[0][1]["input"]["chunk"] == "c0"
 
 

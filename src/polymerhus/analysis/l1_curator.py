@@ -379,7 +379,6 @@ def build_aggregates_cypher(delta: AggregatesDelta) -> tuple[str, dict]:
     params = {
         "project_id": _PENDING_PROJECT_ID,
         "slug": slug,
-        "confidence": float(env.confidence),
         "status": env.status,
         "evidence_refs": list(env.evidence_refs),
         "prov_job": env.provenance.job,
@@ -399,7 +398,7 @@ def build_aggregates_cypher(delta: AggregatesDelta) -> tuple[str, dict]:
         "MERGE (s)-[r:AGGREGATES]->(l0)",
         "ON CREATE SET r.first_seen = datetime()",
         "SET r.last_seen = datetime()",
-        "SET r.confidence = $confidence, r.status = $status, r.evidence_refs = $evidence_refs",
+        "SET r.status = $status, r.evidence_refs = $evidence_refs",
         "SET r.prov_job = $prov_job, r.prov_model = $prov_model, r.prov_prompt_id = $prov_prompt_id",
         "SET r.ts = coalesce($ts, toString(datetime()))",
     ]

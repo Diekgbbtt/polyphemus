@@ -109,7 +109,7 @@ def _run_walkthrough(session, project, *, member_endpoints=(CAT_EP, SALES_EP)):
         session.run(cy, **params).consume()
 
     # 3. assignment: AGGREGATES with the judgment envelope (/healthz left unassigned -> stale pool)
-    env = JudgmentEnvelope(confidence=0.82, status="committed",
+    env = JudgmentEnvelope(status="committed",
                            evidence_refs=["obs:returns sell params"], provenance=PROV)
     aggregates = [AggregatesDelta(service_slug="product-introspection", l0=L0Ref(label="Endpoint", identity=dict(CAT_EP)), envelope=env)]
     for ep in member_endpoints:
@@ -209,9 +209,9 @@ def test_provenance_on_every_node_and_edge(session, project):
         bad = session.run(f"MATCH (a {{project_id:$p}})-[r:{rel}]->() WHERE r.prov_job IS NULL RETURN count(r) AS c",
                           p=project).single()["c"]
         assert bad == 0, f"{rel} edge missing prov_job"
-    # the AGGREGATES edge carries the full judgment envelope
+    # the AGGREGATES edge carries the judgment envelope (no confidence field)
     env = session.run("MATCH (:L1Service {project_id:$p})-[r:AGGREGATES]->() "
-                      "RETURN count(r) AS t, sum(CASE WHEN r.confidence IS NOT NULL AND r.status IS NOT NULL "
+                      "RETURN count(r) AS t, sum(CASE WHEN r.status IS NOT NULL "
                       "AND r.evidence_refs IS NOT NULL THEN 1 ELSE 0 END) AS full", p=project).single()
     assert env["t"] == 3 and env["full"] == 3
     # ON CREATE (not unconditional SET): a bootstrap-minted Service that a later
@@ -273,7 +273,7 @@ def test_every_inscope_primitive_fired(session, project):
         return session.run(q, p=project).single()["c"]
 
     # assignment envelope, systems-as-edges, Tier-1 flow with assumption, SURFACES_AT
-    assert c("MATCH (:L1Service {project_id:$p})-[r:AGGREGATES]->() WHERE r.confidence IS NOT NULL RETURN count(r) AS c") >= 1
+    assert c("MATCH (:L1Service {project_id:$p})-[r:AGGREGATES]->() WHERE r.evidence_refs IS NOT NULL RETURN count(r) AS c") >= 1
     assert c("MATCH (:L1Service {project_id:$p})-[r:EXPOSED_VIA]->(:L1System {kind:'RESTApi'}) RETURN count(r) AS c") == 1
     assumption = session.run("MATCH (:L1Service {project_id:$p})-[r:CONSUMES]->() RETURN r.assumption AS a", p=project).single()["a"]
     assert assumption and "authorized" in assumption  # assumption predicate on CONSUMES
