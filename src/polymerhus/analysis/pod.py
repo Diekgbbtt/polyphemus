@@ -63,10 +63,11 @@ def _slice_repr(l0_slice: dict) -> str:
     """Textual rendering of the L0 slice for a prompt.
 
     UNTRUNCATED since #48 section 11 step 6 (ratified 2026-07-30): the legacy
-    400-node cap this helper used to apply is a provable no-op on the surviving
-    path, because every consumer of this helper now renders a single CHUNK,
-    bounded at `chunking.CHUNK_MAX_ASSETS = 100` - well under the old 400 cap, so
-    the truncation branch could never fire again."""
+    400-node cap this helper used to apply is a no-op on the surviving path,
+    because every consumer of this helper now renders a single CHUNK, targeted at
+    `chunking.CHUNK_TARGET_ASSETS = 100` - well under the old 400 cap. The target
+    is SOFT (2026-10-15): an atomic topology family can exceed it, so the
+    truncation branch is unreachable unless one family alone passes 400 nodes."""
     nodes = (l0_slice or {}).get("nodes", [])
     return f"L0 slice ({len(nodes)} nodes): {nodes}"
 

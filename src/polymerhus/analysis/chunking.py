@@ -32,7 +32,6 @@ Composition (the clean seams):
 from __future__ import annotations
 
 import logging
-import math
 import re
 
 from pydantic import BaseModel, ConfigDict
@@ -41,8 +40,32 @@ from polymerhus.recon.domain.types import AssetDelta, JobSpec, Observation
 
 logger = logging.getLogger(__name__)
 
-# Provisional per-chunk asset budget (#13, fork B): tune on a katana-heavy run.
-CHUNK_MAX_ASSETS = 100
+# The per-chunk SOFT target (#13's asset budget, reshaped 2026-10-15 by T3). It is
+# a target, NOT a cap: the builder adds whole topology FAMILIES and closes a chunk
+# once the added families cross this count, so a chunk can exceed it and a family
+# never splits (see `chunks_for_job`; rationale in
+# `docs/experiments/typist-feed-quality-diagnosis.md`).
+CHUNK_TARGET_ASSETS = 100
+
+# Endpoint sub-buckets, in match order, keyed on what the recorded response
+# SERVES (the Endpoint's `content_type` prop) - never guessed from the path. A
+# chunk stays homogeneous in surface class, the operator's "break the attack
+# surface down by type". `other` catches anything unrecorded.
+_BUCKET_MARKERS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("code", ("javascript", "ecmascript", "typescript", "text/css", "wasm")),
+    ("visual", ("image/", "video/", "audio/", "font/")),
+    ("html", ("html",)),
+    ("data", ("json", "xml", "yaml", "csv", "protobuf", "graphql")),
+)
+DEFAULT_BUCKET = "other"
+
+# The family-internal order: the ANCHOR first, then what it owns (the operator's
+# "parent endpoint -> its headers, parameters, secrets, technologies"). A type
+# beyond this table sorts last; first-seen order breaks ties.
+_FAMILY_RANK: dict[str, int] = {
+    "BaseURL": 0, "Endpoint": 1, "Parameter": 2, "Secret": 3,
+    "Header": 4, "Technology": 5, "Certificate": 6,
+}
 
 # Noise Endpoints are EXCLUDED from the stream for every downstream agent. Recon
 # must keep producing them - jsluice mines `.js` bundles for parameters and
@@ -160,6 +183,81 @@ def is_connectivity_asset(asset: AssetDelta) -> bool:
     return getattr(asset, "type", None) in _CONNECTIVITY_TYPES
 
 
+def _inbound_identity(asset: AssetDelta, node_type: str) -> dict:
+    """The node identity of the asset's first inbound edge of `node_type`, else {}.
+    The topology a delta carries lives on BOTH `identity` (baseurl/endpoint_path)
+    AND its edges: a jsluice `Secret` has neither identity key - only a HAS_SECRET
+    edge to its BaseURL."""
+    for edge in getattr(asset, "edges", None) or ():
+        try:
+            if edge.dir == "in" and edge.node_type == node_type:
+                return edge.node_identity or {}
+        except AttributeError:  # a malformed edge never breaks the grouping
+            continue
+    return {}
+
+
+def _baseurl_of(asset: AssetDelta) -> str:
+    """The BaseURL an asset belongs to: its `baseurl` identity key, its own `url`
+    (a BaseURL asset itself), or the node identity of its inbound BaseURL edge."""
+    identity = getattr(asset, "identity", None) or {}
+    baseurl = identity.get("baseurl")
+    if isinstance(baseurl, str) and baseurl:
+        return baseurl
+    if getattr(asset, "type", None) == "BaseURL":
+        url = identity.get("url")
+        return url if isinstance(url, str) else ""
+    url = _inbound_identity(asset, "BaseURL").get("url")
+    return url if isinstance(url, str) else ""
+
+
+def _endpoint_path_of(asset: AssetDelta) -> str:
+    """The path of the Endpoint an asset hangs off (`endpoint_path` identity key, or
+    the path of its inbound Endpoint edge) - '' when the asset is host-anchored."""
+    identity = getattr(asset, "identity", None) or {}
+    path = identity.get("endpoint_path")
+    if isinstance(path, str) and path:
+        return path
+    path = _inbound_identity(asset, "Endpoint").get("path")
+    return path if isinstance(path, str) else ""
+
+
+def endpoint_bucket(asset: AssetDelta) -> str:
+    """The content-class bucket of an Endpoint: `code` / `visual` / `html` / `data` /
+    `other`, read from the recorded `content_type` prop (never from the path)."""
+    content_type = str((getattr(asset, "props", None) or {}).get("content_type") or "").lower()
+    for bucket, markers in _BUCKET_MARKERS:
+        if any(marker in content_type for marker in markers):
+            return bucket
+    return DEFAULT_BUCKET
+
+
+def _family_key(asset: AssetDelta, bucket_by_path: dict[tuple[str, str], str]) -> tuple:
+    """Where the asset belongs in the graph (T3):
+
+    - `("host-meta", baseurl)`: the BaseURL and its host-level findings (Headers,
+      Technologies, Certificates, host-level Secrets).
+    - `("endpoints", baseurl, bucket)`: Endpoints grouped by content class, each
+      with its Parameters and endpoint-anchored Secrets.
+    - `("asset", type, identity)`: an anchorless asset (e.g. a Subdomain) keeps its
+      own singleton family and still streams (the fork-H guarantee).
+    """
+    baseurl = _baseurl_of(asset)
+    atype = getattr(asset, "type", None)
+    if not baseurl:
+        return ("asset", atype, _identity_key(getattr(asset, "identity", None) or {}))
+    if atype in ("Endpoint", "Parameter", "Secret"):
+        path = _endpoint_path_of(asset)
+        if atype == "Endpoint":
+            bucket = endpoint_bucket(asset)
+        else:
+            bucket = bucket_by_path.get((baseurl, path), DEFAULT_BUCKET)
+        if atype == "Secret" and not path:
+            return ("host-meta", baseurl)  # a host-level Secret rides its host
+        return ("endpoints", baseurl, bucket)
+    return ("host-meta", baseurl)
+
+
 def _observations_for(assets: tuple[AssetDelta, ...], observations: list[Observation]) -> tuple[Observation, ...]:
     """The observations that belong to this chunk. An observation rides the chunk
     when its anchor is either an asset in the chunk OR the PARENT broad anchor of one
@@ -193,16 +291,31 @@ def chunks_for_job(
     assets: list[AssetDelta],
     observations: list[Observation] | None = None,
     *,
-    max_assets: int = CHUNK_MAX_ASSETS,
+    target_assets: int = CHUNK_TARGET_ASSETS,
 ) -> list[Chunk]:
-    """Stream a job's L0 delta into ONE ordered, size-bounded `Chunk` sequence
-    (#13, reshaped by #34 D8, the profile gate removed by #48 section 6). EVERY
-    asset type that survives the stream-hygiene gate is streamed (malformed
-    assets, noise Endpoints and the connectivity types never enter a chunk); the
-    consuming role then narrows via `admit_for_role`. Pure: the deltas are read by
-    the caller and passed in. Total delivery semantics: an empty delta -> []; a
-    malformed asset is excluded (never crashes); replay is deterministic (the
-    `chunk_id` is a pure function of source_job + batch_index)."""
+    """Stream a job's L0 delta into ordered, topology-cohesive `Chunk`s (#13,
+    reshaped by #34 D8, the profile gate removed by #48 section 6, the family
+    chunker added 2026-10-15/T3). EVERY asset type that survives the
+    stream-hygiene gate is streamed (malformed assets, noise Endpoints and the
+    connectivity types never enter a chunk); the consuming role then narrows via
+    `admit_for_role`. Pure: the deltas are read by the caller and passed in.
+    Total delivery semantics: an empty delta -> []; a malformed asset is excluded
+    (never crashes); replay is deterministic (the `chunk_id` is a pure function of
+    source_job + batch_index).
+
+    Three stream-level transforms, in order:
+
+    1. FILTER - malformed assets, noise Endpoints (`is_noise_endpoint`) and the
+       connectivity types (`is_connectivity_asset`) never enter the stream;
+    2. COLLAPSE - the first occurrence of each `(type, identity)` wins; recon
+       re-emits its BaseURL, response Headers and Technologies once per crawled
+       transaction, and this is where that per-transaction flood ends;
+    3. GROUP - the stream becomes topology FAMILIES (`_family_key`): a host's
+       metadata family and one family per `(baseurl, content class)` endpoint
+       bucket. Families are ATOMIC and are added whole; a chunk closes once the
+       added families cross `target_assets`, so it follows the graph and never an
+       array position, a family larger than the target goes whole, and the tail is
+       never dropped."""
     observations = observations or []
     source_job = job.tool if job is not None else ""
 
@@ -223,21 +336,54 @@ def chunks_for_job(
     if not items:
         return []  # empty delta -> no chunk (valid)
 
-    # 2. batch-overflow the stream into ordered chunks (tail never dropped).
-    budget = max(1, max_assets)
-    total = math.ceil(len(items) / budget)
-    chunks: list[Chunk] = []
-    for idx in range(total):
-        window_assets = tuple(items[idx * budget:(idx + 1) * budget])
-        chunks.append(Chunk(
+    # 2. collapse the per-transaction repeats: first (type, identity) wins.
+    deduped: list[AssetDelta] = []
+    seen: set[tuple] = set()
+    for asset in items:
+        key = (asset.type, _identity_key(asset.identity or {}))
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(asset)
+
+    # 3. group the deduped stream into topology families, order-stable on first
+    # sight. The bucket index first, so a Parameter can follow its Endpoint's class.
+    bucket_by_path: dict[tuple[str, str], str] = {}
+    for asset in deduped:
+        if asset.type == "Endpoint":
+            bucket_by_path[(_baseurl_of(asset), (asset.identity or {}).get("path"))] = \
+                endpoint_bucket(asset)
+    families: dict[tuple, list[AssetDelta]] = {}
+    for asset in deduped:
+        families.setdefault(_family_key(asset, bucket_by_path), []).append(asset)
+
+    # 4. add families whole; close a chunk once they cross the SOFT target.
+    order = {id(asset): idx for idx, asset in enumerate(deduped)}
+    target = max(1, target_assets)
+    windows: list[list[AssetDelta]] = []
+    window: list[AssetDelta] = []
+    for members in families.values():
+        members.sort(key=lambda a: (_FAMILY_RANK.get(a.type, 99), order[id(a)]))
+        window.extend(members)
+        if len(window) >= target:
+            windows.append(window)
+            window = []
+    if window:
+        windows.append(window)  # the tail is never dropped
+
+    # 5. materialise the ordered chunks (deterministic ids and totals).
+    total = len(windows)
+    return [
+        Chunk(
             chunk_id=f"{source_job}:{idx}",
             source_job=source_job,
-            assets=window_assets,
-            observations=_observations_for(window_assets, observations),
+            assets=tuple(window),
+            observations=_observations_for(tuple(window), observations),
             batch_index=idx,
             batch_total=total,
-        ))
-    return chunks
+        )
+        for idx, window in enumerate(windows)
+    ]
 
 
 def routing_pairs(chunk: Chunk) -> list[tuple[Chunk, str]]:

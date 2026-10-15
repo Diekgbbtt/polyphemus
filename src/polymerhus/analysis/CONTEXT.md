@@ -385,7 +385,7 @@ A pure function whose reads are injected.
 **Chunk**:
 The slim immutable Value Object carrying an immutable per-job L0 DELTA - the pure-function input a proposer reasons over.
 It carries only the L0 delta; all L1 context is re-derived LIVE at the proposer, never frozen on the chunk (the live-graph invariant).
-_Avoid_: batch (a batch is the overflow unit, below), payload.
+_Avoid_: batch (a chunk closes on the soft target, below), payload.
 
 **Role admission set** (`ROLE_ADMITS` / `admit_for_role`, #34 D2/D7 - the lever #15 called asset-type-driven agent scoping):
 Every asset type a recon job produces is STREAMED unless a stream-level gate withholds it (noise Endpoints; the connectivity types `Domain`/`IP`/`Port`/`Service`); each proposer role then narrows the stream to the types it can meaningfully consume.
@@ -398,11 +398,15 @@ This is a SEPARATE, later-stage mechanism from the httpx-profile delivery gate b
 The two-way `service` / `data` partition fixed "which asset types matter" once and globally, when the real constraint is per-agent; the role admission set replaced it, and `Chunk.concern` / `CONCERN_ROLES` are gone.
 
 **Chunk-builder**:
-`chunks_for_job` - streams a job's `AssetDelta` list into ONE ordered sequence, size-bounded by batch-overflow.
-The stream-level gates (`is_noise_endpoint`, `is_connectivity_asset`) drop what no L1 judgment can use before batching: script/style/map bundles (`.js`, `.mjs`, `.map`, `.css`, case-insensitive, query/fragment stripped) and whole-segment `assets/`/`static/` paths; non-Endpoint assets found on those paths stay in the stream. The connectivity types (`Domain`, `IP`, `Port`, `Service`) are how the target is REACHED, not surface an agent acts on: they stay in L0 (the topology's join keys) and never enter a chunk (2026-10-15, arm H: the assigner yielded no judgment on them while the typist typed mechanism noise off them).
+`chunks_for_job` - streams a job's `AssetDelta` list into an ordered sequence of topology-cohesive chunks, in three stream-level transforms: FILTER, COLLAPSE, GROUP.
+The FILTER gates (`is_noise_endpoint`, `is_connectivity_asset`) drop what no L1 judgment can use: script/style/map bundles (`.js`, `.mjs`, `.map`, `.css`, case-insensitive, query/fragment stripped) and whole-segment `assets/`/`static/` paths; non-Endpoint assets found on those paths stay in the stream. The connectivity types (`Domain`, `IP`, `Port`, `Service`) are how the target is REACHED, not surface an agent acts on: they stay in L0 (the topology's join keys) and never enter a chunk (2026-10-15, arm H: the assigner yielded no judgment on them while the typist typed mechanism noise off them).
+The COLLAPSE keeps the FIRST occurrence of each `(type, identity)`; recon re-emits its BaseURL, response Headers and Technologies once per crawled transaction, and this is where that per-transaction flood ends (2026-10-15, T3 diagnosis: a katana chunk carried 100 paragraphs over 10 unique identities, ~144k chars).
+The GROUP turns the deduped stream into topology FAMILIES: a `host-meta` family per BaseURL (the BaseURL with its Headers, Technologies, Certificates and host-level Secrets) and one `endpoints` family per `(baseurl, content-class bucket)`, the Endpoints with their Parameters and endpoint-anchored Secrets. Endpoint BUCKETS read the recorded `content_type` prop: `code` / `visual` / `html` / `data` / `other`. Anchorless assets (e.g. a Subdomain) keep their own singleton family and still stream (the fork-H guarantee).
 
-**Batch-overflow**:
-The sizing lever: a stream longer than the per-chunk asset budget splits into ordered chunks (`batch_index` / `batch_total`), the tail never dropped - replacing the retired silent 400-cap truncation.
+**Chunk target (soft)**:
+`CHUNK_TARGET_ASSETS` is a target, NOT a cap: families are ATOMIC and are added whole, so a chunk closes once the added families cross the target while a single family larger than it goes whole.
+`batch_index` / `batch_total` still order the chunks and the tail is never dropped.
+A chunk is therefore a graph neighbourhood (a host's metadata, or an endpoint bucket with its parameters), never an array slice.
 
 **httpx-profile delivery gate** - REMOVED, 2026-07-30 (#48, not merely retired as an instance of "Gate"):
 Formerly: the `#13` fork-G rule (reuse-first on D16) that admitted a Parameter only when its BaseURL carried an httpx `profile`, withholding an un-profiled one at delivery and delivering it FLAGGED at the phase-barrier (`Chunk.flagged`, the AMV-14 fail-open backstop).
