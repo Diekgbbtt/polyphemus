@@ -13,8 +13,8 @@ status: draft
 |-----------|-------|
 | **Experiment ID** | `analysisUnitFirst-vs-l0batchFirst-comfyui` |
 | **Experiment Name** | Analyser pipeline policy comparison, target comfyui |
-| **Status** | Completed - both analysis-unit-first formulations regress connectivity against the incumbent; the v2 enrichment fixes System attachment but not Service placement. The W-a..W-d fixes (arms D/E) recover most of the placement loss; the compaction tuning (arm E) then loses it again |
-| **Arms** | A = streamed L0-batch-first; B = batched analysis-unit-first (`service_sourced` v1); C = enriched analysis-unit-first (`service_sourced` v2, per-Service assign + System units + surface tools); D = surface-integrity fixes W-a..W-d (`dev` `c97750a`, current config); E = D with tuned per-proposer compaction thresholds |
+| **Status** | Completed - both analysis-unit-first formulations regress connectivity against the incumbent; the v2 enrichment fixes System attachment but not Service placement. The W-a..W-d fixes (arms D/E) recover most of the placement loss; the compaction tuning (arm E) then loses it again. The endpoint-first prefix + MCP seam fix (arm F) is the cheapest and best-cached run so far and ties the incumbent on ground-truth System exposure, but it regresses Service surface placement. Arm G (adjacent-surface assigner) recovers volume but collapses discrimination onto one non-GT owner |
+| **Arms** | A = streamed L0-batch-first; B = batched analysis-unit-first (`service_sourced` v1); C = enriched analysis-unit-first (`service_sourced` v2, per-Service assign + System units + surface tools); D = surface-integrity fixes W-a..W-d (`dev` `c97750a`, current config); E = D with tuned per-proposer compaction thresholds; F = D-config + endpoint-first prefix (`aecac71a`) + http-history MCP seam fix (`6596a5f`) |
 | **Target** | WebExploitBench `comfyui` (ComfyUI core v0.3.76 + ComfyUI-Manager V3.37), 6 vulnerabilities |
 | **Sample Size** | 1 trial per arm, single target |
 | **Owner** | Operator + implementing agent |
@@ -87,6 +87,12 @@ Metrics:
 - **`input_uncached_tokens`** = total uncached input tokens (the prefix the provider had to reprocess).
 - **`generated_output_tokens`** = total generated output tokens (reasoning plus visible).
 - **`capped_tokens`** = total capped tokens (budget guardrail, 4,000,000 per target).
+
+Reading rules (amended 2026-10-15):
+
+- The cached axis is **sampled and gated**: a role entry whose `cache_detail_omitted` count equals its `calls` count reports SILENCE, and its cached share must be read as unknown, not as a measured miss.
+- The streamed cache detail can regress to silence at the gateway hop (pinned litellm 1.96.0 dropped it whenever the provider attached `usage` to a choice-bearing finish chunk); the continuity patch now rides the gateway (`src/polymerhus/app/gateway_proxy_bootstrap.py`), and the trial's `token_spectrum` carries `cache_detail_omitted` so the condition is visible in the artifact.
+- A trial whose `capped_tokens` include a fully-omitted role has an INFLATED budget axis; read its budget stop against the flag.
 
 ### C5 - L1 surface structure and L0 grounding
 
@@ -501,6 +507,265 @@ The measured recommendation is to keep arm D's configuration (the global `0.2` t
 
 ---
 
+## Arm F - endpoint-first prefix + the http-history MCP seam fix
+
+Arm F is the two-commit advance over arm D's `dev` base.
+It carries the endpoint-first prefix (`aecac71a`), which feeds the Service surface into the FIRST human message of every proposer turn, and the http-history MCP seam fix (`6596a5f`), which rewrote the HTTP-history search filter from correlated `EXISTS`/`NOT EXISTS` subqueries to semi-joins.
+The second change is the one under test by the run: the previous MCP filter was O(flows x attributes) and hung the analysis (measured 85s and 152s on the live store of 32,473 flows and 946,421 attributes, reduced to 0.03s and 0.006s).
+
+| Attribute | Value |
+|-----------|-------|
+| Project | `6da91642-6298-4d73-8ec2-f16b740dd970` (`arm-f-rerun-2`) |
+| Recon run | `1f4510ec-d1ae-4568-82ae-8e12e3d04b09` |
+| Analysis run | `1f4510ec-d1ae-4568-82ae-8e12e3d04b09:e7ab848f` |
+| `eval_sha` | `6596a5f4861feeb682e822de9f8f3056a529031b` (detached HEAD; `dev` `68d430af` + `aecac71a` + `6596a5f`) |
+| `analysis_mode` | `service_sourced` (prompt variant `batched_l1unit_first`, the default) |
+| Models | `opencode-go:deepseek-v4-flash` (every analysis role) |
+| Compaction threshold | global `LLM_COMPACTION_THRESHOLD=0.2` (arm D's config) |
+| Hunting | `hunt_after_analysis=false` (analysis-only) |
+| Terminal | analysis `interrupted` (hard-stop; see Known Issues) |
+| `stack_fingerprint` | not captured - the run was manual, with no orchestrator `trial.yaml` |
+
+**F hypothesis:**
+
+> We believed that feeding the surface into the first human message and fixing the HTTP-history MCP filter to be linear would keep arm D's placement while letting every unit run to completion (no MCP hang) at a lower cost.
+
+### Comparison table (six arms)
+
+| Criterion | Metric | A streamed | B batched | C enriched | D fixes | E tuned | F endpoint-first | Winner |
+|---|---|---:|---:|---:|---:|---:|---:|---|
+| C1 | `service_aggregation_coverage` | 68.0% | 65.2% | 45.8% | 47.8% | 47.8% | 12/23 = 52.2% | A |
+| C1 | `endpoint_placement` | 28.3% | 11.7% | 7.2% | 24.1% | 10.0% | 32/290 = 11.0% | A |
+| C1 | `orphan_services` | 8 | 8 | 13 | 12 | 12 | 11 | A |
+| C1 | `gt_service_aggregation` | 92.9% | 78.6% | 71.4% | 100% | 100% | 9/14 = 64.3% | D/E |
+| C2 | `system_attachment_coverage` | 69.2% | 37.5% | 50.0% | 20.8% | 17.4% | 15/23 = 65.2% | A |
+| C2 | `system_anchoring_coverage` | 50.0% | 37.5% | 46.4% | 20.8% | 17.4% | 7/23 = 30.4% | A |
+| C2 | `orphan_systems` | 8 | 15 | 14 | 19 | 19 | 8 | A/F |
+| C3 | `service_recall` | 100% | 100% | 100% | 100% | 100% | 14/14 = 100% | tie |
+| C3 | `service_precision` | 56.0% | 60.9% | 58.3% | 60.9% | 60.9% | 14/23 = 60.9% | B/D/E/F |
+| C3 | `dataitem_recall` | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | tie |
+| C3 | `gt_service_system_exposure` | 100% | 57.1% | 71.4% | 28.6% | 57.1% | 14/14 = 100% | A/F |
+| C4 | `cached_share_total` | 70.6% | 70.0% | 68.9% | 87.8% | 76.2% | 88.2% | F |
+| C4 | `cached_share_worst_proposer` | 18.0% | 27.8% | 0.0% | 58.5% / 85.9% | 65.6% / 69.2% | 69.3% (`triager`) / 84.5% (proposers, `data_modeller`) | F |
+| C4 | `input_uncached_tokens` | 4,492,641 | 4,495,625 | 15,881,382 | 3,749,265 | 3,903,682 | 2,071,438 | F |
+| C4 | `generated_output_tokens` | 547,505 | 388,610 | 1,934,405 | 834,620 | 529,165 | 551,217 | B/E |
+| C4 | `capped_tokens` | 5,036,246 | 4,884,235 | 17,815,787 | 4,583,885 | 4,432,847 | 2,622,655 | F |
+
+C4 per-role (capped tokens / calls / cached share):
+
+| Role | F capped | F calls | F cached |
+|------|---------:|--------:|---------:|
+| triager | 108,251 | 31 | 69.3% |
+| assigner | 1,862,953 | 272 | 87.6% |
+| mechanism_typist | 410,366 | 47 | 92.3% |
+| data_modeller | 241,085 | 16 | 84.5% |
+| **total** | **2,622,655** | **366** | **88.2%** |
+
+Arm F is analysis-only (no hunting leg), so the whole-project total is the analysis total and is directly comparable to arms D and E.
+
+### C1 - Service-to-surface aggregation
+
+Arm F regresses placement against arm D, and the regression is in the ASSIGN pass, which completed in both arms (the per-Service loop that this stop interrupted writes no `AGGREGATES`).
+The assign pass kept 33 edges across 12 Services against arm D's 70 across 11 Services, so `endpoint_placement` fell from 24.1% to 11.0% and `gt_service_aggregation` from 100% to 64.3%.
+
+```
+endpoint_placement   A [##########################.............] 28.3%
+                     D [######################.................] 24.1%
+                     F [##########.............................] 11.0%
+```
+
+The assigner logged `assign_services run=... units=23 kept=33 written=33 stale=6638`, with eight Manager Services reporting `no_surface` (bounded harvest found nothing; halted before `candidate_owners`).
+The endpoint-first prefix is the change that separates arm F from arm D on this axis, and it is the likely cause: feeding the surface into the first human message can prime the harvest toward the pre-fed set and away from the tool-driven discovery that arm D's prompt relied on.
+The model (`deepseek-v4-flash`) is a second, uncontrolled difference, so the two effects are not separated by this run.
+
+### C2 - System anchoring
+
+`system_attachment_coverage` is 65.2% (15 of 23) and `system_anchoring_coverage` is 30.4% (7 of 23), with 8 orphan Systems.
+These are partial-loop numbers, as in arms D and E: the per-Service loop was stopped after a handful of units, so the System edges it writes are incomplete.
+The attachment figure is nonetheless the second-best of any arm and nearly matches arm A, because the loop's mechanism-typist units wrote `EXPOSED_VIA` for 20 of 23 Services before the stop.
+
+### C3 - Ground-truth breadth and depth
+
+Breadth is a tie again (all 14 ground-truth Services captured, 100% recall; 60.9% precision).
+Depth is unchanged: the spine carries `service_contract`, `exposure`, and `business_function_slug` on all 23 Services (`api_paradigm` and `auth_methods` absent), and the DataItem layer is empty (`0` `L1DataItem` nodes, `dataitem_recall` 0/8) even though the `data_modeller` ran (16 calls) - a partial, stopped run.
+`gt_service_system_exposure` is 100%: every ground-truth Service carries a `ROUTED_BY`/`EXPOSED_VIA` System edge, tied with arm A.
+
+### C4 - Cache spectrum
+
+Arm F is the cheapest and best-cached run of the six, by a wide margin.
+Its whole-project `capped_tokens` are 2,622,655 - 65.6% of the 4,000,000 budget and 57% of arm D's 4,583,885 - with `cached_share_total` 88.2% and uncached input 2,071,438 (46% of arm D's 3,749,265).
+The cost falls for the same reason arm D's did: the endpoint-first prefix gives every proposer turn a byte-stable leading block, so the provider prefix cache matches and the assigner carries 87.6% of its input cached over 272 calls.
+
+The worst proposer is the small `triager` at 69.3% (the only role under the 70% bar); across the three analysis proposers the floor is `data_modeller` at 84.5%.
+Generation is 551,217 tokens, close to arm D's 834,620 and arm A's 547,505.
+
+### C5 - L1 surface structure and L0 grounding
+
+| Metric | F |
+|--------|--:|
+| `l1_nodes_by_kind` | L1Service 23, L1System 23, L1DataItem 0 |
+| `l1_edges_by_type` | EXPOSED_VIA 20, ROUTED_BY 20 |
+| `l1_l0_grounded_nodes` | 12/46 = 26.1% |
+| `l0_unreferenced` (Endpoints) | 258 |
+
+Arm F's L1 edge vocabulary is the narrowest yet: only the two presentation edges (`EXPOSED_VIA`, `ROUTED_BY`), no data-flow edges (`CONSUMES`/`PRODUCES`/`REFLECTED_IN`), no `AUTHENTICATED_BY` or `DEPENDS_ON`, and no DataItems.
+Its grounding share (26.1%) is the highest of the three scored arms, but the edge vocabulary is thinner than arm D's.
+
+### C6 - proposer trajectory fidelity
+
+Read from the Langfuse trace (v2 observations, one session per unit) and the agent log.
+
+| Axis | F | Evidence |
+|------|--:|----------|
+| `workflow_adherence` | pass (assigner) | The assigner ran `harvest_surface -> falsify_harvest -> prior_insights -> candidate_owners -> assign -> closure` in order per Service; the `no_surface` units halted cleanly after `falsify_harvest` |
+| `tool_call_completeness` | pass | Every harvesting proposer bound and called the surface tools (`graph_view`, `search_http_history`, `get_http_artifact`, `notes`); the kept Service used all four |
+| `interface_adherence` | pass (assigner) | No `ReadOnlyGraphViewError` or unknown-property-key warnings on the assign pass; the earlier arm D/E write-shaped cypher failures did not recur |
+| `reasoning_coherence` | pass (assigner) | The harvest reasoning cites the contract nouns it discovered (`extensions`, `scripts`, `workflow_templates`, `i18n`) and the tool rows it read |
+| `tool_output_fidelity` | pass | The empty-harvest path read `{"summaries": []}` correctly and halted, rather than inventing a mechanism |
+
+The reading is complete for the assigner (its stage completed) and partial for the mechanism-typist and data-modeller (the loop was stopped).
+The agent log carries one `ReadOnlyGraphViewError` and no `reasoning gap`, `hypotheses exhausted`, or `consecutive-pass cap` warnings, but this is a post-restart log (see Known Issues), so it undercounts the run.
+
+### Produced artifacts and token distribution
+
+Artifacts (all on the eval server):
+
+| Artifact | Path | Note |
+|----------|------|------|
+| Graph | `ph-dd131acc-neo4j-1`, project `6da91642-6298-4d73-8ec2-f16b740dd970` | The re-measured C1/C2/C3/C5 source |
+| Usage ledger | `GET /projects/6da91642-6298-4d73-8ec2-f16b740dd970/usage` | The C4 source (durable YAML, write-through per call) |
+| Assigner log | `ph-dd131acc-agent-1` | `assigner chunk=<slug> ...`, `assign_services ... kept=33 written=33 stale=6638` |
+| Langfuse | sessions `1f4510ec-..._e7ab848f:<slug>:assigner` | The C6 trajectory source |
+
+No `trial.yaml`, `verdicts.yaml`, or `diagnoses.yaml` were produced: the run was manual and stopped by hand.
+
+Token distribution by role (whole project, from the usage ledger):
+
+| Role | cached input | uncached input | reasoning | visible | capped | calls |
+|------|-------------:|---------------:|----------:|--------:|-------:|------:|
+| triager | 191,360 | 84,788 | 16,798 | 6,665 | 108,251 | 31 |
+| assigner | 10,616,960 | 1,499,543 | 143,447 | 219,963 | 1,862,953 | 272 |
+| mechanism_typist | 3,600,512 | 299,797 | 57,017 | 53,552 | 410,366 | 47 |
+| data_modeller | 1,023,616 | 187,310 | 30,028 | 23,747 | 241,085 | 16 |
+| **total** | **15,432,448** | **2,071,438** | **247,290** | **303,927** | **2,622,655** | **366** |
+
+### Verdict for arm F
+
+- **The MCP hang is fixed.** The assign pass completed all 23 Services (`assign_services ... units=23 kept=33 written=33`) and the run never stalled on `HttpHistoryStore._filter_sql` - the defect that hung the previous run.
+- **Placement regressed against arm D.** `endpoint_placement` fell from 24.1% to 11.0% and `gt_service_aggregation` from 100% to 64.3%, in the completed assign pass, so the endpoint-first prefix (or the model change) reduced assignment recall.
+- **Cost and cache improved decisively.** `capped_tokens` 2,622,655 (65.6% of budget, 57% of arm D) and `cached_share_total` 88.2% - the cheapest, best-cached run of the six.
+- **System/exposure metrics are strong but partial.** `system_attachment_coverage` 65.2% and `gt_service_system_exposure` 100%, both from a stopped loop.
+- **The L1 edge vocabulary is the narrowest yet** (two presentation edges, no data edges, no DataItems).
+
+The measured read is that the MCP seam fix should stay, while the endpoint-first prefix needs iteration: it bought cost but cost placement.
+
+---
+
+## Arm G - streamed L0 with the adjacent-surface assigner (collapse to one owner)
+
+Arm G is the first trial of the L0 trunk after the pipeline split: the streamed chunk pipeline with the adjacent-surface assigner (D-A1..D-A4 - bounded BaseURL-neighbourhood discovery through the re-bound read-only `graph_view` + HTTP-history pair for disambiguation/confirmation only, the L1 dump as the deductive target, the out-of-chunk write gate dropped), the reset-per-chunk session lifecycle, and config 0.2.
+It ran the same setup as the streamed fix trial (`eval/setups/webexploitbench-8-run2.yaml`, target `comfyui-1`, budget 7200s), analysis-only in effect (no hunting roles in the ledger), with the token budget lowered to 3M capped for this arm.
+
+| Attribute | Value |
+|-----------|-------|
+| Trial | re-run `run-streamed-comfyui-arm-g2` (no `trial.yaml`: the orchestrator timed out at the token budget without writing one - the arm F precedent; graph + ledger + log are the sources) |
+| Project | `90ededf2-9753-4362-83f9-6a98ee66f1b1` |
+| Recon run | `2c319370-6dec-4dd5-a73d-17ccf1af70bc` (complete, phase 10) |
+| `eval_sha` | `775505c36ad472f879122333fc7343bec99a773a` (`dev` merge of `rollback/l0-trunk`) |
+| `stack_fingerprint` | `39a85f7d589fe32f22703ca77382a850269972435e1b2e18e031885b2b5444e1` |
+| `analysis_mode` | `streamed` (the only mode; the `--analysis-mode` selector is removed) |
+| Models | `opencode-go:deepseek-v4.1-flash` (every role - the new key is not entitled to `v4-flash`; v4.1 is the arms A-E lineage, F is the v4-flash outlier) |
+| Token budget | 3,000,000 capped (arms A-F: 4,000,000) |
+| Terminal | analysis ended at the token budget (3,235,875 capped / 198 calls, overshoot 235,875); hunting never launched |
+
+**G hypothesis:**
+
+> We believed that letting the streamed assigner judge each chunk against its adjacent settled surface (instead of refusing every out-of-chunk reference) would recover the correct edges the httpx:0 forensics showed the gate discarding, raising `endpoint_placement` toward arm A at a bounded per-chunk cost.
+
+**What ran (~1h, 20:43Z-21:40Z):** recon completed and settled 290 Endpoints plus the KB skeleton (25 Services, 25 Systems).
+Analysis ran 11 chunks to the budget cap.
+The assigner census over the run: admitted 83, proposed 75, kept 75, `unresolvable` 0, `out_of_inventory` 0, `withheld` 0.
+The gate drop works mechanically - nothing died as unresolvable - but the judgment collapsed: **74 of the 75 kept edges name `editor-shell`** (a non-ground-truth extra), 1 names `model-inventory`.
+The withholding bar never fired once in 11 chunks.
+
+### Comparison table (seven arms)
+
+| Criterion | Metric | A streamed | F endpoint-first | G adjacent-surface |
+|---|---|---:|---:|---:|
+| C1 | `service_aggregation_coverage` | 68.0% | 52.2% | 2/25 = 8.0% |
+| C1 | `endpoint_placement` | 28.3% | 11.0% | 75/290 = 25.9% |
+| C1 | `orphan_services` | 8 | 11 | 23 |
+| C1 | `gt_service_aggregation` | 92.9% | 64.3% | 1/14 = 7.1% |
+| C2 | `system_attachment_coverage` | 69.2% | 65.2% | 5/25 = 20.0% |
+| C2 | `system_anchoring_coverage` | 50.0% | 30.4% (partial) | 4/25 = 16.0% |
+| C2 | `orphan_systems` | 8 | 8 | 20 |
+| C3 | `service_recall` | 100% | 100% | 14/14 = 100% |
+| C3 | `service_precision` | 56.0% | 60.9% | 14/25 = 56.0% |
+| C3 | `dataitem_recall` | 0/8 | 0/8 | 0/8 |
+| C3 | `spine_depth` | 60.0% | 60.0% | 60.0% (`api_paradigm`/`auth_methods` absent on all 25) |
+| C3 | `gt_service_system_exposure` | 100% | 100% | 1/14 = 7.1% |
+| C4 | `cached_share_total` | 70.6% | 88.2% | 30.2% (unaudited) |
+| C4 | `input_uncached_tokens` | 4,492,641 | 2,071,438 | 2,972,981 (inflated) |
+| C4 | `generated_output_tokens` | 547,505 | 551,217 | 262,894 |
+| C4 | `capped_tokens` | 5,036,246 | 2,622,655 | 3,235,875 (3M budget, overshoot 235,875; inflated) |
+
+The G cache cells are UNAUDITED (corrected 2026-10-15): every one of the typist's 58 streamed calls reached the ledger with no cache detail at all, because the pinned gateway (litellm 1.96.0) drops `prompt_tokens_details` from streamed usage when the provider attaches `usage` to a choice-bearing finish chunk.
+The provider did cache the requests: replays of the captured typist bytes hit `cached=4480/4673` (95.9%) and `4672/4673`.
+The recorded 0.0% is silence read as a miss, and the recorded `input_uncached` / `capped` are correspondingly inflated (`typist-cache-collapse-diagnosis.md`, verdict falsified; `cache-spectrum-measurement-research.md`).
+
+C4 per-role (capped tokens / calls / cached share):
+
+| Role | G capped | G calls | G cached |
+|------|---------:|--------:|---------:|
+| triager | 112,722 | 30 | 66.8% |
+| assigner | 309,878 | 73 | 76.7% |
+| mechanism_typist | 2,670,245 | 58 | 0.0% (unaudited) |
+| data_modeller | 143,030 | 37 | 77.9% |
+| **total** | **3,235,875** | **198** | **30.2%** (unaudited) |
+
+The typist row is the unaudited one: the ledger recorded `input_cache_read=0` because the streamed usage carried NO detail (`cache_detail_omitted` 58/58), not because the provider measured a miss.
+
+Two cost readings: the assigner did NOT explode (309,878 capped over 73 calls at 76.7% cached - the adjacent phase costs ~28k capped per chunk); the run stopped on the **mechanism-typist's 2.67M recorded uncached at 0.0% cached** (58 calls, ~46k each).
+That typist figure is a measurement artifact, not a cache failure: the calls carried no cache detail through the gateway, and replays of the same bytes hit the provider cache at 95.9-100%.
+The typist's true uncached input is therefore expected an order of magnitude smaller (~10% of the recorded figure at the sampled hit rates), and the 3M budget stop fired early on an inflated axis.
+The 70% hygiene bar reads 30.2% under the artifact; the per-role floor that flagged the typist flagged a gateway defect, not a prompt defect.
+
+### C5 - L1 surface structure and L0 grounding
+
+| Metric | G |
+|--------|--:|
+| `l1_nodes_by_kind` | L1Service 25, L1System 25, L1DataItem 0 |
+| `l1_edges_by_type` | EXPOSED_VIA 12, FRONTED_BY 7, ROUTED_BY 1 |
+| `l1_l0_grounded_nodes` | 2/50 = 4.0% |
+| `l0_unreferenced` (Endpoints) | 215 |
+
+The edge vocabulary is presentation-only (as in arm F); grounding collapses with the ownership collapse (only the 2 aggregating Services touch L0).
+
+### C6 - proposer trajectory fidelity (arm G, structural - no IO persisted)
+
+Langfuse carries no message IO for this run (generations and tool calls persist without input/output, as in arm F), so the C6 reading is structural, from the 772-observation assigner session (`2c319370-...:assigner`, the one `run:role` thread - the Task-2 reset visible in observability):
+
+| Axis | G (assigner) | Evidence |
+|------|--:|----------|
+| `workflow_adherence` | partial | 73 generations over 11 chunks (~7 turns/chunk); the adjacent phase executed every chunk (100 `graph_view`, 11 `search_http_history`, 6 `get_http_artifact`); extractions shaped cleanly into kept batches |
+| `tool_call_completeness` | pass | The bound set (`graph_view` + HTTP pair) was called on every chunk; the HTTP pair stayed disambiguation-scale as specified |
+| `interface_adherence` | pass | 771 DEFAULT / 1 ERROR (a single `search_http_history` fail-open); no write-shaped cypher, no property warnings |
+| `reasoning_coherence` | fail | 74/75 edges to one non-GT owner with 0 withholds in 11 chunks - the differential/calibration discipline did not operate at the outcome level |
+| `tool_output_fidelity` | unreadable | No IO persisted; no verdict possible |
+
+The per-chunk reset lifecycle is verified live in the same session: one `run:assigner` thread across all chunks with reset markers at each boundary.
+Per-proposal confidences are unrecoverable (`assigner-aggregates` traces persist with empty outputs) - all that is known is every kept edge cleared 0.75.
+
+### Verdict for arm G
+
+- **The hypothesis is disproven in this form.** Dropping the out-of-chunk gate recovered volume (`endpoint_placement` 25.9%, near arm A's 28.3%, with zero unresolvable) but destroyed discrimination: coverage 8.0%, GT aggregation 7.1%, grounding 4.0%. The gate was load-bearing friction, not just a scope bug - removing it without a counterweight turns the assigner into a single-owner dustbin.
+- **The failure is calibration, not discovery.** The adjacent phase found real surface (100 bounded graph queries, HTTP pair used as specified); the bar never fired because every judgment cleared it. Candidates for the next experiment, in order: (a) the `editor-shell` contract is over-broad (a skeleton property - the model may be right that the shell "owns" the UI surface, in which case the defect is the skeleton's, not the judgment's); (b) the L1-dump-as-deductive-target primes deduction-to-one when the gate no longer localises; (c) confidence calibration collapsed under the wider view.
+- **Do not re-run this configuration.** The next experiment is NOT more of arm G: raise the bar (`ASSIGN_CONFIDENCE_BAR` 0.85/0.9) to test the calibration hypothesis, or cap per-owner volume, or narrow the adjacent phase to the chunk's own BaseURLs - one change at a time.
+- **Cost verdict REVISED (2026-10-15).** The typist's 0%-cached 2.67M was a gateway measurement artifact: the same request bytes replayed hit the provider cache at 95.9-100% (`typist-cache-collapse-diagnosis.md`, verdict falsified), so the per-chunk typist prompt was cache-friendly and the 3M stop fired early on an inflated axis. The true cost axis needs a clean re-run (arm H) before any budget conclusion, and the endpoint-first-prefix treatment is unproven as a cache need.
+- **Model/budget provenance for comparability:** arm G ran `v4.1-flash` (arms A-E lineage) under a 3M cap; arm F ran `v4-flash` under 4M. The F-vs-G delta bundles model + budget + pipeline - read it as directional, never as isolated.
+
+---
+
 ## Cumulative per-target registry
 
 This table is the extension point.
@@ -513,6 +778,8 @@ Every future target run appends one row, so the criteria accumulate evidence acr
 | comfyui | C | enriched analysis-unit-first (v2) | 7.2% | 13 | 46.4% | 14/14 | 0/8 | 68.9% (analysis roles) | 15,881,382 | 1,934,405 | 17,815,787 | - | - | 2026-10-12 |
 | comfyui | D | surface-integrity fixes (W-a..W-d), config 0.2 | 24.1% | 12 | 20.8% (partial loop) | 14/14 | 0/8 | 87.8% | 3,749,265 | 834,620 | 4,583,885 | 11/49 = 22.4% | fail (interface, reasoning) | 2026-10-13 |
 | comfyui | E | D + tuned per-proposer compaction | 10.0% | 12 | 17.4% (partial loop) | 14/14 | 0/8 | 76.2% | 3,903,682 | 529,165 | 4,432,847 | 11/46 = 23.9% | fail (interface, reasoning) | 2026-10-13 |
+| comfyui | F | endpoint-first prefix + MCP seam fix, config 0.2 | 11.0% | 11 | 30.4% (partial loop) | 14/14 | 0/8 | 88.2% | 2,071,438 | 551,217 | 2,622,655 | 12/46 = 26.1% | partial (assigner pass) | 2026-10-13 |
+| comfyui | G | streamed + adjacent-surface assigner, no out-of-chunk gate, config 0.2, 3M cap, v4.1-flash | 25.9% | 23 | 16.0% (budget stop) | 14/14 | 0/8 | 30.2% (unaudited) | 2,972,981 | 262,894 | 3,235,875 | 2/50 = 4.0% | structural (coherence fail) | 2026-10-14 |
 | `<target>` | | | | | | | | | | | | | | |
 | `<target>` | | | | | | | | | | | | | | |
 
@@ -521,6 +788,7 @@ The C5 and C6 columns are `-` for arms A, B, and C: the criteria were defined af
 Arm C's C4 columns are the analysis roles only (`triager` + `assigner` + `mechanism_typist`); arms A and B reported whole-project totals.
 The arm C whole-project totals, including its long hunting arm, are `cached_share_total` 38.2%, 157,174,825 uncached input, 3,552,535 generated output, 160,727,360 capped.
 The arms are therefore not cache-comparable without this note; see the C4 section.
+Arm G's C4 cells are unaudited for the same reason: its 0% typist reading is a gateway artifact, not a provider miss (corrected 2026-10-15).
 
 ## Segment Analysis - by ground-truth Service
 
@@ -576,6 +844,20 @@ The regression is uniform, not concentrated.
 8. **Reading the whole surface once per Service multiplies cost.**
    Arm C's analysis cost 3.5x arm A's whole-project cost, driven by 23 whole-surface prompts and repeated compaction passes.
 
+9. **The endpoint-first prefix trades placement for cost.**
+   Arm F places 11.0% of endpoints against arm D's 24.1% and covers 9 of 14 ground-truth Services against arm D's 14, in the completed assign pass, while its capped tokens fall to 57% of arm D's. Feeding the surface into the first human message buys a stable cache prefix but appears to prime the harvest away from tool-driven discovery.
+
+10. **The http-history MCP fix holds under a full assign pass.**
+   All 23 Services were judged and the loop ran without the O(flows x attributes) stall, so the semi-join rewrite (85s and 152s reduced to 0.03s and 0.006s on the live store) removed the hang that blocked the previous run.
+
+11. **A graceful `POST /execution/stop` does not settle a mid-pass analysis.**
+   The project-execution stop blocked for over 15 minutes while the per-Service loop sat inside one unit, and never returned; the run only stopped on a container restart (`interrupted`). This is a stop-path defect worth a ticket.
+
+12. **Removing a gate removes friction, not just scope.**
+    Arm G dropped the out-of-chunk write gate and recovered volume (placement 25.9%, zero unresolvable) but collapsed discrimination (74/75 edges to one non-GT owner, bar never fired in 11 chunks). A gate that looks like a scope bug may be load-bearing friction; its removal needs a counterweight (calibration, competition, per-owner caps), tested one change at a time.
+13. **Cost has a per-role shape, and the mean hides it.**
+    Arm G's 30.2% cache share is the typist's recorded 0%-cached 2.67M alone (unaudited - a gateway artifact, corrected 2026-10-15); the assigner ran at 76.7% cached. A hygiene bar on the mean misdirects the fix - the per-role floor names the anomaly, and here it named one whose number was wrong.
+
 ### Surprising Findings
 
 - The streamed (older) pipeline is the better-connected one; both analysis-unit-first redesigns (B and C) regressed connectivity.
@@ -587,6 +869,10 @@ The regression is uniform, not concentrated.
 - Whether a per-Service assign pass without the strict `existing_slugs` write filter closes the connectivity gap.
 - Whether a Service slice that unions data assets with endpoints grounds the DataItem layer (the data-modeller never ran in either arm B or arm C).
 - Whether the connectivity regression holds on other targets, or whether comfyui is an outlier.
+- Whether arm F's placement regression is caused by the endpoint-first prefix or by the `deepseek-v4-flash` model change (the run bundles both).
+- Whether a full arm F loop (unstopped) would ground the DataItem layer and lift `system_anchoring_coverage` to arm D's completed-loop level.
+- Whether arm G's adjacent-surface phase recovers the httpx:0-style correct edges (the D-A hypothesis) - answered: it recovers volume but collapses discrimination (74/75 to `editor-shell`, GT 1/14).
+- Whether the collapse is calibration (uniformly high confidences), an over-broad `editor-shell` contract (skeleton property), or deduction-to-one primed by the L1-dump target - per-proposal confidences are unrecoverable (empty trace outputs), so the mechanism is open; the bar-raise experiment separates calibration from the rest.
 
 ---
 
@@ -599,21 +885,19 @@ The regression is uniform, not concentrated.
 Arm A (streamed L0-batch-first) remains the best-connected and cheapest arm and is the best latest version: it wins C1 (all four), C2 (all three) and C4 (all five), and ties C3 breadth and depth.
 Arm B (batched v1) loses C1 and C2 and wins only C4.
 Arm C (enriched v2) also loses C1 and C4 and wins only C2 against arm B.
+Arm D (the W-a..W-d surface-integrity fixes) recovers most of the placement (`endpoint_placement` 24.1%, `gt_service_aggregation` 100%) and arm E's compaction tuning regresses it again.
+Arm F (endpoint-first prefix + MCP seam fix) is the cheapest and best-cached run of the six and fixes the MCP hang, but its `endpoint_placement` (11.0%) and `gt_service_aggregation` (64.3%) regress against arm D in the completed assign pass.
+Arm G (adjacent-surface assigner, no out-of-chunk gate) recovers placement volume (25.9%) but collapses discrimination (74/75 edges to non-GT `editor-shell`, GT aggregation 7.1%); its apparent cache-bar break (typist 0%, 30.2% total) is a gateway measurement artifact, not a cache failure (corrected 2026-10-15).
 Neither analysis-unit-first formulation beats the incumbent on the criteria that orient a hunting agent, so neither should proceed to further targets as-is.
-
-### If Reverting
-
-- Keep the streamed `L0-batch-first` pipeline as the default (`analysis_mode: streamed`).
-- Keep the `service_sourced` mode behind its flag until the assignment starvation is fixed.
 
 ### If Iterating (precondition for re-testing)
 
 - **What to change:**
-  - Remove or widen the per-Service assign write filter. The per-Service pass should ground on one Service but write a proposal onto whichever Service the surface evidence names, or reconcile owners, so it stops dropping `out_of_inventory` candidates.
-  - Cut analysis cost: stop reading the whole settled surface once per Service; window the candidate set per Service.
-  - Fix the data plane: the `data_modeller` never ran in arms B or C, so the DataItem layer stays empty.
-  - Keep the System-unit change: it is the one measured improvement.
-- **Next experiment:** re-run comfyui and require `endpoint_placement` at or above 28.3%, `system_anchoring_coverage` at or above 50.0%, and analysis capped tokens at or below arm A's whole-project 5,036,246.
+  - Do not adopt the endpoint-first prefix as-is: it bought cost and cache but cost `endpoint_placement` (24.1% -> 11.0%) and `gt_service_aggregation` (100% -> 64.3%) against arm D. Re-test it in isolation against arm D's config to separate the prefix from the model change (`deepseek-v4-flash`).
+  - Keep the http-history MCP seam fix (`6596a5f`): with it the assign pass completes all 23 Services and the loop never stalls.
+  - Keep arm D's global `0.2` compaction config and arm D's assignment shaping; both are the placement-best settings measured so far.
+  - Fix the graceful-stop path: `POST /execution/stop` blocks past its bound when the per-Service loop is inside a unit.
+- **Next experiment:** re-run comfyui on arm D's config with ONLY the MCP seam fix (no endpoint-first prefix), and require `endpoint_placement` at or above 24.1% with capped tokens at or below arm D's 4,583,885.
 - **Timeline:** one worktree, TDD, then re-run on the eval server.
 
 ---
@@ -722,7 +1006,17 @@ A verdict is an axis-by-axis pass or fail with the trace evidence that shows it;
 - Arm C's hunting arm ran far longer than arm B's, so the whole-project cost is not a clean pipeline comparison.
 - Arm C's `data_modeller` never ran (no usage-ledger entry), so its DataItem layer is empty for the same reason as arm B's.
 - The arm C comparison bundles the pipeline change with a code change (branch `feat/analysis-unit-enrichment` against arm A's `dev` `93d213e`).
+- Arm F's terminal is `interrupted`, not `stopped`: the graceful `POST /projects/{id}/execution/stop` blocked for over 15 minutes while the per-Service loop sat inside a unit and never returned, so the run was stopped by restarting the agent container and the startup reconcile wrote `interrupted`.
+- Arm F is a partial run: the assign pass completed all 23 Services, but the per-Service loop was stopped after a few units, so the C2 and C5 System metrics are partial (as in arms D and E).
+- Arm F's `stack_fingerprint` was not captured (no orchestrator `trial.yaml`); only the `eval_sha` is recorded.
+- Arm F bundles two changes (the endpoint-first prefix and the MCP seam fix) with a model change (`deepseek-v4-flash`); the run does not separate the prefix effect from the model effect.
+- Arm F's agent log is post-restart, so its C6 warning counts undercount the run; the C6 reading is taken from the Langfuse trace instead.
+- Arm F's `data_modeller` ran (16 calls) but the loop was stopped before the DataItem layer could be written, so `dataitem_recall` is 0/8 as in every other arm.
+- Arm G ended at its 3M token budget (3,235,875 capped / 198 calls, overshoot 235,875) with no `trial.yaml` (the orchestrator timed out without writing one - the arm F precedent); graph + ledger + log are the sources. Its first attempt the same day ended early on provider quota exhaustion (`quota_exhausted=true`, 0 calls) and was superseded by the re-run; the attempt's record (`...-185850-1fc05262`) stays on disk for provenance.
+- Pre-existing (found during the arm G merge verification, unrelated to any arm): `tests/test_llm_checkpoints_module.py::test_the_module_scoped_saver_carries_the_serde_allowlist` fails on the installed langgraph (`JsonPlusSerializer(allowed_msgpack_modules=())` yields `serde._allowed_msgpack_modules is None`). It fails identically on the pre-merge trunk, so it is environment/version drift, not a regression; recorded here so a future red suite is not misread.
 
 ---
 
 *Results documented on 2026-10-11. Decision to kill the current batched formulation recorded with the document.*
+*Arm F appended on 2026-10-13: the MCP seam fix holds, the endpoint-first prefix trades placement for cost, and the graceful project-execution stop does not settle a mid-pass analysis.*
+*Arm G appended on 2026-10-14: the adjacent-surface assigner recovers placement volume (25.9%, zero unresolvable) but collapses discrimination (74/75 edges to non-GT `editor-shell`, GT 1/14) - the dropped gate was load-bearing friction; the typist's recorded 0%-cached 2.67M appeared to break the cache bar on its own - CORRECTED 2026-10-15: that reading is a gateway artifact (the same bytes replay at 95.9-100% cached), so the break is unaudited. First G attempt (quota exhaustion) superseded by the re-run.*

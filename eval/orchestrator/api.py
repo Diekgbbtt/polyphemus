@@ -360,7 +360,11 @@ def usage_by_agent(response: Mapping) -> dict:
 # The flat per-agent token spectrum (#349): the eval record's first-class
 # schema. Each entry is a typed, non-negative surface decoded from the durable
 # ledger's nested `by_agent` (`_entry_surface` in `app/llm/usage.py`). The
-# order is the schema contract.
+# order is the schema contract. `cache_detail_omitted` (N5) counts the calls
+# that carried NO cache detail at all, so a reported 0% cached share stays
+# readable as "the provider did not say" rather than as "the provider measured
+# a miss": a cached share read against `cache_detail_omitted == calls` is
+# unaudited (`docs/design/eval-token-spectrum-349-adr.md`).
 SPECTRUM_FIELDS = (
     "visible",
     "reasoning",
@@ -370,6 +374,7 @@ SPECTRUM_FIELDS = (
     "total",
     "capped",
     "calls",
+    "cache_detail_omitted",
 )
 
 
@@ -386,14 +391,16 @@ def usage_spectrum(response: Mapping) -> dict:
     """The project's per-agent token spectrum, decoded from a usage response.
 
     One flat typed entry per agent - `{visible, reasoning, cached_input,
-    uncached_input, generated, total, capped, calls}` - projected from the
-    durable ledger's own cumulative `by_agent` surface (#326). The values are
-    the ledger's per-agent totals, NEVER a re-derivation from traces or spend
-    logs; `generated = reasoning + visible` is the ledger's own output split
-    summed, and `cached_input`/`uncached_input` are the ledger's context split.
-    An absent/malformed agent entry reads as zeros (advisory), so the terminal
-    record is always writable and the spectrum is readable from the trial file
-    alone (#349)."""
+    uncached_input, generated, total, capped, calls, cache_detail_omitted}` -
+    projected from the durable ledger's own cumulative `by_agent` surface
+    (#326). The values are the ledger's per-agent totals, NEVER a re-derivation
+    from traces or spend logs; `generated = reasoning + visible` is the
+    ledger's own output split summed, and `cached_input`/`uncached_input` are
+    the ledger's context split. `cache_detail_omitted` is the ledger's N5 count
+    of calls that carried NO cache detail at all, so a 0% cached share is
+    readable as silence, not as a measured miss. An absent/malformed agent
+    entry reads as zeros (advisory), so the terminal record is always writable
+    and the spectrum is readable from the trial file alone (#349)."""
     by_agent = usage_by_agent(response)
     spectrum: dict[str, dict[str, int]] = {}
     for agent, entry in by_agent.items():
@@ -414,6 +421,7 @@ def usage_spectrum(response: Mapping) -> dict:
             "total": _spectrum_int(entry, "total_tokens"),
             "capped": _spectrum_int(entry, "capped_tokens"),
             "calls": _spectrum_int(entry, "calls"),
+            "cache_detail_omitted": _spectrum_int(entry, "cache_detail_omitted"),
         }
     return spectrum
 

@@ -14,6 +14,7 @@ failure (proceed on stale). T2 will emit exactly these codes.
 
 import signal
 import subprocess
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -435,12 +436,15 @@ def test_proxy_command_listens_on_internal_port():
     at 127.0.0.1:4000; the client seam (T4, #107) will set
     `LLM_GATEWAY_URL=http://127.0.0.1:4000`.
 
-    Uses the litellm CLI (the documented launcher) rather than invoking
-    `uvicorn litellm.proxy.proxy_server:app` directly - uvicorn's `--config`
+    Uses the litellm CLI (the documented launcher) THROUGH the proxy
+    bootstrap (`python -m polymerhus.app.gateway_proxy_bootstrap`) - the
+    bootstrap applies the 1.96.0 streamed-usage patch inside the proxy
+    process, then delegates to the CLI. Never `uvicorn
+    litellm.proxy.proxy_server:app` directly: uvicorn's `--config`
     flag is uvicorn's own config file, NOT litellm's, so a direct uvicorn
     invocation would silently fail to load the gateway config."""
     cmd = E._proxy_command(config_path="/etc/litellm.yaml")
-    assert cmd[0] == "litellm"
+    assert cmd[:3] == [sys.executable, "-m", E.PROXY_BOOTSTRAP_MODULE]
     assert "--config" in cmd and "/etc/litellm.yaml" in cmd
     assert "127.0.0.1" in cmd
     assert "4000" in cmd
@@ -462,7 +466,7 @@ def test_proxy_command_without_config_path_falls_back_to_env():
     empty `--config ""` would be a silent lie (a non-existent path), so we drop
     the flag instead."""
     cmd = E._proxy_command(config_path=None)
-    assert cmd[0] == "litellm"
+    assert cmd[:3] == [sys.executable, "-m", E.PROXY_BOOTSTRAP_MODULE]
     assert "--config" not in cmd
     assert "127.0.0.1" in cmd and "4000" in cmd
     assert "--use_v2_migration_resolver" not in cmd

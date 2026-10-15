@@ -97,11 +97,24 @@ class GatewayStartupError(RuntimeError):
     gateway-boot failure from a sync collapse."""
 
 
+# The proxy is launched THROUGH this bootstrap (not the bare `litellm` CLI) so
+# the streamed-usage continuity patch
+# (`gateway_proxy_bootstrap.install_stream_usage_patch`) is active inside the
+# proxy process: pinned litellm 1.96.0 synthesizes a messages-only prompt size
+# with no cache detail when a provider attaches `usage` to a choice-bearing
+# finish chunk (evidence: docs/design/cache-spectrum-measurement-research.md).
+# The bootstrap applies the patch, then hands the SAME argv to the litellm CLI
+# - the CLI remains the documented config-loading entrypoint.
+PROXY_BOOTSTRAP_MODULE = "polymerhus.app.gateway_proxy_bootstrap"
+
+
 def _proxy_command(config_path: str | None = None) -> list[str]:
     """The launcher invocation that brings up the litellm proxy.
 
-    Uses the litellm CLI (`litellm --config <path> --host 127.0.0.1 --port 4000`)
-    rather than `uvicorn litellm.proxy.proxy_server:app` directly. The CLI is
+    Runs the litellm CLI THROUGH `polymerhus.app.gateway_proxy_bootstrap`
+    (`python -m polymerhus.app.gateway_proxy_bootstrap --config <path> --host
+    127.0.0.1 --port 4000`): the bootstrap applies the 1.96.0 streamed-usage
+    patch inside the proxy process, then delegates to the CLI. The CLI is
     litellm's documented entrypoint: it loads the YAML config correctly,
     applies `store_model_in_db` / `general_settings` / `litellm_settings`,
     and starts the ASGI under the hood. Invoking uvicorn directly with
@@ -124,12 +137,14 @@ def _proxy_command(config_path: str | None = None) -> list[str]:
     non-empty schema), the v2 resolver baselines foreign tables into litellm's
     migration ledger, and `prisma db push` DROPS every foreign table (all
     verified live 2026-08-17)."""
-    cmd: list[str] = ["litellm", "--config", config_path or "",
+    cmd: list[str] = [sys.executable, "-m", PROXY_BOOTSTRAP_MODULE,
+                      "--config", config_path or "",
                       "--host", "127.0.0.1", "--port", str(PROXY_PORT)]
     if not config_path:
         # No path -> drop the empty `--config ""` (litellm reads
         # `LITELLM_CONFIG_PATH` env var instead; the Dockerfile sets it).
-        cmd = ["litellm", "--host", "127.0.0.1", "--port", str(PROXY_PORT)]
+        cmd = [sys.executable, "-m", PROXY_BOOTSTRAP_MODULE,
+               "--host", "127.0.0.1", "--port", str(PROXY_PORT)]
     return cmd
 
 

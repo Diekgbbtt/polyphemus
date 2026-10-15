@@ -136,6 +136,7 @@ def test_usage_spectrum_decodes_the_ledger_per_agent_surface() -> None:
                 "total_tokens": 62_100_000,
                 "capped_tokens": 44_100_000,
                 "calls": 24,
+                "cache_detail_omitted": 3,
             },
             "job_orchestrator": {
                 "context_tokens": {"cached": 0, "uncached": 7_350_000},
@@ -143,6 +144,7 @@ def test_usage_spectrum_decodes_the_ledger_per_agent_surface() -> None:
                 "total_tokens": 7_600_000,
                 "capped_tokens": 7_600_000,
                 "calls": 30,
+                "cache_detail_omitted": 24,
             },
         }
     }
@@ -159,6 +161,7 @@ def test_usage_spectrum_decodes_the_ledger_per_agent_surface() -> None:
             "total": 62_100_000,
             "capped": 44_100_000,
             "calls": 24,
+            "cache_detail_omitted": 3,
         },
         "job_orchestrator": {
             "visible": 250_000,
@@ -169,13 +172,14 @@ def test_usage_spectrum_decodes_the_ledger_per_agent_surface() -> None:
             "total": 7_600_000,
             "capped": 7_600_000,
             "calls": 30,
+            "cache_detail_omitted": 24,
         },
     }
 
 
 def test_usage_spectrum_pins_the_schema_and_fails_open() -> None:
     # The acceptance contract (#349): one entry per agent with exactly these
-    # eight keys, in this order, every one a non-negative int.
+    # nine keys, in this order, every one a non-negative int.
     response = {"by_agent": {"recon": {"capped_tokens": 4200}}}
     spectrum = api.usage_spectrum(response)
     assert list(spectrum["recon"]) == [
@@ -187,6 +191,7 @@ def test_usage_spectrum_pins_the_schema_and_fails_open() -> None:
         "total",
         "capped",
         "calls",
+        "cache_detail_omitted",
     ]
     assert spectrum["recon"] == {
         "visible": 0,
@@ -197,6 +202,7 @@ def test_usage_spectrum_pins_the_schema_and_fails_open() -> None:
         "total": 0,
         "capped": 4200,
         "calls": 0,
+        "cache_detail_omitted": 0,
     }
     # Fail-open: absent/malformed response, a non-mapping agent, or a malformed
     # nested map degrades to empty/zeros, never a raise.
@@ -215,6 +221,7 @@ def test_usage_spectrum_pins_the_schema_and_fails_open() -> None:
             "total": 0,
             "capped": 0,
             "calls": 0,
+            "cache_detail_omitted": 0,
         }
     }
 
@@ -230,6 +237,7 @@ def test_usage_spectrum_ignores_negative_and_bool_fields() -> None:
                 "total_tokens": 50,
                 "capped_tokens": 20,
                 "calls": 2,
+                "cache_detail_omitted": True,
             }
         }
     }
@@ -242,6 +250,7 @@ def test_usage_spectrum_ignores_negative_and_bool_fields() -> None:
         "total": 50,
         "capped": 20,
         "calls": 2,
+        "cache_detail_omitted": 0,
     }
 
 
