@@ -493,7 +493,6 @@ ROLES: tuple[Role, ...] = (
     Role("bootstrapper",     "LLM_ANALYSER",         "one_shot"),
     Role("assigner",         "LLM_ANALYSER",         "session",  "medium"),
     Role("mechanism_typist", "LLM_ANALYSER",         "session",  "medium"),
-    Role("data_modeller",    "LLM_ANALYSER",         "session",  "medium"),
     Role("anatomy",          "LLM_ANALYSER",         "one_shot"),
     Role("curation",         "LLM_ANALYSER",         "one_shot"),
     Role("sweep",            "LLM_ANALYSER",         "one_shot"),

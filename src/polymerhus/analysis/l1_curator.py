@@ -46,17 +46,12 @@ import re
 from polymerhus.analysis.l1_types import (
     L1_SINGLETON,
     AggregatesDelta,
-    DataFlowDelta,
-    DataItemDelta,
-    DataRelationshipDelta,
     DeleteOp,
-    L0Ref,
     MergeOp,
     Provenance,
     RelabelOp,
     ServiceDelta,
     StripPropsOp,
-    SurfacesAtDelta,
     SystemDelta,
     SystemEdgeDelta,
 )
@@ -106,6 +101,10 @@ _KNOWN_KINDS = frozenset(kind_id for kind_id, _desc in SYSTEM_KINDS)
 # allowlist is a hard security boundary - the value is interpolated into Cypher
 # (Neo4j cannot parameterise a rel type), and a miss is a HARD REJECT (never a
 # fallback to a generic edge). Only these six may become edge types.
+# RETAINED after the data plane was removed (docs/design/drop-data-modeller.md):
+# nothing in analysis writes DataRelationships any more, but the hunting read-only
+# unit projection (`attack.hunting.unit_projection` / `predicate`) imports this
+# catalogue to validate the relationship edge types it reads.
 DATA_RELATIONSHIP_KINDS: tuple[tuple[str, str], ...] = (
     ("derived_from", "The source item is computed/derived from the target item."),
     ("reflected_in", "The source item's value is reflected back in the target item."),
@@ -114,13 +113,14 @@ DATA_RELATIONSHIP_KINDS: tuple[tuple[str, str], ...] = (
     ("concatenation_of", "The source item is a concatenation involving the target item."),
     ("subset_of", "The source item is a subset/projection of the target item."),
 )
-_KNOWN_DATA_REL_KINDS = frozenset(k for k, _d in DATA_RELATIONSHIP_KINDS)
-# kind -> the uppercase edge TYPE it becomes. Single source; reused by the builder
-# and the merge re-point allowlist. Every value is a safe identifier by construction.
+# kind -> the uppercase edge TYPE it becomes. RETAINED for the merge re-point
+# allowlist (`_REPOINT_REL_TYPES`); every value is a safe identifier by construction.
 _DATA_REL_EDGE_TYPES: dict[str, str] = {k: k.upper() for k, _d in DATA_RELATIONSHIP_KINDS}
 
 # Edge-label allowlists (rel labels are interpolated into Cypher, so they are
 # validated against these fixed sets - defence in depth, like _SAFE_IDENT).
+# RETAINED after the data plane was removed: the hunting read-only projection
+# imports this map to recognise the data-flow edge families it reads.
 _DATA_FLOW_RELS = {"produces": "PRODUCES", "consumes": "CONSUMES"}
 # The §6 System-edge taxonomy (L1D-18/L1D-21); sub-granularity rides on props.
 # NOTE: RENDERED_BY is deliberately ABSENT - a Service reaches its web-presentation
@@ -157,9 +157,13 @@ def vocabulary_prompt() -> str:
     """The controlled vocabularies the analyser LLM MUST draw from, rendered for
     the prompt. Single-sourced from the catalogues below so it never drifts: a
     proposal using a name outside these sets is rejected by the builders and
-    silently dropped, so the LLM must be told the exact allowed values."""
+    silently dropped, so the LLM must be told the exact allowed values.
+
+    Only the vocabularies a LIVE proposer can actually emit are rendered: the
+    surviving roles emit `systems` / `system_edges`, so the data-relationship
+    catalogue is NOT advertised here (nothing can emit one; see
+    `docs/design/drop-data-modeller.md`)."""
     kinds = ", ".join(sorted(_KNOWN_KINDS))
-    rel_kinds = ", ".join(sorted(_KNOWN_DATA_REL_KINDS))
     sys_rels = ", ".join(sorted(SYSTEM_EDGE_RELS))
     return (
         "CONTROLLED VOCABULARIES - use these EXACT values only:\n"
@@ -167,8 +171,6 @@ def vocabulary_prompt() -> str:
         "e.g. the authentication mechanism is `AuthenticationMechanism` (NOT "
         "'Authentication'); the authorization system is `AuthorizationSystem`.\n"
         f"- System-edge `rel` must be one of: {sys_rels}.\n"
-        f"- a DataRelationship `kind` must be one of: {rel_kinds} (the kind becomes "
-        "the edge type; anything else is rejected).\n"
         "- A System's `discriminator` defaults to the literal string "
         "'__singleton__' unless the target genuinely has multiple instances of "
         "that kind (e.g. two different CDN products)."
@@ -438,132 +440,13 @@ def write_aggregates(
     return written
 
 
-# --- FR-ENRICH: DataItem + trust/data-flow + relationship writers -------------
+# --- FR-ENRICH: (the DataItem/data-flow writers were removed with the data plane;
+#     see docs/design/drop-data-modeller.md) --------------------------------------
 
 def _require_slug(value, what: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{what} must be a non-empty string, got {value!r}")
     return value
-
-
-def _l0_match_clause(l0: L0Ref) -> tuple[str, dict]:
-    """Build a `MATCH (l0:<Label> {<identity>, project_id})` fragment + params,
-    validating the interpolated label + identity keys as safe identifiers
-    (Cypher-injection guard). The L0 node is MATCHed, never created (L1D-2)."""
-    if not isinstance(l0.label, str) or not _SAFE_IDENT.match(l0.label):
-        raise ValueError(f"unsafe L0 label {l0.label!r}")
-    if not isinstance(l0.identity, dict) or not l0.identity:
-        raise ValueError("empty L0 identity")
-    if not all(isinstance(k, str) and _SAFE_IDENT.match(k) for k in l0.identity):
-        raise ValueError(f"unsafe L0 identity keys: {list(l0.identity)}")
-    id_keys = sorted(l0.identity)
-    clause = ", ".join(f"{k}: $l0_{k}" for k in id_keys)
-    params = {f"l0_{k}": l0.identity[k] for k in id_keys}
-    return f"MATCH (l0:{l0.label} {{{clause}, project_id: $project_id}})", params
-
-
-def build_dataitem_cypher(delta: DataItemDelta) -> tuple[str, dict]:
-    """Pure: MERGE one `:L1DataItem` on its flexible semantic key
-    (project_id, item_key). identity ⊥ membership: never keyed on its L0 sites."""
-    item_key = _require_slug(delta.item_key, "DataItem item_key")
-    params = {"item_key": item_key, "project_id": _PENDING_PROJECT_ID, "props": _clean_props(delta.props)}
-    params.update(_prov_params(delta.provenance))
-    cypher = "\n".join([
-        "MERGE (d:L1DataItem {item_key: $item_key, project_id: $project_id})",
-        "ON CREATE SET d.first_seen = datetime()",
-        "SET d += $props",
-        "SET d.last_seen = datetime()",
-        "SET d.prov_job = $prov_job, d.prov_model = $prov_model, d.prov_prompt_id = $prov_prompt_id",
-    ])
-    return cypher, params
-
-
-def build_surfaces_at_cypher(delta: SurfacesAtDelta) -> tuple[str, dict]:
-    """Pure: MERGE the native cross-layer `(:L1DataItem)-[:SURFACES_AT]->(:L0)`
-    edge. The DataItem is MERGEd (owned by L1); the L0 site is MATCHed, never
-    created."""
-    item_key = _require_slug(delta.item_key, "SurfacesAt item_key")
-    match_clause, params = _l0_match_clause(delta.l0)
-    params["item_key"] = item_key
-    params["project_id"] = _PENDING_PROJECT_ID
-    params.update(_prov_params(delta.provenance))
-    cypher = "\n".join([
-        match_clause,
-        "MERGE (d:L1DataItem {item_key: $item_key, project_id: $project_id})",
-        "ON CREATE SET d.prov_job = $prov_job, d.first_seen = datetime()",  # provenance-on-mint
-        "MERGE (d)-[r:SURFACES_AT]->(l0)",
-        "ON CREATE SET r.first_seen = datetime()",
-        "SET r.last_seen = datetime()",
-        "SET r.prov_job = $prov_job",
-    ])
-    return cypher, params
-
-
-def build_data_flow_cypher(delta: DataFlowDelta) -> tuple[str, dict]:
-    """Pure: MERGE a `(:L1Service)-[:PRODUCES|CONSUMES]->(:L1DataItem)` edge. A
-    CONSUMES edge carries the trust `assumption` predicate + rationale (L1D-14)."""
-    slug = _require_slug(delta.service_slug, "DataFlow service_slug")
-    item_key = _require_slug(delta.item_key, "DataFlow item_key")
-    rel = _DATA_FLOW_RELS.get(delta.direction)
-    if rel is None:
-        raise ValueError(f"DataFlow direction must be produces|consumes, got {delta.direction!r}")
-    params = {
-        "slug": slug, "item_key": item_key, "project_id": _PENDING_PROJECT_ID,
-        "assumption": delta.assumption, "assumption_rationale": delta.assumption_rationale,
-    }
-    params.update(_prov_params(delta.provenance))
-    lines = [
-        "MERGE (s:L1TestableUnit:L1Service {business_function_slug: $slug, project_id: $project_id})",
-        "ON CREATE SET s.prov_job = $prov_job, s.first_seen = datetime()",  # provenance-on-mint
-        "MERGE (d:L1DataItem {item_key: $item_key, project_id: $project_id})",
-        "ON CREATE SET d.prov_job = $prov_job, d.first_seen = datetime()",
-        f"MERGE (s)-[r:{rel}]->(d)",
-        "ON CREATE SET r.first_seen = datetime()",
-        "SET r.last_seen = datetime()",
-        "SET r.prov_job = $prov_job",
-    ]
-    if rel == "CONSUMES":
-        lines.append("SET r.assumption = $assumption, r.assumption_rationale = $assumption_rationale")
-    return "\n".join(lines), params
-
-
-def build_data_relationship_cypher(delta: DataRelationshipDelta) -> tuple[str, dict]:
-    """Pure: MERGE a `(:L1DataItem)-[:<KIND>]->(:L1DataItem)` edge whose TYPE is the
-    kind (operator correction 2026-07-20), carrying the machine-checkable
-    `predicate` + NL `rationale`.
-
-    `kind` MUST be in the fixed `DATA_RELATIONSHIP_KINDS` allowlist; the uppercased
-    value is interpolated as the relationship type (Neo4j cannot parameterise a rel
-    type). An allowlist miss is a HARD REJECT (ValueError) - never a fallback to a
-    generic edge and never a catalogue node. `_SAFE_IDENT` re-checks the derived
-    label as defence in depth (mirrors `SYSTEM_EDGE_RELS`)."""
-    from_key = _require_slug(delta.from_item_key, "DataRelationship from_item_key")
-    to_key = _require_slug(delta.to_item_key, "DataRelationship to_item_key")
-    rel = _DATA_REL_EDGE_TYPES.get(delta.kind)
-    if rel is None:
-        raise ValueError(
-            f"Unknown DataRelationship kind {delta.kind!r}; allowed: {sorted(_KNOWN_DATA_REL_KINDS)}"
-        )
-    if not _SAFE_IDENT.match(rel):  # defence in depth: the label is interpolated
-        raise ValueError(f"unsafe DataRelationship edge type {rel!r}")
-    params = {
-        "from_key": from_key, "to_key": to_key,
-        "predicate": delta.predicate, "rationale": delta.rationale,
-        "project_id": _PENDING_PROJECT_ID,
-    }
-    params.update(_prov_params(delta.provenance))
-    cypher = "\n".join([
-        "MERGE (a:L1DataItem {item_key: $from_key, project_id: $project_id})",
-        "ON CREATE SET a.prov_job = $prov_job, a.first_seen = datetime()",  # provenance-on-mint
-        "MERGE (b:L1DataItem {item_key: $to_key, project_id: $project_id})",
-        "ON CREATE SET b.prov_job = $prov_job, b.first_seen = datetime()",
-        f"MERGE (a)-[r:{rel}]->(b)",
-        "ON CREATE SET r.first_seen = datetime()",
-        "SET r.last_seen = datetime()",
-        "SET r.predicate = $predicate, r.rationale = $rationale",
-        "SET r.prov_job = $prov_job",
-    ])
-    return cypher, params
 
 
 def build_system_edge_cypher(delta: SystemEdgeDelta) -> tuple[str, dict]:
@@ -630,23 +513,13 @@ def _write_each(builder, deltas, project_id, merge_fn, what: str) -> int:
 def enrich(
     project_id: str,
     *,
-    data_items: list[DataItemDelta] | None = None,
-    surfaces_at: list[SurfacesAtDelta] | None = None,
-    data_flows: list[DataFlowDelta] | None = None,
-    data_relationships: list[DataRelationshipDelta] | None = None,
     system_edges: list[SystemEdgeDelta] | None = None,
     merge_fn=None,
 ) -> dict:
-    """Write a batch of enrichment deltas, fail-open. Order matters: DataItems
-    are written before the edges that reference them (SURFACES_AT / flows /
-    relationships MERGE the items by identity too, so order is defensive, not
-    required). Returns per-category counts."""
+    """Write a batch of enrichment deltas, fail-open. Returns per-category
+    counts."""
     merge_fn = _resolve_merge_fn(merge_fn)
     return {
-        "data_items": _write_each(build_dataitem_cypher, data_items or [], project_id, merge_fn, "enrich.data_item"),
-        "surfaces_at": _write_each(build_surfaces_at_cypher, surfaces_at or [], project_id, merge_fn, "enrich.surfaces_at"),
-        "data_flows": _write_each(build_data_flow_cypher, data_flows or [], project_id, merge_fn, "enrich.data_flow"),
-        "data_relationships": _write_each(build_data_relationship_cypher, data_relationships or [], project_id, merge_fn, "enrich.data_relationship"),
         "system_edges": _write_each(build_system_edge_cypher, system_edges or [], project_id, merge_fn, "enrich.system_edge"),
     }
 

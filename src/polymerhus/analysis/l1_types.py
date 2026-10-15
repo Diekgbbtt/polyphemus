@@ -19,9 +19,7 @@ Design anchors:
 
 Operator-ratified 2026-07-20 domain-model correction: a System's kind is a plain
 identity ATTRIBUTE named `kind` on the System node (NOT a `:SystemKind` catalogue
-node reached by `OF_KIND`), and a DataRelationship's kind IS the relationship type
-(a fixed uppercase allowlist), NOT a `:DataRelationshipKind` node + generic
-`DATA_RELATIONSHIP` edge. See docs/design/l1-domain-model-catalogue.md.
+node reached by `OF_KIND`). See docs/design/l1-domain-model-catalogue.md.
 """
 from __future__ import annotations
 
@@ -118,73 +116,7 @@ class AggregatesDelta(BaseModel):
     envelope: JudgmentEnvelope
 
 
-# --- FR-ENRICH: DataItem (flexible identity) + trust/data-flow deltas ----------
-
-class DataItemDelta(BaseModel):
-    """A first-class L1 `DataItem` (L1D-13): a logical data element (session
-    token, sales_figure, username), identity independent of the many L0 sites it
-    surfaces at.
-
-    **Flexible identity** (operator decision 2026-07-16, resolving L1OP-1):
-    keyed `(project_id, item_key)` where `item_key` is a semantic slug the
-    analyser assigns - mirroring Service `business_function_slug`. "Two data
-    items across services are the same logical item" is therefore a *judgment*:
-    the analyser assigns the same `item_key` to sites it judges to be one item.
-    `identity ⊥ membership` (L1D-11): never keyed on the L0 sites it SURFACES_AT,
-    so a new site never churns the item's identity."""
-
-    item_key: str
-    props: dict = Field(default_factory=dict)
-    provenance: Provenance
-
-
-class SurfacesAtDelta(BaseModel):
-    """A cross-layer `SURFACES_AT` reference (spec §6): the DataItem `item_key`
-    appears at a specific L0 site (`Parameter`/`Header`/response field). Native
-    edge `(:L1DataItem)-[:SURFACES_AT]->(:L0)`; the L0 node is MATCHed, never
-    created (like AGGREGATES)."""
-
-    item_key: str
-    l0: L0Ref
-    provenance: Provenance
-
-
-class DataFlowDelta(BaseModel):
-    """A `PRODUCES`/`CONSUMES` edge between a Service and a DataItem (L1D-14, the
-    Tier-1 trust substrate). `direction='produces'` writes `(:L1Service)
-    -[:PRODUCES]->(:L1DataItem)`; `direction='consumes'` writes `[:CONSUMES]`
-    and may carry a trust **assumption** predicate + NL rationale - the machine-
-    checkable trust assumption ranging over the typed DataItem (derived, not
-    asserted, because it hangs on a represented flow)."""
-
-    service_slug: str
-    item_key: str
-    direction: Literal["produces", "consumes"]
-    assumption: str | None = None          # predicate (on CONSUMES)
-    assumption_rationale: str | None = None  # NL rationale
-    provenance: Provenance
-
-
-class DataRelationshipDelta(BaseModel):
-    """A functional-dependency edge between two DataItems (L1D-13): the invariants
-    whose violation hides the trickiest faults.
-
-    **The kind IS the relationship type** (operator correction 2026-07-20): `kind`
-    must be one of the FIXED allowlist in `l1_curator.DATA_RELATIONSHIP_KINDS`
-    (`derived_from`, `reflected_in`, `equals_hash_of`, `copy_of`,
-    `concatenation_of`, `subset_of`); the sole-writer emits it uppercased as the
-    edge TYPE (e.g. `-[:DERIVED_FROM]->`). An unknown kind is HARD-REJECTED (no
-    fallback to a generic type; no catalogue node). The edge carries a machine-
-    checkable `predicate` (e.g. `client_id = md5(email+id)`) + NL `rationale` (the
-    predicate grammar/evaluation is deferred to the signature engine, NM-8)."""
-
-    from_item_key: str
-    to_item_key: str
-    kind: str
-    predicate: str | None = None
-    rationale: str | None = None
-    provenance: Provenance
-
+# --- FR-ENRICH: typed Service->System edge delta -------------------------------
 
 class SystemEdgeDelta(BaseModel):
     """A typed Service->System edge (L1D-18: cross-cutting systems are edges, not

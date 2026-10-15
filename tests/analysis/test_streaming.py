@@ -306,7 +306,6 @@ def test_analyse_chunked_threads_surface_fn_into_the_assigner_body(monkeypatch):
         chunk,
         invoke_fn=lambda messages: None,
         typist_invoke_fn=lambda *a, **k: None,
-        data_modeller_invoke_fn=lambda *a, **k: None,
         surface_fn=marker,
         observe=False,
     ))

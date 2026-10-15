@@ -7,12 +7,12 @@ running a legacy two-pass prompt behind the `analysis.supervisor_enabled`
 coexistence flag. That flag flipped ON by default in the same change (step 5) and
 the flag branch, the legacy pass, its prompts, and its skill loader are now fully
 dissolved: `run_analyser` is a thin wrapper that always drives the chunk-fed
-supervised path (`supervisor.run_analyser_chunked`), the three-role
-`assigner -> mechanism_typist -> data_modeller` schedule (`dataplane-A1-decisions.md`).
+supervised path (`supervisor.run_analyser_chunked`), the two-role
+`assigner -> mechanism_typist` schedule.
 
 What survives here, with its live consumers: `AnalyserExport` (broadly),
-`default_read_fn` (`l0_stream`), `_inventory_block` (`bootstrap`, `assigner`,
-`data_modeller`), `_slice_repr` (`assigner`),
+`default_read_fn` (`l0_stream`), `_inventory_block` (`bootstrap`, `assigner`),
+`_slice_repr` (`assigner`),
 `default_curate_fn` and `default_curate_with_enrichment_fn`
 (`supervisor`), and `run_analyser` itself. The module is coherent without a pod:
 the analyser's entry point plus shared prompt-render and write helpers.
@@ -106,13 +106,12 @@ def _inventory_block(inventory: dict | None) -> str:
         "EXISTING L1 IDENTITIES - reuse these EXACT keys, do NOT coin a synonym.\n"
         "These identities are already in the graph from earlier passes. Sign-in / "
         "signin / login are ONE identity: pick the key already listed here rather "
-        "than minting a near-duplicate. Add a NEW Service / System / DataItem ONLY "
+        "than minting a near-duplicate. Add a NEW Service / System ONLY "
         "for surface no existing key below covers.\n"
         "Where a Service shows a description after its slug, that is its service "
         "contract: what that business function does and owns.\n"
         f"{_render('Services (business_function_slug)', inv.get('services'), annotations=contracts)}\n"
-        f"{_render('Systems (kind[:discriminator])', inv.get('systems'))}\n"
-        f"{_render('DataItems (item_key)', inv.get('data_items'))}"
+        f"{_render('Systems (kind[:discriminator])', inv.get('systems'))}"
     )
 
 
@@ -152,10 +151,9 @@ def default_curate_fn(services, systems, aggregates, project_id: str) -> Analyse
 
 def default_curate_with_enrichment_fn(batch, project_id: str, provenance) -> AnalyserExport:
     """Full curate: the core deltas (services/systems/aggregates) plus the
-    FR-ENRICH deltas (DataItems, SURFACES_AT, PRODUCES/CONSUMES, DataRelationships,
-    System edges), all mapped from one analyser `batch` with system provenance and
-    written through the L1 sole-writer. Used when the analyser proposes enrichment
-    alongside assignment. Seeds the DataRelationship catalogue (idempotent)."""
+    FR-ENRICH deltas (Service->System edges), all mapped from one analyser `batch`
+    with system provenance and written through the L1 sole-writer. Used when the
+    analyser proposes enrichment alongside assignment."""
     from polymerhus.analysis import l1_curator
     from polymerhus.analysis.analyser_types import (
         enrichment_proposals_to_deltas, proposals_to_deltas,
@@ -166,9 +164,6 @@ def default_curate_with_enrichment_fn(batch, project_id: str, provenance) -> Ana
 
     enrich_deltas = enrichment_proposals_to_deltas(batch, provenance)
     if any(enrich_deltas.values()):
-        # No catalogue seeding: a DataRelationship's kind IS its (allowlisted) edge
-        # type now (operator correction 2026-07-20), so there is no
-        # `:DataRelationshipKind` catalogue to seed.
         counts = l1_curator.enrich(project_id, **enrich_deltas)
         export = export.model_copy(update={"enrichment": counts})
     return export
@@ -191,8 +186,8 @@ def run_analyser(
     THIN WRAPPER (#48 section 11 step 6, ratified 2026-07-30): the legacy
     read->analyse->curate pod and its `analysis.supervisor_enabled` coexistence
     flag are retired. `run_analyser` always drives the chunk-fed supervised path
-    (`supervisor.run_analyser_chunked`, the assigner -> mechanism_typist ->
-    data_modeller schedule). `run_supervisor_fn` is injectable for testing and
+    (`supervisor.run_analyser_chunked`, the assigner -> mechanism_typist
+    schedule). `run_supervisor_fn` is injectable for testing and
     defaults to `run_analyser_chunked`; any extra keyword (`invoke_fn`,
     `assets_fn`, `write_fn`, `checkpointer`, ...) is passed straight through, so a
     test can wire the same collaborator surface `analyse_chunked` exposes.

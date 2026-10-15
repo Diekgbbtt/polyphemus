@@ -31,10 +31,9 @@ from polymerhus.recon.domain.types import AssetDelta, Observation
 logger = logging.getLogger(__name__)
 
 # The L0 identity keys per label - which of a node's properties form its identity.
-# Single-sourced here for the read side; a proposer's own reference guide (e.g.
-# `data_modeller`'s reference-gate canonicalisation) states the same keys to the
-# LLM, and the two must not drift (an identity carrying a stray property is one
-# the sole-writer's MATCH will not find).
+# Single-sourced here for the read side; a proposer's own reference guide states the
+# same keys to the LLM, and the two must not drift (an identity carrying a stray
+# property is one the sole-writer's MATCH will not find).
 L0_IDENTITY_KEYS: dict[str, tuple[str, ...]] = {
     "BaseURL": ("url",),
     "Endpoint": ("path", "method", "baseurl"),
@@ -42,10 +41,8 @@ L0_IDENTITY_KEYS: dict[str, tuple[str, ...]] = {
     "Header": ("name", "value", "baseurl"),
     "Technology": ("name", "version"),
     "Certificate": ("subject_cn",),
-    # DPL-DEC-10 (dataplane-A1-decisions.md §6): a jsluice-mined Secret is Tier-1
-    # trust substrate, so the data_modeller's reference gate needs its identity
-    # shape too - added alongside the ROLE_ADMITS widening to {Parameter, Header,
-    # Secret}.
+    # A jsluice-mined Secret is L0 trust substrate; its identity is the value hash,
+    # declared here so the read side projects it consistently.
     "Secret": ("value_hash",),
 }
 
@@ -98,11 +95,11 @@ def read_l0_assets(project_id: str, *, read_fn=None) -> list[AssetDelta]:
 
 def read_observations(project_id: str, *, read_fn=None) -> list[Observation]:
     """The project's triager `Observation`s, with their ANCHOR reconstructed, for
-    the chunk builder (dataplane-A1-decisions.md §11 step 0).
+    the chunk builder.
 
     `analyse_chunked` called `chunks_for_job` with no observations at all, so
-    `Chunk.observations` was ALWAYS empty on the live path - the typist and the
-    data-modeller both render observations but neither ever received one.
+    `Chunk.observations` was ALWAYS empty on the live path - the typist renders
+    observations but never received one.
     `delivery.collect_observations` cannot be reused: it projects `_OBS_FIELDS`
     and DROPS the anchor entirely, while `chunking._observations_for` needs a real
     `Observation.anchor`. This is that missing read.

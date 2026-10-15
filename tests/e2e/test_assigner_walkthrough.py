@@ -121,8 +121,6 @@ def test_E1_katana_delta_through_admission_to_assignment():
     assert {a.service_slug for a in out.batch.aggregates} == {"checkout", "fulfilment"}
     assert out.batch.services == []                     # D4: never mints
     assert out.batch.systems == [] and out.batch.system_edges == []
-    assert out.batch.data_items == [] and out.batch.surfaces_at == []
-    assert out.batch.data_flows == [] and out.batch.data_relationships == []
     assert len(out.backlog) == 1 and "ghost" in out.backlog[0]
 
 

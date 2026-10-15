@@ -11,7 +11,6 @@ import pytest
 from polymerhus.analysis import assigner
 from polymerhus.analysis.analyser_types import (
     AggregatesProposal,
-    DataItemProposal,
     L1DeltaBatch,
     ServiceProposal,
     SystemProposal,
@@ -29,7 +28,7 @@ from polymerhus.recon.domain.types import AssetDelta, Observation
 
 BU = "https://a"
 INVENTORY = {
-    "services": ["checkout", "fulfilment"], "systems": [], "data_items": [],
+    "services": ["checkout", "fulfilment"], "systems": [],
     "service_contracts": {"checkout": "Take a basket to a paid order."},
 }
 SLUGS = frozenset({"checkout", "fulfilment"})
@@ -146,13 +145,10 @@ def test_C18_narrow_drops_non_assignment_lists():
     raw = L1DeltaBatch(
         services=[ServiceProposal(business_function_slug="x")],
         systems=[SystemProposal(kind="RESTApi")],
-        data_items=[DataItemProposal(item_key="order")],
         aggregates=[_agg("/x")],
     )
     out = narrow_to_assignment(raw)
     assert out.services == [] and out.systems == [] and out.system_edges == []
-    assert out.data_items == [] and out.surfaces_at == []
-    assert out.data_flows == [] and out.data_relationships == []
     assert len(out.aggregates) == 1
 
 

@@ -44,6 +44,8 @@ def _jsonable(value):
 # which made every L1 node read as one indistinct type (and one grey colour) in
 # the frontend. Rank the specific subtypes / catalogue labels ahead of the
 # supertype so services, systems, and data items are always distinguishable.
+# RETAINED (dormant legacy: nothing writes L1DataItem/data edges after the
+# data-plane removal) -> docs/design/drop-data-modeller.md
 _LABEL_PRIORITY = (
     "L1Service", "L1System", "L1DataItem",
 )
@@ -71,6 +73,8 @@ def node_name(labels: list[str], props: dict) -> str:
         kind = p.get("kind") or "L1System"
         disc = elide_singleton(p.get("discriminator"))
         return f"{kind}:{disc}" if disc else str(kind)
+    # RETAINED (dormant legacy: nothing writes L1DataItem/data edges after the
+    # data-plane removal) -> docs/design/drop-data-modeller.md
     if label == "L1DataItem":
         return str(p.get("item_key") or "L1DataItem")
     for key in ("name", "url", "path", "address", "value", "number"):

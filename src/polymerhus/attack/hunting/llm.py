@@ -233,6 +233,8 @@ def _system_render(info) -> str:
     return "; ".join(parts)
 
 
+# RETAINED (dormant legacy: nothing writes L1DataItem/data edges after the
+# data-plane removal) -> docs/design/drop-data-modeller.md
 def _data_item_render(item) -> str:
     """Deterministic one-line render of a DataItem (a data-flow edge's full
     node): the named trust slots (name/type/sensitivity, fields, notes). An

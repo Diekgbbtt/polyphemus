@@ -63,9 +63,9 @@ _NOISE_EXT = re.compile(r"\.(?:js|mjs|map|css)$", re.IGNORECASE)
 _NOISE_SEGMENTS = frozenset({"assets", "static"})
 
 # The sentinel admitting EVERY asset type. Load-bearing, not a convenience: with
-# three allow-sets an asset type no role names would be admitted by nobody and so
-# silently dropped, losing the increment-1 fork-H guarantee. The generalist role
-# holds the sentinel, so a new recon tool's output always lands somewhere.
+# more than one allow-set an asset type no role names would be admitted by nobody
+# and so silently dropped, losing the increment-1 fork-H guarantee. The generalist
+# role holds the sentinel, so a new recon tool's output always lands somewhere.
 ADMIT_ALL = "*"
 
 # The per-ROLE admission table (#34 D7): every asset type a recon job produces is
@@ -74,17 +74,11 @@ ADMIT_ALL = "*"
 ROLE_ADMITS: dict[str, frozenset[str] | str] = {
     "assigner": frozenset({"Endpoint"}),          # one judgment: who owns this Endpoint
     "mechanism_typist": ADMIT_ALL,                 # the generalist (see ADMIT_ALL)
-    # Widened to include Secret (#48, dataplane-A1-decisions.md section 6,
-    # ratified 2026-07-30): a jsluice-mined Secret is Tier-1 trust substrate too -
-    # #10's own responsibility statement names "parameters/headers/secrets/HTML"
-    # as the lift surface. Endpoint stays OUT (question 8): SURFACES_AT targets
-    # Parameter/Header/Secret only, never an Endpoint (DPL-DEC-10).
-    "data_modeller": frozenset({"Parameter", "Header", "Secret"}),
 }
 
 # The chunk-fed proposer roles, in dispatch order. `bootstrapper` / `anti_cluttering`
 # are slice-less (they re-derive the whole live L1) and never receive a chunk.
-CHUNK_ROLES: tuple[str, ...] = ("assigner", "mechanism_typist", "data_modeller")
+CHUNK_ROLES: tuple[str, ...] = ("assigner", "mechanism_typist")
 
 
 class Chunk(BaseModel):
@@ -151,8 +145,7 @@ def _observations_for(assets: tuple[AssetDelta, ...], observations: list[Observa
     BaseURL). The parent hop is essential: the triager anchors observations UP to a
     broad asset (curator ANCHOR_ALLOWLIST drops Endpoint/Header/Parameter anchors), so
     a service chunk of Endpoints would otherwise carry NONE of its BaseURL's insights.
-    Consumed by the mechanism-typist and the data-modeller; the Assigner does not
-    render them (#34 D5)."""
+    Consumed by the mechanism-typist; the Assigner does not render them (#34 D5)."""
     from polymerhus.recon.domain.curator import broaden_anchor
 
     keys: set[tuple] = set()

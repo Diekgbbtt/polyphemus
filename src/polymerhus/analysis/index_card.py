@@ -8,7 +8,7 @@ Two read shapes drive the L1 outer analysis loop:
     blow the token budget (DD-4); a Service that AGGREGATES tens of thousands of
     L0 elements has a card whose `edge_degree.AGGREGATES` is a single integer.
     Depth is fetched only for the unit currently under analysis.
-  * DFS-down is one typed hop per edge family (Service -> its Systems/DataItems),
+  * DFS-down is one typed hop per edge family (Service -> its Systems),
     fetched lazily for the unit under analysis.
 
 Read-only; the write counterpart is `l1_curator`. `read_fn` defaults to
@@ -109,7 +109,7 @@ def index_cards(project_id: str, *, read_fn=None) -> list[dict]:
 
 def dfs_down(project_id: str, business_function_slug: str, rel: str, *, read_fn=None) -> list[dict]:
     """One typed hop down from a Service via edge family `rel` (e.g. EXPOSED_VIA,
-    AUTHORIZED_BY, CONSUMES): return the neighbouring L1 nodes. Fetched lazily for
+    AUTHORIZED_BY): return the neighbouring L1 nodes. Fetched lazily for
     the unit under analysis (not in the BFS hot loop). Raises ValueError on an
     unsafe rel label."""
     read_fn = _resolve_read_fn(read_fn)

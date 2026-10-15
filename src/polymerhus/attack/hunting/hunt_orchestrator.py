@@ -701,6 +701,8 @@ def _distinct_vulnerability_classes(classes: Sequence[str]) -> list[str]:
     return out
 
 
+# RETAINED (dormant legacy: nothing writes L1DataItem/data edges after the
+# data-plane removal) -> docs/design/drop-data-modeller.md
 def _data_item_detail(item) -> dict:
     """Pure: one connected-DataItem detail dict for the surface-context
     transform (name/type/sensitivity/fields/notes, the ADR G5 slots). An

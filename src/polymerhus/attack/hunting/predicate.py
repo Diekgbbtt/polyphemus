@@ -43,6 +43,8 @@ from polymerhus.analysis.l1_curator import (
     _DATA_FLOW_RELS,
 )
 
+# RETAINED (dormant legacy: nothing writes L1DataItem/data edges after the
+# data-plane removal) -> docs/design/drop-data-modeller.md
 # Validated value vocabularies, single-sourced from the analysis write boundary.
 _SYSTEM_KIND_SET = frozenset(kind for kind, _desc in SYSTEM_KINDS)
 _DATA_REL_KIND_SET = frozenset(kind for kind, _desc in DATA_RELATIONSHIP_KINDS)

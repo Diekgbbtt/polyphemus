@@ -34,12 +34,10 @@ def test_C1_shell_maps_to_exposure_only_service_a1_slots_dropped():
     shell = ServiceShell(
         business_function_slug="checkout", exposure="public",
         label="X", salience="high", aggregates=[{"x": 1}], exposed_via=[{"y": 2}],
-        data_flows=[{"z": 3}], surfaces_at=[{"w": 4}],
     )
     batch = shells_to_batch([shell], [])
     assert _svc_props(batch)["checkout"] == {"exposure": "public"}  # exposure-only
     assert batch.aggregates == [] and batch.system_edges == []
-    assert batch.data_items == [] and batch.data_flows == [] and batch.surfaces_at == []
 
 
 # --- C2: invalid exposure dropped (allowlist as defense-in-depth) -------------
@@ -339,13 +337,13 @@ def test_C21_a_re_bootstrap_never_clobbers_an_existing_contract_with_a_blank_one
 
 def test_C22_contract_reaches_the_inventory_block_the_proposers_read():
     """Without this the attribute would be write-only: `read_l1_inventory` renders into
-    `_inventory_block`, which is what the Assigner / DataPlane / TechnicalSystem prompts
+    `_inventory_block`, which is what the Assigner / TechnicalSystem prompts
     actually consume. A bare slug list is what made `byoc` unroutable."""
     from polymerhus.analysis.pod import _inventory_block
 
     rendered = _inventory_block({
         "services": ["byoc", "checkout"],
-        "systems": [], "data_items": [],
+        "systems": [],
         "service_contracts": {"checkout": "Take a basket to a paid order."},
     })
     assert "- checkout - Take a basket to a paid order." in rendered

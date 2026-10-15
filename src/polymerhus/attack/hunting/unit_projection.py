@@ -47,6 +47,8 @@ from polymerhus.analysis.l1_curator import (
 )
 from polymerhus.analysis.l1_types import L1_SINGLETON
 
+# RETAINED (dormant legacy: nothing writes L1DataItem/data edges after the
+# data-plane removal) -> docs/design/drop-data-modeller.md
 # The validated DataRelationship edge types (kind uppercased - the edge type IS
 # the kind, single-sourced per L1D-13/L1OP-2).
 _DATA_REL_EDGE_TYPES = frozenset(k.upper() for k, _d in DATA_RELATIONSHIP_KINDS)

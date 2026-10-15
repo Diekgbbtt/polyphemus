@@ -100,13 +100,3 @@ def test_typist_reflection_prompt_is_framed_by_the_overview():
     assert _reflection_prompt(chunk, inventory).startswith(
         "APPLICATION OVERVIEW: A single web service"
     )
-
-
-def test_data_modeller_reflection_prompt_is_framed_by_the_overview():
-    from polymerhus.analysis.data_modeller import _reflection_prompt
-
-    chunk = Chunk(chunk_id="katana_0", source_job="katana", assets=())
-    inventory = {"application_overview": "A single web service for node-graph editing."}
-    assert _reflection_prompt(chunk, inventory, {}).startswith(
-        "APPLICATION OVERVIEW: A single web service"
-    )

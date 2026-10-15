@@ -9,8 +9,8 @@ REWIRED (#48 section 11 step 6, ratified 2026-07-30): the legacy
 retired along with the legacy pod. This now runs the SUPERVISED chunk-fed path
 (`run_analyser`, driving `supervisor.run_analyser_chunked`) twice against a live
 Neo4j fixture and asserts the same node/edge counts hold after the second pass -
-the same idempotent-MERGE guarantee, now exercised through the three-role
-`assigner -> mechanism_typist -> data_modeller` schedule. Since #34 D4 retired
+the same idempotent-MERGE guarantee, now exercised through the two-role
+`assigner -> mechanism_typist` schedule. Since #34 D4 retired
 Service minting from the Assigner, the owning Service is pre-seeded here exactly
 as the Bootstrapper would leave it, and the Assigner's fixed invoke_fn only
 proposes an AGGREGATES judgment onto that pre-existing slug.
@@ -86,19 +86,12 @@ def _typist_invoke(messages, *, schema=None):
     # Deliberately empty (reflection returns None -> bounded_retry exhausts ->
     # fail-CLOSED, no Systems): `mechanism_typist_body`'s own `read_inventory`/
     # `read_aggregations` collaborators are NOT threaded through
-    # `analyse_chunked`'s `inventory_fn`/`aggregations_fn` (a known gap in the
+    # `analyse_chunked`'s `inventory_fn` (a known gap in the
     # typist's supervisor wiring, unrelated to this test), so it would otherwise
     # fall back to LIVE default reads against the real neo4j_client rather than
-    # this test's session - the same reason `test_data_modeller_walkthrough.py`'s
-    # E1 keeps this stub a deliberate no-op. This test's subject is the curator's
+    # this test's session. This test's subject is the curator's
     # idempotent MERGE on the AGGREGATES path, not the typist.
     return None if schema is None else L1DeltaBatch()
-
-
-def _data_modeller_invoke(messages, *, schema=None):
-    # no Parameter/Header surface is admitted in this fixture, so both calls are
-    # a legitimate empty (nothing to lift) - not the subject of this test.
-    return "" if schema is None else L1DeltaBatch()
 
 
 # --- AST-ANALYSER-01: pure f(surface+context)->L1-deltas, idempotent MERGE ----
@@ -137,19 +130,16 @@ def test_analyser_writes_l1_idempotently_via_curator(session, project):
         return AnalyserExport(services_written=sw, systems_written=syw, aggregates_written=aw, enrichment=counts)
 
     inventory = {
-        "services": [SLUG], "systems": [], "data_items": [],
+        "services": [SLUG], "systems": [],
         "service_contracts": {}, "system_descriptions": {},
-        "data_item_fields": {}, "data_item_notes": {},
     }
 
     for _ in range(2):  # run the supervised pass twice on the same input
         export = run_analyser(
             project, "run-1", observations=[],
             invoke_fn=_assigner_invoke(endpoint_id), typist_invoke_fn=_typist_invoke,
-            data_modeller_invoke_fn=_data_modeller_invoke,
             assets_fn=lambda pid: [AssetDelta(type="Endpoint", identity=dict(endpoint_id))],
             inventory_fn=lambda pid: inventory,
-            aggregations_fn=lambda pid: [],
             write_fn=write_fn, checkpointer=MemorySaver(), observe=False,
         )
         assert export.error is None

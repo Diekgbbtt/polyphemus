@@ -16,19 +16,13 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from typing import Literal
-
 from polymerhus.analysis.l1_types import (
     L1_SINGLETON,
     AggregatesDelta,
-    DataFlowDelta,
-    DataItemDelta,
-    DataRelationshipDelta,
     JudgmentEnvelope,
     L0Ref,
     Provenance,
     ServiceDelta,
-    SurfacesAtDelta,
     SystemDelta,
     SystemEdgeDelta,
 )
@@ -68,43 +62,6 @@ class AggregatesProposal(BaseModel):
 
 # --- FR-ENRICH LLM-facing proposals (no provenance; system-stamped at curate) --
 
-class DataItemProposal(BaseModel):
-    """A logical DataItem the analyser lifts (L1D-13). `item_key` is the flexible
-    semantic key; the analyser gives the same key to sites it judges one item."""
-
-    item_key: str
-    props: dict = Field(default_factory=dict)
-
-
-class SurfacesAtProposal(BaseModel):
-    """Where a DataItem appears on the L0 surface (cross-layer SURFACES_AT)."""
-
-    item_key: str
-    l0: L0Ref
-
-
-class DataFlowProposal(BaseModel):
-    """A Service PRODUCES/CONSUMES a DataItem; a CONSUMES may carry a trust
-    assumption predicate + rationale (L1D-14)."""
-
-    service_slug: str
-    item_key: str
-    direction: Literal["produces", "consumes"]
-    assumption: str | None = None
-    assumption_rationale: str | None = None
-
-
-class DataRelationshipProposal(BaseModel):
-    """A functional-dependency relationship between two DataItems; `kind` is one of
-    the fixed allowlist (it becomes the edge type), carrying a predicate + NL."""
-
-    from_item_key: str
-    to_item_key: str
-    kind: str
-    predicate: str | None = None
-    rationale: str | None = None
-
-
 class SystemEdgeProposal(BaseModel):
     """A typed Service->System edge (systems are edges, not strings, L1D-18)."""
 
@@ -121,16 +78,12 @@ class L1DeltaBatch(BaseModel):
     """The analyser LLM's structured output: the L1 deltas it proposes from an
     L0 slice + observations. Every list defaults empty so a 'nothing to add'
     judgment is a valid, well-typed result (mirrors `_ObservationBatch`). The
-    enrichment lists (data_items … system_edges) let one analyser pass propose
-    the Tier-1 trust substrate alongside the assignment."""
+    enrichment list (`system_edges`) lets one analyser pass propose the
+    Service->System edges alongside the assignment."""
 
     services: list[ServiceProposal] = Field(default_factory=list)
     systems: list[SystemProposal] = Field(default_factory=list)
     aggregates: list[AggregatesProposal] = Field(default_factory=list)
-    data_items: list[DataItemProposal] = Field(default_factory=list)
-    surfaces_at: list[SurfacesAtProposal] = Field(default_factory=list)
-    data_flows: list[DataFlowProposal] = Field(default_factory=list)
-    data_relationships: list[DataRelationshipProposal] = Field(default_factory=list)
     system_edges: list[SystemEdgeProposal] = Field(default_factory=list)
 
 
@@ -169,29 +122,6 @@ def enrichment_proposals_to_deltas(batch: L1DeltaBatch, provenance: Provenance) 
     match `l1_curator.enrich`'s kwargs. Provenance is system-supplied (the LLM
     never sets it), exactly as `proposals_to_deltas` does for the core deltas."""
     return {
-        "data_items": [
-            DataItemDelta(item_key=d.item_key, props=d.props, provenance=provenance)
-            for d in batch.data_items
-        ],
-        "surfaces_at": [
-            SurfacesAtDelta(item_key=s.item_key, l0=s.l0, provenance=provenance)
-            for s in batch.surfaces_at
-        ],
-        "data_flows": [
-            DataFlowDelta(
-                service_slug=f.service_slug, item_key=f.item_key, direction=f.direction,
-                assumption=f.assumption, assumption_rationale=f.assumption_rationale,
-                provenance=provenance,
-            )
-            for f in batch.data_flows
-        ],
-        "data_relationships": [
-            DataRelationshipDelta(
-                from_item_key=r.from_item_key, to_item_key=r.to_item_key, kind=r.kind,
-                predicate=r.predicate, rationale=r.rationale, provenance=provenance,
-            )
-            for r in batch.data_relationships
-        ],
         "system_edges": [
             SystemEdgeDelta(
                 service_slug=e.service_slug, kind=e.kind,

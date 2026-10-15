@@ -194,10 +194,9 @@ def _service_linchpin_prompt() -> str:
 class ServiceShell(BaseModel):
     """Call-2 per-Service elicitation shell (#26 Q7): bootstrap fills
     `business_function_slug` + `exposure` + `service_contract`; the phase-A.1
-    attributes are PRESENT but EMPTIED (label/salience/aggregates/exposed_via/
-    data_flows/surfaces_at), owned by the later proposers. Mapped DOWN to a
-    `ServiceProposal` (the empty A.1 slots are NOT persisted - absence means
-    not-yet-filled)."""
+    attributes are PRESENT but EMPTIED (label/salience/aggregates/exposed_via),
+    owned by the later proposers. Mapped DOWN to a `ServiceProposal` (the empty
+    A.1 slots are NOT persisted - absence means not-yet-filled)."""
 
     business_function_slug: str
     # permissive on purpose (#7 fork B: the LLM strays) - the exposure-only allowlist
@@ -215,8 +214,6 @@ class ServiceShell(BaseModel):
     salience: str | None = None
     aggregates: list = Field(default_factory=list)
     exposed_via: list = Field(default_factory=list)
-    data_flows: list = Field(default_factory=list)
-    surfaces_at: list = Field(default_factory=list)
 
 
 class SystemShell(BaseModel):
@@ -867,7 +864,7 @@ def default_reason_fn(operator_kb: str, service_slugs: list[str] | None = None) 
     from polymerhus.analysis.pod import _inventory_block
     from polymerhus.analysis.proposer_reasoning import few_shot_block
 
-    inventory = {"services": service_slugs or [], "systems": [], "data_items": []}
+    inventory = {"services": service_slugs or [], "systems": []}
     # NB: the service-linchpin prompt (`_service_linchpin_prompt`) is DELIBERATELY NOT
     # woven in here. Pushing the account-surface umbrellas through the reasoning prompt
     # globally coarsened the model's granularity prior - a live 3-target eval collapsed
@@ -918,8 +915,8 @@ def default_extract_fn(reasoning: str):
     prompt = (
         "Extract the Service and System SHELLS decided in the reasoning below. For each "
         "Service set ONLY business_function_slug + exposure (public/authenticated, or omit) "
-        "+ service_contract; leave label/salience/aggregates/exposed_via/data_flows/"
-        "surfaces_at EMPTY. For each System set kind + discriminator; give the "
+        "+ service_contract; leave label/salience/aggregates/exposed_via "
+        "EMPTY. For each System set kind + discriminator; give the "
         "AuthorizationSystem its roles/realms; leave other spine slots empty.\n\n"
         # The contract is COMPOSED here, from the reasoning's own grounding prose. The
         # reasoning states each candidate as a justification ("the KB says X, so this

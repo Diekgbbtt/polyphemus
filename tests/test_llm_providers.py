@@ -44,10 +44,10 @@ def test_validate_passes_when_all_present(monkeypatch):
 
 def test_analysis_roles_share_the_analyser_key_and_it_is_required(monkeypatch):
     """#93: `analyser` is split into per-cognitive-job role_ids (assigner,
-    mechanism_typist, data_modeller, ...) that SHARE `LLM_ANALYSER`
+    mechanism_typist, ...) that SHARE `LLM_ANALYSER`
     (many-to-one), so validate_llm_config still requires that key at boot."""
     ids = {r.role_id for r in P.ROLES}
-    assert {"assigner", "mechanism_typist", "data_modeller"} <= ids
+    assert {"assigner", "mechanism_typist"} <= ids
     assert "analyser" not in ids  # the conflated single role is gone
     assert P.role_record("assigner").model_key == "LLM_ANALYSER"
     assert P.role_record("mechanism_typist").model_key == "LLM_ANALYSER"
@@ -64,7 +64,6 @@ def test_role_record_carries_agent_mode():
     """agent_mode is a property of the role (one_shot | session), not the model."""
     assert P.agent_mode("assigner") == "session"
     assert P.agent_mode("mechanism_typist") == "session"
-    assert P.agent_mode("data_modeller") == "session"
     assert P.agent_mode("triager") == "session"
     assert P.agent_mode("configurator") == "session"
     assert P.agent_mode("curation") == "one_shot"
@@ -364,7 +363,6 @@ def test_thinking_baselines_are_set_on_the_reasoning_agents():
     assert P.thinking_for("hunting_orchestrator") == "medium"   # Q8 gate + D2 re-match
     assert P.thinking_for("assigner") == "medium"
     assert P.thinking_for("mechanism_typist") == "medium"
-    assert P.thinking_for("data_modeller") == "medium"
     assert P.thinking_for("triager") == "low"  # downscaled f7ad043 (dev)
     assert P.thinking_for("job_orchestrator") == "medium"      # = the recon-orchestrator
     # untouched agents + unregistered ids default off

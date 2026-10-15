@@ -27,7 +27,7 @@ BATCH = L1DeltaBatch(services=[ServiceProposal(business_function_slug="checkout"
 
 def test_C1_writing_curator_maps_export_to_written_receipt():
     export = AnalyserExport(services_written=1, systems_written=2, aggregates_written=3,
-                            enrichment={"data_items": 4})
+                            enrichment={"system_edges": 4})
     curator = _make_curator(write_fn=lambda deltas, pid, prov: export)
     env = ProposalEnvelope(dispatch_id="d1", role="assigner", phase="A1", deltas=BATCH)
     out = curator({"inflight": env, "project_id": "p1", "run_id": "r1"})

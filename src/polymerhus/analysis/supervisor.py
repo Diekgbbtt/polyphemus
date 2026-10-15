@@ -9,8 +9,7 @@ loses nothing. 2b built the per-responsibility decomposition and the
 chunk feeding; #48 completed the dissolution of the legacy two-pass analyser
 prompt (the whole legacy pod module) and its `analysis.supervisor_enabled`
 coexistence flag - `analyse_chunked`, below, is now the analyser's ONE
-production path, driving the `assigner -> mechanism_typist -> data_modeller`
-chunk-major schedule.
+production path, driving the `assigner -> mechanism_typist` chunk-major schedule.
 
 Topology (#17 DP-5/DP-7), unchanged from increment 0:
   START -> supervisor
@@ -96,8 +95,7 @@ class SupervisorState(TypedDict, total=False):
 def _has_content(batch: L1DeltaBatch) -> bool:
     """True when the proposal batch carries at least one delta of any kind."""
     return any((
-        batch.services, batch.systems, batch.aggregates, batch.data_items,
-        batch.surfaces_at, batch.data_flows, batch.data_relationships, batch.system_edges,
+        batch.services, batch.systems, batch.aggregates, batch.system_edges,
     ))
 
 
@@ -350,7 +348,7 @@ def build_schedule(
     step as if it were work. The default stays `("assigner",)` for the callers that
     want assignment alone; the chunk-fed analyser (`analyse_chunked`) passes
     `("assigner", "mechanism_typist")` so the typist types each chunk right after the
-    assigner has aggregated it (the data-modeller is still unbuilt).
+    assigner has aggregated it.
 
     `dispatch_id` is a pure function of run + chunk + role, so a replayed run
     produces the same ids and the receipts reducer dedups rather than doubling."""
@@ -390,7 +388,6 @@ class PassCensus(BaseModel):
     dispatches_entered: int = 0
     aggregates_written: int = 0
     systems_written: int = 0
-    data_items_written: int = 0
     terminal: bool = False
     error: str | None = None
 
@@ -441,11 +438,9 @@ def run_analyser_chunked(
     *,
     invoke_fn=None,
     typist_invoke_fn=None,
-    data_modeller_invoke_fn=None,
     assets_fn=None,
     observations_fn=None,
     inventory_fn=None,
-    aggregations_fn=None,
     write_fn=None,
     checkpointer=None,
     store=None,
@@ -480,8 +475,7 @@ def run_analyser_chunked(
     with checkpoints.module_context("analysis"):
         return asyncio.run(analyse_chunked(
             chunk, invoke_fn=invoke_fn, typist_invoke_fn=typist_invoke_fn,
-            data_modeller_invoke_fn=data_modeller_invoke_fn,
-            inventory_fn=inventory_fn, aggregations_fn=aggregations_fn,
+            inventory_fn=inventory_fn,
             write_fn=write_fn, checkpointer=checkpointer, store=store, observe=observe,
         )).export
 
@@ -491,9 +485,7 @@ async def analyse_chunked(
     *,
     invoke_fn=None,
     typist_invoke_fn=None,
-    data_modeller_invoke_fn=None,
     inventory_fn=None,
-    aggregations_fn=None,
     surface_fn=None,
     write_fn=None,
     checkpointer=None,
@@ -510,13 +502,10 @@ async def analyse_chunked(
     drain marker rides as an empty `terminal` chunk whose pass reports
     `unprocessed_after=0`, so the feed can decide the drain honestly.
 
-    The schedule is CHUNK-MAJOR over THREE roles: per chunk, the `assigner` runs
+    The schedule is CHUNK-MAJOR over TWO roles: per chunk, the `assigner` runs
     first and writes AGGREGATES against the Bootstrapper's Services, then the
     `mechanism_typist` (#9) re-reads those aggregations and writes Systems +
-    Service->System edges, then the `data_modeller` (#48) re-reads them again and
-    writes the DataItems + SURFACES_AT + PRODUCES/CONSUMES + DataRelationships -
-    the data plane deliberately runs LAST so its Parameter-to-owning-Service join
-    has a live answer (dataplane-A1-decisions.md section 3).
+    Service->System edges.
 
     Every collaborator is injectable; the defaults are the live ones. Fail-open
     throughout: a read, LLM or write failure degrades that step, never the run.
@@ -524,15 +513,11 @@ async def analyse_chunked(
     from polymerhus.analysis.assigner import make_assigner_body
     from polymerhus.analysis.assigner import stateful_invoke_fn as assigner_stateful_invoke_fn
     from polymerhus.analysis.chunking import admit_for_role, chunks_for_job
-    from polymerhus.analysis.data_modeller import make_data_modeller_body
-    from polymerhus.analysis.data_modeller import stateful_invoke_fn as dm_stateful_invoke_fn
     from polymerhus.analysis.l1_inventory import read_l1_inventory
-    from polymerhus.analysis.l1_read import read_service_aggregations
     from polymerhus.analysis.pod import AnalyserExport
     from polymerhus.app.llm.checkpoints import get_session_checkpointer
 
     inventory_fn = inventory_fn or read_l1_inventory
-    aggregations_fn = aggregations_fn or read_service_aggregations
     write_fn = write_fn or _chunked_write_fn
     # `invoke_fn`s are resolved below, once the run's stateful-session checkpointer is
     # open (they close over it): each proposer runs STATEFUL on its OWN per-run thread.
@@ -547,7 +532,7 @@ async def analyse_chunked(
 
     assets = chunk.assets
     # The triager's adversarial observations ride the chunk beside the assets they
-    # anchor to (#9): the mechanism-typist and the data_modeller need them. Without
+    # anchor to (#9): the mechanism-typist needs them. Without
     # this the chunk carried NO observations, so the per-asset/per-origin insight
     # rendered was empty every time (the silent-empty-insight defect). The httpx-profile
     # gate this used to also read (`profiled`/`barrier`) was RETIRED (#48 section 11
@@ -575,14 +560,12 @@ async def analyse_chunked(
                               **_window(_t0, _started_at)),
         )
 
-    totals = {"aggregates": 0, "systems": 0, "data_items": 0}
+    totals = {"aggregates": 0, "systems": 0}
 
     def _counting_write(deltas, pid, provenance):
         export = write_fn(deltas, pid, provenance)
         totals["aggregates"] += getattr(export, "aggregates_written", 0) or 0
         totals["systems"] += getattr(export, "systems_written", 0) or 0
-        enrichment = getattr(export, "enrichment", None) or {}
-        totals["data_items"] += enrichment.get("data_items", 0) or 0
         return export
 
     entered = {"n": 0}
@@ -595,11 +578,10 @@ async def analyse_chunked(
     # address), resuming across the run's chunks, over the process-wide POOLED
     # checkpointer (#94) shared by every stateful agent - never a per-run connection.
     # Tests inject `session_checkpointer` (an isolated `InMemorySaver`); an explicitly
-    # injected `invoke_fn`/`typist_invoke_fn`/`data_modeller_invoke_fn` still wins.
+    # injected `invoke_fn`/`typist_invoke_fn` still wins.
     session_cp = session_checkpointer if session_checkpointer is not None else get_session_checkpointer()
     invoke_fn = invoke_fn or assigner_stateful_invoke_fn(run_id, session_cp, project_id)
     typist_invoke_fn = typist_invoke_fn or typist_stateful_invoke_fn(run_id, session_cp, project_id)
-    data_modeller_invoke_fn = data_modeller_invoke_fn or dm_stateful_invoke_fn(run_id, session_cp, project_id)
 
     assigner_inner = make_assigner_body(invoke_fn=invoke_fn, inventory_fn=inventory_fn,
                                         surface_fn=surface_fn)
@@ -613,25 +595,20 @@ async def analyse_chunked(
             return inner(dispatch, state)
         return body
 
-    # Chunk-major THREE-role schedule: assigner -> mechanism_typist -> data_modeller
-    # per chunk, so each later role re-reads the aggregations the assigner just
-    # wrote. The three roles take DIFFERENT LLM seams - the assigner's
-    # `invoke_fn(messages) -> batch`, the typist's/data_modeller's
-    # `invoke_fn(messages, *, schema) -> prose | batch` - so they cannot share one
-    # injected callable; `typist_invoke_fn`/`data_modeller_invoke_fn` are their own
-    # seams, defaulting (None) to each role's live `_default_invoke_fn`. Every read
-    # inside a body is guarded, so it is fail-open regardless.
+    # Chunk-major TWO-role schedule: assigner -> mechanism_typist per chunk, so the
+    # typist re-reads the aggregations the assigner just wrote. The two roles take
+    # DIFFERENT LLM seams - the assigner's `invoke_fn(messages) -> batch`, the
+    # typist's `invoke_fn(messages, *, schema) -> prose | batch` - so they cannot
+    # share one injected callable; `typist_invoke_fn` is its own seam, defaulting
+    # (None) to the role's live `_default_invoke_fn`. Every read inside a body is
+    # guarded, so it is fail-open regardless.
     typist_inner = partial(mechanism_typist_body, invoke_fn=typist_invoke_fn)
-    data_modeller_inner = make_data_modeller_body(
-        invoke_fn=data_modeller_invoke_fn, inventory_fn=inventory_fn, aggregations_fn=aggregations_fn,
-    )
     proposer_bodies = {
         "assigner": _counted(assigner_inner),
         "mechanism_typist": _counted(typist_inner),
-        "data_modeller": _counted(data_modeller_inner),
     }
     builder = build_supervisor_graph(proposer_bodies=proposer_bodies, write_fn=_counting_write)
-    schedule = build_schedule(chunks, run_id, roles=("assigner", "mechanism_typist", "data_modeller"))
+    schedule = build_schedule(chunks, run_id, roles=("assigner", "mechanism_typist"))
     await (run_supervisor(
         project_id, run_id, schedule, builder=builder,
         checkpointer=checkpointer, store=store, observe=observe,
@@ -642,16 +619,9 @@ async def analyse_chunked(
             "dispatches": len(schedule),
             "l0_assets": len(assets),
             "admitted_endpoints": sum(len(admit_for_role(c, "assigner")) for c in chunks),
-            "admitted_parameters": sum(
-                sum(1 for a in admit_for_role(c, "data_modeller") if a.type == "Parameter") for c in chunks
-            ),
-            "admitted_headers": sum(
-                sum(1 for a in admit_for_role(c, "data_modeller") if a.type == "Header") for c in chunks
-            ),
             "terminal": terminal,
             "langfuse_tags": [
-                "analyser", "supervisor", "assigner", "mechanism_typist", "data_modeller",
-                "analyse-data-plane", "chunked",
+                "analyser", "supervisor", "assigner", "mechanism_typist", "chunked",
             ],
             # Join recon and analysis onto ONE Langfuse timeline. The run id is the
             # recon run itself (the feed is keyed on it), and the SESSION must be the
@@ -669,15 +639,14 @@ async def analyse_chunked(
         chunks_built=len(chunks),
         dispatches_scheduled=len(schedule), dispatches_entered=entered["n"],
         aggregates_written=totals["aggregates"], systems_written=totals["systems"],
-        data_items_written=totals["data_items"],
         terminal=terminal, **_window(_t0, _started_at),
     )
     logger.info(
         "analyser chunked run=%s terminal=%s chunks=%d scheduled=%d entered=%d "
-        "l0_assets=%d aggregates_written=%d systems_written=%d data_items_written=%d duration_s=%.1f",
+        "l0_assets=%d aggregates_written=%d systems_written=%d duration_s=%.1f",
         run_id, terminal, census.chunks_built, census.dispatches_scheduled,
         census.dispatches_entered, census.l0_assets_read, census.aggregates_written,
-        census.systems_written, census.data_items_written, census.duration_s,
+        census.systems_written, census.duration_s,
     )
     return PassResult(
         export=AnalyserExport(aggregates_written=totals["aggregates"],
@@ -701,28 +670,16 @@ def _aggregates_write_fn(deltas: L1DeltaBatch, project_id: str, provenance: Prov
 
 
 def _chunked_write_fn(deltas: L1DeltaBatch, project_id: str, provenance: Provenance):
-    """Curator collaborator for the three-role chunk-fed run: route by delta content.
+    """Curator collaborator for the two-role chunk-fed run: route by delta content.
 
     The Assigner emits an aggregates-only batch (#34), written by the no-mint
     `_aggregates_write_fn` so it can never restore the Service-minting path. The
-    mechanism-typist (#9) emits a systems + Service->System-edges batch, and the
-    data_modeller (#48) emits a data_items/surfaces_at/data_flows/data_relationships
-    batch; BOTH are written through the full sole-writer curate
-    (`default_curate_with_enrichment_fn`). One curator node carries one `write_fn`,
-    so this dispatches on the batch shape - the three roles' batches are disjoint
-    by construction, so the routing is unambiguous.
-
-    DPL-DEC-21 (#48): the ORIGINAL condition here was `if deltas.systems or
-    deltas.system_edges`, which routed a data-only batch (neither systems nor
-    system_edges, but non-empty data_items/surfaces_at/data_flows/
-    data_relationships) to `_aggregates_write_fn` - which does NOT call
-    `l1_curate`/`enrich` at all, so the data-only batch was SILENTLY DROPPED with
-    a `written` receipt. Widened to cover any non-empty data list; the minimal
-    correct fix reuses the existing writer rather than adding one, since
-    `default_curate_with_enrichment_fn`'s `proposals_to_deltas` half is already a
-    no-op for empty `services`/`systems`."""
-    if (deltas.systems or deltas.system_edges or deltas.data_items or deltas.surfaces_at
-            or deltas.data_flows or deltas.data_relationships):
+    mechanism-typist (#9) emits a systems + Service->System-edges batch, written
+    through the full sole-writer curate (`default_curate_with_enrichment_fn`). One
+    curator node carries one `write_fn`, so this dispatches on the batch shape -
+    the two roles' batches are disjoint by construction, so the routing is
+    unambiguous. Fail-open: an empty batch falls through to the no-mint writer."""
+    if deltas.systems or deltas.system_edges:
         from polymerhus.analysis.pod import default_curate_with_enrichment_fn
         return default_curate_with_enrichment_fn(deltas, project_id, provenance)
     return _aggregates_write_fn(deltas, project_id, provenance)

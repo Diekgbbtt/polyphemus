@@ -1,6 +1,6 @@
 """Unit tier: the analysis proposers' STATEFUL session seams (#94).
 
-`assigner`/`mechanism_typist`/`data_modeller` no longer make stateless `invoke_role`
+`assigner`/`mechanism_typist` no longer make stateless `invoke_role`
 calls - each runs as a session that resumes from its OWN per-run checkpoint, so its
 context progresses across the run's chunks. These tests pin that each `stateful_invoke_fn`
 keys its session by its `AnalysisSession(run_id, <its own role>)` (distinct per
@@ -56,58 +56,43 @@ def test_typist_session_keys_per_run_and_passes_the_call_schema(monkeypatch):
     assert seen["schema"] is L1DeltaBatch
 
 
-def test_data_modeller_session_keys_per_run(monkeypatch):
-    from polymerhus.analysis.data_modeller import stateful_invoke_fn
-
-    seen = _capture(monkeypatch)
-    stateful_invoke_fn("runX", object())([HumanMessage(content="m")], schema=None)
-    assert seen["role_id"] == "data_modeller"
-    assert seen["thread_id"] == "runX:data_modeller"
-
-
-def test_the_three_proposers_never_share_a_thread(monkeypatch):
-    """The collision-free guarantee at the analysis layer: the three proposers of one
-    run hold three DISTINCT checkpoints, so none resumes another's memory."""
+def test_the_two_proposers_never_share_a_thread(monkeypatch):
+    """The collision-free guarantee at the analysis layer: the two proposers of one
+    run hold two DISTINCT checkpoints, so neither resumes the other's memory."""
     from polymerhus.analysis.assigner import stateful_invoke_fn as a
-    from polymerhus.analysis.data_modeller import stateful_invoke_fn as d
     from polymerhus.analysis.mechanism_typist import stateful_invoke_fn as t
 
     threads = set()
     for build, call in ((a, lambda f: f([HumanMessage(content="m")])),
-                        (t, lambda f: f([HumanMessage(content="m")], schema=None)),
-                        (d, lambda f: f([HumanMessage(content="m")], schema=None))):
+                        (t, lambda f: f([HumanMessage(content="m")], schema=None))):
         seen = _capture(monkeypatch)
         call(build("runX", object()))
         threads.add(seen["thread_id"])
-    assert threads == {"runX:assigner", "runX:mechanism_typist", "runX:data_modeller"}
+    assert threads == {"runX:assigner", "runX:mechanism_typist"}
 
 
-def test_all_three_proposers_tag_turns_with_the_run_id(monkeypatch):
+def test_all_proposers_tag_turns_with_the_run_id(monkeypatch):
     """Convergence join: each proposer turn carries the bare run id as an extra
     tag, so session-scoped turn traces stay run-joinable after the hand-written
     agent-span wrappers go away."""
     from polymerhus.analysis.assigner import stateful_invoke_fn as a
-    from polymerhus.analysis.data_modeller import stateful_invoke_fn as d
     from polymerhus.analysis.mechanism_typist import stateful_invoke_fn as t
 
     for build, call in ((a, lambda f: f([HumanMessage(content="m")])),
-                        (t, lambda f: f([HumanMessage(content="m")], schema=None)),
-                        (d, lambda f: f([HumanMessage(content="m")], schema=None))):
+                        (t, lambda f: f([HumanMessage(content="m")], schema=None))):
         seen = _capture(monkeypatch)
         call(build("runX", object()))
         assert seen["extra_tags"] == ["runX"]
 
 
-def test_all_three_proposers_thread_the_project_id_as_usage_scope(monkeypatch):
+def test_all_proposers_thread_the_project_id_as_usage_scope(monkeypatch):
     """The project id rides the stateful seam as `usage_scope`, so each
     proposer's tokens land in the project's ledger bucket."""
     from polymerhus.analysis.assigner import stateful_invoke_fn as a
-    from polymerhus.analysis.data_modeller import stateful_invoke_fn as d
     from polymerhus.analysis.mechanism_typist import stateful_invoke_fn as t
 
     for build, call in ((a, lambda f: f([HumanMessage(content="m")])),
-                        (t, lambda f: f([HumanMessage(content="m")], schema=None)),
-                        (d, lambda f: f([HumanMessage(content="m")], schema=None))):
+                        (t, lambda f: f([HumanMessage(content="m")], schema=None))):
         seen = _capture(monkeypatch)
         call(build("runX", object(), project_id="proj-1"))
         assert seen["usage_scope"] == "proj-1"
@@ -119,13 +104,11 @@ def test_the_proposers_carry_no_skill_surface(monkeypatch):
     environment, so they bind neither the `load_skill` tool nor the L1 index
     middleware nor a skill context - their turns carry structure, not skills."""
     from polymerhus.analysis.assigner import stateful_invoke_fn as a
-    from polymerhus.analysis.data_modeller import stateful_invoke_fn as d
     from polymerhus.analysis.mechanism_typist import stateful_invoke_fn as t
 
     for role, build, call in (
         ("assigner", a, lambda f: f([HumanMessage(content="m")])),
         ("mechanism_typist", t, lambda f: f([HumanMessage(content="m")], schema=None)),
-        ("data_modeller", d, lambda f: f([HumanMessage(content="m")], schema=None)),
     ):
         seen = _capture(monkeypatch)
         call(build("runX", object()))

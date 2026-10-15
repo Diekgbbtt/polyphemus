@@ -11,8 +11,8 @@ would stand the async supervisor stack up, DISPATCH a mechanism_typist step on t
 real schedule, and read the System nodes/edges back out of Neo4j with their
 `prov_job`. That is DEFERRED by operator ruling (grilled #9, Option B): the body is
 register-ready but the schedule flip (dissolving the legacy two-pass into
-assigner-assignment-only + mechanism_typist + data_modeller) is a coordinated 2b
-increment gated on the data_modeller + the #34 Assigner re-homing. So this walkthrough
+assigner + mechanism_typist) was a coordinated 2b
+increment gated on the #34 Assigner re-homing. So this walkthrough
 mirrors the established `test_assigner_walkthrough` precedent: it drives the REAL
 proposer body over a fixture `service` chunk with an injected `invoke_fn`, and asserts
 the exact deltas the sole-writer would MERGE. Promote to a live-graph readback +
@@ -83,9 +83,8 @@ def test_W_N1_three_endpoint_service_chunk_types_shared_systems_and_links():
     }
     assert len(out.system_edges) == 3
 
-    # The typist writes NOTHING on the assignment or data planes (breadth systems-only).
+    # The typist writes NOTHING on the assignment plane (breadth systems-only).
     assert out.services == [] and out.aggregates == []
-    assert out.data_items == [] and out.surfaces_at == [] and out.data_flows == [] and out.data_relationships == []
 
     # Every emitted value is in the controlled vocabulary (the sole-writer would accept it).
     from polymerhus.analysis.l1_curator import _KNOWN_KINDS, SYSTEM_EDGE_RELS

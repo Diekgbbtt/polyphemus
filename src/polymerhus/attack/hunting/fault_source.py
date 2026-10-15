@@ -77,6 +77,8 @@ from polymerhus.analysis.l1_curator import (
     SYSTEM_KINDS,
 )
 
+# RETAINED (dormant legacy: nothing writes L1DataItem/data edges after the
+# data-plane removal) -> docs/design/drop-data-modeller.md
 _SYSTEM_KIND_SET = frozenset(kind for kind, _desc in SYSTEM_KINDS)
 _DATA_REL_EDGE_TYPES = frozenset(k.upper() for k, _desc in DATA_RELATIONSHIP_KINDS)
 
