@@ -292,12 +292,14 @@ Since **#187** both build their turn through ONE seam, `analysis/proposer_turn.p
 
 **Prompt delivery (load-bearing):** the role prompt rides the `system_prompt=` binding of `create_agent`, NOT a `SystemMessage` in the turn's messages. The agent factory prepends it ephemerally at each model invocation and never writes it into the checkpoint state, so the trail carries only the volatile task and the request's leading block is byte-identical on every call. Re-adding it as a trail message instead stacks a fresh copy per call at a shifting position, which is what produced the `mechanism_typist` quadratic input growth. This is the client half of the gateway's cache contract (`llm-gateway-100-decisions.md` D8). Reasoning: `docs/design/converged-agent-turn-adr.md`; the reusable rule: `statefulness-pattern-matrix.md` OUTLIER-5. The one-shot legacy leg (`prepend_prompt`) heads a message list with the same prompt at the same position, so the request does not depend on which leg a call site takes.
 
-**Assigner** (built, #8/#34/#30; adjacent-surface D-A1..D-A4):
+**Assigner** (built, #8/#34/#30; HTTP-history surface R-A1..R-A3,
+`docs/design/assigner-http-history-surface-adr.md`, superseding the
+adjacent-surface D-A2/D-A4 for this role):
 Sole owner of the `AGGREGATES` hinge: high-precision classification of an observed `Endpoint` onto an EXISTING Service. A.1-only - no minting, no re-assignment, no retraction.
-The chunk is the slice recon most recently collected and stays the unit of work; before judging, the assigner MAY run a bounded adjacent-surface phase (BaseURLs of all, joined with the endpoints they expose, through the read-only `graph_view`; the HTTP-history pair for disambiguation, confirmation, AND an adjacently promising endpoint's fuller response - one endpoint often embeds several features, so a minimally promising surface is worth a read - while deep technical understanding stays the mechanism-typist's ownership), so ownership is judged with a topological understanding of the slice's neighbourhood.
+The chunk is the slice recon most recently collected and stays the unit of work AND the scope of judgment; before judging, the assigner MAY read the recorded transactions behind the slice through the HTTP-history pair (`search_http_history` / `get_http_artifact`) - disambiguation, confirmation, AND an adjacently promising endpoint's fuller response (one endpoint often embeds several features, so a minimally promising surface is worth a read - while deep technical understanding stays the mechanism-typist's ownership). The recorded-response read is the whole widening seam, kept central; there is no `graph_view` roam on this turn, and a neighbour the slice does not carry stays a hypothesis, never an aggregate.
 The inventory block re-read live at every chunk dispatch is the deductive target: the assigner reasons FROM the observed surface TO those listed identities.
 
-*Contracts.* In: a `Chunk` narrowed by `admit_for_role` to `Endpoint` alone, plus the live L1 inventory with its `service_contract`s (the primary routing evidence), plus the settled Endpoint surface re-read live at dispatch. Out: `L1DeltaBatch{aggregates}`, each `AggregatesProposal{service_slug, l0: L0Ref, evidence_refs}`. Writes only through `l1_curator.write_aggregates`.
+*Contracts.* In: a `Chunk` narrowed by `admit_for_role` to `Endpoint` alone, plus the live L1 inventory with its `service_contract`s (the primary routing evidence). Out: `L1DeltaBatch{aggregates}`, each `AggregatesProposal{service_slug, l0: L0Ref, evidence_refs}`. Writes only through `l1_curator.write_aggregates`.
 
 *Prompt.* TWO layers, the Bootstrapper's split: the role verbatim in code (identity, the aggregates-only contract, the `l0.identity` shape - the WHAT, which must hold with no prompt file) plus `analysis/prompts/assigner.md` (the no-owner null hypothesis, the differential over candidate owners, discriminating evidence - the HOW). The shared analyser skill was never a fit here: it addresses a generalist proposer and instructs the System and data modelling D4/D18 forbid this role (the #30 per-role retirement).
 `ASSIGNER_PROMPT_CONFIG` selects; **`skill` is the default** (operator-ratified 2026-07-29), `baseline` a byte-identical rollback. The default was NOT earned on measurement - the comparison was confounded by inventory size (23 vs 11 Services) and supports only "no regression".
@@ -305,8 +307,8 @@ The system half is byte-stable so the provider prompt-cache survives a run; inve
 Its structured output is the role's DEFAULT, so no call site may drop it by omission: the shared seam treats an absent `schema` as the role's own contract and only a deliberate `None` selects a prose turn.
 
 *Shaping* (deterministic, post-LLM, ORDER load-bearing): `narrow_to_assignment` -> `resolve_l0_refs` -> `drop_out_of_inventory`.
-Correctness never depends on the model's formatting: an `l0.label` the model coined is repaired against the known surface.
-`resolve_l0_refs` resolves against the KNOWN surface (chunk slice UNION settled surface): the out-of-chunk write gate is dropped (D-A4), so only a reference to surface nobody knows is unresolvable - its own chunk judges it when recon collects it.
+Correctness never depends on the model's formatting: an `l0.label` the model coined is repaired against the chunk's slice.
+`resolve_l0_refs` resolves against THIS chunk's admitted slice ONLY (the out-of-scope filter, R-A2): a reference outside the chunk drops as `unresolvable`, even when the settled surface holds it - its own chunk judges it when recon collects it.
 `AssignmentStats` counts every gate, so "found nothing" stays distinguishable from "discarded everything".
 _Avoid_: analyser (the whole-model term).
 

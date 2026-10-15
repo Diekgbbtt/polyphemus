@@ -278,9 +278,10 @@ def test_analyse_chunked_threads_delivered_observations_into_the_chunk_builder(m
     assert result.census.unprocessed_after == 0
 
 
-def test_analyse_chunked_threads_surface_fn_into_the_assigner_body(monkeypatch):
-    """D-A4 wiring: the pass threads the settled-surface reader into the
-    assigner body, beside `inventory_fn`. Spy on `make_assigner_body`
+def test_analyse_chunked_threads_no_surface_reader_into_the_assigner_body(monkeypatch):
+    """Rollback wiring: the pass threads NO settled-surface reader into the
+    assigner body - the judgment is chunk-scoped, so there is nothing to
+    feed an out-of-chunk discovery seam. Spy on `make_assigner_body`
     (returning a no-op body short-circuits before the graph/DB) to capture
     what it got."""
     from polymerhus.analysis import assigner, chunking, supervisor
@@ -299,17 +300,15 @@ def test_analyse_chunked_threads_surface_fn_into_the_assigner_body(monkeypatch):
     monkeypatch.setattr(assigner, "make_assigner_body", spy_make_assigner_body)
     monkeypatch.setattr(chunking, "chunks_for_job",
                         lambda job, assets, observations=None, **kw: [acost])
-    marker = lambda project_id: []  # noqa: E731
     chunk = L0Chunk(project_id="p", run_id="run1",
                     assets=[AssetDelta(type="Endpoint", identity={"path": "/x", "baseurl": "https://a"})])
     asyncio.run(supervisor.analyse_chunked(
         chunk,
         invoke_fn=lambda messages: None,
         typist_invoke_fn=lambda *a, **k: None,
-        surface_fn=marker,
         observe=False,
     ))
-    assert captured["surface_fn"] is marker
+    assert captured == {}, "no surface reader reaches the assigner body"
 
 
 # NOTE (merge, #74): the regression test `test_analyse_chunked_incremental_key_...`

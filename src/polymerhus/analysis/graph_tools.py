@@ -1,18 +1,22 @@
-"""The analysis-proposer tool surface (the adjacent-surface read seam, D-A2).
+"""The analysis-proposer tool surface (the read/probe seam).
 
-The streamed Assigner judges a recently-collected chunk slice, and may widen
+The mechanism-typist judges a recently-collected chunk slice, and may widen
 its view to the slice's neighbourhood to gain a topological understanding of
 the services around it. It therefore needs to query the mapped L0 surface
 broadly, without assuming asset names, and to confirm an ambiguous ownership
 against the recorded request shapes.
 
-Two tools are bound on the Assigner turn (the constant request shape, the
+Three tools are bound on the typist turn (the constant request shape, the
 cache rule):
 
   * `graph_view` - the read-only L0/L1 Cypher view (broad L0 query);
   * `search_http_history` / `get_http_artifact` - the recorded transaction
     search + fetch (request shapes), for disambiguation, confirmation, and an
     adjacently promising endpoint's fuller response.
+
+The Assigner turn binds ONLY the HTTP-history pair: its `graph_view`
+binding is rolled back (the concentration failure it licensed), and the
+recorded-transaction read is its whole widening seam, kept central.
 
 The mechanism-typist turn binds the same three plus a bounded `exec`
 (`build_analysis_exec_tool`), so its ORIENT / VERIFY phases can witness a
@@ -182,8 +186,8 @@ def build_analysis_graph_view_tool(project_id: str, *, read_fn: GraphReadFn | No
 
 
 def build_http_history_tools(project_id: str):
-    """The `search_http_history` / `get_http_artifact` read pair, bound for every
-    proposer that harvests a surface so it can read the recorded request shapes.
+    """The `search_http_history` / `get_http_artifact` read pair: the
+    assigner's whole widening seam and the typist's transaction read.
 
     The classes and contracts are single-sourced in the hunting module and
     reused verbatim; the default read seams are the app client. Resolved lazily
@@ -291,10 +295,13 @@ def build_analysis_exec_tool(*, exec_fn=None, budget: int | None = None):
 
 def build_surface_tools(role_id: str, *, project_id: str | None = None,
                         with_http: bool = False, with_exec: bool = False) -> tuple:
-    """The L0-grounding tools bound on a proposer turn: `graph_view` always, the
-    HTTP-history pair when `with_http`, and the bounded `exec` term when
-    `with_exec`. Fail-open at every seam: an unbuildable `graph_view` binds
-    nothing, an unbuildable `exec` is simply omitted (the read tools remain)."""
+    """The L0-grounding tools bound on a mechanism-typist turn: `graph_view`
+    always, the HTTP-history pair when `with_http`, and the bounded `exec`
+    term when `with_exec`. (The assigner no longer builds through this seam -
+    its turn binds the HTTP-history pair alone, direct from
+    `build_http_history_tools`.) Fail-open at every seam: an unbuildable
+    `graph_view` binds nothing, an unbuildable `exec` is simply omitted (the
+    read tools remain)."""
     if not project_id:
         return ()
     tools: list[Any] = []

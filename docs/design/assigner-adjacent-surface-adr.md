@@ -1,7 +1,9 @@
 # ADR: the streamed Assigner judges its chunk against the adjacent surface
 
 Date: 2026-10-14.
-Status: accepted.
+Status: PARTIALLY SUPERSEDED 2026-10-15 for the Assigner (D-A2 and D-A4;
+see `docs/design/assigner-http-history-surface-adr.md`). The D-A2
+typist amendment of 2026-10-15 and D-A1/D-A3 stand.
 Supersedes: `docs/experiments/l0-l1-pipeline-split-report.md` D-1 (both the first
 reading and its 2026-10-14 revision) as the statement of what the streamed
 assigner may read and what the gate may refuse.
