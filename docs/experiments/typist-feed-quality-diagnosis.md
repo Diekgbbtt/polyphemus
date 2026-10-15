@@ -69,7 +69,7 @@ The pass table (`docs/experiments/analysisUnitFirst-vs-l0batchFirst-pipeline-com
 
 The httpx binary's `-irh` JSON emits header keys with UNDERSCORES (`accept_ranges`, `content_type`), and katana's JSONL emits dashes (`accept-ranges`, `content-type`).
 Both parsers identity the header with `name.lower()` and nothing else, so one real header becomes two L0 Header nodes.
-The graph shows it: 10 underscore headers first seen by the httpx pass (12:31:44Z) and 6 dash headers first seen by the katana pass (12:32:33Z), overlapping on 6 names.
+The graph shows it: 10 underscore headers first seen by the httpx pass (12:31:44Z) and 6 dash headers first seen by the katana pass (12:32:33Z), overlapping on 5 names (`accept-ranges`, `cache-control`, `content-length`, `content-type`, `last-modified`; the other underscore names - `date`, `etag`, `expires`, `pragma`, `server` - have no dash twin in the run).
 Any feed dedup on identity would still render both rows.
 
 ## 4. Hypotheses, with verdicts

@@ -5,6 +5,7 @@ Deterministic field-mapping only, tolerant of malformed JSONL lines.
 from urllib.parse import urlparse
 
 from polymerhus.recon.domain.noise_filter import classify_profile
+from polymerhus.recon.domain.parsers._headers import canonical_header_name
 from polymerhus.recon.domain.parsers._jsonlines import iter_json_dicts
 from polymerhus.recon.domain.parsers._urls import url_to_deltas
 from polymerhus.recon.domain.types import AssetDelta, Edge
@@ -143,10 +144,16 @@ def parse(stdout: str) -> list[AssetDelta]:
             for name, value in headers.items():
                 if not name or not isinstance(name, str):
                     continue
+                # `-irh` keys are underscore-style (`accept_ranges`); the canonical
+                # rule makes them MERGE with the wire-form key every other tool
+                # emits (`accept-ranges`) - see `_headers.py`.
+                canonical = canonical_header_name(name)
+                if not canonical:
+                    continue
                 deltas.append(
                     AssetDelta(
                         type="Header",
-                        identity={"name": name.lower(), "baseurl": baseurl_delta.identity["url"]},
+                        identity={"name": canonical, "baseurl": baseurl_delta.identity["url"]},
                         props={"value": str(value), "direction": "response"},
                         edges=[
                             Edge(
