@@ -7,6 +7,7 @@
 *Resolution (2026-10-15, same day): the recommended primary fix landed as `src/polymerhus/app/gateway_proxy_bootstrap.py` - the entrypoint launches the proxy CLI through it, the patch is pinned to 1.96.0 and unit-tested against the real release (fail-open, idempotent).*
 *In-container A/B on the running stack: the unpatched proxy returned streamed `prompt_tokens=3614` with no details on 2 of 3 calls; the patched proxy returned `7215` with `cached_tokens=7040` on 3 of 3, matching the nonstream twin.*
 *The N5 flag now rides `SPECTRUM_FIELDS` and the trial's `token_spectrum` (with the C4 reading rules amended), and the bounded nonstream probe seam stays DEFERRED as the documented fallback (phasing step 2) - dormant while the gateway is correct, to be built if a silence recurs.*
+*Eval-server verification (2026-10-15, the real deployment): before the deploy the probe on `ph-dd131acc-agent-1` returned `7215` + `cached_tokens=7040` on the nonstream call and the messages-only `3614` with NO details on 4 of 4 streamed calls (deterministic on the eval box); after pulling `a088730` into the instance worktree and one agent-container restart, all 4 streamed calls returned `7215` + `cached_tokens=7040`, matching the nonstream twin.*
 
 ## Recommendation (short)
 

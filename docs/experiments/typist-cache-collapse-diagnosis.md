@@ -19,6 +19,7 @@ A fresh dev-shape nonstream call on the same warm session: `cached=7040/7215` (9
 A cold session reports `cached=0`, so the provider does report measured misses explicitly.
 In-container A/B on the real gateway (same warm body, same session): the running proxy returned streamed `prompt_tokens=3614` with no `prompt_tokens_details` on 2 of 3 calls, while a second proxy carrying the continuity patch returned streamed `prompt_tokens=7215` with `cached_tokens=7040` on 3 of 3 - matching the nonstream twin on both ports.
 Wire check: the 23 captured chain bodies are append-only (system sha `46c57a45ee28` x23, tools sha `2b7de75e296b` x23), so the requests were cache-friendly by construction.
+The same loss and its fix reproduce on the eval server (`ph-dd131acc-agent-1`, the arm-G/H deployment): before the deploy, 4 of 4 streamed probes of the captured dev body returned the messages-only `3614` with no detail while the nonstream twin returned `7215` + `cached_tokens=7040`; after the deploy, all 4 streamed probes returned the full pair.
 
 ## Mechanism
 
