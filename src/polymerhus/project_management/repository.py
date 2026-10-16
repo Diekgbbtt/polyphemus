@@ -122,12 +122,18 @@ def read_project_settings(project_id: str) -> dict:
     """The project's stored recon settings, read-only (`{"recon": {...}}`).
 
     Unknown project -> ProjectNotFound; a known project with no settings row
-    reads back an empty blob, never an error. The blob carries no auth (#243),
-    so nothing here can hand back a credential.
+    reads back an empty blob, never an error.
+
+    The retired `auth_context` key is dropped on the way out, mirroring the
+    write face's refusal (#243): a row written before the retirement may still
+    carry credentials in the obsolete location, and this read face must never
+    hand them back.
     """
     if not pg.project_exists(project_id):
         raise ProjectNotFound(project_id)
-    return {"recon": pg.load_settings(project_id) or {}}
+    recon = dict(pg.load_settings(project_id) or {})
+    recon.pop("auth_context", None)
+    return {"recon": recon}
 
 
 def save_project_settings(project_id: str, recon: dict) -> None:

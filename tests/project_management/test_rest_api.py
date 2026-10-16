@@ -38,6 +38,27 @@ def test_create_project_scaffolds_into_the_given_root(tmp_path, monkeypatch):
     assert (tmp_path / "data" / project_id / "hunting" / "orchestration").is_dir()
 
 
+def test_get_settings_drops_a_legacy_auth_context(monkeypatch):
+    """#243 retired the settings-blob auth. A row written before that may still
+    carry it, so the read face drops the key instead of serving credentials."""
+    monkeypatch.setattr(pg, "project_exists", lambda pid: True)
+    monkeypatch.setattr(
+        pg,
+        "load_settings",
+        lambda pid: {
+            "target_domain": "example.com",
+            "auth_context": {"cookies": [{"name": "session", "value": "s3cr3t"}]},
+        },
+    )
+
+    resp = client.get("/projects/p1/settings")
+
+    assert resp.status_code == 200
+    assert resp.json() == {"recon": {"target_domain": "example.com"}}
+    assert "s3cr3t" not in resp.text
+    assert "auth_context" not in resp.text
+
+
 def test_get_settings_returns_the_stored_blob(monkeypatch):
     monkeypatch.setattr(pg, "project_exists", lambda pid: True)
     monkeypatch.setattr(pg, "load_settings", lambda pid: {"target_domain": "example.com"})
