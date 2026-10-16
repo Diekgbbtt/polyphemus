@@ -71,6 +71,29 @@ def test_system_key_shape_and_no_catalogue_node():
     assert "OF_KIND" not in cy
 
 
+# --- overwrite: a re-emitted System replaces its props (last write wins) -------
+
+def test_system_reemission_overwrites_description_and_new_attributes():
+    """Operator ruling 2026-10-16: extending a System is emitting the SAME identity
+    (kind, discriminator) with the FULL rewritten description - the write REPLACES
+    the stored value (MERGE + `SET n += $props`), it is never merged into it. A new
+    attribute this batch carries is written too, so the second write wins on every
+    key it sets (last-write-wins, not write-once)."""
+    d = SystemDelta(
+        kind="WebPresentation", discriminator="catalogue::product-detail",
+        props={"description": "full rewritten text; new evidence folded in",
+               "pages": ["/it/prodotto/1"], "rendering_model": "PrestaShop"},
+        provenance=PROV,
+    )
+    cy, params = l1_curator.build_system_cypher(d)
+    assert "MERGE (n:L1TestableUnit:L1System " in cy   # same identity -> one node, one store
+    assert "SET n += $props" in cy                      # replaces props, never write-once
+    assert params["props"] == {
+        "description": "full rewritten text; new evidence folded in",
+        "pages": ["/it/prodotto/1"], "rendering_model": "PrestaShop",
+    }
+
+
 # --- AST-LCUR-08: guards — disallowed labels / unknown kinds / bad identity raise ---
 
 def test_disallowed_unit_label_raises():

@@ -251,6 +251,68 @@ def test_C27f_non_endpoint_assets_on_noise_paths_survive():
     assert sorted(a.type for a in chunk.assets) == ["Header", "Parameter", "Parameter"]
 
 
+# --- C27g-C27j (2026-10-16, operator-ruled): the gate reuses recon's families -----
+#
+# The stream gate now SINGLE-SOURCES its extension families from recon's
+# `noise_filter` (`STATIC_EXTS`/`JS_EXTS`/`IMAGE_EXTS`/`MEDIA_EXTS`), so the two
+# classifiers never drift. Drop policy is two-tier, mirroring recon's recall bias
+# (D15): the never-surface static families (stylesheets, fonts, sourcemaps), the
+# script bundles (js/mjs) and wasm are a HARD drop; the image/media families drop
+# ONLY under a whole `assets`/`static` segment, so `/uploads/x.png` and
+# `/downloads/x.pdf` stay in the stream (user-controllable surface).
+
+def test_C27g_hard_static_and_script_families_never_stream():
+    assets = [
+        _ep("/orders/42"),              # kept
+        _ep("/styles/app.scss"),        # stylesheet pre-processor
+        _ep("/styles/app.less"),
+        _ep("/fonts/glyphs.woff2"),     # font
+        _ep("/fonts/glyphs.ttf"),
+        _ep("/app.wasm"),               # wasm
+        _ep("/x.mjs"),                  # es module
+    ]
+    (chunk,) = chunks_for_job(JOB, assets)
+    assert {a.identity["path"] for a in chunk.assets} == {"/orders/42"}
+
+
+def test_C27h_recall_biased_media_stay_outside_presentational_segments():
+    """Recon's recall bias (D15) carried into L1: a user-upload/download URL can be
+    real surface (SSRF / stored-XSS / path-traversal), so an image/media extension
+    is NOT a hard drop - it must keep streaming from `/uploads`, `/downloads`, etc."""
+    assets = [
+        _ep("/uploads/photo.png"),
+        _ep("/downloads/report.pdf"),
+        _ep("/media/clip.mp4"),
+        _ep("/user-content/avatar.jpg"),
+    ]
+    (chunk,) = chunks_for_job(JOB, assets)
+    assert {a.identity["path"] for a in chunk.assets} == {
+        "/uploads/photo.png", "/downloads/report.pdf",
+        "/media/clip.mp4", "/user-content/avatar.jpg",
+    }
+
+
+def test_C27i_recall_biased_media_drop_under_a_presentational_segment():
+    assets = [
+        _ep("/assets/logo.png"),
+        _ep("/static/hero.jpg"),
+        _ep("/downloads/assets/report.pdf"),   # an `assets` segment anywhere -> dropped
+        _ep("/orders/42"),
+    ]
+    (chunk,) = chunks_for_job(JOB, assets)
+    assert {a.identity["path"] for a in chunk.assets} == {"/orders/42"}
+
+
+def test_C27j_gate_families_are_single_sourced_from_noise_filter():
+    """No drift: the gate's hard-drop + recall-biased sets ARE the recon families,
+    never a private copy (the two classifiers must agree)."""
+    from polymerhus.analysis import chunking
+    from polymerhus.recon.domain import noise_filter
+
+    assert chunking._HARD_DROP_EXTS >= noise_filter.STATIC_EXTS | noise_filter.JS_EXTS | {"wasm"}
+    assert chunking._RECALL_BIASED_EXTS == noise_filter.IMAGE_EXTS | noise_filter.MEDIA_EXTS
+
+
 def _obs_on(anchor_type, identity):
     return Observation(macro_kind="k", severity="info", evidence="e", rationale="r",
                        anchor={"type": anchor_type, "identity": identity},
