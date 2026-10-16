@@ -150,11 +150,42 @@ def test_build_batches_empty():
     assert build_batches([], max_pods=20) == []
 
 
+def test_build_batches_keeps_one_origin_in_one_pod():
+    # Load-bearing for the runtime-baseURL chaining (2026-10-16): a prefix
+    # discovered in one bundle of an origin must reach the pod scanning that
+    # origin's other bundles (the lazy chunks), or chaining `/login` ->
+    # `/api/login` is nondeterministic (#185 ADR deferral).
+    items = [f"https://h.example.com/b{i}.js" for i in range(9)]
+    assert build_batches(items, max_pods=8) == [items]
+
+
+def test_build_batches_distributes_origins_round_robin():
+    a = [f"https://a.example.com/b{i}.js" for i in range(3)]
+    b = [f"https://b.example.com/b{i}.js" for i in range(3)]
+    c = [f"https://c.example.com/b{i}.js" for i in range(3)]
+    batches = build_batches(a + b + c, max_pods=2)
+    # Whole origins, round-robin across the pod budget - never split.
+    assert batches == [a + c, b]
+
+
+def test_build_batches_oversized_origin_degrades_to_round_robin(monkeypatch):
+    # Past `_ORIGIN_GROUP_MAX` a single origin could outlive EXEC_TIMEOUT_S in
+    # one pod, so it degrades to per-item units: today's exact round-robin, no
+    # chaining. The pod must never time out and lose the whole batch.
+    monkeypatch.setattr("polymerhus.recon.control.batching._ORIGIN_GROUP_MAX", 4)
+    items = [f"https://big.example.com/b{i}.js" for i in range(10)]
+    batches = build_batches(items, max_pods=3)
+    assert [len(b) for b in batches] == [4, 3, 3]
+    assert sorted(x for b in batches for x in b) == sorted(items)
+
+
 # -------------------------- build_batch_assets --------------------------- #
 def test_build_batch_assets_wraps_batches_and_caps_pods():
     assets = [_ep(url=f"https://h.houseofhr.com/b{i}.js") for i in range(50)]
     out = build_batch_assets(assets, apex_registrable="houseofhr.com", max_pods=20)
-    assert len(out) == 20  # never exceeds the pod budget
+    # One origin stays in ONE pod (the chaining contract), so the pod budget
+    # is an upper bound - `<=` - not a target.
+    assert len(out) <= 20
     assert all("batch" in a and a["batch"] for a in out)
     total = sum(len(a["batch"]) for a in out)
     assert total == 50

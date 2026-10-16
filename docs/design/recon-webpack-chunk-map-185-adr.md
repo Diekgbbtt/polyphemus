@@ -64,6 +64,103 @@ Accepted (2026-10-08).
   enter the surface; the API endpoints recovered from chunks carry the origin
   root rather than the `/api` prefix until the follow-up lands.
 
+## Amendment (2026-10-16): baseURL-awareness landed
+- The deferral above is closed by the arm J diagnosis (`fix/baseurl-relative-chaining`).
+  The "prefix must reach every pod" constraint is resolved by keeping the origin
+  TOGETHER instead of persisting the prefix: `batching.build_batches` partitions
+  bundles by origin, so the app bundle's config literal reaches the pod scanning
+  that origin's chunks by construction (one origin = one pod; an origin beyond
+  `_ORIGIN_GROUP_MAX` = 120 bundles degrades to the previous round-robin with
+  chaining skipped, so no pod can outlive `EXEC_TIMEOUT_S`).
+- `jsluice_scan.py` scans each batch's bundle/source bodies for two runtime
+  prefix shapes (`baseURL: "/api"`, `+ "/internal" +`), then re-mints every
+  buffered root-relative literal once per prefix as an ADDITIVE candidate
+  (`chained_prefix`/`chained_from` props; the original literal is kept - a
+  `/login` is a route as well as an API call). Candidates are probed and
+  arbitrated by the reprofile pass like any other endpoint.
+- The same change resolves literals against the scanned RESOURCE instead of the
+  origin: `./commands-x.js` in `/assets/index-abc.js` means
+  `/assets/commands-x.js`, closing the phantom class (the arm J comfyui index
+  bundle's `./x-*.js` imports re-minted as 86 root-level `.js` 404s, of the
+  graph's 162 404 endpoints).
+- Live verification on the arm J targets: white-jotter's 14-bundle origin in
+  one pod yields 37 chained candidates including `POST /api/login`,
+  `/api/search`, `/api/admin/*` (200 live; the bare literals were 404); the
+  full comfyui 105-bundle origin scans in 31s single-pod and yields the `/api/*`
+  mirror (`/api/system_stats`, `/api/object_info`, `/api/queue`) and the
+  `/internal/*` manager routes (`/internal/logs`, `/internal/folder_paths`).
+- Known limits recorded: bundles served from the origin root have no directory
+  discriminator (every root-relative literal is a candidate); bare-relative
+  request literals under a runtime base (`axios.post("login")`) resolve
+  bundle-relative and are not chained; absolute-URL bases
+  (`baseURL: "https://api.comfy.org"`) are chained as the LATEST failover under
+  the 2026-10-16 amendment below (never probed).
+- Tests: `tests/recon/test_jsluice_scan.py` (resource-base resolution, prefix
+  extraction forms, chaining guards), `test_batching.py` (origin grouping, cap
+  degrade), `test_jsluice_parser.py` (provenance props), and the
+  `test_consumption_set.py` independent oracle updated to the grouping rule.
+
+## Amendment (2026-10-16): foreign-origin chaining, failover order, no-probe
+
+The arm J diagnosis also found client-bundle URL literals assembled from a
+runtime base the bundle declares as an ABSOLUTE URL
+(`axios.create({baseURL:"https://api.comfy.org"})` + `/login`), which the first
+chaining landing deliberately skipped. This amendment reverses that skip and
+records the decisions and their rationale.
+
+- **Decision (i): foreign origins are chained, and the full foreign URL is
+  minted.** An absolute-URL `baseURL` config is captured (its own, separately
+  capped list so it never evicts a target path prefix); a literal that produced
+  no target-origin candidate is re-minted as the FULL foreign URL, and the
+  chained record's `base_url` is the foreign ORIGIN. Rationale: a foreign origin
+  reached from a first-party bundle is ADJACENTLY RELEVANT to the modelled
+  service (an API host the client calls), so it belongs in the graph; minting
+  the full URL lets the URL stream so the assigner can relate it through the
+  application-overview domain. `chained_prefix` is the foreign base string and
+  `chained_from` the original literal, so the provenance is intact.
+- **Decision: failover order.** Target-origin resource-relative resolution and
+  path-prefix chaining come FIRST; foreign-base chaining is the LATEST failover -
+  attempted for a literal ONLY when it produced no target-origin candidate, and
+  its candidates are emitted last. Path prefixes are extracted before absolute
+  bases so the `_MAX_BASE_PREFIXES` cap always keeps the target ones. Rationale:
+  a target-origin interpretation of a literal is almost always the right one;
+  foreign chaining is the last resort that widens recall without displacing it.
+- **Decision: no probing at all.** Every asset whose origin differs from the
+  scanned origin, and every foreign-chained candidate, is marked
+  `origin_scope: "external"` (absent means target). The consumption stage's new
+  `skip_external` option drops external-marked assets (Endpoint AND BaseURL
+  shapes) for every requesting job, so NO active phase sends traffic to a foreign
+  origin. The marker propagates to the BaseURL delta via the shared
+  `_urls.url_to_deltas` baseurl-extra-props seam.
+- **Decision (ii): reachability-gated probing was CONSIDERED AND REJECTED.**
+  Rationale: (a) `baseURL` parsing is heuristic, so wrong foreign chaining is
+  common - including taking the branch when the origin is not actually foreign -
+  and probing every such guess multiplies off-target requests; (b) a foreign
+  origin typically answers 401/403 without the correct auth material, so a
+  reachability gate would learn nothing and still fire the request. The
+  mechanism typist (NOT the harness) may obtain auth context through the project
+  auth_store or `graph_view` WHEN REASONING, and the assigner needs no
+  interaction - so no automated gate is required. A mitigation that iterates the
+  baseurl over the resource's baseurl/origin domain until a 200 was also
+  rejected: it still fails on auth-gated origins and adds request volume for no
+  verdict. Final ruling: no probing at all; foreign chaining is the latest
+  failover.
+- **Decision (iii): directory-like / trailing-slash literals are KEPT.** The
+  previous guard rejected a literal ending `/` (a directory reference). Rationale:
+  the base path stays systematically identifiable, so a `/dist/` under `/api` is a
+  legitimate candidate the reprofile pass can arbitrate; the static-asset-extension,
+  already-prefixed, and resource-directory guards remain, and the root-path `/`
+  rejection remains.
+- **Note (auth-store access of the mechanism typist).** Checked per this
+  amendment: the mechanism typist currently has NO auth-store access. Grepping
+  `auth_store`/`auth_feed`/`auth_capable` under `src/polymerhus/analysis` finds
+  only `anatomy.py` projecting `recon.control.auth_feed.select_account_role` for
+  its interface executor (a separate concern); `auth_capable_binding` and
+  `build_auth_store_tool` are bound only by the recon orchestrator, the recon pod
+  triager, and the attack hunting roles. The typist turn binds the read-only
+  `graph_view`, the HTTP-history pair, and a bounded `exec` (`graph_tools.py`).
+  No new tool was implemented.
+
 ## Consequences
 - The lazy-loaded chunk files become Endpoints (`source="webpack"`) and are
   reprofiled and parameter-probed like any other endpoint.
