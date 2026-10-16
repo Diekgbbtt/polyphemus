@@ -150,8 +150,6 @@ export async function getResolvedArtifact(
   return (await res.json()) as ResolvedArtifactDetail
 }
 
-// The raw content URL for a resolved artifact, bound to the digest the detail
-// returned. Pure: it builds a URL and never fetches.
 // One project's own Hunting/Skill tree, keyed by `project_id` alone: the
 // project-scoped sibling of the Trial inventory. It stays on the eval API base
 // and never touches the agent.
@@ -163,6 +161,36 @@ export async function listProjectArtifacts(
   const res = await fetch(`${evalApiBaseUrl()}${path}`, { signal })
   if (!res.ok) throw new Error(await failureText(res, path))
   return (await res.json()) as ResolvedArtifactInventory
+}
+
+// One artifact of one project, read from the project's own tree. The wire shape
+// is the Trial detail's, so the same renderer serves it. Distinct from the
+// Trial-scoped `getProjectArtifact`, which needs the full Trial identity.
+export async function getProjectArtifactDetail(
+  projectId: string,
+  artifactId: string,
+  signal?: AbortSignal,
+): Promise<ResolvedArtifactDetail> {
+  const path =
+    `/projects/${encodeURIComponent(projectId)}/artifacts/` +
+    `${encodeURIComponent(artifactId)}`
+  const res = await fetch(`${evalApiBaseUrl()}${path}`, { signal })
+  if (!res.ok) throw new Error(await failureText(res, path))
+  return (await res.json()) as ResolvedArtifactDetail
+}
+
+// The raw content URL for one project artifact, bound to the digest the detail
+// returned. Pure: it builds a URL and never fetches.
+export function projectArtifactDetailContentUrl(
+  projectId: string,
+  artifactId: string,
+  sha256: string,
+): string {
+  return (
+    `${evalApiBaseUrl()}/projects/${encodeURIComponent(projectId)}/artifacts/` +
+    `${encodeURIComponent(artifactId)}/content` +
+    `?expected_sha256=${encodeURIComponent(sha256)}`
+  )
 }
 
 // The raw content URL for a resolved artifact, bound to the digest the detail

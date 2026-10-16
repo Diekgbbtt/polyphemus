@@ -1,3 +1,5 @@
+import { Link } from "react-router-dom"
+import { projectPaths } from "../projectPaths"
 import { usePolledResource } from "../usePolledResource"
 import { listProjectArtifacts } from "./client"
 import { artifactCount } from "./ResolvedArtifactsSection"
@@ -16,9 +18,9 @@ import type { ProjectArtifactGroup, ResolvedArtifactInventory } from "./types"
 const ARTIFACTS_POLL_MS = 30_000
 
 // One project's Hunting and Skill files, read straight from the project data
-// root with no Trial in the path. It lists what the project produced - names,
-// kinds and sizes - and deliberately has no links: opening a file is the Trial
-// artifact detail's job, and this block never pretends to be a Trial.
+// root with no Trial in the path. It lists what the project produced and each
+// file opens its own project-scoped detail, exactly as the Trial workspace's
+// inventory does.
 export function ProjectArtifactsBlock({ projectId }: { projectId: string }) {
   const { data, error, loading } = usePolledResource<ResolvedArtifactInventory>({
     key: `project-artifacts:${projectId}`,
@@ -62,7 +64,7 @@ export function ProjectArtifactsBlock({ projectId }: { projectId: string }) {
       {sections.map((section) => (
         <div key={section.category} className="project-artifact-section">
           <h3 className="project-artifact-section-title">{section.label}</h3>
-          <ArtifactGroups groups={section.groups} />
+          <ArtifactGroups groups={section.groups} projectId={projectId} />
         </div>
       ))}
     </>
@@ -71,7 +73,13 @@ export function ProjectArtifactsBlock({ projectId }: { projectId: string }) {
 
 // The group tree as nested, always-open lists: a group header carries its name
 // and the number of files beneath it, then each file one line.
-function ArtifactGroups({ groups }: { groups: ProjectArtifactGroup[] }) {
+function ArtifactGroups({
+  groups,
+  projectId,
+}: {
+  groups: ProjectArtifactGroup[]
+  projectId: string
+}) {
   return (
     <ul className="project-artifact-groups">
       {groups.map((group) => (
@@ -84,7 +92,12 @@ function ArtifactGroups({ groups }: { groups: ProjectArtifactGroup[] }) {
             <ul className="project-artifact-entries">
               {group.entries.map((entry) => (
                 <li key={artifactKey(entry)} className="project-artifact-entry">
-                  <span className="project-artifact-path">{entry.relative_path}</span>
+                  <Link
+                    to={projectPaths.projectArtifact(projectId, entry.artifact_id)}
+                    className="project-artifact-path"
+                  >
+                    {entry.relative_path}
+                  </Link>
                   <span className="project-artifact-meta">
                     {kindLabel(entry.kind)} · {representationLabel(entry.representation)} ·{" "}
                     {bytesLabel(entry.size_bytes)}
@@ -93,7 +106,9 @@ function ArtifactGroups({ groups }: { groups: ProjectArtifactGroup[] }) {
               ))}
             </ul>
           )}
-          {group.children.length > 0 && <ArtifactGroups groups={group.children} />}
+          {group.children.length > 0 && (
+            <ArtifactGroups groups={group.children} projectId={projectId} />
+          )}
         </li>
       ))}
     </ul>

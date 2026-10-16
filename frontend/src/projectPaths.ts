@@ -6,6 +6,10 @@ export const projectPaths = {
   live: (projectId: string) => `/p/${enc(projectId)}`,
   runs: (projectId: string) => `/p/${enc(projectId)}/runs`,
   evals: (projectId: string) => `/p/${enc(projectId)}/evals`,
+  // One file of the project's own artifact tree - the project-scoped sibling of
+  // the Trial artifact routes, with no Trial in the path.
+  projectArtifact: (projectId: string, artifactId: string) =>
+    `/p/${enc(projectId)}/artifacts/${enc(artifactId)}`,
   trial: (projectId: string, targetId: string, targetRunId: string, trialId: string) =>
     `${projectPaths.evals(projectId)}/${enc(targetId)}/${enc(targetRunId)}/${enc(trialId)}`,
   // Reserved for the artifact routes (Tasks 9-10); the routes are not

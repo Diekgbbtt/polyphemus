@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate, useParams } from "react-router-
 import { ProjectsPage } from "./pages/ProjectsPage"
 import { GraphPage } from "./pages/GraphPage"
 import { RunsPage } from "./pages/RunsPage"
+import { ProjectArtifactDetailPage } from "./pages/ProjectArtifactDetailPage"
 import { LivePage } from "./pages/LivePage"
 import { ProjectEvalLayout } from "./pages/ProjectEvalLayout"
 import { ProjectEvalsPage } from "./pages/ProjectEvalsPage"
@@ -40,6 +41,11 @@ export function AppRoutes() {
       <Route path="/p" element={<Navigate to="/" replace />} />
       <Route path="/p/:projectId" element={<GraphPage />} />
       <Route path="/p/:projectId/runs" element={<RunsPage />} />
+      {/* One file of the project's own artifact tree, with no Trial in the path. */}
+      <Route
+        path="/p/:projectId/artifacts/:artifactId"
+        element={<ProjectArtifactDetailPage />}
+      />
       {/* The project eval subtree shares one provider for list and detail. */}
       <Route path="/p/:projectId/evals" element={<ProjectEvalLayout />}>
         <Route index element={<ProjectEvalsPage />} />

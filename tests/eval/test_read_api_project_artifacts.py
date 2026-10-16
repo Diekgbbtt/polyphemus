@@ -17,6 +17,7 @@ from orchestrator.files import FileStore
 from read_api import app as app_module
 from read_api import resolved_artifacts as resolved
 from read_api.resolved import ResolvedDataError
+from read_api.source import ArtifactLookupError
 
 # A project id from the live instance: an unassigned directory that no projected
 # Trial claims.
@@ -136,3 +137,83 @@ def test_the_route_serves_the_project_inventory(tmp_path, monkeypatch):
     assert empty.status_code == 200
     assert empty.json()["status"] == "available"
     assert _entries(empty.json()["groups"]) == []
+
+
+def _inventory(data_root: Path) -> resolved.ResolvedInventory:
+    return resolved.resolve_project_inventory(data_root, PROJECT_ID, files=FileStore())
+
+
+def _hunting_entry(data_root: Path) -> dict:
+    body = resolved.project_inventory_response(_inventory(data_root))
+    return next(
+        entry
+        for entry in _entries(body["groups"])
+        if entry["relative_path"].endswith("prod.yaml")
+    )
+
+
+def test_detail_keeps_the_content_url_on_the_project_route(tmp_path):
+    _write_project(tmp_path, PROJECT_ID)
+    entry = _hunting_entry(tmp_path)
+
+    detail = resolved.project_detail_response(
+        _inventory(tmp_path), PROJECT_ID, entry["artifact_id"]
+    )
+
+    assert detail["entry"]["relative_path"] == entry["relative_path"]
+    assert detail["preview"]["text"] == "kind: hunt-config\n"
+    # The download URL is rebuilt against the project route and bound to the
+    # digest the reader just saw, never to a Trial path.
+    assert detail["content_url"] == (
+        f"/projects/{PROJECT_ID}/artifacts/{entry['artifact_id']}"
+        f"/content?expected_sha256={entry['sha256']}"
+    )
+
+
+def test_detail_rejects_an_unknown_artifact_id(tmp_path):
+    _write_project(tmp_path, PROJECT_ID)
+
+    with pytest.raises(ArtifactLookupError):
+        resolved.project_detail_response(_inventory(tmp_path), PROJECT_ID, "0" * 64)
+
+
+def test_content_requires_the_digest_the_detail_returned(tmp_path):
+    _write_project(tmp_path, PROJECT_ID)
+    entry = _hunting_entry(tmp_path)
+
+    download = resolved.content_download(
+        _inventory(tmp_path), entry["artifact_id"], entry["sha256"]
+    )
+    assert b"".join(download.chunks) == HUNTING_FILES[
+        "hunting/orchestration/hunt_configs/produced/prod.yaml"
+    ]
+
+    with pytest.raises(ArtifactLookupError) as caught:
+        resolved.content_download(_inventory(tmp_path), entry["artifact_id"], "0" * 64)
+    assert caught.value.status_code == 409
+
+
+def test_the_detail_and_content_routes_serve_one_project_artifact(tmp_path, monkeypatch):
+    _write_project(tmp_path, PROJECT_ID)
+    store = tmp_path / "store"
+    store.mkdir()
+    monkeypatch.setenv("EVAL_PROJECT_DATA_ROOT", str(tmp_path))
+    monkeypatch.setenv("EVAL_ARTIFACT_STORE", str(store))
+    client = TestClient(app_module.create_app())
+    entry = _hunting_entry(tmp_path)
+
+    detail = client.get(f"/projects/{PROJECT_ID}/artifacts/{entry['artifact_id']}")
+    assert detail.status_code == 200
+    body = detail.json()
+    assert body["entry"]["relative_path"] == entry["relative_path"]
+
+    content = client.get(body["content_url"])
+    assert content.status_code == 200
+    assert content.content == b"kind: hunt-config\n"
+
+    # A digest the detail never returned is rejected, not served.
+    mismatch = client.get(
+        f"/projects/{PROJECT_ID}/artifacts/{entry['artifact_id']}"
+        "/content?expected_sha256=" + "0" * 64
+    )
+    assert mismatch.status_code == 409

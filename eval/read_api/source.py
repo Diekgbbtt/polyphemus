@@ -29,6 +29,7 @@ from .resolved_artifacts import (
     content_download,
     detail_response,
     inventory_response,
+    project_detail_response,
     project_inventory_response,
     resolve_project_inventory,
     resolve_inventory,
@@ -154,6 +155,14 @@ class SnapshotSource(Protocol):
         identity, no capture to prefer - just the allowlisted Hunting/Skill tree
         the project data root holds for that project.
         """
+
+    def get_project_artifact(self, project_id: str, artifact_id: str) -> dict[str, Any]:
+        """Metadata plus one safe preview for one project-inventory artifact."""
+
+    def stream_project_artifact(
+        self, project_id: str, artifact_id: str, expected_sha256: str
+    ) -> ArtifactDownload:
+        """One project artifact's bytes, bound to the digest the detail returned."""
 
     def get_resolved_artifact(
         self, target_id: str, target_run_id: str, trial_id: str, artifact_id: str
@@ -304,6 +313,20 @@ class ArtifactStoreSnapshotSource:
             self.project_data_root, project_id, files=FileStore()
         )
         return project_inventory_response(inventory)
+
+    def get_project_artifact(self, project_id: str, artifact_id: str) -> dict[str, Any]:
+        inventory = resolve_project_inventory(
+            self.project_data_root, project_id, files=FileStore()
+        )
+        return project_detail_response(inventory, project_id, artifact_id)
+
+    def stream_project_artifact(
+        self, project_id: str, artifact_id: str, expected_sha256: str
+    ) -> ArtifactDownload:
+        inventory = resolve_project_inventory(
+            self.project_data_root, project_id, files=FileStore()
+        )
+        return content_download(inventory, artifact_id, expected_sha256)
 
     def get_resolved_artifact(
         self, target_id: str, target_run_id: str, trial_id: str, artifact_id: str

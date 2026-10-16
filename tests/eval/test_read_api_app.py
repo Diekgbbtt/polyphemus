@@ -159,6 +159,8 @@ def test_only_get_routes_are_exposed() -> None:
         ("/snapshot", ("GET",)),
         ("/health", ("GET",)),
         ("/projects/{project_id}/artifacts", ("GET",)),
+        ("/projects/{project_id}/artifacts/{artifact_id}", ("GET",)),
+        ("/projects/{project_id}/artifacts/{artifact_id}/content", ("GET",)),
         ("/trials/{target_id}/{target_run_id}/{trial_id}/project-graph", ("GET",)),
         ("/trials/{target_id}/{target_run_id}/{trial_id}/artifacts", ("GET",)),
         (

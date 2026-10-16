@@ -138,6 +138,50 @@ def create_app(source_factory: SourceFactory = filesystem_source) -> FastAPI:
                 detail=str(exc) or "resolved artifact source unavailable",
             ) from exc
 
+    @app.get("/projects/{project_id}/artifacts/{artifact_id}")
+    def project_artifact(project_id: str, artifact_id: str) -> dict:
+        """Metadata plus one safe preview for one project artifact."""
+        try:
+            return source_factory().get_project_artifact(project_id, artifact_id)
+        except ResolvedDataError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.code) from exc
+        except ArtifactLookupError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.code) from exc
+        except SnapshotSourceUnavailable as exc:
+            raise HTTPException(
+                status_code=503,
+                detail=str(exc) or "resolved artifact source unavailable",
+            ) from exc
+
+    @app.get("/projects/{project_id}/artifacts/{artifact_id}/content")
+    def project_artifact_content(
+        project_id: str,
+        artifact_id: str,
+        expected_sha256: str = Query(...),
+    ) -> StreamingResponse:
+        """One project artifact's bytes, bound to the digest the detail returned."""
+        try:
+            download = source_factory().stream_project_artifact(
+                project_id, artifact_id, expected_sha256
+            )
+        except ResolvedDataError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.code) from exc
+        except ArtifactLookupError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.code) from exc
+        except SnapshotSourceUnavailable as exc:
+            raise HTTPException(
+                status_code=503,
+                detail=str(exc) or "resolved artifact source unavailable",
+            ) from exc
+        disposition = "attachment" if download.attachment else "inline"
+        return StreamingResponse(
+            download.chunks,
+            media_type=download.media_type,
+            headers={
+                "Content-Disposition": f'{disposition}; filename="{download.filename}"',
+            },
+        )
+
     @app.get("/trials/{target_id}/{target_run_id}/{trial_id}/resolved-graph")
     def resolved_graph(target_id: str, target_run_id: str, trial_id: str) -> dict:
         try:

@@ -564,6 +564,33 @@ def _content_url(
     )
 
 
+def _project_content_url(project_id: str, artifact_id: str, sha256: str) -> str:
+    return "/projects/{}/artifacts/{}/content?expected_sha256={}".format(
+        quote(project_id, safe=""),
+        quote(artifact_id, safe=""),
+        quote(sha256, safe=""),
+    )
+
+
+def project_detail_response(
+    inventory: ResolvedInventory,
+    project_id: str,
+    artifact_id: object,
+) -> dict[str, Any]:
+    """Metadata plus one bounded preview for one project-inventory artifact id.
+
+    The shape is the resolved detail's, so the same renderer serves it; only the
+    content URL differs, and it stays on the project-scoped route.
+    """
+    entry = _require_entry(inventory, artifact_id)
+    content_url = _project_content_url(
+        project_id, entry["artifact_id"], entry["sha256"]
+    )
+    return artifact_reader._detail_body(
+        _entry_root(inventory, entry), entry, content_url=content_url
+    )
+
+
 __all__ = [
     "PROJECT_STORAGE",
     "ResolvedInventory",

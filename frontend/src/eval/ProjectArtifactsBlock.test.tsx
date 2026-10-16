@@ -1,4 +1,5 @@
 import { render, screen, waitFor, within } from "@testing-library/react"
+import { MemoryRouter } from "react-router-dom"
 import { expect, test } from "vitest"
 import { ProjectArtifactsBlock } from "./ProjectArtifactsBlock"
 
@@ -63,9 +64,17 @@ function stub(body: unknown, status = 200): string[] {
   return calls
 }
 
+function renderBlock(projectId = "proj-1") {
+  return render(
+    <MemoryRouter>
+      <ProjectArtifactsBlock projectId={projectId} />
+    </MemoryRouter>,
+  )
+}
+
 test("lists the project's hunting and skill files, grouped and counted", async () => {
   stub(INVENTORY)
-  render(<ProjectArtifactsBlock projectId="proj-1" />)
+  renderBlock()
 
   await waitFor(() => expect(screen.getByText("Hunting")).toBeDefined())
   expect(screen.getByText("Skills")).toBeDefined()
@@ -73,19 +82,25 @@ test("lists the project's hunting and skill files, grouped and counted", async (
   const orchestration = screen.getByText("Orchestration").closest("li")!
   expect(within(orchestration).getByText("1")).toBeDefined()
   // Every file is named, with its kind, representation and size.
-  expect(
-    screen.getByText("hunting/orchestration/hunt_configs/produced/prod.yaml"),
-  ).toBeDefined()
-  expect(screen.getByText("skills/authn/SKILL.md")).toBeDefined()
   expect(screen.getByText(/2\.0 KB/)).toBeDefined()
   expect(screen.getByText(/512 B/)).toBeDefined()
-  // A project tree is listed, never linked: the Trial views own the file detail.
-  expect(screen.queryAllByRole("link")).toHaveLength(0)
+})
+
+test("each file opens its own project-scoped detail, like a Trial's", async () => {
+  stub(INVENTORY)
+  renderBlock()
+
+  const hunting = await screen.findByRole("link", {
+    name: ENTRY_HUNTING.relative_path,
+  })
+  expect(hunting.getAttribute("href")).toBe("/p/proj-1/artifacts/h1")
+  const skill = screen.getByRole("link", { name: ENTRY_SKILL.relative_path })
+  expect(skill.getAttribute("href")).toBe("/p/proj-1/artifacts/s1")
 })
 
 test("an empty tree says so instead of looking broken", async () => {
   stub({ ...INVENTORY, groups: [] })
-  render(<ProjectArtifactsBlock projectId="proj-1" />)
+  renderBlock()
 
   expect(
     await screen.findByText(/no artifacts were saved for this project/i),
@@ -102,7 +117,7 @@ test("an unavailable inventory names the reason", async () => {
     reason: "project_data_unavailable",
     groups: [],
   })
-  render(<ProjectArtifactsBlock projectId="proj-1" />)
+  renderBlock()
 
   expect(
     await screen.findByText(/project artifacts unavailable \(project_data_unavailable\)/i),
@@ -111,7 +126,7 @@ test("an unavailable inventory names the reason", async () => {
 
 test("a failed read is stated, never rendered as an empty tree", async () => {
   stub({ detail: "boom" }, 500)
-  render(<ProjectArtifactsBlock projectId="proj-1" />)
+  renderBlock()
 
   expect(await screen.findByText(/project artifacts unavailable/i)).toBeDefined()
   expect(screen.queryByText(/no artifacts were saved/i)).toBeNull()
@@ -119,7 +134,7 @@ test("a failed read is stated, never rendered as an empty tree", async () => {
 
 test("the request encodes the project id", async () => {
   const calls = stub(INVENTORY)
-  render(<ProjectArtifactsBlock projectId="proj/2" />)
+  renderBlock("proj/2")
 
   await waitFor(() => expect(calls.length).toBeGreaterThan(0))
   expect(calls[0]).toBe("/projects/proj%2F2/artifacts")

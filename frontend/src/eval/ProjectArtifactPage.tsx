@@ -27,7 +27,7 @@ function Identity({ trial }: { trial: EvalTrial }) {
   )
 }
 
-function Metadata({ detail }: { detail: ResolvedArtifactDetail }) {
+export function Metadata({ detail }: { detail: ResolvedArtifactDetail }) {
   const entry = detail.entry
   return (
     <dl className="artifact-metadata">
