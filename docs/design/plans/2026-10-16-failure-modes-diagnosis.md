@@ -55,3 +55,12 @@ The operator's guess that comfyui "ran before the recently added noise and chunk
 ## Progress log
 
 - 2026-10-16: plan written; build pin confirmed (`eval_sha 6d3897e1` in both arm J trial records).
+- 2026-10-16 F1: root cause closed in `docs/experiments/streamed-endpoint-coverage-diagnosis.md`. Job census, chunk-to-job map, stream-vs-graph diff (289 graph endpoints / 98 streamed / 191 withheld, all `.js/.mjs`), jsluice `-R` mis-resolution with live proof, Vite-vs-webpack chunk-scanner finding, foreign-client literals, http-history usability evidence.
+- 2026-10-16 F2: Header value and direction are present in the graph (11/11 nodes) and in the stream (`[direction=response, value=...]`); the operator quote traces to the identity-only table in `docs/experiments/typist-feed-quality-diagnosis.md:52`; real nuance = per-`(name,baseurl)` last-write-wins merge. Recorded in the F1/F2 doc.
+- 2026-10-16 F3: `docs/experiments/streamed-chunks-inventory-arm-j.md` - 5 chunks per trial with asset types, observations, typist calls carrying each block, and Langfuse trace URLs; aborted wj attempt recorded separately.
+- 2026-10-16 F4: implemented and committed on `fix/baseurl-relative-chaining` @ `9931ea9` (resource-relative resolution, runtime prefix extraction, additive chained records, origin-grouped batches, guards; ADR amendment; tests: recon 1024 passed, full suite 1337 passed).
+- 2026-10-16 F5: `docs/experiments/typist-expression-diagnosis.md` - H/J contract volume identical on comfyui (23 services / 4,084 chars; aggregates 80 vs 76); J wj thin (2,820 chars / 31 edges); root cause = chunk-gated cadence plus mint-only delta schema; fix direction = symbolic-layer extension questions.
+- 2026-10-16 F6: T5 D1-D3 restated for the operator (degenerate-set artifact trigger default off; open class vocabulary; required `SINGLE-CANDIDATE ADMIT` label), plus the flagged API-enumeration-anchor ruling against the C1 boundary.
+- 2026-10-16 F7: `docs/experiments/assigner-concretisation-diagnosis.md` - deltas (comfyui 107/81/81; wj 40/31/31; zero drops in all 12 turns), workflow (comfyui 64 tools: search 48 + artifact 16, graph_view 0; wj 42), refs per proposal (comfyui 1.05 vs wj 2.0); root cause in both contained recon and analysis workflow.
+- 2026-10-16 F8: steel crawl contribution disregarded (cloud crawl cannot reach local-network-only targets; moving it local is out of scope); the next launcher/report must not count steel-crawl endpoints.
+- 2026-10-16 F9: consolidated fix proposals delivered in the final report.
