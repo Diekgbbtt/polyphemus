@@ -188,15 +188,16 @@ def test_N5_drop_unknown_vocabulary_pure():
 
 def test_N6_extract_prompt_shows_existing_description_and_demands_enrichment():
     """The System `description` is the discriminative attribute; on extend it is
-    COMPOUNDED, never blanked. The extraction prompt must SHOW the existing
-    description and DIRECT enrichment - else the model cannot compound."""
+    OVERWRITTEN (operator ruling 2026-10-16) - the emitted FULL rewritten text REPLACES
+    the stored description. The extraction prompt must SHOW the existing description and
+    direct the overwrite, else the model cannot compound."""
     inv = {"systems": ["AuthenticationMechanism"],
            "system_descriptions": {"AuthenticationMechanism": "Mints session cookies; no MFA seen."}}
     prompt = _systems_prompt(inv)
     assert "Mints session cookies; no MFA seen." in prompt        # existing description shown
     assert "AuthenticationMechanism" in prompt                     # by its exact key
-    assert "enrich" in prompt.lower()                              # enrichment directed
-    assert "never blank" in prompt.lower()                         # never emptied
+    assert "REPLACES" in prompt                                    # overwrite directed
+    assert "stand alone" in prompt.lower()                         # the rewrite is self-contained
 
 
 def test_N6_extract_prompt_without_existing_systems_offers_no_extend_target():
@@ -332,3 +333,26 @@ def test_N11_enrichment_write_fn_is_what_carries_system_edges():
 
     assert "system_edges" in inspect.signature(enrich).parameters
     assert callable(default_curate_with_enrichment_fn)
+
+
+# --- N12 (operator ruling 2026-10-16): extend = overwrite, downstream-clean ----
+
+def test_N12_reemitted_system_props_reach_the_curator_cypher():
+    """Extending a System = re-emitting its exact key with the FULL rewritten description
+    (and any updated attributes). A re-emitted System's props must survive shaping and
+    reach the curator cypher's `SET n += $props` verbatim, so the write REPLACES the
+    stored value (MERGE on identity -> last write wins, never write-once)."""
+    from polymerhus.analysis.analyser_types import proposals_to_deltas
+    from polymerhus.analysis.l1_curator import build_system_cypher
+    from polymerhus.analysis.l1_types import Provenance
+
+    batch = L1DeltaBatch(systems=[SystemProposal(
+        kind="RESTApi",
+        props={"description": "rewritten full text: adds a paginated /items surface",
+               "pages": ["/items"]})])
+    _, systems, _ = proposals_to_deltas(
+        batch, Provenance(job="mechanism_typist", model="m", prompt_id="p"))
+    cypher, params = build_system_cypher(systems[0])
+    assert "SET n += $props" in cypher                       # replaces props on every write
+    assert params["props"]["description"].startswith("rewritten full text")
+    assert params["props"]["pages"] == ["/items"]

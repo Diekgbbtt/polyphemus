@@ -32,10 +32,15 @@ Composition (the clean seams):
 from __future__ import annotations
 
 import logging
-import re
 
 from pydantic import BaseModel, ConfigDict
 
+from polymerhus.recon.domain.noise_filter import (
+    IMAGE_EXTS,
+    JS_EXTS,
+    MEDIA_EXTS,
+    STATIC_EXTS,
+)
 from polymerhus.recon.domain.types import AssetDelta, JobSpec, Observation
 
 logger = logging.getLogger(__name__)
@@ -75,14 +80,28 @@ _FAMILY_RANK: dict[str, int] = {
 # not per-role: no proposer wants them. This is the L1 counterpart of recon's
 # `noise_filter.classify_endpoint`, and it stays inside `chunks_for_job` so recon
 # production (the jsluice input) is untouched.
-# Two independent signals on the bare path (query string and fragment stripped
-# first, so a cache-busted `/app.js?v=2` is still recognised), both case-insensitive:
-#   - a never-surface FILE EXTENSION (.js/.mjs/.map/.css);
+#
+# Decision record (operator-ruled 2026-10-16, grounded on
+# `docs/experiments/typist-expression-diagnosis.md`). The families are SINGLE-SOURCED
+# from recon's `noise_filter` so the stream gate and recon's own classifier never
+# drift. Two tiers, mirroring recon's recall bias (D15):
+#   - HARD drop (never stream): the never-surface static families (stylesheets,
+#     pre-processors, fonts, sourcemaps), the script bundles (`js`/`mjs`) and `wasm`.
+#     A static stylesheet/font/sourcemap is never L1 surface, and recon's `.js`
+#     bundles are recon INPUT (jsluice feeds the chained API candidates), not surface.
+#   - RECALL-BIASED: images and media/archives drop ONLY under a presentational path
+#     segment (`assets`/`static`), because `/uploads/x.png` and `/downloads/x.pdf`
+#     can be real surface (SSRF / stored-XSS / path-traversal) - dropping them by
+#     extension alone would lose that surface (the D15 recall bias).
+# Signals, all case-insensitive on the bare path (query string and fragment stripped
+# first, so a cache-busted `/app.js?v=2` is still recognised):
+#   - a never-surface FILE EXTENSION (the hard-drop families);
 #   - a presentational path DIRECTORY: a path SEGMENT equal to `assets` or `static`,
 #     matched on whole segments - never substrings, so `/api/static-data/x` is real
-#     API surface and stays. This one signal also covers the `_next/static` layout,
-#     whose `static` segment drops it.
-_NOISE_EXT = re.compile(r"\.(?:js|mjs|map|css)$", re.IGNORECASE)
+#     API surface and stays. This rule drops ANY endpoint under it, which already
+#     covers the recall-biased image/media families, and the `_next/static` layout.
+_HARD_DROP_EXTS = STATIC_EXTS | JS_EXTS | {"wasm"}
+_RECALL_BIASED_EXTS = IMAGE_EXTS | MEDIA_EXTS
 _NOISE_SEGMENTS = frozenset({"assets", "static"})
 
 # The CONNECTIVITY types are EXCLUDED from the stream for every downstream agent
@@ -156,11 +175,21 @@ def admit_for_role(chunk: Chunk, role: str) -> tuple[AssetDelta, ...]:
     return tuple(a for a in chunk.assets if a.type in admits)
 
 
+def _endpoint_extension(path: str) -> str:
+    """The lowercased extension of the path's final segment ("" when there is none),
+    mirroring `noise_filter._extension` so both classifiers read a filename the same
+    way."""
+    filename = path.rpartition("/")[2]
+    return filename.rpartition(".")[2] if "." in filename else ""
+
+
 def is_noise_endpoint(asset: AssetDelta) -> bool:
     """True for an Endpoint that is noise from an L1 surface-modelling perspective:
-    a never-surface extension (`*.js`/`*.mjs`/`*.map`/`*.css`) or a path segment equal
-    to `assets` / `static` (the latter covers the `_next/static` layout). Matching is
-    case-insensitive.
+    a never-surface extension (the hard-drop families - stylesheets, fonts, sourcemaps,
+    scripts and wasm) or a path segment equal to `assets` / `static` (the latter covers
+    the `_next/static` layout). Matching is case-insensitive. Image/media extensions are
+    NOT hard-dropped: they drop only under a presentational segment (recall bias), which
+    the segment rule already enforces. See `_HARD_DROP_EXTS` for the decision record.
 
     Only Endpoints are judged: a Parameter or Header discovered ON a script is a real
     finding and stays in the stream."""
@@ -170,9 +199,13 @@ def is_noise_endpoint(asset: AssetDelta) -> bool:
     if not isinstance(path, str):
         return False
     bare = path.split("?", 1)[0].split("#", 1)[0].lower()
-    if _NOISE_EXT.search(bare):
-        return True
     segments = [seg for seg in bare.split("/") if seg]
+    if _endpoint_extension(bare) in _HARD_DROP_EXTS:
+        return True
+    # Every other extension - the recall-biased image/media families included - drops
+    # only under a whole `assets`/`static` segment, so `/uploads/x.png` stays (the
+    # `_RECALL_BIASED_EXTS` families share this condition by design; see the decision
+    # record above).
     return bool(_NOISE_SEGMENTS.intersection(segments))
 
 
