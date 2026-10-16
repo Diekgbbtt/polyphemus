@@ -544,7 +544,7 @@ def test_repeated_identities_render_one_row_after_the_stream_collapse():
     for _ in range(10):
         assets.append(AssetDelta(type="BaseURL", identity={"url": bu}))
         assets.append(AssetDelta(
-            type="Header", identity={"name": "server", "baseurl": bu},
+            type="Header", identity={"name": "server", "endpoint": "/", "baseurl": bu},
             props={"value": "nginx/1.31.6", "direction": "response"}))
         assets.append(AssetDelta(
             type="Technology", identity={"name": "Nginx:1.31.6", "version": ""},

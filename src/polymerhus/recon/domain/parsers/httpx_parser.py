@@ -5,7 +5,10 @@ Deterministic field-mapping only, tolerant of malformed JSONL lines.
 from urllib.parse import urlparse
 
 from polymerhus.recon.domain.noise_filter import classify_profile
-from polymerhus.recon.domain.parsers._headers import canonical_header_name
+from polymerhus.recon.domain.parsers._headers import (
+    canonical_header_name,
+    is_dropped_header,
+)
 from polymerhus.recon.domain.parsers._jsonlines import iter_json_dicts
 from polymerhus.recon.domain.parsers._urls import url_to_deltas
 from polymerhus.recon.domain.types import AssetDelta, Edge
@@ -132,13 +135,23 @@ def parse(stdout: str) -> list[AssetDelta]:
 
         # Response headers (httpx `-irh` -> the `header` map, name -> value,
         # names already lowercased by httpx). Each becomes a Header node keyed
-        # on {name, baseurl} with the value as a prop and an inbound HAS_HEADER
-        # edge from the BaseURL: (BaseURL)-[:HAS_HEADER]->(Header). The
-        # `direction="response"` marker is structural, not documentary: Header
+        # on {name, endpoint, baseurl} - `endpoint` is the path the probe hit,
+        # the SAME path string the Endpoint identity carries - with the value as
+        # a PROP and an inbound HAS_HEADER edge from the BaseURL:
+        # (BaseURL)-[:HAS_HEADER]->(Header). Endpoint scoping is what makes the
+        # dedup reliable: two endpoints under one BaseURL each returning a
+        # same-named header no longer collide on {name, baseurl} and clobber one
+        # another, while repeated streamed emissions of the SAME endpoint's
+        # headers still collapse to one node. The binding stays the source
+        # BaseURL: a per-endpoint header edge is never observed, so none is
+        # invented. The `date` response header is dropped entirely (wall-clock
+        # churn, not an endpoint fingerprint - `_headers.py`).
+        # The `direction="response"` marker is structural, not documentary: Header
         # nodes are OBSERVED surface (what the host sent us) and must never be
         # replayed into requests - request headers come only from the feed's
         # store-resolved account projection (control.auth_feed). A future
         # request-side Header would need direction="request", never a bare node.
+        endpoint_path = endpoint_delta.identity["path"]
         headers = entry.get("header") or {}
         if isinstance(headers, dict):
             for name, value in headers.items():
@@ -148,12 +161,16 @@ def parse(stdout: str) -> list[AssetDelta]:
                 # rule makes them MERGE with the wire-form key every other tool
                 # emits (`accept-ranges`) - see `_headers.py`.
                 canonical = canonical_header_name(name)
-                if not canonical:
+                if not canonical or is_dropped_header(canonical):
                     continue
                 deltas.append(
                     AssetDelta(
                         type="Header",
-                        identity={"name": canonical, "baseurl": baseurl_delta.identity["url"]},
+                        identity={
+                            "name": canonical,
+                            "endpoint": endpoint_path,
+                            "baseurl": baseurl_delta.identity["url"],
+                        },
                         props={"value": str(value), "direction": "response"},
                         edges=[
                             Edge(

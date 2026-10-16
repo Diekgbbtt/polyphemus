@@ -126,17 +126,40 @@ def test_content_type_read_from_response_headers():
 
 def test_response_headers_marked_response_direction():
     # Structural contract shared with httpx_parser: minted Headers carry
-    # direction="response" (observed surface, never replayed into requests).
+    # direction="response" (observed surface, never replayed into requests) and
+    # are keyed on {name, endpoint, baseurl} - `endpoint` being the path this
+    # transaction hit, the same path its Endpoint identity carries. The `Date`
+    # response header is never minted (canonical rule).
     from polymerhus.recon.domain.parsers.katana_parser import parse
     line = (
         '{"request":{"endpoint":"https://h/page","method":"GET"},'
-        '"response":{"status_code":200,"headers":{"Server":"nginx","X-A":"b"}}}\n'
+        '"response":{"status_code":200,"headers":{"Server":"nginx","X-A":"b",'
+        '"Date":"Mon, 06 Oct 2026 00:00:00 GMT"}}}\n'
     )
     out = parse(line)
     headers = [d for d in out if d.type == "Header"]
-    assert len(headers) == 2
+    assert len(headers) == 2                                     # `Date` dropped
     assert all(d.props.get("direction") == "response" for d in headers)
+    assert all(d.identity["endpoint"] == "/page" for d in headers)
     assert all(d.identity["baseurl"] == "https://h" for d in headers)
+
+
+def test_two_endpoints_one_baseurl_keep_their_own_headers():
+    """Operator ruling 2026-10-16: katana's per-transaction headers are scoped to
+    the endpoint the transaction hit, so two endpoints under one BaseURL each
+    carrying a same-named header mint TWO Header nodes (previously one)."""
+    from polymerhus.recon.domain.parsers.katana_parser import parse
+    lines = (
+        '{"request":{"endpoint":"https://h/a","method":"GET"},'
+        '"response":{"status_code":200,"headers":{"Content-Type":"text/html"}}}\n'
+        '{"request":{"endpoint":"https://h/b","method":"GET"},'
+        '"response":{"status_code":200,"headers":{"Content-Type":"application/json"}}}\n'
+    )
+    out = parse(lines)
+    headers = [d for d in out if d.type == "Header"]
+    assert len(headers) == 2
+    assert {(h.identity["endpoint"], h.props["value"]) for h in headers} == {
+        ("/a", "text/html"), ("/b", "application/json")}
 
 
 def test_katana_get_form_parameters_are_query_position():
@@ -153,10 +176,11 @@ def test_katana_get_form_parameters_are_query_position():
 
 def test_header_names_canonicalize_underscores_to_dashes():
     """T3/E5 (`docs/experiments/typist-feed-quality-diagnosis.md`): a `Header`
-    anchors on `{name, baseurl}`, so one real header must have ONE identity across
-    tools. httpx `-irh` emits `content_type`; the shared canonical rule folds it
-    onto the wire form `content-type` katana emits, so both observations merge
-    instead of minting two L0 nodes."""
+    anchors on `{name, endpoint, baseurl}`, so the same real header (same name and
+    endpoint) must have ONE identity across tools. httpx `-irh` emits
+    `content_type`; the shared canonical rule folds it onto the wire form
+    `content-type` katana emits, so both observations merge instead of minting two
+    L0 nodes."""
     from polymerhus.recon.domain.parsers.katana_parser import parse
     line = (
         '{"request":{"endpoint":"https://h/page","method":"GET"},'

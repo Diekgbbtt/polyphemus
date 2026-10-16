@@ -247,7 +247,8 @@ def test_filter_leaves_non_endpoint_labels_untouched():
         AssetDelta(type="Parameter", identity={"name": "id", "position": "query",
                                                "endpoint_path": "/x", "baseurl": "https://h"}),
         AssetDelta(type="Technology", identity={"name": "nginx", "baseurl": "https://h"}),
-        AssetDelta(type="Header", identity={"name": "server", "baseurl": "https://h"}),
+        AssetDelta(type="Header",
+                   identity={"name": "server", "endpoint": "/", "baseurl": "https://h"}),
     ]
     assert filter_deltas(params) == params
 

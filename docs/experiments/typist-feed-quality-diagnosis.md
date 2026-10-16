@@ -101,7 +101,8 @@ The fix moves into the stream layer; the parsers keep emitting observations and 
 
 ## 7. Deliberate deviations and open items
 
-- **"Headers report the owning endpoint":** the Header identity is `{name, baseurl}` and its only minted edge is `(BaseURL)-[:HAS_HEADER]->(Header)`. Endpoint-level ownership would need a parser change that invents a link recon does not observe. The fix keeps the baseurl owner visible and collapses the per-transaction repeats.
+- **REVERSED 2026-10-16 (operator ruling).** The entry below held the Header identity at `{name, baseurl}` with baseurl-only ownership. The operator overruled it: the Header identity is now `{name, endpoint, baseurl}` (the `endpoint` being the path that returned the header, the value a prop). The `(BaseURL)-[:HAS_HEADER]->(Header)` edge is unchanged - the binding stays the source BaseURL, and no header-to-endpoint edge is invented - but two endpoints under one origin carrying a same-named header no longer merge, while a re-crawled endpoint's headers still collapse. The `date` response header is dropped entirely. The measurement in Appendix A predates this change.
+- **"Headers report the owning endpoint" (the superseded position, kept as record):** the Header identity is `{name, baseurl}` and its only minted edge is `(BaseURL)-[:HAS_HEADER]->(Header)`. Endpoint-level ownership would need a parser change that invents a link recon does not observe. The fix keeps the baseurl owner visible and collapses the per-transaction repeats.
 - **The exec-seam double sessions** (`recon.domain.pod.default_exec_fn`) remain a separate follow-up from T2; they show up in the same kali access log and are measured in the next trial.
 - **Group sizes for the typist:** after the fix the katana pass collapses to one small cohesive chunk (15 unique assets, measured; Appendix A). If a single family ever exceeds a prompt budget, a future iteration can split a family by parent endpoint.
 

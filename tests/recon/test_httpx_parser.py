@@ -50,24 +50,29 @@ def test_malformed_line_skipped():
     assert any(d.type == "BaseURL" for d in deltas)
 
 
-def test_parse_emits_headers_with_baseurl_edge():
+def test_parse_emits_endpoint_scoped_headers_with_baseurl_edge():
     # httpx `-irh` includes response headers under the `header` key (a map of
     # lowercased name -> value; the marshaler emits UNDERSCORE keys - verified
     # live 2026-10-15). Each becomes a Header node keyed on the CANONICAL
-    # {name, baseurl} (`_headers.canonical_header_name`: lowercase-with-dashes)
-    # with the value as a prop and an inbound HAS_HEADER edge from the BaseURL:
+    # {name, endpoint, baseurl} (`_headers.canonical_header_name`:
+    # lowercase-with-dashes; `endpoint` is the path the probe hit, the SAME path
+    # string the Endpoint identity carries) with the value and direction as
+    # PROPS and an inbound HAS_HEADER edge from the BaseURL:
     # (BaseURL)-[:HAS_HEADER]->(Header). The canonical rule is what makes an
-    # httpx `content_type` MERGE with katana's wire-form `content-type`.
+    # httpx `content_type` MERGE with katana's wire-form `content-type`. The
+    # `date` header is never minted (wall-clock churn, not an endpoint fingerprint).
     line = (
         '{"url":"https://h.example.com","status_code":200,'
-        '"header":{"server":"nginx","content_type":"text/html","cf_ray":"abc123"}}\n'
+        '"header":{"server":"nginx","content_type":"text/html","cf_ray":"abc123",'
+        '"date":"Mon, 06 Oct 2026 00:00:00 GMT"}}\n'
     )
     deltas = parse(line)
 
     headers = [d for d in deltas if d.type == "Header"]
     by_name = {d.identity["name"]: d for d in headers}
-    assert set(by_name) == {"server", "content-type", "cf-ray"}
-    assert by_name["server"].identity == {"name": "server", "baseurl": "https://h.example.com"}
+    assert set(by_name) == {"server", "content-type", "cf-ray"}   # `date` dropped
+    assert by_name["server"].identity == {
+        "name": "server", "endpoint": "/", "baseurl": "https://h.example.com"}
     assert by_name["server"].props == {"value": "nginx", "direction": "response"}
     # Every minted Header is marked response-side: observed surface, never
     # replayed into requests (request headers come only from auth_context).
@@ -78,6 +83,36 @@ def test_parse_emits_headers_with_baseurl_edge():
     assert edge.dir == "in"
     assert edge.node_type == "BaseURL"
     assert edge.node_identity == {"url": "https://h.example.com"}
+
+
+def test_two_endpoints_one_baseurl_keep_their_own_headers():
+    """Operator ruling 2026-10-16: Header identity is {name, endpoint, baseurl},
+    so two endpoints under ONE BaseURL each carrying a same-named header mint TWO
+    Header nodes with their own values. Under the old {name, baseurl} identity the
+    second clobbered the first via MERGE - one node, one value."""
+    lines = (
+        '{"url":"https://h.example.com/a","status_code":200,'
+        '"header":{"content-type":"text/html"}}\n'
+        '{"url":"https://h.example.com/b","status_code":200,'
+        '"header":{"content-type":"application/json"}}\n'
+    )
+    deltas = parse(lines)
+    headers = [d for d in deltas if d.type == "Header"]
+    assert len(headers) == 2
+    assert {(h.identity["endpoint"], h.props["value"]) for h in headers} == {
+        ("/a", "text/html"), ("/b", "application/json")}
+    assert all(h.identity["baseurl"] == "https://h.example.com" for h in headers)
+
+
+def test_date_header_is_never_minted_case_insensitively():
+    # `Date` canonicalises to `date`; the canonical rule drops it, so a map with
+    # only `Date` + `Server` mints exactly one Header.
+    deltas = parse(
+        '{"url":"https://h.example.com","status_code":200,'
+        '"header":{"Date":"Mon, 06 Oct 2026 00:00:00 GMT","Server":"nginx"}}\n'
+    )
+    names = {d.identity["name"] for d in deltas if d.type == "Header"}
+    assert names == {"server"}
 
 
 def test_parse_no_headers_when_header_field_absent():
