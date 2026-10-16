@@ -26,9 +26,16 @@ def test_neo4j_constraints_applied():
     driver = wait_for(_driver, timeout=180)
     with driver.session() as s:
         init_schema(s)
-        names = {r["name"] for r in s.run("SHOW CONSTRAINTS YIELD name")}
+        keys = {
+            r["name"]: set(r["properties"] or [])
+            for r in s.run("SHOW CONSTRAINTS YIELD name, properties")
+        }
+    names = set(keys)
     assert "endpoint_unique" in names
     assert "observation_unique" in names
     assert "cve_unique" not in names
     assert "vulnerability_unique" not in names
+    # The identity reconcile (2026-10-16) must leave the Header key set on the
+    # endpoint-scoped identity, never a stale (name, value, baseurl) one.
+    assert keys["header_unique"] == {"name", "endpoint", "baseurl", "project_id"}
     driver.close()
