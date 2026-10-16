@@ -85,4 +85,23 @@ The target environment is a parameter: attach to a reachable target, or run a lo
 
 ## Ontology decisions (W1.0 answers)
 
-Pending.
+- Q1, domain: a domain name never changes - real targets keep theirs.
+  In a benchmarking setting this requires the minted domain alias to be created consistently per target.
+  The current eval system does not do this; recorded as lack L-1 below.
+  The `domain` value is the target's stable canonical domain (for a benchmark target, its identity, for example `wordpress`), never the per-run synthetic Host.
+- Q2, journeys: `journeys: [{name, steps: [str]}]`; at least 2 journeys, 3+ steps each; every step names at least one concrete surface part (route, form, menu entry, page navigation) and the activated component(s) by their KB identity.
+- Q3, budget: the 250-word cap covers the whole Overview content and is enforced at every checkpoint: the creator (self-check), the critic (criteria), and the deterministic validator (hard count).
+  The creator and the critic are LLM checks; they must both actively verify the cap.
+- Q4, reasoning text: every site that dumps the L1 units inventory or the L1 graph into a prompt is prepended with the overview content, rendered cleanly without formatting noise.
+  Sites: assigner `_user_prompt`, mechanism typist `_reflection_prompt`, curation `_curation_prompt` (new prepend), sweep `stale_ownership_prompt` (new prepend).
+  The in-system bootstrap message is the creation pass (no overview exists yet) and its mechanism is being retired; it keeps its current shape.
+- Q5, KB format: the least complex, most structurally reliable parse wins; the ephemeral KB format itself is not a concern.
+  Decision: a fenced YAML block under `## Overview`, read with `yaml.safe_load`; legacy prose stays accepted (mapped to `description`).
+- Q6, assessment framework: extensive - rubric across all artifact families (Overview, L1 surface, auth bundle, cross-artifact consistency, graph loadability), ordinal scales with explicit anchors, per-target and portfolio metrics, deterministic checks plus an LLM assessor; lives in `tools/bootstrap/assessment/`.
+- Q7, e2e artifacts: the fresh from-scratch artifacts replace the committed 8-target set on the W2 branch, gated by the validator and the assessment; auth bundles and skills stay out of git.
+
+## Recorded lacks
+
+- L-1, minted domain consistency: the eval front mints a per-run-unique synthetic Host (`eval/orchestrator/routing.py`: `synthetic_host` returns `t-<short>.target` per TargetRun).
+  A stable domain per target is required for the Overview `domain` to be meaningful and for canonical journeys to hold across runs.
+  Handle in the W2.1 dependency audit: the minted alias must be created consistently per target (fix or follow-up ticket).
