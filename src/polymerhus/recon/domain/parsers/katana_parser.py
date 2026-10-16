@@ -18,7 +18,10 @@ Pure, deterministic, tolerant of malformed/missing-key lines - never raises.
 from urllib.parse import urljoin
 
 from polymerhus.recon.domain.noise_filter import classify_profile
-from polymerhus.recon.domain.parsers._headers import canonical_header_name
+from polymerhus.recon.domain.parsers._headers import (
+    canonical_header_name,
+    is_dropped_header,
+)
 from polymerhus.recon.domain.parsers._jsonlines import iter_json_dicts, safe_str
 from polymerhus.recon.domain.parsers._urls import url_to_deltas
 from polymerhus.recon.domain.types import AssetDelta, Edge
@@ -81,22 +84,35 @@ def parse(stdout: str) -> list[AssetDelta]:
         # same nodes regardless of which one discovered them.
         if url_deltas:
             baseurl_identity = url_deltas[0].identity
+            # The path THIS transaction hit - the same path its Endpoint
+            # identity carries (`url_deltas[1]`) - so a Header is scoped to the
+            # endpoint that returned it.
+            endpoint_path = url_deltas[1].identity["path"]
             if response_headers:
                 # Same structural contract as httpx_parser: response headers
                 # carry direction="response" (observed surface, never replayed
-                # into requests - see the httpx_parser seam note). The canonical
-                # name rule is shared too (`_headers.py`), so a Header observed by
-                # katana and by httpx MERGEs onto one node.
+                # into requests - see the httpx_parser seam note) and are keyed
+                # on {name, endpoint, baseurl}, so two endpoints' same-named
+                # headers no longer collide while a re-crawled endpoint's headers
+                # still collapse. The binding stays the source BaseURL - a
+                # per-endpoint header edge is never observed, so none is invented.
+                # The canonical name rule is shared too (`_headers.py`), so a
+                # Header observed by katana and by httpx MERGEs onto one node; the
+                # `date` response header is dropped by the same shared rule.
                 for name, value in response_headers.items():
                     if not name or not isinstance(name, str):
                         continue
                     canonical = canonical_header_name(name)
-                    if not canonical:
+                    if not canonical or is_dropped_header(canonical):
                         continue
                     deltas.append(
                         AssetDelta(
                             type="Header",
-                            identity={"name": canonical, "baseurl": baseurl_identity["url"]},
+                            identity={
+                                "name": canonical,
+                                "endpoint": endpoint_path,
+                                "baseurl": baseurl_identity["url"],
+                            },
                             props={"value": str(value), "direction": "response"},
                             edges=[
                                 Edge(

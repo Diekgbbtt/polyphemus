@@ -52,6 +52,7 @@ _Avoid_: probing a foreign origin; reading a minted candidate as a witnessed fac
 **Parameter / Header**:
 Parameter nodes are the input-carrying atoms that hang off an Endpoint; they, not the Endpoint, express that a user-controllable input reaches a sink.
 Header nodes as minted today are RESPONSE headers (httpx `-irh` / katana `response.headers`), hung off their BaseURL via `HAS_HEADER` with `direction="response"` - observed surface, never replayed into requests.
+Their identity is `{name, endpoint, baseurl}` (the `endpoint` being the path that returned the header, the value a prop), and the `date` response header is never minted (operator ruling 2026-10-16).
 Request headers come only from the auth feed (the store-resolved account projection, serialised per tool into the `{auth_flags}` command slot solely for `use_auth` jobs); since #223 the material resolves lazily from the auth store via the account identifier bound into the pipeline state by the orchestrator (never the retired settings blob, D223-4 / D223-19); no code path reads `:Header` nodes to build a request, so a `Set-Cookie` value can never become a request `Cookie`.
 
 **Service (L0)**:

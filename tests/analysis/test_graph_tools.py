@@ -167,6 +167,19 @@ def test_contract_teaches_return_scalars_not_nodes():
     assert "properties(e) AS props" in GRAPH_VIEW_CONTRACT
 
 
+def test_schema_states_the_endpoint_scoped_header_identity():
+    """Operator ruling 2026-10-16: the graph_view schema must state the Header
+    identity as {name, endpoint, baseurl} with value/direction as PROPS - the same
+    keys `l0_stream.L0_IDENTITY_KEYS` declares, never in drift."""
+    from polymerhus.analysis.l0_stream import L0_IDENTITY_KEYS
+
+    assert "Header (name/endpoint/baseurl" in GRAPH_VIEW_CONTRACT
+    assert "value/direction" in GRAPH_VIEW_CONTRACT
+    # the retired value-in-identity form must be gone
+    assert "name/value/baseurl" not in GRAPH_VIEW_CONTRACT
+    assert L0_IDENTITY_KEYS["Header"] == ("name", "endpoint", "baseurl")
+
+
 def test_write_word_inside_a_string_literal_is_allowed():
     """FM-A: the analysis seam reuses the single-sourced strip - `CONTAINS
     'create'` is a legal path filter, not a write."""

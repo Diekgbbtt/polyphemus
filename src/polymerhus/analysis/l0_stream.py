@@ -38,7 +38,10 @@ L0_IDENTITY_KEYS: dict[str, tuple[str, ...]] = {
     "BaseURL": ("url",),
     "Endpoint": ("path", "method", "baseurl"),
     "Parameter": ("name", "position", "endpoint_path", "baseurl"),
-    "Header": ("name", "value", "baseurl"),
+    # Header identity is endpoint-scoped (operator ruling 2026-10-16): the value
+    # is a PROP, never an identity key, so two endpoints' same-named headers stay
+    # distinct while a re-read of one endpoint's headers still collapses.
+    "Header": ("name", "endpoint", "baseurl"),
     "Technology": ("name", "version"),
     "Certificate": ("subject_cn",),
     # A jsluice-mined Secret is L0 trust substrate; its identity is the value hash,

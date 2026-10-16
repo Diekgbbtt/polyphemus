@@ -126,7 +126,7 @@ Two consequences, both material.
 
 First, a `surfaces_at` proposal whose identity the model shaped its own way is silently discarded, and `enrich()` REPORTS it as written.
 This is the same defect class as the `l0.label` failure that wrote zero of 114 sound assignments (`assigner.py:171-186`) - correctness must not depend on the model's formatting - so it gets the same treatment: repaired in the shaping seam, not instructed and hoped for.
-The gate rewrites each ref into the exact shape from `l0_stream.L0_IDENTITY_KEYS` (`Parameter{name, position, endpoint_path, baseurl}`, `Header{name, value, baseurl}`) by matching against the assets the chunk actually streamed, keyed on the parts a model reliably gets right (the parameter or header `name`, then the `endpoint_path` or `baseurl`), and drops what it cannot place.
+The gate rewrites each ref into the exact shape from `l0_stream.L0_IDENTITY_KEYS` (`Parameter{name, position, endpoint_path, baseurl}`, `Header{name, endpoint, baseurl}`) by matching against the assets the chunk actually streamed, keyed on the parts a model reliably gets right (the parameter or header `name`, then the `endpoint_path`/`endpoint` or `baseurl`), and drops what it cannot place.
 
 Second, the `enrich()` return value is not a trustworthy count of `surfaces_at` writes, and therefore not a trustworthy input to `WriteCounts.enrichment` or to `PassCensus`.
 The authoritative count of what this agent produced is its own census (section 8), which counts what it KEPT after the reference gate resolved every ref to a site it had seen.
@@ -204,9 +204,9 @@ The flat `data_items` list is unchanged, so no existing consumer of the inventor
 A new pure helper `owning_services(admitted, aggregations) -> dict[asset_ref, list[slug]]` joins each admitted asset to the Services that aggregate the Endpoint it hangs off.
 
 - A `Parameter` joins on `identity["endpoint_path"] == row.props["path"]` and `identity["baseurl"] == row.props["baseurl"]`, over the rows whose L0 labels include `Endpoint`.
-- A `Header` has no endpoint in its identity (`{name, value, baseurl}`), so it joins on `baseurl` alone and yields every Service owning any Endpoint on that origin.
+- A `Header` carries its endpoint in its identity (`{name, endpoint, baseurl}`), so it can join on `endpoint`/`baseurl` like a `Parameter`.
 
-The header join is deliberately coarse and is stated as such in the prompt, because a response header IS origin-scoped rather than endpoint-scoped; pretending otherwise would manufacture precision the surface does not carry.
+_(CORRECTION 2026-10-16: an earlier revision stated the Header identity as `{name, value, baseurl}` and joined on `baseurl` alone, arguing a response header is origin-scoped rather than endpoint-scoped. The operator overruled that. The Header identity is now endpoint-scoped (`{name, endpoint, baseurl}`) with the value as a prop, so the join above replaces the old coarse one, and two endpoints under one origin carrying a same-named header no longer merge.)_
 The prompt presents these candidates as the ONLY permitted values for `data_flows.service_slug`, and gate 4 enforces membership in the live inventory regardless of what the model returns.
 
 _SUPERSEDED (`batched-l1unit-first-adr.md` decision 16): under the batched L1-unit-first variant the prompt no longer renders this candidate join. `owning_services` and its `candidate_services` census counter were removed as dead (C-m1); the live Service inventory is the surviving validation surface._

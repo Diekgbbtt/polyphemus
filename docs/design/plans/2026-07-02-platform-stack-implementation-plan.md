@@ -399,7 +399,7 @@ CONSTRAINTS = [
     "CREATE CONSTRAINT baseurl_unique IF NOT EXISTS FOR (u:BaseURL) REQUIRE (u.url, u.project_id) IS UNIQUE",
     "CREATE CONSTRAINT endpoint_unique IF NOT EXISTS FOR (e:Endpoint) REQUIRE (e.path, e.method, e.baseurl, e.project_id) IS UNIQUE",
     "CREATE CONSTRAINT parameter_unique IF NOT EXISTS FOR (p:Parameter) REQUIRE (p.name, p.position, p.endpoint_path, p.baseurl, p.project_id) IS UNIQUE",
-    "CREATE CONSTRAINT header_unique IF NOT EXISTS FOR (h:Header) REQUIRE (h.name, h.value, h.baseurl, h.project_id) IS UNIQUE",
+    "CREATE CONSTRAINT header_unique IF NOT EXISTS FOR (h:Header) REQUIRE (h.name, h.endpoint, h.baseurl, h.project_id) IS UNIQUE",
     "CREATE CONSTRAINT certificate_unique IF NOT EXISTS FOR (c:Certificate) REQUIRE (c.subject_cn, c.project_id) IS UNIQUE",
     "CREATE CONSTRAINT technology_unique IF NOT EXISTS FOR (t:Technology) REQUIRE (t.name, t.version, t.project_id) IS UNIQUE",
     "CREATE CONSTRAINT secret_unique IF NOT EXISTS FOR (s:Secret) REQUIRE (s.value_hash, s.project_id) IS UNIQUE",

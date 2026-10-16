@@ -130,7 +130,7 @@ Tests shipped with the port: `tests/recon/crawl/test_crawl_auth.py`, `test_steel
 ## D7 - Header capture scope: not a prior forward decision, closing the loop
 
 Checked against this doc's own history and the design docs it superseded: **no prior forward-decision entry constrained `Header` capture scope.**
-The live behavior - `httpx` invoked with `-irh` (include-response-headers) and every response header persisted as a `Header{name, baseurl}` node with a `HAS_HEADER` edge from `BaseURL` (`agent/recon/parsers/httpx_parser.py:71-84`, `agent/recon/jobs.py:78` command template) - was a design choice made and shipped directly (commit `b783773`, per memory `recon-e2e-validation`), not a walk-back of an earlier narrower decision.
+The live behavior - `httpx` invoked with `-irh` (include-response-headers) and every response header persisted as a `Header{name, endpoint, baseurl}` node (identity endpoint-scoped since the operator ruling of 2026-10-16; the value is a prop) with a `HAS_HEADER` edge from `BaseURL` (`agent/recon/parsers/httpx_parser.py:71-84`, `agent/recon/jobs.py:78` command template) - was a design choice made and shipped directly (commit `b783773`, per memory `recon-e2e-validation`), not a walk-back of an earlier narrower decision.
 Recorded here only to close out the brief's question, not because there is an open deferral: **all headers are captured today; there is no pending forward-decision item for header scope.**
 
 ## D8 - Deterministic re-anchor repair for triager anchor errors (deferred, not built)

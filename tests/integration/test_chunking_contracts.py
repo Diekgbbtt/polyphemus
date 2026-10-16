@@ -287,8 +287,12 @@ def test_C28_baseurl_anchored_observation_rides_via_its_endpoints_parent():
 # once the accumulated families cross the SOFT target, so a family is atomic and
 # chunks follow the graph, never an array position.
 
-def _hdr(name, baseurl=BU):
-    return AssetDelta(type="Header", identity={"name": name, "baseurl": baseurl})
+def _hdr(name, baseurl=BU, endpoint="/"):
+    # Operator ruling 2026-10-16: Header identity is {name, endpoint, baseurl},
+    # the value being a prop. The default endpoint `/` keeps these fixtures'
+    # per-transaction repeats collapsing onto one identity.
+    return AssetDelta(
+        type="Header", identity={"name": name, "endpoint": endpoint, "baseurl": baseurl})
 
 
 def _tech(name, baseurl=BU):
@@ -379,22 +383,23 @@ def test_D5_parameters_ride_their_endpoints_bucket_parent_first():
 
 def test_D6_katana_shaped_stream_collapses_to_one_cohesive_chunk():
     """The arm H regression: 30 crawled transactions of one host, each re-emitting
-    the BaseURL, 8 response headers and one Technology, plus a gated `.js`
+    the BaseURL, its response headers and one Technology, plus a gated `.js`
     Endpoint. The positional builder produced 12 chunks of ~144k chars; the
-    family builder produces ONE chunk of the 10 unique assets."""
+    family builder produces ONE chunk of the 9 unique assets. (`date` is absent:
+    the parser never mints it - operator ruling 2026-10-16.)"""
     assets = []
     for i in range(30):
         assets.append(_asset("BaseURL", url=BU))
         assets.append(_ep(f"/assets/chunk{i}.js"))
-        for name in ("content-type", "content-length", "date", "server", "etag",
+        for name in ("content-type", "content-length", "server", "etag",
                      "cache-control", "expires", "connection"):
             assets.append(_hdr(name))
         assets.append(_tech("Nginx:1.31.6"))
     (chunk,) = chunks_for_job(JOB, assets)
-    assert len(chunk.assets) == 10
+    assert len(chunk.assets) == 9
     assert chunk.assets[0].type == "BaseURL"      # the host anchor leads its family
     assert {a.type for a in chunk.assets} == {"BaseURL", "Header", "Technology"}
-    assert sum(1 for a in chunk.assets if a.type == "Header") == 8
+    assert sum(1 for a in chunk.assets if a.type == "Header") == 7
 
 
 def test_D7_unattached_assets_keep_their_own_family_and_still_stream():
