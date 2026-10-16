@@ -429,6 +429,11 @@ def derive_consumption_set(
     """Derive one job's pod-input asset list from its read-back population.
 
     Stages (fixed order, each gated on its option):
+      0. `skip_external` - drop every asset carrying `origin_scope == "external"`:
+         an Endpoint or BaseURL the chaining module marked as foreign-origin (a
+         foreign literal in a bundle, or a foreign-chained candidate). This is the
+         no-probe enforcement - an active phase must never send traffic to a
+         foreign origin (operator 2026-10-16). A no-op before any marker exists.
       1. `drop_malformed` - exclude paths the curator gate classifies as
          JS-concat/template junk (`noise_filter.is_malformed_concat_path`,
          called - never copied - per P3), preprocess-side so no pod is ever
@@ -459,6 +464,13 @@ def derive_consumption_set(
          `none` (raw 1:1 assets, e.g. arjun: still one pod per endpoint).
     """
     items = list(assets or [])
+
+    if consumption.skip_external:
+        # No-probe enforcement (operator 2026-10-16): a foreign-origin record or
+        # a foreign-chained candidate carries `origin_scope == "external"`; drop
+        # it (Endpoint AND BaseURL shapes both expose the prop) so no active
+        # phase ever sends traffic to a foreign origin.
+        items = [a for a in items if a.get("origin_scope") != "external"]
 
     if consumption.drop_malformed:
         from polymerhus.recon.domain.noise_filter import is_malformed_concat_path

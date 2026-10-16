@@ -55,6 +55,7 @@ def test_consumption_defaults_are_noop():
     assert opts.drop_malformed is False
     assert opts.order_restapi_first is False
     assert opts.pack == "none"
+    assert opts.skip_external is False
 
 
 def test_legacy_dispatch_flags_are_views_of_consumption():
@@ -504,3 +505,50 @@ def test_derive_drops_assets_with_no_derivable_baseurl():
         max_pods=20, set_cap=500,
     )
     assert out == [{"batch": ["https://h/real"]}]
+
+
+# --- no-probe enforcement: skip_external (operator ruling 2026-10-16) -----------
+# Active phases must never send traffic to an EXTERNAL-marked asset: the
+# chaining module marks foreign-origin records and foreign-chained candidates
+# `origin_scope: "external"` (absent means target), and the consumption stage
+# drops them so no httpx/kiterunner/arjun/... probe reaches a foreign origin.
+
+def test_derive_skip_external_drops_endpoint_and_baseurl_assets():
+    assets = [
+        _ep("/keep"),
+        _ep("/drop", origin_scope="external"),  # external Endpoint asset
+        {  # external BaseURL asset (ffuf consumes BaseURLs)
+            "url": "https://ext.example.com/", "baseurl": "https://ext.example.com",
+            "path": "/", "origin_scope": "external",
+        },
+    ]
+    out = batching.derive_consumption_set(
+        assets, consumption=ConsumptionOptions(skip_external=True),
+        max_pods=20, set_cap=500,
+    )
+    assert [a.get("path") for a in out] == ["/keep"]
+
+
+def test_derive_skip_external_off_keeps_marked_assets():
+    assets = [_ep("/mark", origin_scope="external")]
+    out = batching.derive_consumption_set(
+        assets, consumption=ConsumptionOptions(), max_pods=20, set_cap=500,
+    )
+    assert [a["path"] for a in out] == ["/mark"]
+
+
+def test_derive_skip_external_applies_before_batching():
+    assets = [_ep("/a"), _ep("/b", origin_scope="external")]
+    out = batching.derive_consumption_set(
+        assets, consumption=JOBS["arjun"].consumption,
+        max_pods=20, set_cap=500,
+    )
+    assert _batched_urls(out) == ["https://h/a"]
+
+
+def test_consuming_jobs_opt_into_skip_external():
+    # Every job that consumes Endpoint/BaseURL and makes requests opts in -
+    # a no-op before markers exist, and the safe default on a targeted re-run.
+    for name in ("httpx_reprofile", "kiterunner", "arjun", "graphql-cop",
+                 "jsluice", "webpack_chunks", "katana", "ffuf", "steel_crawl"):
+        assert JOBS[name].consumption.skip_external is True, name

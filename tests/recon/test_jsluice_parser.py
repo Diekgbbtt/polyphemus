@@ -63,6 +63,56 @@ def test_parse_plain_entry_has_no_chaining_props():
     endpoint = next(d for d in deltas if d.type == "Endpoint")
     assert "chained_prefix" not in endpoint.props
     assert "chained_from" not in endpoint.props
+    assert "origin_scope" not in endpoint.props
+    baseurl = next(d for d in deltas if d.type == "BaseURL")
+    assert "origin_scope" not in baseurl.props
+
+
+def test_parse_foreign_chained_record_flows_provenance_and_marker():
+    """A FOREIGN chained record (jsluice_scan re-mints a literal under an
+    absolute-URL `baseURL`) flows its provenance to the Endpoint props AND the
+    `origin_scope: "external"` no-probe marker to BOTH the Endpoint and the
+    BaseURL delta (operator 2026-10-16)."""
+    line = json.dumps(
+        {
+            "url": "https://api.comfy.org/login",
+            "method": "POST",
+            "base_url": "https://api.comfy.org",
+            "source_url": "https://h.example.com/static/js/app.js",
+            "chained_prefix": "https://api.comfy.org",
+            "chained_from": "https://h.example.com/login",
+            "origin_scope": "external",
+        }
+    )
+    deltas = parse(line)
+    endpoint = next(d for d in deltas if d.type == "Endpoint")
+    assert endpoint.identity == {
+        "path": "/login",
+        "method": "POST",
+        "baseurl": "https://api.comfy.org",
+    }
+    assert endpoint.props["chained_prefix"] == "https://api.comfy.org"
+    assert endpoint.props["chained_from"] == "https://h.example.com/login"
+    assert endpoint.props["origin_scope"] == "external"
+    # the foreign origin's BaseURL node is marked too (ffuf consumes BaseURLs)
+    baseurl = next(d for d in deltas if d.type == "BaseURL")
+    assert baseurl.identity == {"url": "https://api.comfy.org"}
+    assert baseurl.props["origin_scope"] == "external"
+
+
+def test_parse_foreign_literal_without_chaining_still_marked_external():
+    """An absolute foreign literal in a bundle (record origin differs from the
+    scanned origin) is marked `external` even though it carries no chaining
+    provenance."""
+    line = json.dumps(
+        {"url": "https://other.example.com/x", "origin_scope": "external"}
+    )
+    deltas = parse(line)
+    endpoint = next(d for d in deltas if d.type == "Endpoint")
+    assert endpoint.props["origin_scope"] == "external"
+    assert "chained_prefix" not in endpoint.props
+    baseurl = next(d for d in deltas if d.type == "BaseURL")
+    assert baseurl.props["origin_scope"] == "external"
 
 
 def test_endpoint_has_incoming_baseurl_edge():

@@ -23,12 +23,23 @@ the same origin's bundles (`baseURL: "/api"`, or a joined segment like
 literal reveals. The batch grouping (batching.build_batches) keeps one origin's
 bundles in one pod so this join is deterministic.
 
+The chaining has TWO tiers, applied in failover order (operator 2026-10-16):
+target-origin path-prefix chaining above comes FIRST; a literal that produced no
+target-origin candidate is then re-minted under a FOREIGN absolute base the batch
+discovered (`baseURL: "https://api.comfy.org"` + `/login` -> the full foreign
+URL). Foreign candidates are emitted LAST, their `base_url` is the foreign origin
+(the graph gets the foreign BaseURL node and the URL streams for adjacent-service
+reasoning), and BOTH the foreign candidate and any record whose own origin differs
+from the scanned origin carry `origin_scope: "external"` (absent means target) -
+the no-probe marker the consumption stage filters on.
+
 Every emitted line is jsluice's own `urls`/`secrets` JSONL, annotated with the
 bundle origin as `base_url` and the scanned resource as `source_url` so
 `jsluice_parser` anchors recovered `Secret`s (and endpoints) to the right
 `BaseURL`. Stdout is therefore exactly what
 `polymerhus.recon.domain.parsers.jsluice_parser.parse` already ingests
-(chained records add `chained_prefix`/`chained_from` keys the parser props).
+(chained records add `chained_prefix`/`chained_from`/`origin_scope` keys the
+parser props).
 
 Replicates the identification/filtering/extraction behavior of the operator's
 reference `secret_scanner.py` (spec, not a dependency). Pure helpers plus a
@@ -60,9 +71,15 @@ _NOISE_EXT_RE = re.compile(r"\.(css|scss|png|jpg|jpeg|gif|svg|map)$", re.IGNOREC
 # `/logs/raw` literal into `/internal/logs/raw`. Two conservative shapes:
 # a static `baseURL` config, and a path string JOINED as a segment
 # (`+ "/internal" +`). Absolute-URL bases (`baseURL:"https://api.comfy.org"`)
-# are deliberately not captured - chaining them would mint cross-origin
-# endpoints, outside the scanned origin's surface.
+# are NOT path prefixes; they are captured separately by `_ABSOLUTE_BASEURL_RE`
+# and chained as the latest failover (operator 2026-10-16).
 _BASEURL_CONFIG_RE = re.compile(r"""baseURL\s*[:=]\s*["'`](/[^"'`\s]{0,63})["'`]""")
+# Absolute-URL `baseURL` configs - a FOREIGN origin a bundle points its request
+# base at (`axios.create({baseURL:"https://api.comfy.org"})`). Captured in their
+# OWN, separately-capped list so a foreign base never evicts a target path
+# prefix from `_MAX_BASE_PREFIXES`; chained only when a literal produced no
+# target-origin candidate, and emitted last.
+_ABSOLUTE_BASEURL_RE = re.compile(r"""baseURL\s*[:=]\s*["'`](https?://[^"'`\s]{0,255})["'`]""")
 _JOINED_PREFIX_RE = re.compile(r"""\+\s*["'`](/[A-Za-z][A-Za-z0-9_\-/]{0,31})["'`]\s*\+""")
 _PREFIX_SHAPE_RE = re.compile(r"/[A-Za-z0-9_\-/]+")
 # A chained candidate ending in one of these is the literal of a STATIC ASSET
@@ -107,6 +124,36 @@ def extract_base_prefixes(text: str) -> list[str]:
     return out[:_MAX_BASE_PREFIXES]
 
 
+def _clean_foreign_base(raw: str) -> str | None:
+    """Normalize one captured absolute-URL base; `None` when it is not a usable
+    foreign origin (no http/https scheme or no host). Strips a trailing `/` so
+    chaining never doubles up, and keeps any base path (`.../v1`)."""
+    b = (raw or "").strip().rstrip("/")
+    if not b:
+        return None
+    try:
+        p = urlparse(b)
+    except ValueError:
+        return None
+    if p.scheme not in ("http", "https") or not p.netloc:
+        return None
+    return b
+
+
+def extract_foreign_bases(text: str) -> list[str]:
+    """Ordered, deduped, capped (`_MAX_BASE_PREFIXES`) runtime FOREIGN bases -
+    absolute-URL `baseURL` configs (`baseURL:"https://api.comfy.org"`). Captured
+    in a list separate from `extract_base_prefixes` so the path-prefix cap always
+    keeps the target-origin prefixes (path prefixes are extracted first); foreign
+    chaining is the latest failover and its candidates are emitted last."""
+    out: list[str] = []
+    for m in _ABSOLUTE_BASEURL_RE.finditer(text or ""):
+        b = _clean_foreign_base(m.group(1))
+        if b and b not in out:
+            out.append(b)
+    return out[:_MAX_BASE_PREFIXES]
+
+
 def _resource_dir(rec: dict) -> str:
     """Directory of the resource a literal was scanned in (`source_url`), or
     `/` when unknown - the base a bundle-relative literal resolved under."""
@@ -123,22 +170,23 @@ def _resource_dir(rec: dict) -> str:
     return path.rsplit("/", 1)[0] or "/"
 
 
-def _chained_record(origin: str, prefix: str, rec: dict) -> dict | None:
-    """Re-mint one jsluice `urls` record under a discovered runtime prefix -
-    the same path one base further out (`/login` -> `/api/login`). The ORIGINAL
-    literal is never replaced (`/login` is also a real Vue route), so this is an
-    additive candidate the reprofile probe pass arbitrates. `None` when there is
-    nothing to mint:
+def _chainable_target(origin: str, rec: dict) -> tuple[object, str] | None:
+    """The target-origin root-relative literal a chaining pass can re-mint, or
+    `None` when there is nothing to mint. Shared by the path-prefix and
+    foreign-base passes:
 
-    - foreign-origin record, root path, or a path that already carries the
-      prefix;
+    - foreign-origin record (its own origin differs from the scanned origin);
+    - the root path `/`;
     - a static-asset path (extension filter above);
     - a literal that resolved UNDER the resource's own directory: it is an
-      asset/module reference (`import "./locales/en/main.json"`), not a
-      request path. Only root-relative literals are runtime-prefix
-      candidates - exactly the `/login`-under-`baseURL:"/api"` shape. Bundles
-      served from the root directory keep every literal (no discriminator
-      exists there)."""
+      asset/module reference (`import "./locales/en/main.json"`), not a request
+      path. Only root-relative literals are runtime-base candidates - exactly
+      the `/login`-under-`baseURL` shape. Bundles served from the root keep
+      every literal (no discriminator exists there).
+
+    Directory-like / trailing-slash literals are NOT excluded (operator
+    2026-10-16): the base path stays systematically identifiable. Returns the
+    parsed URL and its path on success."""
     url = rec.get("url")
     if not isinstance(url, str) or not url:
         return None
@@ -149,14 +197,27 @@ def _chained_record(origin: str, prefix: str, rec: dict) -> dict | None:
     if not p.netloc or f"{p.scheme}://{p.netloc}" != origin:
         return None
     path = p.path or "/"
-    if path == "/" or path.endswith("/") or _STATIC_ASSET_EXT_RE.search(path):
-        return None
-    if path == prefix or path.startswith(prefix + "/"):
+    if path == "/" or _STATIC_ASSET_EXT_RE.search(path):
         return None
     resource_dir = _resource_dir(rec)
     if resource_dir != "/" and (
         path == resource_dir or path.startswith(resource_dir + "/")
     ):
+        return None
+    return p, path
+
+
+def _chained_record(origin: str, prefix: str, rec: dict) -> dict | None:
+    """Re-mint one jsluice `urls` record under a discovered runtime PATH prefix -
+    the same path one base further out (`/login` -> `/api/login`). The ORIGINAL
+    literal is never replaced (`/login` is also a real Vue route), so this is an
+    additive candidate the reprofile probe pass arbitrates. `None` when the
+    shared guards reject the literal, or when it already carries the prefix."""
+    got = _chainable_target(origin, rec)
+    if got is None:
+        return None
+    p, path = got
+    if path == prefix or path.startswith(prefix + "/"):
         return None
     target = f"{p.scheme}://{p.netloc}{prefix}{path}"
     if p.query:
@@ -165,8 +226,40 @@ def _chained_record(origin: str, prefix: str, rec: dict) -> dict | None:
         "url": target,
         "method": rec.get("method") or "",
         "chained_prefix": prefix,
-        "chained_from": url,
+        "chained_from": rec.get("url"),
     }
+    for key in ("queryParams", "bodyParams"):
+        value = rec.get(key)
+        if isinstance(value, list) and value:
+            out[key] = list(value)
+    return out
+
+
+def _foreign_chained_record(origin: str, foreign_base: str, rec: dict) -> dict | None:
+    """Re-mint one target-origin root-relative literal under a FOREIGN absolute
+    base: `baseURL:"https://api.comfy.org"` + `/login` -> the full foreign URL.
+    The record's `base_url` is the foreign ORIGIN (so the graph gets the foreign
+    `BaseURL` node and the full URL streams for adjacent-service reasoning),
+    `chained_prefix` is the foreign base string, and `origin_scope` is
+    `"external"` - the marker that keeps active phases from probing it. `None`
+    when the shared guards reject the literal."""
+    got = _chainable_target(origin, rec)
+    if got is None:
+        return None
+    p, path = got
+    base_origin = bundle_origin(foreign_base)
+    target = f"{foreign_base}{path}"
+    if p.query:
+        target = f"{target}?{p.query}"
+    out: dict = {
+        "url": target,
+        "method": rec.get("method") or "",
+        "chained_prefix": foreign_base,
+        "chained_from": rec.get("url"),
+        "base_url": base_origin,
+    }
+    if base_origin and base_origin != origin:
+        out["origin_scope"] = "external"
     for key in ("queryParams", "bodyParams"):
         value = rec.get(key)
         if isinstance(value, list) and value:
@@ -282,6 +375,12 @@ def _emit_jsluice(
             obj.setdefault("base_url", origin)
             obj.setdefault("source_url", source_url)
             if mode == "urls" and isinstance(obj.get("url"), str) and obj["url"]:
+                # A record whose OWN origin differs from the scanned origin is
+                # external surface (an absolute foreign literal in the bundle):
+                # mark it so active phases never probe it (operator 2026-10-16).
+                rec_origin = bundle_origin(obj["url"])
+                if rec_origin and rec_origin != origin:
+                    obj["origin_scope"] = "external"
                 url_records.append(obj)
             emit(json.dumps(obj))
     return url_records
@@ -295,19 +394,35 @@ def scan_bundles(bundle_urls, *, fetch, run_jsluice, emit) -> None:
     batch, every buffered root-relative literal of an origin is re-minted once
     per runtime path prefix the batch discovered in that origin's bundles
     (`chained_prefix` on the record) - the cross-bundle join per-bundle
-    scanning alone cannot do. Dedups processed sourcemap URLs and
-    content-hash-dedups source bodies so the same map / identical source
-    across bundles is scanned once."""
+    scanning alone cannot do. A literal that produced NO target-origin candidate
+    is then re-minted under a foreign absolute base the batch discovered
+    (`origin_scope: "external"`); those foreign candidates are emitted last.
+    Dedups processed sourcemap URLs and content-hash-dedups source bodies so the
+    same map / identical source across bundles is scanned once."""
     processed_maps: set[str] = set()
     seen_source_hashes: set[str] = set()
     prefixes_by_origin: dict[str, list[str]] = {}
+    foreign_bases_by_origin: dict[str, list[str]] = {}
     pending: list[tuple[str, dict]] = []
 
     def note_prefixes(text: str, origin: str) -> None:
+        # Path prefixes are noted FIRST (their own cap always keeps the target
+        # prefixes); foreign absolute bases are noted into a separate, equally
+        # capped bucket so they can never evict a path prefix. A same-origin
+        # ABSOLUTE base is really a path prefix, so it joins the target bucket.
         bucket = prefixes_by_origin.setdefault(origin, [])
         for prefix in extract_base_prefixes(text):
             if prefix not in bucket and len(bucket) < _MAX_BASE_PREFIXES:
                 bucket.append(prefix)
+        bases = foreign_bases_by_origin.setdefault(origin, [])
+        for base in extract_foreign_bases(text):
+            if bundle_origin(base) == origin:
+                p = _clean_base_prefix(urlparse(base).path or "")
+                if p and p not in bucket and len(bucket) < _MAX_BASE_PREFIXES:
+                    bucket.append(p)
+                continue
+            if base not in bases and len(bases) < _MAX_BASE_PREFIXES:
+                bases.append(base)
 
     for burl in bundle_urls:
         origin = bundle_origin(burl)
@@ -358,17 +473,35 @@ def scan_bundles(bundle_urls, *, fetch, run_jsluice, emit) -> None:
             )
 
     seen_chained: set[str] = set()
+
+    def _emit_chained(origin: str, chained: dict | None, rec: dict) -> bool:
+        if chained is None or chained["url"] in seen_chained:
+            return False
+        seen_chained.add(chained["url"])
+        chained.setdefault("base_url", origin)
+        source_url = rec.get("source_url")
+        if isinstance(source_url, str) and source_url:
+            chained.setdefault("source_url", source_url)
+        emit(json.dumps(chained))
+        return True
+
+    # Pass 1: target-origin path-prefix chaining (prioritised). A record that
+    # produced any target candidate is NOT foreign-chained (failover order).
+    foreign_pending: list[tuple[str, dict]] = []
     for origin, rec in pending:
+        produced_target = False
         for prefix in prefixes_by_origin.get(origin, ()):
             chained = _chained_record(origin, prefix, rec)
-            if chained is None or chained["url"] in seen_chained:
-                continue
-            seen_chained.add(chained["url"])
-            chained.setdefault("base_url", origin)
-            source_url = rec.get("source_url")
-            if isinstance(source_url, str) and source_url:
-                chained.setdefault("source_url", source_url)
-            emit(json.dumps(chained))
+            if chained is not None:
+                produced_target = True
+                _emit_chained(origin, chained, rec)
+        if not produced_target:
+            foreign_pending.append((origin, rec))
+
+    # Pass 2: foreign-base chaining - the latest failover, emitted LAST.
+    for origin, rec in foreign_pending:
+        for base in foreign_bases_by_origin.get(origin, ()):
+            _emit_chained(origin, _foreign_chained_record(origin, base, rec), rec)
 
 
 # --------------------------------------------------------------------------- #

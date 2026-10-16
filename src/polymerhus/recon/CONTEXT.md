@@ -38,7 +38,16 @@ The evidence-derived API-root prefix a fuzzer is scoped to, computed by `api_sco
 The static `{<chunk-id>: "<content-hash>"}` object the webpack runtime bundle carries, naming the lazy-loaded code-split chunks a SPA fetches only at route navigation.
 It is resolved by the `webpack_chunks` Job, which fetches the crawled `.js`/`.mjs` bundles (the same consumption set and batch seam as jsluice), mints each resolved `<bundle-dir>/<id>.<hash>.js` chunk as an Endpoint (`source="webpack"`), and sits in its own phase before jsluice so the following jsluice pass scans the chunk bodies - the browser is never needed because the map is static JSON.
 _Avoid_: treating chunk resolution as a crawl (no JS executes); reading the map in katana (it does not fetch and parse the runtime).
-_Deferred_: the shell's `defaults.baseURL="/api"` prefix on the chunks' relative API literals is a separate concern (`recon-webpack-chunk-map-185-adr.md`).
+_Amendment_ (2026-10-16): the shell's `defaults.baseURL` prefix on the chunks' relative API literals is now resolved by the jsluice phase's **Runtime baseURL chaining**; the deferral is closed.
+
+**Runtime baseURL chaining** (the jsluice phase):
+The jsluice client-code scanning phase's post-batch join that re-mints a bundle's root-relative URL literals under the runtime base the same origin's bundles declare, so `/login` under `baseURL: "/api"` also appears as `/api/login`.
+Its input relative literals are produced by katana (`-jc`), jsluice, the `webpack_chunks` resolution, and the Steel `js_urls`; the Endpoints it mints are consumed by `httpx_reprofile`, `kiterunner`, and `arjun`, and `ffuf` consumes the chained BaseURLs.
+Two tiers in failover order: target-origin PATH-prefix chaining comes first (`baseURL: "/api"`, a joined `api_base+"/internal"+x` segment); a literal that produced NO target-origin candidate is then re-minted under a FOREIGN absolute base (`baseURL: "https://api.comfy.org"` + `/login` -> the full foreign URL), whose candidates are emitted last and whose `base_url` is the foreign origin, so the graph gets the foreign BaseURL node and the full URL streams for adjacent-service reasoning.
+Provenance props: `chained_prefix` (the base string), `chained_from` (the original literal), and `origin_scope` (absent means target; `"external"` marks a foreign-origin record or a foreign-chained candidate).
+Its coupling seams to the asset pre/post-processing family (the SAME seams the `httpx_reprofile` asset processing uses) are: the batching pre-processing origin grouping (`build_batches` keeps one origin's bundles in one pod), the `_urls.url_to_deltas` mint (via `jsluice_parser` extra props - the Endpoint props and the BaseURL `origin_scope`), and the `curator` write (props ride `SET n += $props`).
+No probing: an external-marked asset is never actively requested - the consumption stage's `skip_external` option drops it for every requesting job (operator 2026-10-16).
+_Avoid_: probing a foreign origin; reading a minted candidate as a witnessed fact (the original literal is kept; chained candidates are additive and arbitrated by the reprofile probe pass).
 
 **Parameter / Header**:
 Parameter nodes are the input-carrying atoms that hang off an Endpoint; they, not the Endpoint, express that a user-controllable input reaches a sink.
@@ -120,7 +129,7 @@ _Avoid_: task, step.
 
 **Consumption set**:
 The deliberately-derived input set a Job is fanned out over - WHAT a job probes, as opposed to the probe itself.
-Declared per job by `JobSpec.consumption` and derived by the single composed `batching.derive_consumption_set` pipeline (malformed-path exclusion via the curator gate's predicate, route-cluster dedup to one representative per `(baseurl, method, path-template)`, restapi-first ordering, then pack into pod inputs).
+Declared per job by `JobSpec.consumption` and derived by the single composed `batching.derive_consumption_set` pipeline (external-marker exclusion - `skip_external` drops any asset carrying `origin_scope: "external"`, the no-probe enforcement; malformed-path exclusion via the curator gate's predicate; route-cluster dedup to one representative per `(baseurl, method, path-template)`; restapi-first ordering; then pack into pod inputs).
 The `pack` stage is the pod-shape choice: `none` (raw 1:1), `one_pod` (the whole set in one pod, #208), `scan_targets` (kiterunner API-root prefixes), or `batches` - the endpoint-reduce seam (first-party filter, exact-URL dedup, fingerprinted-basename dedup) that distributes the survivors across `<= MAX_PODS` batch pods. jsluice, webpack_chunks (#185) and arjun (#37) all ride `batches`: arjun's pod count is bounded rather than one pod per endpoint.
 Profile preference inside a consumption set is ORDERING only, never exclusion: a `webapp` endpoint is still probed, after `restapi` ones - the reprofile probe (with its request-shape adaptation, #208) decides what each endpoint IS.
 `MAX_JOB_ASSETS` is a ceiling over the deliberately-ordered set, not a relevance filter; a derivation failure degrades to the blunt capped 1:1 with a loud warning (fail-open), never a raised exception.

@@ -57,10 +57,14 @@ def _parse_url_entry(entry: dict) -> list[AssetDelta]:
     query_params = entry.get("queryParams")
     body_params = entry.get("bodyParams")
 
-    # Runtime-prefix chaining provenance (jsluice_scan's post-batch join): the
+    # Runtime-baseURL chaining provenance (jsluice_scan's post-batch join): the
     # record is the same literal re-minted under a discovered request-path
-    # prefix (`/login` -> `/api/login`), and the props carry both halves so the
-    # graph and the streamed analysis blocks show WHY the endpoint exists.
+    # prefix (`/login` -> `/api/login`) or, as the latest failover, under a
+    # foreign absolute base (`/login` -> `https://api.comfy.org/login`). The
+    # props carry both halves so the graph and the streamed analysis blocks show
+    # WHY the endpoint exists. `origin_scope: "external"` marks a foreign-origin
+    # record or a foreign-chained candidate; it rides BOTH the Endpoint props and
+    # the BaseURL delta props so the consumption stage can drop it.
     extra: dict = {}
     chained_prefix = entry.get("chained_prefix")
     if isinstance(chained_prefix, str) and chained_prefix:
@@ -68,12 +72,17 @@ def _parse_url_entry(entry: dict) -> list[AssetDelta]:
     chained_from = entry.get("chained_from")
     if isinstance(chained_from, str) and chained_from:
         extra["chained_from"] = chained_from
+    baseurl_extra: dict | None = None
+    if entry.get("origin_scope") == "external":
+        extra["origin_scope"] = "external"
+        baseurl_extra = {"origin_scope": "external"}
 
     return url_to_deltas(
         url,
         method=method,
         source="jsluice",
         extra_endpoint_props=extra or None,
+        baseurl_extra_props=baseurl_extra,
         query_params=query_params if isinstance(query_params, list) else None,
         body_params=body_params if isinstance(body_params, list) else None,
     )
