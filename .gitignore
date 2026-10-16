@@ -92,3 +92,10 @@ eval/state/
 # runtime, never source. Without this an unguarded `git add -A` in the canonical
 # server checkout would commit live instance state and credentials.
 eval/instances/
+
+# The pre-eval data-dependency staging root: mirrors <data_root>/<project_id>/
+# and holds SECRET-BEARING auth artifacts (tokens, passwords) for every target.
+# Per-machine runtime, never source.
+eval/data-dependencies/
+# AuthContext artifacts are secrets wherever they are staged.
+eval/kbs/*/auth/
