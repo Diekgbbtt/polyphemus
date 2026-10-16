@@ -1,4 +1,12 @@
-# Assigner concretisation diagnosis - arm J comfyui vs white-jotter
+# Assigner concretisation diagnosis
+
+## Operator ruling addendum (2026-10-16)
+
+- The graph read step (graph_view) is REJECTED: a graph_view-capable assigner degraded quality in an earlier iteration, because it repeatedly queried the whole graph and its context grew vertically.
+- Instead the L1 graph is posted in the assigner's human message: service contracts, system descriptions, other relevant attributes, and the typed edges among them.
+- The posted graph updates progressively through the live inventory read on every dispatch, as the run concretises and specifies more linked systems.
+- Null-owner paths (honest `unresolvable` / `out_of_inventory` outcomes) are NOT implemented now.
+- They remain a future experiment direction only: an endpoint that is streamed but cannot be assigned is treated as an upstream filtering failure, not an assigner failure. - arm J comfyui vs white-jotter
 
 Date: 2026-10-16.
 Plan: `docs/design/plans/2026-10-16-failure-modes-diagnosis.md` (F7, operator item 5).
