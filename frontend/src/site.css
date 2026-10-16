@@ -375,6 +375,103 @@ button:focus-visible,
 
 /* --- the global live board (/live) ------------------------------------------- */
 
+/* --- the project page (/p/:projectId) ---------------------------------------- */
+
+/* One project, for itself - not a Target/Trial workspace. The blocks reuse the
+   live board's row and counter presentation so the two read alike. */
+.project-page {
+  max-width: 72rem;
+  margin: 0 auto;
+  padding: 2.5rem 1.25rem 4rem;
+  min-height: 100vh;
+}
+
+.project-page-header {
+  display: grid;
+  gap: 0.5rem;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.project-page-back {
+  margin: 0;
+  font-size: 13px;
+}
+
+.project-page-title {
+  margin: 0;
+  font-size: 1.6rem;
+  overflow-wrap: anywhere;
+}
+
+.project-page-id {
+  margin: 0;
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.project-page-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.project-block {
+  display: grid;
+  gap: 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1rem 1.1rem;
+  background: var(--surface);
+  margin-bottom: 1rem;
+}
+
+.project-block-title {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.project-block-muted {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.project-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 2rem;
+  margin: 0;
+}
+
+.project-facts div {
+  display: grid;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+.project-facts dt {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.project-facts dd {
+  margin: 0;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.project-fact-mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
 .live-page {
   max-width: 72rem;
   margin: 0 auto;

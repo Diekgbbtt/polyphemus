@@ -86,7 +86,7 @@ test("capturedAt is shown only when present", () => {
   expect(screen.getByText(/2024-05-05/)).toBeDefined()
 })
 
-test("the live GraphPage calls only the agent graph endpoint", async () => {
+test("the live GraphPage reads only the project's own sources", async () => {
   const calls: string[] = []
   globalThis.fetch = (async (input: unknown) => {
     calls.push(String(input))
@@ -96,7 +96,13 @@ test("the live GraphPage calls only the agent graph endpoint", async () => {
   render(<App />)
 
   await waitFor(() => expect(screen.getByText("Live project graph")).toBeDefined())
-  expect(calls).toEqual(["/projects/p1/graph"])
+  // The project's graph, its identity, its in-flight runs and its counters -
+  // everything keyed by project_id, and nothing else.
+  expect(new Set(calls)).toEqual(
+    new Set(["/projects", "/app-state", "/projects/p1/usage", "/projects/p1/graph"]),
+  )
+  // It never pretends to be a Trial: no captured graph, no resolved inventory.
   expect(calls.some((url) => url.includes("/project-graph"))).toBe(false)
+  expect(calls.some((url) => url.includes("/resolved-"))).toBe(false)
   window.history.pushState({}, "", "/")
 })

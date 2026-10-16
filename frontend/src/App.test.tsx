@@ -182,8 +182,13 @@ test("unassigned saved data merges raw-only dirs with live-only projects", async
   expect(within(section).getByText("orphan-project")).toBeDefined()
   expect(within(section).getByText("live-only")).toBeDefined()
   expect(within(section).queryByText("proj-comfyui")).toBeNull()
-  // No fabricated Trial link inside the diagnostic section.
-  expect(within(section).queryAllByRole("link")).toHaveLength(0)
+  // Each row opens the project's own page; no Target or Trial link is ever
+  // fabricated inside this diagnostic section.
+  const links = within(section).getAllByRole("link")
+  expect(links.map((link) => link.getAttribute("href")).sort()).toEqual([
+    "/p/live-only",
+    "/p/orphan-project",
+  ])
 })
 
 test("unassignedSavedData is empty when every project is proven", () => {

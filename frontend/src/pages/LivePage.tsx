@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react"
 import { Link } from "react-router-dom"
 import { getAppState, getProjectUsage } from "../api/client"
-import type { AppState, ProjectState, ProjectUsage } from "../api/types"
+import type { AppState, ProjectUsage } from "../api/types"
 import { projectPaths } from "../projectPaths"
+import { RUN_KINDS, activeRuns } from "../projectRuns"
 import { GlobalNav } from "./ProjectNav"
 
 // The board polls a bounded, read-only surface; 2.5s matches the Runs page.
@@ -10,45 +11,6 @@ const POLL_MS = 2500
 // Every read is bounded: a request that hangs is aborted and its slot freed so
 // the next update can retry, instead of wedging the board forever.
 const REQUEST_TIMEOUT_MS = 10_000
-
-const RUN_KINDS = ["recon", "analysis", "hunting"] as const
-type RunKind = (typeof RUN_KINDS)[number]
-
-// One normalized run row: every run class has its own id field and only recon
-// carries a liveness verdict, so the view reads this shape, not three.
-interface RunRow {
-  id: string
-  status: string
-  liveness: "live" | "stalled" | null
-  phase: number | null
-}
-
-// The active runs of one project, grouped by class. A class with no runs is
-// dropped entirely so a project shows only what is actually executing.
-export function activeRuns(project: ProjectState, kind: RunKind): RunRow[] {
-  if (kind === "recon") {
-    return project.recon.map((run) => ({
-      id: run.run_id,
-      status: run.status,
-      liveness: run.liveness,
-      phase: run.current_phase,
-    }))
-  }
-  if (kind === "analysis") {
-    return project.analysis.map((run) => ({
-      id: run.analysis_run_id,
-      status: run.status,
-      liveness: null,
-      phase: null,
-    }))
-  }
-  return project.hunting.map((run) => ({
-    id: run.hunting_run_id,
-    status: run.status,
-    liveness: null,
-    phase: null,
-  }))
-}
 
 // The current endpoint reports the project-wide context and output splits.
 export function usageTotals(usage: ProjectUsage): { input: number; output: number } {

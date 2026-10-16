@@ -5,7 +5,7 @@ import type { Project } from "../api/types"
 import { getSnapshot } from "../eval/client"
 import type { EvalSnapshot, UnassignedSavedData } from "../eval/types"
 import { formatClockTime, usePolledResource } from "../usePolledResource"
-import { targetPaths } from "../projectPaths"
+import { projectPaths, targetPaths } from "../projectPaths"
 import { GlobalNav } from "./ProjectNav"
 
 // The Target catalog: the snapshot's Targets, ordered deterministically. The
@@ -182,7 +182,8 @@ export function ProjectsPage() {
         <h2>Unassigned saved data</h2>
         <p className="unassigned-note">
           Saved project data with no Trial proving which Target it belongs to. It is
-          shown for diagnosis only and is never attributed to a Target.
+          never attributed to a Target; open one to read the graph, runs and token
+          counters the platform holds for that project itself.
         </p>
         {unassigned.length === 0 ? (
           <p className="projects-empty">No unassigned saved data.</p>
@@ -191,7 +192,12 @@ export function ProjectsPage() {
             {unassigned.map((entry) => (
               <li key={entry.project_id} className="project-entry">
                 <div className="project-entry-identity">
-                  <span className="project-entry-name eval-ref">{entry.project_id}</span>
+                  <Link
+                    to={projectPaths.live(entry.project_id)}
+                    className="project-entry-name eval-ref"
+                  >
+                    {entry.project_id}
+                  </Link>
                   <span className="project-entry-id">Unassigned</span>
                 </div>
                 <p className="project-entry-meta">
