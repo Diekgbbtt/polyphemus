@@ -444,6 +444,76 @@ button:focus-visible,
   font-size: 13px;
 }
 
+.project-block-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* The project's own Hunting/Skill tree: nested, always-open groups, each file
+   one line. No links - the Trial artifact views own the file detail. */
+.project-artifact-section + .project-artifact-section {
+  margin-top: 0.75rem;
+}
+
+.project-artifact-section-title {
+  margin: 0 0 0.35rem;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.project-artifact-groups,
+.project-artifact-entries {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.project-artifact-groups .project-artifact-groups {
+  margin-left: 0.9rem;
+}
+
+.project-artifact-group {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin: 0.35rem 0 0.15rem;
+}
+
+.project-artifact-group-label {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.project-artifact-group-count {
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.project-artifact-entry {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.15rem 0.75rem;
+  padding: 0.1rem 0 0.1rem 0.9rem;
+  font-size: 13px;
+}
+
+.project-artifact-path {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow-wrap: anywhere;
+}
+
+.project-artifact-meta {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
 .project-facts {
   display: flex;
   flex-wrap: wrap;

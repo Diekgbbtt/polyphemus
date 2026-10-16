@@ -38,7 +38,7 @@ from .artifacts import (
     ArtifactDownload,
     ArtifactLookupError,
 )
-from .resolved import TrialContext, is_safe_identifier
+from .resolved import ResolvedDataError, TrialContext, is_safe_identifier
 
 TRIAL_SNAPSHOT = "trial_snapshot"
 PROJECT_STORAGE = "project_storage"
@@ -55,6 +55,11 @@ REASON_IDENTITY_MISMATCH = "trial_identity_mismatch"
 REASON_PROJECT_MISMATCH = "project_id_mismatch"
 # A symlink, special file or out-of-root manifest is never read.
 REASON_MANIFEST_UNSAFE = "artifact_unsafe"
+
+# The HTTP detail for a project id that is not a safe path segment. A project
+# request names the project directly, so an unsafe one is a client error rather
+# than an unavailable inventory.
+INVALID_PROJECT_ID = "invalid_project_id"
 
 # The bounded manifest read: the bytes actually read, never a full read.
 MANIFEST_MAX_BYTES = 1024 * 1024
@@ -415,13 +420,47 @@ def _unavailable(
     )
 
 
-def inventory_response(
-    inventory: ResolvedInventory,
-    target_id: str,
-    target_run_id: str,
-    trial_id: str,
-) -> dict[str, Any]:
-    """The resolved inventory wire body (never carries a trusted root)."""
+def resolve_project_inventory(
+    project_data_root: str | Path | None,
+    project_id: str,
+    *,
+    files: FileStore,
+) -> ResolvedInventory:
+    """The project's own Hunting/Skill inventory, resolved from `project_id` alone.
+
+    There is no Trial context here - so there is no capture to prefer and no
+    instance eligibility to check - which leaves exactly the raw project-storage
+    read the per-Trial fallback performs: the same allowlist, the same validation
+    and the same coded failures. A project whose directory is simply absent is a
+    successful empty inventory, never an error; an unconfigured or unreadable
+    data root is an explicit `project_data_unavailable`.
+    """
+    if not is_safe_identifier(project_id):
+        raise ResolvedDataError(INVALID_PROJECT_ID, 400)
+    if not project_data_root or not files.is_dir(Path(project_data_root)):
+        return _unavailable(project_id, REASON_DATA_ROOT_UNAVAILABLE, None)
+    try:
+        collected = collect_project_artifacts(
+            project_data_root, project_id, files=files
+        )
+    except ProjectArtifactError as exc:
+        return _unavailable(project_id, exc.failure, None)
+    entries = _with_origin(
+        (artifact.as_manifest_entry() for artifact in collected), ORIGIN_CURRENT
+    )
+    return ResolvedInventory(
+        status="available",
+        source=PROJECT_STORAGE,
+        project_id=project_id,
+        root=Path(project_data_root) / project_id,
+        entries=entries,
+        reason=None,
+        fallback_reason=None,
+    )
+
+
+def _inventory_body(inventory: ResolvedInventory) -> dict[str, Any]:
+    """The inventory wire body for any scope (never carries a trusted root)."""
     body: dict[str, Any] = {
         "status": inventory.status,
         "source": inventory.source,
@@ -437,6 +476,22 @@ def inventory_response(
     else:
         body["reason"] = inventory.reason
     return body
+
+
+def inventory_response(
+    inventory: ResolvedInventory,
+    target_id: str,
+    target_run_id: str,
+    trial_id: str,
+) -> dict[str, Any]:
+    """The Trial-scoped inventory body. The Trial identity is the caller's - the
+    body itself names only the project, the source and the artifact groups."""
+    return _inventory_body(inventory)
+
+
+def project_inventory_response(inventory: ResolvedInventory) -> dict[str, Any]:
+    """The project-scoped inventory body: the same shape, without a Trial."""
+    return _inventory_body(inventory)
 
 
 def detail_response(

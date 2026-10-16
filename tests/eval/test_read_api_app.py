@@ -158,6 +158,7 @@ def test_only_get_routes_are_exposed() -> None:
     assert exposed == {
         ("/snapshot", ("GET",)),
         ("/health", ("GET",)),
+        ("/projects/{project_id}/artifacts", ("GET",)),
         ("/trials/{target_id}/{target_run_id}/{trial_id}/project-graph", ("GET",)),
         ("/trials/{target_id}/{target_run_id}/{trial_id}/artifacts", ("GET",)),
         (

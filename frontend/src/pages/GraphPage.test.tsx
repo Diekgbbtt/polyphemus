@@ -45,6 +45,36 @@ const USAGE: ProjectUsage = {
   },
 }
 
+// The project's own Hunting/Skill tree, read with no Trial in the path.
+const ARTIFACTS = {
+  status: "available",
+  source: "project_storage",
+  project_id: "proj-1",
+  fallback_reason: null,
+  issues: [],
+  groups: [
+    {
+      key: "hunting/orchestration",
+      label: "Orchestration",
+      category: "hunting",
+      entries: [
+        {
+          artifact_id: "h1",
+          category: "hunting",
+          kind: "hunt_config",
+          relative_path: "hunting/orchestration/hunt_configs/produced/prod.yaml",
+          media_type: "application/yaml",
+          size_bytes: 2048,
+          sha256: "0".repeat(64),
+          representation: "yaml",
+          origin: "current",
+        },
+      ],
+      children: [],
+    },
+  ],
+}
+
 const APP_STATE: AppState = {
   idle: false,
   projects: [
@@ -142,6 +172,7 @@ function standardRoutes(
     ["/app-state", appState],
     ["/projects/proj-1/graph", graph],
     ["/projects/proj-1/usage", usage],
+    ["/projects/proj-1/artifacts", () => json(ARTIFACTS)],
     ["/projects", () => json({ projects: [PROJECT] })],
   ]
 }
@@ -164,6 +195,11 @@ test("shows the project identity, its three run classes, the graph and counters"
   // The live graph of the project itself.
   expect(screen.getByText("Live project graph")).toBeDefined()
   expect(screen.getByTestId("graph-canvas")).toBeDefined()
+
+  // The project's own produced files, listed without a Trial in the path.
+  expect(
+    await screen.findByText("hunting/orchestration/hunt_configs/produced/prod.yaml"),
+  ).toBeDefined()
 
   // The cumulative counters.
   await waitFor(() =>

@@ -99,7 +99,13 @@ test("the live GraphPage reads only the project's own sources", async () => {
   // The project's graph, its identity, its in-flight runs and its counters -
   // everything keyed by project_id, and nothing else.
   expect(new Set(calls)).toEqual(
-    new Set(["/projects", "/app-state", "/projects/p1/usage", "/projects/p1/graph"]),
+    new Set([
+      "/projects",
+      "/app-state",
+      "/projects/p1/usage",
+      "/projects/p1/artifacts",
+      "/projects/p1/graph",
+    ]),
   )
   // It never pretends to be a Trial: no captured graph, no resolved inventory.
   expect(calls.some((url) => url.includes("/project-graph"))).toBe(false)

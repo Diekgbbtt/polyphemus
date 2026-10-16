@@ -152,6 +152,21 @@ export async function getResolvedArtifact(
 
 // The raw content URL for a resolved artifact, bound to the digest the detail
 // returned. Pure: it builds a URL and never fetches.
+// One project's own Hunting/Skill tree, keyed by `project_id` alone: the
+// project-scoped sibling of the Trial inventory. It stays on the eval API base
+// and never touches the agent.
+export async function listProjectArtifacts(
+  projectId: string,
+  signal?: AbortSignal,
+): Promise<ResolvedArtifactInventory> {
+  const path = `/projects/${encodeURIComponent(projectId)}/artifacts`
+  const res = await fetch(`${evalApiBaseUrl()}${path}`, { signal })
+  if (!res.ok) throw new Error(await failureText(res, path))
+  return (await res.json()) as ResolvedArtifactInventory
+}
+
+// The raw content URL for a resolved artifact, bound to the digest the detail
+// returned. Pure: it builds a URL and never fetches.
 export function resolvedArtifactContentUrl(
   targetId: string,
   targetRunId: string,

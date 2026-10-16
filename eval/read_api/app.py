@@ -119,6 +119,25 @@ def create_app(source_factory: SourceFactory = filesystem_source) -> FastAPI:
 
     # --- resolved endpoints (unified Target -> Trial workspace) -----------------
 
+    @app.get("/projects/{project_id}/artifacts")
+    def project_artifacts(project_id: str) -> dict:
+        """One project's own raw artifact inventory, with no Trial in the path.
+
+        The project-scoped sibling of the resolved inventory: it reads the
+        allowlisted Hunting/Skill tree the project data root holds for that
+        project, so a project no Trial has materialized still shows what it
+        produced.
+        """
+        try:
+            return source_factory().list_project_artifacts(project_id)
+        except ResolvedDataError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.code) from exc
+        except SnapshotSourceUnavailable as exc:
+            raise HTTPException(
+                status_code=503,
+                detail=str(exc) or "resolved artifact source unavailable",
+            ) from exc
+
     @app.get("/trials/{target_id}/{target_run_id}/{trial_id}/resolved-graph")
     def resolved_graph(target_id: str, target_run_id: str, trial_id: str) -> dict:
         try:

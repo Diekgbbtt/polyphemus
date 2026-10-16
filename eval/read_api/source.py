@@ -29,6 +29,8 @@ from .resolved_artifacts import (
     content_download,
     detail_response,
     inventory_response,
+    project_inventory_response,
+    resolve_project_inventory,
     resolve_inventory,
 )
 from .resolved_graph import (
@@ -144,6 +146,14 @@ class SnapshotSource(Protocol):
         self, target_id: str, target_run_id: str, trial_id: str
     ) -> dict[str, Any]:
         """The unified artifact inventory for one Trial: captured, else raw."""
+
+    def list_project_artifacts(self, project_id: str) -> dict[str, Any]:
+        """One project's own raw artifact inventory, from `project_id` alone.
+
+        The project-scoped sibling of `list_resolved_artifacts`: no Trial
+        identity, no capture to prefer - just the allowlisted Hunting/Skill tree
+        the project data root holds for that project.
+        """
 
     def get_resolved_artifact(
         self, target_id: str, target_run_id: str, trial_id: str, artifact_id: str
@@ -288,6 +298,12 @@ class ArtifactStoreSnapshotSource:
     ) -> dict[str, Any]:
         inventory = self._resolve_inventory(target_id, target_run_id, trial_id)
         return inventory_response(inventory, target_id, target_run_id, trial_id)
+
+    def list_project_artifacts(self, project_id: str) -> dict[str, Any]:
+        inventory = resolve_project_inventory(
+            self.project_data_root, project_id, files=FileStore()
+        )
+        return project_inventory_response(inventory)
 
     def get_resolved_artifact(
         self, target_id: str, target_run_id: str, trial_id: str, artifact_id: str

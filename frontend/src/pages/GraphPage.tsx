@@ -1,6 +1,7 @@
 import { Link, useParams } from "react-router-dom"
 import { getAppState, getProjectUsage, getProjects } from "../api/client"
 import type { Project, ProjectUsage } from "../api/types"
+import { ProjectArtifactsBlock } from "../eval/ProjectArtifactsBlock"
 import { isValidProjectUsage } from "../eval/ProjectUsageSummary"
 import { GraphView } from "../graph/GraphView"
 import { useGraphData } from "../graph/useGraphData"
@@ -143,9 +144,18 @@ export function GraphPage() {
         )}
       </section>
 
+      <section className="project-block" aria-label="Project artifacts">
+        <h2 className="project-block-title">Artifacts</h2>
+        <p className="project-block-note">
+          The Hunting and Skill files this project's own data root holds, read
+          with no Trial in the path.
+        </p>
+        <ProjectArtifactsBlock projectId={projectId} />
+      </section>
+
       <section className="project-block" aria-label="Token usage">
         <h2 className="project-block-title">Token usage</h2>
-        <p className="eval-usage-note">
+        <p className="project-block-note">
           Cumulative tokens for this project since the backend started — they are
           not a Trial's spend.
         </p>
