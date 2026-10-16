@@ -886,6 +886,172 @@ Typist: the sampled tail shows six turns at 9-14 generations each running the co
 
 ---
 
+## Arm J - the corrected streamed pipeline and the WS1-WS4 formal re-run
+
+Arm J is the streamed pipeline with the operator-ruled corrections of 2026-10-16 landed.
+Its first trials ran on 2026-10-15 (`6d3897e1`) with the T1-T3 stream corrections and the E5 header canonicalization; this document calls those runs **arm J baseline**.
+The failure-mode diagnoses F1-F9 (`docs/design/plans/2026-10-16-failure-modes-diagnosis.md`) drove four workstreams WS1-WS4, and the plan with its rollout is `docs/design/plans/2026-10-16-arm-j-formal-corrections.md`.
+The workstreams landed on `dev` through `eee6740` (the header hotfix `1163f33` followed it), and the formal re-runs ran `1163f330` with stack fingerprint `542674ea...` on both targets on 2026-10-16.
+Evidence for this section: the Langfuse window pulls (6 distinct streamed blocks per formal run), the observation censuses, the hunter-store counts, the graph queries of the Appendix, and the durable usage pull.
+
+### What changed (WS1-WS4) and what the formal data shows
+
+| Workstream | Change (merged) | Formal verification (both runs unless noted) |
+|------------|-----------------|----------------------------------------------|
+| WS1 - runtime baseURL chaining (`85f9938`, `3c12a6f`) | JS literals resolve against their resource and chain runtime baseURL prefixes; foreign-origin chaining stays the latest failover; the external gate never probes foreign origins | the `/api` namespace enters the graph: 52 `/api/*` paths on comfyui against 4 at baseline, 38 on white-jotter against 2, including `/api/admin/**`, `/api/authentication` and `/api/books`; 0 foreign `BaseURL`s and 0 `ExternalDomain`s; the mis-resolved json-literal artifacts are gone (44 `.json` paths in the baseline comfyui graph, all streamed, against 0 now) and the comfyui extensionless class grows 54 -> 145 |
+| WS2 - endpoint-scoped headers (`2fcc1dd`, `2f1f984`) | header identity is `{name, endpoint, baseurl}`; `value`/`direction` stay attributes; `date` is never minted; headers stay bound to their source BaseURL | comfyui carries 1,743 headers over 339 distinct endpoints (baseline 11 project-global, one named `date`), white-jotter 329 over 68 (baseline 9); 0 `date`-named headers, 0 identity duplicates, every header `response` with a value and a `HAS_HEADER` BaseURL membership |
+| WS3 - recall-biased stream gate + description overwrite (`ea9b092`, `97dd9c8`) | hard-drop the static families (css/scss/less/fonts/map, js/mjs, wasm); images/media/archives only under `assets`/`static`; `.json` and extensionless stay; System descriptions overwrite instead of accumulate | the comfyui graph holds 189 `.js`/`.mjs` endpoints (191 at baseline: 100 `.mjs` + 91 `.js`) and the stream carries none (its 153 endpoint deltas are 152 extensionless + 1 `.html`); white-jotter holds 16 `.js` and streams none; the described Systems read as single coherent narratives (12/24 comfyui, 7/29 white-jotter) |
+| WS4 - assigner L1 graph block (`2ad4575`, `011848c`) | the L1 graph (contracts, System descriptions, attributes, edges) is posted in the assigner's human message and updates live per dispatch; no `graph_view` step and no null-owner drop path | all 17 (comfyui) and 15 (white-jotter) assigner generations carry the block and grow with it live (25,757 -> 130,734 chars / 24,984 -> 112,020); 0 `graph_view` calls by the assigner; `unresolvable` 0 and `out_of_inventory` 0 on every chunk; `proposed` equals `kept` throughout |
+
+### Trials
+
+| Attribute | J baseline comfyui | J formal comfyui | J baseline white-jotter | J formal white-jotter |
+|-----------|--------------------|------------------|-------------------------|-----------------------|
+| Trial | `comfyui-1-20261015T224409-1fc05262` | `comfyui-1-20261016T203228-1fc05262` | `white-jotter-1-20261015T235448-1618c524` | `white-jotter-1-20261016T212305-1618c524` |
+| Project | `2df3ad9d-eb9c-4789-a118-44139a745ca2` | `d04b947f-d6c3-48be-9b18-1c4eef851241` | `bf0d9408-d403-457f-b769-076dd9cd9138` | `f16de150-b032-4566-871b-2df6fa4d48a9` |
+| `eval_sha` | `6d3897e1` | `1163f330` | `6d3897e1` | `1163f330` |
+| `stack_fingerprint` | `5d3a954b...` | `542674ea...` | `5d5e9d21...` | `542674ea...` |
+| Token budget / spend at stop | 3,000,000 / 3,009,705 | 3,000,000 / 3,042,118 | 4,000,000 / 4,029,445 | 4,000,000 / 4,003,908 |
+| Wall (UTC) | 21:59:57-22:44:09 (44 min) | 19:37:30-20:32:28 (55 min) | 23:02:11-23:54:48 (53 min) | 20:32:29-21:23:05 (51 min) |
+| Terminal | `stopped` | `stopped` | `stopped` | `stopped` |
+
+The spend column is the `trial.yaml` agent sum at the stop; the usage pull (the C4 source, see the list footnotes) reads 3,010,284 / 3,044,033 / 4,033,225 / 4,031,857 capped because late calls land after the record is written.
+Both formal runs close clean: zero `merge failed` and zero `ParsingRecovery` lines in either agent log.
+
+### C1-C3 criteria (comfyui)
+
+| Criterion | Metric | A streamed | H | J (15 Oct) | J formal |
+|-----------|--------|-----------:|------------:|------------:|-----------:|
+| C1 | `service_aggregation_coverage` | 68.0% | 14/23 = 60.9% | 14/23 = 60.9% | 14/23 = 60.9% |
+| C1 | `endpoint_placement` | 28.3% | 78/290 = 26.9% | 76/290 = 26.2% | 67/335 = 20.0% |
+| C1 | `orphan_services` | 8 | 9 | 9 | 9 |
+| C1 | `gt_service_aggregation` | 92.9% | 10/14 = 71.4% | 10/14 = 71.4% | 10/14 = 71.4% |
+| C2 | `system_attachment_coverage` | 69.2% | 18/27 = 66.7% | 10/24 = 41.7% | 12/24 = 50.0% |
+| C2 | `system_anchoring_coverage` | 50.0% | 11/27 = 40.7% | 10/24 = 41.7% | 12/24 = 50.0% |
+| C2 | `orphan_systems` | 8 | 9 | 14 | 12 |
+| C3 | `service_recall` | 100% | 14/14 = 100% | 14/14 = 100% | 14/14 = 100% |
+| C3 | `service_precision` | 56.0% | 14/23 = 60.9% | 14/23 = 60.9% | 14/23 = 60.9% |
+| C3 | `dataitem_recall` | 0/8 | 0/8 | 0/8 | 0/8 |
+| C3 | `spine_depth` | 60.0% | 60.0% | 60.0% | 60.0% |
+| C3 | `gt_service_system_exposure` | 100% | 100% | 10/14 = 71.4% | 11/14 = 78.6% |
+| C4 | `cached_share_total` | 70.6% | 90.0% | 92.5% | 93.0% |
+| C4 | `input_uncached_tokens` | 4,492,641 | 2,151,348 | 2,187,976 | 2,090,533 |
+| C4 | `generated_output_tokens` | 547,505 | 867,442 | 822,308 | 953,500 |
+| C4 | `capped_tokens` | 5,036,246 | 3,018,790 (+18,790) | 3,010,284 (+10,284) | 3,044,033 (+44,033) |
+
+`gt_service_system_exposure` uses the source-side reading (the ground-truth Service carries the `ROUTED_BY`/`EXPOSED_VIA`/`FRONTED_BY` System edge); the staged script's target-side variant reads 0 and is an inverted-direction artifact.
+
+### C1-C3 criteria (white-jotter)
+
+| Criterion | Metric | J (15 Oct) | J formal |
+|-----------|--------|-----------:|---------:|
+| C1 | `service_aggregation_coverage` | 18/24 = 75.0% | 17/24 = 70.8% |
+| C1 | `endpoint_placement` | 29/57 = 50.9% | 51/93 = 54.8% |
+| C1 | `orphan_services` | 6 | 7 |
+| C1 | `gt_service_aggregation` | 18/21 = 85.7% | 17/21 = 81.0% |
+| C2 | `system_attachment_coverage` | 27/28 = 96.4% | 24/29 = 82.8% |
+| C2 | `system_anchoring_coverage` | 24/28 = 85.7% | 24/29 = 82.8% |
+| C2 | `orphan_systems` | 1 | 5 |
+| C3 | `service_recall` | 21/21 = 100% | 21/21 = 100% |
+| C3 | `service_precision` | 21/24 = 87.5% | 21/24 = 87.5% |
+| C3 | `dataitem_recall` | 0/13 | 0/13 |
+| C3 | `spine_depth` | 60.0% | 60.0% |
+| C3 | `gt_service_system_exposure` | 21/21 = 100% | 21/21 = 100% |
+| C4 | `cached_share_total` | 92.8% | 93.0% |
+| C4 | `input_uncached_tokens` | 2,937,955 | 2,941,414 |
+| C4 | `generated_output_tokens` | 1,095,270 | 1,090,443 |
+| C4 | `capped_tokens` | 4,033,225 (+33,225) | 4,031,857 (+31,857) |
+
+The white-jotter ground truth is 21 Services and 13 DataItems (`~/.local/share/polymerhus/vuln-groundtruth/white-jotter/_target.md` section 8); the produced 24 slugs add `register`, `sign-in` and `password-recovery` from the KB skeleton, so `service_precision` reads 21/24 = 87.5%.
+
+### Typist economics (extended from the arm J baseline report)
+
+| Metric | H comfyui | J comfyui | J white-jotter | J formal comfyui | J formal white-jotter |
+|--------|----------:|-----------:|----------------:|------------------:|-----------------------:|
+| Analysis typing window | 116 min | 13 min | 17 min | 22 min | 19.5 min |
+| Typist feed chunks | 26 | 5 | 6 | 6 | 6 |
+| Streamed feed paragraphs (distinct blocks) | - | 144 (5) | 30 (6) | 977 (6) | 123 (6) |
+| Typist calls / capped | 304 / 2,362,165 | 59 / 533,222 | 65 / 596,663 | 70 / 522,634 | 73 / 490,094 |
+| Capped per call | ~7,770 | 9,037 | 9,179 | 7,466 | 6,713 |
+| Typist share of spend | 78.2% | 17.7% | 14.8% | 17.2% | 12.2% |
+| Hunting window | 4 min | 23 min | 26 min | 29 min | 24 min |
+| Hunting spend | 214,308 | 2,241,355 | 3,136,008 | 2,290,371 | 3,330,040 |
+| Findings produced / consumed | 0 / 0 | 7 / 22 | 10 / 21 | 7 / 22 | 9 / 20 |
+
+Windows read from per-session observation timestamps (typist first-to-last; hunting from the analysis drain to the terminal); hunting spend is the hunting orchestrator + hunter + pods from the usage pull; findings are YAML counts in the hunter store (`test-specs/<fault_key>/produced|consumed`) and reproduce the baseline exactly at 7/22.
+The formal feed grows to 977 paragraphs on comfyui (144 at baseline) and 123 on white-jotter (30).
+One comfyui chunk carries the katana metadata stream alone: 795 paragraphs (793 Header deltas), 140,577 characters and 300 near-duplicate paragraphs, the WS2 per-endpoint identity multiplier (11 project-global headers at baseline to 1,743).
+The typist absorbs it: capped per call falls from 9,037/9,179 to 7,466/6,713 and turns per chunk stay at 11-12 across every streamed run.
+
+### Final spec surface
+
+| Metric | H comfyui | J comfyui | J white-jotter | J formal comfyui | J formal white-jotter |
+|--------|----------:|-----------:|----------------:|------------------:|-----------------------:|
+| L1 Systems | 27 | 24 | 28 | 24 | 29 |
+| Systems with a description | 12 | 5 | 8 | 12 | 7 |
+| Description text total (chars) | 34,960 | 10,782 | 18,042 | 16,739 | 15,809 |
+| Average per described System | 2,913 | 2,156 | 2,255 | 1,395 | 2,258 |
+| Systems attached to a Service | 18 | 10 | 27 | 12 | 24 |
+| L1-to-L1 edges | 66 | 29 | 75 | 43 | 87 |
+| Typist trailing commits (events / Systems / edges) | - | - | - | 11 / 22 / 71 | 9 / 17 / 87 |
+
+The overwrite contract turns description breadth around on comfyui: 5 of 24 Systems described at baseline, 12 of 24 now, total text 10,782 -> 16,739 characters, longest single description 3,003 characters.
+The descriptions read as verbatim evidence narratives; samples: comfyui `ReverseProxy`: "nginx/1.31.6 is the single front tier for http://t-1fc05262.target, and http:// is the ONLY scheme that answers: the slice's second BaseURL https://t-1fc05262.target is defined but does not serve - a live read of port 443 is refused immediately while the same host answers on 80 - so the origin has no TLS listener, no HTTP-to-HTTPS upgrade"; white-jotter `ReverseProxy`: "nginx/1.31.6 is the sole public HTTP server and reverse proxy in front of the Spring Boot (Java) origin, reached in cleartext on :80 (recorded transactions show connection.protocol http, tls:false to 172.17.0.1:80; re-verified live as `HTTP/1.1 200`, Content-Type text/html;charset=UTF-8, Content-Length 662 ...)".
+White-jotter holds the same edge count as its commits (87) on a slightly larger L1 (29 Systems, 93 endpoints) with AUTHORIZED_BY 12, IDENTIFIED_BY 17 and FRONTED_BY 21 entering the vocabulary.
+
+### C4 per-role (capped tokens / calls / cached share, usage pull)
+
+| Role | J comfyui | J formal comfyui | J white-jotter | J formal white-jotter |
+|------|-----------|------------------|----------------|-----------------------|
+| job_orchestrator | - | - | 34,731 / 9 / 79.1% | 27,120 / 10 / 89.2% |
+| triager | 115,195 / 32 / 68.5% | 108,684 / 22 / 63.7% | 135,936 / 25 / 65.0% | 87,050 / 18 / 60.9% |
+| assigner | 120,512 / 18 / 71.2% | 122,344 / 17 / 69.9% | 129,887 / 20 / 71.8% | 97,553 / 15 / 66.8% |
+| mechanism_typist | 533,222 / 59 / 88.9% | 522,634 / 70 / 91.3% | 596,663 / 65 / 90.2% | 490,094 / 73 / 91.3% |
+| hunting_orchestrator | 496,610 / 76 / 94.9% | 275,526 / 74 / 97.4% | 542,966 / 73 / 93.9% | 675,630 / 104 / 95.0% |
+| hunting_hunter | 1,023,946 / 192 / 94.2% | 1,078,356 / 216 / 93.6% | 1,749,821 / 311 / 94.5% | 1,861,289 / 364 / 93.9% |
+| pod_runner | 557,093 / 229 / 90.8% | 663,859 / 282 / 91.9% | 634,255 / 250 / 92.0% | 569,405 / 229 / 91.0% |
+| pod_triager | 163,706 / 14 / 67.5% | 272,630 / 18 / 44.8% | 208,966 / 16 / 58.4% | 223,716 / 24 / 51.2% |
+| **Total** | **3,010,284 / 620 / 92.5%** | **3,044,033 / 699 / 93.0%** | **4,033,225 / 769 / 92.8%** | **4,031,857 / 837 / 93.0%** |
+
+Every pull reports `cache_detail_omitted` 0, so no row is unaudited.
+Three readings: the typist stays many small cache-friendly calls (88.9-91.3% cached across the four runs); the hunt dominates the spend (74.5% / 77.8% baseline and 75.2% / 82.6% formal); the 70% proposer floor is breached by the triager on all four runs (68.5% / 63.7% comfyui, 65.0% / 60.9% white-jotter) and by the formal assigners (69.9% / 66.8%), while every total clears the overall bar at 92.5-93.0%.
+
+### C5 - L1 structure and L0 grounding
+
+| Metric | J comfyui | J formal comfyui | J white-jotter | J formal white-jotter |
+|--------|-----------|------------------|----------------|-----------------------|
+| `l1_nodes_by_kind` | L1Service 23, L1System 24 | L1Service 23, L1System 24 | L1Service 24, L1System 28 | L1Service 24, L1System 29 |
+| `l1_edges_by_type` | AUTHORIZED_BY 1, DEPENDS_ON 1, EXPOSED_VIA 16, FRONTED_BY 11 | AUTHENTICATED_BY 2, AUTHORIZED_BY 3, DEPENDS_ON 3, EXPOSED_VIA 18, FRONTED_BY 16, IDENTIFIED_BY 1 | AUTHENTICATED_BY 2, DEPENDS_ON 3, EXPOSED_VIA 41, IDENTIFIED_BY 6, ROUTED_BY 21, SHAPES_DATA_OF 2 | AUTHENTICATED_BY 2, AUTHORIZED_BY 12, DEPENDS_ON 3, EXPOSED_VIA 32, FRONTED_BY 21, IDENTIFIED_BY 17 |
+| `l1_l0_grounded` | 14/47 = 29.8% | 14/47 = 29.8% | 18/52 = 34.6% | 17/53 = 32.1% |
+| `l0_unreferenced` (Endpoints) | 214 | 268 | 28 | 42 |
+
+The grounded node count equals the aggregating Services on every run, so the C5 cost of placement volume is direct: comfyui unreferenced endpoints rise 214 -> 268 as the chained surface enters.
+comfyui widens its edge vocabulary (six types against four) and white-jotter swaps its ROUTED_BY/SHAPES_DATA_OF reads for AUTHORIZED_BY 12, FRONTED_BY 21 and a wider IDENTIFIED_BY (6 -> 17).
+
+### C6 - proposer trajectory fidelity (arm J formal)
+
+The assigner sessions persisted their full message IO (17 generations on comfyui, 15 on white-jotter) and the typist trajectory is read from the censuses (84 and 86 `graph_view` reads) and the per-chunk commit outputs.
+
+| Axis | J formal (both targets) | Evidence |
+|------|-------------------------|----------|
+| `workflow_adherence` | pass | chunk-by-chunk dispatch after each typist pass; every session opens on the L1 block and re-reads it live (the block grows 25,757 -> 130,734 chars on comfyui and 24,984 -> 112,020 on white-jotter) |
+| `tool_call_completeness` | pass | `search_http_history` on every candidate turn and `get_http_artifact` per named artifact (42 + 6 on comfyui, 14 + 8 on white-jotter); zero `graph_view` calls, per the WS4 ruling |
+| `interface_adherence` | pass with recoverables | assigner calls are read-only and correctly shaped; the recoverables sit with the hunting orchestrator (4 `notes` argument validations on comfyui, 1 on white-jotter, and 1 `query_lightrag` validation; 2 white-jotter write-shaped `graph_view` refusals self-corrected); one assigner chain error per run (19:59:06, 20:53:53) recovered inside its chunk |
+| `reasoning_coherence` | pass | every chunk reports `admitted -> proposed -> kept` with a reason set; `proposed` equals `kept` and `unresolvable`/`out_of_inventory` stay 0; the proposal rate falls (comfyui 72/153 = 47.1% against 81/107 = 75.7%; white-jotter 51/77 = 66.2% against 31/40 = 77.5%) |
+| `tool_output_fidelity` | pass | the sampled turns read error and empty results as evidence gaps, with no mechanism invented from a tool response; the comfyui baseline's four tool-argument parse incidents have no counterpart |
+
+The typist closes every turn with `L1DeltaBatch` commits (11 events / 22 Systems / 71 edges on comfyui, 9 / 17 / 87 on white-jotter), and the error census tags no typist session; the flagged rows are the provider 404s and the recoverables above.
+
+### Verdict for arm J
+
+- **Every workstream verifies in the formal data.** WS1 chains `/api` into the graph (52/38 paths against 4/2) with zero foreign origins; WS2 replaces 11/9 project-global headers with 1,743/329 endpoint-scoped ones (`date` gone, zero duplicates); WS3 streams the extensionless routes and withholds every `.js`/`.mjs` delta (none streamed against 189/16 in the graph); WS4 posts the L1 block live in all 32 assigner dispatches with zero `graph_view` calls and zero drops.
+- **The surface and the spec deepen while the cost holds.** comfyui endpoints 290 -> 335 and white-jotter 57 -> 93; comfyui descriptions 5 -> 12; C4 reads 93.0% cached on both formal runs with `cache_detail_omitted` 0; the typist stays a small-call shape (70/73 calls at 7,466/6,713 capped per call) on a feed ~7x / ~4x the baseline paragraphs.
+- **comfyui placement regresses; white-jotter holds it above the line.** comfyui `endpoint_placement` 26.2% -> 20.0% (67 aggregates against 76 over 335 endpoints) with GT aggregation flat at 71.4%; white-jotter 50.9% -> 54.8% (29 -> 51) with GT aggregation 85.7% -> 81.0%. The C1 bar (28.3%) reads unmet on both targets.
+- **The hunting outputs hold.** comfyui produced/consumed 7/22 with the baseline's exact status split (1 dropped / 6 hypothesised / 22 specified); white-jotter 9/20 against 10/21 (6 dropped / 3 hypothesised / 20 specified).
+- **The run's reliability story is external and recoverable.** The hunts absorbed 77 provider 404s on `chat/completions` through retries; 5 (comfyui) and 3 (white-jotter) tool-argument recoverables self-corrected; zero `merge failed` and zero parse incidents in either window.
+
+---
+
 ## Cumulative per-target registry
 
 This table is the extension point.
@@ -901,8 +1067,10 @@ Every future target run appends one row, so the criteria accumulate evidence acr
 | comfyui | F | endpoint-first prefix + MCP seam fix, config 0.2 | 11.0% | 11 | 30.4% (partial loop) | 14/14 | 0/8 | 88.2% | 2,071,438 | 551,217 | 2,622,655 | 12/46 = 26.1% | partial (assigner pass) | 2026-10-13 |
 | comfyui | G | streamed + adjacent-surface assigner, no out-of-chunk gate, config 0.2, 3M cap, v4.1-flash | 25.9% | 23 | 16.0% (budget stop) | 14/14 | 0/8 | 30.2% (unaudited) | 2,972,981 | 262,894 | 3,235,875 | 2/50 = 4.0% | structural (coherence fail) | 2026-10-14 |
 | comfyui | H | streamed + L0 noise gate + HTTP-history assigner + streamed-usage fix, config 0.2, 3M cap, v4.1-flash | 26.9% | 9 | 40.7% (analysis drained; hunting stopped on spend) | 14/14 | 0/8 | 90.0% (measured, 0 omissions) | 2,151,348 | 867,442 | 3,018,790 (+18,790) | 14/50 = 28.0% | partial (assigner pass; seam errors; one quirk) | 2026-10-15 |
-| `<target>` | | | | | | | | | | | | | | |
-| `<target>` | | | | | | | | | | | | | | |
+| comfyui | J | streamed corrected (T1-T3, E5 header canonicalization), config 0.2, 3M cap, v4.1-flash | 26.2% | 9 | 41.7% (analysis drained; hunting stopped on spend) | 14/14 | 0/8 | 92.5% (measured, 0 omissions) | 2,187,976 | 822,308 | 3,010,284 (+10,284) | 14/47 = 29.8% | partial (4 tool-arg parse incidents) | 2026-10-15 |
+| comfyui | J formal | J + WS1-WS4 (baseurl chaining, endpoint-scoped headers, recall-biased gate, assigner L1 block), 3M cap, v4.1-flash | 20.0% | 9 | 50.0% (analysis drained; hunting stopped on spend) | 14/14 | 0/8 | 93.0% (measured, 0 omissions) | 2,090,533 | 953,500 | 3,044,033 (+44,033) | 14/47 = 29.8% | pass (assigner + typist; 5 recoverable tool-arg validations) | 2026-10-16 |
+| white-jotter | J | streamed corrected (T1-T3, E5 header canonicalization), config 0.2, 4M cap, v4.1-flash | 50.9% | 6 | 85.7% (analysis drained; hunting stopped on spend) | 21/21 | 0/13 | 92.8% (measured, 0 omissions) | 2,937,955 | 1,095,270 | 4,033,225 (+33,225) | 18/52 = 34.6% | pass (zero flagged incidents) | 2026-10-15 |
+| white-jotter | J formal | J + WS1-WS4 (baseurl chaining, endpoint-scoped headers, recall-biased gate, assigner L1 block), 4M cap, v4.1-flash | 54.8% | 7 | 82.8% (analysis drained; hunting stopped on spend) | 21/21 | 0/13 | 93.0% (measured, 0 omissions) | 2,941,414 | 1,090,443 | 4,031,857 (+31,857) | 17/53 = 32.1% | pass (1 validation + 2 read-only refusals, recovered) | 2026-10-16 |
 
 The C5 and C6 columns are `-` for arms A, B, and C: the criteria were defined after those runs, and the caveat is that they are forward-only (see Statistical Methodology).
 
@@ -910,6 +1078,7 @@ Arm C's C4 columns are the analysis roles only (`triager` + `assigner` + `mechan
 The arm C whole-project totals, including its long hunting arm, are `cached_share_total` 38.2%, 157,174,825 uncached input, 3,552,535 generated output, 160,727,360 capped.
 The arms are therefore not cache-comparable without this note; see the C4 section.
 Arm G's C4 cells are unaudited for the same reason: its 0% typist reading is a gateway artifact, not a provider miss (corrected 2026-10-15).
+The four arm J rows' C4 cells come from the durable usage pull (`GET /projects/{pid}/usage`); the `trial.yaml` agent sums at the stop read 3,009,705 (J comfyui), 3,042,118 (J formal comfyui), 4,029,445 (J white-jotter) and 4,003,908 (J formal white-jotter), and late calls add +579 / +1,915 / +3,780 / +27,949 capped; `cache_detail_omitted` is 0 on every pull.
 
 ## Segment Analysis - by ground-truth Service
 
@@ -1148,6 +1317,13 @@ A verdict is an axis-by-axis pass or fail with the trace evidence that shows it;
 - Arm H's katana pass streamed ~1.2k metadata deltas against 2 admissible Endpoints; 10 of its 12 chunks spent a typist turn with nothing for the assigner, and the pass wrote 1 aggregate in total.
 - Arm H's kali MCP sessions failed on freshly opened sessions for most of the run (`ClosedResourceError` in 14/14 assigner turns; the kali server log shows `DELETE /mcp` then `POST /mcp` 404).
 - `/experiment/models` (arm H) returns the folder-path map (live probe, 15 Oct 2026); `model-inventory` and `server-diagnostics` both carry contract text that can claim it, and the nouns-only differential never reconciled the payload's other route identity (`/folder_paths`). Scoped for the next iteration.
+- Arm J's C4 cells for all four rows come from the durable usage pull (`cache_detail_omitted` 0 on every pull); the `trial.yaml` agent sums at the stop differ by +579 (J comfyui), +1,915 (J formal comfyui), +3,780 (J white-jotter) and +27,949 (J formal white-jotter) capped.
+- The formal hunts absorbed 77 provider `404` responses on `chat/completions` (36 comfyui, 41 white-jotter), spread 1-6 per minute through each hunting phase; every call was retried, and both runs closed with zero `merge failed` and zero parse incidents. Provider flakiness, flagged for a provider-side note.
+- The hunting orchestrators emitted 4 (comfyui) + 1 (white-jotter) `notes` calls missing the `cmd` argument and 1 `query_lightrag` call missing `scenario_id`; each was refused by argument validation and retried. The `notes` tool's argument contract is the weak spot to tighten.
+- White-jotter's hunting orchestrator twice ran write-shaped `graph_view` cypher and the read-only guard refused both calls (21:01:00 and 21:01:04); it self-corrected.
+- comfyui `endpoint_placement` fell 26.2% -> 20.0% while `endpoints_total` rose 290 -> 335: the WS1 chaining brings 52 `/api/*` paths into the graph (baseline 4) and the assigner keeps 67 aggregates against the baseline's 76. No target meets the C1 bar (28.3%).
+- `steel_crawl` streams 2 admitted endpoints with 0 kept on each formal target; its cloud-crawl contribution stays disregarded (the F8 diagnosis), and the pass is a candidate for the next gate ruling.
+- The triager's cached share (68.5% / 63.7% comfyui, 65.0% / 60.9% white-jotter) and the formal assigners' (69.9% / 66.8%) sit under the 70% proposer floor while every C4 total clears the bar at 92.5-93.0%; the figures are measured with zero omissions, so this is a small-prefix shape, not the arm G silence artifact.
 - Pre-existing (found during the arm G merge verification, unrelated to any arm): `tests/test_llm_checkpoints_module.py::test_the_module_scoped_saver_carries_the_serde_allowlist` fails on the installed langgraph (`JsonPlusSerializer(allowed_msgpack_modules=())` yields `serde._allowed_msgpack_modules is None`). It fails identically on the pre-merge trunk, so it is environment/version drift, not a regression; recorded here so a future red suite is not misread.
 
 ---
@@ -1156,3 +1332,4 @@ A verdict is an axis-by-axis pass or fail with the trace evidence that shows it;
 *Arm F appended on 2026-10-13: the MCP seam fix holds, the endpoint-first prefix trades placement for cost, and the graceful project-execution stop does not settle a mid-pass analysis.*
 *Arm G appended on 2026-10-14: the adjacent-surface assigner recovers placement volume (25.9%, zero unresolvable) but collapses discrimination (74/75 edges to non-GT `editor-shell`, GT 1/14) - the dropped gate was load-bearing friction; the typist's recorded 0%-cached 2.67M appeared to break the cache bar on its own - CORRECTED 2026-10-15: that reading is a gateway artifact (the same bytes replay at 95.9-100% cached), so the break is unaudited. First G attempt (quota exhaustion) superseded by the re-run.*
 *Arm H appended on 2026-10-15: the L0 noise gate + HTTP-history assigner + streamed-usage fix pair volume with discrimination (placement 26.9%, GT aggregation 71.4%, 193/298 declined, zero unresolvable) and C4 reads 90.0% with zero omissions - the first clean crossing. Open defects: feed cohesion on the katana metadata deltas, the kali MCP session lifecycle, and the path-noun-driven candidate generation at `/experiment/models`.*
+*Arm J appended on 2026-10-16: the WS1-WS4 corrections land and verify (52/38 `/api` chained paths against 4/2, 1,743/329 endpoint-scoped headers against 11/9 with `date` dropped, every `.js`/`.mjs` feed delta withheld, the assigner reading the L1 block live with zero `graph_view` calls) and the cost holds (93.0% cached on both, typist 7,466/6,713 capped per call); comfyui placement regresses 26.2% -> 20.0% as the `/api` namespace enters the graph while white-jotter holds 54.8%; both hunts absorbed provider 404s with zero pipeline impact. Open defects: the triager/assigner cache-prefix shape, the `steel_crawl` 0-kept pass, and the `notes` argument contract.*
