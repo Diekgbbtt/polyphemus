@@ -34,3 +34,10 @@ Docs branch: `fix/streamed-pipeline-corrections` (diagnosis docs + this plan).
 ## Progress log
 
 - 2026-10-16: plan written; workstreams W1-W4 dispatched to implementation agents.
+- 2026-10-16 (late): the first relaunch at `eee67406` caught a STALE `header_unique` constraint LIVE.
+  W2 moved the Header identity to `{name, endpoint, baseurl}`, but `db/neo4j/schema.py` still declared `(name, value, baseurl, project_id)`.
+  Every second endpoint under one BaseURL returning an identical header value tripped the old key, so the curator dropped 1337 header deltas from the graph and the analysis feed in four minutes (fail-open warnings only).
+  Hotfix branch `fix/header-constraint-reconcile` (`d7891d8`, merged `1163f33`): constraint updated; `init_schema` now reconciles a changed declaration against the live constraint (drop + recreate on key-set drift; undeclared constraints untouched); the unit tier pins the reconcile decision and the live tier asserts the applied header key set.
+  E2E: a controlled two-delta probe raises ConstraintValidationFailed pre-fix and passes post-fix; the live DB migrated on agent restart; the declared-vs-live drift check is clean (16 declared, 3 L1 extras).
+  The killed pre-fix attempt wrote no trial record (records are written at completion) and must never be measured.
+- 2026-10-16 (late): formal trials relaunched on `1163f330` (stack fingerprint `542674eafc426da98ce66ed19ea47892faf633d67a243388d8299f96ab1ab3fe`), comfyui-1 first, then white-jotter-1.
