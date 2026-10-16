@@ -38,6 +38,77 @@ def test_create_project_scaffolds_into_the_given_root(tmp_path, monkeypatch):
     assert (tmp_path / "data" / project_id / "hunting" / "orchestration").is_dir()
 
 
+def test_get_settings_drops_a_legacy_auth_context(monkeypatch):
+    """#243 retired the settings-blob auth. A row written before that may still
+    carry it, so the read face drops the key instead of serving credentials."""
+    monkeypatch.setattr(pg, "project_exists", lambda pid: True)
+    monkeypatch.setattr(
+        pg,
+        "load_settings",
+        lambda pid: {
+            "target_domain": "example.com",
+            "auth_context": {"cookies": [{"name": "session", "value": "s3cr3t"}]},
+        },
+    )
+
+    resp = client.get("/projects/p1/settings")
+
+    assert resp.status_code == 200
+    assert resp.json() == {"recon": {"target_domain": "example.com"}}
+    assert "s3cr3t" not in resp.text
+    assert "auth_context" not in resp.text
+
+
+def test_get_settings_returns_the_stored_blob(monkeypatch):
+    monkeypatch.setattr(pg, "project_exists", lambda pid: True)
+    monkeypatch.setattr(pg, "load_settings", lambda pid: {"target_domain": "example.com"})
+
+    resp = client.get("/projects/p1/settings")
+
+    assert resp.status_code == 200
+    assert resp.json() == {"recon": {"target_domain": "example.com"}}
+
+
+def test_get_settings_unknown_project_404(monkeypatch):
+    monkeypatch.setattr(pg, "project_exists", lambda pid: False)
+
+    resp = client.get("/projects/nope/settings")
+
+    assert resp.status_code == 404
+
+
+def test_get_settings_reads_an_empty_blob_for_a_known_project(monkeypatch):
+    monkeypatch.setattr(pg, "project_exists", lambda pid: True)
+    monkeypatch.setattr(pg, "load_settings", lambda pid: {})
+
+    resp = client.get("/projects/p1/settings")
+
+    assert resp.status_code == 200
+    assert resp.json() == {"recon": {}}
+
+
+def test_settings_round_trip_is_verbatim(monkeypatch):
+    """A partial PUT lands exactly as sent and reads back unchanged: the read
+    face validates nothing beyond the retired auth key, so nested operator keys
+    survive the trip."""
+    stored: dict = {}
+    monkeypatch.setattr(pg, "project_exists", lambda pid: True)
+    monkeypatch.setattr(
+        pg, "save_settings", lambda pid, recon: stored.update({"recon": recon})
+    )
+    monkeypatch.setattr(pg, "load_settings", lambda pid: stored.get("recon", {}))
+    recon = {
+        "target_domain": "example.com",
+        "scope": {"depth": 3, "notes": ["a", "b"]},
+    }
+
+    assert client.put("/projects/p1/settings", json={"recon": recon}).status_code == 200
+    resp = client.get("/projects/p1/settings")
+
+    assert resp.status_code == 200
+    assert resp.json() == {"recon": recon}
+
+
 def test_put_settings_unknown_project_404(monkeypatch):
     monkeypatch.setattr(pg, "project_exists", lambda pid: False)
 

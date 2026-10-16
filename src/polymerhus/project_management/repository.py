@@ -118,6 +118,24 @@ def app_state(project_id: str | None = None, now: datetime | None = None) -> dic
     }
 
 
+def read_project_settings(project_id: str) -> dict:
+    """The project's stored recon settings, read-only (`{"recon": {...}}`).
+
+    Unknown project -> ProjectNotFound; a known project with no settings row
+    reads back an empty blob, never an error.
+
+    The retired `auth_context` key is dropped on the way out, mirroring the
+    write face's refusal (#243): a row written before the retirement may still
+    carry credentials in the obsolete location, and this read face must never
+    hand them back.
+    """
+    if not pg.project_exists(project_id):
+        raise ProjectNotFound(project_id)
+    recon = dict(pg.load_settings(project_id) or {})
+    recon.pop("auth_context", None)
+    return {"recon": recon}
+
+
 def save_project_settings(project_id: str, recon: dict) -> None:
     """Persist a partial settings PUT (#223 T4 #243: the settings blob carries
     no auth - the AuthContext value object and its validation are retired
