@@ -47,6 +47,12 @@ The operator_kb `## Overview` paragraph - the macro description of the deployed 
 It is a SKELETON ATTRIBUTE, not a graph node, so it is carried as `settings.application_overview` and surfaced on the inventory dict (`read_l1_inventory`), never a `:L1*` label.
 Each proposer prepends it (`pod.overview_block`) to its human message, so a Service is reasoned inside the application it lives in rather than from its contract alone.
 
+**L1 graph block**:
+The current L1 graph posted into the Assigner's volatile human message (`pod.l1_graph_block`): each Service with its `service_contract`, each System as `kind[:disc] :: description {attributes}`, and the typed `Service -[REL]-> System` edges with role/realm/order.
+It is built from the per-dispatch `read_l1_inventory` read (`system_details`, `edges`), so it is rebuilt every dispatch and tracks the run as it concretises more linked systems.
+It folds in the FR-INVENTORY identity-reuse discipline, so it REPLACES `pod._inventory_block` in the Assigner prompt (`_inventory_block` survives for the Bootstrapper).
+The graph is POSTED as a prompt block, never exposed as a `graph_view` tool: a previous graph_view-capable Assigner degraded quality and bloated context (retained decision, operator ruling 2026-10-16).
+
 ## The tripartition
 
 **Service (L1)**:
@@ -298,6 +304,7 @@ adjacent-surface D-A2/D-A4 for this role):
 Sole owner of the `AGGREGATES` hinge: high-precision classification of an observed `Endpoint` onto an EXISTING Service. A.1-only - no minting, no re-assignment, no retraction.
 The chunk is the slice recon most recently collected and stays the unit of work AND the scope of judgment; before judging, the assigner MAY read the recorded transactions behind the slice through the HTTP-history pair (`search_http_history` / `get_http_artifact`) - disambiguation, confirmation, AND an adjacently promising endpoint's fuller response (one endpoint often embeds several features, so a minimally promising surface is worth a read - while deep technical understanding stays the mechanism-typist's ownership). The recorded-response read is the whole widening seam, kept central; there is no `graph_view` roam on this turn, and a neighbour the slice does not carry stays a hypothesis, never an aggregate.
 The inventory block re-read live at every chunk dispatch is the deductive target: the assigner reasons FROM the observed surface TO those listed identities.
+Its first human message POSTS the L1 graph block (`pod.l1_graph_block`): the Services with contracts, the Systems with descriptions/attributes, and the typed Service->System edges, rebuilt every dispatch from the live `read_l1_inventory` read. The graph rides the prompt; there is no `graph_view` tool on this turn (retained decision - a graph_view-capable assigner degraded quality, operator ruling 2026-10-16).
 
 *Contracts.* In: a `Chunk` narrowed by `admit_for_role` to `Endpoint` alone, plus the live L1 inventory with its `service_contract`s (the primary routing evidence). Out: `L1DeltaBatch{aggregates}`, each `AggregatesProposal{service_slug, l0: L0Ref, evidence_refs}`. Writes only through `l1_curator.write_aggregates`.
 
