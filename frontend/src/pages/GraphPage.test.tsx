@@ -75,6 +75,14 @@ const ARTIFACTS = {
   ],
 }
 
+const SETTINGS = {
+  recon: {
+    target_domain: "example.com",
+    scope: { depth: 3 },
+    deep_scan: true,
+  },
+}
+
 const APP_STATE: AppState = {
   idle: false,
   projects: [
@@ -167,12 +175,14 @@ function standardRoutes(
   graph: () => Response = () => json(GRAPH),
   usage: () => Response = () => json(USAGE),
   appState: () => Response = () => json(APP_STATE),
+  settings: () => Response = () => json(SETTINGS),
 ): Array<[string, () => Response]> {
   return [
     ["/app-state", appState],
     ["/projects/proj-1/graph", graph],
     ["/projects/proj-1/usage", usage],
     ["/projects/proj-1/artifacts", () => json(ARTIFACTS)],
+    ["/projects/proj-1/settings", settings],
     ["/projects", () => json({ projects: [PROJECT] })],
   ]
 }
@@ -191,6 +201,13 @@ test("shows the project identity, its three run classes, the graph and counters"
   expect(screen.getByRole("region", { name: "hunting runs" })).toBeDefined()
   expect(screen.getByText("recon-run-1")).toBeDefined()
   expect(screen.getByText("stalled")).toBeDefined()
+
+  // The operator's stored configuration, read back verbatim.
+  expect(await screen.findByText("target_domain")).toBeDefined()
+  expect(screen.getByText("example.com")).toBeDefined()
+  expect(screen.getByText("deep_scan")).toBeDefined()
+  expect(screen.getByText("true")).toBeDefined()
+  expect(screen.getByText('{"depth":3}')).toBeDefined()
 
   // The live graph of the project itself.
   expect(screen.getByText("Live project graph")).toBeDefined()
@@ -249,4 +266,36 @@ test("an invalid usage body is unavailable, never zero", async () => {
 
   expect(await screen.findByText(/usage unavailable/i)).toBeDefined()
   expect(document.querySelector('[data-usage="total"]')).toBeNull()
+})
+
+test("a project with no stored configuration says so", async () => {
+  stub(standardRoutes(undefined, undefined, undefined, () => json({ recon: {} })))
+  renderPage()
+
+  expect(
+    await screen.findByText(/no settings are stored for this project/i),
+  ).toBeDefined()
+})
+
+test("an invalid settings body is unavailable, never an empty configuration", async () => {
+  stub(
+    standardRoutes(undefined, undefined, undefined, () =>
+      json({ recon: "nope" }),
+    ),
+  )
+  renderPage()
+
+  expect(await screen.findByText(/settings unavailable/i)).toBeDefined()
+  expect(screen.queryByText(/no settings are stored/i)).toBeNull()
+})
+
+test("a project the agent does not know shows no configuration", async () => {
+  stub(
+    standardRoutes(undefined, undefined, undefined, () =>
+      json({ detail: "unknown project" }, 404),
+    ),
+  )
+  renderPage()
+
+  expect(await screen.findByText(/settings unavailable/i)).toBeDefined()
 })

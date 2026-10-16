@@ -1,4 +1,11 @@
-import type { Project, GraphData, ProjectUsage, RunsResponse, AppState } from "./types"
+import type {
+  Project,
+  GraphData,
+  ProjectSettings,
+  ProjectUsage,
+  RunsResponse,
+  AppState,
+} from "./types"
 
 const BASE = import.meta.env.VITE_AGENT_BASE_URL ?? ""
 
@@ -41,4 +48,17 @@ export async function getProjectUsage(
 
 export async function getAppState(signal?: AbortSignal): Promise<AppState> {
   return getJSON<AppState>("/app-state", signal)
+}
+
+// The project's own recon settings, read-only - the read face of the settings
+// the operator writes with the PUT. The id is a stable identifier, so it is
+// URL-encoded on its own.
+export async function getProjectSettings(
+  projectId: string,
+  signal?: AbortSignal,
+): Promise<ProjectSettings> {
+  return getJSON<ProjectSettings>(
+    `/projects/${encodeURIComponent(projectId)}/settings`,
+    signal,
+  )
 }

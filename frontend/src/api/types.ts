@@ -52,3 +52,8 @@ export interface ProjectState {
   recon: RunningRun[]; analysis: AnalysisRun[]; hunting: HuntingRun[]
 }
 export interface AppState { idle: boolean; projects: ProjectState[] }
+
+// The project's stored recon settings (`GET /projects/{id}/settings`): the
+// operator's own free-form blob, read-only. It deliberately carries no auth
+// (#243), so nothing here can be a credential.
+export interface ProjectSettings { recon: Record<string, unknown> }

@@ -118,6 +118,18 @@ def app_state(project_id: str | None = None, now: datetime | None = None) -> dic
     }
 
 
+def read_project_settings(project_id: str) -> dict:
+    """The project's stored recon settings, read-only (`{"recon": {...}}`).
+
+    Unknown project -> ProjectNotFound; a known project with no settings row
+    reads back an empty blob, never an error. The blob carries no auth (#243),
+    so nothing here can hand back a credential.
+    """
+    if not pg.project_exists(project_id):
+        raise ProjectNotFound(project_id)
+    return {"recon": pg.load_settings(project_id) or {}}
+
+
 def save_project_settings(project_id: str, recon: dict) -> None:
     """Persist a partial settings PUT (#223 T4 #243: the settings blob carries
     no auth - the AuthContext value object and its validation are retired

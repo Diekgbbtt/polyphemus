@@ -104,6 +104,7 @@ test("the live GraphPage reads only the project's own sources", async () => {
       "/app-state",
       "/projects/p1/usage",
       "/projects/p1/artifacts",
+      "/projects/p1/settings",
       "/projects/p1/graph",
     ]),
   )

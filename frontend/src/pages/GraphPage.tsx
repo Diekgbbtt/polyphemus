@@ -1,6 +1,6 @@
 import { Link, useParams } from "react-router-dom"
-import { getAppState, getProjectUsage, getProjects } from "../api/client"
-import type { Project, ProjectUsage } from "../api/types"
+import { getAppState, getProjectSettings, getProjectUsage, getProjects } from "../api/client"
+import type { Project, ProjectSettings, ProjectUsage } from "../api/types"
 import { ProjectArtifactsBlock } from "../eval/ProjectArtifactsBlock"
 import { isValidProjectUsage } from "../eval/ProjectUsageSummary"
 import { GraphView } from "../graph/GraphView"
@@ -52,6 +52,18 @@ export function GraphPage() {
     },
   })
 
+  const settings = usePolledResource<ProjectSettings>({
+    key: `settings:${projectId}`,
+    load: async (signal) => {
+      const body = (await getProjectSettings(projectId, signal)) as unknown
+      // A body without the contract is a failure, never an empty configuration.
+      if (!isPlainObject(body) || !isPlainObject(body.recon)) {
+        throw new Error("invalid settings body")
+      }
+      return { recon: body.recon }
+    },
+  })
+
   return (
     <main className="project-page">
       <header className="project-page-header">
@@ -88,6 +100,15 @@ export function GraphPage() {
             </div>
           </dl>
         )}
+      </section>
+
+      <section className="project-block" aria-label="Project settings">
+        <h2 className="project-block-title">Configuration</h2>
+        <p className="project-block-note">
+          The recon settings stored for this project — the operator's own blob,
+          read-only. It carries no auth.
+        </p>
+        <SettingsBody settings={settings} />
       </section>
 
       <section className="project-block" aria-label="Active runs">
@@ -163,6 +184,54 @@ export function GraphPage() {
       </section>
     </main>
   )
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+// One setting's value as text: scalars as they are, anything structured as
+// compact JSON, so nothing is silently dropped from the blob.
+function formatSetting(value: unknown): string {
+  if (value === null) return "null"
+  if (typeof value === "object") return JSON.stringify(value)
+  return String(value)
+}
+
+// The project's stored recon settings, read-only. An empty blob is stated as
+// such; a failed refresh keeps the last one and says it may be out of date.
+function SettingsBody({ settings }: { settings: PolledResource<ProjectSettings> }) {
+  if (settings.data) {
+    const entries = Object.entries(settings.data.recon).sort(([a], [b]) =>
+      a.localeCompare(b),
+    )
+    if (entries.length === 0) {
+      return (
+        <p className="project-block-muted">No settings are stored for this project.</p>
+      )
+    }
+    return (
+      <>
+        {settings.error !== null && (
+          <p className="project-block-muted">
+            Settings not up to date — showing the last reading.
+          </p>
+        )}
+        <dl className="project-facts">
+          {entries.map(([key, value]) => (
+            <div key={key}>
+              <dt>{key}</dt>
+              <dd>{formatSetting(value)}</dd>
+            </div>
+          ))}
+        </dl>
+      </>
+    )
+  }
+  if (settings.error !== null) {
+    return <p className="project-block-muted">Settings unavailable.</p>
+  }
+  return <p className="project-block-muted">Loading settings…</p>
 }
 
 // The project's cumulative counters. The last reading survives a failed refresh
