@@ -64,6 +64,42 @@ Accepted (2026-10-08).
   enter the surface; the API endpoints recovered from chunks carry the origin
   root rather than the `/api` prefix until the follow-up lands.
 
+## Amendment (2026-10-16): baseURL-awareness landed
+- The deferral above is closed by the arm J diagnosis (`fix/baseurl-relative-chaining`).
+  The "prefix must reach every pod" constraint is resolved by keeping the origin
+  TOGETHER instead of persisting the prefix: `batching.build_batches` partitions
+  bundles by origin, so the app bundle's config literal reaches the pod scanning
+  that origin's chunks by construction (one origin = one pod; an origin beyond
+  `_ORIGIN_GROUP_MAX` = 120 bundles degrades to the previous round-robin with
+  chaining skipped, so no pod can outlive `EXEC_TIMEOUT_S`).
+- `jsluice_scan.py` scans each batch's bundle/source bodies for two runtime
+  prefix shapes (`baseURL: "/api"`, `+ "/internal" +`), then re-mints every
+  buffered root-relative literal once per prefix as an ADDITIVE candidate
+  (`chained_prefix`/`chained_from` props; the original literal is kept - a
+  `/login` is a route as well as an API call). Candidates are probed and
+  arbitrated by the reprofile pass like any other endpoint.
+- The same change resolves literals against the scanned RESOURCE instead of the
+  origin: `./commands-x.js` in `/assets/index-abc.js` means
+  `/assets/commands-x.js`, closing the phantom class (the arm J comfyui index
+  bundle's `./x-*.js` imports re-minted as 86 root-level `.js` 404s, of the
+  graph's 162 404 endpoints).
+- Live verification on the arm J targets: white-jotter's 14-bundle origin in
+  one pod yields 37 chained candidates including `POST /api/login`,
+  `/api/search`, `/api/admin/*` (200 live; the bare literals were 404); the
+  full comfyui 105-bundle origin scans in 31s single-pod and yields the `/api/*`
+  mirror (`/api/system_stats`, `/api/object_info`, `/api/queue`) and the
+  `/internal/*` manager routes (`/internal/logs`, `/internal/folder_paths`).
+- Known limits recorded: bundles served from the origin root have no directory
+  discriminator (every root-relative literal is a candidate); bare-relative
+  request literals under a runtime base (`axios.post("login")`) resolve
+  bundle-relative and are not chained; absolute-URL bases
+  (`baseURL: "https://api.comfy.org"`) are deliberately not chained
+  (cross-origin, outside the scanned origin's surface).
+- Tests: `tests/recon/test_jsluice_scan.py` (resource-base resolution, prefix
+  extraction forms, chaining guards), `test_batching.py` (origin grouping, cap
+  degrade), `test_jsluice_parser.py` (provenance props), and the
+  `test_consumption_set.py` independent oracle updated to the grouping rule.
+
 ## Consequences
 - The lazy-loaded chunk files become Endpoints (`source="webpack"`) and are
   reprofiled and parameter-probed like any other endpoint.

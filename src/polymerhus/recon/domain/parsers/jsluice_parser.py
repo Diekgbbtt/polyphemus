@@ -56,10 +56,24 @@ def _parse_url_entry(entry: dict) -> list[AssetDelta]:
     # at position=body) anchored to the Endpoint - no longer dropped.
     query_params = entry.get("queryParams")
     body_params = entry.get("bodyParams")
+
+    # Runtime-prefix chaining provenance (jsluice_scan's post-batch join): the
+    # record is the same literal re-minted under a discovered request-path
+    # prefix (`/login` -> `/api/login`), and the props carry both halves so the
+    # graph and the streamed analysis blocks show WHY the endpoint exists.
+    extra: dict = {}
+    chained_prefix = entry.get("chained_prefix")
+    if isinstance(chained_prefix, str) and chained_prefix:
+        extra["chained_prefix"] = chained_prefix
+    chained_from = entry.get("chained_from")
+    if isinstance(chained_from, str) and chained_from:
+        extra["chained_from"] = chained_from
+
     return url_to_deltas(
         url,
         method=method,
         source="jsluice",
+        extra_endpoint_props=extra or None,
         query_params=query_params if isinstance(query_params, list) else None,
         body_params=body_params if isinstance(body_params, list) else None,
     )

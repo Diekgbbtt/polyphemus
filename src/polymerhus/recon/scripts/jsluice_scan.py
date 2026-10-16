@@ -13,10 +13,22 @@ takes a batch of JS-bundle URLs as argv and, for each:
      FILTERS out presentational/vendor noise, content-hash-dedups source
      bodies, and runs `jsluice urls` + `jsluice secrets` over each survivor.
 
+Relative literals resolve against the scanned RESOURCE (each bundle's own URL),
+not the origin root: `./commands-x.js` imported by `/assets/index-abc.js` means
+`/assets/commands-x.js` (resolving against the origin minted 86 phantom `.js`
+404s in the arm J comfyui trial). After the batch, every root-relative literal
+is additionally re-minted once per runtime path prefix the batch discovered in
+the same origin's bundles (`baseURL: "/api"`, or a joined segment like
+`api_base+"/internal"+x`) - the `/api/login`-style candidates that no single
+literal reveals. The batch grouping (batching.build_batches) keeps one origin's
+bundles in one pod so this join is deterministic.
+
 Every emitted line is jsluice's own `urls`/`secrets` JSONL, annotated with the
-bundle origin as `base_url`/`source_url` so `jsluice_parser` anchors recovered
-`Secret`s (and endpoints) to the right `BaseURL`. Stdout is therefore exactly
-what `polymerhus.recon.domain.parsers.jsluice_parser.parse` already ingests.
+bundle origin as `base_url` and the scanned resource as `source_url` so
+`jsluice_parser` anchors recovered `Secret`s (and endpoints) to the right
+`BaseURL`. Stdout is therefore exactly what
+`polymerhus.recon.domain.parsers.jsluice_parser.parse` already ingests
+(chained records add `chained_prefix`/`chained_from` keys the parser props).
 
 Replicates the identification/filtering/extraction behavior of the operator's
 reference `secret_scanner.py` (spec, not a dependency). Pure helpers plus a
@@ -40,10 +52,131 @@ _SOURCEMAP_RE = re.compile(r"//[#@]\s*sourceMappingURL=(.+?\.map)")
 # themselves, and (below) bundler internals / third-party modules.
 _NOISE_EXT_RE = re.compile(r"\.(css|scss|png|jpg|jpeg|gif|svg|map)$", re.IGNORECASE)
 
+# Runtime request-path prefixes a first-party bundle assembles its URLs from -
+# the base split across a config statement and a later literal, invisible to
+# any single extraction. white-jotter: `defaults.baseURL="/api"` in the app
+# bundle + `this.$axios.post("/login")` in a lazy chunk means
+# `POST /api/login`. comfyui-manager: `api_base+"/internal"+route` turns the
+# `/logs/raw` literal into `/internal/logs/raw`. Two conservative shapes:
+# a static `baseURL` config, and a path string JOINED as a segment
+# (`+ "/internal" +`). Absolute-URL bases (`baseURL:"https://api.comfy.org"`)
+# are deliberately not captured - chaining them would mint cross-origin
+# endpoints, outside the scanned origin's surface.
+_BASEURL_CONFIG_RE = re.compile(r"""baseURL\s*[:=]\s*["'`](/[^"'`\s]{0,63})["'`]""")
+_JOINED_PREFIX_RE = re.compile(r"""\+\s*["'`](/[A-Za-z][A-Za-z0-9_\-/]{0,31})["'`]\s*\+""")
+_PREFIX_SHAPE_RE = re.compile(r"/[A-Za-z0-9_\-/]+")
+# A chained candidate ending in one of these is the literal of a STATIC ASSET
+# (a Vite `./commands-x.js` import, a stylesheet, an image), never an API route
+# under the runtime prefix - the arm J comfyui bundle's 124 `./x-hash.js`
+# literals would otherwise mint `/api/assets/*.js` phantoms by the hundred.
+_STATIC_ASSET_EXT_RE = re.compile(
+    r"\.(?:js|mjs|css|map|wasm|png|jpe?g|gif|svg|ico|webp|avif|woff2?|ttf|eot|mp4|webm)$",
+    re.IGNORECASE,
+)
+_MAX_BASE_PREFIXES = 4
+_MAX_BASE_PREFIX_LEN = 32
+
+
+def _clean_base_prefix(raw: str) -> str | None:
+    """Normalize one captured prefix; `None` when it is not usable as a
+    request-path prefix (empty, root, file-shaped/dotted, over-long, or
+    carrying characters no path segment has). Strips a trailing `/` so chaining
+    never doubles up (`/api/` + `/login` -> `/api/login`)."""
+    p = (raw or "").rstrip("/")
+    if not p or "." in p or "?" in p or "#" in p:
+        return None
+    if len(p) > _MAX_BASE_PREFIX_LEN or not _PREFIX_SHAPE_RE.fullmatch(p):
+        return None
+    return p
+
+
+def extract_base_prefixes(text: str) -> list[str]:
+    """Ordered, deduped, capped (`_MAX_BASE_PREFIXES`) runtime path prefixes a
+    bundle assembles request URLs from. First-seen wins; the cap keeps a
+    pathological bundle from multiplying every literal into hundreds of
+    candidate URLs."""
+    out: list[str] = []
+    for m in _BASEURL_CONFIG_RE.finditer(text or ""):
+        p = _clean_base_prefix(m.group(1))
+        if p and p not in out:
+            out.append(p)
+    for m in _JOINED_PREFIX_RE.finditer(text or ""):
+        p = _clean_base_prefix(m.group(1))
+        if p and p not in out:
+            out.append(p)
+    return out[:_MAX_BASE_PREFIXES]
+
+
+def _resource_dir(rec: dict) -> str:
+    """Directory of the resource a literal was scanned in (`source_url`), or
+    `/` when unknown - the base a bundle-relative literal resolved under."""
+    source_url = rec.get("source_url")
+    if not isinstance(source_url, str) or not source_url:
+        return "/"
+    try:
+        p = urlparse(source_url)
+    except ValueError:
+        return "/"
+    path = p.path or "/"
+    if "/" not in path:
+        return "/"
+    return path.rsplit("/", 1)[0] or "/"
+
+
+def _chained_record(origin: str, prefix: str, rec: dict) -> dict | None:
+    """Re-mint one jsluice `urls` record under a discovered runtime prefix -
+    the same path one base further out (`/login` -> `/api/login`). The ORIGINAL
+    literal is never replaced (`/login` is also a real Vue route), so this is an
+    additive candidate the reprofile probe pass arbitrates. `None` when there is
+    nothing to mint:
+
+    - foreign-origin record, root path, or a path that already carries the
+      prefix;
+    - a static-asset path (extension filter above);
+    - a literal that resolved UNDER the resource's own directory: it is an
+      asset/module reference (`import "./locales/en/main.json"`), not a
+      request path. Only root-relative literals are runtime-prefix
+      candidates - exactly the `/login`-under-`baseURL:"/api"` shape. Bundles
+      served from the root directory keep every literal (no discriminator
+      exists there)."""
+    url = rec.get("url")
+    if not isinstance(url, str) or not url:
+        return None
+    try:
+        p = urlparse(url)
+    except ValueError:
+        return None
+    if not p.netloc or f"{p.scheme}://{p.netloc}" != origin:
+        return None
+    path = p.path or "/"
+    if path == "/" or path.endswith("/") or _STATIC_ASSET_EXT_RE.search(path):
+        return None
+    if path == prefix or path.startswith(prefix + "/"):
+        return None
+    resource_dir = _resource_dir(rec)
+    if resource_dir != "/" and (
+        path == resource_dir or path.startswith(resource_dir + "/")
+    ):
+        return None
+    target = f"{p.scheme}://{p.netloc}{prefix}{path}"
+    if p.query:
+        target = f"{target}?{p.query}"
+    out: dict = {
+        "url": target,
+        "method": rec.get("method") or "",
+        "chained_prefix": prefix,
+        "chained_from": url,
+    }
+    for key in ("queryParams", "bodyParams"):
+        value = rec.get(key)
+        if isinstance(value, list) and value:
+            out[key] = list(value)
+    return out
+
 
 def bundle_origin(url: str) -> str:
-    """`scheme://netloc` of `url` (the `-R` resolve base for jsluice urls and
-    the `base_url` anchor for recovered secrets). `""` if unparseable."""
+    """`scheme://netloc` of `url` (the `base_url` anchor for recovered
+    endpoints and secrets). `""` if unparseable."""
     try:
         p = urlparse(url)
     except ValueError:
@@ -119,13 +252,23 @@ def iter_sourcemap_sources(sourcemap: dict):
         yield src, (content if isinstance(content, str) else None)
 
 
-def _emit_jsluice(text: str, origin: str, source_url: str, run_jsluice, emit) -> None:
-    """Run both jsluice modes over `text` and emit each output line annotated
-    with `base_url`/`source_url` so the parser can anchor findings."""
+def _emit_jsluice(
+    text: str, base: str, source_url: str, origin: str, run_jsluice, emit
+) -> list[dict]:
+    """Run both jsluice modes over `text`, emit every record annotated with
+    `base_url` (the origin anchor) and `source_url` (the scanned resource), and
+    return the url-bearing records for the caller's runtime-prefix chaining.
+
+    `base` is the URL jsluice resolves relative literals against: the RESOURCE
+    the literal lives in, never the origin root - a bundle at
+    `/assets/index-abc.js` importing `./commands-x.js` means
+    `/assets/commands-x.js`, and resolving against the origin minted the
+    phantom `/commands-x.js` (2026-10-16 arm J diagnosis)."""
+    url_records: list[dict] = []
     if not text:
-        return
+        return url_records
     for mode in ("urls", "secrets"):
-        out = run_jsluice(mode, text, origin) or ""
+        out = run_jsluice(mode, text, base) or ""
         for line in out.splitlines():
             line = line.strip()
             if not line:
@@ -138,20 +281,38 @@ def _emit_jsluice(text: str, origin: str, source_url: str, run_jsluice, emit) ->
                 continue
             obj.setdefault("base_url", origin)
             obj.setdefault("source_url", source_url)
+            if mode == "urls" and isinstance(obj.get("url"), str) and obj["url"]:
+                url_records.append(obj)
             emit(json.dumps(obj))
+    return url_records
 
 
 def scan_bundles(bundle_urls, *, fetch, run_jsluice, emit) -> None:
     """Core flow (injected `fetch(url)->str|None`, `run_jsluice(mode,text,base)
     ->str`, `emit(line)`), so tests drive it with no network/binary.
 
-    Dedups processed sourcemap URLs and content-hash-dedups source bodies so
-    the same map / identical source across bundles is scanned once."""
+    Relative literals resolve against each scanned resource's URL. After the
+    batch, every buffered root-relative literal of an origin is re-minted once
+    per runtime path prefix the batch discovered in that origin's bundles
+    (`chained_prefix` on the record) - the cross-bundle join per-bundle
+    scanning alone cannot do. Dedups processed sourcemap URLs and
+    content-hash-dedups source bodies so the same map / identical source
+    across bundles is scanned once."""
     processed_maps: set[str] = set()
     seen_source_hashes: set[str] = set()
+    prefixes_by_origin: dict[str, list[str]] = {}
+    pending: list[tuple[str, dict]] = []
+
+    def note_prefixes(text: str, origin: str) -> None:
+        bucket = prefixes_by_origin.setdefault(origin, [])
+        for prefix in extract_base_prefixes(text):
+            if prefix not in bucket and len(bucket) < _MAX_BASE_PREFIXES:
+                bucket.append(prefix)
 
     for burl in bundle_urls:
         origin = bundle_origin(burl)
+        if not origin:
+            continue
 
         # A direct `.map` URL IS the sourcemap - never fetch it as a bundle
         # (that would double-fetch and defeat the processed-map dedup).
@@ -159,7 +320,11 @@ def scan_bundles(bundle_urls, *, fetch, run_jsluice, emit) -> None:
         if not burl.endswith(".map"):
             content = fetch(burl)
             if content:
-                _emit_jsluice(content, origin, burl, run_jsluice, emit)
+                note_prefixes(content, origin)
+                pending.extend(
+                    (origin, rec)
+                    for rec in _emit_jsluice(content, burl, burl, origin, run_jsluice, emit)
+                )
 
         map_url = sourcemap_candidate(content or "", burl)
         if not map_url or map_url in processed_maps:
@@ -186,7 +351,24 @@ def scan_bundles(bundle_urls, *, fetch, run_jsluice, emit) -> None:
             if digest in seen_source_hashes:
                 continue
             seen_source_hashes.add(digest)
-            _emit_jsluice(body, origin, origin, run_jsluice, emit)
+            note_prefixes(body, origin)
+            pending.extend(
+                (origin, rec)
+                for rec in _emit_jsluice(body, burl, burl, origin, run_jsluice, emit)
+            )
+
+    seen_chained: set[str] = set()
+    for origin, rec in pending:
+        for prefix in prefixes_by_origin.get(origin, ()):
+            chained = _chained_record(origin, prefix, rec)
+            if chained is None or chained["url"] in seen_chained:
+                continue
+            seen_chained.add(chained["url"])
+            chained.setdefault("base_url", origin)
+            source_url = rec.get("source_url")
+            if isinstance(source_url, str) and source_url:
+                chained.setdefault("source_url", source_url)
+            emit(json.dumps(chained))
 
 
 # --------------------------------------------------------------------------- #

@@ -404,7 +404,9 @@ def test_independent_oracle_jsluice_batching():
         assets, consumption=JOBS["jsluice"].consumption,
         apex_registrable="houseofhr.com", max_pods=2, set_cap=500,
     )
-    assert out == [{"batch": [a_app, b_main]}, {"batch": [a_main]}]
+    # Origin grouping (2026-10-16 baseURL chaining): each origin's bundles
+    # stay in ONE batch, grouped origins round-robin across the pod budget.
+    assert out == [{"batch": [a_app, a_main]}, {"batch": [b_main]}]
 
 
 def test_independent_oracle_reprofile_one_pod():

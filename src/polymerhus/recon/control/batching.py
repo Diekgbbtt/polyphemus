@@ -131,14 +131,39 @@ def reduce_endpoints(assets: list[dict], *, apex_registrable: str | None = None)
     return reduced
 
 
+# One origin's bundles stay in ONE pod (load-bearing for the runtime-baseURL
+# chaining the jsluice scanner applies per batch: a prefix declared in the app
+# bundle must reach the pods scanning that origin's lazy chunks). A single
+# origin beyond this bundle count would risk `EXEC_TIMEOUT_S` in the pod's
+# sequential fetch+scan loop, so it degrades to per-item units - the plain
+# round-robin, no chaining - instead of blowing the pod budget.
+_ORIGIN_GROUP_MAX = 120
+
+
+def _origin_key(url: str) -> str:
+    """The batch-grouping key of one bundle URL: its `scheme://netloc` origin,
+    else the URL itself (each unusable URL is then its own unit)."""
+    split = base_and_path(url)
+    return split[0] if split is not None else url
+
+
 def build_batches(
     items: list[str], max_pods: int, max_batch_size: int | None = None
 ) -> list[list[str]]:
     """Distribute `items` into batches. Returns `[]` for no items; every
     returned batch is non-empty.
 
-    Default (jsluice): round-robin into `min(max_pods, len(items))` batches so
-    sizes differ by at most one - the batch COUNT is bounded, each batch is not.
+    Default (jsluice/webpack bundles): partition by origin, then round-robin
+    the origin units into `min(max_pods, unit_count)` batches so sizes stay
+    balanced - the batch COUNT is bounded, each batch is not. Keeping one
+    origin's bundles together is load-bearing for the scanner's
+    runtime-baseURL chaining (2026-10-16): a request-path prefix discovered in
+    one of the origin's bundles (`baseURL: "/api"` in the app bundle) must
+    reach the pod that scans the rest of that origin's bundles, or chaining the
+    root-relative literals is nondeterministic (the #185 ADR deferral). An
+    origin exceeding `_ORIGIN_GROUP_MAX` bundles degrades to per-item units
+    (today's round-robin, chaining skipped) so no pod can outlive the exec
+    timeout.
 
     Bounded (`max_batch_size` set, arjun #37): chunk into batches of at most
     `max_batch_size` URLs, so every pod's single command finishes under its exec
@@ -149,10 +174,28 @@ def build_batches(
         return []
     if max_batch_size and max_batch_size > 0:
         return [items[i:i + max_batch_size] for i in range(0, n, max_batch_size)]
-    k = min(max_pods, n)
+
+    groups: dict[str, list[str]] = {}
+    order: list[str] = []
+    for item in items:
+        key = _origin_key(item)
+        if key not in groups:
+            groups[key] = []
+            order.append(key)
+        groups[key].append(item)
+
+    units: list[list[str]] = []
+    for key in order:
+        group = groups[key]
+        if len(group) <= _ORIGIN_GROUP_MAX:
+            units.append(group)
+        else:
+            units.extend([item] for item in group)
+
+    k = min(max_pods, len(units))
     batches: list[list[str]] = [[] for _ in range(k)]
-    for i, item in enumerate(items):
-        batches[i % k].append(item)
+    for i, unit in enumerate(units):
+        batches[i % k].extend(unit)
     return batches
 
 

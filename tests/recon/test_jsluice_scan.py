@@ -168,6 +168,138 @@ def test_scan_bundles_survives_unfetchable_and_bad_json():
     assert emitted == []
 
 
+# ------------- resource-relative resolution + runtime-prefix chaining ------ #
+# The arm J comfyui/white-jotter diagnosis (2026-10-16): jsluice resolved every
+# relative literal against the ORIGIN root (a Vite bundle's `./commands-x.js`
+# import became the 404 `/commands-x.js`), and root-relative literals missed
+# the runtime prefix their call site actually had (`/login` under axios
+# `defaults.baseURL: "/api"`). These lock both halves.
+def test_scan_bundles_resolves_against_scanned_resource_not_origin():
+    origin = "https://h.example.com"
+    burl = f"{origin}/assets/index-abc.js"
+    map_url = f"{origin}/assets/index-abc.js.map"
+    bases = []
+
+    def run(mode, text, base):
+        bases.append((mode, base))
+        return ""
+
+    fetched = {
+        burl: "x//# sourceMappingURL=index-abc.js.map",
+        map_url: json.dumps({"sources": ["src/x.js"], "sourcesContent": ["SRC"]}),
+    }
+    js.scan_bundles(
+        [burl], fetch=lambda u: fetched.get(u), run_jsluice=run, emit=lambda line: None
+    )
+    url_bases = [base for mode, base in bases if mode == "urls"]
+    assert url_bases == [burl, burl]  # bundle body AND recovered source
+    assert all(base != origin for base in url_bases)
+
+
+def test_extract_base_prefixes_from_config_and_joined_idioms():
+    assert js.extract_base_prefixes(
+        've.defaults.baseURL="/api",ve.defaults.withCredentials=!0'
+    ) == ["/api"]
+    assert js.extract_base_prefixes('return this.api_base+"/internal"+o') == ["/internal"]
+    assert js.extract_base_prefixes("axios.create({baseURL:'/v2/'})") == ["/v2"]
+    assert js.extract_base_prefixes('baseURL:"/api";baseURL:"/api"') == ["/api"]
+    # An absolute-URL base is another origin's surface - never chained here.
+    assert js.extract_base_prefixes('baseURL:"https://api.comfy.org"') == []
+    # Root and file-shaped values are not path prefixes.
+    assert js.extract_base_prefixes('baseURL:"/";baseURL:"/app.js"') == []
+    capped = "".join(f'baseURL:"/p{i}";' for i in range(6))
+    assert js.extract_base_prefixes(capped) == ["/p0", "/p1", "/p2", "/p3"]
+
+
+def test_chained_record_guards():
+    origin = "https://g.example.com"
+    assert js._chained_record(origin, "/api", {"url": origin + "/api/books"}) is None
+    assert js._chained_record(origin, "/api", {"url": origin + "/"}) is None
+    assert js._chained_record(origin, "/api", {"url": origin + "/api"}) is None
+    # Static assets and directory literals are never API routes under a prefix.
+    assert js._chained_record(origin, "/api", {"url": origin + "/assets/index-abc.js"}) is None
+    assert js._chained_record(origin, "/api", {"url": origin + "/a/vendor-x.css"}) is None
+    assert js._chained_record(origin, "/api", {"url": origin + "/dist/"}) is None
+    assert js._chained_record(
+        origin, "/api", {"url": "https://other.example.com/login"}
+    ) is None
+    rec = js._chained_record(origin, "/api", {"url": origin + "/search?k=1", "method": "GET"})
+    assert rec == {
+        "url": origin + "/api/search?k=1",
+        "method": "GET",
+        "chained_prefix": "/api",
+        "chained_from": origin + "/search?k=1",
+    }
+    # `.json` is NOT filtered: it can be a real API path (only unambiguously
+    # static asset extensions are skipped).
+    kept = js._chained_record(origin, "/api", {"url": origin + "/data/x.json", "method": "GET"})
+    assert kept is not None and kept["url"] == origin + "/api/data/x.json"
+    # A literal that resolved under the resource's own directory is an
+    # asset/module reference, NOT a request path - skip it even without a
+    # static extension (the `./locales/en/main.json` family).
+    bundle = {"source_url": origin + "/assets/index--PH2IHOc.js"}
+    assert js._chained_record(
+        origin, "/api", {"url": origin + "/assets/locales/en/main.json", **bundle}
+    ) is None
+    kept_root = js._chained_record(origin, "/api", {"url": origin + "/system_stats", **bundle})
+    assert kept_root is not None and kept_root["url"] == origin + "/api/system_stats"
+    # A root-served bundle has no directory discriminator: every literal stays
+    # a candidate.
+    assert js._chained_record(
+        origin, "/api", {"url": origin + "/anything.json", "source_url": origin + "/app.js"}
+    ) is not None
+
+
+def test_scan_bundles_chains_literals_with_batch_runtime_prefix():
+    origin = "https://j.example.com"
+    app = f"{origin}/static/js/app.js"
+    chunk = f"{origin}/static/js/8.chunk.js"
+    app_text = 'var ve=t("mtWM");ve.defaults.baseURL="/api",ve.defaults.withCredentials=!0'
+    chunk_text = 'this.$axios.post("/login",{u:"x"})'
+    fetched = {app: app_text, chunk: chunk_text}
+
+    def run(mode, text, base):
+        if mode != "urls":
+            return ""
+        if text == chunk_text:
+            return json.dumps(
+                {"url": origin + "/login", "method": "POST", "bodyParams": ["u"]}
+            )
+        return ""
+
+    emitted = []
+    # Prefix bundle SECOND: the join is post-batch, so scan order must not
+    # matter - the lazy chunk's literal still gets chained.
+    js.scan_bundles(
+        [chunk, app], fetch=lambda u: fetched.get(u), run_jsluice=run, emit=emitted.append
+    )
+    objs = [json.loads(line) for line in emitted]
+    originals = [o for o in objs if o.get("url") == origin + "/login"]
+    chained = [o for o in objs if o.get("chained_prefix")]
+    assert len(originals) == 1  # the literal itself is kept (a real route, too)
+    assert len(chained) == 1
+    assert chained[0]["url"] == origin + "/api/login"
+    assert chained[0]["method"] == "POST"
+    assert chained[0]["bodyParams"] == ["u"]
+    assert chained[0]["chained_from"] == origin + "/login"
+    assert chained[0]["base_url"] == origin
+
+
+def test_scan_bundles_no_chained_without_prefix_in_batch():
+    origin = "https://k.example.com"
+    burl = f"{origin}/static/js/8.chunk.js"
+
+    def run(mode, text, base):
+        return json.dumps({"url": origin + "/login"}) if mode == "urls" else ""
+
+    emitted = []
+    fetched = {burl: 'this.$axios.post("/login",{u:"x"})'}
+    js.scan_bundles([burl], fetch=lambda u: fetched.get(u), run_jsluice=run, emit=emitted.append)
+    objs = [json.loads(line) for line in emitted]
+    assert any(o.get("url") == origin + "/login" for o in objs)  # the literal WAS scanned
+    assert not any(o.get("chained_prefix") for o in objs)
+
+
 # ------------- real collaborators (the untested pod-side boundary) -------- #
 # scan_bundles is injected with fakes above, so _real_fetch / _real_run_jsluice
 # had zero coverage - both shipped broken from the D17 rewrite. These lock the
