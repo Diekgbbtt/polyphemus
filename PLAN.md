@@ -1,8 +1,9 @@
 # Plan: Overview entity + mechanised external bootstrap
 
-Created 2026-10-16. Status: active.
+Created 2026-10-16. Status: complete (2026-10-17).
 Execution contract for the two operator tasks, approved in shape before implementation started.
 This session is the orchestrator; workers are subagents.
+Task 1 landed with the Overview ADR (`docs/design/application-overview-entity-adr.md`); task 2 landed with the module under `tools/bootstrap/`, its spec (Diekgbbtt/polyphemus#358) and the run w2.6 acceptance record (`docs/design/external-bootstrap-w2.6-acceptance.md`).
 
 ## Task 1 - the Overview entity (+ the quality-assessment framework)
 

@@ -145,3 +145,7 @@ No phase of the loop reads the ground truth: the critic was its only reader, and
 5. Lifecycle signal design as in section 5 - confirmed by the accurate-signal requirement.
 
 Note for later readers: the validator deliberately does not enforce linchpin grounding or threat-model coverage (its own comment says so); those remain semantic judgements, now carried by the assessment framework's L criteria after the run, not by a loop phase.
+
+## 10. Run records
+
+- The first full end-to-end regeneration and its acceptance: `docs/design/external-bootstrap-w2.6-acceptance.md` (run w2.6, 2026-10-17, eight targets, `8/8` shape-valid, accepted under RUBRIC.md section 5). It also lists the five module defects the live run surfaced and the two measurement fixes the assessment produced.
