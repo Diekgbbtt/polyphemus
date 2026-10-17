@@ -175,6 +175,17 @@ def get_project_usage(project_id: str) -> dict:
     return usage_ledger().snapshot(project_id)
 
 
+@router.get("/projects/{project_id}/settings")
+def read_settings(project_id: str) -> dict:
+    """The project's own recon settings, read-only - the read face of the
+    settings the operator writes with the PUT beside it. An unknown project is a
+    404; a known project that never stored a blob reads back an empty one."""
+    try:
+        return repository.read_project_settings(project_id)
+    except ProjectNotFound:
+        raise HTTPException(status_code=404, detail="unknown project")
+
+
 @router.put("/projects/{project_id}/settings")
 def update_settings(project_id: str, body: SettingsUpdate) -> dict:
     try:

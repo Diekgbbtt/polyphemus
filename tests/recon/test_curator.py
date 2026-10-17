@@ -17,6 +17,29 @@ def test_unknown_label_rejected():
     with pytest.raises(ValueError):
         curator.build_asset_cypher(d)
 
+
+def test_asset_cypher_carries_chained_provenance_props():
+    """Chained provenance survives the graph write: the curator's `SET n +=
+    $props` passes an Endpoint's `chained_prefix`/`chained_from`/`origin_scope`
+    through verbatim, so the graph and the streamed analysis blocks keep WHY the
+    endpoint exists and WHETHER it may be probed (operator 2026-10-16)."""
+    d = AssetDelta(
+        type="Endpoint",
+        identity={"path": "/api/login", "method": "POST", "baseurl": "https://t.example.com"},
+        props={
+            "url": "https://t.example.com/api/login",
+            "source": "jsluice",
+            "chained_prefix": "/api",
+            "chained_from": "https://t.example.com/login",
+            "origin_scope": "external",
+        },
+    )
+    cy, params = curator.build_asset_cypher(d)
+    assert params["props"]["chained_prefix"] == "/api"
+    assert params["props"]["chained_from"] == "https://t.example.com/login"
+    assert params["props"]["origin_scope"] == "external"
+    assert "SET n += $props" in cy
+
 def test_untyped_profile_rejected_at_the_cypher_seam():
     import pytest
     # The typed-literal guard sits at BOTH write seams: here the graph-write

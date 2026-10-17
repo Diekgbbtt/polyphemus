@@ -147,6 +147,7 @@ JOBS: dict[str, JobSpec] = {
             materialise_root=True,
             skip_profiled=True,
             pack="one_pod",
+            skip_external=True,
         ),
         use_auth=True,
     ),
@@ -266,6 +267,9 @@ JOBS: dict[str, JobSpec] = {
         ),
         produces=["BaseURL", "Endpoint", "Parameter", "Header", "Technology"],
         consumes="BaseURL",
+        # No-probe enforcement (operator 2026-10-16): never crawl a BaseURL the
+        # chaining marked external (`origin_scope: "external"`).
+        consumption=ConsumptionOptions(skip_external=True),
         use_auth=True,
     ),
     "ffuf": JobSpec(
@@ -296,6 +300,9 @@ JOBS: dict[str, JobSpec] = {
         ),
         produces=["Endpoint"],
         consumes="BaseURL",
+        # No-probe enforcement (operator 2026-10-16): never fuzz an external
+        # BaseURL the chaining marked.
+        consumption=ConsumptionOptions(skip_external=True),
         use_auth=True,
     ),
     "kiterunner": JobSpec(
@@ -313,7 +320,7 @@ JOBS: dict[str, JobSpec] = {
         consumes_where=AssetSelector(field="profile", op="equals", values=["restapi"]),
         # #37 option B: the host's `restapi` Endpoints collapse per host into
         # scan-target prefixes via the unified derivation (`pack="scan_targets"`).
-        consumption=ConsumptionOptions(pack="scan_targets"),
+        consumption=ConsumptionOptions(pack="scan_targets", skip_external=True),
         # kr scans routes that may sit behind auth, so it receives the
         # feed-projected cookies/headers like the other request-based tools
         # (`kr` takes repeated -H "k: v" flags, the shared default format).
@@ -335,8 +342,9 @@ JOBS: dict[str, JobSpec] = {
         consumes="Endpoint",
         consumes_where=AssetSelector(field="path", op="ends_with", values=[".js", ".mjs"]),
         # #37 option B: bundles reduce + pack into batch pods via the unified
-        # derivation (`pack="batches"`).
-        consumption=ConsumptionOptions(pack="batches"),
+        # derivation (`pack="batches"`). `skip_external` (operator 2026-10-16):
+        # never fetch/scan a bundle the chaining marked external.
+        consumption=ConsumptionOptions(pack="batches", skip_external=True),
         use_auth=False,
     ),
     "webpack_chunks": JobSpec(
@@ -357,7 +365,7 @@ JOBS: dict[str, JobSpec] = {
         # bundles are the input.
         consumes="Endpoint",
         consumes_where=AssetSelector(field="path", op="ends_with", values=[".js", ".mjs"]),
-        consumption=ConsumptionOptions(pack="batches"),
+        consumption=ConsumptionOptions(pack="batches", skip_external=True),
         use_auth=False,
     ),
     "graphql-cop": JobSpec(
@@ -372,6 +380,9 @@ JOBS: dict[str, JobSpec] = {
         # only where the root `/` classifies graphql_api.
         consumes="Endpoint",
         consumes_where=AssetSelector(field="profile", op="equals", values=["graphql_api"]),
+        # No-probe enforcement (operator 2026-10-16): never audit an external
+        # endpoint the chaining marked.
+        consumption=ConsumptionOptions(skip_external=True),
         # graphql-cop probes a GraphQL surface that may sit behind auth, so it
         # receives the feed-projected cookies/headers (its own --headers
         # format: comma-joined `Key:Value` pairs, see the auth feed).
@@ -383,6 +394,9 @@ JOBS: dict[str, JobSpec] = {
         command_template="",
         produces=["BaseURL", "Endpoint", "Parameter"],
         consumes="BaseURL",
+        # No-probe enforcement (operator 2026-10-16): never crawl an external
+        # BaseURL the chaining marked.
+        consumption=ConsumptionOptions(skip_external=True),
         use_auth=True,
         configurator_mode="agent",
     ),
@@ -453,6 +467,7 @@ JOBS: dict[str, JobSpec] = {
             order_restapi_first=True,
             pack="batches",
             max_batch_size=4,
+            skip_external=True,
         ),
         use_auth=True,
     ),

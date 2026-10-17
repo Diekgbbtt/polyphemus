@@ -98,7 +98,7 @@ Neo4j holds a **Layer-0 descriptive attack-surface graph**: 15 entity labels plu
 | `BaseURL` | `(url, project_id)` | A web origin (scheme+host+port) |
 | `Endpoint` | `(path, method, baseurl, project_id)` | A path/method on a BaseURL |
 | `Parameter` | `(name, position, endpoint_path, baseurl, project_id)` | An input on an endpoint |
-| `Header` | `(name, value, baseurl, project_id)` | A response header |
+| `Header` | `(name, endpoint, baseurl, project_id)` | A response header (its `value`/`direction` are props) |
 | `Certificate` | `(subject_cn, project_id)` | A TLS certificate |
 | `Technology` | `(name, version, project_id)` | A fingerprinted product |
 | `Secret` | `(value_hash, project_id)` | A secret found in a JS bundle |

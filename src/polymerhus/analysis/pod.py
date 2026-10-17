@@ -11,7 +11,8 @@ supervised path (`supervisor.run_analyser_chunked`), the two-role
 `assigner -> mechanism_typist` schedule.
 
 What survives here, with its live consumers: `AnalyserExport` (broadly),
-`default_read_fn` (`l0_stream`), `_inventory_block` (`bootstrap`, `assigner`),
+`default_read_fn` (`l0_stream`), `_inventory_block` (`bootstrap`),
+`l1_graph_block` (`assigner`),
 `_slice_repr` (`assigner`),
 `default_curate_fn` and `default_curate_with_enrichment_fn`
 (`supervisor`), and `run_analyser` itself. The module is coherent without a pod:
@@ -116,6 +117,108 @@ def _inventory_block(inventory: dict | None) -> str:
     )
 
 
+def _render_l1_graph_sections(inv: dict) -> tuple:
+    """Render the three sections of the L1 graph block as (services, systems, edges)
+    lines. `(none yet)` for an empty section; stable-sorted; untruncated (the L1
+    graph is small). Shared by `l1_graph_block`."""
+    contracts = inv.get("service_contracts") or {}
+    descriptions = inv.get("system_descriptions") or {}
+    details = inv.get("system_details") or {}
+    edges = inv.get("edges") or []
+
+    service_keys = sorted(set(inv.get("services") or ()) | set(contracts))
+    if not service_keys:
+        services = "  Services (business_function_slug - contract): (none yet)"
+    else:
+        lines = []
+        for k in service_keys:
+            contract = (contracts.get(k) or "").strip()
+            lines.append(f"    - {k} - {contract}" if contract else f"    - {k}")
+        services = "  Services (business_function_slug - contract):\n" + "\n".join(lines)
+
+    system_keys = sorted(set(inv.get("systems") or ()) | set(descriptions) | set(details))
+    if not system_keys:
+        systems = ("  Systems (kind[:discriminator] :: description {attributes}): "
+                   "(none yet)")
+    else:
+        lines = []
+        for k in system_keys:
+            desc = (descriptions.get(k) or "").strip()
+            line = f"    - {k}"
+            if desc:
+                line += f" :: {desc}"
+            attrs = details.get(k) or {}
+            if attrs:
+                rendered = ", ".join(f"{a}={attrs[a]}" for a in sorted(attrs))
+                line += f" {{{rendered}}}"
+            lines.append(line)
+        systems = ("  Systems (kind[:discriminator] :: description {attributes}):\n"
+                   + "\n".join(lines))
+
+    if not edges:
+        edges_block = "  Edges (Service -[REL]-> System): (none yet)"
+    else:
+        lines = []
+        for e in sorted(edges, key=_edge_sort_key):
+            tail = _edge_tail(e)
+            lines.append(
+                f"    - {e.get('service_slug')} -[{e.get('rel')}]-> "
+                f"{e.get('system_key')}{tail}"
+            )
+        edges_block = "  Edges (Service -[REL]-> System):\n" + "\n".join(lines)
+
+    return services, systems, edges_block
+
+
+def _edge_sort_key(edge: dict):
+    """Stable sort for edges: (service_slug, rel, system_key, role, realm, order),
+    None-tolerant so a missing sub-field never raises on comparison."""
+    order = edge.get("order")
+    return (
+        edge.get("service_slug") or "", edge.get("rel") or "",
+        edge.get("system_key") or "", edge.get("role") or "", edge.get("realm") or "",
+        "" if order is None else str(order),
+    )
+
+
+def _edge_tail(edge: dict) -> str:
+    """` (role=..., realm=..., order=...)` for the sub-granularity that is SET, or
+    "" when none is. A `0` order is SET (positional metadata), so the check is
+    `is not None`, never truthiness."""
+    parts = [
+        f"{key}={edge.get(key)}"
+        for key in ("role", "realm", "order") if edge.get(key) is not None
+    ]
+    return f" ({', '.join(parts)})" if parts else ""
+
+
+def l1_graph_block(inventory: dict | None) -> str:
+    """The current L1 GRAPH as an explicit prompt block for the Assigner's volatile
+    human message (operator ruling 2026-10-16): each Service with its
+    `service_contract`, each System as `kind[:disc] :: description {attributes}`, and
+    the typed `Service -[REL]-> System` edges with role/realm/order.
+
+    It folds in the FR-INVENTORY identity-reuse discipline ("reuse these EXACT keys,
+    do NOT coin a synonym"), so it REPLACES `_inventory_block` in the Assigner prompt
+    rather than sitting beside it (two identity lists would duplicate). `_inventory_block`
+    is kept for its other consumers (bootstrap). Built fresh from the per-dispatch
+    `read_l1_inventory` read, so it tracks the graph as the run concretises more linked
+    systems. Untruncated (L1 is small); stable sort; `(none yet)` for an empty section.
+
+    A previous graph_view-capable Assigner degraded quality and bloated context
+    (retained decision), so the graph is POSTED here, never exposed as a tool."""
+    inv = inventory or {}
+    services, systems, edges = _render_l1_graph_sections(inv)
+    return (
+        "EXISTING L1 GRAPH - reuse these EXACT keys, do NOT coin a synonym.\n"
+        "These identities and the links between them are already in the graph from "
+        "earlier passes. Sign-in / signin / login are ONE identity: pick the key "
+        "already listed here rather than minting a near-duplicate. Add a NEW Service "
+        "/ System ONLY for surface no existing key below covers.\n"
+        f"{services}\n"
+        f"{systems}\n"
+        f"{edges}"
+    )
 # `_invoke_with_retry` was RETIRED (#73): structured analyser calls now go through
 # `roles.invoke_role`, whose single escalating-budget retry
 # (`invoke_with_escalating_timeout`) replaces this helper AND the client's own retry

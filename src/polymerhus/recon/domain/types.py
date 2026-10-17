@@ -113,6 +113,13 @@ class ConsumptionOptions(BaseModel):
     skip_profiled: bool = False
     drop_malformed: bool = False
     order_restapi_first: bool = False
+    # No-probe enforcement (operator 2026-10-16): drop every asset an earlier
+    # phase marked `origin_scope: "external"` (a foreign-origin record or a
+    # foreign-chained candidate) so an active phase never sends traffic to a
+    # foreign origin. Applies to Endpoint AND BaseURL read-back assets (both
+    # carry the prop). Off by default; every requesting job consuming
+    # Endpoint/BaseURL opts in - a no-op before any marker exists.
+    skip_external: bool = False
     pack: Literal["none", "batches", "one_pod", "scan_targets"] = "none"
     # Per-batch URL cap for the `batches` pack. `None` (jsluice) distributes the
     # whole set round-robin into `<= MAX_PODS` batches, so the batch COUNT is

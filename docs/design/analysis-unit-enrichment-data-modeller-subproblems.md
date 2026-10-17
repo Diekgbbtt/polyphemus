@@ -339,7 +339,7 @@ The request shape is a CORROBORATING grounding channel, never a new anchor type.
 - The request shape widens the **observed vocabulary** for `fields`.
   A name witnessed in a recorded request to an aggregated endpoint is a name the unit could actually have observed.
 - The request shape widens the **site index** only for sites that canonicalise onto a real **L0** node.
-  A `query` or `form` key canonicalises to `Parameter{name, position, endpoint_path, baseurl}`; a header or cookie name canonicalises to `Header{name, baseurl}`.
+  A `query` or `form` key canonicalises to `Parameter{name, position, endpoint_path, baseurl}`; a header or cookie name canonicalises to `Header{name, endpoint, baseurl}`.
 - The **groundedness** gate is UNCHANGED in force.
   A NEW **DataItem** still needs a surviving **SURFACES_AT** to a real **L0** **Parameter**/ **Header**/ **Secret**.
 
@@ -505,7 +505,7 @@ Each example names its HELD hypotheses, not only its final answer. The identity 
 
 **Example 3 - grounding, trust and a shallow relate.** Verified record `shopping_basket`, surfacing at `Parameter{quantity, position=query, endpoint_path=/api/basket}` and `Parameter{productId, ...}`, candidate owners `{cart, catalogue}`. Ground: `cart` produces it (owns `/api/basket`); `catalogue` consumes it (owns `/api/products/{id}` which the basket references). Trust: `catalogue` holds the assumption "the referenced productId is a catalogue item cart does not itself validate". Relate: `shopping_basket` `derived_from` `product_listing`, predicate "line item derived from a listed product".
 
-**Example 4 - a Header-sourced item, contrasted with a mechanism-only header.** `Header{Authorization, baseurl}` carries a bearer value, and a recorded request shows it on every authenticated call. Hypothesise: A - witnesses a `session_principal` record; B - no record, a mechanism-typist concern (evidence of an auth MECHANISM). Verify: the header's VALUE is the principal's own credential, present on every authenticated call - A is supported; the mechanism itself is out of scope for this role. -> lift `session_principal`, surfacing at the Header.
+**Example 4 - a Header-sourced item, contrasted with a mechanism-only header.** `Header{Authorization, endpoint, baseurl}` carries a bearer value, and a recorded request shows it on every authenticated call. Hypothesise: A - witnesses a `session_principal` record; B - no record, a mechanism-typist concern (evidence of an auth MECHANISM). Verify: the header's VALUE is the principal's own credential, present on every authenticated call - A is supported; the mechanism itself is out of scope for this role. -> lift `session_principal`, surfacing at the Header.
 
 **Example 5 - reuse over paraphrase.** Known items include `shopping_basket :: client-supplied quantity and product reference`. New surface: `Parameter{qty, position=body, endpoint_path=/api/cart/items}` and a recorded `form.qty`. Hypothesise: A - a NEW record; B - the SAME record as `shopping_basket`, reached via a second endpoint. Verify: `qty` and `quantity` are the same field under a different name, and the two paths plausibly serve the same function - reuse `shopping_basket`'s exact `item_key`, compound its `fields`/`notes`.
 
@@ -644,7 +644,7 @@ The six ordered gates of `docs/design/dataplane-A1-decisions.md` section 5 are u
 Two of them take one widened input each, fed deterministically by the body.
 
 - **Gate 3, the reference gate** (`resolve_surface_refs`): the `sites` index becomes `site_index(admitted) | request_site_index`.
-  A request-shape **Parameter** site carries the canonical `{name, position, endpoint_path, baseurl}` identity; a **Header** site carries `{name, baseurl}`.
+  A request-shape **Parameter** site carries the canonical `{name, position, endpoint_path, baseurl}` identity; a **Header** site carries `{name, endpoint, baseurl}`.
 - **Gate 5, the observed-only-fields gate** (`bind_fields_to_observed`): the `observed_names` becomes `observed_vocabulary(admitted) | observed_request_names`.
 - **Gate 6, groundedness** (`enforce_groundedness`): unchanged.
   A NEW **DataItem** still needs a surviving **SURFACES_AT** to a real **L0** node.

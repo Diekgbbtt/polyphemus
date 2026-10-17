@@ -82,6 +82,7 @@ IGNORED_PREFIXES: tuple[str, ...] = (
     "CLAUDE.md",
     "CODING_STANDARD.md",
     "CONTEXT-MAP.md",
+    "PLAN.md",
     "PROMPT-",
     "README.md",
     "STATE.md",

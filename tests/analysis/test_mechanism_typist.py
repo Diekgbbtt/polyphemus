@@ -18,6 +18,7 @@ from polymerhus.analysis.analyser_types import (
 )
 from polymerhus.analysis.chunking import Chunk
 from polymerhus.analysis.mechanism_typist import (
+    _merge_systems,
     drop_unknown_vocabulary,
     mechanism_typist_body,
     narrow_to_typing,
@@ -179,9 +180,10 @@ def test_N5_end_to_end_emits_only_valid_vocabulary():
 
 
 def test_N6_extend_prompt_shows_existing_description_and_demands_enrichment():
-    """Compounding (grilled #9 Q7): the extraction prompt must surface the currently-
-    defined System WITH its description AND instruct enrich-never-blank, or the model
-    cannot compound and would clobber."""
+    """Compounding (grilled #9 Q7, operator ruling 2026-10-16): the extraction prompt
+    must surface the currently-defined System WITH its description AND direct an
+    OVERWRITE - the emitted FULL rewritten text REPLACES the stored description (it is
+    not merged into it, so the model must restate the whole mechanism)."""
     captured = {}
 
     def invoke(messages, *, schema=None, system_prompt=None):
@@ -195,7 +197,40 @@ def test_N6_extend_prompt_shows_existing_description_and_demands_enrichment():
     type_mechanisms(_service_chunk(), invoke_fn=invoke, inventory=inventory)
     p = captured["systems_prompt"]
     assert "bearer-token auth" in p            # the existing description is shown
-    assert "ENRICHED" in p and "never blank" in p  # enrich-not-clobber is directed
+    assert "REPLACES" in p                     # the overwrite contract is directed
+    assert "stand alone" in p                  # the rewritten text must be self-contained
+
+
+def test_merge_systems_preserves_a_fallback_only_new_attribute():
+    """Operator ruling 2026-10-16: on EXTEND the model may overwrite ANY attribute (a
+    new `pages` list, an updated `rendering_model`). The two structured calls of one
+    wave merge by (kind, discriminator); the extraction call's description wins, but an
+    attribute ONLY the linking call carried must NOT be dropped."""
+    primary = SystemProposal(kind="WebPresentation", discriminator="catalogue::home",
+                             props={"description": "homepage cluster"})
+    fallback = SystemProposal(kind="WebPresentation", discriminator="catalogue::home",
+                              props={"description": "stale", "pages": ["/"],
+                                     "rendering_model": "PrestaShop"})
+    (merged,) = _merge_systems([primary], [fallback])
+    assert merged.props["description"] == "homepage cluster"   # primary wins the description
+    assert merged.props["pages"] == ["/"]                       # new attribute survives
+    assert merged.props["rendering_model"] == "PrestaShop"
+
+
+def test_reemitted_system_with_changed_description_and_new_attribute_survives_shaping():
+    """A re-emitted System (existing identity, changed description, a new attribute) is
+    a valid EXTEND: shaping must carry its props through UNCHANGED so the curator writes
+    them (MERGE + `SET n += $props`, last-write-wins), never blank or strip them."""
+    batch = L1DeltaBatch(systems=[SystemProposal(
+        kind="WebPresentation", discriminator="catalogue::product-detail",
+        props={"description": "rewritten: now shows a price filter and an AJAX pager",
+               "pages": ["/it/prodotto/1", "/it/prodotto/2"],
+               "rendering_model": "PrestaShop 8"})])
+    out = drop_unknown_vocabulary(narrow_to_typing(batch), kinds=_KINDS, rels=_RELS)
+    (s,) = out.systems
+    assert s.props["description"].startswith("rewritten:")      # the new text is intact
+    assert s.props["pages"] == ["/it/prodotto/1", "/it/prodotto/2"]
+    assert s.props["rendering_model"] == "PrestaShop 8"          # a new attribute survives
 
 
 def test_co_produced_systems_from_linking_are_captured_not_discarded():
@@ -544,7 +579,7 @@ def test_repeated_identities_render_one_row_after_the_stream_collapse():
     for _ in range(10):
         assets.append(AssetDelta(type="BaseURL", identity={"url": bu}))
         assets.append(AssetDelta(
-            type="Header", identity={"name": "server", "baseurl": bu},
+            type="Header", identity={"name": "server", "endpoint": "/", "baseurl": bu},
             props={"value": "nginx/1.31.6", "direction": "response"}))
         assets.append(AssetDelta(
             type="Technology", identity={"name": "Nginx:1.31.6", "version": ""},

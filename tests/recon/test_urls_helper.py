@@ -97,6 +97,26 @@ def test_url_to_deltas_extra_endpoint_props_merged():
     assert endpoint.props["source"] == "t"
 
 
+def test_url_to_deltas_baseurl_extra_props_ride_the_baseurl_delta():
+    # jsluice passes {"origin_scope": "external"} here for a foreign-origin
+    # record so the no-probe marker rides the BaseURL node too (operator
+    # 2026-10-16). Absent, the BaseURL delta keeps its empty props.
+    deltas = url_to_deltas(
+        "https://api.comfy.org/login",
+        source="jsluice",
+        extra_endpoint_props={"origin_scope": "external"},
+        baseurl_extra_props={"origin_scope": "external"},
+    )
+    baseurl = next(d for d in deltas if d.type == "BaseURL")
+    assert baseurl.identity == {"url": "https://api.comfy.org"}
+    assert baseurl.props == {"origin_scope": "external"}
+    endpoint = next(d for d in deltas if d.type == "Endpoint")
+    assert endpoint.props["origin_scope"] == "external"
+    # default: no baseurl props
+    plain = url_to_deltas("https://h.example.com/x", source="t")
+    assert next(d for d in plain if d.type == "BaseURL").props == {}
+
+
 def test_url_to_deltas_invalid_url_returns_empty_list():
     assert url_to_deltas("not-a-url", source="t") == []
     assert url_to_deltas("", source="t") == []

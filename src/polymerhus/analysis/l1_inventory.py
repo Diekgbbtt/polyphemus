@@ -18,10 +18,20 @@ from __future__ import annotations
 
 import logging
 
+from polymerhus.analysis.l1_curator import SYSTEM_EDGE_RELS
 from polymerhus.analysis.l1_types import elide_singleton
 from polymerhus.analysis.overview import empty_overview, normalize_overview
 
 logger = logging.getLogger(__name__)
+
+# Keys that are identity / provenance / lifecycle BOOKKEEPING on an `:L1System`,
+# never a "notable attribute" for the L1 graph block. `description` is excluded too:
+# it is surfaced on its own line (`system_descriptions`). Mirrors
+# `l1_curator._RESERVED_PROPS` minus the service-only `business_function_slug`.
+_SYSTEM_BOOKKEEPING = frozenset({
+    "project_id", "kind", "discriminator", "description",
+    "first_seen", "last_seen", "prov_job", "prov_model", "prov_prompt_id",
+})
 
 
 def _resolve_read_fn(read_fn):
@@ -34,6 +44,8 @@ def _resolve_read_fn(read_fn):
 def _empty() -> dict:
     return {"services": [], "systems": [],
             "service_contracts": {}, "system_descriptions": {},
+            "service_contracts": {}, "system_descriptions": {},
+            "system_details": {}, "edges": [],
             "application_overview": empty_overview()}
 
 
@@ -69,6 +81,42 @@ def read_application_overview(project_id: str, *, settings_fn=None) -> dict:
     return normalize_overview(value)
 
 
+def _read_edges(read_fn, project_id: str) -> list[dict]:
+    """The typed `Service -> System` edges of the project's L1 graph, filtered to
+    the §6 `SYSTEM_EDGE_RELS` allowlist (imported, never duplicated) and shaped for
+    the prompt block: `{service_slug, rel, system_key, role, realm, order}` with the
+    `system_key` rendered by the same `_render_system` rule as the Systems list, so
+    an edge's endpoint names the exact key a proposer must reuse. role/realm/order
+    are None when unset (they ride the edge's props, L1D-21). Stable sort by
+    (service_slug, rel, system_key, role, realm, order)."""
+    edge_rows = read_fn(
+        "MATCH (s:L1Service)-[r]->(y:L1System) "
+        "WHERE s.project_id = $project_id AND y.project_id = $project_id "
+        "RETURN s.business_function_slug AS service_slug, type(r) AS rel, "
+        "y.kind AS kind, y.discriminator AS disc, "
+        "r.role AS role, r.realm AS realm, r.order AS order",
+        {"project_id": project_id},
+    )
+    edges = []
+    for r in edge_rows:
+        if r.get("rel") not in SYSTEM_EDGE_RELS or not r.get("service_slug") or not r.get("kind"):
+            continue
+        edges.append({
+            "service_slug": r["service_slug"],
+            "rel": r["rel"],
+            "system_key": _render_system(r),
+            "role": r.get("role"),
+            "realm": r.get("realm"),
+            "order": r.get("order"),
+        })
+    edges.sort(key=lambda e: (
+        e["service_slug"], e["rel"], e["system_key"],
+        e["role"] or "", e["realm"] or "",
+        "" if e["order"] is None else str(e["order"]),
+    ))
+    return edges
+
+
 def read_l1_inventory(project_id: str, *, read_fn=None, settings_fn=None) -> dict:
     """Return the project's current L1 identities as
     `{"services": [business_function_slug,...], "systems": ["kind" | "kind:disc",...],
@@ -94,8 +142,20 @@ def read_l1_inventory(project_id: str, *, read_fn=None, settings_fn=None) -> dic
     the framing the four item-consuming agents receive as a dedicated message
     (the Q4 model).
 
+    `system_details` and `edges` are the L1-GRAPH additions (operator ruling
+    2026-10-16): the Assigner's first human message POSTS the current graph, so the
+    read surfaces a System's non-bookkeeping attributes (`system_details`, keyed by
+    the same `_render_system` shape) and the typed `Service -> System` edges
+    (`edges`, filtered to `l1_curator.SYSTEM_EDGE_RELS` - the allowlist is imported,
+    never duplicated). Both are ADDITIVE to the existing keys; the flat
+    `services`/`systems` lists and the `service_contracts`/`system_descriptions`
+    maps are unchanged. A previous graph_view-capable Assigner degraded quality and
+    bloated context (retained decision), so the graph is delivered as a prompt block
+    from this per-dispatch read, never a tool the model calls.
+
     Fail-open: any read error degrades to the empty inventory shape and never raises
-    into the caller."""
+    into the caller. The EDGE read has its OWN try, so a failing edge query drops
+    `edges` to [] without discarding the identity reads above it."""
     read_fn = _resolve_read_fn(read_fn)
     overview = read_application_overview(project_id, settings_fn=settings_fn)
     try:
@@ -106,7 +166,8 @@ def read_l1_inventory(project_id: str, *, read_fn=None, settings_fn=None) -> dic
         )
         system_rows = read_fn(
             "MATCH (n:L1System) WHERE n.project_id = $project_id "
-            "RETURN n.kind AS kind, n.discriminator AS disc, n.description AS description",
+            "RETURN n.kind AS kind, n.discriminator AS disc, n.description AS description, "
+            "properties(n) AS props",
             {"project_id": project_id},
         )
     except Exception:  # fail-open: a read error degrades to the empty inventory
@@ -125,10 +186,29 @@ def read_l1_inventory(project_id: str, *, read_fn=None, settings_fn=None) -> dic
         for r in system_rows
         if r.get("kind") and (r.get("description") or "").strip()
     }
+    system_details = {}
+    for r in system_rows:
+        if not r.get("kind"):
+            continue
+        props = r.get("props") or {}
+        details = {
+            k: v for k, v in props.items()
+            if k not in _SYSTEM_BOOKKEEPING and v is not None
+        }
+        if details:
+            system_details[_render_system(r)] = details
+    try:
+        edges = _read_edges(read_fn, project_id)
+    except Exception:  # fail-open: the graph block degrades to no edges
+        logger.warning("read_l1_inventory edges failed for project=%s; fail-open to no edges",
+                       project_id, exc_info=True)
+        edges = []
     return {
         "services": services,
         "systems": systems,
         "service_contracts": contracts,
         "system_descriptions": system_descriptions,
+        "system_details": system_details,
+        "edges": edges,
         "application_overview": overview,
     }

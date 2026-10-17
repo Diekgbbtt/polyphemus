@@ -270,7 +270,7 @@ Every node carries `project_id`, `first_seen`, `last_seen`. Identity key = the `
 | `BaseURL` | `(url)` | scheme, host, source, status_code, title, content_type, final_url | `-[:HAS_ENDPOINT]->Endpoint`, `-[:USES_TECHNOLOGY]->Technology`, `-[:HAS_HEADER]->Header`, `-[:HAS_CERTIFICATE]->Certificate`, `-[:HAS_SECRET]->Secret` |
 | `Endpoint` | `(path, method, baseurl)` | url, status_code, content_type, content_length, title, server, response_time_ms, source, category, endpoint_type | `-[:HAS_PARAMETER]->Parameter` |
 | `Parameter` | `(name, position, endpoint_path, baseurl)` | type, category, input_type, required, source, sample_values[] | (attached to Endpoint) |
-| `Header` | `(name, value, baseurl)` | — | (attached to BaseURL/Endpoint) |
+| `Header` | `(name, endpoint, baseurl)` | value, direction | (attached to BaseURL) |
 | `Certificate` | `(subject_cn)` | issuer, san[], not_before, not_after | (attached to BaseURL/IP) |
 | `Technology` | `(name, version)` | category, source, cpe | — |
 | `Secret` | `(value_hash)` | kind, source, redacted | (attached to BaseURL) |

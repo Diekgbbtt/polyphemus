@@ -49,12 +49,15 @@ def url_to_deltas(
     method: str = "GET",
     source: str,
     extra_endpoint_props: dict | None = None,
+    baseurl_extra_props: dict | None = None,
     query_params: list[str] | None = None,
     body_params: list[str] | None = None,
 ) -> list[AssetDelta]:
     """Decompose one discovered URL into BaseURL + Endpoint(+edge) + Parameters(+edges).
 
-    - `BaseURL{url: scheme://netloc}` (no props).
+    - `BaseURL{url: scheme://netloc}` (props `baseurl_extra_props` when given,
+      else none - e.g. jsluice passes `{"origin_scope": "external"}` for a
+      foreign-origin record so the no-probe marker rides the BaseURL node too).
     - `Endpoint{path, method, baseurl}` identity, `props={url, source, **extra}`,
       with an inbound `HAS_ENDPOINT` edge from the `BaseURL` reusing the exact
       `BaseURL` identity dict object.
@@ -81,7 +84,11 @@ def url_to_deltas(
     method = method.upper()
 
     deltas: list[AssetDelta] = [
-        AssetDelta(type="BaseURL", identity={"url": baseurl}),
+        AssetDelta(
+            type="BaseURL",
+            identity={"url": baseurl},
+            props=dict(baseurl_extra_props) if baseurl_extra_props else {},
+        ),
     ]
 
     endpoint_props = {"url": url, "source": source}

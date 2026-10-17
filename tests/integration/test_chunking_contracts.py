@@ -251,6 +251,68 @@ def test_C27f_non_endpoint_assets_on_noise_paths_survive():
     assert sorted(a.type for a in chunk.assets) == ["Header", "Parameter", "Parameter"]
 
 
+# --- C27g-C27j (2026-10-16, operator-ruled): the gate reuses recon's families -----
+#
+# The stream gate now SINGLE-SOURCES its extension families from recon's
+# `noise_filter` (`STATIC_EXTS`/`JS_EXTS`/`IMAGE_EXTS`/`MEDIA_EXTS`), so the two
+# classifiers never drift. Drop policy is two-tier, mirroring recon's recall bias
+# (D15): the never-surface static families (stylesheets, fonts, sourcemaps), the
+# script bundles (js/mjs) and wasm are a HARD drop; the image/media families drop
+# ONLY under a whole `assets`/`static` segment, so `/uploads/x.png` and
+# `/downloads/x.pdf` stay in the stream (user-controllable surface).
+
+def test_C27g_hard_static_and_script_families_never_stream():
+    assets = [
+        _ep("/orders/42"),              # kept
+        _ep("/styles/app.scss"),        # stylesheet pre-processor
+        _ep("/styles/app.less"),
+        _ep("/fonts/glyphs.woff2"),     # font
+        _ep("/fonts/glyphs.ttf"),
+        _ep("/app.wasm"),               # wasm
+        _ep("/x.mjs"),                  # es module
+    ]
+    (chunk,) = chunks_for_job(JOB, assets)
+    assert {a.identity["path"] for a in chunk.assets} == {"/orders/42"}
+
+
+def test_C27h_recall_biased_media_stay_outside_presentational_segments():
+    """Recon's recall bias (D15) carried into L1: a user-upload/download URL can be
+    real surface (SSRF / stored-XSS / path-traversal), so an image/media extension
+    is NOT a hard drop - it must keep streaming from `/uploads`, `/downloads`, etc."""
+    assets = [
+        _ep("/uploads/photo.png"),
+        _ep("/downloads/report.pdf"),
+        _ep("/media/clip.mp4"),
+        _ep("/user-content/avatar.jpg"),
+    ]
+    (chunk,) = chunks_for_job(JOB, assets)
+    assert {a.identity["path"] for a in chunk.assets} == {
+        "/uploads/photo.png", "/downloads/report.pdf",
+        "/media/clip.mp4", "/user-content/avatar.jpg",
+    }
+
+
+def test_C27i_recall_biased_media_drop_under_a_presentational_segment():
+    assets = [
+        _ep("/assets/logo.png"),
+        _ep("/static/hero.jpg"),
+        _ep("/downloads/assets/report.pdf"),   # an `assets` segment anywhere -> dropped
+        _ep("/orders/42"),
+    ]
+    (chunk,) = chunks_for_job(JOB, assets)
+    assert {a.identity["path"] for a in chunk.assets} == {"/orders/42"}
+
+
+def test_C27j_gate_families_are_single_sourced_from_noise_filter():
+    """No drift: the gate's hard-drop + recall-biased sets ARE the recon families,
+    never a private copy (the two classifiers must agree)."""
+    from polymerhus.analysis import chunking
+    from polymerhus.recon.domain import noise_filter
+
+    assert chunking._HARD_DROP_EXTS >= noise_filter.STATIC_EXTS | noise_filter.JS_EXTS | {"wasm"}
+    assert chunking._RECALL_BIASED_EXTS == noise_filter.IMAGE_EXTS | noise_filter.MEDIA_EXTS
+
+
 def _obs_on(anchor_type, identity):
     return Observation(macro_kind="k", severity="info", evidence="e", rationale="r",
                        anchor={"type": anchor_type, "identity": identity},
@@ -287,8 +349,12 @@ def test_C28_baseurl_anchored_observation_rides_via_its_endpoints_parent():
 # once the accumulated families cross the SOFT target, so a family is atomic and
 # chunks follow the graph, never an array position.
 
-def _hdr(name, baseurl=BU):
-    return AssetDelta(type="Header", identity={"name": name, "baseurl": baseurl})
+def _hdr(name, baseurl=BU, endpoint="/"):
+    # Operator ruling 2026-10-16: Header identity is {name, endpoint, baseurl},
+    # the value being a prop. The default endpoint `/` keeps these fixtures'
+    # per-transaction repeats collapsing onto one identity.
+    return AssetDelta(
+        type="Header", identity={"name": name, "endpoint": endpoint, "baseurl": baseurl})
 
 
 def _tech(name, baseurl=BU):
@@ -379,22 +445,23 @@ def test_D5_parameters_ride_their_endpoints_bucket_parent_first():
 
 def test_D6_katana_shaped_stream_collapses_to_one_cohesive_chunk():
     """The arm H regression: 30 crawled transactions of one host, each re-emitting
-    the BaseURL, 8 response headers and one Technology, plus a gated `.js`
+    the BaseURL, its response headers and one Technology, plus a gated `.js`
     Endpoint. The positional builder produced 12 chunks of ~144k chars; the
-    family builder produces ONE chunk of the 10 unique assets."""
+    family builder produces ONE chunk of the 9 unique assets. (`date` is absent:
+    the parser never mints it - operator ruling 2026-10-16.)"""
     assets = []
     for i in range(30):
         assets.append(_asset("BaseURL", url=BU))
         assets.append(_ep(f"/assets/chunk{i}.js"))
-        for name in ("content-type", "content-length", "date", "server", "etag",
+        for name in ("content-type", "content-length", "server", "etag",
                      "cache-control", "expires", "connection"):
             assets.append(_hdr(name))
         assets.append(_tech("Nginx:1.31.6"))
     (chunk,) = chunks_for_job(JOB, assets)
-    assert len(chunk.assets) == 10
+    assert len(chunk.assets) == 9
     assert chunk.assets[0].type == "BaseURL"      # the host anchor leads its family
     assert {a.type for a in chunk.assets} == {"BaseURL", "Header", "Technology"}
-    assert sum(1 for a in chunk.assets if a.type == "Header") == 8
+    assert sum(1 for a in chunk.assets if a.type == "Header") == 7
 
 
 def test_D7_unattached_assets_keep_their_own_family_and_still_stream():

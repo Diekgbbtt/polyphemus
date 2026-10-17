@@ -34,7 +34,7 @@ A live probe of the httpx binary settled E5 (`httpx -u http://t-1fc05262.target/
 `katana_parser.parse` decomposes each JSONL line (one crawled request) into: 1 `BaseURL`, 1 `Endpoint` (+`Parameter`s), 1 `Header` per response header, and 1 `Technology` per detected tech.
 Nothing dedups at the source, and the parser says so: the per-line emission is the observation record.
 The arm H crawl visited ~124 requests on one host, so P4's 1,240 assets are consistent with ~124 x 10 deltas.
-After identity collapse the same stream holds ONE BaseURL, ~16 Headers, 1 Technology and ~2 admittable Endpoints.
+After identity collapse the same stream holds ONE BaseURL, 11 Headers, 1 Technology and 2 admittable Endpoints (measured in Appendix A; the first estimate was ~16 headers / ~2 endpoints).
 
 ### E2 - the chunk builder slices the stream positionally at 100
 
@@ -101,6 +101,41 @@ The fix moves into the stream layer; the parsers keep emitting observations and 
 
 ## 7. Deliberate deviations and open items
 
-- **"Headers report the owning endpoint":** the Header identity is `{name, baseurl}` and its only minted edge is `(BaseURL)-[:HAS_HEADER]->(Header)`. Endpoint-level ownership would need a parser change that invents a link recon does not observe. The fix keeps the baseurl owner visible and collapses the per-transaction repeats.
+- **REVERSED 2026-10-16 (operator ruling).** The entry below held the Header identity at `{name, baseurl}` with baseurl-only ownership. The operator overruled it: the Header identity is now `{name, endpoint, baseurl}` (the `endpoint` being the path that returned the header, the value a prop). The `(BaseURL)-[:HAS_HEADER]->(Header)` edge is unchanged - the binding stays the source BaseURL, and no header-to-endpoint edge is invented - but two endpoints under one origin carrying a same-named header no longer merge, while a re-crawled endpoint's headers still collapse. The `date` response header is dropped entirely. The measurement in Appendix A predates this change.
+- **"Headers report the owning endpoint" (the superseded position, kept as record):** the Header identity is `{name, baseurl}` and its only minted edge is `(BaseURL)-[:HAS_HEADER]->(Header)`. Endpoint-level ownership would need a parser change that invents a link recon does not observe. The fix keeps the baseurl owner visible and collapses the per-transaction repeats.
 - **The exec-seam double sessions** (`recon.domain.pod.default_exec_fn`) remain a separate follow-up from T2; they show up in the same kali access log and are measured in the next trial.
-- **Group sizes for the typist:** after the fix the katana pass collapses to one small cohesive chunk (~20 unique assets). If a single family ever exceeds a prompt budget, a future iteration can split a family by parent endpoint.
+- **Group sizes for the typist:** after the fix the katana pass collapses to one small cohesive chunk (15 unique assets, measured; Appendix A). If a single family ever exceeds a prompt budget, a future iteration can split a family by parent endpoint.
+
+## Appendix A - the collapse in numbers (measured 2026-10-15)
+
+Source: the full arm H window (12:28Z-14:32Z) pulled per trace from Langfuse (`/root/lf-blocks.json`: 5,233 observations, 444 generations, 26 distinct `STREAMED SURFACE` blocks = the run's 26 chunks).
+The 12 katana blocks (first seen 12:48:26Z through 13:26:28Z) were parsed paragraph by paragraph.
+
+PRE - what the typist actually received (P4's chunks):
+
+| type | paragraphs streamed | distinct identities | repeats |
+|------|--------------------:|--------------------:|--------:|
+| BaseURL | 114 | 1 | 113 |
+| Header | 905 | 11 | 894 |
+| Technology | 114 | 1 | 113 |
+| Endpoint | 2 | 2 | 0 |
+| **total** | **1,135** | **15** | **1,120** |
+
+- 12 chunks: 11 x 100 assets + one 35-asset tail, cut positionally at 100.
+- P4 produced 1,240 deltas (the results doc); 1,135 reached the typist; the 105-delta difference is the Endpoint deltas the pre-existing noise gate withheld (the script/style bundles, E3).
+- The two streamed Endpoints are `GET /` and `GET /experiment/models`; the old builder put them in the FIRST and LAST chunks.
+- Repeat share: 1,120 of 1,135 paragraphs (98.7%) repeated an identity already in the stream.
+
+POST - the same stream through the T3 builder (filter -> collapse -> families):
+
+| type | identities | family |
+|------|-----------:|--------|
+| BaseURL | 1 | host-meta, 13 assets |
+| Header | 11 | host-meta |
+| Technology | 1 | host-meta |
+| Endpoint | 2 | endpoints: `GET /` and `GET /experiment/models` |
+| **total** | **15** | 3 families -> ONE chunk |
+
+- Typist turns for this pass fall 12 -> 1 (15 assets never reach the soft target of 100).
+- The assigner-visible surface stays 2 Endpoints and now arrives in ONE turn instead of two.
+- Corrections to earlier estimates in this doc: E1's "~16 Headers" matched the graph's total Header node count across both tools (16 nodes); the katana stream's own identity set is 11. Section 7's "~20 unique assets" is superseded: measured 15.

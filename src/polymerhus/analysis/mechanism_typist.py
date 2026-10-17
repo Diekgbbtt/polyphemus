@@ -119,17 +119,23 @@ def _merge_systems(primary, fallback):
     systems+edges together in the linking step, so a System it names there must be
     CAPTURED, never discarded (observed live: extraction=0 systems, linking co-produced
     5 well-described ones that were being thrown away). Keyed by (kind, discriminator);
-    primary wins, but a fallback fills a missing key OR supplies a description the
-    primary left blank."""
+    primary wins on a conflicting prop, but a fallback fills a missing key OR supplies
+    props the primary lacks - an attribute ONLY the fallback carried (a new `pages`
+    list, an updated `rendering_model`) must not be dropped, since extending a System
+    overwrites its attributes (operator ruling 2026-10-16)."""
     out: dict = {}
     for s in primary:
         out[(s.kind, s.discriminator)] = s
     for s in fallback:
         k = (s.kind, s.discriminator)
-        if k not in out:
+        existing = out.get(k)
+        if existing is None:
             out[k] = s
-        elif not (out[k].props or {}).get("description") and (s.props or {}).get("description"):
-            out[k] = s
+            continue
+        merged_props = dict(s.props or {})
+        merged_props.update(existing.props or {})  # primary wins on a conflicting key
+        if merged_props != (existing.props or {}):
+            out[k] = existing.model_copy(update={"props": merged_props})
     return list(out.values())
 
 
@@ -325,7 +331,8 @@ def _defined_systems_block(inventory: dict | None) -> str:
     descs = inv.get("system_descriptions") or {}
     if not systems:
         return "CURRENTLY-DEFINED SYSTEMS: (none yet)"
-    lines = ["CURRENTLY-DEFINED SYSTEMS (extend these by their EXACT key; enrich - never blank - a description):"]
+    lines = ["CURRENTLY-DEFINED SYSTEMS (to extend one, emit its EXACT key with the "
+             "FULL rewritten description - your text REPLACES the stored value):"]
     for s in systems:
         d = (descs.get(s) or "").strip()
         lines.append(f"- {s}" + (f" :: {d}" if d else ""))
@@ -384,8 +391,12 @@ def _systems_prompt(inventory: dict | None) -> str:
         "`description` prop in `props` - a brief adversarially-oriented NL characterisation "
         "of that mechanism. You MUST return at least one system whenever your reflection "
         "named a mechanism; an empty `systems` list is a wrong answer here. For a System "
-        "already listed above, REUSE its exact key and output an ENRICHED description (fold "
-        "your new insight in - never blank it, never merely restate). "
+        "already listed above, REUSE its exact key and output that System's FULL rewritten "
+        "description: fold your new insight into the existing text and restate the whole "
+        "mechanism. Your emission REPLACES the stored description - the stored value is not "
+        "merged into it, so the new text must stand alone - and it MAY also overwrite other "
+        "attributes (e.g. `pages`, `rendering_model`) with updated values. Never emit an "
+        "empty description. "
         # WebPresentation is PER (service, page-cluster), not a singleton (#53): the
         # downstream agent must locate the exact page a service is exposed on.
         "SPECIAL CASE - WebPresentation: emit ONE per (owning service, page cluster) from the "

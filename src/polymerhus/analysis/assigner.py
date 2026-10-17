@@ -429,29 +429,33 @@ _ASSIGN_CHAIN = (
 
 
 def _user_prompt(l0_slice: dict, inventory: dict | None, *, chained: bool = False) -> str:
-    """The VOLATILE half of the prompt (#34): the un-truncated L1 identities block
-    FIRST (the FR-INVENTORY discipline - identity reuse enforced at write time),
-    then the rendered chunk.
+    """The VOLATILE half of the prompt (#34): the un-truncated L1 GRAPH block FIRST
+    (the FR-INVENTORY discipline plus the L1-graph posting, operator ruling
+    2026-10-16: Services with contracts, Systems with descriptions and attributes,
+    and the typed Service->System edges), then the rendered chunk.
 
     The Q4 model: the structured Overview rides its OWN dedicated HumanMessage
     ahead of this one (`overview_message`). When it does, `chained=True` opens
     this message with the verbatim that couples the two messages.
 
-    The inventory sits here rather than in the system prefix ON PURPOSE: it mutates
+    The L1 graph sits here rather than in the system prefix ON PURPOSE: it mutates
     as the run proceeds, so hoisting it into the cacheable prefix would invalidate
-    that prefix at every step and buy nothing.
+    that prefix at every step and buy nothing. It is rebuilt from the per-dispatch
+    `read_l1_inventory` read, so a later chunk sees the graph earlier chunks
+    concretised. The graph block REPLACES `_inventory_block` here (it folds the same
+    identity-reuse discipline in), so the identity lists are carried once.
 
     The adjacent-surface widening is deliberately NOT restated here: it is the
     SYSTEM prompt's job (`prompts/assigner.md`, D-A2), so the volatile half carries
     only the task and the deductive target instead of duplicating the read policy
     on every chunk."""
-    from polymerhus.analysis.pod import _inventory_block, _slice_repr
+    from polymerhus.analysis.pod import _slice_repr, l1_graph_block
 
     lead = f"{_ASSIGN_CHAIN}\n\n" if chained else ""
     return (
-        f"{lead}{_inventory_block(inventory)}\n\n{_slice_repr(l0_slice)}\n\n"
+        f"{lead}{l1_graph_block(inventory)}\n\n{_slice_repr(l0_slice)}\n\n"
         "TASK: judge the Endpoints above. The slice above is the chunk recon most "
-        "recently collected - it is your primary subject. The inventory block "
+        "recently collected - it is your primary subject. The L1 graph block "
         "above is your DEDUCTIVE TARGET: reason FROM the observed surface TO "
         "these listed identities - a judgment that cannot cite the surface "
         "against a listed Service is left unplaced; the endpoint stays in the "
