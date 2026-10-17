@@ -280,6 +280,40 @@ def assistant_text(turn: TurnResult) -> str:
     return "\n".join(parts)
 
 
+def transcript_tail(turn: TurnResult, *, limit: int = 40, max_chars: int = 20000) -> str:
+    """A bounded, human-readable rendering of the turn's own messages.
+
+    This is what lands in a per-turn log: the worker's report, the tool lines,
+    and the terminal idle, without the megabytes a long crawl's transcript can
+    reach. It is evidence for a human; nothing reads it back.
+    """
+    lines: list[str] = []
+    for message in turn.messages[-limit:]:
+        kind = str(message.get("type") or "?")
+        if kind == "assistant":
+            text = " ".join(
+                block.get("text", "")
+                for block in (message.get("content") or [])
+                if isinstance(block, dict)
+            )
+            if message.get("error"):
+                text = f"{text} [error] {message['error']}"
+            lines.append(f"assistant: {text.strip()}")
+        elif kind == "idle":
+            detail = f" idle: {message.get('outcome')}"
+            if message.get("error"):
+                detail += f" {message['error']}"
+            lines.append(detail)
+        elif kind == "user":
+            lines.append("user: (the wrapper sent for this turn)")
+        else:
+            lines.append(f"{kind}: {json.dumps(message)[:400]}")
+    rendered = "\n".join(lines)
+    if len(rendered) > max_chars:
+        rendered = "...[truncated]\n" + rendered[-max_chars:]
+    return rendered
+
+
 def is_retryable(text: str) -> bool:
     """True when a provider error looks transient (rate limit, auth gate, transport).
 

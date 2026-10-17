@@ -181,10 +181,16 @@ class RunState:
             self.target(name)
 
     def first_incomplete_phase(self, name: str) -> str | None:
-        """The first phase of a target that is not complete, or None."""
+        """The first phase of a target that is not complete, or None.
+
+        A phase with no record yet counts as incomplete, and the lookup never
+        creates one: a target that was never worked on must not gain phase rows
+        just because the orchestrator asked whether it had any.
+        """
         record = self.target(name)
         for phase in ("authn", "l1"):
-            if not record.phase(phase).complete:
+            state = record.phases.get(phase)
+            if state is None or not state.complete:
                 return phase
         return None
 
