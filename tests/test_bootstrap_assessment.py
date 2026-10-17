@@ -225,6 +225,26 @@ def test_good_target_scores_high_on_every_deterministic_family(assess, tmp_path)
     assert row["D1"]["scale"] == 0
 
 
+def test_surface_reference_proxy_counts_singular_and_plural(assess):
+    """A step that names its surface part in the enumerable vocabulary grounds.
+
+    The plural counts: `fields`, `pages` and `links` name the same parts a
+    singular does, and a proxy that fails on an inflection would punish the
+    artifact for prose, not for content.
+    """
+    rx = assess._SURFACE_REF_RE
+    for step in (
+        "choose tables and fields",
+        "access rule pages bind roles",
+        "adjacent-entry links",
+        "call the account API endpoints",
+        "Open the sign-in form",
+        "Open the editor page",
+    ):
+        assert rx.search(step), step
+    assert not rx.search("Load the browser shell from the root")
+
+
 def test_good_target_metrics_are_reported(assess, tmp_path):
     row = assess.assess_target(_write_good(tmp_path / "shop"))
     assert row["A3"]["metrics"]["words"] <= 150

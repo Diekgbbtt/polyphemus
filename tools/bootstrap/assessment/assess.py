@@ -85,7 +85,7 @@ _LEAK_PATTERNS = (
 )
 _SURFACE_REF_RE = re.compile(
     r"(/[\w{}\-./]*|https?://|\b(page|screen|form|menu|button|link|panel|"
-    r"endpoint|route|tab|dialog|modal|field)\b)", re.IGNORECASE)
+    r"endpoint|route|tab|dialog|modal|field)s?\b)", re.IGNORECASE)
 _PATHISH_RE = re.compile(r"/[\w{}\-./]+|https?://")
 # A path/parameter leak in a contract: a URL, a route-ish leading slash in
 # normal prose context, or a query-string assignment. A bilingual gloss

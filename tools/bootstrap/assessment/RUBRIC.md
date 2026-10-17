@@ -49,7 +49,7 @@ Anchors: 4 = <= 150 words; 3 = <= 250 (the budget); 2 = <= 325; 1 = over 325; 0 
 Metrics: `words`, `budget`.
 
 **A4 `overview.grounding`** (deterministic proxy; the semantic reading is L1).
-Fraction of steps that name a concrete surface part (a path, URL, page, form, menu, endpoint, ...) and fraction of steps that mention a KB identity (a Service slug or System kind).
+Fraction of steps that name a concrete surface part (a path, URL, page, form, menu, endpoint, ...; the singular and the plural both count) and fraction of steps that mention a KB identity (a Service slug or System kind).
 Anchors: 4 = every step names a surface part and >= 80% name a KB identity; 3 = >= 80% surface parts and >= 50% identities; 2 = >= 50% surface parts; 1 = some surface parts; 0 = no steps or no surface reference at all.
 Metrics: `surface_ref_frac`, `identity_ref_frac`.
 

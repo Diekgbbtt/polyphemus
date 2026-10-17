@@ -67,7 +67,8 @@ Refine and extend the service set with what you observed, and ensure breadth: th
 1. `<target_dir>/operator_kb.md` - the structured KB exactly as `tools/bootstrap/DATA-DEPENDENCIES.md` section 3.1 defines (`## Overview`, `## Services`, `## Systems`, `## Roles`).
    Contracts must be discriminating and path-free; include the pre-auth account services explicitly; map mechanisms onto the `SYSTEM_KINDS` vocabulary.
    The `## Overview` is the STRUCTURED entity: a fenced ```yaml block with `domain` (the stable target identity - the product or application name, never the per-run host), a generalised `description`, and at least two canonical navigation journeys with at least three steps each.
-   Every step names a concrete surface part you observed (a page, a form, a menu entry, an endpoint) and, where it exercises a component the KB names, that component's identity (Service `business_function_slug` / System `kind`).
+   Every step names the surface part in the contract's own vocabulary - page, screen, form, menu, panel, dialog, route, endpoint, tab, field, button or link (singular or plural) - and, where it exercises a component the KB names, cites that component's identity in parentheses (Service `business_function_slug` / System `kind`).
+   A free synonym for a surface part ("shell", "view", "catalogue", "history") does not count as naming one, even when the citation is right: the grounding check looks for the vocabulary above.
    Keep the whole Overview under 250 words over its rendered plain text (domain + description + journey names + steps): the shape checker hard-counts it, so trim until it passes.
 2. `<target_dir>/l1-surface.yaml` - the graph-ready RDF dataset per `tools/bootstrap/DATA-DEPENDENCIES.md` section 3.2.
    Every identity is unique; every edge endpoint resolves within the file; Service->System edges use `EXPOSED_VIA` / `AUTHENTICATED_BY` / `AUTHORIZED_BY`; wire the authenticated services to the auth linchpins.

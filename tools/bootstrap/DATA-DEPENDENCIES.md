@@ -70,7 +70,7 @@ description: <one generalised paragraph: what the application is, its deployment
 journeys:
   - name: <canonical end-to-end navigation journey>
     steps:
-      - <a concrete surface part: page / form / menu entry / endpoint> (<component identity it exercises: Service business_function_slug or System kind>)
+      - <a concrete surface part in the vocabulary page|screen|form|menu|panel|dialog|route|endpoint|tab|field|button|link, singular or plural> (<component identity it exercises: Service business_function_slug or System kind>)
       - <at least 3 steps per journey>
       - <...>
   - <at least 2 journeys>
@@ -94,10 +94,13 @@ Notes:
 - The `## Overview` is the STRUCTURED entity (Q3, 2026-10-17): a fenced ```yaml
   block with `domain`, `description`, and `journeys`. `domain` is the target's
   STABLE identity (the product/application name); a per-run minted host is not a
-  domain. Each journey carries >= 3 steps; each step references a specific
-  surface part (endpoint, form, menu entry, page navigation) and, where it
-  activates existing L1 knowledge, the component by its KB identity. The whole
-  Overview stays <= 250 words over the rendered plain text (domain +
+  domain. Each journey carries >= 3 steps; each step names a specific surface
+  part in the contract's own vocabulary (page, screen, form, menu, panel,
+  dialog, route, endpoint, tab, field, button or link - singular or plural) and,
+  where it activates existing L1 knowledge, the component by its KB identity
+  (Service `business_function_slug` / System `kind`) in parentheses. A free
+  synonym for a surface part ("shell", "view", "catalogue") is not naming one.
+  The whole Overview stays <= 250 words over the rendered plain text (domain +
   description + journey names + steps, whitespace-tokenised) - the same
   `polymerhus.analysis.overview` rule the creator self-checks and the critic
   judges with.
