@@ -1,0 +1,1020 @@
+{
+  "criteria": [
+    "A1",
+    "A2",
+    "A3",
+    "A4",
+    "B1",
+    "B2",
+    "B3",
+    "B4",
+    "C1",
+    "C2",
+    "C3",
+    "D1",
+    "E1",
+    "E2",
+    "L1",
+    "L2",
+    "L3",
+    "L4",
+    "L5"
+  ],
+  "generated": "2026-10-17T08:28:31+00:00",
+  "targets": [
+    {
+      "A1": {
+        "metrics": {
+          "domain": "",
+          "fields_present": 1,
+          "n_journeys": 0
+        },
+        "notes": [],
+        "scale": 2
+      },
+      "A2": {
+        "metrics": {
+          "n_journeys": 0
+        },
+        "notes": [],
+        "scale": 0
+      },
+      "A3": {
+        "metrics": {
+          "budget": 250,
+          "words": 79
+        },
+        "notes": [],
+        "scale": 4
+      },
+      "A4": {
+        "metrics": {
+          "identity_ref_frac": 0.0,
+          "surface_ref_frac": 0.0
+        },
+        "notes": [],
+        "scale": 0
+      },
+      "B1": {
+        "metrics": {
+          "dropped": 9,
+          "n_services": 20,
+          "n_systems": 22
+        },
+        "notes": [],
+        "scale": 4
+      },
+      "B2": {
+        "metrics": {
+          "empty_contracts": 0,
+          "max_pairwise_jaccard": 0.179,
+          "n_contracts": 20,
+          "near_duplicate_pairs": 0,
+          "path_leaks": 0,
+          "without_unique_token": 0
+        },
+        "notes": [],
+        "scale": 4
+      },
+      "B3": {
+        "metrics": {
+          "in_vocabulary": 22,
+          "n_systems": 22
+        },
+        "notes": [],
+        "scale": 3
+      },
+      "B4": {
+        "metrics": {
+          "n_roles": 2
+        },
+        "notes": [],
+        "scale": 4
+      },
+      "C1": {
+        "metrics": {
+          "validator_errors": 0
+        },
+        "notes": [],
+        "scale": 4
+      },
+      "C2": {
+        "metrics": {
+          "n_edges": 90,
+          "n_units": 42,
+          "orphan_frac": 0.0
+        },
+        "notes": [],
+        "scale": 4
+      },
+      "C3": {
+        "metrics": {
+          "auth_edge_coverage": 1.0,
+          "extra_surface_services": [],
+          "kb_services_missing_in_surface": []
+        },
+        "notes": [],
+        "scale": 4
+      },
+      "D1": {
+        "metrics": {
+          "n_accounts": 0,
+          "validator_errors": 2
+        },
+        "notes": [
+          "overview.yaml missing at eval/data/webexploitbench/comfyui/auth/overview.yaml",
+          "credentials.yaml missing at eval/data/webexploitbench/comfyui/auth/credentials.yaml"
+        ],
+        "scale": 0
+      },
+      "E1": {
+        "metrics": {
+          "endpoint_tokens": 129,
+          "research_notes_chars": 10061,
+          "surface_map_chars": 20060
+        },
+        "notes": [],
+        "scale": 4
+      },
+      "E2": {
+        "metrics": {
+          "marker_hits": 0
+        },
+        "notes": [],
+        "scale": 4
+      },
+      "overall": 2.93,
+      "target": "comfyui"
+    },
+    {
+      "A1": {
+        "metrics": {
+          "domain": "",
+          "fields_present": 1,
+          "n_journeys": 0
+        },
+        "notes": [],
+        "scale": 2
+      },
+      "A2": {
+        "metrics": {
+          "n_journeys": 0
+        },
+        "notes": [],
+        "scale": 0
+      },
+      "A3": {
+        "metrics": {
+          "budget": 250,
+          "words": 188
+        },
+        "notes": [],
+        "scale": 3
+      },
+      "A4": {
+        "metrics": {
+          "identity_ref_frac": 0.0,
+          "surface_ref_frac": 0.0
+        },
+        "notes": [],
+        "scale": 0
+      },
+      "B1": {
+        "metrics": {
+          "dropped": 0,
+          "n_services": 18,
+          "n_systems": 22
+        },
+        "notes": [],
+        "scale": 4
+      },
+      "B2": {
+        "metrics": {
+          "empty_contracts": 0,
+          "max_pairwise_jaccard": 0.143,
+          "n_contracts": 18,
+          "near_duplicate_pairs": 0,
+          "path_leaks": 0,
+          "without_unique_token": 0
+        },
+        "notes": [],
+        "scale": 4
+      },
+      "B3": {
+        "metrics": {
+          "in_vocabulary": 22,
+          "n_systems": 22
+        },
+        "notes": [],
+        "scale": 4
+      },
+      "B4": {
+        "metrics": {
+          "n_roles": 2
+        },
+        "notes": [],
+        "scale": 4
+      },
+      "C1": {
+        "metrics": {
+          "validator_errors": 0
+        },
+        "notes": [],
+        "scale": 4
+      },
+      "C2": {
+        "metrics": {
+          "n_edges": 142,
+          "n_units": 40,
+          "orphan_frac": 0.0
+        },
+        "notes": [],
+        "scale": 4
+      },
+      "C3": {
+        "metrics": {
+          "auth_edge_coverage": 1.0,
+          "extra_surface_services": [],
+          "kb_services_missing_in_surface": []
+        },
+        "notes": [],
+        "scale": 4
+      },
+      "D1": {
+        "metrics": {
+          "n_accounts": 0,
+          "validator_errors": 2
+        },
+        "notes": [
+          "overview.yaml missing at eval/data/webexploitbench/dataease/auth/overview.yaml",
+          "credentials.yaml missing at eval/data/webexploitbench/dataease/auth/credentials.yaml"
+        ],
+        "scale": 0
+      },
+      "E1": {
+        "metrics": {
+          "endpoint_tokens": 128,
+          "research_notes_chars": 5304,
+          "surface_map_chars": 8802
+        },
+        "notes": [],
+        "scale": 4
+      },
+      "E2": {
+        "metrics": {
+          "marker_hits": 0
+        },
+        "notes": [],
+        "scale": 4
+      },
+      "overall": 2.93,
+      "target": "dataease"
+    },
+    {
+      "A1": {
+        "metrics": {
+          "domain": "",
+          "fields_present": 1,
+          "n_journeys": 0
+        },
+        "notes": [],
+        "scale": 2
+      },
+      "A2": {
+        "metrics": {
+          "n_journeys": 0
+        },
+        "notes": [],
+        "scale": 0
+      },
+      "A3": {
+        "metrics": {
+          "budget": 250,
+          "words": 90
+        },
+        "notes": [],
+        "scale": 4
+      },
+      "A4": {
+        "metrics": {
+          "identity_ref_frac": 0.0,
+          "surface_ref_frac": 0.0
+        },
+        "notes": [],
+        "scale": 0
+      },
+      "B1": {
+        "metrics": {
+          "dropped": 0,
+          "n_services": 9,
+          "n_systems": 16
+        },
+        "notes": [],
+        "scale": 4
+      },
+      "B2": {
+        "metrics": {
+          "empty_contracts": 0,
+          "max_pairwise_jaccard": 0.2,
+          "n_contracts": 9,
+          "near_duplicate_pairs": 0,
+          "path_leaks": 0,
+          "without_unique_token": 0
+        },
+        "notes": [],
+        "scale": 4
+      },
+      "B3": {
+        "metrics": {
+          "in_vocabulary": 16,
+          "n_systems": 16
+        },
+        "notes": [],
+        "scale": 4
+      },
+      "B4": {
+        "metrics": {
+          "n_roles": 2
+        },
+        "notes": [],
+        "scale": 4
+      },
+      "C1": {
+        "metrics": {
+          "validator_errors": 0
+        },
+        "notes": [],
+        "scale": 4
+      },
+      "C2": {
+        "metrics": {
+          "n_edges": 64,
+          "n_units": 25,
+          "orphan_frac": 0.0
+        },
+        "notes": [],
+        "scale": 4
+      },
+      "C3": {
+        "metrics": {
+          "auth_edge_coverage": 1.0,
+          "extra_surface_services": [],
+          "kb_services_missing_in_surface": []
+        },
+        "notes": [],
+        "scale": 4
+      },
+      "D1": {
+        "metrics": {
+          "n_accounts": 0,
+          "validator_errors": 2
+        },
+        "notes": [
+          "overview.yaml missing at eval/data/webexploitbench/geoserver/auth/overview.yaml",
+          "credentials.yaml missing at eval/data/webexploitbench/geoserver/auth/credentials.yaml"
+        ],
+        "scale": 0
+      },
+      "E1": {
+        "metrics": {
+          "endpoint_tokens": 43,
+          "research_notes_chars": 3658,
+          "surface_map_chars": 8749
+        },
+        "notes": [],
+        "scale": 4
+      },
+      "E2": {
+        "metrics": {
+          "marker_hits": 0
+        },
+        "notes": [],
+        "scale": 4
+      },
+      "overall": 3.0,
+      "target": "geoserver"
+    },
+    {
+      "A1": {
+        "metrics": {
+          "domain": "",
+          "fields_present": 1,
+          "n_journeys": 0
+        },
+        "notes": [],
+        "scale": 2
+      },
+      "A2": {
+        "metrics": {
+          "n_journeys": 0
+        },
+        "notes": [],
+        "scale": 0
+      },
+      "A3": {
+        "metrics": {
+          "budget": 250,
+          "words": 110
+        },
+        "notes": [],
+        "scale": 4
+      },
+      "A4": {
+        "metrics": {
+          "identity_ref_frac": 0.0,
+          "surface_ref_frac": 0.0
+        },
+        "notes": [],
+        "scale": 0
+      },
+      "B1": {
+        "metrics": {
+          "dropped": 0,
+          "n_services": 52,
+          "n_systems": 63
+        },
+        "notes": [],
+        "scale": 4
+      },
+      "B2": {
+        "metrics": {
+          "empty_contracts": 0,
+          "max_pairwise_jaccard": 0.842,
+          "n_contracts": 52,
+          "near_duplicate_pairs": 0,
+          "path_leaks": 0,
+          "without_unique_token": 5
+        },
+        "notes": [],
+        "scale": 4
+      },
+      "B3": {
+        "metrics": {
+          "in_vocabulary": 63,
+          "n_systems": 63
+        },
+        "notes": [],
+        "scale": 4
+      },
+      "B4": {
+        "metrics": {
+          "n_roles": 3
+        },
+        "notes": [],
+        "scale": 4
+      },
+      "C1": {
+        "metrics": {
+          "validator_errors": 0
+        },
+        "notes": [],
+        "scale": 4
+      },
+      "C2": {
+        "metrics": {
+          "n_edges": 402,
+          "n_units": 115,
+          "orphan_frac": 0.0
+        },
+        "notes": [],
+        "scale": 4
+      },
+      "C3": {
+        "metrics": {
+          "auth_edge_coverage": 1.0,
+          "extra_surface_services": [],
+          "kb_services_missing_in_surface": []
+        },
+        "notes": [],
+        "scale": 4
+      },
+      "D1": {
+        "metrics": {
+          "n_accounts": 0,
+          "validator_errors": 2
+        },
+        "notes": [
+          "overview.yaml missing at eval/data/webexploitbench/jetlinks/auth/overview.yaml",
+          "credentials.yaml missing at eval/data/webexploitbench/jetlinks/auth/credentials.yaml"
+        ],
+        "scale": 0
+      },
+      "E1": {
+        "metrics": {
+          "endpoint_tokens": 388,
+          "research_notes_chars": 15754,
+          "surface_map_chars": 44280
+        },
+        "notes": [],
+        "scale": 4
+      },
+      "E2": {
+        "metrics": {
+          "marker_hits": 0
+        },
+        "notes": [],
+        "scale": 4
+      },
+      "overall": 3.0,
+      "target": "jetlinks"
+    },
+    {
+      "A1": {
+        "metrics": {
+          "domain": "",
+          "fields_present": 1,
+          "n_journeys": 0
+        },
+        "notes": [],
+        "scale": 2
+      },
+      "A2": {
+        "metrics": {
+          "n_journeys": 0
+        },
+        "notes": [],
+        "scale": 0
+      },
+      "A3": {
+        "metrics": {
+          "budget": 250,
+          "words": 157
+        },
+        "notes": [],
+        "scale": 3
+      },
+      "A4": {
+        "metrics": {
+          "identity_ref_frac": 0.0,
+          "surface_ref_frac": 0.0
+        },
+        "notes": [],
+        "scale": 0
+      },
+      "B1": {
+        "metrics": {
+          "dropped": 0,
+          "n_services": 25,
+          "n_systems": 30
+        },
+        "notes": [],
+        "scale": 4
+      },
+      "B2": {
+        "metrics": {
+          "empty_contracts": 0,
+          "max_pairwise_jaccard": 0.267,
+          "n_contracts": 25,
+          "near_duplicate_pairs": 0,
+          "path_leaks": 0,
+          "without_unique_token": 0
+        },
+        "notes": [],
+        "scale": 4
+      },
+      "B3": {
+        "metrics": {
+          "in_vocabulary": 30,
+          "n_systems": 30
+        },
+        "notes": [],
+        "scale": 4
+      },
+      "B4": {
+        "metrics": {
+          "n_roles": 5
+        },
+        "notes": [],
+        "scale": 4
+      },
+      "C1": {
+        "metrics": {
+          "validator_errors": 0
+        },
+        "notes": [],
+        "scale": 4
+      },
+      "C2": {
+        "metrics": {
+          "n_edges": 118,
+          "n_units": 55,
+          "orphan_frac": 0.0
+        },
+        "notes": [],
+        "scale": 4
+      },
+      "C3": {
+        "metrics": {
+          "auth_edge_coverage": 1.0,
+          "extra_surface_services": [],
+          "kb_services_missing_in_surface": []
+        },
+        "notes": [],
+        "scale": 4
+      },
+      "D1": {
+        "metrics": {
+          "n_accounts": 0,
+          "validator_errors": 2
+        },
+        "notes": [
+          "overview.yaml missing at eval/data/webexploitbench/phpbb/auth/overview.yaml",
+          "credentials.yaml missing at eval/data/webexploitbench/phpbb/auth/credentials.yaml"
+        ],
+        "scale": 0
+      },
+      "E1": {
+        "metrics": {
+          "endpoint_tokens": 51,
+          "research_notes_chars": 7909,
+          "surface_map_chars": 11410
+        },
+        "notes": [],
+        "scale": 4
+      },
+      "E2": {
+        "metrics": {
+          "marker_hits": 0
+        },
+        "notes": [],
+        "scale": 4
+      },
+      "overall": 2.93,
+      "target": "phpbb"
+    },
+    {
+      "A1": {
+        "metrics": {
+          "domain": "",
+          "fields_present": 1,
+          "n_journeys": 0
+        },
+        "notes": [],
+        "scale": 2
+      },
+      "A2": {
+        "metrics": {
+          "n_journeys": 0
+        },
+        "notes": [],
+        "scale": 0
+      },
+      "A3": {
+        "metrics": {
+          "budget": 250,
+          "words": 162
+        },
+        "notes": [],
+        "scale": 3
+      },
+      "A4": {
+        "metrics": {
+          "identity_ref_frac": 0.0,
+          "surface_ref_frac": 0.0
+        },
+        "notes": [],
+        "scale": 0
+      },
+      "B1": {
+        "metrics": {
+          "dropped": 0,
+          "n_services": 68,
+          "n_systems": 113
+        },
+        "notes": [],
+        "scale": 4
+      },
+      "B2": {
+        "metrics": {
+          "empty_contracts": 0,
+          "max_pairwise_jaccard": 0.75,
+          "n_contracts": 68,
+          "near_duplicate_pairs": 0,
+          "path_leaks": 0,
+          "without_unique_token": 5
+        },
+        "notes": [],
+        "scale": 4
+      },
+      "B3": {
+        "metrics": {
+          "in_vocabulary": 113,
+          "n_systems": 113
+        },
+        "notes": [],
+        "scale": 4
+      },
+      "B4": {
+        "metrics": {
+          "n_roles": 4
+        },
+        "notes": [],
+        "scale": 4
+      },
+      "C1": {
+        "metrics": {
+          "validator_errors": 0
+        },
+        "notes": [],
+        "scale": 4
+      },
+      "C2": {
+        "metrics": {
+          "n_edges": 382,
+          "n_units": 181,
+          "orphan_frac": 0.0
+        },
+        "notes": [],
+        "scale": 4
+      },
+      "C3": {
+        "metrics": {
+          "auth_edge_coverage": 1.0,
+          "extra_surface_services": [],
+          "kb_services_missing_in_surface": []
+        },
+        "notes": [],
+        "scale": 4
+      },
+      "D1": {
+        "metrics": {
+          "n_accounts": 0,
+          "validator_errors": 2
+        },
+        "notes": [
+          "overview.yaml missing at eval/data/webexploitbench/prestashop/auth/overview.yaml",
+          "credentials.yaml missing at eval/data/webexploitbench/prestashop/auth/credentials.yaml"
+        ],
+        "scale": 0
+      },
+      "E1": {
+        "metrics": {
+          "endpoint_tokens": 164,
+          "research_notes_chars": 7283,
+          "surface_map_chars": 32702
+        },
+        "notes": [],
+        "scale": 4
+      },
+      "E2": {
+        "metrics": {
+          "marker_hits": 0
+        },
+        "notes": [],
+        "scale": 4
+      },
+      "overall": 2.93,
+      "target": "prestashop"
+    },
+    {
+      "A1": {
+        "metrics": {
+          "domain": "",
+          "fields_present": 1,
+          "n_journeys": 0
+        },
+        "notes": [],
+        "scale": 2
+      },
+      "A2": {
+        "metrics": {
+          "n_journeys": 0
+        },
+        "notes": [],
+        "scale": 0
+      },
+      "A3": {
+        "metrics": {
+          "budget": 250,
+          "words": 118
+        },
+        "notes": [],
+        "scale": 4
+      },
+      "A4": {
+        "metrics": {
+          "identity_ref_frac": 0.0,
+          "surface_ref_frac": 0.0
+        },
+        "notes": [],
+        "scale": 0
+      },
+      "B1": {
+        "metrics": {
+          "dropped": 0,
+          "n_services": 50,
+          "n_systems": 51
+        },
+        "notes": [],
+        "scale": 4
+      },
+      "B2": {
+        "metrics": {
+          "empty_contracts": 0,
+          "max_pairwise_jaccard": 0.692,
+          "n_contracts": 50,
+          "near_duplicate_pairs": 0,
+          "path_leaks": 0,
+          "without_unique_token": 4
+        },
+        "notes": [],
+        "scale": 4
+      },
+      "B3": {
+        "metrics": {
+          "in_vocabulary": 51,
+          "n_systems": 51
+        },
+        "notes": [],
+        "scale": 4
+      },
+      "B4": {
+        "metrics": {
+          "n_roles": 4
+        },
+        "notes": [],
+        "scale": 4
+      },
+      "C1": {
+        "metrics": {
+          "validator_errors": 0
+        },
+        "notes": [],
+        "scale": 4
+      },
+      "C2": {
+        "metrics": {
+          "n_edges": 320,
+          "n_units": 101,
+          "orphan_frac": 0.0
+        },
+        "notes": [],
+        "scale": 4
+      },
+      "C3": {
+        "metrics": {
+          "auth_edge_coverage": 1.0,
+          "extra_surface_services": [],
+          "kb_services_missing_in_surface": []
+        },
+        "notes": [],
+        "scale": 4
+      },
+      "D1": {
+        "metrics": {
+          "n_accounts": 0,
+          "validator_errors": 2
+        },
+        "notes": [
+          "overview.yaml missing at eval/data/webexploitbench/siyucms/auth/overview.yaml",
+          "credentials.yaml missing at eval/data/webexploitbench/siyucms/auth/credentials.yaml"
+        ],
+        "scale": 0
+      },
+      "E1": {
+        "metrics": {
+          "endpoint_tokens": 99,
+          "research_notes_chars": 11449,
+          "surface_map_chars": 8965
+        },
+        "notes": [],
+        "scale": 4
+      },
+      "E2": {
+        "metrics": {
+          "marker_hits": 1
+        },
+        "notes": [
+          "research-notes.md:158: 'RCE'"
+        ],
+        "scale": 0
+      },
+      "overall": 2.71,
+      "target": "siyucms"
+    },
+    {
+      "A1": {
+        "metrics": {
+          "domain": "",
+          "fields_present": 1,
+          "n_journeys": 0
+        },
+        "notes": [],
+        "scale": 2
+      },
+      "A2": {
+        "metrics": {
+          "n_journeys": 0
+        },
+        "notes": [],
+        "scale": 0
+      },
+      "A3": {
+        "metrics": {
+          "budget": 250,
+          "words": 92
+        },
+        "notes": [],
+        "scale": 4
+      },
+      "A4": {
+        "metrics": {
+          "identity_ref_frac": 0.0,
+          "surface_ref_frac": 0.0
+        },
+        "notes": [],
+        "scale": 0
+      },
+      "B1": {
+        "metrics": {
+          "dropped": 0,
+          "n_services": 21,
+          "n_systems": 26
+        },
+        "notes": [],
+        "scale": 4
+      },
+      "B2": {
+        "metrics": {
+          "empty_contracts": 0,
+          "max_pairwise_jaccard": 0.444,
+          "n_contracts": 21,
+          "near_duplicate_pairs": 0,
+          "path_leaks": 0,
+          "without_unique_token": 3
+        },
+        "notes": [],
+        "scale": 4
+      },
+      "B3": {
+        "metrics": {
+          "in_vocabulary": 26,
+          "n_systems": 26
+        },
+        "notes": [],
+        "scale": 3
+      },
+      "B4": {
+        "metrics": {
+          "n_roles": 4
+        },
+        "notes": [],
+        "scale": 4
+      },
+      "C1": {
+        "metrics": {
+          "validator_errors": 0
+        },
+        "notes": [],
+        "scale": 4
+      },
+      "C2": {
+        "metrics": {
+          "n_edges": 152,
+          "n_units": 47,
+          "orphan_frac": 0.0
+        },
+        "notes": [],
+        "scale": 4
+      },
+      "C3": {
+        "metrics": {
+          "auth_edge_coverage": 1.0,
+          "extra_surface_services": [],
+          "kb_services_missing_in_surface": []
+        },
+        "notes": [],
+        "scale": 4
+      },
+      "D1": {
+        "metrics": {
+          "n_accounts": 0,
+          "validator_errors": 2
+        },
+        "notes": [
+          "overview.yaml missing at eval/data/webexploitbench/white-jotter/auth/overview.yaml",
+          "credentials.yaml missing at eval/data/webexploitbench/white-jotter/auth/credentials.yaml"
+        ],
+        "scale": 0
+      },
+      "E1": {
+        "metrics": {
+          "endpoint_tokens": 72,
+          "research_notes_chars": 14283,
+          "surface_map_chars": 15734
+        },
+        "notes": [],
+        "scale": 4
+      },
+      "E2": {
+        "metrics": {
+          "marker_hits": 0
+        },
+        "notes": [],
+        "scale": 4
+      },
+      "overall": 2.93,
+      "target": "white-jotter"
+    }
+  ]
+}
