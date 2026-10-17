@@ -41,7 +41,7 @@ DEDICATED Overview-only HumanMessage chained to the item message(s) that follow:
 
 plumbing: read_l1_inventory -> application_overview (normalized dict)
   read_application_overview (settings-only, cheap; used by the hunting sites)
-  pod.overview_block (clean render) / pod.overview_message (dedicated message)
+  overview.overview_message (clean render + shared intro; the entity's single home)
 ```
 
 ## 3. Touchpoint register
@@ -62,7 +62,7 @@ plumbing: read_l1_inventory -> application_overview (normalized dict)
 Rule (operator feedback 2026-10-17): each of the four agents sends a dedicated HumanMessage containing ONLY the Overview at the head of its turn, cohesively coupled to the following item-feeding message(s) by specific introductory verbatims and chaining between the messages.
 This supersedes the earlier "prepend the Overview at every inventory dump" reading.
 
-- `pod.py` - NEW/CHANGE: `overview_block(value)` renders the Overview value (structured dict, legacy string, or absent) as clean deterministic text with no formatting noise; `overview_message(value)` is the dedicated message content (shared specific intro verbatim + the clean render), empty when no Overview exists.
+- `src/polymerhus/analysis/overview.py` - NEW module, the entity's single home: `empty_overview`, `normalize_overview`, `overview_is_empty`, `OVERVIEW_WORD_BUDGET` + `overview_word_count` (the one budget rule), `overview_message(value)` (clean render + shared intro verbatim; empty when no Overview exists). `pod.py`'s `overview_block` is DELETED (no consumers).
 - `l1_inventory.py` - CHANGE: `application_overview` normalizes to the dict shape; NEW `read_application_overview(project_id, settings_fn=None)` - a cheap settings-only read for the hunting sites (no graph read), fail-open.
 - `assigner.py` - CHANGE: `_user_prompt` stops embedding the Overview; the assign turn sends `[HumanMessage(overview_message), HumanMessage(items)]` where the item message (inventory + slice + TASK) opens with a chaining verbatim referring to the Overview above. Absent Overview -> today's single-message shape with no chaining verbatim.
 - `mechanism_typist.py` - CHANGE: call 1 (reflection) sends `[HumanMessage(overview_message), HumanMessage(reflection)]` with the chaining verbatim; calls 2-3 continue the same per-chunk thread unchanged.
@@ -92,13 +92,13 @@ This supersedes the earlier "prepend the Overview at every inventory dump" readi
 
 ### 3.6 tests
 
-- `tests/analysis/test_operator_overview.py` - rewrite for the structured model: parse (structured, legacy, absent, malformed), persistence, inventory normalization, `overview_block` and `overview_message` renders; NEW assigner and typist two-message framing tests.
+- `tests/analysis/test_operator_overview.py` - rewrite for the structured model: parse (structured, legacy, absent, malformed), persistence, inventory normalization, the `overview_message` render and the word-count rule; NEW assigner and typist two-message framing tests.
 - `tests/analysis/test_l1_inventory.py` - the default-shape assertion (`application_overview: ""`) updates to the normalized empty shape. CHANGE.
 - `tests/attack/test_hunting_llm.py` - add gate-message framing coverage (Overview message + chained gate prompt; absent Overview -> single message). CHANGE.
 - `tests/attack/test_hunting_agent.py` - add first-step framing coverage (Overview message + chained first step). CHANGE.
 - Hunting orchestrator actor test (wherever `HuntOrchestratorActor._on_message` is exercised) - the Overview message is emitted once per thread. CHANGE.
-- `tests/tools/test_bootstrap_validator.py` - NEW: the validator's Overview checks (fenced parse, fields, journey and step counts, budget, cross-file equality; legacy prose is rejected by the validator).
-  `tests/tools/` is a new directory; the validator is loaded by path (`tools/` is not a package).
+- `tests/test_bootstrap_validator.py` - NEW: the validator's Overview checks (fenced parse, fields, journey and step counts, word budget).
+  The file sits flat like the other tool-script tests; the validator is loaded by path (`tools/` is not a package).
 - `tests/integration/test_bootstrap_reasoned_contracts.py` - the C22 inventory-block test is unaffected; re-run to confirm. VERIFY.
 
 ### 3.7 docs
@@ -143,7 +143,7 @@ This supersedes the earlier "prepend the Overview at every inventory dump" readi
 1. `parse_overview`: structured block -> dict; legacy -> `description`; absent -> empty; malformed -> fail-open. Red first in `tests/analysis/test_operator_overview.py`.
 2. `scaffold_project`: persists the normalized dict with all keys; fail-open path unchanged.
 3. `read_l1_inventory` / `read_application_overview`: normalization and defaults.
-4. `pod.overview_block` + `pod.overview_message`: render and dedicated-message content.
+4. `overview.overview_message`: render and dedicated-message content.
 5. Framing tests in order: assigner, mechanism typist, hunter first step, hunt orchestrator gate (composer + actor once-per-thread + standalone seam).
-6. Validator: new checks + `tests/tools/test_bootstrap_validator.py`.
+6. Validator: new checks + `tests/test_bootstrap_validator.py`.
 7. Contract and prompt text updates (documentation of the already-pinned behavior).

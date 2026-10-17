@@ -43,9 +43,12 @@ Nothing writes it anymore; legacy graphs may still carry it (read-only).
 The cross-layer edge from an L1 `System` to the L0 node that fingerprints it (a `Server:` header, a cookie); carries provenance and timestamps only.
 
 **Application Overview**:
-The operator_kb `## Overview` paragraph - the macro description of the deployed solution: its product category, deployment model, and audiences.
+The structured macro framing of the deployed solution: a canonical `domain` (the target's stable identity), a generalised `description` of the offered features, and the canonical navigation `journeys` (each >= 3 steps naming specific surface parts).
+It is authored as a fenced ```yaml block under the operator_kb `## Overview` section (the deterministic scaffold parses it; legacy prose maps to `description`).
+The normalized value is `{domain, description, journeys}` (`polymerhus.analysis.overview`).
 It is a SKELETON ATTRIBUTE, not a graph node, so it is carried as `settings.application_overview` and surfaced on the inventory dict (`read_l1_inventory`), never a `:L1*` label.
-Each proposer prepends it (`pod.overview_block`) to its human message, so a Service is reasoned inside the application it lives in rather than from its contract alone.
+The four item-consuming agents - the Assigner, the TechnicalSystem mechanism-typist, the hunt orchestrator, and the hunter - each receive it as a DEDICATED HumanMessage at the head of their turn (`overview_message`), cohesively coupled to the item messages that follow, so an item is reasoned inside the application it lives in rather than from its contract alone.
+The Q3 budget: <= 250 words over the rendered plain text, enforced by one shared rule in creator self-check, critic judgement, and the bootstrapper shape validator.
 
 ## The tripartition
 

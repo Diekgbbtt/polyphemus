@@ -437,7 +437,13 @@ def _render_unit_block(units, unit_projection, compat_projection, kb_evidences) 
     return "\n".join(out)
 
 
-def _compose_gate_prompt(inp: GateInput) -> str:
+_GATE_CHAIN = (
+    "Grounded in the application overview above, this hypothesise turn works "
+    "the matched units of one fault:"
+)
+
+
+def _compose_gate_prompt(inp: GateInput, *, chained: bool = False) -> str:
     """Render the HYPOTHESISE-phase input (spec 3.7, re-scoped by #167/#168) into
     the phase turn's user prompt. The frame OPENS with the L1 ontology primer
     constant (G9, the conceptions of Service / System / DataItem + the domain-
@@ -452,7 +458,12 @@ def _compose_gate_prompt(inp: GateInput) -> str:
     and the hypothesise write). The phase-TRANSITION verbatims are NOT part of
     this prompt - they ride the tool-call responses from the constants (G1/G3).
     Deterministic sorted rendering throughout; every slot degrades
-    independently (never FALSE, never a prune signal - C16)."""
+    independently (never FALSE, never a prune signal - C16).
+
+    The Q4 model: the structured Overview rides its OWN dedicated HumanMessage
+    ahead of this one (the actor emits it once per run thread); when it does,
+    `chained=True` opens this prompt with the verbatim that couples the two
+    messages."""
     fault_class = inp.candidates[0].fault_class if inp.candidates else None
 
     # The section split is on the kind-qualified identity, never on the
@@ -467,6 +478,8 @@ def _compose_gate_prompt(inp: GateInput) -> str:
                      key=lambda c: c.unit_id)
 
     lines = [L1_ONTOLOGY_PRIMER, ""]
+    if chained:
+        lines = [_GATE_CHAIN, ""] + lines
     lines += [
         f"KB grounding: {'DEGRADED (KB unavailable; do not prune on this)' if inp.kb_degraded else 'available'}",
         f"Read-only graph surface (index cards): {inp.surface or '(none)'}",
@@ -677,7 +690,9 @@ def build_gate_reason_fn() -> Callable[[GateInput], GateDecision]:
         result = invoke_role(
             GATE_ROLE,
             [SystemMessage(content=_gate_skill()),
-             HumanMessage(content=_compose_gate_prompt(inp))],
+             *([HumanMessage(content=inp.overview)] if inp.overview else []),
+             HumanMessage(content=_compose_gate_prompt(
+                 inp, chained=bool(inp.overview)))],
             schema=GateDecision,
         )
         return result if isinstance(result, GateDecision) else GateDecision()
@@ -745,7 +760,8 @@ def build_actor_hunting_agent(*, run_id, project_id="", memory_store=None,
                               graph_view_fn=None, kb_fn=None,
                               exec_fn=None, checkpointer=None, model_factory=None,
                               observe: bool = True,
-                              http_search_fn=None, http_get_fn=None):
+                              http_search_fn=None, http_get_fn=None,
+                              overview_fn=None):
     """Compose the production hunting-agent dispatch seam (as of #164 W5).
 
     As of W5 the harness (`hunting_agent.build_hunting_agent`) is the turn-by-turn
@@ -772,6 +788,7 @@ def build_actor_hunting_agent(*, run_id, project_id="", memory_store=None,
         graph_view_fn=graph_view_fn, kb_fn=kb_fn, exec_fn=exec_fn,
         http_search_fn=http_search_fn, http_get_fn=http_get_fn,
         checkpointer=checkpointer, model_factory=model_factory, observe=observe,
+        overview_fn=overview_fn,
     )
     return dispatch_fn, registry
 

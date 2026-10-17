@@ -317,3 +317,138 @@ def test_overview_message_skips_empty_fields():
         "belong to):",
         "Domain: shop",
     ]
+
+
+def test_overview_word_count_counts_rendered_plain_text():
+    from polymerhus.analysis.overview import (
+        OVERVIEW_WORD_BUDGET,
+        overview_word_count,
+    )
+
+    value = {
+        "domain": "shop",
+        "description": "A web storefront.",
+        "journeys": [
+            {"name": "Buy an item", "steps": ["Open the home page.", "Pay."]},
+        ],
+    }
+    # shop(1) + A web storefront.(3) + Buy an item(3) + Open the home page.(4)
+    # + Pay.(1) = 12
+    assert overview_word_count(value) == 12
+    assert OVERVIEW_WORD_BUDGET == 250
+
+
+def test_overview_word_count_is_indifferent_to_the_source_form():
+    from polymerhus.analysis.overview import overview_word_count
+
+    assert overview_word_count("two words") == 2
+    assert overview_word_count(None) == 0
+    assert overview_word_count({}) == 0
+
+
+def _endpoint(path="/x"):
+    from polymerhus.recon.domain.types import AssetDelta
+
+    return AssetDelta(type="Endpoint", identity={"path": path, "method": "GET", "baseurl": "https://a"})
+
+
+def _service_chunk(*assets):
+    from polymerhus.analysis.chunking import Chunk
+
+    return Chunk(chunk_id="c", concern="service", assets=tuple(assets or (_endpoint(),)))
+
+
+def test_assigner_turn_sends_overview_then_chained_items():
+    from polymerhus.analysis.assigner import assign
+    from polymerhus.analysis.chunking import Chunk
+
+    captured: dict = {}
+
+    def invoke(messages, *, schema=None, system_prompt=None, **_):
+        captured["messages"] = messages
+        return None
+
+    chunk = Chunk(chunk_id="katana:0", source_job="katana", assets=(_endpoint("/cart"),))
+    assign(
+        chunk,
+        invoke_fn=invoke,
+        inventory={
+            "services": ["checkout"],
+            "service_contracts": {"checkout": "Take a basket to a paid order."},
+            "application_overview": STRUCTURED_OVERVIEW,
+        },
+    )
+    messages = captured["messages"]
+    assert len(messages) == 2
+    assert messages[0].content.startswith("APPLICATION OVERVIEW (")
+    assert "Domain: comfyui" in messages[0].content
+    items = messages[1].content
+    assert "Grounded in the application overview above" in items
+    assert "APPLICATION OVERVIEW" not in items
+    assert "checkout" in items
+    assert "TASK: judge the Endpoints above" in items
+
+
+def test_assigner_turn_is_single_message_without_an_overview():
+    from polymerhus.analysis.assigner import assign
+    from polymerhus.analysis.chunking import Chunk
+
+    captured: dict = {}
+
+    def invoke(messages, *, schema=None, system_prompt=None, **_):
+        captured["messages"] = messages
+        return None
+
+    chunk = Chunk(chunk_id="katana:0", source_job="katana", assets=(_endpoint("/cart"),))
+    assign(chunk, invoke_fn=invoke, inventory={"services": ["checkout"]})
+    assert len(captured["messages"]) == 1
+    assert "Grounded in the application overview above" not in captured["messages"][0].content
+
+
+def test_typist_reflection_call_sends_overview_then_chained_items():
+    from polymerhus.analysis.analyser_types import L1DeltaBatch
+    from polymerhus.analysis.mechanism_typist import type_mechanisms
+
+    captured: list = []
+
+    def invoke(messages, *, schema=None, system_prompt=None, **_):
+        captured.append(messages)
+        if schema is None:
+            return "I reason about the mechanisms."
+        return L1DeltaBatch()
+
+    type_mechanisms(
+        _service_chunk(),
+        invoke_fn=invoke,
+        inventory={
+            "application_overview": STRUCTURED_OVERVIEW,
+            "services": [],
+            "system_descriptions": {},
+        },
+    )
+    first = captured[0]
+    assert len(first) == 2
+    assert first[0].content.startswith("APPLICATION OVERVIEW (")
+    assert "Grounded in the application overview above" in first[1].content
+    assert "APPLICATION OVERVIEW" not in first[1].content
+    # calls 2-3 continue the same per-chunk thread, single item message each
+    assert len(captured) == 3
+    assert len(captured[1]) == 1
+    assert len(captured[2]) == 1
+
+
+def test_typist_reflection_call_is_single_message_without_an_overview():
+    from polymerhus.analysis.analyser_types import L1DeltaBatch
+    from polymerhus.analysis.mechanism_typist import type_mechanisms
+
+    captured: list = []
+
+    def invoke(messages, *, schema=None, system_prompt=None, **_):
+        captured.append(messages)
+        if schema is None:
+            return "I reason about the mechanisms."
+        return L1DeltaBatch()
+
+    type_mechanisms(_service_chunk(), invoke_fn=invoke, inventory={"services": []})
+    assert len(captured[0]) == 1
+    assert "Grounded in the application overview above" not in captured[0][0].content

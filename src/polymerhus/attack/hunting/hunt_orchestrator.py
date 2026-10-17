@@ -361,7 +361,9 @@ class GateInput(BaseModel):
     node from the ledger state, fail-open to []). Every slot is degraded
     independently - `unit_projection[unit_id]` None, an absent
     materialisation/fold-family key - and renders as UNKNOWN, never FALSE,
-    never a prune signal (C16)."""
+    never a prune signal (C16). `overview` carries the rendered dedicated
+    Overview message (Q4): the run thread's first gate turn heads with it, and
+    a missing value (fails open to "") keeps the single-prompt turn shape."""
 
     candidates: list[DeliveredCandidate] = Field(default_factory=list)
     kb_degraded: bool = False
@@ -372,6 +374,7 @@ class GateInput(BaseModel):
     materialisation: dict = Field(default_factory=dict)
     fold_family: dict = Field(default_factory=dict)
     prior_minted_keys: list[str] = Field(default_factory=list)
+    overview: str = ""
 
 
 class GateDecision(BaseModel):
@@ -1506,6 +1509,15 @@ async def arun_orchestration(
         # keys (fail-open to [] when the ledger slot is absent or not a
         # LoopLedger).
         prior_ledger = _ledger(state)
+        # Q4: the rendered Overview the run thread's FIRST gate turn heads with
+        # (the actor emits it once, then chains later gate prompts to it).
+        # Settings-only read, fail-open to "" (no framing, no coupling).
+        from polymerhus.analysis.l1_inventory import (  # noqa: PLC0415
+            read_application_overview,
+        )
+        from polymerhus.analysis.overview import overview_message  # noqa: PLC0415
+
+        overview = overview_message(read_application_overview(project_id))
         gate_input = GateInput(
             candidates=[pair],
             kb_degraded=kb_degraded,
@@ -1516,6 +1528,7 @@ async def arun_orchestration(
             materialisation={fault_class: materialisation},
             fold_family={fault_class: fold_ids},
             prior_minted_keys=list(prior_ledger.minted_config_keys),
+            overview=overview,
         )
 
         directions: list[EnvisionedDirection] = []

@@ -116,18 +116,6 @@ def _inventory_block(inventory: dict | None) -> str:
     )
 
 
-def overview_block(inventory: dict | None) -> str:
-    """The operator_kb `## Overview`, the macro framing of the whole solution,
-    rendered as the leading line of a proposer's human message (or "" when absent).
-
-    The Overview is a SKELETON ATTRIBUTE (operator decision), not a graph node, so it
-    rides the inventory dict (`application_overview`). It frames what the target IS,
-    so a proposer reasons about a Service inside the application it lives in rather
-    than from a bare contract."""
-    overview = str((inventory or {}).get("application_overview") or "").strip()
-    return f"APPLICATION OVERVIEW: {overview}\n\n" if overview else ""
-
-
 # `_invoke_with_retry` was RETIRED (#73): structured analyser calls now go through
 # `roles.invoke_role`, whose single escalating-budget retry
 # (`invoke_with_escalating_timeout`) replaces this helper AND the client's own retry

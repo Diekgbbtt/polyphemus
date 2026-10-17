@@ -612,6 +612,7 @@ def test_raw_hunter_provider_error_at_the_real_seam_interrupts_the_run(
             model_factory=lambda role_id: _RaisingModel(
                 exc=_openai_rate_limit_error()),
             checkpointer=InMemorySaver(), middleware=[], observe=False,
+            overview_fn=lambda project_id: None,
         )
         return dispatch, None
 

@@ -5,7 +5,9 @@ Validates the three N12 work items of one target against the contract in
 `tools/bootstrap/DATA-DEPENDENCIES.md`:
 
   1. `operator_kb.md`  - parses through the real platform scaffold (`src/polymerhus/analysis/scaffold.py`)
-     into at least one Service and at least the three linchpin Systems.
+     into at least one Service and at least the three linchpin Systems, and
+     carries the structured `## Overview` block (fenced ```yaml: domain,
+     description, >= 2 journeys of >= 3 steps, <= 250 rendered words).
   2. `l1-surface.yaml` - the graph-ready RDF dataset: valid labels, identity
      keys matching the graph schema, resolvable edge endpoints, unique
      identities.
@@ -72,6 +74,60 @@ def check_operator_kb(path: Path) -> list[str]:
     # platform scaffold, so an unauthenticated target legitimately omits them from
     # the KB. Grounding them is a COVERAGE judgement (the batch critic), not a
     # shape error, so it is deliberately not enforced here.
+    return errors
+
+
+def check_overview(path: Path) -> list[str]:
+    """The structured `## Overview` block: the strict, deterministic gate (Q3).
+
+    The runtime parser (`analysis.scaffold.parse_overview`) fails OPEN - a
+    legacy prose block maps to `description`, malformed YAML degrades to empty -
+    because the platform must never break the skeleton over framing. THIS check
+    does not fail open: the KB must carry a fenced ```yaml Overview with a
+    non-empty `domain`, a non-empty `description`, at least two canonical
+    journeys of at least three steps each, and at most
+    `OVERVIEW_WORD_BUDGET` words over the rendered plain text. The budget is
+    the SAME constant and the SAME count the creator self-checks and the critic
+    judges with (`polymerhus.analysis.overview`), so the three sites cannot
+    drift."""
+    if not path.is_file():
+        return [f"operator_kb.md missing at {path} (Overview not checkable)"]
+    from polymerhus.analysis.overview import (  # noqa: PLC0415
+        OVERVIEW_WORD_BUDGET,
+        overview_word_count,
+    )
+    from polymerhus.analysis.scaffold import parse_overview  # noqa: PLC0415
+
+    overview = parse_overview(path.read_text(encoding="utf-8"))
+    errors: list[str] = []
+    if not overview.get("domain"):
+        errors.append(
+            "Overview: 'domain' missing (a legacy prose block is not the "
+            "structured entity - the fenced ```yaml form is required)"
+        )
+    if not overview.get("description"):
+        errors.append("Overview: 'description' missing")
+    journeys = overview.get("journeys") or []
+    if len(journeys) < 2:
+        errors.append(
+            f"Overview: needs at least 2 journeys (found {len(journeys)})"
+        )
+    for journey in journeys:
+        name = journey.get("name") or "(unnamed)"
+        if not journey.get("name"):
+            errors.append("Overview: a journey has no 'name'")
+        steps = journey.get("steps") or []
+        if len(steps) < 3:
+            errors.append(
+                f"Overview journey {name!r}: needs at least 3 steps "
+                f"(found {len(steps)})"
+            )
+    count = overview_word_count(overview)
+    if count > OVERVIEW_WORD_BUDGET:
+        errors.append(
+            f"Overview: {count} words exceeds the {OVERVIEW_WORD_BUDGET}-word "
+            "budget"
+        )
     return errors
 
 
@@ -264,7 +320,9 @@ def check_target(
     """
     report: dict[str, list[str]] = {}
     if not auth_only:
-        report["operator_kb"] = check_operator_kb(target_dir / "operator_kb.md")
+        kb_path = target_dir / "operator_kb.md"
+        report["operator_kb"] = check_operator_kb(kb_path)
+        report["overview"] = check_overview(kb_path)
         report["l1_surface"] = check_l1_surface(target_dir / "l1-surface.yaml")
     if not l1_only:
         report["auth"] = check_auth(auth_dir or target_dir)

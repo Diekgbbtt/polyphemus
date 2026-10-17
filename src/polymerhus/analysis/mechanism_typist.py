@@ -43,6 +43,7 @@ from collections import defaultdict
 
 from polymerhus.analysis.analyser_types import L1DeltaBatch
 from polymerhus.analysis.chunking import Chunk
+from polymerhus.analysis.overview import overview_message
 from polymerhus.analysis.proposer_reasoning import cot_scaffold, role_header
 
 logger = logging.getLogger(__name__)
@@ -331,12 +332,24 @@ def _defined_systems_block(inventory: dict | None) -> str:
     return "\n".join(lines)
 
 
-def _reflection_prompt(chunk: Chunk, inventory: dict | None) -> str:
-    from polymerhus.analysis.l1_curator import vocabulary_prompt
-    from polymerhus.analysis.pod import overview_block
+_TYPIST_CHAIN = (
+    "Grounded in the application overview above, reflect on the streamed "
+    "surface that follows."
+)
 
+
+def _reflection_prompt(chunk: Chunk, inventory: dict | None, *,
+                       chained: bool = False) -> str:
+    """Call 1's item message. The Q4 model: the structured Overview rides its
+    OWN dedicated HumanMessage ahead of this one (`overview_message`); when it
+    does, `chained=True` opens this message with the verbatim that couples the
+    two messages. Calls 2-3 continue the same per-chunk thread and are not
+    re-framed."""
+    from polymerhus.analysis.l1_curator import vocabulary_prompt
+
+    lead = f"{_TYPIST_CHAIN}\n\n" if chained else ""
     return (
-        f"{overview_block(inventory)}"
+        f"{lead}"
         f"{role_header('the TechnicalSystem mechanism-typist', 'reconstruct, at breadth, the cross-cutting technical Systems this streamed surface evidences and how they overlay the Services')}\n\n"
         f"{_defined_systems_block(inventory)}\n\n"
         f"{vocabulary_prompt()}\n\n"
@@ -517,8 +530,13 @@ def type_mechanisms(
         # Call 1 - REFLECTION (reason). Exhaustion => fail-closed (whole step empty).
         # The escalating retry lives inside invoke_fn (invoke_role) now; a None return
         # is the exhausted-generation fail-closed signal, exactly as before.
+        # Q4: the dedicated Overview message heads the turn; the reflection item
+        # message chains to it.
+        overview = overview_message((inventory or {}).get("application_overview"))
         prose = invoke_fn(
-            [HumanMessage(content=_reflection_prompt(chunk, inventory))],
+            ([HumanMessage(content=overview)] if overview else [])
+            + [HumanMessage(content=_reflection_prompt(
+                chunk, inventory, chained=bool(overview)))],
             schema=None, system_prompt=skill,
         )
         if not prose:

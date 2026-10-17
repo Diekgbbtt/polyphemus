@@ -17,6 +17,7 @@ For EACH target, do:
 
 Run `PYTHONPATH=src python3 tools/bootstrap/validate_data_dependencies.py --staging <staging> <target_dir>`.
 Confirm: `operator_kb.md` parses into Services and the three linchpin Systems; every `l1-surface.yaml` identity is unique and every edge endpoint resolves; contracts are path-free (grep for `/`, `http`, `?`, `=` in `service_contract` and `contract` values and flag any route/parameter leaking in); every service that requires authentication carries an `AUTHENTICATED_BY` edge to the AuthenticationMechanism linchpin (match the prestashop/wordpress convention).
+Also check the structured `## Overview` (the validator hard-gates its shape): `domain` is the stable target identity, never the per-run host; the `description` states what the application offers; there are at least two journeys with at least three steps each; every step names a concrete surface part (a page, a form, a menu entry, an endpoint); and the whole Overview stays under 250 words over its rendered plain text.
 
 ## 2. Coverage by threat-modelling (the real judgement)
 
@@ -33,6 +34,7 @@ This is not a checklist pass; it is a red-team read of the surface.
   - **over-broad contract** - a contract so generic it cannot route endpoints.
   - **auth-gap** - the authn bootstrap made the authenticated surface reachable, yet a known class that lives behind login has no observed servicing unit, or an auth-gated service is marked unobserved with no loud reason. The authn-first order exists precisely so these are covered; flag any surface-map entry that is still anonymous-only.
 - Also judge breadth honestly: an over-populated surface that invents business functions the target lacks is a defect, not a win.
+- Judge the Overview's journeys semantically: do they walk the application's CANONICAL end-to-end paths a real user takes (reach the public surface, sign in, perform the core business action, administer the application), in a plausible order? A journey that is reworded prose, a list of unrelated endpoints, or one that maps to components the KB does not carry is a finding.
 
 ## Output
 

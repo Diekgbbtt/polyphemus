@@ -13,9 +13,26 @@ Let each stage's insight shape the next. Never jump to the answer.
 
 ## Write the application Overview first
 
-Begin with a short `## Overview` paragraph: what the SOLUTION is as a whole - its product category, deployment model, and the audiences it serves.
-It is the framing every Service is read inside, and it is carried as the skeleton attribute `application_overview`, prepended to each Service's later reasoning.
-Keep it to a few sentences and ground it in the knowledge base exactly as the contracts are: no invented depth.
+Begin with the `## Overview` section: the framing every Service is read inside.
+It is carried as the skeleton attribute `application_overview` and delivered to the
+later reasoning agents as a dedicated message.
+Write it as a fenced ```yaml block with exactly three fields:
+
+- `domain`: the stable identity of the deployed application (for example `wordpress`
+  or `comfyui`). Use the product or application name, never a host or a run identifier.
+- `description`: one generalised paragraph - what the SOLUTION is as a whole: its
+  product category, deployment model, and the audiences it serves.
+- `journeys`: the canonical end-to-end navigation paths through the application.
+  Write at least two journeys, each with at least three steps, ordered as a user
+  performs them.
+
+Each journey step names a concrete surface part - a page, a form, a menu entry, or a
+navigation - and maps it onto the components you propose below by their KB identity
+(the Service's business-function slug, a System's kind).
+
+Ground the Overview in the knowledge base exactly as the contracts are: no invented
+depth. Its total length (domain, description, journey names, and steps together) stays
+under 250 words: every consuming agent reads it, so brevity is a feature.
 
 ## Write a service contract for every Service
 

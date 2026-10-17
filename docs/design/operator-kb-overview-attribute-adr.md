@@ -1,6 +1,7 @@
 # ADR: the operator_kb Overview is a skeleton attribute, prepended to each Service
 
 Status: accepted (2026-10-12).
+Amended by: `docs/design/application-overview-entity-adr.md` (2026-10-17) - the Overview stays a skeleton attribute, but its value became the structured `{domain, description, journeys}` entity and its delivery became a dedicated message per consuming agent (Q4).
 
 ## Context
 

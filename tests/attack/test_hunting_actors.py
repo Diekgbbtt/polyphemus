@@ -155,6 +155,28 @@ def _factory(args_list):
     return make
 
 
+class _RecordingToolFake(_ToolFake):
+    """`_ToolFake` plus a per-call message recorder (the Q4 pin: which messages
+    the actor's session turns actually carry). `recorder` is `object`-typed on
+    purpose: a `list`-typed pydantic field would be re-validated into a COPY,
+    and the test's `seen` list would stay empty."""
+
+    recorder: object = None
+
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+        if self.recorder is not None:
+            self.recorder.append(list(messages))
+        return _ToolFake._generate(
+            self, messages, stop=stop, run_manager=run_manager, **kwargs)
+
+    async def _agenerate(self, messages, stop=None, run_manager=None, **kwargs):
+        if self.recorder is not None:
+            self.recorder.append(list(messages))
+        return _ToolFake._generate(
+            self, messages, stop=stop,
+            run_manager=run_manager.get_sync() if run_manager else None, **kwargs)
+
+
 def _gate_input() -> GateInput:
     return GateInput(candidates=[
         DeliveredCandidate(
@@ -189,6 +211,54 @@ def test_hunt_orchestrator_actor_reason_on_one_thread():
     decision = asyncio.run(_drive())
     assert isinstance(decision, GateDecision)
     assert decision.directions[0].carried is True
+
+
+def _gate_input_with_overview() -> GateInput:
+    gate_input = _gate_input()
+    gate_input.overview = (
+        "APPLICATION OVERVIEW (the deployed application the following items "
+        "belong to):\nDomain: shop"
+    )
+    return gate_input
+
+
+def test_gate_turn_heads_with_the_dedicated_overview_message_once_per_thread():
+    """Q4: the hypothesise turn heads with the dedicated Overview-only
+    HumanMessage and the gate prompt chains to it; a SECOND gate turn on the
+    same run thread does NOT restack the Overview (the #187 stacking
+    precedent: the run thread is monotonic across all faults/pairs)."""
+    gate_args = {"directions": [
+        {"unit_id": "Service:slug:a", "fault_class": "fault-x", "carried": True,
+         "rationale": "plausible"}
+    ]}
+    seen: list = []
+
+    def factory(role_id):
+        return _RecordingToolFake(
+            call_name="GateDecision", args=gate_args, recorder=seen)
+
+    async def _drive():
+        actor = HuntOrchestratorActor(
+            "run1", checkpointer=InMemorySaver(), model_factory=factory, observe=False,
+        )
+        first = await actor.hypothesise(_gate_input_with_overview())
+        second = await actor.hypothesise(_gate_input_with_overview())
+        await actor.stop()
+        return first, second
+
+    first, second = asyncio.run(_drive())
+    assert isinstance(first, GateDecision) and isinstance(second, GateDecision)
+    assert len(seen) == 2
+    first_humans = [m.content for m in seen[0] if m.type == "human"]
+    assert len(first_humans) == 2
+    assert first_humans[0].startswith("APPLICATION OVERVIEW (")
+    assert first_humans[1].startswith(
+        "Grounded in the application overview above")
+    second_contents = [m.content for m in seen[1]]
+    overviews = [c for c in second_contents if c.startswith("APPLICATION OVERVIEW (")]
+    assert len(overviews) == 1  # only the head-of-thread copy
+    last_human = [m.content for m in seen[1] if m.type == "human"][-1]
+    assert not last_human.startswith("Grounded in the application overview above")
 
 
 def test_hypothesise_retries_once_on_a_wrong_union_member():

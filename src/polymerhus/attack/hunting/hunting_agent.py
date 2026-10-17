@@ -366,7 +366,8 @@ def _state_summary(state: dict) -> str:
     return "\n".join(lines)
 
 
-def _compose_first_step(config: HuntConfig, state: dict, tool_surface: str) -> str:
+def _compose_first_step(config: HuntConfig, state: dict, tool_surface: str, *,
+                        chained: bool = False) -> str:
     """The first step's HUMAN input: the hunt grounding, the tool surface, the
     current state, and the step protocol, in that order. The stable skill rides
     the SYSTEM channel (`system_prompt=` on every turn - the orchestrator's
@@ -374,13 +375,43 @@ def _compose_first_step(config: HuntConfig, state: dict, tool_surface: str) -> s
     this message: this message is per-dispatch instance data (the correct human
     channel), while the skill is the stable system prompt. Later steps resume
     the thread from the checkpoint, so the grounding/surface are never repeated
-    into the conversation."""
-    return "\n\n".join([
+    into the conversation.
+
+    The Q4 model: the structured Overview rides its OWN dedicated HumanMessage
+    ahead of this one (`overview_message`); when it does, `chained=True` opens
+    this message with the verbatim that couples the two messages."""
+    lead = f"{_HUNTER_CHAIN}\n\n" if chained else ""
+    return lead + "\n\n".join([
         _compose_grounding(config),
         tool_surface,
         _state_summary(state),
         _STEP_PROTOCOL,
     ])
+
+
+_HUNTER_CHAIN = (
+    "Grounded in the application overview above, your hunt configuration, the "
+    "tool surface, the current state, and the step protocol follow."
+)
+
+
+def _overview_message_for(overview_fn, project_id: str) -> str:
+    """The dedicated Overview HumanMessage content for one dispatch (Q4).
+
+    The Overview is read settings-only (`read_application_overview`; the whole
+    L1 inventory read would be waste here) and rendered cleanly. Fail-open: any
+    read error degrades to "" and the first turn keeps its single-message
+    shape."""
+    from polymerhus.analysis.l1_inventory import read_application_overview  # noqa: PLC0415
+    from polymerhus.analysis.overview import overview_message  # noqa: PLC0415
+
+    try:
+        value = (overview_fn or read_application_overview)(project_id)
+    except Exception:  # noqa: BLE001 - framing is fail-open, the hunt is not
+        logger.warning("hunter: overview read failed; dispatch without it",
+                       exc_info=True)
+        return ""
+    return overview_message(value)
 
 
 def _status_write(args: Any) -> tuple[str, dict] | None:
@@ -437,6 +468,7 @@ def build_hunting_agent(
     middleware=None,
     model_factory=None,
     observe: bool = True,
+    overview_fn=None,
 ) -> Callable[[HuntConfig], Awaitable[DispatchResult]]:
     """Build the turn-by-turn hunting-agent dispatch seam (IA-2).
 
@@ -451,8 +483,12 @@ def build_hunting_agent(
     defaults to the R5 compaction middleware (`build_hunter_compaction_middleware`,
     #95 D9) - capability (#99) negotiation attaches via the session seam itself.
     `model_factory` injects a fake model for tests; `observe` toggles session
-    observability. Returns `async dispatch_fn(config: HuntConfig) -> DispatchResult`
-    (the async-native harness; sync callers use `build_sync_hunting_agent`).
+    observability. `overview_fn` injects the structured-Overview read
+    (defaults to `read_application_overview`, settings-only): the rendered
+    Overview heads the first turn as its own dedicated HumanMessage (Q4),
+    fail-open to none. Returns `async dispatch_fn(config: HuntConfig) ->
+    DispatchResult` (the async-native harness; sync callers use
+    `build_sync_hunting_agent`).
 
     The closure binds the injected seams once; each dispatch (hunt) compiles
     its OWN in-memory state graph (OUTLIER-1, no graph-level checkpointer),
@@ -524,8 +560,15 @@ def build_hunting_agent(
         # passing is cheap and required. Fail-closed here (raise) so a hunt
         # never starts without its prompt.
         skill = _load_hunting_agent_skill()
-        new_messages = [HumanMessage(
-            content=_compose_first_step(config, state, _tool_surface(tools)))]
+        # Q4: the dedicated Overview message heads the FIRST turn only (later
+        # steps resume the thread from the checkpoint); the first-step message
+        # chains to it when it rides along.
+        overview = _overview_message_for(overview_fn, project_id)
+        new_messages = (
+            ([HumanMessage(content=overview)] if overview else [])
+            + [HumanMessage(content=_compose_first_step(
+                config, state, _tool_surface(tools), chained=bool(overview)))]
+        )
         # The five tools ride the generation request REQUEST-ONLY (the standard
         # tool interface): each `convert_to_openai_tool` dict carries its JSON
         # schema in the request's `tools` body - the model emits valid args per

@@ -77,6 +77,26 @@ def _text(value) -> str:
     return value.strip() if isinstance(value, str) else ""
 
 
+# The operator budget (Q3, grilled 2026-10-16): the whole Overview - domain,
+# description, journey names, journey steps - stays under 250 words of rendered
+# plain text. The creator self-checks with this, the critic judges with it, and
+# the deterministic validator hard-counts with it: ONE rule, three sites.
+OVERVIEW_WORD_BUDGET = 250
+
+
+def overview_word_count(value) -> int:
+    """The Overview's word count over its RENDERED PLAIN TEXT: the domain, the
+    description, and each journey's name and steps, whitespace-tokenised. The
+    count never touches YAML/markdown artifacts, so it measures what the agents
+    actually read."""
+    overview = normalize_overview(value)
+    parts = [overview["domain"], overview["description"]]
+    for journey in overview["journeys"]:
+        parts.append(journey["name"])
+        parts.extend(journey["steps"])
+    return len(" ".join(parts).split())
+
+
 _STRUCTURED_INTRO = (
     "APPLICATION OVERVIEW (the deployed application the following items belong to):"
 )

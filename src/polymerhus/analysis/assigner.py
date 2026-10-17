@@ -37,6 +37,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from polymerhus.analysis.analyser_types import L1DeltaBatch
 from polymerhus.analysis.chunking import Chunk, admit_for_role
 from polymerhus.analysis.l1_types import L0Ref
+from polymerhus.analysis.overview import overview_message
 
 logger = logging.getLogger(__name__)
 
@@ -421,10 +422,20 @@ def _assigner_prompt_config() -> str:
     return cfg
 
 
-def _user_prompt(l0_slice: dict, inventory: dict | None) -> str:
+_ASSIGN_CHAIN = (
+    "Grounded in the application overview above, the CURRENT L1 identities - "
+    "your deductive target - and the freshly collected slice follow."
+)
+
+
+def _user_prompt(l0_slice: dict, inventory: dict | None, *, chained: bool = False) -> str:
     """The VOLATILE half of the prompt (#34): the un-truncated L1 identities block
     FIRST (the FR-INVENTORY discipline - identity reuse enforced at write time),
     then the rendered chunk.
+
+    The Q4 model: the structured Overview rides its OWN dedicated HumanMessage
+    ahead of this one (`overview_message`). When it does, `chained=True` opens
+    this message with the verbatim that couples the two messages.
 
     The inventory sits here rather than in the system prefix ON PURPOSE: it mutates
     as the run proceeds, so hoisting it into the cacheable prefix would invalidate
@@ -434,11 +445,11 @@ def _user_prompt(l0_slice: dict, inventory: dict | None) -> str:
     SYSTEM prompt's job (`prompts/assigner.md`, D-A2), so the volatile half carries
     only the task and the deductive target instead of duplicating the read policy
     on every chunk."""
-    from polymerhus.analysis.pod import _inventory_block, _slice_repr, overview_block
+    from polymerhus.analysis.pod import _inventory_block, _slice_repr
 
+    lead = f"{_ASSIGN_CHAIN}\n\n" if chained else ""
     return (
-        f"{overview_block(inventory)}"
-        f"{_inventory_block(inventory)}\n\n{_slice_repr(l0_slice)}\n\n"
+        f"{lead}{_inventory_block(inventory)}\n\n{_slice_repr(l0_slice)}\n\n"
         "TASK: judge the Endpoints above. The slice above is the chunk recon most "
         "recently collected - it is your primary subject. The inventory block "
         "above is your DEDUCTIVE TARGET: reason FROM the observed surface TO "
@@ -487,10 +498,14 @@ def assign(
     from polymerhus.analysis.proposer_turn import proposer_batch
 
     try:
+        overview = overview_message((inventory or {}).get("application_overview"))
         with proposer_batch(chunk.chunk_id):
-            raw = invoke_fn([
-                HumanMessage(content=_user_prompt(l0_slice, inventory)),
-            ], schema=L1DeltaBatch, system_prompt=system_prompt)
+            raw = invoke_fn(
+                ([HumanMessage(content=overview)] if overview else [])
+                + [HumanMessage(content=_user_prompt(
+                    l0_slice, inventory, chained=bool(overview)))],
+                schema=L1DeltaBatch, system_prompt=system_prompt,
+            )
     except Exception:  # LLM error -> fail-open to no assignment, never crash
         logger.warning("assigner: invoke failed; degrading to empty outcome", exc_info=True)
         return AssignmentOutcome()

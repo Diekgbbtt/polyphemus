@@ -80,6 +80,44 @@ def test_gate_reason_fn_degrades_none_to_empty_decision(monkeypatch):
     assert out.directions == []
 
 
+def test_gate_reason_fn_prepends_the_dedicated_overview_message(monkeypatch):
+    """Q4: when the GateInput carries the rendered Overview (the hypothesise
+    node builds it from settings), the turn heads with the dedicated
+    Overview-only HumanMessage and the gate prompt chains to it."""
+    seen = {}
+
+    def fake_invoke_role(role, messages, *, schema=None, **kw):
+        seen["messages"] = messages
+        return GateDecision(directions=[])
+
+    monkeypatch.setattr("polymerhus.app.llm.roles.invoke_role", fake_invoke_role)
+    gate_input = _gate_input()
+    gate_input.overview = (
+        "APPLICATION OVERVIEW (the deployed application the following items "
+        "belong to):\nDomain: shop"
+    )
+    HL.build_gate_reason_fn()(gate_input)
+    messages = seen["messages"]
+    assert len(messages) == 3
+    assert messages[1].content.startswith("APPLICATION OVERVIEW (")
+    assert messages[2].content.startswith(
+        "Grounded in the application overview above")
+
+
+def test_gate_reason_fn_without_an_overview_is_single_human_message(monkeypatch):
+    seen = {}
+
+    def fake_invoke_role(role, messages, *, schema=None, **kw):
+        seen["messages"] = messages
+        return GateDecision(directions=[])
+
+    monkeypatch.setattr("polymerhus.app.llm.roles.invoke_role", fake_invoke_role)
+    HL.build_gate_reason_fn()(_gate_input())
+    messages = seen["messages"]
+    assert len(messages) == 2
+    assert "Grounded in the application overview above" not in messages[1].content
+
+
 # --- the hunting agent's author / judge seams (hunting_hunter) ----------------
 
 def test_author_fn_invokes_hunter_and_parses_json(monkeypatch):

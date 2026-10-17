@@ -270,11 +270,13 @@ def _skill_hunt_config():
     )
 
 
-def _run_stubbed_dispatch(monkeypatch, turns):
+def _run_stubbed_dispatch(monkeypatch, turns, *, overview=None):
     """Drive the REAL harness with a stubbed session turn; return (result, calls).
 
     Each stubbed turn records its `system_prompt` kwarg and input messages, then
-    replays the scripted reply (`{"message": AIMessage}` per turn)."""
+    replays the scripted reply (`{"message": AIMessage}` per turn).
+    `overview` is what the injected `overview_fn` returns (a value, not a
+    read): None keeps the no-Overview single-message shape."""
     import polymerhus.app.llm.session as S  # noqa: PLC0415
     from langgraph.checkpoint.memory import InMemorySaver  # noqa: PLC0415
     from polymerhus.attack.hunting.hunting_agent import (  # noqa: PLC0415
@@ -298,7 +300,8 @@ def _run_stubbed_dispatch(monkeypatch, turns):
     monkeypatch.setattr(S, "arun_session_turn", fake_turn)
     dispatch = build_sync_hunting_agent(
         run_id="run-sys", project_id="proj-a",
-        checkpointer=InMemorySaver(), middleware=[], observe=False)
+        checkpointer=InMemorySaver(), middleware=[], observe=False,
+        overview_fn=lambda project_id: overview)
     return dispatch(_skill_hunt_config()), calls
 
 
@@ -327,6 +330,44 @@ def test_hunter_turns_thread_the_project_as_usage_scope(monkeypatch):
     _, calls = _run_stubbed_dispatch(
         monkeypatch, [{"answer": "done", "message": AIMessage(content="done")}])
     assert calls[0]["usage_scope"] == "proj-a"
+
+
+def test_first_step_carries_the_dedicated_overview_message(monkeypatch):
+    """Q4: the hunt's first turn heads with the dedicated Overview-only
+    HumanMessage; the grounding/first-step message chains to it."""
+    from langchain_core.messages import AIMessage  # noqa: PLC0415
+
+    overview = {
+        "domain": "comfyui",
+        "description": "A single web service hosting the ComfyUI node-graph editor.",
+        "journeys": [
+            {"name": "Register and submit a workflow",
+             "steps": ["Open / and click the queue button (workflow-submission, WebPresentation).",
+                       "Fill the prompt form and submit it (RESTApi).",
+                       "Watch the queue page update (WebPresentation)."]},
+        ],
+    }
+    _, calls = _run_stubbed_dispatch(
+        monkeypatch, [{"answer": "done", "message": AIMessage(content="done")}],
+        overview=overview)
+    first_turn = calls[0]["new_messages"]
+    assert len(first_turn) == 2
+    assert first_turn[0].content.startswith("APPLICATION OVERVIEW (")
+    assert "Domain: comfyui" in first_turn[0].content
+    grounded = first_turn[1].content
+    assert "Grounded in the application overview above" in grounded
+    assert "APPLICATION OVERVIEW" not in grounded
+    assert "fault-x" in grounded  # the grounding body still rides the message
+
+
+def test_first_step_stays_single_message_without_an_overview(monkeypatch):
+    from langchain_core.messages import AIMessage  # noqa: PLC0415
+
+    _, calls = _run_stubbed_dispatch(
+        monkeypatch, [{"answer": "done", "message": AIMessage(content="done")}])
+    assert len(calls[0]["new_messages"]) == 1
+    assert "Grounded in the application overview above" not in (
+        calls[0]["new_messages"][0].content)
 
 
 def test_skill_includes_the_off_path_examples_companion():
@@ -484,6 +525,7 @@ def _raw_error_hunt(tmp_path, exc):
         memory_store=build_memory_store(tmp_path),
         model_factory=lambda role_id: _RaisingModel(exc=exc),
         checkpointer=InMemorySaver(), middleware=[], observe=False,
+        overview_fn=lambda project_id: None,
     )
     return dispatch(_hunt_config())
 

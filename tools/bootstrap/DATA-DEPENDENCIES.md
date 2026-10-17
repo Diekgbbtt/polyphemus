@@ -63,7 +63,18 @@ The deterministic platform scaffold (`src/polymerhus/analysis/scaffold.py`) pars
 # <Target> (<version>)
 
 ## Overview
-<one paragraph>
+
+```yaml
+domain: <stable target identity, e.g. wordpress, comfyui - never a per-run host>
+description: <one generalised paragraph: what the application is, its deployment model, its audiences>
+journeys:
+  - name: <canonical end-to-end navigation journey>
+    steps:
+      - <a concrete surface part: page / form / menu entry / endpoint> (<component identity it exercises: Service business_function_slug or System kind>)
+      - <at least 3 steps per journey>
+      - <...>
+  - <at least 2 journeys>
+```
 
 ## Services
 ### <business-function-slug>
@@ -78,6 +89,20 @@ The deterministic platform scaffold (`src/polymerhus/analysis/scaffold.py`) pars
 - <role>
 - <role>
 ```
+
+Notes:
+- The `## Overview` is the STRUCTURED entity (Q3, 2026-10-17): a fenced ```yaml
+  block with `domain`, `description`, and `journeys`. `domain` is the target's
+  STABLE identity (the product/application name); a per-run minted host is not a
+  domain. Each journey carries >= 3 steps; each step references a specific
+  surface part (endpoint, form, menu entry, page navigation) and, where it
+  activates existing L1 knowledge, the component by its KB identity. The whole
+  Overview stays <= 250 words over the rendered plain text (domain +
+  description + journey names + steps, whitespace-tokenised) - the same
+  `polymerhus.analysis.overview` rule the creator self-checks and the critic
+  judges with.
+- A legacy prose Overview still PARSES at runtime (it maps to `description`,
+  fail-open), but it FAILS the validator: the fenced form above is the contract.
 
 Notes:
 - `contract` must DISCRIMINATE between services and contain NO path/URL/route/parameter names (the scaffold reads it as the routing profile; a path would enter the graph looking like evidence).

@@ -656,6 +656,10 @@ class HuntOrchestratorActor(_TurnActor):
         self._compaction = compaction  # #95 D9/H: None auto-wires, False disables
         self.tools = tools
         self.project_id = project_id
+        # Q4: the dedicated Overview message heads the run thread exactly ONCE
+        # (the run thread is monotonic across all faults/pairs, so a per-turn
+        # emit would re-stack the framing - the #187 precedent).
+        self._overview_emitted = False
 
     @property
     def compaction_manager(self):
@@ -735,7 +739,19 @@ class HuntOrchestratorActor(_TurnActor):
             payload = message.payload if isinstance(message.payload, dict) else {}
             from polymerhus.attack.hunting.llm import _compose_gate_prompt  # noqa: PLC0415
             from langchain_core.messages import HumanMessage  # noqa: PLC0415
-            text = _compose_gate_prompt(payload.get("input"))
+            # Q4: the dedicated Overview message (a HumanMessage carrying ONLY
+            # the rendered Overview) heads the run thread ONCE, on the first
+            # gate turn that carries one; the gate prompt then chains to it
+            # with its opener verbatim. Later gate turns and later faults
+            # continue the same thread, so the Overview is never re-stacked
+            # (#187: a byte-identical per-turn re-add is a defect).
+            gate_input = payload.get("input")
+            overview = getattr(gate_input, "overview", "") or ""
+            messages = []
+            if overview and not self._overview_emitted:
+                messages.append(HumanMessage(content=overview))
+                self._overview_emitted = True
+            text = _compose_gate_prompt(gate_input, chained=bool(messages))
             if payload.get("correction"):
                 # The voluntary-function-calling rung lets the model pick any
                 # union member; a wrong member (NoteDecision / RatifyDecision) on
@@ -746,7 +762,8 @@ class HuntOrchestratorActor(_TurnActor):
                     "This is the HYPOTHESISE turn - answer with the GateDecision "
                     "structured-output tool ONLY (its `directions` list)."
                 )
-            return [HumanMessage(content=text)]
+            messages.append(HumanMessage(content=text))
+            return messages
         if message.kind == _RATIFY_KIND:
             payload = message.payload if isinstance(message.payload, dict) else {}
             from polymerhus.attack.hunting.llm import _compose_ratify_prompt  # noqa: PLC0415
