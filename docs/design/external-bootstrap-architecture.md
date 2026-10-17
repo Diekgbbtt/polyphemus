@@ -133,7 +133,7 @@ No phase of the loop reads the ground truth: the critic was its only reader, and
 - Server rules: `/root/wb` wrapper only, its environment pins untouched; `down` + `docker rm -f $(docker ps -aq)` between targets is allowed; `docker system prune -a` is forbidden.
 - Failure policy: `on_target_failure: continue` (default) marks the target failed and reports at the end; the operator resumes it with `resume`.
 - `--no-lifecycle` runs the phases and the gates with the environment's lifecycle actuators skipped (for a target whose lifecycle the operator already manages); observations and correctness gates are unaffected.
-- Resume reads the run's own `config.resolved.yaml`, warns loudly on config drift (the state is the run's truth), probes every incomplete target's session live, and re-creates a missing session by its deterministic id at the target's next dispatch.
+- Resume reads the run's own `config.resolved.yaml`, warns loudly on config drift (the state is the run's truth), probes every incomplete target's session live, re-creates a missing session by its deterministic id at the target's next dispatch, and re-aligns an adopted session to the run's agent and model through the session's own setters (a session persists the lane it was created with, so a resumed run after a lane change would otherwise keep dispatching on the stale model).
 - Secrets: the wrappers carry paths, never values; logs never contain credential-file contents.
 
 ## 9. Resolved decisions (checkpoint 2026-10-17)

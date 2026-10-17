@@ -400,7 +400,9 @@ class OpenCodeApiHarness:
             self.session_store[spec.session_id] = spec
             return spec.session_id
         live = self._call("get", f"/api/session/{spec.session_id}")
-        if live.returncode == 0 and decode_data(live.stdout) is not None:
+        data = decode_data(live.stdout) if live.returncode == 0 else None
+        if live.returncode == 0 and data is not None:
+            self._align_adopted(spec, data)
             self.session_store[spec.session_id] = spec
             return spec.session_id
         detail = (created.stderr or created.stdout).strip() or "unknown error"
@@ -408,6 +410,48 @@ class OpenCodeApiHarness:
             f"session {spec.session_id} could not be created or resumed: {detail}",
             retryable=classify_stderr(detail),
         )
+
+    def _align_adopted(self, spec: SessionSpec, live: Mapping[str, object]) -> None:
+        """Bring an adopted session onto the run's agent and model.
+
+        A session persists the agent and the model it was created with, so a
+        resumed run (a crashed first attempt, a provider-lane change, config
+        drift) would otherwise keep dispatching turns on the stale lane - the
+        duplicate create only refuses, and nothing else re-examines the pin. A
+        failed alignment is a HarnessError: every later turn would silently run
+        on the wrong model otherwise.
+        """
+        live_model = live.get("model")
+        pinned = spec.model
+        current: ModelRef | None = None
+        if isinstance(live_model, Mapping) and live_model.get("providerID") and live_model.get("id"):
+            variant = live_model.get("variant")
+            current = ModelRef(
+                str(live_model["providerID"]),
+                str(live_model["id"]),
+                str(variant) if isinstance(variant, str) else None,
+            )
+        if current != pinned:
+            aligned = self._call(
+                "post", f"/api/session/{spec.session_id}/model", {"model": pinned.payload()}
+            )
+            if aligned.returncode != 0:
+                detail = (aligned.stderr or aligned.stdout).strip() or "unknown error"
+                raise HarnessError(
+                    f"session {spec.session_id} could not be aligned to {pinned}: {detail}",
+                    retryable=classify_stderr(detail),
+                )
+        if live.get("agent") != spec.agent:
+            aligned = self._call(
+                "post", f"/api/session/{spec.session_id}/agent", {"agent": spec.agent}
+            )
+            if aligned.returncode != 0:
+                detail = (aligned.stderr or aligned.stdout).strip() or "unknown error"
+                raise HarnessError(
+                    f"session {spec.session_id} could not be aligned to agent "
+                    f"{spec.agent}: {detail}",
+                    retryable=classify_stderr(detail),
+                )
 
     # --- prompt / await ---
 

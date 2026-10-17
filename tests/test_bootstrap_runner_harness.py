@@ -247,6 +247,115 @@ def test_create_session_resumes_an_existing_id():
     assert harness.create_session(_spec()) == "ses_bt_r1_shop_creator"
 
 
+def test_create_session_aligns_an_adopted_sessions_stale_model():
+    """A session persists its model; a resumed run must not dispatch on a stale lane."""
+    api = FakeApi()
+    api.fail(
+        "post",
+        "/api/session",
+        CommandResult(1, "", '{"type":"ConflictError","message":"session exists"}'),
+    )
+    api.ok(
+        "get",
+        "/api/session/ses_bt_r1_shop_creator",
+        {
+            "id": "ses_bt_r1_shop_creator",
+            "agent": "data-dep-worker",
+            "model": {"providerID": "opencode-go", "id": "deepseek-v4.1-flash", "variant": "high"},
+        },
+    )
+    harness = OpenCodeApiHarness(directory="/wt", executor=api)
+    assert harness.create_session(_spec()) == "ses_bt_r1_shop_creator"
+    paths = [call.argv[3] for call in api.calls]
+    assert paths == [
+        "/api/session",
+        "/api/session/ses_bt_r1_shop_creator",
+        "/api/session/ses_bt_r1_shop_creator/model",
+    ]
+    align = api.calls[-1]
+    body = json.loads(align.argv[align.argv.index("--data") + 1])
+    assert body["model"] == {
+        "providerID": "opencode",
+        "id": "deepseek-v4.1-flash-free",
+        "variant": "high",
+    }
+
+
+def test_create_session_aligns_an_adopted_sessions_stale_agent():
+    api = FakeApi()
+    api.fail(
+        "post",
+        "/api/session",
+        CommandResult(1, "", '{"type":"ConflictError","message":"session exists"}'),
+    )
+    api.ok(
+        "get",
+        "/api/session/ses_bt_r1_shop_creator",
+        {
+            "id": "ses_bt_r1_shop_creator",
+            "agent": "general",
+            "model": {"providerID": "opencode", "id": "deepseek-v4.1-flash-free", "variant": "high"},
+        },
+    )
+    harness = OpenCodeApiHarness(directory="/wt", executor=api)
+    assert harness.create_session(_spec()) == "ses_bt_r1_shop_creator"
+    align = api.calls[-1]
+    assert align.argv[3] == "/api/session/ses_bt_r1_shop_creator/agent"
+    body = json.loads(align.argv[align.argv.index("--data") + 1])
+    assert body == {"agent": "data-dep-worker"}
+
+
+def test_create_session_leaves_an_aligned_session_untouched():
+    api = FakeApi()
+    api.fail(
+        "post",
+        "/api/session",
+        CommandResult(1, "", '{"type":"ConflictError","message":"session exists"}'),
+    )
+    api.ok(
+        "get",
+        "/api/session/ses_bt_r1_shop_creator",
+        {
+            "id": "ses_bt_r1_shop_creator",
+            "agent": "data-dep-worker",
+            "model": {"providerID": "opencode", "id": "deepseek-v4.1-flash-free", "variant": "high"},
+        },
+    )
+    harness = OpenCodeApiHarness(directory="/wt", executor=api)
+    assert harness.create_session(_spec()) == "ses_bt_r1_shop_creator"
+    assert [call.argv[3] for call in api.calls] == [
+        "/api/session",
+        "/api/session/ses_bt_r1_shop_creator",
+    ]
+
+
+def test_create_session_fails_loudly_when_the_alignment_fails():
+    api = FakeApi()
+    api.fail(
+        "post",
+        "/api/session",
+        CommandResult(1, "", '{"type":"ConflictError","message":"session exists"}'),
+    )
+    api.ok(
+        "get",
+        "/api/session/ses_bt_r1_shop_creator",
+        {
+            "id": "ses_bt_r1_shop_creator",
+            "agent": "data-dep-worker",
+            "model": {"providerID": "opencode", "id": "another-model", "variant": "high"},
+        },
+    )
+    api.fail(
+        "post",
+        "/api/session/ses_bt_r1_shop_creator/model",
+        CommandResult(1, "", "rate limit exceeded"),
+    )
+    harness = OpenCodeApiHarness(directory="/wt", executor=api)
+    with pytest.raises(HarnessError) as excinfo:
+        harness.create_session(_spec())
+    assert excinfo.value.retryable is True
+
+
 def test_create_session_fails_loudly_when_neither_create_nor_resume_works():
     api = FakeApi()
     api.fail("post", "/api/session", CommandResult(1, "", "network unreachable"))
