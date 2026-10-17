@@ -19,6 +19,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Mapping, Protocol
 
+from runner.env import decode_output
+
 # The two gate modes this loop uses. `auth_only` is the authn phase's gate (the
 # L1 surface does not exist yet); `full` is the L1 phase's gate.
 AUTH_ONLY = "auth_only"
@@ -149,10 +151,12 @@ class ValidatorGate:
                 cwd=str(self.worktree),
                 env=validator_env(self.worktree, {**os.environ, **self.extra_env}),
                 capture_output=True,
-                text=True,
                 timeout=self.timeout_s,
             )
-            output = (proc.stdout or "") + (proc.stderr or "")
+            # A validator that trips over an undecodable byte in a worker's
+            # artifact must come back as a red, readable gate, never as a
+            # traceback that kills the run.
+            output = decode_output(proc.stdout) + decode_output(proc.stderr)
             parsed = parse_report(output, target)
             ok = proc.returncode == 0 and parsed is not False
         except (OSError, subprocess.SubprocessError) as exc:

@@ -42,9 +42,13 @@ WATERMARK_ATTEMPTS = 3
 # 200 at most, the rest behind an opaque `cursor`. Both transcript reads are
 # explicit about it, and the turn boundary is an ID - never a count - so a
 # transcript larger than one page can neither break the boundary nor hand the
-# wait a stale terminal.
+# wait a stale terminal. The poll page stays SMALL on purpose: the `opencode
+# api` front end truncates a large streamed body (~256KiB observed, unstably),
+# and a 20-message page of these sessions is ~115KiB, comfortably inside it.
+# The terminal `idle` is always the newest message of its turn, so a small page
+# still carries it; `newer_than`'s timestamp walk covers the rest.
 _TRANSCRIPT_HEAD = "/message?order=desc&limit=1"
-_TRANSCRIPT_PAGE = "/message?order=desc&limit=200"
+_TRANSCRIPT_PAGE = "/message?order=desc&limit=20"
 
 # Provider failure classes this harness recognises by text. Everything that
 # looks transient is retried with backoff; a hard configuration error is not.
@@ -536,31 +540,40 @@ class OpenCodeApiHarness:
         """The transcript head (the newest message's id and stamp), read strictly.
 
         The head is the message the turn starts after, so it has to be sound
-        before the prompt goes out: a failed read retries a bounded number of
-        times and then raises. The read asks for exactly one message in the
-        endpoint's newest-first order; a count of the page is meaningless under
-        pagination and would let the previous turn's idle complete this turn.
+        before the prompt goes out: a failed or unparseable read retries a
+        bounded number of times and then raises. An unparseable body is a
+        FAILED read, never an empty session - the endpoint's body can be
+        truncated under load, and an empty boundary would let the previous
+        turn's idle complete this one. The read asks for exactly one message
+        in the endpoint's newest-first order; a count of the page is
+        meaningless under pagination.
         """
         attempts = max(1, self.watermark_attempts)
         detail = "unknown error"
+        retryable = False
         for attempt in range(attempts):
             result = self._call("get", f"/api/session/{session_id}{_TRANSCRIPT_HEAD}")
             if result.returncode == 0:
-                head = message_list(result.stdout)
-                if not head:
-                    return None
-                message = head[0]
-                time = message.get("time")
-                created = time.get("created") if isinstance(time, Mapping) else None
-                stamp = int(created) if isinstance(created, (int, float)) else None
-                return str(message.get("id") or ""), stamp
-            detail = (result.stderr or result.stdout).strip() or "unknown error"
+                data = decode_data(result.stdout)
+                if isinstance(data, list):
+                    if not data:
+                        return None
+                    message = data[0]
+                    time = message.get("time") if isinstance(message, Mapping) else None
+                    created = time.get("created") if isinstance(time, Mapping) else None
+                    stamp = int(created) if isinstance(created, (int, float)) else None
+                    return str(message.get("id") or ""), stamp
+                detail = "the head response did not parse (truncated or garbled body)"
+                retryable = True
+            else:
+                detail = (result.stderr or result.stdout).strip() or "unknown error"
+                retryable = classify_stderr(detail)
             if attempt + 1 < attempts:
                 self.sleep(max(0.1, self.poll_interval_s))
         raise HarnessError(
             f"the transcript head of {session_id} could not be read "
             f"after {attempts} attempt(s): {detail}",
-            retryable=classify_stderr(detail),
+            retryable=retryable,
         )
 
     def wait_terminal(self, session_id: str, timeout_s: float = DEFAULT_TURN_TIMEOUT_S) -> TurnResult:

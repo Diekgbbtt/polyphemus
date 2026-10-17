@@ -322,6 +322,32 @@ def test_validator_gate_does_not_pass_on_a_nonzero_exit_with_an_ok_line(tmp_path
     assert result.command[0] == sys.executable
 
 
+def test_validator_gate_survives_output_that_is_not_utf8(tmp_path):
+    """A worker's artifact can carry bytes the console cannot decode.
+
+    The gate has to come back red and readable; a UnicodeDecodeError escaping
+    the executor would abort the whole run instead of failing one gate.
+    """
+    script = tmp_path / "fake_validator.py"
+    script.write_text(
+        "import sys\n"
+        "sys.stdout.buffer.write(b'FAIL shop\\n  [x] caf\\xe4\\n')\n"
+        "sys.stdout.buffer.flush()\n"
+        "raise SystemExit(1)\n",
+        encoding="utf-8",
+    )
+    gate = gates.ValidatorGate(
+        validator=script,
+        staging=tmp_path / "staging",
+        kbs=tmp_path / "kbs",
+        worktree=tmp_path,
+        python=sys.executable,
+    )
+    result = gate.run("shop", gates.AUTH_ONLY)
+    assert result.ok is False
+    assert "caf" in result.output
+
+
 def test_validator_gate_parses_the_real_validator_over_a_fixture(tmp_path):
     """The real validator, in auth-only mode, over a crafted good/bad target."""
     project = tmp_path / "staging" / "shop" / "auth"

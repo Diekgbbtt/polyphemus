@@ -120,14 +120,31 @@ class LocalExecutor:
                 cwd=command.cwd,
                 env=env,
                 capture_output=True,
-                text=True,
                 timeout=self._timeout_s,
             )
         except FileNotFoundError as exc:
             return CommandResult(127, "", f"{command.argv[0]}: {exc}")
         except subprocess.TimeoutExpired:
             return CommandResult(124, "", f"timeout after {self._timeout_s}s")
-        return CommandResult(proc.returncode, proc.stdout or "", proc.stderr or "")
+        # Decoding is lossy by decision: a target's transcript, a UI string or a
+        # truncated stream can carry bytes that are not valid UTF-8, and a
+        # decode error in this seam would abort the whole run. `replace` keeps
+        # the run bounded - a damaged read fails JSON parsing and is classified
+        # like any other bad read.
+        return CommandResult(
+            proc.returncode,
+            decode_output(proc.stdout),
+            decode_output(proc.stderr),
+        )
+
+
+def decode_output(raw: bytes | str | None) -> str:
+    """Subprocess output as text, never raising on undecodable bytes."""
+    if raw is None:
+        return ""
+    if isinstance(raw, str):
+        return raw
+    return raw.decode("utf-8", errors="replace")
 
 
 def ssh_command(ssh: str, remote: str) -> Command:

@@ -417,7 +417,7 @@ def test_wait_terminal_polls_until_a_new_idle_appears():
     api.routes["get /api/session/ses/message?order=desc&limit=1"] = [
         CommandResult(0, json.dumps({"data": stale}), ""),
     ]
-    api.routes["get /api/session/ses/message?order=desc&limit=200"] = [
+    api.routes["get /api/session/ses/message?order=desc&limit=20"] = [
         CommandResult(0, json.dumps({"data": stale}), ""),
         CommandResult(0, json.dumps({"data": fresh + stale}), ""),
     ]
@@ -463,6 +463,31 @@ def test_the_boundary_read_is_strict_and_never_degrades():
     assert not any("prompt" in " ".join(call.argv) for call in api.calls)
 
 
+def test_a_truncated_head_body_is_a_failed_read_not_an_empty_session():
+    """The CLI can truncate a large streamed body; that is never 'no messages'.
+
+    An empty boundary would accept any message, including the previous turn's
+    idle, as this turn's completion, so an unparseable body retries and then
+    raises instead of degrading.
+    """
+    truncated = CommandResult(0, '{"data": [{"id": "m9", "type": "user"', "")
+    api = FakeApi()
+    api.fail(
+        "get",
+        "/api/session/ses/message?order=desc&limit=1",
+        truncated,
+        truncated,
+        truncated,
+    )
+    api.ok("post", "/api/session/ses/prompt", {"id": "m"})
+    harness = OpenCodeApiHarness(directory="/wt", executor=api, sleep=lambda _s: None)
+    with pytest.raises(HarnessError) as excinfo:
+        harness.prompt("ses", "go")
+    assert excinfo.value.retryable is True
+    assert "did not parse" in str(excinfo.value)
+    assert not any("prompt" in " ".join(call.argv) for call in api.calls)
+
+
 def test_a_stale_idle_never_completes_a_new_turn():
     """The reviewer's fixture: a failed boundary read plus an unchanged page.
 
@@ -477,7 +502,7 @@ def test_a_stale_idle_never_completes_a_new_turn():
         CommandResult(1, "", "connection reset by peer"),
         CommandResult(0, json.dumps({"data": stale_page}), ""),
     ]
-    api.routes["get /api/session/ses/message?order=desc&limit=200"] = [
+    api.routes["get /api/session/ses/message?order=desc&limit=20"] = [
         CommandResult(0, json.dumps({"data": stale_page}), ""),
     ]
     api.ok("post", "/api/session/ses/prompt", {"id": "m"})
