@@ -452,6 +452,52 @@ def test_a_cold_target_is_deployed_and_waited_for(tmp_path):
     assert state.target("shop").base_url == "http://203.0.113.9:48287/"
 
 
+def test_a_known_permanent_5xx_is_accepted_only_when_the_policy_relaxes_it(tmp_path):
+    """The eval-server prestashop case: containers up, the probed route 500s.
+
+    The default rule refuses that target; the per-target relaxation accepts it
+    and the run state records the raw status, so the decision is evidence.
+    """
+    from runner.config import ReadinessPolicy
+
+    five_hundred = Observation("shop", (_fact(),), "http://203.0.113.9:1/", "500")
+    env = FakeEnv(
+        observations=[
+            five_hundred,  # the reuse observation
+            Observation("shop", (), None, "000"),  # teardown, clean
+        ]
+    )
+    relaxed = ReadinessPolicy(per_target_require_http={"shop": False})
+    orch, _h, _e, _g, state, _l = _orchestrator(
+        tmp_path, env=env, run={"readiness": relaxed}
+    )
+    orch.run_plan()
+    assert ("up", "shop") not in env.commands
+    assert state.target("shop").base_url == "http://203.0.113.9:1/"
+    assert any("http 500" in note for note in state.target("shop").notes)
+
+
+def test_a_permanent_5xx_fails_the_target_under_the_default_rule(tmp_path):
+    from runner.config import ReadinessPolicy
+
+    five_hundred = Observation("shop", (_fact(),), "http://203.0.113.9:1/", "500")
+    env = FakeEnv(
+        observations=[
+            five_hundred,  # the reuse observation
+            five_hundred,  # readiness wait, attempt 1
+            five_hundred,  # readiness wait, attempt 2
+            Observation("shop", (), None, "000"),  # teardown, clean
+        ]
+    )
+    strict = ReadinessPolicy(retries=2, interval_s=0.0)
+    orch, _h, _e, _g, state, _l = _orchestrator(
+        tmp_path, env=env, run={"readiness": strict}
+    )
+    orch.run_plan()
+    assert state.target("shop").status == "failed"
+    assert any("never ready" in note and "http 500" in note for note in state.target("shop").notes)
+
+
 # --- gating and bounded repair ---------------------------------------------
 
 

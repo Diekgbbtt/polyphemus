@@ -47,6 +47,15 @@ run:
     # The server recipe: poll 60 times, 5s apart (5 minutes per deployment).
     retries: 60
     interval_s: 5
+    # The platform's HTTP answer rule; a per-target `false` relaxes it to "the
+    # transport answered at all" for a target with a known, permanent 5xx on the
+    # probed route. The original eval-server config relaxes it for prestashop
+    # only: under amd64 emulation its web SAPI hits the ICU defect
+    # (Transliterator::create null), so the storefront root answers 500 while
+    # the containers are up and the authenticated surface is workable.
+    require_http: true
+    per_target_require_http:
+      prestashop: false
   teardown_on_failure: true
   continue_on_failure: true
 

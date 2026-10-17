@@ -41,6 +41,7 @@ from runner.env import (  # noqa: E402
     LocalEnv,
     Observation,
     SshServerEnv,
+    accepted_http_note,
     containers_ready,
     driver_for,
     leftovers,
@@ -121,6 +122,22 @@ def test_not_ready_reason_is_none_only_when_every_signal_agrees():
     assert not_ready_reason(_obs(status="", containers=(_fact(),))) is not None
     # 401/403/301 are live answers, so a login-walled target is ready.
     assert not_ready_reason(_obs(status="401", containers=(_fact(),))) is None
+
+
+def test_the_non_5xx_rule_can_be_relaxed_per_target():
+    """A known permanent 5xx is accepted when the policy says so - and noted."""
+    broken = _obs(status="500", containers=(_fact(),))
+    assert not_ready_reason(broken) is not None
+    assert not_ready_reason(broken, require_http=False) is None
+    # Relaxing the answer rule never relaxes the transport: nothing that
+    # answered no HTTP at all is ready.
+    silent = _obs(status="000", containers=(_fact(),))
+    assert not_ready_reason(silent, require_http=False) is not None
+    assert not_ready_reason(_obs(status="", containers=(_fact(),)), require_http=False) is not None
+    # The accepted 5xx is recorded, a healthy answer is not.
+    assert "500" in accepted_http_note(broken)
+    assert accepted_http_note(_obs(status="200", containers=(_fact(),))) is None
+    assert accepted_http_note(silent) is None
 
 
 def test_leftovers_reports_every_container_after_teardown():

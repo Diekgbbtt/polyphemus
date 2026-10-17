@@ -56,10 +56,24 @@ class RetryPolicy:
 
 @dataclass(frozen=True)
 class ReadinessPolicy:
-    """The bounded readiness window; the platform's own defaults (60 x 5s)."""
+    """The bounded readiness window; the platform's own defaults (60 x 5s).
+
+    `require_http` is the platform's HTTP answer rule: a target must answer a
+    non-5xx status before it is worked on. `per_target_require_http` relaxes it
+    for one target whose application has a known, permanent 5xx on the probed
+    route (the eval-server prestashop: its web SAPI hits the emulation ICU
+    defect, while the containers are up and the retrofit crawl worked on it).
+    A relaxed target still has to answer at all.
+    """
 
     retries: int = DEFAULT_READINESS_RETRIES
     interval_s: float = DEFAULT_READINESS_INTERVAL_S
+    require_http: bool = True
+    per_target_require_http: Mapping[str, bool] = field(default_factory=dict)
+
+    def require_http_for(self, target: str) -> bool:
+        """Whether the non-5xx rule applies to one target."""
+        return self.per_target_require_http.get(target, self.require_http)
 
 
 @dataclass(frozen=True)
@@ -158,6 +172,11 @@ class RunConfig:
                 "readiness": {
                     "retries": self.run.readiness.retries,
                     "interval_s": self.run.readiness.interval_s,
+                    "require_http": self.run.readiness.require_http,
+                    "per_target_require_http": {
+                        target: value
+                        for target, value in self.run.readiness.per_target_require_http.items()
+                    },
                 },
                 "teardown_on_failure": self.run.teardown_on_failure,
                 "continue_on_failure": self.run.continue_on_failure,
@@ -309,6 +328,15 @@ def load_config(path: Path, *, repo_root: Path) -> RunConfig:
         readiness=ReadinessPolicy(
             retries=_integer(readiness_raw.get("retries"), DEFAULT_READINESS_RETRIES),
             interval_s=_number(readiness_raw.get("interval_s"), DEFAULT_READINESS_INTERVAL_S),
+            require_http=_flag(readiness_raw.get("require_http"), True),
+            per_target_require_http={
+                str(target): _flag(value, True)
+                for target, value in (
+                    readiness_raw.get("per_target_require_http") or {}
+                ).items()
+            }
+            if isinstance(readiness_raw.get("per_target_require_http"), Mapping)
+            else {},
         ),
         teardown_on_failure=_flag(run_raw.get("teardown_on_failure"), True),
         continue_on_failure=_flag(run_raw.get("continue_on_failure"), True),

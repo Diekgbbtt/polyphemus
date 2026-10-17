@@ -458,11 +458,17 @@ def containers_ready(containers: Sequence[ContainerFact]) -> bool:
     )
 
 
-def not_ready_reason(observation: Observation) -> str | None:
+def not_ready_reason(observation: Observation, *, require_http: bool = True) -> str | None:
     """Why the target is not ready, or None when every signal agrees it is.
 
     Composite, like the platform's readiness plan: every container must be ready
-    AND the target must answer a non-5xx status (no answer is never ready).
+    AND the target must answer over HTTP. The default answer rule is the
+    platform's - a non-5xx status, because a server-side error is not a live
+    target. `require_http=False` relaxes it to "the transport answered at all"
+    for a target whose application has a known, permanent 5xx on the probed
+    route (the eval-server prestashop and its emulation ICU defect); the raw
+    status stays in the observation and the caller records it, so the
+    relaxation is evidence, never silence.
     """
     if not observation.containers:
         return f"no containers for {project_name(observation.target)}"
@@ -474,9 +480,36 @@ def not_ready_reason(observation: Observation) -> str | None:
         return f"containers not ready ({states})"
     if not observation.url:
         return "targetctl reported no accessible url"
-    if not http_ready(observation.http_status):
+    if not http_ready(observation.http_status) and (
+        require_http or not _http_answered(observation.http_status)
+    ):
         return f"http {observation.http_status or NO_ANSWER} at {observation.url}"
     return None
+
+
+def accepted_http_note(observation: Observation) -> str | None:
+    """The loud note for a target accepted without the platform's non-5xx rule.
+
+    Only a target whose policy relaxed the rule can be accepted on a 5xx; the
+    note carries the raw status, so the run state says why it proceeded.
+    """
+    code = (observation.http_status or "").strip()
+    if not _http_answered(code) or http_ready(code):
+        return None
+    return (
+        f"http {code} at {observation.url} "
+        "(accepted: the non-5xx readiness rule is off for this target)"
+    )
+
+
+def _http_answered(status: str) -> bool:
+    """True when the probe reached the target and the target answered.
+
+    An empty status and `000` mean no HTTP answer at all; any status the server
+    did send is an answer, 5xx included.
+    """
+    code = (status or "").strip()
+    return bool(code) and code != NO_ANSWER
 
 
 def leftovers(observation: Observation) -> tuple[ContainerFact, ...]:

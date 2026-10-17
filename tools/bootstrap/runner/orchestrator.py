@@ -36,7 +36,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 from runner import state as state_mod
 from runner.config import RunConfig
-from runner.env import Observation, not_ready_reason, project_name
+from runner.env import Observation, accepted_http_note, not_ready_reason, project_name
 from runner.gates import AUTH_ONLY, FULL
 from runner.harness import (
     HarnessError,
@@ -159,9 +159,9 @@ def rewrite_base_url(url: str, *, public_host: str) -> str:
     return url
 
 
-def ready_to_work(observation: Observation) -> str | None:
+def ready_to_work(observation: Observation, *, require_http: bool = True) -> str | None:
     """The readiness reason, or None when the target can be worked on."""
-    return not_ready_reason(observation)
+    return not_ready_reason(observation, require_http=require_http)
 
 
 def build_instructions(
@@ -361,16 +361,21 @@ class Orchestrator:
     def _ensure_ready(self, target: str) -> Observation:
         """Observe, reuse when ready, else up plus a bounded readiness wait."""
         record = self.state.target(target)
+        require_http = self.config.run.readiness.require_http_for(target)
         observation = self.env.observe(target)
-        if ready_to_work(observation) is None:
+        if ready_to_work(observation, require_http=require_http) is None:
             record.lifecycle.reused = True
             record.notes.append(f"{target}: reused the already-ready deployment")
+            note = accepted_http_note(observation)
+            if note:
+                record.notes.append(f"{target}: {note}")
             record.base_url = self._worker_url(observation)
             self._save()
             return observation
         if self.skip_lifecycle:
             raise TargetNotReadyError(
-                f"{target}: not ready ({ready_to_work(observation)}) and the "
+                f"{target}: not ready "
+                f"({ready_to_work(observation, require_http=require_http)}) and the "
                 "lifecycle is disabled"
             )
         result = self.env.up(target)
@@ -387,14 +392,18 @@ class Orchestrator:
         """Poll the raw observation until every signal agrees, or fail loudly."""
         record = self.state.target(target)
         policy = self.config.run.readiness
+        require_http = policy.require_http_for(target)
         last: Observation | None = None
         reason = "no observation yet"
         for attempt in range(max(1, policy.retries)):
             last = self.env.observe(target)
-            reason = ready_to_work(last)
+            reason = ready_to_work(last, require_http=require_http)
             if reason is None:
                 record.base_url = self._worker_url(last)
                 record.notes.append(f"{target}: ready after {attempt + 1} observation(s)")
+                note = accepted_http_note(last)
+                if note:
+                    record.notes.append(f"{target}: {note}")
                 self._save()
                 return last
             self.sleep(policy.interval_s)

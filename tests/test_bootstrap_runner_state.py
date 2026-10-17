@@ -230,6 +230,9 @@ def test_load_config_applies_every_pinned_default(tmp_path):
     assert config.run.retry.backoff_s == (60.0, 300.0, 900.0)
     assert config.run.readiness.retries == 60
     assert config.run.readiness.interval_s == 5.0
+    assert config.run.readiness.require_http is True
+    assert config.run.readiness.per_target_require_http == {}
+    assert config.run.readiness.require_http_for("shop") is True
     assert config.run.teardown_on_failure is True
     assert config.run.continue_on_failure is True
     assert config.paths.kbs == REPO_ROOT / "eval/data/webexploitbench"
@@ -256,7 +259,11 @@ def test_load_config_reads_the_override_shape(tmp_path):
             "repair_attempts": 1,
             "timeout_reprompts": 2,
             "retry": {"attempts": 2, "backoff_s": [5, 10]},
-            "readiness": {"retries": 3, "interval_s": 1.5},
+            "readiness": {
+                "retries": 3,
+                "interval_s": 1.5,
+                "per_target_require_http": {"shop": False},
+            },
             "teardown_on_failure": False,
             "continue_on_failure": False,
         },
@@ -278,6 +285,8 @@ def test_load_config_reads_the_override_shape(tmp_path):
     assert config.run.retry.backoff_s == (5.0, 10.0)
     assert config.run.readiness.retries == 3
     assert config.run.readiness.interval_s == 1.5
+    assert config.run.readiness.require_http_for("shop") is False
+    assert config.run.readiness.require_http_for("blog") is True
     assert config.run.continue_on_failure is False
     assert config.environment.driver == "ssh"
     assert config.environment.targetctl == "/root/wb"
