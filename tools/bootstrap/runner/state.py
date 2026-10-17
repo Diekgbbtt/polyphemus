@@ -38,7 +38,6 @@ SKIPPED = "skipped"
 RUN_ACTIVE = "active"
 RUN_DONE = "done"
 RUN_FAILED = "failed"
-RUN_INTERRUPTED = "interrupted"
 
 
 def utc_now() -> str:
@@ -136,19 +135,24 @@ class TargetState:
                 return SKIPPED
             return PENDING
 
+        if self.lifecycle.leftovers:
+            # Leftovers are the loud form of "not verified": the count names how
+            # much is still on the host after `down`.
+            teardown = f"leftovers({len(self.lifecycle.leftovers)})"
+        elif self.lifecycle.verified_teardown is True:
+            teardown = "verified"
+        elif self.lifecycle.verified_teardown is False:
+            teardown = "unverified"
+        else:
+            teardown = "-"
+
         return {
             "target": self.target,
             "status": self.status,
             "authn": phase_cell("authn"),
             "l1": phase_cell("l1"),
             "gates": ",".join(f"{k}={v}" for k, v in sorted(self.gates.items())) or "-",
-            "teardown": (
-                "verified"
-                if self.lifecycle.verified_teardown
-                else "unverified"
-                if self.lifecycle.verified_teardown is False
-                else "-"
-            ),
+            "teardown": teardown,
             "session": self.creator_session(run_id),
         }
 

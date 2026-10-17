@@ -17,12 +17,10 @@ Read `tools/bootstrap/DATA-DEPENDENCIES.md` first: it is the contract for the ou
   - `<staging>/<target>/auth/credentials.yaml` - accounts, secrets, and the persisted session `snapshot` (cookies/headers/tokens).
   - `<staging>/<target>/skills/authn/SKILL.md` (+ `references/`) - the replayable sign-in procedure.
   Read the skill and its `references/` scripts; they are the authoritative login procedure.
-- Ground truth (the answer key - read for orientation, never copy into the output): `<groundtruth_dir>`.
-  Read `<groundtruth_dir>/_target.md` and the per-vuln `<groundtruth_dir>/<vuln>/l1-profile.md` and `l0-surface.yaml`.
-  Extract from them **only the higher-level Services and Systems** - the business functions and mechanisms - and use them as your starting hypothesis.
-  A ground-truth profile is often biased toward the deep version of a service that reaches the vulnerability locus; your job is to make sure the *higher-level application service* still surfaces, with the specific sub-feature left for hunting to find.
+- The ground truth is sealed: no phase of this run reads it. There is no answer key; build the surface from the live crawl alone, and never read `<web_root>/<target>/vulnerability/` or `<web_root>/<target>/challenge.json`.
 - Output directory (create if absent): `<target_dir>`.
-  If `<target_dir>/operator_kb.md` already exists (a prior committed KB for this target), read it as an additional prior and REFINE it; do not discard prior work you can improve.
+  This run regenerates the target's artifacts FROM SCRATCH: the live crawl is the only source.
+  Do not read or refine any prior KB that may still exist in `<target_dir>`; overwrite every artifact you author.
 - Scaffold + validator: `<worktree>/eval/scaffold.py` (thin CLI; the parser lives in `src/polymerhus/analysis/scaffold.py`), `<worktree>/tools/bootstrap/validate_data_dependencies.py`.
 
 ## Step 0 - confirm the target is up
@@ -64,7 +62,7 @@ Write the crawl notes into `<target_dir>/surface-map.md`: the enumerated endpoin
 
 ## Step 3 - author the L1 surface (two renderings)
 
-Refine and extend the ground-truth Services/Systems with what you observed, and ensure breadth: the set must cover the whole application surface - anonymous AND authenticated - so that threat-modelling every service outlines the target's vulnerability classes.
+Refine and extend the service set with what you observed, and ensure breadth: the set must cover the whole application surface - anonymous AND authenticated - so that threat-modelling every service outlines the target's vulnerability classes.
 
 1. `<target_dir>/operator_kb.md` - the structured KB exactly as `tools/bootstrap/DATA-DEPENDENCIES.md` section 3.1 defines (`## Overview`, `## Services`, `## Systems`, `## Roles`).
    Contracts must be discriminating and path-free; include the pre-auth account services explicitly; map mechanisms onto the `SYSTEM_KINDS` vocabulary.
@@ -81,7 +79,7 @@ Do not copy ground-truth payloads, exploit steps, or the vulnerability list into
 
 ```
 cd <worktree>
-PYTHONPATH=src python3 tools/bootstrap/validate_data_dependencies.py --staging eval/data-dependencies <target_dir>
+PYTHONPATH=src python3 tools/bootstrap/validate_data_dependencies.py --staging <staging> <target_dir>
 ```
 
 Fix every reported error until it prints `OK`.

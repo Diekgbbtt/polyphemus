@@ -275,13 +275,17 @@ def test_local_env_uses_an_explicit_bash_and_the_amd64_platform():
     assert call.cwd == "/Users/x/WebExploitBench"
 
 
-def test_local_env_down_and_ps_use_the_same_scaffold():
-    ex = RecordingExecutor()
+def test_local_env_observation_is_the_one_url_discovery_path():
+    """`observe` is the only URL-discovery path, over the same targetctl scaffold."""
+    ex = RecordingExecutor(
+        {"targetctl ps shop": CommandResult(0, "UI: http://0.0.0.0:48287/\n", "")}
+    )
     env = LocalEnv(local_dir=Path("/wt"), executor=ex)
     env.down("shop")
-    env.ps("shop")
+    observation = env.observe("shop")
     assert ex.calls[0].argv == ("/wt/scripts/targetctl", "down", "shop")
-    assert ex.calls[1].argv == ("/wt/scripts/targetctl", "ps", "shop")
+    assert ("/wt/scripts/targetctl", "ps", "shop") in [call.argv for call in ex.calls]
+    assert observation.url == "http://0.0.0.0:48287/"
 
 
 def test_local_env_observation_runs_the_engine_commands_locally():
@@ -338,9 +342,23 @@ def test_driver_for_builds_each_configured_driver(tmp_path):
     )
 
 
+def test_driver_for_carries_the_configured_bash_and_platform(tmp_path):
+    env = driver_for(
+        "local",
+        local_dir=tmp_path,
+        bash="/opt/homebrew/bin/bash",
+        platform="linux/arm64",
+        executor=RecordingExecutor(),
+    )
+    assert env.bash == "/opt/homebrew/bin/bash"
+    assert env.platform == "linux/arm64"
+
+
 def test_driver_for_fails_loudly_on_an_incomplete_description():
     with pytest.raises(ValueError):
         driver_for("ssh")
+    with pytest.raises(ValueError):
+        driver_for("local")
     with pytest.raises(ValueError):
         driver_for("attach")
     with pytest.raises(ValueError):

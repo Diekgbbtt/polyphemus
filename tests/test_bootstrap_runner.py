@@ -65,12 +65,47 @@ def _facts(**overrides) -> wrappers.WrapperFacts:
         web_root="/root/WebExploitBench",
         worktree="/wt",
         staging="/wt/eval/data-dependencies",
-        target_dir="/root/WebExploitBench/shop",
+        # `<target_dir>` is the LOCAL KB output directory, never the checkout.
+        target_dir="/wt/eval/data/webexploitbench/shop",
         lifecycle_hint=("/root/wb ps shop",),
-        kbs_dir="/wt/eval/data/webexploitbench/shop",
+        path_semantics="Every path is local to this machine.",
     )
     base.update(overrides)
     return wrappers.WrapperFacts(**base)
+
+
+# The tokens a wrapper must map to this run's real values. Everything else the
+# carriers write in angle brackets is a schema metavariable (see the test below).
+RUN_FACT_TOKENS = (
+    "<target>",
+    "<target_dir>",
+    "<web_root>",
+    "<worktree>",
+    "<staging>",
+    "<base_url>",
+)
+
+
+def _real_sources(mode: str = "auth_only") -> wrappers.WrapperSources:
+    """The carriers as the repository actually ships them (for token audits)."""
+    authn = mode == "auth_only"
+    prompt = "tools/bootstrap/prompts/data-dep-authn.md" if authn else "tools/bootstrap/prompts/data-dep-l1.md"
+    meta = "skills/meta/authn-skill-writing/SKILL.md"
+    return wrappers.WrapperSources(
+        prompt_path=prompt,
+        prompt_text=(REPO_ROOT / prompt).read_text(encoding="utf-8"),
+        contract_path="tools/bootstrap/DATA-DEPENDENCIES.md",
+        contract_text=(REPO_ROOT / "tools/bootstrap/DATA-DEPENDENCIES.md").read_text(
+            encoding="utf-8"
+        ),
+        meta_skill_path=meta if authn else "",
+        meta_skill_text=(REPO_ROOT / meta).read_text(encoding="utf-8") if authn else "",
+        validator_path="tools/bootstrap/validate_data_dependencies.py",
+        validator_invocation=(
+            "PYTHONPATH=src python3 tools/bootstrap/validate_data_dependencies.py "
+            "--staging <staging> shop"
+        ),
+    )
 
 
 # --- wrappers: substitution completeness ------------------------------------
@@ -96,7 +131,7 @@ def test_authn_wrapper_carries_every_substitution():
         ("<worktree>", "/wt"),
         ("<staging>", "/wt/eval/data-dependencies"),
         ("<base_url>", "http://198.51.100.7:48287/"),
-        ("<target_dir>", "/root/WebExploitBench/shop"),
+        ("<target_dir>", "/wt/eval/data/webexploitbench/shop"),
     ):
         assert f"`{token}` -> {value}" in text
 
@@ -156,15 +191,46 @@ def test_l1_wrapper_keeps_the_session_and_phase_boundary():
     assert "phase-1 session" in text
     assert "Do NOT mutate `auth/`" in text
     assert "Never crawl the authenticated surface anonymously" in text
-    assert "Write the L1 artifacts into `<target_dir>`." in text
+    assert "to `/wt/eval/data/webexploitbench/shop` (`<target_dir>`, local)." in text
+    # The checkout paths are a different fact, and the sealed rule names them.
+    assert "/root/WebExploitBench/shop/vulnerability/" in text
 
 
-def test_l1_wrapper_names_the_kb_output_root_when_given_one():
-    text = wrappers.l1_wrapper(
-        _facts(), _sources(), output_dir="/wt/eval/data/webexploitbench/shop"
+def test_wrappers_name_the_path_semantics_fact_when_set():
+    text = wrappers.authn_wrapper(_facts(path_semantics="PATHS: remote on srv."), _sources())
+    assert "PATHS: remote on srv." in text
+    # An unset fact adds no paragraph at all.
+    assert "PATHS" not in wrappers.authn_wrapper(_facts(path_semantics=""), _sources())
+
+
+def test_real_carriers_map_every_run_fact_token_and_never_hand_out_groundtruth():
+    """Built from the SHIPPED carriers, for a representative target.
+
+    Every run-fact token has exactly one substitution line with this run's real
+    value; the carriers' internal schema metavariables are NOT run facts and get
+    no line. And `<groundtruth_dir>` never appears in any wrapper: the ground
+    truth is sealed, so no carrier may hand out a path into it.
+    """
+    facts = _facts(
+        target="dataease",
+        target_dir="/wt/eval/data/webexploitbench/dataease",
+        staging="/wt/eval/data-dependencies",
     )
-    assert "to `/wt/eval/data/webexploitbench/shop`." in text
-    assert "Do NOT mutate `auth/`" in text
+    expected = (
+        ("<target>", "dataease"),
+        ("<target_dir>", "/wt/eval/data/webexploitbench/dataease"),
+        ("<web_root>", "/root/WebExploitBench"),
+        ("<worktree>", "/wt"),
+        ("<staging>", "/wt/eval/data-dependencies"),
+        ("<base_url>", "http://198.51.100.7:48287/"),
+    )
+    for mode, build in (("auth_only", wrappers.authn_wrapper), ("full", wrappers.l1_wrapper)):
+        text = build(facts, _real_sources(mode))
+        for token, value in expected:
+            assert f"- `{token}` -> {value}" in text
+        assert "<groundtruth_dir>" not in text
+        for metavariable in ("<username>", "<project_id>", "<minting_context>", "<role>"):
+            assert f"- `{metavariable}` ->" not in text
 
 
 def test_wrappers_are_pure_functions_of_their_arguments():

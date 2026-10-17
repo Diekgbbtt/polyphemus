@@ -34,6 +34,10 @@ from orchestrator.commands import Command, CommandResult
 RETRY_BACKOFF_S: tuple[float, ...] = (60.0, 300.0, 900.0)
 DEFAULT_TURN_TIMEOUT_S = 3600.0
 DEFAULT_POLL_INTERVAL_S = 5.0
+# How many times `prompt` retries the transcript read that establishes the
+# watermark before it raises: a degraded watermark would let a previous turn's
+# idle count as this turn's completion.
+WATERMARK_ATTEMPTS = 3
 
 # Provider failure classes this harness recognises by text. Everything that
 # looks transient is retried with backoff; a hard configuration error is not.
@@ -146,6 +150,15 @@ class HarnessError(Exception):
         return self.message
 
 
+class TurnTimeout(HarnessError):
+    """A turn that never reached a terminal message inside its window.
+
+    Its own class because the orchestrator owns a distinct recovery policy for
+    it (interrupt, then one resume re-prompt); every other HarnessError either
+    takes the retry ladder or fails the phase.
+    """
+
+
 class Harness(Protocol):
     """The worker-session seam the orchestrator depends on."""
 
@@ -180,15 +193,6 @@ def message_list(stdout: str) -> tuple[dict, ...]:
     if not isinstance(data, list):
         return ()
     return tuple(item for item in data if isinstance(item, dict))
-
-
-def last_message_id(messages: Sequence[Mapping[str, object]]) -> str | None:
-    """The newest message id, the watermark a prompt's turn is measured from."""
-    for message in reversed(messages):
-        identifier = message.get("id")
-        if isinstance(identifier, str) and identifier:
-            return identifier
-    return None
 
 
 def _error_from(message: Mapping[str, object]) -> tuple[str, int | None]:
@@ -345,9 +349,11 @@ class OpenCodeApiHarness:
     """`opencode api` as the harness: create, prompt, await, interrupt.
 
     `executor` is the process seam (a fake in tests); `binary` is the CLI to
-    invoke (`opencode`, resolved from PATH by the OS). Nothing here retries;
-    the caller owns the bounded backoff, because the caller also owns the run
-    state that records it.
+    invoke (`opencode`, resolved from PATH by the OS). No failure is retried
+    with a backoff policy here; the caller owns that, because the caller also
+    owns the run state it is recorded in. The one bounded retry inside is the
+    watermark read itself (`_transcript`): it cannot be deferred, because the
+    turn boundary has to be sound before the prompt goes out.
     """
 
     directory: str
@@ -356,6 +362,7 @@ class OpenCodeApiHarness:
     poll_interval_s: float = DEFAULT_POLL_INTERVAL_S
     sleep: Callable[[float], None] = time.sleep
     api_timeout_s: float = 120.0
+    watermark_attempts: int = WATERMARK_ATTEMPTS
     session_store: dict[str, SessionSpec] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -363,6 +370,9 @@ class OpenCodeApiHarness:
             from runner.env import LocalExecutor
 
             self.executor = LocalExecutor(timeout_s=self.api_timeout_s)
+        # The prompt watermark per session: the transcript length the turn
+        # starts after, written only by a successful prompt (see `prompt`).
+        self._watermarks: dict[str, int] = {}
 
     # --- command construction (asserted by the unit tests) ---
 
@@ -404,11 +414,13 @@ class OpenCodeApiHarness:
     def prompt(self, session_id: str, text: str) -> str:
         """Send one user turn; returns its watermark (the transcript length it starts after).
 
-        The watermark is the COUNT of messages already in the transcript, taken
-        before the send: a terminal message at index >= that count belongs to
-        this turn, and no message of a previous turn can be mistaken for it.
+        The watermark is the COUNT of messages already in the transcript, read
+        strictly (`_transcript` retries a failed GET a bounded number of times
+        and then raises): a degraded watermark of 0 would let the previous
+        turn's idle count as this turn's completion. The prompt itself is only
+        sent once the boundary is known.
         """
-        watermark = len(self.messages(session_id))
+        watermark = len(self._transcript(session_id))
         sent = self._call("post", f"/api/session/{session_id}/prompt", {"text": text})
         if sent.returncode != 0:
             detail = (sent.stderr or sent.stdout).strip() or "unknown error"
@@ -416,24 +428,59 @@ class OpenCodeApiHarness:
                 f"prompt to {session_id} failed: {detail}",
                 retryable=classify_stderr(detail),
             )
-        self._watermark = watermark
+        self._watermarks[session_id] = watermark
         return str(watermark)
 
     def messages(self, session_id: str) -> tuple[dict, ...]:
+        """The live transcript, best-effort (for introspection and poll reads).
+
+        `prompt` and `wait_terminal` must NOT use this lenient form for the
+        turn boundary; they use `_transcript` (via `prompt`) and the stored
+        watermark instead.
+        """
         result = self._call("get", f"/api/session/{session_id}/message")
         if result.returncode != 0:
             return ()
         return message_list(result.stdout)
 
+    def _transcript(self, session_id: str) -> tuple[dict, ...]:
+        """The transcript, read strictly: bounded retries, then a HarnessError.
+
+        A failed GET is never turned into an empty transcript, because an empty
+        transcript is a watermark of 0 and a watermark of 0 accepts the
+        previous turn's idle as the current turn's terminal message.
+        """
+        attempts = max(1, self.watermark_attempts)
+        detail = "unknown error"
+        for attempt in range(attempts):
+            result = self._call("get", f"/api/session/{session_id}/message")
+            if result.returncode == 0:
+                return message_list(result.stdout)
+            detail = (result.stderr or result.stdout).strip() or "unknown error"
+            if attempt + 1 < attempts:
+                self.sleep(max(0.1, self.poll_interval_s))
+        raise HarnessError(
+            f"transcript for {session_id} could not be read after {attempts} attempt(s): {detail}",
+            retryable=classify_stderr(detail),
+        )
+
     def wait_terminal(self, session_id: str, timeout_s: float = DEFAULT_TURN_TIMEOUT_S) -> TurnResult:
         """Poll until a terminal `idle` message newer than the prompt, or raise.
 
-        A timeout raises `HarnessError(retryable=False)`: the orchestrator owns
-        the interrupt-and-re-prompt recovery, because that policy has to be
-        visible in the run state.
+        Only a message that appears AFTER the prompt's watermark can be this
+        turn's terminal message; without a watermark for this session there is
+        no sound boundary, so the call refuses rather than guess.
+
+        A timeout raises `TurnTimeout`: the orchestrator owns the
+        interrupt-and-re-prompt recovery, because that policy has to be visible
+        in the run state.
         """
+        watermark = self._watermarks.get(session_id)
+        if watermark is None:
+            raise HarnessError(
+                f"no prompt watermark for {session_id}: the turn boundary would be unsound"
+            )
         deadline = time.monotonic() + max(0.0, timeout_s)
-        watermark = getattr(self, "_watermark", 0)
         interval = max(0.1, self.poll_interval_s)
         while True:
             messages = self.messages(session_id)
@@ -443,7 +490,7 @@ class OpenCodeApiHarness:
                     turn = replace(turn, session_id=session_id)
                 return turn
             if time.monotonic() >= deadline:
-                raise HarnessError(
+                raise TurnTimeout(
                     f"session {session_id} did not reach a terminal turn within {timeout_s}s",
                     retryable=False,
                 )

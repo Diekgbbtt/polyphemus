@@ -44,6 +44,7 @@ from runner.harness import (  # noqa: E402
     ModelRef,
     OpenCodeApiHarness,
     SessionSpec,
+    TurnTimeout,
     assistant_text,
     classify_stderr,
     decode_data,
@@ -308,10 +309,52 @@ def test_wait_terminal_times_out_loudly_and_non_retryably():
     api.ok("get", "/api/session/ses/message", [{"id": "m1", "type": "user"}])
     harness = OpenCodeApiHarness(directory="/wt", executor=api, sleep=lambda _s: None)
     harness.prompt("ses", "go")
-    with pytest.raises(HarnessError) as excinfo:
+    with pytest.raises(TurnTimeout) as excinfo:
         harness.wait_terminal("ses", timeout_s=0)
     assert excinfo.value.retryable is False
     assert "terminal turn" in str(excinfo.value)
+    # The timeout is a HarnessError: the orchestrator catches it by its own
+    # subclass for the interrupt-and-reprompt policy.
+    assert isinstance(excinfo.value, HarnessError)
+
+
+def test_the_watermark_read_is_strict_and_never_degrades_to_zero():
+    """A broken transcript GET must raise, never hand the wait a 0 watermark."""
+    api = FakeApi()
+    api.fail(
+        "get",
+        "/api/session/ses/message",
+        CommandResult(1, "", "connection reset by peer"),
+    )
+    api.ok("post", "/api/session/ses/prompt", {"id": "m"})
+    harness = OpenCodeApiHarness(directory="/wt", executor=api, sleep=lambda _s: None)
+    with pytest.raises(HarnessError) as excinfo:
+        harness.prompt("ses", "go")
+    assert excinfo.value.retryable is True
+    assert "transcript" in str(excinfo.value)
+    # The prompt was never sent: there is no turn to await.
+    assert not any("prompt" in " ".join(call.argv) for call in api.calls)
+
+
+def test_a_stale_idle_never_completes_a_new_turn():
+    """The reviewer's fixture: a failed watermark read plus an unchanged tail.
+
+    The transcript already ends with `idle: succeeded` (the previous turn) and
+    the new turn produces nothing. The first watermark GET fails, so a degraded
+    watermark of 0 would hand the wait the stale idle as this turn's terminal
+    message; the strict read makes the real watermark the boundary instead.
+    """
+    stale = [_assistant(), _idle("succeeded", session="ses")]
+    api = FakeApi()
+    api.routes["get /api/session/ses/message"] = [
+        CommandResult(1, "", "connection reset by peer"),
+        CommandResult(0, json.dumps({"data": stale}), ""),
+    ]
+    api.ok("post", "/api/session/ses/prompt", {"id": "m"})
+    harness = OpenCodeApiHarness(directory="/wt", executor=api, sleep=lambda _s: None)
+    assert harness.prompt("ses", "go") == "2"
+    with pytest.raises(TurnTimeout):
+        harness.wait_terminal("ses", timeout_s=0)
 
 
 def test_interrupt_posts_to_the_interrupt_endpoint():

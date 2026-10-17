@@ -21,7 +21,7 @@ Two locations, both operator assumptions that may move once the eval symbolic la
 **L1 surface** - the existing per-target eval KB directory, extended:
 
 ```
-eval/kbs/<target>/
+eval/data/webexploitbench/<target>/
   operator_kb.md        # L1 skeleton, consumed by eval/scaffold.py (structured: ## Services / ## Systems / ## Roles)
   l1-surface.yaml       # graph-ready RDF dataset of the L1 units (Services + Systems) and their edges
   surface-map.md        # human-readable crawl notes (existing convention)
@@ -50,7 +50,7 @@ No seeding into a live store is required at build time: the creator authors thes
 ### Secrets policy
 
 `auth/overview.yaml` and `auth/credentials.yaml` hold live tokens and passwords.
-They MUST stay out of git: `eval/kbs/*/auth/` is git-ignored, and only the redaction-safe `overview` subset is ever committed.
+They MUST stay out of git: the auth bundles live only in the staging root (default `eval/data-dependencies/`), which is git-ignored; only the redaction-safe `overview` subset is ever committed.
 The authn skill cites secret NAMES, never values.
 
 ## 3. The L1 surface, two renderings
@@ -157,7 +157,7 @@ The order is **authn first, L1 second**: the L1 crawl is authenticated, so the a
 
 Why this order:
 
-- Phase 1 is self-sufficient: it needs only the live target and the ground truth, not the L1 surface.
+- Phase 1 is self-sufficient: it needs only the live target (seeded credentials come from the compose seed files or a freshly minted account), not the L1 surface.
 - Phase 2 depends on phase 1 to reach the authenticated services; crawling before authn would leave them unobserved.
 - `tools/bootstrap/validate_data_dependencies.py --auth-only --staging <root> <target>` validates phase 1 before `<target_dir>` exists; the full mode (with `--staging`) validates phase 2.
 

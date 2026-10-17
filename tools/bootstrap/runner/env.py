@@ -32,14 +32,13 @@ from __future__ import annotations
 import json
 import re
 import shlex
-import shutil
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Mapping, Protocol, Sequence
+from typing import Callable, Protocol, Sequence
 
 from orchestrator.commands import Command, CommandResult
-from orchestrator.readiness import READY_HEALTH, READY_STATES, http_ready
+from orchestrator.readiness import ServiceHealth, http_ready
 from orchestrator.targets.targetctl import TargetctlError, parse_targetctl_url
 
 # The docker label `scripts/targetctl` sets per compose project, and the one it
@@ -306,10 +305,6 @@ class SshServerEnv(_DockerEnv):
     def down(self, target: str) -> CommandResult:
         return self._run((self.targetctl, "down", target))
 
-    def ps(self, target: str) -> CommandResult:
-        """targetctl's own status view: the URL discovery source for the observation."""
-        return self._run((self.targetctl, "ps", target))
-
     def url_command(self, target: str) -> tuple[str | None, Command]:
         return None, Command(
             argv=(self.targetctl, "ps", target),
@@ -372,9 +367,6 @@ class LocalEnv(_DockerEnv):
 
     def down(self, target: str) -> CommandResult:
         return self._executor(self._command("down", target))
-
-    def ps(self, target: str) -> CommandResult:
-        return self._executor(self._command("ps", target))
 
     def url_command(self, target: str) -> tuple[str | None, Command]:
         return None, self._command("ps", target)
@@ -447,25 +439,23 @@ def project_name(target: str) -> str:
 
 
 def containers_ready(containers: Sequence[ContainerFact]) -> bool:
-    """Platform readiness rules over the engine's facts: every container ready.
+    """The platform's readiness rules over the engine's facts: every one ready.
 
-    Identical semantics to `orchestrator.readiness.ServiceHealth.ready` - running
-    and healthy, running with no healthcheck, or exited zero - and, like the
-    platform's compose poll, an empty set is NOT ready.
+    Single source of truth: each fact becomes a `ServiceHealth` and its own
+    `.ready` predicate decides (healthy, running with no healthcheck, or a clean
+    one-shot exit). Like the platform's compose poll, an empty set is NOT ready.
     """
     if not containers:
         return False
-    for fact in containers:
-        if fact.health:
-            if fact.health not in READY_HEALTH:
-                return False
-        elif fact.state in READY_STATES:
-            continue
-        elif fact.state == "exited" and fact.exit_code == 0:
-            continue
-        else:
-            return False
-    return True
+    return all(
+        ServiceHealth(
+            service=fact.service,
+            state=fact.state,
+            health=fact.health,
+            exit_code=fact.exit_code,
+        ).ready
+        for fact in containers
+    )
 
 
 def not_ready_reason(observation: Observation) -> str | None:
@@ -555,20 +545,29 @@ def driver_for(
     targetctl: str = "/root/wb",
     local_dir: Path | None = None,
     bash: str | None = None,
+    platform: str = "linux/amd64",
     base_url: str | None = None,
     executor: Executor | None = None,
-    env: Mapping[str, str] | None = None,
 ) -> TargetEnv:
-    """Build the configured driver, failing loudly on an incomplete description."""
+    """Build the configured driver; THE factory (the CLI calls this, tests too).
+
+    Fails loudly on an incomplete description: `ssh` without an alias, `local`
+    without a checkout, `attach` without a URL. `bash` stays None unless the
+    config names one, because macOS's system bash 3.2 collapses the compose
+    project names (the class docstring explains).
+    """
     executor = executor or LocalExecutor()
     if driver == "ssh":
         if not ssh:
             raise ValueError("the ssh driver needs environment.ssh")
         return SshServerEnv(ssh=ssh, targetctl=targetctl, executor=executor)
     if driver == "local":
+        if not local_dir:
+            raise ValueError("the local driver needs environment.local_dir")
         return LocalEnv(
-            local_dir=Path(local_dir or "~/WebExploitBench").expanduser(),
-            bash=bash or shutil.which("bash"),
+            local_dir=Path(local_dir).expanduser(),
+            bash=bash or None,
+            platform=platform,
             executor=executor,
         )
     if driver == "attach":

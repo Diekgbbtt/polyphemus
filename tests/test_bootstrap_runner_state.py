@@ -181,6 +181,19 @@ def test_status_table_marks_a_failed_phase_and_an_unverified_teardown():
     assert row["teardown"] == "unverified"
 
 
+def test_status_table_names_leftover_containers_instead_of_hiding_them():
+    run = new_state("r1", targets=["a"])
+    record = run.target("a")
+    record.status = state_mod.DONE
+    record.lifecycle.verified_teardown = False
+    record.lifecycle.leftovers = ["web_a-app-1", "web_a-db-1"]
+    row = run.status_table()[0]
+    # Not silently `done`: the teardown cell carries the leftover count, and the
+    # target's status stays what the run decided (a leftover is reporting only).
+    assert row["teardown"] == "leftovers(2)"
+    assert row["status"] == state_mod.DONE
+
+
 def test_config_digest_is_stable_and_order_insensitive():
     left = {"a": 1, "b": [2, 3]}
     right = {"b": [2, 3], "a": 1}

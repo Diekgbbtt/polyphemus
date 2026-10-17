@@ -17,7 +17,7 @@ import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Mapping, Protocol, Sequence
+from typing import Mapping, Protocol
 
 # The two gate modes this loop uses. `auth_only` is the authn phase's gate (the
 # L1 surface does not exist yet); `full` is the L1 phase's gate.
@@ -159,12 +159,3 @@ class ValidatorGate:
             output = f"gate could not run: {exc}"
             ok = False
         return GateResult(ok=ok, output=output, command=argv, mode=mode)
-
-
-def gate_modes(mode: str | None) -> Sequence[str]:
-    """The gate modes to run for one phase, in order."""
-    if mode in (None, "", FULL):
-        return (FULL,)
-    if mode == AUTH_ONLY:
-        return (AUTH_ONLY,)
-    raise ValueError(f"unknown gate mode {mode!r}")

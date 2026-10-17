@@ -92,6 +92,7 @@ Observation
 - Readiness interpretation reuses the platform's readiness rules (`ServiceHealth.ready` semantics: running + healthy, or running with no healthcheck, or exited 0; HTTP 5xx and no-answer are not ready) and is composite, like the platform's readiness plan: every container ready AND the URL answers a non-5xx status.
 - Teardown verification is an observation: after `down`, `observe` must show zero containers of the project; leftovers are recorded as evidence and reported (not silently ignored).
 - Drivers: `SshServerEnv` (default; ssh transport, `/root/wb` wrapper with its environment pins, never prune), `LocalEnv` (targetctl on the Mac with `DOCKER_DEFAULT_PLATFORM=linux/amd64` and bash 5), `AttachEnv` (lifecycle no-ops; the caller supplies the base URL).
+- Path semantics per driver, carried to every wrapper as a fact: under `ssh`, the checkout (`<web_root>`, the sealed `vulnerability/` and `challenge.json`) lives on the remote host and is read over ssh, while the KB outputs (`<target_dir>`) are local to the worker's machine; under `local`, every path is local; under `attach`, checkout paths are informational only and outputs are local. The application is always at `<base_url>`.
 
 ## 6. State and resume
 
@@ -126,10 +127,13 @@ No phase of the loop reads the ground truth: the critic was its only reader, and
 ## 8. Operational policy
 
 - Serial targets by default (one target up on the shared server at a time).
+- From scratch by construction: before a target's first dispatch, its pre-existing KB directory and staging bundle are moved aside under the run directory (`<rundir>/<target>/pre-existing/{kb,auth-bundle}`); the slots are the idempotence markers, so a resume never archives fresh artifacts. A stale artifact (in particular an old `research-notes.md` or a stale authn skill) can therefore neither mislead a worker nor survive a phase that fails to overwrite it.
 - Gate repair: on a red gate the orchestrator re-dispatches the verbatim validator output into the creator session (bounded attempts, default 3); a persistently red target is marked failed and the run continues.
-- Teardown after the target's phases pass, verified by observation; the L1 phase re-verifies sessions and falls back loudly to re-sign-in.
+- Teardown after the target's phases pass, verified by observation; the status table and the summary show a target whose teardown could not be verified (leftover containers are evidence, never silently `done`).
 - Server rules: `/root/wb` wrapper only, its environment pins untouched; `down` + `docker rm -f $(docker ps -aq)` between targets is allowed; `docker system prune -a` is forbidden.
 - Failure policy: `on_target_failure: continue` (default) marks the target failed and reports at the end; the operator resumes it with `resume`.
+- `--no-lifecycle` runs the phases and the gates with the environment's lifecycle actuators skipped (for a target whose lifecycle the operator already manages); observations and correctness gates are unaffected.
+- Resume reads the run's own `config.resolved.yaml`, warns loudly on config drift (the state is the run's truth), probes every incomplete target's session live, and re-creates a missing session by its deterministic id at the target's next dispatch.
 - Secrets: the wrappers carry paths, never values; logs never contain credential-file contents.
 
 ## 9. Resolved decisions (checkpoint 2026-10-17)

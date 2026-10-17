@@ -37,10 +37,15 @@ from runner import state as state_mod  # noqa: E402
 from runner.config import ReadinessPolicy  # noqa: E402
 from runner.env import ContainerFact, Observation  # noqa: E402
 from runner.gates import AUTH_ONLY, FULL, GateResult  # noqa: E402
-from runner.harness import HarnessError, ModelRef, TurnResult, is_retryable  # noqa: E402
+from runner.harness import (  # noqa: E402
+    HarnessError,
+    ModelRef,
+    TurnResult,
+    TurnTimeout,
+    is_retryable,
+)
 from runner.orchestrator import (  # noqa: E402
     Dispatch,
-    GateDirective,
     Orchestrator,
     build_instructions,
     ready_to_work,
@@ -62,9 +67,9 @@ def _facts(target="shop"):
         web_root="/root/WebExploitBench",
         worktree="/wt",
         staging="/wt/eval/data-dependencies",
-        target_dir=f"/root/WebExploitBench/{target}",
+        target_dir=f"/wt/eval/data/webexploitbench/{target}",
         lifecycle_hint=("/root/wb ps shop",),
-        kbs_dir=f"/wt/eval/data/webexploitbench/{target}",
+        path_semantics="Every path is local to this machine.",
     )
 
 
@@ -95,11 +100,17 @@ class FakeHarness:
         self.interrupts: list[str] = []
         self.turns: list[object] = []
         self.missing: set[str] = set()
+        # Sessions whose create fails retryably N more times (a flaky transport).
+        self.flaky: dict[str, int] = {}
 
     def create_session(self, spec) -> str:
         self.created.append(spec)
         if spec.session_id in self.missing:
             raise HarnessError(f"session {spec.session_id} is gone")
+        remaining = self.flaky.get(spec.session_id, 0)
+        if remaining:
+            self.flaky[spec.session_id] = remaining - 1
+            raise HarnessError("connection reset while creating the session", retryable=True)
         return spec.session_id
 
     def prompt(self, session_id: str, text: str) -> str:
@@ -373,24 +384,36 @@ def test_a_callable_instructions_source_resolves_per_target_at_dispatch(tmp_path
 
     The base URL is a fact only the environment reports, so the CLI hands the
     orchestrator a callable keyed by target; the orchestrator resolves it per
-    dispatch, and memoisation is the caller's business.
+    dispatch, and memoisation is the caller's business. The assertion is on what
+    the harness actually received, not on how often the callable ran.
     """
-    built: list[str] = []
 
     def instructions_for(target: str):
-        built.append(target)
         return {
             "authn": Dispatch(text=f"AUTHN {target}"),
             "l1": Dispatch(text=f"L1 {target}"),
         }
 
-    orch, harness, _env, _gate, _state, _ = _orchestrator(
+    orch, harness, _env, _gate, state, _ = _orchestrator(
         tmp_path, targets=("a", "b"), instructions=instructions_for
     )
     summary = orch.run_plan()
     assert summary.completed == ("a", "b")
-    assert built == ["a", "a", "b", "b"]
-    assert [text for _session, text in harness.prompts] == ["AUTHN a", "L1 a", "AUTHN b", "L1 b"]
+    # Each target's own wrappers reached that target's session, in phase order.
+    assert [text for _session, text in harness.prompts] == [
+        "AUTHN a",
+        "L1 a",
+        "AUTHN b",
+        "L1 b",
+    ]
+    assert [session for session, _text in harness.prompts] == [
+        "ses_bt_r1_a_creator",
+        "ses_bt_r1_a_creator",
+        "ses_bt_r1_b_creator",
+        "ses_bt_r1_b_creator",
+    ]
+    assert state.target("a").status == state_mod.DONE
+    assert state.target("b").status == state_mod.DONE
 
 
 def test_targets_run_serially_up_down_up_down(tmp_path):
@@ -545,10 +568,102 @@ def test_a_hard_provider_failure_is_not_retried(tmp_path):
     assert state.target("shop").phase("authn").read == state_mod.FAILED
 
 
+def test_a_retryable_harness_error_takes_the_same_backoff_ladder(tmp_path):
+    """A transport/provider HarnessError is a provider failure, not a timeout."""
+    harness = FakeHarness()
+    harness.turns = [
+        HarnessError("FreeTierError 403", retryable=True),
+        _turn(outcome="succeeded"),
+        _turn(outcome="succeeded"),
+    ]
+    sleeps: list[float] = []
+    orch, harness, _env, _gate, state, _ = _orchestrator(tmp_path, harness=harness)
+    orch.sleep = sleeps.append
+    summary = orch.run_plan()
+    assert summary.completed == ("shop",)
+    assert sleeps == [60.0]
+    phase = state.target("shop").phase("authn")
+    assert phase.turns == 2
+    assert phase.timeouts == 0  # the timeout branch never swallowed it
+    assert len(harness.prompts) == 3
+
+
+def test_an_exhausted_harness_ladder_fails_one_target_and_the_run_continues(tmp_path):
+    harness = FakeHarness()
+    harness.turns = [HarnessError("429 rate limit", retryable=True)] * 3 + [
+        _turn(outcome="succeeded"),
+        _turn(outcome="succeeded"),
+    ]
+    sleeps: list[float] = []
+    orch, _h, env, gate, state, _ = _orchestrator(
+        tmp_path, targets=("shop", "blog"), harness=harness
+    )
+    orch.sleep = sleeps.append
+    summary = orch.run_plan()
+    assert summary.failed == ("shop",)
+    assert summary.completed == ("blog",)
+    assert sleeps == [60.0, 300.0]
+    assert state.target("shop").status == state_mod.FAILED
+    assert state.target("shop").phase("authn").read == state_mod.FAILED
+    assert gate.calls == [("blog", AUTH_ONLY), ("blog", FULL)]
+    assert ("down", "shop") in env.commands
+
+
+def test_a_retryable_session_creation_failure_is_retried_by_the_ladder(tmp_path):
+    harness = FakeHarness()
+    harness.flaky = {"ses_bt_r1_shop_creator": 1}
+    sleeps: list[float] = []
+    orch, harness, _env, _gate, state, _ = _orchestrator(tmp_path, harness=harness)
+    orch.sleep = sleeps.append
+    summary = orch.run_plan()
+    assert summary.completed == ("shop",)
+    assert sleeps == [60.0]
+    assert state.target("shop").status == state_mod.DONE
+    assert len([spec for spec in harness.created if spec.session_id == "ses_bt_r1_shop_creator"]) == 2
+
+
+def test_a_hard_session_creation_failure_fails_the_target_without_aborting(tmp_path):
+    harness = FakeHarness()
+    harness.missing = {"ses_bt_r1_shop_creator"}
+    sleeps: list[float] = []
+    orch, _h, env, gate, state, _ = _orchestrator(
+        tmp_path, targets=("shop", "blog"), harness=harness
+    )
+    orch.sleep = sleeps.append
+    summary = orch.run_plan()
+    assert summary.failed == ("shop",)
+    assert summary.completed == ("blog",)
+    assert sleeps == []
+    assert gate.calls == [("blog", AUTH_ONLY), ("blog", FULL)]
+    assert state.target("shop").phase("authn").read == state_mod.FAILED
+    assert ("down", "shop") in env.commands
+
+
+def test_a_hard_repair_turn_failure_fails_the_phase_not_the_run(tmp_path):
+    gate = ScriptedGate([(False, "FAIL shop\n  [auth] nope"), True, True])
+    harness = FakeHarness()
+    harness.turns = [
+        _turn(outcome="succeeded"),
+        HarnessError("session not found", retryable=False),
+        _turn(outcome="succeeded"),
+        _turn(outcome="succeeded"),
+    ]
+    orch, _h, env, gate, state, _ = _orchestrator(
+        tmp_path, targets=("shop", "blog"), harness=harness, gate=gate
+    )
+    summary = orch.run_plan()
+    assert summary.failed == ("shop",)
+    assert summary.completed == ("blog",)
+    assert state.target("shop").phase("authn").repairs == 1
+    assert state.target("shop").phase("authn").gate == state_mod.FAILED
+    assert state.target("shop").status == state_mod.FAILED
+    assert ("down", "shop") in env.commands
+
+
 def test_a_turn_timeout_interrupts_and_reprompts_once(tmp_path):
     harness = FakeHarness()
     harness.turns = [
-        HarnessError("session did not reach a terminal turn within 3600s"),
+        TurnTimeout("session did not reach a terminal turn within 3600s"),
         _turn(outcome="succeeded"),
         _turn(outcome="succeeded"),
     ]
@@ -563,7 +678,7 @@ def test_a_turn_timeout_interrupts_and_reprompts_once(tmp_path):
 
 def test_a_second_timeout_fails_the_phase(tmp_path):
     harness = FakeHarness()
-    harness.turns = [HarnessError("no terminal")] * 2
+    harness.turns = [TurnTimeout("no terminal")] * 2
     orch, harness, _env, gate, state, _ = _orchestrator(
         tmp_path, harness=harness, run={"timeout_reprompts": 1}
     )
@@ -605,6 +720,13 @@ def test_teardown_leftovers_are_recorded_as_evidence(tmp_path):
     assert record.lifecycle.leftovers == ["web_shop-app-1", "web_shop-db-1"]
     assert any("leftover" in note for note in record.notes)
     assert summary.notes
+    # Leftovers are never silent: the run summary names the target, and the
+    # status row carries the count (the target is still done, not failed).
+    assert summary.teardown_unverified == ("shop",)
+    assert summary.completed == ("shop",)
+    row = state.status_table()[0]
+    assert row["status"] == state_mod.DONE
+    assert row["teardown"] == "leftovers(2)"
 
 
 def test_attach_mode_reports_unverifiable_teardown_rather_than_assuming_it(tmp_path):
@@ -713,6 +835,45 @@ def test_a_targets_filter_restricts_the_run(tmp_path):
     assert [t for kind, t in env.commands if kind == "up"] == ["b"]
 
 
+def test_pre_existing_artifacts_are_archived_before_the_first_dispatch(tmp_path):
+    kb = tmp_path / "kbs" / "shop"
+    kb.mkdir(parents=True)
+    (kb / "research-notes.md").write_text("OLD LEAK\n", encoding="utf-8")
+    bundle = tmp_path / "staging" / "shop" / "auth"
+    bundle.mkdir(parents=True)
+    (bundle / "credentials.yaml").write_text("accounts: {}\n", encoding="utf-8")
+    orch, harness, _env, _gate, _state, _ = _orchestrator(tmp_path)
+    summary = orch.run_plan()
+    assert summary.completed == ("shop",)
+    slot = tmp_path / "rundir" / "shop" / "pre-existing"
+    assert (slot / "kb" / "research-notes.md").read_text(encoding="utf-8") == "OLD LEAK\n"
+    assert not kb.exists()
+    assert (slot / "auth-bundle" / "auth" / "credentials.yaml").exists()
+    assert not (tmp_path / "staging" / "shop").exists()
+    assert harness.prompts[0][0] == "ses_bt_r1_shop_creator"
+
+
+def test_the_pre_existing_archive_is_idempotent_across_a_resume(tmp_path):
+    kb = tmp_path / "kbs" / "shop"
+    kb.mkdir(parents=True)
+    (kb / "operator_kb.md").write_text("OLD\n", encoding="utf-8")
+    gate = ScriptedGate([True] + [(False, "FAIL shop\n  [overview] old")] * 10)
+    orch, _h, _env, _gate, _state, _ = _orchestrator(tmp_path, gate=gate)
+    first = orch.run_plan()
+    assert first.failed == ("shop",)
+    slot = tmp_path / "rundir" / "shop" / "pre-existing" / "kb"
+    assert (slot / "operator_kb.md").read_text(encoding="utf-8") == "OLD\n"
+    # The failed phase's earlier attempt wrote fresh artifacts; a resume must
+    # leave them alone and keep the archived original.
+    kb.mkdir(parents=True, exist_ok=True)
+    (kb / "operator_kb.md").write_text("FRESH\n", encoding="utf-8")
+    gate.script[:] = [True] * 4
+    second = orch.run_plan()
+    assert second.completed == ("shop",)
+    assert (kb / "operator_kb.md").read_text(encoding="utf-8") == "FRESH\n"
+    assert (slot / "operator_kb.md").read_text(encoding="utf-8") == "OLD\n"
+
+
 # --- persistence and logs ---------------------------------------------------
 
 
@@ -726,13 +887,20 @@ def test_every_transition_is_persisted(tmp_path):
 
 
 def test_logs_are_written_beside_the_state(tmp_path):
-    orch, _h, _env, _gate, _state, logs = _orchestrator(tmp_path)
+    orch, _h, _env, _gate, state, logs = _orchestrator(tmp_path)
     orch.run_plan()
     names = sorted(path.name for path in logs.written)
     assert "01-dispatch.log" in names
     assert any(name.startswith("01-gate") for name in names)
     for path in logs.written:
         assert path.parent.parent.name == "shop"
+    # Every written log is ALSO registered on its phase state, rundir-relative,
+    # so status and a resume can point at the evidence.
+    registered = state.target("shop").phase("authn").logs + state.target("shop").phase("l1").logs
+    assert sorted(registered) == sorted(
+        str(path.relative_to(tmp_path / "rundir")) for path in logs.written
+    )
+    assert "shop/authn/01-dispatch.log" in registered
 
 
 def test_logs_carry_the_prompt_the_transcript_tail_and_the_gate_output(tmp_path):

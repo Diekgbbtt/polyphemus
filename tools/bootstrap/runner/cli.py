@@ -37,7 +37,7 @@ import yaml
 
 from runner import state as state_mod
 from runner.config import RunConfig, load_config, load_resolved
-from runner.env import AttachEnv, LocalEnv, SshServerEnv
+from runner.env import driver_for
 from runner.gates import AUTH_ONLY, FULL, ValidatorGate, validator_argv
 from runner.harness import OpenCodeApiHarness
 from runner.orchestrator import Dispatch, Orchestrator, RunSummary, build_instructions
@@ -64,23 +64,24 @@ class CliError(RuntimeError):
 
 
 def build_env(config: RunConfig):
-    """The environment driver the config names; constructing one runs nothing."""
+    """The environment driver the config names; constructing one runs nothing.
+
+    `env.driver_for` is the single factory (tests build drivers through the same
+    function), so the CLI only maps an incomplete description onto a CliError.
+    """
     environment = config.environment
-    if environment.driver == "ssh":
-        return SshServerEnv(ssh=environment.ssh, targetctl=environment.targetctl)
-    if environment.driver == "local":
-        if environment.local_dir is None:
-            raise CliError("the local driver needs environment.local_dir")
-        return LocalEnv(
+    try:
+        return driver_for(
+            environment.driver,
+            ssh=environment.ssh or None,
+            targetctl=environment.targetctl,
             local_dir=environment.local_dir,
             bash=environment.bash or None,
             platform=environment.docker_platform,
+            base_url=environment.base_url or None,
         )
-    if environment.driver == "attach":
-        if not environment.base_url:
-            raise CliError("the attach driver needs environment.base_url")
-        return AttachEnv(base_url=environment.base_url)
-    raise CliError(f"unknown environment driver {environment.driver!r}")
+    except ValueError as failure:
+        raise CliError(str(failure)) from failure
 
 
 def build_gate(config: RunConfig) -> ValidatorGate:
@@ -126,8 +127,41 @@ def _relative(path: Path, worktree: Path) -> str:
 
 
 def _target_dir(config: RunConfig, target: str) -> str:
-    """The target's own directory, as the prompts and the sealed-path rule name it."""
-    return f"{config.environment.web_root.rstrip('/')}/{target}"
+    """`<target_dir>`, the target's LOCAL KB output directory: `<kbs>/<target>`.
+
+    The checkout paths on the target host are a different fact (`web_root` plus
+    the target); conflating the two is what made the token ambiguous.
+    """
+    return _relative(config.paths.kbs / target, config.run.worktree)
+
+
+def _path_semantics(
+    environment, *, target: str, target_dir: str, base_url: str
+) -> str:
+    """The wrapper's per-driver paragraph: where each cited path actually lives.
+
+    A wrapper cites both host-side paths (the checkout, over ssh) and local ones
+    (the KB output dir), so the worker has to be told which is which for ITS
+    driver. The CLI renders this from the driver the config selected; the
+    builders never guess.
+    """
+    shown = base_url or "(not observed)"
+    web_root = environment.web_root.rstrip("/")
+    if environment.driver == "ssh":
+        return (
+            f"`{web_root}` and everything under it live on the remote host "
+            f"`{environment.ssh}`; read them over ssh (for example `ssh "
+            f"{environment.ssh} 'sed -n 1,120p {web_root}/{target}/setup_files/...'`). "
+            f"Your outputs (`{target_dir}`) are local to this machine. "
+            f"The application is at `{shown}`."
+        )
+    if environment.driver == "local":
+        return f"Every path is local to this machine. The application is at `{shown}`."
+    return (
+        "The target is remote or externally managed; the checkout paths are "
+        f"informational only. Your outputs (`{target_dir}`) are local. "
+        f"The application is at `{shown}`."
+    )
 
 
 def _read_carrier(path: Path) -> str:
@@ -208,21 +242,30 @@ def _facts_for(
 
     `base_url` is the URL the run just observed for that target (`targetctl ps`
     with the placeholder host rewritten); the config's `environment.base_url` is
-    the attach fallback.
+    the attach fallback. `target_dir` is the LOCAL KB output directory; the
+    checkout paths on the target host all derive from `web_root`, and
+    `path_semantics` states that split for the config's driver.
     """
     worktree = config.run.worktree
 
     def facts_for(target: str) -> WrapperFacts:
         record = state.target(target)
+        base_url = record.base_url or config.environment.base_url
+        target_dir = _target_dir(config, target)
         return WrapperFacts(
             target=target,
-            base_url=record.base_url or config.environment.base_url,
+            base_url=base_url,
             web_root=config.environment.web_root,
             worktree=str(worktree),
             staging=_relative(config.paths.staging, worktree),
-            target_dir=_target_dir(config, target),
+            target_dir=target_dir,
             lifecycle_hint=env.lifecycle_hints(target),
-            kbs_dir=_relative(config.paths.kbs / target, worktree),
+            path_semantics=_path_semantics(
+                config.environment,
+                target=target,
+                target_dir=target_dir,
+                base_url=base_url,
+            ),
         )
 
     return facts_for
@@ -382,6 +425,8 @@ def _print_status_table(state: state_mod.RunState) -> None:
 def _report(state: state_mod.RunState, summary: RunSummary, rundir: Path) -> int:
     print()
     _print_status_table(state)
+    for target in summary.teardown_unverified:
+        print(f"teardown unverified: {target} (leftover containers; see the state and notes)")
     for note in summary.notes:
         print(f"note: {note}")
     print(
@@ -447,9 +492,9 @@ def _print_plan(config: RunConfig, rundir: Path, env) -> None:
     for target in run.targets:
         print(f"target {target}")
         print(f"  session:    {state_mod.session_id(run.id, target)}")
-        print(f"  target dir: {_target_dir(config, target)}")
+        print(f"  target dir: {_target_dir(config, target)} (local KB output)")
         print(f"  staging:    {_relative(config.paths.staging / target, run.worktree)}")
-        print(f"  kb out:     {_relative(config.paths.kbs / target, run.worktree)}")
+        print(f"  web root:   {config.environment.web_root} (on the target host)")
         print("  lifecycle:")
         for hint in env.lifecycle_hints(target):
             print(f"    {hint}")

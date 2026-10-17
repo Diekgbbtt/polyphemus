@@ -36,7 +36,7 @@ _on_path("src")
 from orchestrator.commands import Command, CommandResult  # noqa: E402
 
 from runner import cli, state as state_mod  # noqa: E402
-from runner.config import load_config, load_resolved  # noqa: E402
+from runner.config import EnvironmentSection, load_config, load_resolved  # noqa: E402
 from runner.env import ContainerFact, Observation  # noqa: E402
 from runner.gates import AUTH_ONLY, FULL, GateResult  # noqa: E402
 from runner.harness import ModelRef, TurnResult, is_retryable  # noqa: E402
@@ -115,11 +115,13 @@ def _turn(session_id="ses_bt_r1_a_creator", outcome="succeeded", error=""):
 class FakeEnv:
     """The deployment simulation the loop tests use, plus its command log."""
 
-    def __init__(self, *, ready: bool = False, containers: bool = True) -> None:
+    def __init__(self, *, ready: bool = False, containers: bool = True, residual=()) -> None:
         self.ready = ready
         self.commands: list[tuple[str, str]] = []
         self._containers = containers
         self._deployed = False
+        # Containers that survive `down` (the leftover-teardown case).
+        self.residual = list(residual)
 
     def _observation(self, target: str) -> Observation:
         if self.ready or self._deployed:
@@ -130,6 +132,16 @@ class FakeEnv:
                 ),
                 url="http://0.0.0.0:48287/",
                 http_status="200",
+            )
+        if self.residual:
+            return Observation(
+                target=target,
+                containers=tuple(
+                    ContainerFact(name, "app", "running", "healthy", 0)
+                    for name in self.residual
+                ),
+                url=None,
+                http_status="000",
             )
         return Observation(target=target, containers=(), url=None, http_status="000")
 
@@ -264,7 +276,10 @@ def test_plan_prints_the_targets_sessions_lifecycle_and_gate_commands(
     assert "ssh srv /root/wb up b" in printed
     assert "--auth-only" in printed
     assert "validate_data_dependencies.py" in printed
-    assert "/root/WebExploitBench/b" in printed
+    # `<target_dir>` is the LOCAL KB output dir; the checkout root on the target
+    # host is its own fact.
+    assert "webexploitbench/b (local KB output)" in printed
+    assert "web root:   /root/WebExploitBench (on the target host)" in printed
     assert "nothing was created" in printed
     # A plan is a read-only preflight: no target was observed and no run
     # directory was created.

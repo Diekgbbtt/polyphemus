@@ -28,6 +28,7 @@ anything: the two validator gates are the only quality checkpoints.
 from __future__ import annotations
 
 import json
+import shutil
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Callable, Mapping, Sequence
@@ -41,10 +42,11 @@ from runner.harness import (
     HarnessError,
     SessionSpec,
     TurnResult,
+    TurnTimeout,
     assistant_text,
     transcript_tail,
 )
-from runner.state import DONE, FAILED, PENDING, SKIPPED
+from runner.state import DONE, FAILED, PENDING
 from runner.wrappers import WrapperFacts, WrapperSources, authn_wrapper, l1_wrapper
 
 # The two phases, in order. The phase names are load-bearing: they are the state
@@ -58,6 +60,39 @@ PLACEHOLDER_HOSTS = frozenset({"0.0.0.0", "127.0.0.1", "localhost", "::", "[::]"
 # How much of the transcript a per-turn log carries.
 TRANSCRIPT_TAIL_LIMIT = 40
 
+# Where a target's pre-existing data dependencies are moved aside, under the
+# run directory. The slot doubles as the idempotence marker (see
+# `archive_pre_existing`): once it exists, that root was already handled.
+PRE_EXISTING = "pre-existing"
+
+
+def archive_pre_existing(
+    rundir: Path, target: str, sources: Mapping[str, Path]
+) -> list[tuple[str, str]]:
+    """Move a target's pre-existing data dependencies aside, once per run.
+
+    The run regenerates every artifact FROM SCRATCH (issue #358): anything a
+    previous run left in an output root must not be readable by this run's
+    workers, and must not survive a phase that fails to overwrite it. The
+    destination is the idempotence marker: once a slot exists, an earlier entry
+    or a resume already handled that root, so fresh artifacts written since are
+    never touched. A source that never existed still gets its (empty) slot, so a
+    resume after a phase wrote fresh artifacts never re-examines the root.
+    """
+    archived: list[tuple[str, str]] = []
+    root = rundir / target / PRE_EXISTING
+    for label, source in sources.items():
+        slot = root / label
+        if slot.exists():
+            continue
+        if source.exists():
+            slot.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(source), str(slot))
+            archived.append((label, str(slot)))
+        else:
+            slot.mkdir(parents=True, exist_ok=True)
+    return archived
+
 
 @dataclass(frozen=True)
 class Dispatch:
@@ -69,10 +104,13 @@ class Dispatch:
 
 @dataclass(frozen=True)
 class GateDirective:
-    """One phase's gate requirement: the mode, and whether the phase is gated."""
+    """One phase's gate requirement: the validator mode it is gated with.
+
+    Both phases of the loop are always gated (the architecture doc, section 3.5);
+    there is no ungated phase, so the directive carries only the mode.
+    """
 
     mode: str = FULL
-    gated: bool = True
 
 
 @dataclass
@@ -91,6 +129,9 @@ class RunSummary:
     completed: tuple[str, ...] = ()
     failed: tuple[str, ...] = ()
     skipped: tuple[str, ...] = ()
+    # Targets whose teardown could not be verified (leftover containers). This is
+    # REPORTING only: a leftover never fails a target, but it is never silent.
+    teardown_unverified: tuple[str, ...] = ()
     stopped_early: bool = False
     notes: list[str] = field(default_factory=list)
     state_path: Path | None = None
@@ -149,11 +190,11 @@ def build_instructions(
 
     return {
         "authn": Dispatch(
-            text=authn_wrapper(facts, sources_for_mode(AUTH_ONLY), output_dir=facts.kbs_dir),
+            text=authn_wrapper(facts, sources_for_mode(AUTH_ONLY)),
             label="dispatch",
         ),
         "l1": Dispatch(
-            text=l1_wrapper(facts, sources_for_mode(FULL), output_dir=facts.kbs_dir),
+            text=l1_wrapper(facts, sources_for_mode(FULL)),
             label="dispatch",
         ),
     }
@@ -248,6 +289,13 @@ class Orchestrator:
 
         summary.notes = list(self.notes)
         summary.state_path = self._save()
+        # Teardown leftovers are evidence on EVERY run, including a resumed one
+        # whose targets were completed by an earlier process.
+        summary.teardown_unverified = tuple(
+            target
+            for target in selected
+            if self.state.target(target).lifecycle.leftovers
+        )
         self.state.status = state_mod.RUN_FAILED if summary.failed else state_mod.RUN_DONE
         self._save()
         return summary
@@ -260,10 +308,15 @@ class Orchestrator:
         self._save()
         failed = False
         try:
+            self._archive_target_dependencies(target)
             self._ensure_ready(target)
         except TargetNotReadyError as failure:
             record.notes.append(str(failure))
             self.notes.append(f"{target}: {failure}")
+            failed = True
+        except OSError as failure:
+            record.notes.append(f"{target}: pre-existing artifacts could not be archived: {failure}")
+            self.notes.append(f"{target}: pre-existing artifacts could not be archived: {failure}")
             failed = True
         else:
             for phase, directive in zip(PHASES, self._directives()):
@@ -282,6 +335,28 @@ class Orchestrator:
 
     def _directives(self) -> tuple[GateDirective, ...]:
         return (GateDirective(mode=AUTH_ONLY), GateDirective(mode=FULL))
+
+    def _archive_target_dependencies(self, target: str) -> None:
+        """Move a target's pre-existing KB and auth bundle aside, once per run.
+
+        The run is from scratch: a prior run's artifacts (in particular a
+        research-notes.md that must not survive, or a stale authn skill that
+        would hide a `mechanism: none` result) are archived under the run
+        directory before the target's first dispatch. The slots are the
+        idempotence markers, so a resume never re-archives fresh artifacts.
+        """
+        sources = {
+            "kb": self.config.paths.target_dir(target),
+            "auth-bundle": self.config.paths.staging / target,
+        }
+        archived = archive_pre_existing(self.rundir, target, sources)
+        if not archived:
+            return
+        record = self.state.target(target)
+        for label, slot in archived:
+            record.notes.append(f"{target}: archived pre-existing {label} -> {slot}")
+            self.notes.append(f"{target}: archived pre-existing {label} -> {slot}")
+        self._save()
 
     def _ensure_ready(self, target: str) -> Observation:
         """Observe, reuse when ready, else up plus a bounded readiness wait."""
@@ -360,13 +435,6 @@ class Orchestrator:
             self._save()
             return PhaseResult(ok=False, reason=failure.reason)
         phase_state.read = DONE
-
-        if not directive.gated:
-            phase_state.gate = SKIPPED
-            phase_state.finished = state_mod.utc_now()
-            self._save()
-            return PhaseResult(ok=True)
-
         return self._repair_loop(target, phase, directive, phase_state, record)
 
     def _prepare_phase(self, phase_state, target: str) -> None:
@@ -389,12 +457,18 @@ class Orchestrator:
 
         Three bounded policies live here, and no unbounded loop does:
 
-        * a transient provider failure backs off along the configured ladder
-          (default 60/300/900s, three attempts) and then fails the phase;
-        * a stalled turn is interrupted and re-prompted ONCE with a short resume
-          instruction (`timeout_reprompts`), then fails the phase;
-        * a failed turn is answered by the gate's verbatim repair, which the
-          caller owns.
+        * a retryable harness failure - a failed turn, a prompt that never went
+          out, a broken transcript read, a session that could not be created -
+          backs off along the configured ladder (default 60/300/900s, three
+          attempts) and then fails the phase;
+        * a stalled turn (the harness's `TurnTimeout`) is interrupted and
+          re-prompted ONCE with a short resume instruction (`timeout_reprompts`),
+          then fails the phase;
+        * a non-retryable harness failure fails the phase immediately.
+
+        Every exit is either an OK `TurnResult` or `TargetPhaseFailed`: session
+        creation is inside the guarded region too, so neither a repair turn nor
+        a target's first dispatch can abort `run_plan`.
         """
         attempts = max(1, self.config.run.retry.attempts)
         backoff = self.config.run.retry.backoff_s
@@ -403,19 +477,24 @@ class Orchestrator:
         reprompts = max(0, self.config.run.timeout_reprompts)
         text = dispatch.text
         label = dispatch.label
-        session = self._ensure_session(target)
+        record = self.state.target(target)
+        session = record.creator_session(self.state.run_id)
         model = self.config.run.model_for(target)
         header = f"session={session}\nmodel={model.provider_id}/{model.id}#{model.variant}"
+
+        def retry_delay() -> float:
+            return backoff[min(tries, len(backoff) - 1)] if backoff else 0.0
 
         while True:
             phase_state.turns += 1
             index = phase_state.turns
             try:
+                self._ensure_session(target)
                 self.harness.prompt(session, text)
                 turn = self.harness.wait_terminal(
                     session, timeout_s=self.config.run.turn_timeout_s
                 )
-            except HarnessError as failure:
+            except TurnTimeout as failure:
                 self._log_turn(
                     target,
                     phase,
@@ -436,6 +515,29 @@ class Orchestrator:
                 label = "resume"
                 self._save()
                 continue
+            except HarnessError as failure:
+                # A provider or transport failure: the SAME ladder a failed
+                # turn gets. Never the timeout branch, which would interrupt a
+                # session that may not be running and swallow the backoff.
+                self._log_turn(
+                    target,
+                    phase,
+                    index,
+                    f"{label}-error",
+                    text,
+                    str(failure) + "\n",
+                    header=header,
+                )
+                if not failure.retryable or tries >= attempts - 1:
+                    raise TargetPhaseFailed(f"harness failure: {failure}") from failure
+                delay = retry_delay()
+                tries += 1
+                phase_state.notes.append(f"{label}: retry in {delay:.0f}s after {failure}")
+                self._save()
+                self.sleep(delay)
+                text = _resume_instruction()
+                label = "retry"
+                continue
             self._log_turn(target, phase, index, label, text, _turn_log(turn), header=header)
             if turn.ok:
                 return turn
@@ -446,7 +548,7 @@ class Orchestrator:
                 raise TargetPhaseFailed(
                     f"provider failure after {attempts} attempt(s): {detail}"
                 )
-            delay = backoff[min(tries, len(backoff) - 1)] if backoff else 0.0
+            delay = retry_delay()
             tries += 1
             phase_state.notes.append(f"{label}: retry in {delay:.0f}s after {detail}")
             self._save()
@@ -475,11 +577,15 @@ class Orchestrator:
             phase_state.repairs += 1
             record.repair_attempts += 1
             text = _repair_instruction(result.failure_text, target, phase)
-            turn = self._drive_turn(
-                target, phase, Dispatch(text=text, label="repair"), phase_state
-            )
-            if not turn.ok:
-                return PhaseResult(ok=False, reason="repair dispatch failed")
+            try:
+                # `_drive_turn` returns an OK turn or raises TargetPhaseFailed:
+                # a repair dispatch that cannot be driven fails THIS phase, and
+                # the target goes failed without aborting the rest of the run.
+                self._drive_turn(
+                    target, phase, Dispatch(text=text, label="repair"), phase_state
+                )
+            except TargetPhaseFailed as failure:
+                return PhaseResult(ok=False, reason=failure.reason)
             self._save()
         return PhaseResult(ok=False, reason="repair budget exhausted")
 
@@ -627,13 +733,23 @@ class Orchestrator:
             body += f"### prompt\n\n{prompt}\n\n"
         if extra:
             body += f"### turn\n\n{extra}"
-        return self._write_log(self._log_path(target, phase, index, label), body)
+        path = self._log_path(target, phase, index, label)
+        self._record_log(target, phase, path)
+        return self._write_log(path, body)
 
     def _log_gate(self, target: str, phase: str, index: int, mode: str, result) -> Path:
         body = f"### command\n\n{' '.join(result.command)}\n\n### output\n\n{result.output}\n"
-        return self._write_log(
-            self._log_path(target, phase, index, f"gate-{mode}"), body
-        )
+        path = self._log_path(target, phase, index, f"gate-{mode}")
+        self._record_log(target, phase, path)
+        return self._write_log(path, body)
+
+    def _record_log(self, target: str, phase: str, path: Path) -> None:
+        """Register the log on the phase state (so `status` shows its evidence).
+
+        The path is stored rundir-relative: the state and its logs move together.
+        """
+        record = self.state.target(target)
+        record.phase(phase).logs.append(str(path.relative_to(self.rundir)))
 
     def _log_path(self, target: str, phase: str, index: int, label: str) -> Path:
         return self.rundir / target / phase / f"{index:02d}-{label}.log"
