@@ -389,14 +389,18 @@ class OpenCodeApiHarness:
     # --- create / resume ---
 
     def create_session(self, spec: SessionSpec) -> str:
-        """Create the explicit-id session, or adopt the live one with that id.
+        """Ensure the explicit-id session exists and is on the run's lane.
 
-        An existing id is the resume path, not an error: the API refuses a
-        duplicate create, and the run must continue in the session that already
-        holds the target's context instead of starting a second one.
+        The create is IDEMPOTENT on the id: a duplicate answers rc=0 with the
+        EXISTING session, whose agent and model are the ones it was created with
+        (verified live). So both the create response and the get-fallback are
+        adoption surfaces and both must align; otherwise a resumed run keeps
+        dispatching turns on a stale lane with no error at all.
         """
         created = self._call("post", "/api/session", spec.payload())
-        if created.returncode == 0:
+        data = decode_data(created.stdout) if created.returncode == 0 else None
+        if created.returncode == 0 and data is not None:
+            self._align_adopted(spec, data)
             self.session_store[spec.session_id] = spec
             return spec.session_id
         live = self._call("get", f"/api/session/{spec.session_id}")

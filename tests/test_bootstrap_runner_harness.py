@@ -236,28 +236,28 @@ def test_create_session_pins_the_full_explicit_body():
 
 
 def test_create_session_resumes_an_existing_id():
+    """A duplicate create answers rc=0 with the existing (possibly stale) session."""
     api = FakeApi()
-    api.fail(
+    api.ok(
         "post",
         "/api/session",
-        CommandResult(1, "", '{"type":"ConflictError","message":"session exists"}'),
+        {
+            "id": "ses_bt_r1_shop_creator",
+            "agent": "data-dep-worker",
+            "model": {"providerID": "opencode", "id": "deepseek-v4.1-flash-free", "variant": "high"},
+        },
     )
-    api.ok("get", "/api/session/ses_bt_r1_shop_creator", {"id": "ses_bt_r1_shop_creator"})
     harness = OpenCodeApiHarness(directory="/wt", executor=api)
     assert harness.create_session(_spec()) == "ses_bt_r1_shop_creator"
+    assert [call.argv[3] for call in api.calls] == ["/api/session"]
 
 
-def test_create_session_aligns_an_adopted_sessions_stale_model():
-    """A session persists its model; a resumed run must not dispatch on a stale lane."""
+def test_create_session_aligns_a_stale_create_response():
+    """The idempotent create echoes the session it found; a stale pin is aligned."""
     api = FakeApi()
-    api.fail(
+    api.ok(
         "post",
         "/api/session",
-        CommandResult(1, "", '{"type":"ConflictError","message":"session exists"}'),
-    )
-    api.ok(
-        "get",
-        "/api/session/ses_bt_r1_shop_creator",
         {
             "id": "ses_bt_r1_shop_creator",
             "agent": "data-dep-worker",
@@ -266,10 +266,8 @@ def test_create_session_aligns_an_adopted_sessions_stale_model():
     )
     harness = OpenCodeApiHarness(directory="/wt", executor=api)
     assert harness.create_session(_spec()) == "ses_bt_r1_shop_creator"
-    paths = [call.argv[3] for call in api.calls]
-    assert paths == [
+    assert [call.argv[3] for call in api.calls] == [
         "/api/session",
-        "/api/session/ses_bt_r1_shop_creator",
         "/api/session/ses_bt_r1_shop_creator/model",
     ]
     align = api.calls[-1]
