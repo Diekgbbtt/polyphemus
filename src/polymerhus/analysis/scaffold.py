@@ -23,8 +23,17 @@ sole-writer lazily so importing this module constructs no driver
 """
 from __future__ import annotations
 
+import logging
 import re
 from pathlib import Path
+
+import yaml
+
+from polymerhus.analysis.overview import (
+    empty_overview,
+    normalize_overview,
+    overview_is_empty,
+)
 
 # ---------------------------------------------------------------------------
 # The free-form KB mechanism kind -> SYSTEM_KINDS vocabulary map.
@@ -90,28 +99,74 @@ SECTION_RE = re.compile(r"^##\s+(.*)$")
 HEADING_RE = re.compile(r"^###\s+(.*)$")
 BULLET_RE = re.compile(r"^-\s+(.*)$")
 
+# The structured Overview fence: opened by ```yaml and closed by ```.
+OVERVIEW_FENCE_RE = re.compile(r"^\s*```yaml\s*$", re.IGNORECASE)
+FENCE_CLOSE_RE = re.compile(r"^\s*```\s*$")
+
 KB_SECTIONS = ("Services", "Systems", "Roles")
 
+logger = logging.getLogger(__name__)
 
-def parse_overview(text: str) -> str:
-    """EXTRACT the `## Overview` section body from the operator_kb.md.
 
-    The Overview is the macro description of the deployed SOLUTION (what the
-    application IS, its deployment model, the audiences it serves). It is the
-    framing every Service is read inside, so it is carried as a skeleton
-    attribute and prepended to each Service's reasoning.
-    Returns the joined prose (whitespace-normalised), or "" when absent."""
+def _overview_section_lines(text: str) -> list[str]:
+    """The raw lines of the `## Overview` section, up to the next `##` header."""
     lines: list[str] = []
     in_overview = False
     for raw in text.splitlines():
-        line = raw.rstrip()
-        m = SECTION_RE.match(line)
+        m = SECTION_RE.match(raw)
         if m:
             in_overview = m.group(1).strip().lower() == "overview"
             continue
-        if in_overview and line.strip():
-            lines.append(line.strip())
-    return " ".join(lines)
+        if in_overview:
+            lines.append(raw.rstrip())
+    return lines
+
+
+def _extract_yaml_block(lines: list[str]) -> str | None:
+    """The first ```yaml block's body in the section, or None (no fence).
+
+    An unclosed fence takes the remainder of the section (the YAML parse then
+    decides: valid content still lands, invalid content fails open)."""
+    start = None
+    for i, line in enumerate(lines):
+        if OVERVIEW_FENCE_RE.match(line):
+            start = i + 1
+            break
+    if start is None:
+        return None
+    for j in range(start, len(lines)):
+        if FENCE_CLOSE_RE.match(lines[j]):
+            return "\n".join(lines[start:j])
+    return "\n".join(lines[start:])
+
+
+def parse_overview(text: str) -> dict:
+    """Parse the operator_kb `## Overview` section into the structured entity.
+
+    The structured form is a fenced ```yaml mapping with `domain`,
+    `description`, and `journeys` (the normalized shape lives in
+    `polymerhus.analysis.overview`). Legacy prose (no fence) stays accepted and
+    maps to `description`. Malformed YAML, a non-mapping document, or an absent
+    section fails open to the empty shape: the platform never breaks the
+    skeleton over framing (the validator is the strict build gate)."""
+    section = _overview_section_lines(text)
+    block = _extract_yaml_block(section)
+    if block is not None:
+        try:
+            data = yaml.safe_load(block)
+        except yaml.YAMLError:
+            logger.warning(
+                "parse_overview: malformed YAML in the Overview block; fail-open to empty"
+            )
+            return empty_overview()
+        if not isinstance(data, dict):
+            logger.warning(
+                "parse_overview: the Overview block is not a mapping; fail-open to empty"
+            )
+            return empty_overview()
+        return normalize_overview(data)
+    prose = " ".join(line.strip() for line in section if line.strip())
+    return normalize_overview(prose)
 
 
 def parse_kb(text: str) -> tuple[list[dict], list[dict], list[str]]:
@@ -270,12 +325,15 @@ def scaffold_project(project_id: str, operator_kb: str, *, curate_fn=None,
     `l1_curator.l1_curate`, resolved lazily so importing this module constructs
     no driver.
 
-    The KB's `## Overview` is carried as the skeleton attribute
-    `settings.application_overview` (W-d): it is the macro framing every Service
-    is read inside, so it is persisted here and prepended to each Service's
-    reasoning downstream. `save_settings_fn` is the injectable settings seam
-    (default `app.clients.pg.save_settings`); a write failure is fail-open - the
-    skeleton still persists, only the framing is dropped."""
+    The KB's `## Overview` is carried as the structured skeleton attribute
+    `settings.application_overview` (W-d, structured 2026-10-17): the normalized
+    `{domain, description, journeys}` value is persisted with ALL THREE keys on
+    every write, so the settings store's JSONB deep merge can never let an older
+    value survive under a missing key. It is the framing the four item-consuming
+    agents receive as a dedicated message downstream. `save_settings_fn` is the
+    injectable settings seam (default `app.clients.pg.save_settings`); a write
+    failure is fail-open - the skeleton still persists, only the framing is
+    dropped."""
     import logging
 
     from polymerhus.analysis.analyser_types import proposals_to_deltas
@@ -289,7 +347,7 @@ def scaffold_project(project_id: str, operator_kb: str, *, curate_fn=None,
         )
 
     overview = parse_overview(operator_kb)
-    if overview:
+    if not overview_is_empty(overview):
         if save_settings_fn is None:
             from polymerhus.app.clients import pg
 

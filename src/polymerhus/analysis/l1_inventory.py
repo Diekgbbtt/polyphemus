@@ -19,6 +19,7 @@ from __future__ import annotations
 import logging
 
 from polymerhus.analysis.l1_types import elide_singleton
+from polymerhus.analysis.overview import empty_overview, normalize_overview
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +34,7 @@ def _resolve_read_fn(read_fn):
 def _empty() -> dict:
     return {"services": [], "systems": [],
             "service_contracts": {}, "system_descriptions": {},
-            "application_overview": ""}
+            "application_overview": empty_overview()}
 
 
 def _render_system(row: dict) -> str:
@@ -45,6 +46,27 @@ def _render_system(row: dict) -> str:
     if disc:
         return f"{kind}:{disc}"
     return kind
+
+
+def read_application_overview(project_id: str, *, settings_fn=None) -> dict:
+    """The project's normalized structured Overview, from settings ONLY.
+
+    Settings-only by design (no graph read): the hunting sites call it once per
+    dispatch / gate turn, where a full inventory read would be waste. Returns
+    the normalized `{domain, description, journeys}` shape; a legacy prose
+    value maps to `description`. Fail-open: any read error degrades to the
+    empty shape and never raises."""
+    if settings_fn is None:
+        from polymerhus.app.clients import pg
+
+        settings_fn = pg.load_settings
+    try:
+        value = (settings_fn(project_id) or {}).get("application_overview")
+    except Exception:  # fail-open: no framing is better than a crash
+        logger.warning("read application_overview failed for project=%s", project_id,
+                       exc_info=True)
+        return empty_overview()
+    return normalize_overview(value)
 
 
 def read_l1_inventory(project_id: str, *, read_fn=None, settings_fn=None) -> dict:
@@ -64,25 +86,18 @@ def read_l1_inventory(project_id: str, *, read_fn=None, settings_fn=None) -> dic
     same `_render_system` shape). The mechanism-typist reads it to decide new-vs-extend
     and to COMPOUND the description on extension (grilled #9).
 
-    `application_overview` is the KB's macro framing (W-d): the `## Overview`
-    paragraph the deterministic scaffold persists to `settings` when it writes
-    the skeleton. It is NOT a graph node (operator decision: a skeleton
-    attribute), so it is read from settings, not from a `:L1*` label. It is the
-    framing a proposer prepends to the Service it is reasoning about.
+    `application_overview` is the KB's macro framing (W-d, structured
+    2026-10-17): the `## Overview` block the deterministic scaffold persists to
+    `settings` when it writes the skeleton. It is NOT a graph node (operator
+    decision: a skeleton attribute), so it is read from settings, not from a
+    `:L1*` label, and normalized to `{domain, description, journeys}`. It is
+    the framing the four item-consuming agents receive as a dedicated message
+    (the Q4 model).
 
     Fail-open: any read error degrades to the empty inventory shape and never raises
     into the caller."""
     read_fn = _resolve_read_fn(read_fn)
-    if settings_fn is None:
-        from polymerhus.app.clients import pg
-
-        settings_fn = pg.load_settings
-    try:
-        overview = (settings_fn(project_id) or {}).get("application_overview") or ""
-    except Exception:  # fail-open: no framing is better than no inventory
-        logger.warning("read application_overview failed for project=%s", project_id,
-                       exc_info=True)
-        overview = ""
+    overview = read_application_overview(project_id, settings_fn=settings_fn)
     try:
         service_rows = read_fn(
             "MATCH (n:L1Service) WHERE n.project_id = $project_id "

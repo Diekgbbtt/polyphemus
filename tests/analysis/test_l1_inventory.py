@@ -38,7 +38,8 @@ def test_read_error_is_fail_open():
     inv = read_l1_inventory("proj-1", read_fn=boom, settings_fn=lambda pid: {})
     assert inv == {"services": [], "systems": [],
                    "service_contracts": {}, "system_descriptions": {},
-                   "application_overview": ""}
+                   "application_overview": {"domain": "", "description": "",
+                                            "journeys": []}}
 
 
 def test_service_contracts_are_returned_alongside_the_slugs():
