@@ -484,7 +484,20 @@ def test_resume_needs_a_snapshot_or_a_config(tmp_path, wired, capsys):
 # --- the shipped example config ---------------------------------------------
 
 
+def _run_dir_snapshot() -> set[str]:
+    """Every path under the repo's default run root, relative and sorted.
+
+    A plan must create nothing and touch nothing - including a live run's own
+    directory, which legitimately exists while a regeneration is in flight.
+    """
+    root = REPO_ROOT / ".bootstrap-runs"
+    if not root.exists():
+        return set()
+    return {str(p.relative_to(REPO_ROOT)) for p in root.rglob("*")}
+
+
 def test_the_example_config_plans_the_eight_eval_server_targets(capsys):
+    before = _run_dir_snapshot()
     code = cli.main(["plan", "--config", str(EXAMPLE_CONFIG)])
     printed = capsys.readouterr().out
     assert code == 0
@@ -492,11 +505,12 @@ def test_the_example_config_plans_the_eight_eval_server_targets(capsys):
         assert f"ses_bt_w2_6_{target.replace('-', '_')}_creator" in printed
     assert "eval-server-polyphemus" in printed
     assert "46.224.225.245" in printed
-    assert not (REPO_ROOT / ".bootstrap-runs" / "w2.6").exists()
+    assert _run_dir_snapshot() == before
 
 
 def test_the_entry_script_plans_the_example_config_from_any_cwd(tmp_path):
     """The shipped entry point wires sys.path itself and needs no particular cwd."""
+    before = _run_dir_snapshot()
     completed = subprocess.run(
         [
             sys.executable,
@@ -513,14 +527,14 @@ def test_the_entry_script_plans_the_example_config_from_any_cwd(tmp_path):
     assert completed.returncode == 0, completed.stderr
     assert "plan only: nothing was created" in completed.stdout
     assert "ses_bt_w2_6_dataease_creator" in completed.stdout
-    assert not (REPO_ROOT / ".bootstrap-runs" / "w2.6").exists()
+    assert _run_dir_snapshot() == before
 
 
 def test_the_example_config_resolves_to_the_pinned_policy():
     config = load_config(EXAMPLE_CONFIG, repo_root=REPO_ROOT)
     assert config.run.targets == EVAL_TARGETS
     assert config.run.agent == "data-dep-worker"
-    assert config.run.model == ModelRef("opencode", "deepseek-v4.1-flash-free", "high")
+    assert config.run.model == ModelRef("opencode-go", "deepseek-v4.1-flash", "high")
     assert config.environment.driver == "ssh"
     assert config.environment.ssh == "eval-server-polyphemus"
     assert config.environment.targetctl == "/root/wb"

@@ -222,7 +222,7 @@ def test_load_config_applies_every_pinned_default(tmp_path):
     assert config.run.id == "r1"
     assert config.run.targets == ("shop", "blog")
     assert config.run.agent == "data-dep-worker"
-    assert config.run.model == ModelRef("opencode", "deepseek-v4.1-flash-free", "high")
+    assert config.run.model == ModelRef("opencode-go", "deepseek-v4.1-flash", "high")
     assert config.run.turn_timeout_s == 3600.0
     assert config.run.repair_attempts == 3
     assert config.run.timeout_reprompts == 1

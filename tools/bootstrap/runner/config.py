@@ -27,7 +27,7 @@ from runner.state import config_digest
 
 # Defaults, pinned by the architecture doc and the issue:
 DEFAULT_AGENT = "data-dep-worker"
-DEFAULT_MODEL = ModelRef("opencode", "deepseek-v4.1-flash-free", "high")
+DEFAULT_MODEL = ModelRef("opencode-go", "deepseek-v4.1-flash", "high")
 DEFAULT_TURN_TIMEOUT_S = 3600.0
 DEFAULT_REPAIR_ATTEMPTS = 3
 DEFAULT_TIMEOUT_REPROMPTS = 1

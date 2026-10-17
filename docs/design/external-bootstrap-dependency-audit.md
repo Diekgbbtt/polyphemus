@@ -34,11 +34,11 @@ Verified facts:
 - A probe session (`ses_eb6f9debdffeOSUVNALj40azzR`) was created, prompted ("Reply with exactly: PONG4"), and answered by `opencode/nemotron-3.5-super-vl-free`; the transcript ended with an `idle` message carrying `outcome: succeeded`.
 - `POST /api/experimental/session/{id}/wait` exists for blocking waits; `POST /api/session/{id}/interrupt` exists for timeouts.
 - Nested `opencode run` is NOT usable: every variant tried (bare, `--standalone`, explicit `--agent general --model opencode/deepseek-v4.1-flash-free`) fails with a provider-level `FreeTierError` ("OpenCode's free tier can only be used from within OpenCode", HTTP 403) before any model call.
-- Models available to the service are the provider `opencode` free tier (10 models: nemotron-3.5-super-vl-free, beam-free, longcat-2.5-preview-free, space-bunny-free, mimo-v2.6-flash-free, deepseek-v4.1-flash-free, glm-5.3-flash-free, big-pickle, and two more); each carries reasoning-effort variants; `Model.Ref` is `{providerID, id, variant?}`.
+- Models: the service exposes two provider lanes (39 models): the free `opencode` tier and the entitled `opencode-go` lane the operator's own sessions use (`opencode-go/deepseek-v4.1-flash` with low/high/max variants). Each carries reasoning-effort variants; `Model.Ref` is `{providerID, id, variant?}`. The free tier answers interactive probes but rejects automated session dispatches intermittently with a 403 `FreeTierError`, so the module's default worker lane is `opencode-go/deepseek-v4.1-flash#high` (the free tier stays usable as an explicit opt-in; its 403s are classified retryable).
 - Agents available: `build` (default primary, no model pin) and `general` (subagent, pinned `opencode/deepseek-v4.1-flash-free`) plus the repo-local subagent definitions; worker sessions should name `general` (or a new dedicated agent) and an explicit model ref so the choice is parametrized.
 - Session resume is the state machine: prompt the same session id for every follow-up in a target's phase; the child keeps its context (target up, cookie jars, file paths), which mirrors the mined run's resume mechanics.
 
-Consequence: the module drives `opencode api` calls (subprocess), and it must treat provider errors as retryable-with-backoff plus session resume, because the free tier is the only configured provider.
+Consequence: the module drives `opencode api` calls (subprocess), and it must treat provider errors as retryable-with-backoff plus session resume; the default worker lane is the entitled `opencode-go` provider.
 
 ## 4. Target environments
 
@@ -103,7 +103,7 @@ The environment is a parameter; three drivers cover the cases.
 3. Shared server: an eval stack is currently running on the eval server; the regeneration must not touch its containers and must fit in the remaining RAM one target at a time.
 4. Session staleness: snapshots expire between re-instantiation (cookie-name hashes rotate); the L1 phase must verify the persisted session and fall back loudly to re-sign-in, never to a silent anonymous crawl.
 5. Heavy targets: dataease (and historically dify) saturate RAM; the wave plan is serial with a long readiness budget; the mined run's server recipe (poll ~60x5s) is the default.
-6. Free-tier availability: zero-cost provider quotas can throttle; retries must be bounded and resumable from the run state.
+6. Provider lane availability: the free `opencode` tier rejects automated session dispatches intermittently (403 FreeTierError) even though interactive probes pass; the entitled `opencode-go` lane works reliably through the same API. The retry ladder still classifies those 403s as retryable, so a lane outage is bounded and resumable rather than fatal.
 7. `l1-surface.yaml` is a review artifact today: endpoint 4 consumes `operator_kb.md` only; the regeneration still produces and validates the YAML rendering.
 8. The mined-run staging bundles (`/root/eval-dd/staging`) must not be overwritten by the regeneration; new bundles go to this run's staging root, and the assessment compares the two read-only.
 

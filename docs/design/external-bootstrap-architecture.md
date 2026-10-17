@@ -139,7 +139,7 @@ No phase of the loop reads the ground truth: the critic was its only reader, and
 ## 9. Resolved decisions (checkpoint 2026-10-17)
 
 1. Seams as in section 3 - confirmed.
-2. Worker model default `opencode/deepseek-v4.1-flash-free#high` - confirmed.
+2. Worker model default `opencode-go/deepseek-v4.1-flash#high` - the entitled lane the operator's own sessions use; the free `opencode` tier answers interactive probes but rejects automated session dispatches intermittently with a 403 FreeTierError, so the module treats those as retryable but never relies on them.
 3. Critic phase dropped; the two validator gates and the W1 assessment framework are the quality instruments - confirmed.
 4. Final `--all` phase and the run-report phase removed from the loop - confirmed.
 5. Lifecycle signal design as in section 5 - confirmed by the accurate-signal requirement.

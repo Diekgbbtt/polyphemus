@@ -29,9 +29,13 @@ run:
     - white-jotter
   # worktree: .
   agent: data-dep-worker
+  # The entitled provider lane (the same one the operator's own sessions use).
+  # The free `opencode` tier answers interactive probes but rejects automated
+  # session dispatches intermittently with a 403 FreeTierError, so it is not a
+  # usable worker lane for an hours-long regeneration.
   model:
-    providerID: opencode
-    id: deepseek-v4.1-flash-free
+    providerID: opencode-go
+    id: deepseek-v4.1-flash
     variant: high
   turn_timeout_s: 3600
   repair_attempts: 3
