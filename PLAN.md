@@ -30,20 +30,20 @@ The target environment is a parameter: attach to a reachable target, or run a lo
 - W1: `/Users/diekgbbtt/.local/share/opencode/worktree/7b3bba/overview-entity` on `feat/overview-entity`.
 - W2: created when W1 closes; branch `feat/external-bootstrap` stacked on W1's tip.
 
-## W1 phases (task 1)
+## W1 phases (task 1) - COMPLETE (2026-10-17)
 
-- W1.0 Ontology grilling, one brief round (skill: `grilling`).
+- W1.0 Ontology grilling, one brief round (skill: `grilling`). DONE (`1f7601a`).
   Answers land in "Ontology decisions" below and feed the ADR.
-- W1.1 Recover the bootstrap sources into `tools/bootstrap/`: `DATA-DEPENDENCIES.md`, `prompts/data-dep-{authn,l1,critic}.md`, `validate_data_dependencies.py` - from the `eval-data-dependencies` worktree copy.
-- W1.2 Impact map.
+- W1.1 Recover the bootstrap sources into `tools/bootstrap/`: `DATA-DEPENDENCIES.md`, `prompts/data-dep-{authn,l1,critic}.md`, `validate_data_dependencies.py` - from the `eval-data-dependencies` worktree copy. DONE (`c9a0270`, gitignore safety `a312def`).
+- W1.2 Impact map. DONE (`1296614`, refined to the Q4 model in `b294858`).
   Enumerate every touchpoint of the structured Overview: scaffold parse and persistence, settings storage, inventory read and render, proposer reasoning, validator, creator and critic prompts, `l1-surface.yaml`, the contract, docs, tests, and the 8 committed KBs.
   Output: `docs/design/overview-entity-impact-map.md`.
-- W1.3 TDD implementation (skill: `tdd`).
+- W1.3 TDD implementation (skill: `tdd`). DONE (`0888175` entity + parse/persist/read/render; `5970d53` delivery to the four consuming agents, validator gate, prompts, docs).
   Red tests first on the platform seams, then implementation, then the prompts and the validator.
-- W1.4 Quality-assessment framework: criteria, scales, metrics, tooling.
+- W1.4 Quality-assessment framework: criteria, scales, metrics, tooling. DONE (`aa5ecc2`; home `tools/bootstrap/assessment/`, baseline `baseline-pre-regeneration.json`).
   See "Assessment framework" below.
-- W1.5 Documentation: `analysis/CONTEXT.md`, `docs/design/domain-model.md` where the model changes, the ADR (`eval-data-dependency-placement-decisions.md` extension), the contract, the prompts.
-- W1.6 Commit series on `feat/overview-entity`.
+- W1.5 Documentation: `analysis/CONTEXT.md`, the ADR (`docs/design/application-overview-entity-adr.md`, a new ADR amending `operator-kb-overview-attribute-adr.md`), the impact map, the contract, the prompts. DONE (`5970d53`); the durable `to-spec` GitHub issue remains for the finalization step.
+- W1.6 Commit series on `feat/overview-entity`. DONE (7 commits, tree clean).
 
 ## W2 phases (task 2)
 
@@ -69,12 +69,13 @@ The target environment is a parameter: attach to a reachable target, or run a lo
 - G4 Operator confirms the spec seams (the `to-spec` step asks).
 - G5 All 8 fresh artifact sets pass the deterministic validator and the quality assessment; docs current.
 
-## Assessment framework (deliverable shape)
+## Assessment framework (deliverable shape) - BUILT (`aa5ecc2`)
 
-- Criteria families: Overview ontology conformance; L1 surface completeness and grounding; auth bundle conformance; cross-artifact consistency; graph loadability.
-- Scales: per-criterion ordinal scale with explicit anchors; per-target rollup; portfolio metrics.
-- Mechanics: deterministic checks (validator extensions) plus an LLM-assessor rubric; one report artifact per target.
-- The per-target critic stays the delivery gate; the framework is the graded measurement layer.
+- Home `tools/bootstrap/assessment/`: `RUBRIC.md` (criteria, anchors, acceptance), `assess.py` (deterministic engine + portfolio), `llm_judge_prompt.md` (per-target semantic assessor), `README.md` (runbook), `baseline-pre-regeneration.json` (committed-view baseline).
+- Criteria families: the structured Overview (A1-A4); the L1 KB (B1-B4); the l1-surface (C1-C3); the auth bundle (D1); research artifacts and the integrity boundary (E1-E2); semantic judgement by an LLM assessor (L1-L5: journey plausibility, description quality, contract discrimination, threat-model coverage, auth coherence).
+- Scales: 0-4 ordinal with explicit anchors per criterion; per-target rollup; portfolio means/mins, failing list, baseline deltas.
+- Mechanics: the validator gates; `assess.py` grades deterministically and merges the LLM verdicts from `<target>/assessment.yaml`.
+- Baseline findings (committed view, 2026-10-17): all 8 targets score A1=2, A2=0, A4=0 (legacy prose Overviews - the W2 regeneration must lift A2/A4 to >= 3); B/C/E clean except siyucms E2=0 (research notes tie "template RCE" to a service - a true integrity hit to eliminate); D1=0 by design in the committed view (auth is staged outside git).
 
 ## Risks
 
