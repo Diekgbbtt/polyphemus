@@ -71,9 +71,8 @@ def _facts(target="shop"):
 def _sources(mode="auth_only"):
     invocation = (
         "PYTHONPATH=src python3 tools/bootstrap/validate_data_dependencies.py "
-        f"{'--auth-only' if mode == AUTH_ONLY else ''} --staging /wt/eval/data-dependencies shop".replace(
-            "  ", " "
-        )
+        f"{'--auth-only' if mode == AUTH_ONLY else ''} "
+        "--staging /wt/eval/data-dependencies shop".replace("  ", " ")
     )
     return WrapperSources(
         prompt_path="tools/bootstrap/prompts/data-dep-authn.md",
@@ -221,7 +220,16 @@ class Logs:
         return path
 
 
-def _orchestrator(tmp_path, *, targets=("shop",), gate=None, env=None, harness=None, **overrides):
+def _orchestrator(
+    tmp_path,
+    *,
+    targets=("shop",),
+    gate=None,
+    env=None,
+    harness=None,
+    instructions=None,
+    **overrides,
+):
     run = overrides.pop("run", None)
     config = _config(tmp_path, targets=targets, **overrides)
     if run is not None:
@@ -230,7 +238,9 @@ def _orchestrator(tmp_path, *, targets=("shop",), gate=None, env=None, harness=N
     env = env or FakeEnv()
     gate = gate or ScriptedGate()
     logs = Logs()
-    state = state_mod.new_state(config.run.id, config_digest=config.digest, targets=config.run.targets)
+    state = state_mod.new_state(
+        config.run.id, config_digest=config.digest, targets=config.run.targets
+    )
     orch = Orchestrator(
         config=config,
         harness=harness,
@@ -238,10 +248,14 @@ def _orchestrator(tmp_path, *, targets=("shop",), gate=None, env=None, harness=N
         gate=gate,
         state=state,
         rundir=tmp_path / "rundir",
-        instructions={
-            "authn": Dispatch(text="AUTHN WRAPPER"),
-            "l1": Dispatch(text="L1 WRAPPER"),
-        },
+        instructions=(
+            instructions
+            if instructions is not None
+            else {
+                "authn": Dispatch(text="AUTHN WRAPPER"),
+                "l1": Dispatch(text="L1 WRAPPER"),
+            }
+        ),
         write_log=logs,
         sleep=lambda _s: None,
     )
@@ -354,6 +368,31 @@ def test_the_two_phases_run_in_one_session_and_in_order(tmp_path):
     assert harness.created[0].agent == "data-dep-worker"
 
 
+def test_a_callable_instructions_source_resolves_per_target_at_dispatch(tmp_path):
+    """The CLI's production shape: a target's wrappers are built when dispatched.
+
+    The base URL is a fact only the environment reports, so the CLI hands the
+    orchestrator a callable keyed by target; the orchestrator resolves it per
+    dispatch, and memoisation is the caller's business.
+    """
+    built: list[str] = []
+
+    def instructions_for(target: str):
+        built.append(target)
+        return {
+            "authn": Dispatch(text=f"AUTHN {target}"),
+            "l1": Dispatch(text=f"L1 {target}"),
+        }
+
+    orch, harness, _env, _gate, _state, _ = _orchestrator(
+        tmp_path, targets=("a", "b"), instructions=instructions_for
+    )
+    summary = orch.run_plan()
+    assert summary.completed == ("a", "b")
+    assert built == ["a", "a", "b", "b"]
+    assert [text for _session, text in harness.prompts] == ["AUTHN a", "L1 a", "AUTHN b", "L1 b"]
+
+
 def test_targets_run_serially_up_down_up_down(tmp_path):
     orch, harness, env, _gate, _state, _ = _orchestrator(tmp_path, targets=("a", "b"))
     orch.run_plan()
@@ -396,7 +435,11 @@ def test_a_cold_target_is_deployed_and_waited_for(tmp_path):
 def test_a_red_auth_gate_repairs_verbatim_then_advances(tmp_path):
     gate = ScriptedGate(
         [
-            (False, "FAIL eval/data/webexploitbench/shop\n  [auth] credentials.yaml: accounts must be a mapping"),
+            (
+                False,
+                "FAIL eval/data/webexploitbench/shop\n"
+                "  [auth] credentials.yaml: accounts must be a mapping",
+            ),
             True,
             True,
         ]

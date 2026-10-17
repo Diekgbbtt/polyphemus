@@ -8,8 +8,9 @@ times, verifies teardown from the docker engine, and persists a resumable state.
 This file covers the two fast, pure seams: the wrapper builders (`wrappers`) and
 the phase gate (`gates`). The environment drivers and the harness adapter live in
 `test_bootstrap_runner_env.py`; the orchestration loop in
-`test_bootstrap_runner_loop.py`. No test in this module touches the network, a
-model, ssh, or docker.
+`test_bootstrap_runner_loop.py`; the CLI, the run config, and the state in
+`test_bootstrap_runner_cli.py` and `test_bootstrap_runner_state.py`. No test in
+this module touches the network, a model, ssh, or docker.
 """
 from __future__ import annotations
 

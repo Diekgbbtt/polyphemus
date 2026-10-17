@@ -99,3 +99,8 @@ eval/instances/
 eval/data-dependencies/
 # AuthContext artifacts are secrets wherever they are staged.
 eval/kbs/*/auth/
+
+# The external-bootstrap run directories (#358): state, the resolved config
+# snapshot, and the per-turn prompt/transcript logs. Per-run runtime, never
+# source; a run's state is what `resume` and `status` read.
+.bootstrap-runs/

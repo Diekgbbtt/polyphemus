@@ -191,7 +191,7 @@ class Orchestrator:
         gate,
         state: state_mod.RunState,
         rundir: Path,
-        instructions: Mapping[str, object],
+        instructions: Mapping[str, object] | Callable[[str], Mapping[str, Dispatch]],
         write_log: Callable[[Path, str], Path] | None = None,
         sleep: Callable[[float], None] | None = None,
         skip_lifecycle: bool = False,
@@ -589,18 +589,21 @@ class Orchestrator:
     # --- instruction access, logs, persistence ---
 
     def _instructions_for(self, target: str) -> Mapping[str, Dispatch]:
-        """The wrappers for one target, from either accepted shape.
+        """The wrappers for one target, from every accepted shape.
 
-        `build_instructions_for_all` keys by target; the single-target
-        `build_instructions` keys by phase, and that flat mapping is taken as
-        the answer for every target asked for (tests, one-off single-target runs).
+        A CALLABLE is the production shape: the CLI builds a target's wrappers
+        lazily, because their base URL comes from the readiness observation. A
+        mapping keyed by target is what `build_instructions_for_all` returns; the
+        single-target `build_instructions` keys by phase, and that flat mapping is
+        taken as the answer for every target asked for.
         """
-        entry = self.instructions.get(target)
+        source = self.instructions(target) if callable(self.instructions) else self.instructions
+        entry = source.get(target)
         if entry is None:
             flat = {
-                phase: self.instructions[phase]
+                phase: source[phase]
                 for phase in PHASES
-                if phase in self.instructions
+                if phase in source
             }
             return flat
         if isinstance(entry, Mapping):

@@ -1,0 +1,61 @@
+# External bootstrap - the eval-server regeneration run (issue #358).
+#
+# From the repository root, with the example config in CFG:
+#
+#   CFG=tools/bootstrap/run.example.yaml
+#   python3 tools/bootstrap/run_external_bootstrap.py plan   --config $CFG
+#   python3 tools/bootstrap/run_external_bootstrap.py run    --config $CFG
+#   python3 tools/bootstrap/run_external_bootstrap.py status --rundir .bootstrap-runs/w2.6
+#   python3 tools/bootstrap/run_external_bootstrap.py resume --rundir .bootstrap-runs/w2.6
+#
+# Everything a run cannot guess is here; every omitted field keeps the pinned
+# default in runner/config.py. The run is serial (one target up at a time) and
+# tears a target down before the next one starts. `worktree` is omitted, so the
+# checkout that ships this file is the run's worktree; uncomment it to run from
+# another one.
+
+run:
+  id: w2.6
+  targets:
+    # Heavy targets first, while the server has the most headroom; the run is
+    # serial and verifies a teardown before it starts the next target.
+    - dataease
+    - comfyui
+    - geoserver
+    - jetlinks
+    - phpbb
+    - prestashop
+    - siyucms
+    - white-jotter
+  # worktree: .
+  agent: data-dep-worker
+  model:
+    providerID: opencode
+    id: deepseek-v4.1-flash-free
+    variant: high
+  turn_timeout_s: 3600
+  repair_attempts: 3
+  timeout_reprompts: 1
+  retry:
+    attempts: 3
+    backoff_s: [60, 300, 900]
+  readiness:
+    # The server recipe: poll 60 times, 5s apart (5 minutes per deployment).
+    retries: 60
+    interval_s: 5
+  teardown_on_failure: true
+  continue_on_failure: true
+
+environment:
+  driver: ssh
+  ssh: eval-server-polyphemus
+  web_root: /root/WebExploitBench
+  targetctl: /root/wb
+  # `targetctl ps` prints the wildcard bind (http://0.0.0.0:<port>/); workers get
+  # that URL with this host substituted.
+  public_host: 46.224.225.245
+
+paths:
+  # Relative paths resolve against the worktree above.
+  kbs: eval/data/webexploitbench
+  staging: eval/data-dependencies
