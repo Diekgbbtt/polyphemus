@@ -38,6 +38,13 @@ DEFAULT_POLL_INTERVAL_S = 5.0
 # watermark before it raises: a degraded watermark would let a previous turn's
 # idle count as this turn's completion.
 WATERMARK_ATTEMPTS = 3
+# The message endpoint is a windowed page, newest first: 50 messages by default,
+# 200 at most, the rest behind an opaque `cursor`. Both transcript reads are
+# explicit about it, and the turn boundary is an ID - never a count - so a
+# transcript larger than one page can neither break the boundary nor hand the
+# wait a stale terminal.
+_TRANSCRIPT_HEAD = "/message?order=desc&limit=1"
+_TRANSCRIPT_PAGE = "/message?order=desc&limit=200"
 
 # Provider failure classes this harness recognises by text. Everything that
 # looks transient is retried with backoff; a hard configuration error is not.
@@ -74,6 +81,11 @@ _HARD_PATTERNS: tuple[str, ...] = (
 _ERROR_RE = re.compile(r"FreeTierError|rate limit|429|403|5\d\d", re.IGNORECASE)
 
 Executor = Callable[[Command], CommandResult]
+
+# The sound turn boundary: the (id, created) of the transcript head when the
+# prompt went out, or None when the session had no messages at all. An id, not
+# a position, because the transcript is read as a newest-first page.
+TranscriptBoundary = tuple[str, int | None] | None
 
 
 @dataclass(frozen=True)
@@ -269,6 +281,34 @@ def parse_terminal(
     )
 
 
+def newer_than(
+    messages: Sequence[Mapping[str, object]], boundary: TranscriptBoundary
+) -> tuple[Mapping[str, object], ...]:
+    """The messages newer than the turn boundary, oldest first.
+
+    `messages` is the endpoint's newest-first page. The walk stops at the
+    boundary message itself, or - when that message fell out of the page (a
+    turn longer than the page, a compacted transcript) - at the first message
+    that is not newer than the boundary's own timestamp. Both stops keep a
+    previous turn's terminal out of a new turn; for a boundary of None (the
+    session was empty when the prompt went out) every message belongs to it.
+    """
+    if boundary is None:
+        return tuple(reversed(list(messages)))
+    boundary_id, boundary_ms = boundary
+    fresh: list[Mapping[str, object]] = []
+    for message in messages:
+        if str(message.get("id") or "") == boundary_id:
+            break
+        time = message.get("time")
+        created = time.get("created") if isinstance(time, Mapping) else None
+        if boundary_ms is not None and isinstance(created, (int, float)) and created <= boundary_ms:
+            break
+        fresh.append(message)
+    fresh.reverse()
+    return tuple(fresh)
+
+
 def assistant_text(turn: TurnResult) -> str:
     """The turn's assistant text blocks, concatenated (the worker's report)."""
     parts: list[str] = []
@@ -352,7 +392,7 @@ class OpenCodeApiHarness:
     invoke (`opencode`, resolved from PATH by the OS). No failure is retried
     with a backoff policy here; the caller owns that, because the caller also
     owns the run state it is recorded in. The one bounded retry inside is the
-    watermark read itself (`_transcript`): it cannot be deferred, because the
+    boundary read itself (`_read_head`): it cannot be deferred, because the
     turn boundary has to be sound before the prompt goes out.
     """
 
@@ -370,9 +410,9 @@ class OpenCodeApiHarness:
             from runner.env import LocalExecutor
 
             self.executor = LocalExecutor(timeout_s=self.api_timeout_s)
-        # The prompt watermark per session: the transcript length the turn
-        # starts after, written only by a successful prompt (see `prompt`).
-        self._watermarks: dict[str, int] = {}
+        # The prompt boundary per session: the transcript head the turn starts
+        # after, written only by a successful prompt (see `prompt`).
+        self._watermarks: dict[str, TranscriptBoundary] = {}
 
     # --- command construction (asserted by the unit tests) ---
 
@@ -460,15 +500,16 @@ class OpenCodeApiHarness:
     # --- prompt / await ---
 
     def prompt(self, session_id: str, text: str) -> str:
-        """Send one user turn; returns its watermark (the transcript length it starts after).
+        """Send one user turn; returns the head id the turn starts after.
 
-        The watermark is the COUNT of messages already in the transcript, read
-        strictly (`_transcript` retries a failed GET a bounded number of times
-        and then raises): a degraded watermark of 0 would let the previous
-        turn's idle count as this turn's completion. The prompt itself is only
-        sent once the boundary is known.
+        The boundary is the transcript HEAD as read strictly before the prompt
+        goes out - an id, not a position: the message endpoint serves a
+        newest-first page (see `_TRANSCRIPT_PAGE`), so a count can slice
+        outside the page or, in the newest-first order, hand the wait a
+        previous turn's terminal. An empty session is a boundary of None,
+        which accepts every message in the page.
         """
-        watermark = len(self._transcript(session_id))
+        boundary = self._read_head(session_id)
         sent = self._call("post", f"/api/session/{session_id}/prompt", {"text": text})
         if sent.returncode != 0:
             detail = (sent.stderr or sent.stdout).strip() or "unknown error"
@@ -476,63 +517,74 @@ class OpenCodeApiHarness:
                 f"prompt to {session_id} failed: {detail}",
                 retryable=classify_stderr(detail),
             )
-        self._watermarks[session_id] = watermark
-        return str(watermark)
+        self._watermarks[session_id] = boundary
+        return boundary[0] if boundary else ""
 
     def messages(self, session_id: str) -> tuple[dict, ...]:
-        """The live transcript, best-effort (for introspection and poll reads).
+        """The live transcript page, best-effort (newest first, up to 200).
 
-        `prompt` and `wait_terminal` must NOT use this lenient form for the
-        turn boundary; they use `_transcript` (via `prompt`) and the stored
-        watermark instead.
+        The lenient form is for poll reads and introspection only; the turn
+        boundary is read strictly by `prompt`, and `newer_than` turns a page
+        into the turn's own messages.
         """
-        result = self._call("get", f"/api/session/{session_id}/message")
+        result = self._call("get", f"/api/session/{session_id}{_TRANSCRIPT_PAGE}")
         if result.returncode != 0:
             return ()
         return message_list(result.stdout)
 
-    def _transcript(self, session_id: str) -> tuple[dict, ...]:
-        """The transcript, read strictly: bounded retries, then a HarnessError.
+    def _read_head(self, session_id: str) -> TranscriptBoundary:
+        """The transcript head (the newest message's id and stamp), read strictly.
 
-        A failed GET is never turned into an empty transcript, because an empty
-        transcript is a watermark of 0 and a watermark of 0 accepts the
-        previous turn's idle as the current turn's terminal message.
+        The head is the message the turn starts after, so it has to be sound
+        before the prompt goes out: a failed read retries a bounded number of
+        times and then raises. The read asks for exactly one message in the
+        endpoint's newest-first order; a count of the page is meaningless under
+        pagination and would let the previous turn's idle complete this turn.
         """
         attempts = max(1, self.watermark_attempts)
         detail = "unknown error"
         for attempt in range(attempts):
-            result = self._call("get", f"/api/session/{session_id}/message")
+            result = self._call("get", f"/api/session/{session_id}{_TRANSCRIPT_HEAD}")
             if result.returncode == 0:
-                return message_list(result.stdout)
+                head = message_list(result.stdout)
+                if not head:
+                    return None
+                message = head[0]
+                time = message.get("time")
+                created = time.get("created") if isinstance(time, Mapping) else None
+                stamp = int(created) if isinstance(created, (int, float)) else None
+                return str(message.get("id") or ""), stamp
             detail = (result.stderr or result.stdout).strip() or "unknown error"
             if attempt + 1 < attempts:
                 self.sleep(max(0.1, self.poll_interval_s))
         raise HarnessError(
-            f"transcript for {session_id} could not be read after {attempts} attempt(s): {detail}",
+            f"the transcript head of {session_id} could not be read "
+            f"after {attempts} attempt(s): {detail}",
             retryable=classify_stderr(detail),
         )
 
     def wait_terminal(self, session_id: str, timeout_s: float = DEFAULT_TURN_TIMEOUT_S) -> TurnResult:
-        """Poll until a terminal `idle` message newer than the prompt, or raise.
+        """Poll until a terminal `idle` message newer than the boundary, or raise.
 
-        Only a message that appears AFTER the prompt's watermark can be this
-        turn's terminal message; without a watermark for this session there is
-        no sound boundary, so the call refuses rather than guess.
+        Only messages that came after the prompt's boundary can complete the
+        turn: the boundary is the head id the prompt was sent after, so neither
+        an older idle nor a page that has moved past the boundary can be
+        mistaken for this turn's terminal. Without a boundary for this session
+        there is no sound reading, so the call refuses rather than guess.
 
         A timeout raises `TurnTimeout`: the orchestrator owns the
         interrupt-and-re-prompt recovery, because that policy has to be visible
         in the run state.
         """
-        watermark = self._watermarks.get(session_id)
-        if watermark is None:
+        if session_id not in self._watermarks:
             raise HarnessError(
-                f"no prompt watermark for {session_id}: the turn boundary would be unsound"
+                f"no prompt boundary for {session_id}: the turn boundary would be unsound"
             )
+        boundary = self._watermarks[session_id]
         deadline = time.monotonic() + max(0.0, timeout_s)
         interval = max(0.1, self.poll_interval_s)
         while True:
-            messages = self.messages(session_id)
-            turn = parse_terminal(messages[watermark:])
+            turn = parse_terminal(newer_than(self.messages(session_id), boundary))
             if turn is not None:
                 if not turn.session_id:
                     turn = replace(turn, session_id=session_id)

@@ -50,6 +50,7 @@ from runner.harness import (  # noqa: E402
     decode_data,
     is_retryable,
     message_list,
+    newer_than,
     parse_terminal,
 )
 
@@ -363,13 +364,19 @@ def test_create_session_fails_loudly_when_neither_create_nor_resume_works():
         harness.create_session(_spec())
 
 
-def test_prompt_sends_the_json_body_and_sets_the_turn_watermark():
+def test_prompt_sends_the_json_body_and_sets_the_turn_boundary():
     api = FakeApi()
-    api.ok("get", "/api/session/ses/message", [{"id": "m1", "type": "user"}])
+    api.ok(
+        "get",
+        "/api/session/ses/message?order=desc&limit=1",
+        [{"id": "m1", "type": "user", "time": {"created": 1234}}],
+    )
     api.ok("post", "/api/session/ses/prompt", {"id": "m2"})
     harness = OpenCodeApiHarness(directory="/wt", executor=api)
-    watermark = harness.prompt("ses", "do the thing")
-    assert watermark == "1"
+    boundary = harness.prompt("ses", "do the thing")
+    # The boundary is the head ID, never a count: the page is windowed.
+    assert boundary == "m1"
+    assert harness._watermarks["ses"] == ("m1", 1234)
     prompt_call = api.calls[1]
     assert prompt_call.argv[:4] == ("opencode", "api", "post", "/api/session/ses/prompt")
     assert json.loads(prompt_call.argv[prompt_call.argv.index("--data") + 1]) == {
@@ -377,9 +384,18 @@ def test_prompt_sends_the_json_body_and_sets_the_turn_watermark():
     }
 
 
+def test_prompt_boundary_is_none_for_an_empty_session():
+    api = FakeApi()
+    api.ok("get", "/api/session/ses/message?order=desc&limit=1", [])
+    api.ok("post", "/api/session/ses/prompt", {"id": "m1"})
+    harness = OpenCodeApiHarness(directory="/wt", executor=api)
+    assert harness.prompt("ses", "go") == ""
+    assert harness._watermarks["ses"] is None
+
+
 def test_prompt_raises_a_retryable_error_on_a_provider_refusal():
     api = FakeApi()
-    api.ok("get", "/api/session/ses/message", [])
+    api.ok("get", "/api/session/ses/message?order=desc&limit=1", [])
     api.fail(
         "post",
         "/api/session/ses/prompt",
@@ -392,28 +408,32 @@ def test_prompt_raises_a_retryable_error_on_a_provider_refusal():
 
 
 def test_wait_terminal_polls_until_a_new_idle_appears():
-    """A stale idle at the head of the transcript is never this turn's terminal."""
+    """A stale idle in the newest-first page is never this turn's terminal."""
     stale = [{"id": "m0", "type": "idle", "outcome": "succeeded", "sessionID": "ses"}]
-    fresh = [{"id": "m1", "type": "user"}, _assistant(), _idle("succeeded", session="ses")]
+    # The endpoint answers newest first: the new turn's messages arrive at the
+    # head of the page, the stale terminal keeps trailing it.
+    fresh = [_idle("succeeded", session="ses"), _assistant(), {"id": "m1", "type": "user"}]
     api = FakeApi()
-    api.default = CommandResult(0, json.dumps({"data": stale}), "")
-    api.routes["get /api/session/ses/message"] = [
+    api.routes["get /api/session/ses/message?order=desc&limit=1"] = [
         CommandResult(0, json.dumps({"data": stale}), ""),
-        CommandResult(0, json.dumps({"data": stale + fresh}), ""),
+    ]
+    api.routes["get /api/session/ses/message?order=desc&limit=200"] = [
+        CommandResult(0, json.dumps({"data": stale}), ""),
+        CommandResult(0, json.dumps({"data": fresh + stale}), ""),
     ]
     harness = OpenCodeApiHarness(directory="/wt", executor=api, sleep=lambda _s: None)
-    harness.prompt("ses", "go")  # watermark 1
+    harness.prompt("ses", "go")  # boundary: the stale idle's id
     turn = harness.wait_terminal("ses", timeout_s=5)
     assert turn.ok is True
     assert turn.session_id == "ses"
-    # The prompt's own transcript-count call plus the poll that saw the idle.
+    # The prompt's boundary read plus the two polls (the first one had no idle).
     message_calls = [c for c in api.calls if "/message" in " ".join(c.argv)]
-    assert len(message_calls) == 2
+    assert len(message_calls) == 3
 
 
 def test_wait_terminal_times_out_loudly_and_non_retryably():
     api = FakeApi()
-    api.ok("get", "/api/session/ses/message", [{"id": "m1", "type": "user"}])
+    api.ok("get", "/api/session/ses/message?order=desc&limit=1", [{"id": "m1", "type": "user"}])
     harness = OpenCodeApiHarness(directory="/wt", executor=api, sleep=lambda _s: None)
     harness.prompt("ses", "go")
     with pytest.raises(TurnTimeout) as excinfo:
@@ -425,12 +445,12 @@ def test_wait_terminal_times_out_loudly_and_non_retryably():
     assert isinstance(excinfo.value, HarnessError)
 
 
-def test_the_watermark_read_is_strict_and_never_degrades_to_zero():
-    """A broken transcript GET must raise, never hand the wait a 0 watermark."""
+def test_the_boundary_read_is_strict_and_never_degrades():
+    """A broken head read must raise, never hand the wait a soundless boundary."""
     api = FakeApi()
     api.fail(
         "get",
-        "/api/session/ses/message",
+        "/api/session/ses/message?order=desc&limit=1",
         CommandResult(1, "", "connection reset by peer"),
     )
     api.ok("post", "/api/session/ses/prompt", {"id": "m"})
@@ -438,30 +458,68 @@ def test_the_watermark_read_is_strict_and_never_degrades_to_zero():
     with pytest.raises(HarnessError) as excinfo:
         harness.prompt("ses", "go")
     assert excinfo.value.retryable is True
-    assert "transcript" in str(excinfo.value)
+    assert "transcript head" in str(excinfo.value)
     # The prompt was never sent: there is no turn to await.
     assert not any("prompt" in " ".join(call.argv) for call in api.calls)
 
 
 def test_a_stale_idle_never_completes_a_new_turn():
-    """The reviewer's fixture: a failed watermark read plus an unchanged tail.
+    """The reviewer's fixture: a failed boundary read plus an unchanged page.
 
     The transcript already ends with `idle: succeeded` (the previous turn) and
-    the new turn produces nothing. The first watermark GET fails, so a degraded
-    watermark of 0 would hand the wait the stale idle as this turn's terminal
-    message; the strict read makes the real watermark the boundary instead.
+    the new turn produces nothing. A degraded boundary would hand the wait the
+    stale idle as this turn's terminal; the strict head read makes the stale
+    idle itself the boundary, so nothing in the page is newer than the turn.
     """
-    stale = [_assistant(), _idle("succeeded", session="ses")]
+    stale_page = [_idle("succeeded", session="ses"), _assistant()]
     api = FakeApi()
-    api.routes["get /api/session/ses/message"] = [
+    api.routes["get /api/session/ses/message?order=desc&limit=1"] = [
         CommandResult(1, "", "connection reset by peer"),
-        CommandResult(0, json.dumps({"data": stale}), ""),
+        CommandResult(0, json.dumps({"data": stale_page}), ""),
+    ]
+    api.routes["get /api/session/ses/message?order=desc&limit=200"] = [
+        CommandResult(0, json.dumps({"data": stale_page}), ""),
     ]
     api.ok("post", "/api/session/ses/prompt", {"id": "m"})
     harness = OpenCodeApiHarness(directory="/wt", executor=api, sleep=lambda _s: None)
-    assert harness.prompt("ses", "go") == "2"
+    assert harness.prompt("ses", "go") == stale_page[0]["id"]
     with pytest.raises(TurnTimeout):
         harness.wait_terminal("ses", timeout_s=0)
+
+
+def test_newer_than_walks_back_to_the_boundary_id_oldest_first():
+    page = [{"id": "m3"}, {"id": "m2"}, {"id": "m1"}, {"id": "m0"}]
+    assert [m["id"] for m in newer_than(page, ("m1", None))] == ["m2", "m3"]
+    assert [m["id"] for m in newer_than(page, ("m3", None))] == []
+    assert [m["id"] for m in newer_than(page, None)] == ["m0", "m1", "m2", "m3"]
+
+
+def test_a_turn_longer_than_the_page_keeps_its_terminal():
+    """The boundary id can fall out of a full page; the stamp stops the walk.
+
+    A turn that produced more messages than one page pushes its own boundary
+    out of the window. Everything the page still shows was created after the
+    boundary, so the walk must take the whole page rather than credit the
+    previous turn's terminal - and stop at the first message that is not
+    newer than the boundary stamp.
+    """
+    boundary = ("m9", 1000)
+    page = [
+        {
+            "id": "msg_new_idle",
+            "type": "idle",
+            "outcome": "succeeded",
+            "sessionID": "ses",
+            "time": {"created": 3000},
+        }
+    ] + [
+        {"id": f"n{i}", "type": "assistant", "time": {"created": 2000 + i}} for i in range(5)
+    ]
+    fresh = newer_than(page, boundary)
+    assert fresh[-1].get("type") == "idle"
+    assert len(fresh) == len(page)
+    older = [{"id": "o1", "type": "assistant", "time": {"created": 999}}]
+    assert newer_than(page + older, boundary) == fresh
 
 
 def test_interrupt_posts_to_the_interrupt_endpoint():
@@ -495,7 +553,7 @@ def test_harness_never_uses_opencode_run():
     """The harness seam is `opencode api`; `opencode run` is blocked by the gate."""
     api = FakeApi()
     api.ok("post", "/api/session", {"id": "ses"})
-    api.ok("get", "/api/session/ses/message", [])
+    api.ok("get", "/api/session/ses/message?order=desc&limit=1", [])
     api.ok("post", "/api/session/ses/prompt", {"id": "m"})
     harness = OpenCodeApiHarness(directory="/wt", executor=api)
     harness.create_session(_spec(session_id="ses"))
@@ -535,12 +593,12 @@ LIVE_SMOKE = os.environ.get("BOOTSTRAP_LIVE_SMOKE") == "1"
 def test_live_smoke_creates_prompts_and_deletes_a_throwaway_session():
     """The adapter against the REAL service: create -> prompt -> terminal -> delete.
 
-    The provider's free-tier gate may refuse the model call on this machine (an
-    HTTP 403 `FreeTierError` the harness classifies as retryable); the smoke
-    therefore asserts the adapter's contract - a terminal turn with a classified
-    outcome and the requested model on the assistant message - and records which
-    of the two answers it got, instead of failing an environment fact this
-    adapter cannot control.
+    The smoke pins the entitled `opencode-go` lane (the free tier is an explicit
+    opt-in and its 403 gate is covered by the classifier tests). It asserts the
+    adapter's contract - a terminal turn with a classified outcome and the
+    requested model on the assistant message - and records which of the two
+    answers it got, instead of failing an environment fact this adapter cannot
+    control.
     """
     harness = OpenCodeApiHarness(directory=str(REPO_ROOT), executor=LocalExecutor(timeout_s=180))
     session_id = "ses_bt_smoke_" + uuid.uuid4().hex[:12]
@@ -548,7 +606,7 @@ def test_live_smoke_creates_prompts_and_deletes_a_throwaway_session():
         session_id=session_id,
         title="external-bootstrap harness smoke",
         agent="data-dep-worker",
-        model=ModelRef("opencode", "deepseek-v4.1-flash-free", "high"),
+        model=ModelRef("opencode-go", "deepseek-v4.1-flash", "high"),
         directory=str(REPO_ROOT),
         metadata={"smoke": "1"},
     )
@@ -556,8 +614,8 @@ def test_live_smoke_creates_prompts_and_deletes_a_throwaway_session():
     try:
         # The session pins the requested reference explicitly.
         assert harness.session_model(session_id) == {
-            "id": "deepseek-v4.1-flash-free",
-            "providerID": "opencode",
+            "id": "deepseek-v4.1-flash",
+            "providerID": "opencode-go",
             "variant": "high",
         }
         harness.prompt(session_id, "Reply with exactly: PONG. Do not use any tools.")
@@ -566,8 +624,8 @@ def test_live_smoke_creates_prompts_and_deletes_a_throwaway_session():
         for message in turn.messages:
             if message.get("type") == "assistant" and message.get("model"):
                 assert message["model"] == {
-                    "id": "deepseek-v4.1-flash-free",
-                    "providerID": "opencode",
+                    "id": "deepseek-v4.1-flash",
+                    "providerID": "opencode-go",
                     "variant": "high",
                 }
         if turn.ok:

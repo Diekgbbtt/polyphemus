@@ -68,7 +68,7 @@ Prior art: `tests/test_bootstrap_validator.py` (importlib-by-path over `tools/`)
 
 - Create: `opencode api post /api/session` with `{id, title, agent: data-dep-worker, model: {providerID, id, variant}, location: {directory: <worktree>}, metadata: {run, target, phase}, permissions: [{action: "*", resource: "*", effect: "allow"}]}`; an existing id resumes (409 -> fetch).
 - Prompt: `opencode api post /api/session/{id}/prompt` with `{text: <wrapper>}` (JSON body; no PTY truncation).
-- Wait: poll `GET /api/session/{id}/message` until a new terminal `idle` message after the prompt (`outcome: succeeded|failed`); bounded turn timeout with `POST /api/session/{id}/interrupt`; `POST /api/experimental/session/{id}/wait` as an accelerator.
+- Wait: poll `GET /api/session/{id}/message` until a new terminal `idle` message after the prompt (`outcome: succeeded|failed`); bounded turn timeout with `POST /api/session/{id}/interrupt`; `POST /api/experimental/session/{id}/wait` as an accelerator. The turn boundary is the transcript HEAD ID read strictly before the prompt, walked back through the endpoint's newest-first page (`order=desc`, at most 200 per page) - never a message count, which a windowed page cannot support.
 - Failure classes: provider `FreeTierError`/rate limit -> backoff and re-prompt; tool/permission stall -> interrupt and re-prompt with a sharper instruction; hard failure -> mark the target failed and continue per the failure policy.
 - Deterministic session ids (`ses_bt_<run_short>_<target>_creator`) make resume and introspection trivial.
 
