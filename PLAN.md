@@ -92,8 +92,11 @@ The target environment is a parameter: attach to a reachable target, or run a lo
 - Q2, journeys: `journeys: [{name, steps: [str]}]`; at least 2 journeys, 3+ steps each; every step names at least one concrete surface part (route, form, menu entry, page navigation) and the activated component(s) by their KB identity.
 - Q3, budget: the 250-word cap covers the whole Overview content and is enforced at every checkpoint: the creator (self-check), the critic (criteria), and the deterministic validator (hard count).
   The creator and the critic are LLM checks; they must both actively verify the cap.
-- Q4, reasoning text: every site that dumps the L1 units inventory or the L1 graph into a prompt is prepended with the overview content, rendered cleanly without formatting noise.
-  Sites: assigner `_user_prompt`, mechanism typist `_reflection_prompt`, curation `_curation_prompt` (new prepend), sweep `stale_ownership_prompt` (new prepend).
+- Q4, reasoning text (refined 2026-10-17 after operator feedback): the four item-consuming agents - assigner, mechanism typist, hunt orchestrator, hunter - each send a DEDICATED HumanMessage containing ONLY the Overview at the head of their turn.
+  It is coupled cohesively to the following item-feeding humanMessages by specific introductory verbatims and chaining between the messages.
+  The coupling is realised as: a shared intro verbatim on the Overview message, a per-site chaining verbatim opening the item message, and a clean deterministic render without formatting noise.
+  The Overview message heads the thread once; later calls (typist calls 2-3) and later phase turns (orchestrator ratify/note) continue the same thread.
+  Curation and sweep (housekeeping passes) do NOT get the Overview; the earlier "prepend at every inventory dump" reading is superseded.
   The in-system bootstrap message is the creation pass (no overview exists yet) and its mechanism is being retired; it keeps its current shape.
 - Q5, KB format: the least complex, most structurally reliable parse wins; the ephemeral KB format itself is not a concern.
   Decision: a fenced YAML block under `## Overview`, read with `yaml.safe_load`; legacy prose stays accepted (mapped to `description`).
