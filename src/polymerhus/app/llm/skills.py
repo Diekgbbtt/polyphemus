@@ -565,9 +565,10 @@ def skills_for_role(role_id: str) -> tuple[str, ...]:
 
 # The hard ceiling on the artifact-declared additions ONE binding accepts
 # (#236): the artifact is LLM-authored, so the exclusion of the meta family and
-# this cap are the MECHANISM's job, never the author's goodwill. Names past the
-# cap (deterministic sorted order) are dropped LOUDLY - a warning naming them -
-# never a silent drop.
+# this cap are the MECHANISM's job, never the author's goodwill. The cap applies
+# to the RESOLVED additions (a name that resolves nothing is skipped first), in
+# deterministic sorted order; the dropped tail is named in a warning - never a
+# silent drop.
 MAX_TASK_SKILLS = 8
 
 
@@ -590,12 +591,14 @@ def _resolve_task_skills(
       entry, an empty name) degrades to nothing with a warning;
     - a meta-family name (`is_meta_skill`) is refused with a warning: the meta
       skills stay unadvertised, so no artifact can advertise them;
-    - the union is de-duplicated and sorted, then capped at `MAX_TASK_SKILLS`
-      (the dropped tail is named in the warning);
-    - a name whose frontmatter resolves through the SAME store seam the loader
-      uses (the per-project bundle first, then the shared catalogue) with a
-      non-empty `description` is kept; anything else is warned and skipped, so
-      the returned set is exactly the set the L1 index can render.
+    - each remaining name is RESOLVED through the SAME store seam the loader
+      uses (the per-project bundle first, then the shared catalogue): a name
+      whose frontmatter carries no non-empty `description` is warned and
+      skipped, so the survivors are exactly the names the L1 index can render;
+    - only THEN does the cap apply to the RESOLVED additions (sorted,
+      de-duplicated, capped at `MAX_TASK_SKILLS`, the dropped tail named in the
+      warning): unresolvable junk can never consume the budget and evict a
+      valid declaration.
 
     Import performs no I/O; the resolution reads frontmatter (the binding call
     is the deliberate read site, never an import)."""
@@ -630,17 +633,8 @@ def _resolve_task_skills(
             )
             continue
         candidates.append(name)
-    candidates = sorted(candidates)
-    if len(candidates) > MAX_TASK_SKILLS:
-        logger.warning(
-            "skill binding: %s declared %d task skills; the cap keeps the "
-            "first %d and drops %s",
-            role_id, len(candidates), MAX_TASK_SKILLS,
-            candidates[MAX_TASK_SKILLS:],
-        )
-        candidates = candidates[:MAX_TASK_SKILLS]
     resolved: list[str] = []
-    for name in candidates:
+    for name in sorted(candidates):
         meta = seam.meta(name, project_id=project_id)
         description = meta.get("description") if isinstance(meta, dict) else None
         if not isinstance(description, str) or not description:
@@ -651,6 +645,14 @@ def _resolve_task_skills(
             )
             continue
         resolved.append(name)
+    if len(resolved) > MAX_TASK_SKILLS:
+        logger.warning(
+            "skill binding: %s resolved %d task skills; the cap keeps the "
+            "first %d and drops %s",
+            role_id, len(resolved), MAX_TASK_SKILLS,
+            resolved[MAX_TASK_SKILLS:],
+        )
+        resolved = resolved[:MAX_TASK_SKILLS]
     return resolved
 
 

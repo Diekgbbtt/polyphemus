@@ -143,6 +143,20 @@ def test_the_declared_set_is_capped_by_the_mechanism(caplog) -> None:
                for record in caplog.records), "the dropped tail must be named"
 
 
+def test_unresolvable_names_never_consume_the_cap(caplog) -> None:
+    """The cap applies to the RESOLVED additions: unresolvable junk is warned
+    and skipped first, so it can never evict a valid declaration."""
+    junk = [f"no-such-skill-{i}" for i in range(skills.MAX_TASK_SKILLS)]
+    with caplog.at_level(logging.WARNING, logger="polymerhus.app.llm.skills"):
+        binding = skill_agent_binding(
+            "pod_runner", task_skills=[*junk, "ssrf"]
+        )
+
+    assert "ssrf" in binding.context["skills"]
+    assert all(name not in binding.context["skills"] for name in junk)
+    assert any("no-such-skill-0" in record.message for record in caplog.records)
+
+
 def test_a_malformed_declaration_degrades_to_the_baseline() -> None:
     """A malformed artifact degrades its skill set, never crashes the binding:
     a bare string, a scalar, and a mixed list all resolve to what is valid."""
