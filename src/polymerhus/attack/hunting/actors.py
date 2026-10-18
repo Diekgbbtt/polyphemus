@@ -454,6 +454,46 @@ def build_orchestrator_tool_surface(tools, *, run_id: str, project_id: str | Non
     return surface
 
 
+def build_orchestrator_read_grants(project_id: str | None) -> list:
+    """The hunt-orchestrator's two operator-ruled READ grants (#236; the cortex
+    decision of 2026-09-28, which reopens the frozen three-tool surface):
+
+    - `search_http_history` / `get_http_artifact` - the HTTP-history read pair,
+      the SAME single implementations the hunter and the SkillEvolver bind, over
+      the production Kali client seams. The `replay` verb stays the pod's: the
+      orchestrator inspects request history, it never executes.
+    - `load_skill` in its description-only mode: the all-or-regex description
+      listing, never a skill body, never lesson writing.
+
+    Both grants are read-only by construction (no mutation/execution verb; the
+    description-only load refuses a named load in-band), and they ride the
+    orchestrator's session surface through the SAME `tools=` seam the three
+    store/graph tools use - never a per-site reimplementation. The
+    `build_orchestrator_tool_surface` builder stays the SEAM-BACKED half
+    (`TOOL_SURFACE`); this builder is the grant half
+    (`ORCHESTRATOR_READ_GRANTS`), and the actor composes both. The Kali-client
+    import resolves lazily inside the call (CODING_STANDARD section 6)."""
+    from polymerhus.app.clients.kali_http_history import (  # noqa: PLC0415
+        default_http_get_fn,
+        default_http_search_fn,
+    )
+    from polymerhus.app.llm.skills import build_load_skill_tool  # noqa: PLC0415
+    from polymerhus.attack.hunting.hunter_tools import (  # noqa: PLC0415
+        HttpHistoryGetTool,
+        HttpHistorySearchTool,
+    )
+
+    return [
+        HttpHistorySearchTool(
+            http_search_fn=default_http_search_fn, project_id=project_id or ""
+        ),
+        HttpHistoryGetTool(
+            http_get_fn=default_http_get_fn, project_id=project_id or ""
+        ),
+        build_load_skill_tool(project_id, description_only=True),
+    ]
+
+
 class HuntOrchestratorActor(_TurnActor):
     """The hunt-orchestrator as a persistent MAILBOX actor (feat/async-actor-agents).
 
@@ -519,15 +559,20 @@ class HuntOrchestratorActor(_TurnActor):
         middleware_extra = None
         if self._compaction is not False:
             middleware_extra = [self._compaction]
-        surface = ()
+        surface = []
         if (getattr(self.tools, "back_edge", None) is not None
                 or getattr(self.tools, "graph_view", None) is not None
                 or getattr(self.tools, "store_reads", None) is not None):
-            surface = build_orchestrator_tool_surface(
+            surface = list(build_orchestrator_tool_surface(
                 self.tools,
                 run_id=self._run_id,
                 project_id=self.project_id,
-            )
+            ))
+        # The #236 READ grants (the cortex decision) are UNCONDITIONAL: the
+        # HTTP-history read pair and the description-only `load_skill` listing
+        # are the role's considered surface, not a function of which store seam
+        # this pass injected. They carry no mutation, no execution, no bodies.
+        surface += build_orchestrator_read_grants(self.project_id)
         # The static gate skill is the run's ONE system message on this thread
         # (#187): passed ONCE via `system_prompt`, never re-added per phase turn
         # (the per-turn re-add used to stack a byte-identical copy on every
@@ -535,10 +580,10 @@ class HuntOrchestratorActor(_TurnActor):
         # timeout). The phase-transition verbatims stay in the tool-call
         # responses (G1/G3), never here.
         # A6: the structured verdict is negotiated, not pinned - computed from
-        # the REAL binding fact (the surface may be empty); a
-        # forced-choice-constrained profile lands on ToolStrategy over the
-        # relaxed model (voluntary).
-        tools = list(surface) or None
+        # the REAL binding fact (with the #236 read grants bound the surface is
+        # never empty); a forced-choice-constrained profile lands on ToolStrategy
+        # over the relaxed model (voluntary).
+        tools = surface or None
         response_format = structured_response_format(
             "hunting_orchestrator",
             GateDecision | RatifyDecision | NoteDecision | MatchVerdict,

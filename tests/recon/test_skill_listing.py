@@ -148,3 +148,39 @@ def test_both_modes_carry_the_one_contract(catalogue) -> None:
     ):
         assert skills.SKILL_LOAD_CONTRACT in tool.description
         assert "LISTING MODE" in tool.description
+
+
+# --- the description-only BINDING (the hunt-orchestrator's grant) --------------
+
+
+def test_the_description_only_binding_is_the_exempt_roles_grant() -> None:
+    binding = skills.skill_agent_binding(
+        "hunting_orchestrator", description_only=True
+    )
+
+    assert binding.middleware == []
+    assert binding.context == {}
+    assert [t.name for t in binding.tools] == ["load_skill"]
+    tool = binding.tools[0]
+    # the listing works (narrowed here: the live catalogue exceeds the cap)
+    assert "- ssrf: " in tool.invoke({"pattern": "^ssrf$"})
+    assert "description-only" in tool.invoke({"name": "ssrf"})  # no bodies
+
+
+def test_the_description_only_binding_is_refused_on_a_bound_role() -> None:
+    """Swapping a considered bounded set for the listing would silently drop
+    the role's declared discipline: a wiring defect, refused at construction."""
+    with pytest.raises(ValueError, match="BOUND role"):
+        skills.skill_agent_binding("pod_runner", description_only=True)
+
+
+def test_the_auth_wrapper_returns_the_description_only_binding_unchanged() -> None:
+    """The orchestrator carries no auth capability and no `authn` skill: the
+    description-only grant is capability-free."""
+    from polymerhus.app.auth.seams import auth_capable_binding
+
+    binding = auth_capable_binding("hunting_orchestrator", description_only=True)
+
+    assert [t.name for t in binding.tools] == ["load_skill"]
+    assert binding.context == {}
+    assert binding.middleware == []

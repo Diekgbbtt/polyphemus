@@ -271,14 +271,17 @@ def test_H4_phase_hints_ride_tool_responses_and_graph_tracks_the_loop(tmp_path):
 
 
 def test_H5_tool_schemas_ride_the_session_turn(tmp_path, monkeypatch):
-    """The seven tool schemas are bound REQUEST-ONLY to the session turn: each
-    `convert_to_openai_tool` dict carries the tool's JSON schema in the
+    """The hunter's ten tool schemas are bound REQUEST-ONLY to the session turn:
+    each `convert_to_openai_tool` dict carries the tool's JSON schema in the
     generation request's `tools` body (the standard tool interface), so the
     model can emit valid args - and no ToolNode is created, so the harness stays
-    the sole executor. The sixth is `load_skill` (ADR A4): the hunter declares it
-    request-only alongside its five memory/exec tools; the seventh is
-    `auth_store` (#223: the auth-capable binding arms the hunter's skill
-    surface with the shared auth store, last in the surface)."""
+    the sole executor. The surface is the seven harness tools (`hunts_store`,
+    `notes`, `graph_view`, `kb_query`, `exec`, and the #196 HTTP-history read
+    pair) plus the skill binding's three: `load_skill`, `record_skill_lesson`
+    (#232 D232-4) and the auth-capable `auth_store` (#223), last in the
+    surface. (This expectation was stale on the trunk tip: the harness's tool
+    list had grown without the list being updated, so the test failed before
+    #236 too.)"""
     import polymerhus.app.llm.session as S
     from langchain_core.messages import AIMessage
     from langchain_core.outputs import ChatGeneration, ChatResult
@@ -310,8 +313,9 @@ def test_H5_tool_schemas_ride_the_session_turn(tmp_path, monkeypatch):
     tools = captured.get("tools", ())
     names = [t["function"]["name"] for t in tools]
     assert names == [
-        "hunts_store", "notes", "graph_view", "kb_query", "exec", "load_skill",
-        "auth_store",
+        "hunts_store", "notes", "graph_view", "kb_query", "exec",
+        "search_http_history", "get_http_artifact",
+        "load_skill", "record_skill_lesson", "auth_store",
     ]
     for t in tools:
         assert t["type"] == "function"

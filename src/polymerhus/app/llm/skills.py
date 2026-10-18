@@ -677,6 +677,7 @@ def skill_agent_binding(
     store: "SkillStore | None" = None,
     lesson_store: "LessonStore | None" = None,
     task_skills=None,
+    description_only: bool = False,
 ) -> SkillAgentBinding:
     """Build the ONE per-agent skill binding (the `skill_agent_seams` successor,
     Q3 -> #221): every tool-calling agent binds its whole skill surface through
@@ -710,7 +711,16 @@ def skill_agent_binding(
     caught at construction, not a silent no-op. A DECLARED role with an empty
     set is exempt and returns an inert binding (no middleware, no tools, no
     skills in the context): the site stays uniform, and nothing dead is bound.
-    Import performs no I/O."""
+
+    `description_only=True` builds the DESCRIPTION-ONLY surface (the
+    hunt-orchestrator's grant): the ONE `load_skill` tool in its listing mode
+    (all-or-regex descriptions, meta excluded, capped) and nothing else - no L1
+    index, no bounded set, no `record_skill_lesson`, no bodies. It is the grant
+    an exempt role may carry: the roster exemption means "no bounded skill set
+    and no index", and the listing is a capability-free discovery surface, not
+    a bounded set. On a BOUND role it refuses (`ValueError`): swapping a
+    considered bounded set for the listing would silently drop the role's
+    declared discipline. Import performs no I/O."""
     if role_id not in ROLE_SKILLS:
         raise ValueError(
             f"skill seam: {role_id!r} is not declared in ROLE_SKILLS - every "
@@ -719,6 +729,24 @@ def skill_agent_binding(
             "typo) is a wiring defect."
         )
     names = ROLE_SKILLS[role_id]
+    if description_only:
+        if names:
+            raise ValueError(
+                f"skill seam: {role_id!r} is a BOUND role - the description-only "
+                "surface is the exempt-role grant (the hunt-orchestrator's); "
+                "binding it here would silently drop the role's declared "
+                "discipline."
+            )
+        return SkillAgentBinding(
+            role_id=role_id,
+            middleware=[],
+            tools=[
+                build_load_skill_tool(
+                    project_id, store=store, description_only=True
+                )
+            ],
+            context={},
+        )
     if task_skills is not None and not names:
         logger.warning(
             "skill binding: %s is declared exempt in ROLE_SKILLS but its "
