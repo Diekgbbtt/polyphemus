@@ -22,9 +22,11 @@ THIRD-PARTY variant miner (D84-23): it reads the Runner's consolidated
 experiment note, classifies, and either terminates or mints a NEW falsifiable
 variant that changes a fundamental parameter - never a per-lap re-derivation.
 
-Skills are deferred (the whole skill suite + the skill-mount tool): these are
-base prompts in code, no SKILL.md mount. `{KB_TOOL}` is the placeholder tool
-name for the natural-language knowledge-base retrieval tool (#66).
+The pod's `pod_runner` and `pod_triager` roles are BOUND roles: `load_skill`
+and `record_skill_lesson` reach their production seams through the
+universal `build_skill_tools` binding, while these base prompts stay in code
+(no SKILL.md mount). `{KB_TOOL}` is the placeholder tool name for the
+natural-language knowledge-base retrieval tool (#66).
 
 The runner primitives were derived through an overthink `create` pass; the
 triager primitives from `critical-thinking-logical-reasoning` (evaluation) and
