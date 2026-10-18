@@ -1639,14 +1639,16 @@ class LessonStore:
     def _shard_file(self, project_id: str, skill: str) -> Path:
         """The shard for one skill, resolved through the one project resolver.
         `skill` must be ONE safe path component (no separators, no traversal)
-        and may not be the reserved `lessons` shard-directory name."""
+        and may not be a scaffold-owned `skills/` directory name (`lessons`,
+        `evolution`): those directories are not bundles, so no lesson can
+        concern them."""
         try:
             validate_path_component(skill, "skill")
         except ValueError as exc:
             raise LessonInvalidError(f"lesson_invalid: {exc}") from exc
-        if skill == _LESSONS_DIRNAME:
+        if skill in RESERVED_SKILL_NAMES:
             raise LessonInvalidError(
-                f"lesson_invalid: {skill!r} is the reserved lessons directory name"
+                f"lesson_invalid: {skill!r} is a reserved skills/ directory name"
             )
         base = project_dir(project_id, "skills", root=self._root)
         return base / _LESSONS_DIRNAME / f"{skill}.yaml"
