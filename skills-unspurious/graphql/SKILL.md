@@ -1,168 +1,180 @@
 ---
 name: graphql
 description: OWASP GraphQL security testing - introspection, injection, DoS, IDOR/BFLA, batching, GraphiQL, and excessive errors
+metadata:
+  version: 1.0.0
 ---
 
 # GraphQL
 
-Test GraphQL APIs using the [OWASP GraphQL Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/GraphQL_Cheat_Sheet.html). Every interesting action is a GraphQL operation (`query` / `mutation`), not a REST resource. Auth first, then abuse resolvers.
+GraphQL APIs expose one endpoint where every interesting action is an operation (`query` or `mutation`) rather than a REST resource. Establish the endpoint and the schema first, authenticate, then abuse resolvers.
 
-Send JSON POSTs:
+## Attack Surface
 
-```http
-POST /api/graphql
-Content-Type: application/json
-Cookie: session=<cookie>
+**Endpoint Shape**
+- A single path carrying queries and mutations; JSON POST bodies with a query document plus optional variables
+- Alternative transports: form-encoded bodies, a dedicated media type, GET with a query parameter, and batch arrays
+- Console surfaces: interactive query editors exposed alongside the API path
 
-{"query":"query { hello }","variables":null}
-```
+**Operation Types**
+- Queries that take identifiers, filters, search strings, URLs, or paths as arguments
+- Mutations that create, update, delete, promote, invite, or verify
+- Nested selections that resolve relations and connections with pagination arguments
 
-Confirm the endpoint with `{__typename}` (or `{__schema{queryType{name}}}`). A JSON body with `data` or `errors`, or HTTP 401 on a `/graphql` path, means GraphQL.
+**Access Paths**
+- Unauthenticated operations, session-cookie and bearer-token operations, and per-field permission tiers
+- Relay-style node and nodes lookups that resolve any type by identifier
+- Persisted or pre-registered operations, and batched arrays of operations in one request
 
-Authenticate with available test credentials for login. Typical login mutation:
+## Reconnaissance
 
-```graphql
-mutation { login(email: "USER", password: "PASS") { ok token } }
-```
+### Confirm and Map
 
-Reuse `Set-Cookie` (or a returned token) on later requests. If unauthenticated queries return 401, do not treat that as “not GraphQL”.
+- Confirm the endpoint with a well-known meta field; a structured body carrying data or errors, or an auth challenge on the path, marks GraphQL
+- Introspect where enabled to map queries, mutations, types, fields, and arguments
+- Where introspection is disabled, enumerate field names and read the suggestion text in unknown-field errors, which leaks neighbouring names
+- Distinguish unknown-field errors from unauthorized-field errors: the second proves the field exists
+- Watch for console and editor surfaces on sibling paths
 
-## Common attacks (OWASP)
+### Authenticate and Re-enumerate
 
-### 1. Insecure defaults - introspection, GraphiQL, errors
+- Log in with available test credentials and reuse the returned session or token on later requests
+- Re-enumerate the schema after login: fields and types often grow with the authenticated role
+- Treat an unauthenticated auth challenge as expected rather than as evidence the endpoint is not GraphQL
 
-```graphql
-{__schema{queryType{name}mutationType{name}types{name fields{name args{name type{name kind ofType{name}}}}}}}
-```
+### Record Baselines
 
-Also try GraphiQL/Playground: `/graphql`, `/graphiql`, `/playground`, `/altair`.
+- Record one known-good response per operation shape (query, mutation, nested selection) to serve as the acceptance baseline
+- Note response size and latency per operation under a benign argument set
 
-If introspection is off, brute-force field names and watch **Did you mean "user?"** suggestions (leaks schema). Unknown-field vs unauthorized-field errors also prove a field exists.
+## Detection Channels
 
-Production APIs must not return stack traces or debug dumps in `errors`. Record path/SQL/exception text as information disclosure.
+- Structured response bodies carrying data or errors that mark a live GraphQL endpoint.
+- Introspection output listing queries, mutations, types, and arguments.
+- Unknown-field error text carrying a suggestion list, which leaks neighbouring field names.
+- Unknown-field verdict beside unauthorized-field verdict for the same name, which proves the field exists.
+- Resolver error text carrying internal paths, query fragments, or exception classes.
+- Foreign-object data returned for an identifier the caller does not own.
+- A privileged mutation effect observed under a lower-privilege actor.
+- Request success with latency or response size exploding under depth, amount, or alias amplification.
+- Batch responses where a forbidden operation succeeds inside a nominally allowed array.
 
-### 2. Injection (resolver args)
+## Adversarial Capabilities
 
-GraphQL args are passed into SQL, NoSQL, OS, LDAP, XML, and HTTP clients. Probe **string arguments** (`id`, `email`, `search`, `url`, `path`, `host`) with the same payloads as those interpreters.
+GraphQL testing presupposes one authenticated session per privilege tier, a schema or field-name inventory, and repeated requests with controlled argument shapes, and it consumes all three.
+- Hold low-privilege and foreign-principal sessions so access verdicts can be contrasted.
+- Send arbitrary operation documents, variable maps, aliases, fragments, and batch arrays to one endpoint.
+- Enumerate field names and types where introspection is closed, through error text and brute force.
+- Measure response latency and size under amplified operations without taking the target down.
+- Replay one operation through each transport (JSON, form, media type, GET, batch).
 
-```graphql
-query {
-  user(id: "1 OR 1=1") { id }
-  search(q: "\"} || true || \"") { id }
-}
-mutation {
-  createNote(title: "'; SELECT pg_sleep(3)--") { id }
-}
-```
+## Trust Assumptions
 
-SSRF/CRLF: if an arg looks like a URL or host, pass an internal URL. Do not use user input as the HTTP target (OWASP process validation).
+The class rests on one agreement: each operation is authorized at the field or resolver that resolves it, and each argument is data rather than a fragment of a downstream instruction.
+The agreement holds authorization to every resolver and every node, holds argument values to their declared scalar type before they reach a downstream interpreter, holds query cost to a bound the server enforces, and holds error text to the operator while exposing only the caller's own data.
+Sensitive position and data leak when a resolver trusts its caller, trusts an argument's shape, or trusts that upstream cost and rate limits already apply.
+The non-decomposing baseline is the endpoint itself: one surface where depth, aliasing, and nesting are all caller-controlled.
 
-Prefer parameterized-looking failures vs true injection: a 200 with extra rows, time delay, or a fetched internal body is a finding. Pair with skills `sql-injection`, `ssrf`, `rce`.
+## Key Vulnerabilities
 
-### 3. Denial of service
+### Insecure Defaults and Error Exposure
 
-Do **not** take a live target down. On authorized benches, show that limits are missing with modest payloads:
+- Introspection and query editors enabled in production expose the whole schema
+- Field-name suggestions in errors leak schema shape where introspection is closed
+- Stack traces, internal paths, and query fragments in error payloads count as information disclosure
 
-**Depth** (cyclic nesting):
+### Resolver-Argument Injection
 
-```graphql
-query {
-  album(id: 1) { songs { album { songs { album { id } } } } }
-}
-```
+- Arguments flow into downstream interpreters: query languages, document stores, command shells, directory services, XML parsers, and HTTP clients
+- Probe every string argument that looks like an identifier, a search term, a URL, or a path with the payload shapes of the interpreter behind it
+- A URL-shaped or host-shaped argument reaches internal services when the resolver fetches it
+- Parameterized-looking failures versus true injection: extra rows in a 200, a measurable delay, or an internal body fetched back are the findings
 
-**Amount** (unbounded lists):
+### Denial of Service
 
-```graphql
-query { author(id: "1") { posts(first: 9999) { title } } }
-```
+- Depth: cyclic nesting that multiplies resolver calls per level
+- Amount: unbounded list arguments pulling entire collections
+- Alias amplification: many aliases of one resolver in a single request bypassing request-rate limits
+- A finding is a succeeded request whose latency or size explodes without depth, amount, cost, or rate bounds; prove it and stop
 
-**Alias amplification** (many resolvers, one HTTP request):
+### Broken Authorization (Object and Function Level)
 
-```graphql
-query {
-  a1: user(id: "1") { id }
-  a2: user(id: "2") { id }
-  a3: user(id: "3") { id }
-}
-```
+- Possession of an identifier is not authorization; request foreign identifiers after authenticating as one principal
+- Alias several identifier lookups in one operation to test ownership contrast in one request
+- Relay-style node and nodes lookups resolve hidden objects even when named lookups are locked down
+- Field-level access: a caller entitled to one field set may read sensitive sibling fields; request them as a low-privilege actor
+- Mutation-level access: invoke admin, update, promote, or delete operations as a normal user
+- Authorize nodes and edges as well as top-level fields: a connection that hides a row while the identifier lookup still returns it remains a gap
 
-A finding is: request succeeds, latency/size explodes, or the server hangs - and there is no depth/amount/cost/rate limit. Stop after proving it.
+### Batching Amplification
 
-### 4. Broken authorization (BOLA/IDOR and BFLA)
+- Array batches and aliases turn one HTTP request into many operations, evading per-request rate limits
+- Use them to enumerate identities, brute one-time codes or tokens, or multiply resolver cost
+- Sensitive mutations batched in one call carry the highest value
 
-Possession of an object ID is not authorization. After login as principal A, request principal B’s objects.
+## Advanced Techniques
 
-**Query IDOR (BOLA)** - same operation, foreign id:
+### Batched and Persisted Operations
 
-```graphql
-query {
-  me { id email }
-  own: user(id: "1") { id email apiKey }
-  foreign: user(id: "2") { id email apiKey }
-}
-```
+- Batch arrays stress brute-force targets (login, verification, invitation) while the transport survives intact
+- Persisted or pre-registered operations sometimes skip the auth transforms applied to ad-hoc documents
 
-If `foreign` returns another user’s secrets (tokens, apiKey, email, PII), that is a GraphQL IDOR. Aliases in one request are enough; do not require REST.
+### Transport and Parser Differentials
 
-**Relay `node` / `nodes`** - hidden IDOR even when `user(id:)` is locked down:
+- The same operation carried as JSON, form-encoded, a dedicated media type, or a GET parameter can land on different validation paths
+- GET-carried operations enable cross-site forgery on mutations where cookie auth applies
 
-```graphql
-query { node(id: "2") { ... on User { id email apiKey } } }
-```
+### Relay and Connection Paths
 
-**Field-level access** - caller may read `user { id }` but not `user { apiKey role }`. Request sensitive fields as a low-privilege user.
+- Node lookups resolve any mapped type by identifier, which turns one authorized lookup into a cross-type read
+- Connection edges carry their own authorization questions, including counts and page windows
 
-**Mutation BFLA** - invoke admin/update/delete as a normal user:
+## Bypass Techniques
 
-```graphql
-mutation { updateUser(id: "2", role: "admin") { id role } }
-mutation { deleteUser(id: "2") { ok } }
-```
+- Comments and fragments in the operation document evade text-matching filters while the operation stays valid
+- Variable indirection: pass hostile values through the variable map rather than inline arguments, which moves them past argument-level filters
+- Aliasing to duplicate a filtered operation many times inside one document
+- Nested selections that reach a guarded field through an allowed parent
+- Batching to interleave a blocked operation among allowed siblings
 
-Authorize **nodes and edges**. A list/connection that hides a row but `user(id:)` still returns it is still IDOR.
+## Chaining Attacks
 
-### 5. Batching attacks
+- Resolver-argument injection + the interpreter class behind the argument (query language, command, path, URL) to turn one argument into a downstream finding
+- Broken object authorization + identifier enumeration to sweep collections for foreign data
+- Denial-of-service probes + alias amplification to hold a rate-limit budget while brute-force operations run
+- Error exposure + injection probing: leaked query fragments shorten the blind-exploitation path
 
-Two GraphQL-specific brute-force forms (bypass HTTP-layer rate limits):
+## Testing Methodology
 
-**JSON array batching** (Apollo-style):
+1. **Confirm the endpoint** - A meta field answers with a structured body; record the auth challenge shape for later steps
+2. **Map the schema** - Introspection, editor surfaces, and field-suggestion errors; the step completes when queries and mutations are enumerated or enumerated as far as the surface allows
+3. **Authenticate and re-enumerate** - Log in per role and diff the reachable field set; the step completes when each role's reachable surface is recorded
+4. **Object-level sweep** - Per identifier-taking query, request owned versus foreign identifiers; the step completes when each query carries an access verdict
+5. **Function-level sweep** - Per mutation, attempt it unauthenticated, as a low-privilege actor, and with foreign identifiers; the step completes when each mutation carries a verdict
+6. **Argument injection** - Probe string arguments with the payload shapes of the interpreter behind them; the step completes when each argument carries an injection verdict
+7. **Bounded amplification** - Light depth, amount, and alias probes for missing limits, plus batching on login and verification operations; the step completes when each limit question carries a verdict
+8. **Error review** - Read every error payload for internal detail and file it as disclosure; the step completes when listed error texts are triaged
+9. **Transport replay** - Replay the interesting operations through the alternative transports; the step completes when each transport carries a reachability verdict
 
-```json
-[
-  {"query":"query($id:ID!){user(id:$id){email}}","variables":{"id":"1"}},
-  {"query":"query($id:ID!){user(id:$id){email}}","variables":{"id":"2"}}
-]
-```
+## False Positives
 
-**Alias batching** in one operation (see DoS / IDOR examples).
+- Unknown-field errors for a name that does not exist; distinguish from unauthorized-field errors
+- An auth challenge on the whole endpoint; log in and retest before filing
+- Public health and greeting fields that carry no data
+- An empty foreign lookup while the owning lookup returns data, which is enforcement rather than a gap
+- Introspection disabled in production, which is a hardening choice and not itself a finding
 
-Use this to enumerate users, brute OTPs/tokens, or multiply resolver cost. Sensitive mutations (`login`, `verifyOtp`) batched in one call are high impact.
+## Pro Tips
 
-## Request variants
+1. Establish the endpoint and auth shape before anything else; a challenge on the path still marks GraphQL
+2. Alias identifier lookups so ownership contrast resolves in one request
+3. Read the suggestion lists in unknown-field errors when introspection is closed
+4. Test nodes and edges, not only named lookups; connections hide rows while lookups return them
+5. Keep amplification probes modest and stop after proving the bound is missing
+6. Try the alternative transports early; validation paths differ between them
+7. Treat error payloads as a first-class disclosure channel
+8. Pair each argument with the interpreter behind it rather than a generic payload set
 
-Try each of these if the first POST JSON fails:
+## Summary
 
-- `{"query":"..."}` vs `query=` form body vs `Content-Type: application/graphql`
-- GET `/graphql?query={__typename}` (cookie-auth GET enables CSRF on mutations)
-- `variables` vs inline args
-- Comments and fragments to evade WAFs: `query { user(id:"2") { ...F } } fragment F on User { apiKey }`
-
-## Testing order
-
-1. Confirm GraphQL (`{__typename}`). Note 401 vs GraphQL errors.
-2. Introspection / GraphiQL / field suggestions. Map Query and Mutation fields (or use previously enumerated Query/Mutation fields).
-3. Authenticate with project secrets. Re-enumerate if the schema grows after login.
-4. For each Query that takes an id: owned vs foreign (IDOR). Prefer aliases in one request.
-5. For each Mutation: unauthenticated, low-priv, and cross-user ids (BFLA).
-6. Injection in string args of those same fields.
-7. Light depth/amount/alias probes for missing limits. Batching on login/OTP if present.
-8. Record stack traces / SQL in `errors`.
-
-## False positives
-
-- `Cannot query field "X"` - field does not exist
-- `Unauthorized` / 401 on the whole endpoint - log in, then retest
-- Public `hello` / health fields
-- Empty `user(id: foreign)` when the owner query returns data - that is enforcement, not IDOR
-- Introspection disabled is expected on many production APIs; still test IDOR and injection
+One endpoint, caller-controlled depth, aliases, and nesting, and resolvers that own their own authorization and argument trust. Bind each field to its caller, each argument to its declared type, and each operation to a cost bound.

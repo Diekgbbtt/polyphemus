@@ -1,6 +1,8 @@
 ---
 name: broken-function-level-authorization
 description: BFLA testing for action-level authorization failures across endpoints, admin functions, and API operations
+metadata:
+  version: 1.0.0
 ---
 
 # Broken Function Level Authorization (BFLA)
@@ -24,86 +26,110 @@ BFLA is action-level authorization failure: callers invoke functions (endpoints,
 - GraphQL schemas: mutations and admin-only fields/types; gRPC service descriptors (reflection)
 - Mobile clients often reveal extra endpoints/roles in app bundles or network logs
 
-### Signals
+### Role and Route Inventory
 
-- 401/403 on UI but 200 via direct API call; differing status codes across transports
-- Actions succeed via background jobs when direct call is denied
-- Changing only headers (role/org) alters access without token change
+- Collect one session per role so every action can be exercised with each actor
+- Diff middleware stacks between the primary route and its aliases, legacy paths, and alternate encodings
+- Trace the actor value from the edge inward: token claim, gateway-injected header, and body hint
+
+## Detection Channels
+
+- Denial on the primary path beside success on an alternate path for the same action decides the finding.
+- A privileged effect observed after an alias, shadow-route, or parser-path replay, even when the status line looks normal.
+- Status and effect differentials across transports or encodings for the same action.
+- Access that changes on a hint or selector change alone, without any token change.
+- A privileged effect under a hinted lower-role token beside denial without the hint.
+- Conflicting-hint pairs where the service honors one source over the other show which source wins.
+- A privileged effect from a deferred step replayed by an unentitled caller, beside denial on the direct call.
+- State changes applied by a redelivered webhook or retried finalize without a fresh actor check.
+- Session swaps that inherit a cached edge decision.
+- A before-and-after state snapshot showing the privileged change completes the proof.
+
+## Adversarial Capabilities
+
+BFLA testing presupposes a role ladder, a second identity source, and reach into every transport that performs the action, and it consumes all three.
+- Hold one authenticated session per role, from unauthenticated through staff, on every transport in scope.
+- Replay one action across transports, encodings, and routes while changing only the actor or the identity hint.
+- Supply identity hints and selectors (tenant, organization, project) independently of the token.
+- Reach background delivery paths, such as queue and webhook endpoints, that perform the action later.
+- Read the durable effect of each replay, not only the status line, through a before-and-after snapshot.
+
+## Trust Assumptions
+
+The class rests on one agreement: the service that performs an action checks the actor against that action, on every path that reaches it.
+The agreement holds the actor claim as the only identity source, holds the action check at the same layer for every transport and encoding, and holds deferred steps to a fresh check at execution time.
+Sensitive position leaks when any path performs the action while skipping the actor check: an alias, a weaker parser, a trusted upstream hint, or a job that runs later.
+Each variant breaks one clause: the path-binding clause, the identity-source clause, or the execution-time clause.
+Service-to-service trust is the shared root, because an internal caller is assumed to have been authorized upstream.
 
 ## Key Vulnerabilities
 
 ### Verb Drift and Aliases
 
-- Alternate methods: GET performing state change; POST vs PUT vs PATCH differences; X-HTTP-Method-Override/_method
+- Alternate methods: GET performing state change; POST vs PUT vs PATCH differences; method-override headers or fields
 - Alternate endpoints performing the same action with weaker checks (legacy vs v2, mobile vs web)
 
 ### Edge vs Core Mismatch
 
-- Edge blocks an action but core service RPC accepts it directly; call internal service via exposed API route or SSRF
+- The edge blocks an action but the core service accepts it directly; call the internal service through an exposed route
 - Gateway-injected identity headers override token claims; supply conflicting headers to test precedence
 
 ### Feature Flag Bypass
 
-- Client-checked feature gates; call backend endpoints directly
-- Admin-only mutations exposed but hidden in UI; invoke via GraphQL or gRPC tools
+- Client-checked feature gates; call the backend endpoints directly
+- Admin-only mutations exposed but hidden in the UI; invoke them through the schema or RPC tools
 
 ### Batch Job Paths
 
-- Create export/import jobs where creation is allowed but finalize/approve lacks authz; finalize others' jobs
-- Replay webhooks/background tasks endpoints that perform privileged actions without verifying caller
+- Create export/import jobs where creation is allowed but finalize/approve lacks authz; finalize another actor's jobs
+- Replay webhook or background task endpoints that perform privileged actions without verifying the caller
 
 ### Content-Type Paths
 
-- JSON vs form vs multipart handlers using different middleware: send the action via the most permissive parser
+- JSON vs form vs multipart handlers using different middleware: send the action through the most permissive parser
 
 ## Advanced Techniques
 
-### GraphQL
+### Schema and Resolver Paths
 
-- Resolver-level checks per mutation/field; do not assume top-level auth covers nested mutations or admin fields
-- Abuse aliases/batching to sneak privileged fields; persisted queries sometimes bypass auth transforms
+- Resolver-level checks per mutation and field; do not assume top-level auth covers nested mutations or admin fields
+- Abuse aliases and batching to reach privileged fields; persisted queries sometimes bypass auth transforms
 
-```graphql
-mutation Promote($id:ID!){
-  a: updateUser(id:$id, role: ADMIN){ id role }
-}
-```
+### RPC and Descriptor Paths
 
-### gRPC
+- Method-level auth via interceptors must enforce audience and roles; probe the service directly with a lower-role token
+- Reflection lists services and methods; call admin methods the gateway hid
 
-- Method-level auth via interceptors must enforce audience/roles; probe direct gRPC with tokens of lower role
-- Reflection lists services/methods; call admin methods that the gateway hid
+### Socket Paths
 
-### WebSocket
-
-- Handshake-only auth: ensure per-message authorization on privileged events (e.g., admin:impersonate)
-- Try emitting privileged actions after joining standard channels
+- Handshake-only auth: ensure per-message authorization on privileged events
+- Emit privileged actions after joining a standard channel
 
 ### Multi-Tenant
 
-- Actions requiring tenant admin enforced only by header/subdomain; attempt cross-tenant admin actions by switching selectors with same token
+- Actions requiring tenant admin enforced only by header or subdomain; attempt cross-tenant admin actions by switching selectors with the same token
 
 ### Microservices
 
-- Internal RPCs trust upstream checks; reach them through exposed endpoints or SSRF; verify each service re-enforces authz
+- Internal RPCs trust upstream checks; reach them through exposed endpoints; verify each service re-enforces authz
 
 ## Bypass Techniques
 
 ### Header Trust
 
-- Supply X-User-Id/X-Role/X-Organization headers; remove or contradict token claims; observe which source wins
+- Supply identity headers; remove or contradict token claims; observe which source wins
 
 ### Route Shadowing
 
-- Legacy/alternate routes (e.g., /admin/v1 vs /v2/admin) that skip new middleware chains
+- Legacy or alternate routes that skip the newer middleware chain
 
 ### Idempotency and Retries
 
-- Retry or replay finalize/approve endpoints that apply state without checking actor on each call
+- Retry or replay finalize and approve endpoints that apply state without checking the actor on each call
 
 ### Cache Key Confusion
 
-- Cached authorization decisions at edge leading to cross-user reuse; test with Vary and session swaps
+- Cached authorization decisions at the edge reused across users; test with cache-key variation and session swaps
 
 ## Testing Methodology
 
@@ -112,6 +138,13 @@ mutation Promote($id:ID!){
 3. **Exercise every action** - Across all transports and encodings (JSON, form, multipart), including method overrides
 4. **Vary headers and selectors** - Org/tenant/project; test behind gateway vs direct-to-service
 5. **Include background flows** - Job creation/finalization, webhooks, queues; confirm re-validation
+6. **Confirm the effect** - Snapshot the durable state before and after each replay, and the step completes when every privileged effect has a matched denial
+
+## Variants
+
+- bfla-alternate-path - Replay privileged actions through shadow routes and permissive parser chains that skip the current middleware.
+- bfla-client-identity-trust - Decide which request input the service treats as the actor when hints or selectors can override the token.
+- bfla-deferred-execution - Replay finalize, approval, and background deliveries under a different actor than the caller who created them.
 
 ## False Positives
 
@@ -124,7 +157,7 @@ mutation Promote($id:ID!){
 1. Start from the role matrix; test every action with basic vs admin tokens across REST/GraphQL/gRPC
 2. Diff middleware stacks between routes; weak chains often exist on legacy or alternate encodings
 3. Inspect gateways for identity header injection; never trust client-provided identity
-4. Treat jobs/webhooks as first-class: finalize/approve must re-check the actor
+4. Treat jobs and webhooks as first-class: finalize and approve must re-check the actor
 5. Prefer minimal PoCs: one request that flips a privileged field or invokes an admin method with a basic token
 
 ## Summary
