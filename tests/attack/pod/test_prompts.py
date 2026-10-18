@@ -149,6 +149,52 @@ def test_kb_bullet_is_the_neutral_methodology_signature():
             assert stale not in prompt
 
 
+# --- #236: the skills-synergy (the configured skills' discipline) --------------
+
+def test_runner_prompt_carries_the_skills_discipline():
+    """#236: the runner loads the skills selected for this run at stretch
+    entry, holds their stated observables as its judgement criteria, and knows
+    the usage protocol arrives with the loaded body."""
+    lc = POD_RUNNER_SYSTEM.lower()
+    assert "load_skill" in POD_RUNNER_SYSTEM
+    assert "skills selected for this run" in lc
+    assert "stated observables" in lc
+    assert "usage protocol" in lc
+    assert "once per skill" in lc
+
+
+def test_runner_prompt_places_the_lesson_sub_phase_after_execution():
+    """#236: the lesson sub-phase enters after execution - assess the run
+    against the loaded skills' stated observables, then record lessons through
+    `record_skill_lesson` - and the P3 consolidation note stays the FINAL tool
+    call."""
+    assert "record_skill_lesson" in POD_RUNNER_SYSTEM
+    lesson = POD_RUNNER_SYSTEM.index("# Lesson sub-phase")
+    assert lesson > POD_RUNNER_SYSTEM.index("P2 Execute")
+    assert "after execution" in POD_RUNNER_SYSTEM[lesson:lesson + 120].lower()
+    assert "specification, extension, or defect" in POD_RUNNER_SYSTEM
+    assert "FINAL tool call" in POD_RUNNER_SYSTEM
+
+
+def test_triager_prompt_carries_the_skills_discipline():
+    """#236: the critic loads the skills selected for this run before judging
+    and judges the run against their stated observables, then records lessons
+    before it emits its decision."""
+    lc = POD_TRIAGER_SYSTEM.lower()
+    assert "load_skill" in POD_TRIAGER_SYSTEM
+    assert "skills selected for this run" in lc
+    assert "stated observables" in lc
+    assert "record_skill_lesson" in POD_TRIAGER_SYSTEM
+    assert "before you emit your decision" in lc
+    assert "specification, extension, or defect" in POD_TRIAGER_SYSTEM
+
+
+def test_both_prompts_describe_the_two_skill_tools_in_their_tool_sections():
+    for prompt in (POD_RUNNER_SYSTEM, POD_TRIAGER_SYSTEM):
+        assert "- load_skill -" in prompt
+        assert "- record_skill_lesson -" in prompt
+
+
 # --- the D84-30 guard: no differential anywhere --------------------------------
 
 def test_prompts_carry_no_differential_reference():
