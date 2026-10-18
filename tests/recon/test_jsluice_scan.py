@@ -313,6 +313,67 @@ def test_scan_bundles_chains_literals_with_batch_runtime_prefix():
     assert chained[0]["base_url"] == origin
 
 
+def test_chained_record_carries_the_call_name_method_hint():
+    """#365: an axios-shaped record names its verb only in `type` (jsluice's
+    generic call matcher emits `method: ""`), so the re-minted twin must carry
+    the call name for `jsluice_parser` to derive the write method from. A
+    record without `type` keeps its exact shape (no phantom key)."""
+    origin = "https://g.example.com"
+    out = js._chained_record(
+        origin, "/api", {"url": origin + "/login", "method": "", "type": "this.$axios.post"}
+    )
+    assert out is not None
+    assert out["type"] == "this.$axios.post"
+    plain = js._chained_record(origin, "/api", {"url": origin + "/login", "method": "GET"})
+    assert plain is not None and "type" not in plain
+    # the foreign failover twin carries the hint too
+    foreign = js._foreign_chained_record(
+        origin,
+        "https://api.comfy.org",
+        {"url": origin + "/login", "method": "", "type": "this.$axios.post"},
+    )
+    assert foreign is not None and foreign["type"] == "this.$axios.post"
+    foreign_plain = js._foreign_chained_record(
+        origin, "https://api.comfy.org", {"url": origin + "/login", "method": "GET"}
+    )
+    assert foreign_plain is not None and "type" not in foreign_plain
+
+
+def test_scan_bundles_chained_axios_hint_mints_the_write_method():
+    """#365 end to end at the production boundary: jsluice reports
+    `this.$axios.post("/login")` as `{"method": "", "type": "this.$axios.post"}`;
+    the chained twin (the `/api/login` node D-2 saw as a status-less GET) must
+    carry the hint so the parser mints POST."""
+    from polymerhus.recon.domain.parsers.jsluice_parser import parse
+
+    origin = "https://m.example.com"
+    app = f"{origin}/static/js/app.js"
+    chunk = f"{origin}/static/js/8.chunk.js"
+    app_text = 'var ve=t("mtWM");ve.defaults.baseURL="/api"'
+    chunk_text = 'this.$axios.post("/login")'
+    fetched = {app: app_text, chunk: chunk_text}
+
+    def run(mode, text, base):
+        if mode == "urls" and text == chunk_text:
+            return json.dumps(
+                {"url": origin + "/login", "method": "", "type": "this.$axios.post"}
+            )
+        return ""
+
+    emitted = []
+    js.scan_bundles(
+        [app, chunk], fetch=lambda u: fetched.get(u), run_jsluice=run, emit=emitted.append
+    )
+    deltas = parse("\n".join(emitted))
+    methods = {
+        d.identity["path"]: d.identity["method"]
+        for d in deltas
+        if d.type == "Endpoint" and d.identity.get("baseurl") == origin
+    }
+    assert methods["/api/login"] == "POST"  # the chained twin carries the hint
+    assert methods["/login"] == "POST"  # the literal record keeps its own
+
+
 def test_scan_bundles_no_chained_without_prefix_in_batch():
     origin = "https://k.example.com"
     burl = f"{origin}/static/js/8.chunk.js"

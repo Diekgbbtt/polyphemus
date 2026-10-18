@@ -238,6 +238,7 @@ def fill_template(
     session_id: str = "",
     tool: str = "",
     endpoints: list[str] | None = None,
+    write_probes: str = "",
 ) -> str:
     """Deterministic placeholder fill for a job's command_template.
 
@@ -248,6 +249,10 @@ def fill_template(
     - {endpoints} (#208): the reprofile pod's full endpoint list, shell-quoted
       and space-joined, so ONE httpx exec can be fed the whole probe set via a
       `printf ... > file && httpx -l file` command. Empty when not provided.
+    - {write_probes} (#365): the per-method `httpx -x <METHOD>` execs for
+      write-hinted routes (`batching.build_reprofile_write_probes`), appended to
+      the reprofile command. Empty when the probe set carries no write hint, so
+      the all-GET command collapses back to the pre-#365 byte-identical shape.
     - {auth_flags}: empty unless extra["auth_context"] carries the feed's
       flat request projection, in which case it is serialized to the
       tool-appropriate header flags via the auth feed (`control.auth_feed`,
@@ -274,6 +279,8 @@ def fill_template(
     if "{endpoints}" in result:
         quoted = " ".join(shlex.quote(u) for u in endpoints or [])
         result = result.replace("{endpoints}", quoted)
+    if "{write_probes}" in result:
+        result = result.replace("{write_probes}", write_probes or "")
     return result
 
 
@@ -355,12 +362,22 @@ def build_pod_graph(*, exec_fn, curate_fn, triage_fn):
                     "'endpoints' set - default_preprocess_fn must pack the dedup'd "
                     "probe set into ONE pod_input (#208)"
                 )
-            from polymerhus.recon.control.batching import endpoint_url
+            from polymerhus.recon.control.batching import (
+                build_reprofile_write_probes,
+                endpoint_url,
+            )
 
             urls = [u for u in (endpoint_url(e) for e in input_asset["endpoints"]) if u is not None]
+            # #365: write-hinted endpoints get ONE extra `httpx -x <METHOD>` exec
+            # per method, appended to the same pod command; the all-GET exec
+            # above stays untouched and still carries every URL. The fragment is
+            # "" (slot collapses) when no route carries a write hint.
             command = fill_template(
                 job.command_template, input_asset, extra,
                 session_id=state["session_id"], tool=job.tool, endpoints=urls,
+                write_probes=build_reprofile_write_probes(
+                    input_asset["endpoints"], session_id=state["session_id"], extra=extra
+                ),
             )
         else:
             command = fill_template(

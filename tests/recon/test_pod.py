@@ -627,6 +627,98 @@ def test_reprofile_configurator_builds_single_exec_over_full_endpoint_list():
     assert out["export"].stats.get("endpoints_total") == 2
 
 
+def test_fill_template_fills_write_probes_slot():
+    tmpl = "cat /work/{session}/reprofile.json{write_probes}"
+    # no write fragment -> the slot collapses to nothing (the all-GET command
+    # stays byte-identical to the pre-#365 shape)
+    assert pod.fill_template(tmpl, {}, {}, session_id="s") == "cat /work/s/reprofile.json"
+    frag = " && cat /work/s/reprofile_post.json"
+    assert pod.fill_template(tmpl, {}, {}, session_id="s", write_probes=frag) == (
+        "cat /work/s/reprofile.json" + frag
+    )
+
+
+def test_reprofile_configurator_appends_write_method_execs():
+    """#365: a POST-hinted endpoint still rides the all-GET exec (additive,
+    byte-identical), and the pod additionally runs ONE `httpx -x POST` exec over
+    its own list file - same pod, same auth, output cat'd to the same stdout."""
+    captured = {}
+
+    def exec_fn(cmd, sid, t):
+        captured["cmd"] = cmd
+        return ExecResult(stdout=_REPROFILE_STDOUT, stderr="", returncode=0, duration_ms=5)
+
+    g = pod.build_pod_graph(
+        exec_fn=exec_fn,
+        curate_fn=lambda a, o, p: (len(a), len(o), a, o),
+        triage_fn=lambda er, assets, job: [],
+    )
+    out = g.invoke({
+        "job": REPROFILE_JOB,
+        "input_asset": {"endpoints": [
+            {"url": "https://h/api/register", "baseurl": "https://h",
+             "path": "/api/register", "method": "POST"},
+            {"url": "https://h/", "baseurl": "https://h", "path": "/", "method": "GET"},
+        ]},
+        "asset_context": "",
+        "extra": {"auth_context": {"cookies": [{"name": "s", "value": "v"}]}},
+        "session_id": "s-w", "iteration": 0, "project_id": "p1",
+    })
+
+    assert out["export"].verdict == "success"
+    assert len(captured) == 1  # still ONE pod (no per-endpoint fan-out)
+    cmd = captured["cmd"]
+    # the all-GET exec is unchanged and still carries EVERY probe URL
+    assert (
+        "printf '%s\\n' https://h/api/register https://h/ > "
+        "/work/s-w/endpoints.txt" in cmd
+    )
+    assert (
+        "httpx -l /work/s-w/endpoints.txt -sc -title -server -td -fr -silent "
+        "-json -irh -H 'Cookie: s=v' -o /work/s-w/reprofile.json" in cmd
+    )
+    # one appended exec with the hinted method, its own list + out file, auth too
+    assert (
+        "httpx -l /work/s-w/write_post.txt -sc -title -server -td -fr -silent "
+        "-json -irh -x POST -H 'Cookie: s=v' -o /work/s-w/reprofile_post.json" in cmd
+    )
+    assert "printf '%s\\n' https://h/api/register > /work/s-w/write_post.txt" in cmd
+    assert "cat /work/s-w/reprofile_post.json" in cmd
+    assert cmd.count(" -x ") == 1  # GET and DELETE never reach the matrix
+
+
+def test_reprofile_configurator_stays_get_only_without_write_hints():
+    """The pre-#365 shape is exactly preserved when no route carries a write
+    hint - and a DELETE hint stays mint-only (never probed live)."""
+    captured = {}
+
+    def exec_fn(cmd, sid, t):
+        captured["cmd"] = cmd
+        return ExecResult(stdout=_REPROFILE_STDOUT, stderr="", returncode=0, duration_ms=5)
+
+    g = pod.build_pod_graph(
+        exec_fn=exec_fn,
+        curate_fn=lambda a, o, p: (len(a), len(o), a, o),
+        triage_fn=lambda er, assets, job: [],
+    )
+    g.invoke({
+        "job": REPROFILE_JOB,
+        "input_asset": {"endpoints": [
+            {"url": "https://h/api/v1/orders", "baseurl": "https://h",
+             "path": "/api/v1/orders", "method": "GET"},
+            {"url": "https://h/api/things/1", "baseurl": "https://h",
+             "path": "/api/things/1", "method": "DELETE"},
+        ]},
+        "asset_context": "", "extra": {},
+        "session_id": "s-g", "iteration": 0, "project_id": "p1",
+    })
+    cmd = captured["cmd"]
+    assert "httpx -l /work/s-g/endpoints.txt" in cmd
+    assert " -x " not in cmd          # DELETE is mint-only, GET is the default
+    assert "/write_" not in cmd       # no extra list/out files
+    assert cmd.endswith("cat /work/s-g/reprofile.json")
+
+
 def test_reprofile_pod_without_endpoints_raises_not_silently_probes_nothing():
     """The one-pod dispatch seam is TOTAL: an endpoint_profiling pod MUST arrive
     with its packed `endpoints` set. A mis-shaped dispatch (no endpoints key)

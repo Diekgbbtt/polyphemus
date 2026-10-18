@@ -25,11 +25,19 @@ _Avoid_: asset (loose synonym; prefer the specific label).
 A reachability fact - a path that responded.
 Input-carrying capability is not on the Endpoint itself but on the Parameter and Header nodes that hang off it.
 
+**Method hint** (JS-derived):
+The HTTP verb a JS client-style call name carries (`this.$axios.post("/login")` -> POST, `$http.delete` -> DELETE), recovered by `jsluice_parser` when a record's `method` is empty.
+jsluice names the verb itself only for its fetch / XMLHttpRequest.open / `$.get|$.post|$.ajax` matchers; every other client call is reported as `{"method": "", "type": "<call name>"}`, and the parser derives the verb from the call name's last segment.
+The hint mints into the Endpoint identity `{path, method, baseurl}` and is carried onto chained twins (`_chained_record` / `_foreign_chained_record` copy `type`), so the chained `/api/login` node mints under POST too.
+An unhinted route (`router.push`, a bare string literal) keeps the GET default; a hint is a candidate, arbitrated by the reprofile probe - never a witnessed fact until a probe answers.
+_Avoid_: reading jsluice's empty `method` as GET truth; re-deriving the verb anywhere but `jsluice_parser` (the single interpretation owner).
+
 **profile** (`webapp` / `restapi` / `graphql_api`):
 A per-Endpoint classification of the surface an Endpoint exposes, derived from its own httpx-observed content-type (+ host-label / GraphQL-path signals) by `noise_filter.classify_profile`.
 Every produced Endpoint is profiled by the `httpx_reprofile` pass (#208: the pass is ONE pod over the dedup'd probe set - `prepare_endpoint_profile_assets`' dynamic-route collapse + root `/` materialisation - paying O(1) triager turns per job, superseding the D16 per-endpoint pod fan-out; the iteration set is unchanged), not just BaseURL roots - so an API mounted under a `webapp` root is visible.
 `BaseURL.profile` is the backward-compatible mirror of its root `/` Endpoint's profile.
 The profiling pass is enrichment only: it fills gaps (methods/parameters/headers/response shapes) on already-collected endpoints, never re-discovers; production (the profile stamps) and consumption (the triager's Observations) are structurally decoupled, so a triager failure never loses the parsed profiles.
+_Amendment_ (#365, 2026-10-18): the single pod's command appends ONE `httpx -x <METHOD>` exec per hinted write method (POST, PUT, PATCH, in that fixed order) to the all-GET exec - each over its own list file, with the same `{auth_flags}` and its own seeded `-o` file. Every URL still rides the all-GET exec untouched (`{write_probes}` collapses to nothing on an all-GET set), and DELETE stays mint-only (no body guards a live DELETE). `httpx_parser` mints each result under the result's own `method`, so a write node's probe evidence lands on the write Endpoint, and the probe arbitrates the **Method hint**.
 
 **API scope** (kiterunner):
 The evidence-derived API-root prefix a fuzzer is scoped to, computed by `api_scope.derive_scan_targets` from a host's `restapi` Endpoint paths (last api-noun cut, versions left as fuzz-space, parent-dir fallback). Not a naming classifier - the gate is the content-type `profile`; the noun set only picks the cut depth.
@@ -45,6 +53,7 @@ The jsluice client-code scanning phase's post-batch join that re-mints a bundle'
 Its input relative literals are produced by katana (`-jc`), jsluice, the `webpack_chunks` resolution, and the Steel `js_urls`; the Endpoints it mints are consumed by `httpx_reprofile`, `kiterunner`, and `arjun`, and `ffuf` consumes the chained BaseURLs.
 Two tiers in failover order: target-origin PATH-prefix chaining comes first (`baseURL: "/api"`, a joined `api_base+"/internal"+x` segment); a literal that produced NO target-origin candidate is then re-minted under a FOREIGN absolute base (`baseURL: "https://api.comfy.org"` + `/login` -> the full foreign URL), whose candidates are emitted last and whose `base_url` is the foreign origin, so the graph gets the foreign BaseURL node and the full URL streams for adjacent-service reasoning.
 Provenance props: `chained_prefix` (the base string), `chained_from` (the original literal), and `origin_scope` (absent means target; `"external"` marks a foreign-origin record or a foreign-chained candidate).
+The re-mint also copies the record's call-name `type` when present, so a **Method hint** survives the join - the chained `/api/login` twin mints under POST, not just the original literal.
 Its coupling seams to the asset pre/post-processing family (the SAME seams the `httpx_reprofile` asset processing uses) are: the batching pre-processing origin grouping (`build_batches` keeps one origin's bundles in one pod), the `_urls.url_to_deltas` mint (via `jsluice_parser` extra props - the Endpoint props and the BaseURL `origin_scope`), and the `curator` write (props ride `SET n += $props`).
 No probing: an external-marked asset is never actively requested - the consumption stage's `skip_external` option drops it for every requesting job (operator 2026-10-16).
 _Avoid_: probing a foreign origin; reading a minted candidate as a witnessed fact (the original literal is kept; chained candidates are additive and arbitrated by the reprofile probe pass).
@@ -132,7 +141,7 @@ _Avoid_: task, step.
 The deliberately-derived input set a Job is fanned out over - WHAT a job probes, as opposed to the probe itself.
 Declared per job by `JobSpec.consumption` and derived by the single composed `batching.derive_consumption_set` pipeline (external-marker exclusion - `skip_external` drops any asset carrying `origin_scope: "external"`, the no-probe enforcement; malformed-path exclusion via the curator gate's predicate; route-cluster dedup to one representative per `(baseurl, method, path-template)`; restapi-first ordering; then pack into pod inputs).
 The `pack` stage is the pod-shape choice: `none` (raw 1:1), `one_pod` (the whole set in one pod, #208), `scan_targets` (kiterunner API-root prefixes), or `batches` - the endpoint-reduce seam (first-party filter, exact-URL dedup, fingerprinted-basename dedup) that distributes the survivors across `<= MAX_PODS` batch pods. jsluice, webpack_chunks (#185) and arjun (#37) all ride `batches`: arjun's pod count is bounded rather than one pod per endpoint.
-Profile preference inside a consumption set is ORDERING only, never exclusion: a `webapp` endpoint is still probed, after `restapi` ones - the reprofile probe (with its request-shape adaptation, #208) decides what each endpoint IS.
+Profile preference inside a consumption set is ORDERING only, never exclusion: a `webapp` endpoint is still probed, after `restapi` ones - the reprofile probe (with its request-shape adaptation, #208; write hints re-probed with their own method, #365) decides what each endpoint IS.
 `MAX_JOB_ASSETS` is a ceiling over the deliberately-ordered set, not a relevance filter; a derivation failure degrades to the blunt capped 1:1 with a loud warning (fail-open), never a raised exception.
 _Avoid_: input population (the raw read-back before derivation), truncation (the pre-#37 blunt cap).
 

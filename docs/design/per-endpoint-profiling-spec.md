@@ -35,6 +35,34 @@ probe list. New shape:
 Everything else in this spec (classify_profile, the kiterunner/graphql-cop gating, the API-noun prefix
 derivation, the root `/` mirror) is unaffected.
 
+## #365 AMENDMENT (2026-10-18): write-hinted routes get their method probed, on the same pod
+
+Recon minted JS write routes as GET-only, so a route like white-jotter's `this.$axios.post("/login")` surfaced
+as `GET /api/login` with a NULL status, and no probe ever sent a non-GET method (the D-2/D-3 coverage findings).
+Two contained changes, both on existing seams:
+
+- **Mint side (`jsluice_parser`).** jsluice names the HTTP verb itself only for its fetch /
+  `XMLHttpRequest.open` / `$.get|$.post|$.ajax` matchers; every other client-style call is reported as
+  `{"method": "", "type": "<call name>"}`. The parser now derives the verb from the call name's last dotted
+  segment (`this.$axios.post` -> POST; `router.push` / `stringLiteral` derive nothing) and mints the Endpoint
+  under it. An explicit `method` always wins; an unhinted route keeps the GET default. The scanner's chained
+  twins (`_chained_record` / `_foreign_chained_record`) copy `type`, so the chained `/api/login` node - the one
+  the coverage findings saw - carries the hint too.
+- **Probe side (the #208 pod).** The all-GET exec is UNCHANGED and still carries every URL. The pod command now
+  appends ONE `httpx -l <list> -x <METHOD>` exec per hinted write method (POST, PUT, PATCH, fixed order; URLs
+  deduped, first-seen), each with its own list/output file, the same `{auth_flags}`, and the same empty-seed +
+  `cat` persistence pattern. DELETE stays mint-only: no body guards a live DELETE, and a destructive verb has no
+  place on an unattended probe. `httpx_parser` now mints each result under the result's own `method` (GET
+  fallback), so the write node's status evidence lands on the write Endpoint.
+
+The probe is ADDITIVE: the GET exec's command is byte-identical to the pre-#365 shape when the set carries no
+write hint (`batching.build_reprofile_write_probes` returns `""`; the `{write_probes}` slot collapses).
+The shared `REPROFILE_PROBE_FLAGS` literal (jobs.py) keeps the GET exec and the per-method execs from drifting.
+
+Acceptance (unit tier): an axios-shaped record mints POST and its chained twin does too; an unhinted route
+stays GET; the pod command gains exactly the hinted method execs and none for GET/DELETE; the GET exec is
+byte-identical; a POST probe result mints a POST Endpoint.
+
 ## Problem Statement
 
 Recon profiles only BaseURLs, and a BaseURL profile is really the profile of its root `/` path.

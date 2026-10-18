@@ -11,7 +11,11 @@ interleaved line-by-line in this parser's input:
     decomposed into BaseURL + Endpoint (+HAS_ENDPOINT edge) the same way
     `katana_parser` does, PLUS a Parameter per queryParams entry (position
     query) and per bodyParams entry (position body), each with a HAS_PARAMETER
-    edge from the Endpoint (jsluice's built-in param discovery).
+    edge from the Endpoint (jsluice's built-in param discovery). When `method`
+    is empty the verb is derived from the CALL NAME in `type` (`_call_method`,
+    #365) - jsluice leaves `method` empty for every client that is not
+    fetch/xhr/jQuery, so `this.$axios.post(...)` would otherwise mint as GET;
+    an unhinted record keeps the GET default.
 
   - `jsluice secrets` lines: `{"kind": "aws-access-key", "secret": "AKIA...",
     ...}` -> a redacted `Secret` node. The raw secret value is NEVER stored;
@@ -43,12 +47,33 @@ def _baseurl_from(url: str) -> str | None:
     return split[0] if split is not None else None
 
 
+# Call-name method hint (#365). jsluice's own matchers name the HTTP verb for
+# fetch / XMLHttpRequest.open / $.get|$.post|$.ajax only; every other
+# client-style call (e.g. `this.$axios.post("/login")`) falls through the
+# generic "function call with a URL-like argument" matcher, which fills `type`
+# with the CALL NAME and leaves `method` as "". The call name's last dotted
+# segment is a REST verb for write-shaped clients (`this.$axios.post`,
+# `$http.delete`); read-shaped calls (`router.push`, `fetch`, `stringLiteral`)
+# carry none, so an unhinted route keeps the GET default.
+_CALL_VERBS = frozenset({"post", "put", "patch", "delete"})
+
+
+def _call_method(entry: dict) -> str | None:
+    call = entry.get("type")
+    if not isinstance(call, str) or not call:
+        return None
+    verb = call.rsplit(".", 1)[-1].lower()
+    return verb.upper() if verb in _CALL_VERBS else None
+
+
 def _parse_url_entry(entry: dict) -> list[AssetDelta]:
     url = entry.get("url")
     if not url or not isinstance(url, str):
         return []
 
-    method = entry.get("method") or "GET"
+    # An explicit `method` (jsluice spoke) always wins; otherwise the call-name
+    # hint; otherwise GET.
+    method = entry.get("method") or _call_method(entry) or "GET"
 
     # Param discovery: jsluice `urls` mode emits `queryParams`/`bodyParams`
     # arrays per discovered URL (built-in). Feed them to the shared helper so

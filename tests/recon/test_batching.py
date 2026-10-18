@@ -14,7 +14,7 @@ from polymerhus.recon.control.batching import (
 from polymerhus.recon.control.jobs import JOBS
 
 
-def _ep(url=None, baseurl=None, path=None):
+def _ep(url=None, baseurl=None, path=None, method=None):
     a = {}
     if url is not None:
         a["url"] = url
@@ -22,6 +22,8 @@ def _ep(url=None, baseurl=None, path=None):
         a["baseurl"] = baseurl
     if path is not None:
         a["path"] = path
+    if method is not None:
+        a["method"] = method
     return a
 
 
@@ -313,6 +315,23 @@ def test_prepare_keeps_distinct_hosts_separate():
     assert sum(1 for a in out if a.get("path") == "/") == 2
 
 
+def test_prepare_keeps_a_write_route_distinct_from_its_get_twin():
+    # #365: the dedup key carries the method, so a GET probe of a path does NOT
+    # swallow the POST-hinted route on the same path - the write-probe execs
+    # need the POST asset to survive input-prep (white-jotter has both nodes).
+    out = prepare_endpoint_profile_assets(
+        [
+            _ep(url="https://h/api/register", baseurl="https://h",
+                path="/api/register", method="GET"),
+            _ep(url="https://h/api/register", baseurl="https://h",
+                path="/api/register", method="POST"),
+        ]
+    )
+    methods = {(a.get("path"), a.get("method")) for a in out if a.get("path") != "/"}
+    assert ("/api/register", "GET") in methods
+    assert ("/api/register", "POST") in methods
+
+
 # -------------------- build_api_scope_assets (D16 split) --------------------- #
 
 def test_build_api_scope_assets_derives_prefix_targets_per_host():
@@ -330,3 +349,102 @@ def test_build_api_scope_assets_derives_prefix_targets_per_host():
 def test_build_api_scope_assets_empty_when_no_endpoints():
     from polymerhus.recon.control.batching import build_api_scope_assets
     assert build_api_scope_assets([]) == []
+
+
+# -------------- #365 per-method write probe groups + command ---------------- #
+# The reprofile pass stays ONE pod over ONE all-GET exec (the #208 shape, byte-
+# unchanged); write-hinted routes additionally get ONE `httpx -x <METHOD>` exec
+# per hinted method, appended to the same pod command by
+# `build_reprofile_write_probes`.
+
+def test_probe_method_groups_partitions_by_hinted_method_in_fixed_order():
+    from polymerhus.recon.control.batching import probe_method_groups
+
+    assets = [
+        _ep(url="https://h/api/register", method="POST"),
+        _ep(url="https://h/api/orders/1", method="put"),  # case-insensitive
+        _ep(url="https://h/api/orders/1", method="PATCH"),
+        _ep(url="https://h/api/things/1", method="DELETE"),  # mint-only, never probed
+        _ep(url="https://h/admin"),  # unhinted -> GET default
+        _ep(url="https://h/", method="GET"),
+    ]
+    groups = probe_method_groups(assets)
+    assert list(groups) == ["POST", "PUT", "PATCH"]
+    assert groups["POST"] == ["https://h/api/register"]
+    assert "DELETE" not in groups  # mutation-bounded: never probed live
+    assert "GET" not in groups
+
+
+def test_probe_method_groups_dedups_urls_within_a_method_first_seen():
+    from polymerhus.recon.control.batching import probe_method_groups
+
+    assets = [
+        _ep(url="https://h/api/register", method="POST"),
+        _ep(baseurl="https://h", path="/api/register", method="POST"),  # same URL
+        _ep(url="https://h/a", method="POST"),
+    ]
+    assert probe_method_groups(assets)["POST"] == [
+        "https://h/api/register",
+        "https://h/a",
+    ]
+
+
+def test_probe_method_groups_keeps_one_probe_per_hinted_method():
+    # One path hinted POST in one bundle and PUT in another keeps BOTH probes:
+    # each hint is a candidate the live probe arbitrates.
+    from polymerhus.recon.control.batching import probe_method_groups
+
+    groups = probe_method_groups(
+        [_ep(url="https://h/x", method="POST"), _ep(url="https://h/x", method="PUT")]
+    )
+    assert groups == {"POST": ["https://h/x"], "PUT": ["https://h/x"]}
+
+
+def test_probe_method_groups_empty_for_get_only_set():
+    from polymerhus.recon.control.batching import probe_method_groups
+
+    assert probe_method_groups(
+        [_ep(url="https://h/"), _ep(url="https://h/x", method="GET")]
+    ) == {}
+
+
+def test_build_reprofile_write_probes_empty_for_get_only_set():
+    from polymerhus.recon.control.batching import build_reprofile_write_probes
+
+    assert build_reprofile_write_probes([_ep(url="https://h/")], session_id="s") == ""
+    assert build_reprofile_write_probes([], session_id="s") == ""
+
+
+def test_build_reprofile_write_probes_builds_one_x_exec_per_method_in_order():
+    from polymerhus.recon.control.batching import build_reprofile_write_probes
+    from polymerhus.recon.control.jobs import REPROFILE_PROBE_FLAGS
+
+    frag = build_reprofile_write_probes(
+        [
+            _ep(url="https://h/api/register", method="POST"),
+            _ep(url="https://h/api/orders/1", method="PUT"),
+            _ep(url="https://h/api/orders/1", method="PATCH"),
+        ],
+        session_id="s9",
+    )
+    # appended to the all-GET exec, never replacing it
+    assert frag.startswith(" && ")
+    assert frag.index("-x POST") < frag.index("-x PUT") < frag.index("-x PATCH")
+    assert (
+        f"httpx -l /work/s9/write_post.txt {REPROFILE_PROBE_FLAGS} -x POST" in frag
+    )
+    assert "printf '%s\\n' https://h/api/register > /work/s9/write_post.txt" in frag
+    assert "cat /work/s9/reprofile_post.json" in frag
+    # empty-seed guard per method file (httpx -o may not create it on zero hits)
+    assert frag.count("printf '' > /work/s9/reprofile_") == 3
+
+
+def test_build_reprofile_write_probes_threads_the_auth_flags():
+    from polymerhus.recon.control.batching import build_reprofile_write_probes
+
+    frag = build_reprofile_write_probes(
+        [_ep(url="https://h/api/register", method="POST")],
+        session_id="s",
+        extra={"auth_context": {"Authorization": "Bearer tok"}},
+    )
+    assert "-H 'Authorization: Bearer tok'" in frag

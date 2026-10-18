@@ -193,3 +193,36 @@ def test_reprofile_job_uses_the_httpx_parser_to_profile_a_crawler_minted_baseurl
         '"content_type":"application/json"}\n'
     )
     assert next(d for d in reprobed if d.type == "BaseURL").props["profile"] == "restapi"
+
+
+# --- #365: the probe result's own method -------------------------------- #
+# httpx always emits `method` on every JSON result (the marshaled `Result`
+# struct: the probing method, GET unless `-x` named others). The reprofile pass
+# now sends write-hinted routes a second time with their method, so the parser
+# must mint the Endpoint under THAT method - otherwise the write route's
+# evidence lands on a GET node while its POST node stays status-less.
+
+def test_probed_method_rides_into_the_endpoint_identity():
+    deltas = parse(
+        '{"url":"https://h.example.com/api/register","method":"POST","status_code":200}\n'
+    )
+    ep = next(d for d in deltas if d.type == "Endpoint")
+    assert ep.identity == {
+        "path": "/api/register",
+        "method": "POST",
+        "baseurl": "https://h.example.com",
+    }
+
+
+def test_probed_method_is_normalized_to_upper_case():
+    deltas = parse('{"url":"https://h.example.com/x","method":"put","status_code":200}\n')
+    ep = next(d for d in deltas if d.type == "Endpoint")
+    assert ep.identity["method"] == "PUT"
+
+
+def test_missing_method_key_falls_back_to_get():
+    # A plain httpx line (no `method`; e.g. a hand-written fixture) keeps the
+    # pre-#365 GET shape.
+    deltas = parse('{"url":"https://h.example.com/x","status_code":200}\n')
+    ep = next(d for d in deltas if d.type == "Endpoint")
+    assert ep.identity["method"] == "GET"
