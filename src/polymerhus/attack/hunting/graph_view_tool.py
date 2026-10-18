@@ -84,7 +84,8 @@ def _schema_surface() -> str:
     return (
         "SCHEMA - node labels:\n"
         f"- L1 (judged): {labels_l1}\n"
-        "- L0 (observed): Endpoint, Parameter, BaseURL, Header\n"
+        "- L0 (observed): Endpoint, Parameter, BaseURL, Header, Technology, "
+        "Certificate\n"
         "relationship types:\n"
         "- cross-layer: AGGREGATES ((:L1Service)-[:AGGREGATES]->(:L0)), "
         "SURFACES_AT ((:L1DataItem)-[:SURFACES_AT]->(:L0)), "

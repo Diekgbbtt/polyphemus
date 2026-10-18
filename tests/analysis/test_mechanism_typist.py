@@ -17,6 +17,7 @@ from polymerhus.analysis.analyser_types import (
     SystemProposal,
 )
 from polymerhus.analysis.chunking import Chunk
+from polymerhus.analysis.l1_types import L0Ref
 from polymerhus.analysis.mechanism_typist import (
     _merge_systems,
     drop_unknown_vocabulary,
@@ -91,6 +92,102 @@ def test_N5_drop_unknown_vocabulary():
     out = drop_unknown_vocabulary(raw, kinds=_KINDS, rels=_RELS)
     assert [s.kind for s in out.systems] == ["RESTApi"]
     assert [(e.kind, e.rel) for e in out.system_edges] == [("RESTApi", "EXPOSED_VIA")]
+
+
+# --- #354: the EVIDENCED_BY witness on a System proposal -----------------------
+
+def test_witnesses_survive_shaping_and_reach_the_returned_batch():
+    """#354: the extraction call names the L0 node(s) whose observation witnesses
+    each System; shaping must carry them through UNCHANGED so the curator can write
+    one EVIDENCED_BY edge per witness."""
+    raw = L1DeltaBatch(systems=[SystemProposal(
+        kind="AuthenticationMechanism",
+        props={"description": "cookie session"},
+        evidence=[L0Ref(label="Header", identity={"name": "sid", "endpoint": "/login",
+                                                  "baseurl": "https://a"})])])
+    (s,) = drop_unknown_vocabulary(narrow_to_typing(raw), kinds=_KINDS, rels=_RELS).systems
+    assert [(w.label, w.identity["name"]) for w in s.evidence] == [("Header", "sid")]
+
+
+def test_witnesses_outside_the_evidence_vocabulary_are_shaped_out():
+    """The shaping gate guarantees the proposer emits only writer-acceptable values:
+    a witness on a label the writer refuses (a connectivity type, a Parameter /
+    Secret, or a coined name) is dropped HERE, while the System's valid witnesses
+    and the System itself survive."""
+    from polymerhus.analysis.l1_curator import EVIDENCE_L0_LABELS
+
+    batch = L1DeltaBatch(systems=[SystemProposal(kind="RESTApi", evidence=[
+        L0Ref(label="IP", identity={"address": "10.0.0.1"}),               # connectivity: not a witness
+        L0Ref(label="Server", identity={"value": "nginx"}),                 # coined label
+        L0Ref(label="Technology", identity={"name": "nginx", "version": ""}),
+    ])])
+    (s,) = drop_unknown_vocabulary(batch, kinds=_KINDS, rels=_RELS).systems
+    assert [w.label for w in s.evidence] == ["Technology"]
+    assert "IP" not in EVIDENCE_L0_LABELS and "Server" not in EVIDENCE_L0_LABELS
+
+
+def test_a_system_with_no_witness_stays_an_edgeless_but_valid_proposal():
+    """The withhold-the-unproven-claim rule is UNCHANGED: an unsupported claim is
+    still the model's to withhold, and the writer never withholds a System for a
+    missing witness - the proposal stays valid, simply edgeless."""
+    batch = L1DeltaBatch(systems=[SystemProposal(kind="WAF", props={"description": "no witness"})])
+    (s,) = drop_unknown_vocabulary(narrow_to_typing(batch), kinds=_KINDS, rels=_RELS).systems
+    assert s.kind == "WAF" and s.evidence == []
+
+
+def test_the_typist_carries_extraction_witnesses_end_to_end():
+    """The systems-extraction call is the carrier: a System it proposes with
+    witnesses comes back (through merge + reconciliation + shaping) with them."""
+    rec = _Recorder(systems=L1DeltaBatch(systems=[SystemProposal(
+        kind="IntegrationSystem", props={"description": "CSP"},
+        evidence=[L0Ref(label="Header", identity={"name": "content-security-policy",
+                                                  "endpoint": "/", "baseurl": "https://a"})])]))
+    out = type_mechanisms(_service_chunk(), invoke_fn=rec)
+    ((kind, witnesses),) = [(s.kind, [w.identity["name"] for w in s.evidence]) for s in out.systems]
+    assert kind == "IntegrationSystem"
+    assert witnesses == ["content-security-policy"]
+
+
+def test_merge_systems_unions_the_witness_sets_of_both_structured_calls():
+    """A witness independently licenses the claim and the edge MERGE is idempotent,
+    so the two structured calls' witness sets UNION (deduped on label + identity).
+    Unlike a scalar prop (primary wins), dropping a witness the co-producing call
+    named would lose grounding for the exact node it read."""
+    shared = L0Ref(label="Header", identity={"name": "sid", "endpoint": "/login", "baseurl": "https://a"})
+    primary = SystemProposal(kind="IdentificationSystem", props={"description": "d"},
+                             evidence=[shared, L0Ref(label="Technology", identity={"name": "express", "version": ""})])
+    fallback = SystemProposal(kind="IdentificationSystem", props={"description": "stale"},
+                              evidence=[L0Ref(label="Header", identity={"baseurl": "https://a", "endpoint": "/login", "name": "sid"}),
+                                        L0Ref(label="Endpoint", identity={"path": "/login", "baseurl": "https://a"})])
+    (merged,) = _merge_systems([primary], [fallback])
+    assert [(w.label, sorted(w.identity)) for w in merged.evidence] == [
+        ("Header", ["baseurl", "endpoint", "name"]),          # the shared witness appears ONCE
+        ("Technology", ["name", "version"]),
+        ("Endpoint", ["baseurl", "path"]),
+    ]
+
+
+def test_the_systems_prompt_teaches_the_witness_emission():
+    """The extraction call must ASK for the witness: the L0 labels a mechanism
+    fingerprint can be observed on, each with the identity keys the graph MATCHes
+    on, and the rule that a non-graph witness stays unwritten (never invented)."""
+    captured = {}
+
+    def invoke(messages, *, schema=None, system_prompt=None):
+        if schema is None:
+            return "prose"
+        if "EXTRACT SYSTEMS" in messages[-1].content:
+            captured["systems"] = messages[-1].content
+        return L1DeltaBatch()
+    type_mechanisms(_service_chunk(), invoke_fn=invoke, inventory={"services": []})
+    p = captured["systems"]
+    for label in ("Header", "Technology", "Certificate", "Endpoint", "BaseURL"):
+        assert label in p, f"the witness label {label} is not taught"
+    assert "name/endpoint/baseurl" in p     # Header identity, as the writer MATCHes it
+    assert "subject_cn" in p                # Certificate identity
+    assert "EVIDENCED_BY" in p              # the edge the witnesses become
+    assert "never invent a node" in p       # a non-graph witness is never fabricated
+    assert "empty `evidence` list" in p     # an ungrounded claim is still emitted
 
 
 # --- primary/secondary partition (N7) -----------------------------------------

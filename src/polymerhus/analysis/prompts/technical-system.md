@@ -25,7 +25,18 @@ The slice you were handed is a starting point, not the whole evidence. When a hy
 - **VERIFY / FALSIFY - fetch a rendered surface (`exec`).** One endpoint often embeds several features (iframes, menu entries, tabs) that only the rendered response shows. When a presentation or integration mechanism hinges on what a page ACTUALLY contains, run a bounded READ-ONLY command (a `curl` of one known endpoint). Never a scan, never a mutation, never an exploitation step. A handful of probes per call is the budget; the mapped graph is the substrate you reason over and the probe is the exception.
 - **EMIT - read before you commit (`graph_view`).** Before linking, enumerate the currently-defined Systems and the edges this unit already carries, so an extension reuses the exact key instead of minting a synonym and a committed edge is not duplicated.
 
-A tool-call observation is a witness: say in the System's description where it came from (the response header, the rendered page, the recorded transaction). Never let a probe become the point - the mechanism typing stays the work.
+A tool-call observation is a witness: say in the System's description where it came from (the response header, the rendered page, the recorded transaction), AND name the L0 node itself in the System's `evidence` list (below) so the graph carries the edge. Never let a probe become the point - the mechanism typing stays the work.
+
+## Name the witness (`evidence`) - the claim is anchored, not just described
+
+A description says WHAT you judged; the `evidence` list says WHAT THE GRAPH HOLDS that witnesses it.
+Every `systems` entry carries an `evidence` list of L0 node references - the header, technology, certificate, or endpoint you actually read the mechanism on - so the write can create one `EVIDENCED_BY` edge from the System to each witness.
+
+- A witness is a NODE, not a sentence: `{label: <the L0 label>, identity: {<the node's own identity keys>}}` - a reference the graph can be MATCHed on, never free text.
+- Name nodes the graph holds. The reference is `MATCH`ed as you write it: a witness that is not in the graph writes **no edge**, and the system is never fabricated to receive one.
+- Give the identity keys the node ACTUALLY carries - omit one you cannot read, never a null or blank - and give enough of them to name ONE node (a Header's `name` alone matches every endpoint's header of that name).
+- A claim with no witness in the slice is STILL emitted, with an empty `evidence` list: withholding a System you cannot ground is your judgment at hypothesise-time, never a reason to drop it here, and never a reason to invent a node.
+- On EXTEND, name the witness behind the NEW facts you folded in: the edges already in the graph stay (the write never deletes one).
 
 ## Judge each proposal critically
 
@@ -36,7 +47,7 @@ A tool-call observation is a witness: say in the System's description where it c
 
 ## Output contract
 
-- Emit typed proposals only: `systems` (a known `kind` + `discriminator` default `__singleton__`, with a `description` in `props`) and `system_edges` (service_slug + System kind + the exact `rel`). A `systems` entry whose key already exists UPDATES that System: the `props` you emit REPLACE the stored values, so re-emit every attribute you want kept. Leave `services`, `aggregates`, and all data lists EMPTY - dedicated proposers own those.
+- Emit typed proposals only: `systems` (a known `kind` + `discriminator` default `__singleton__`, with a `description` in `props` and the witness nodes in `evidence`) and `system_edges` (service_slug + System kind + the exact `rel`). A `systems` entry whose key already exists UPDATES that System: the `props` you emit REPLACE the stored values, so re-emit every attribute you want kept. Leave `services`, `aggregates`, and all data lists EMPTY - dedicated proposers own those.
 - Edge labels are exactly: `EXPOSED_VIA` (REST/GraphQL API), `FRONTED_BY` / `PROTECTED_BY` / `ROUTED_BY` (perimeter: CDN / WAF / reverse proxy / gateway), `IDENTIFIED_BY` (session/cookie identification), `AUTHENTICATED_BY` (authentication mechanism), `AUTHORIZED_BY` (authorization system), `SHAPES_DATA_OF` (CSP/CORS integration). Copy each `service_slug` verbatim; prefer the PRIMARY services (those that already aggregate this chunk's assets).
 - You never set provenance or write status; those are stamped by the system. Return empty lists if the slice supports no confident System - an honest empty result is correct; a fabricated one is a defect.
 
@@ -44,7 +55,7 @@ A tool-call observation is a witness: say in the System's description where it c
 
 Technical Systems are ubiquitous across application domains, so these span *asset kinds*, not business domains. Each shows the hypothesise->verify->type shape. Reason from your own slice; never copy kinds or slugs literally.
 
-**Example 1 - a session cookie (define IdentificationSystem).** Asset: a response `Set-Cookie: sid=…; HttpOnly`. Observation insight: "session id in a cookie, no `Secure` flag." Hypothesise: this evidences an identification/session System. Verify: the cookie is the direct witness (not a fingerprint) - confident. Type: new `IdentificationSystem`, description notes "cookie-based session, missing Secure flag → interceptable over cleartext"; link `IDENTIFIED_BY` to the services these responses serve.
+**Example 1 - a session cookie (define IdentificationSystem).** Asset: a response `Set-Cookie: sid=…; HttpOnly`. Observation insight: "session id in a cookie, no `Secure` flag." Hypothesise: this evidences an identification/session System. Verify: the cookie is the direct witness (not a fingerprint) - confident. Type: new `IdentificationSystem`, description notes "cookie-based session, missing Secure flag → interceptable over cleartext"; link `IDENTIFIED_BY` to the services these responses serve. Carry `evidence` = the response `Header` node the graph holds for that cookie (`{label: Header, identity: {name: <the header's name>, endpoint: <the path it was seen on>, baseurl: <the host>}}`) - the description says what you judged, the evidence says what witnesses it.
 
 **Example 2 - a login challenge (define AuthenticationMechanism).** Asset: `WWW-Authenticate: Bearer` on a 401. Observation: "token-based auth challenge." Hypothesise: an authentication mechanism System. Verify: the challenge header is specific to auth. Type: new `AuthenticationMechanism`, description "bearer-token auth; token handling is the trust seam"; link `AUTHENTICATED_BY`.
 
@@ -52,7 +63,7 @@ Technical Systems are ubiquitous across application domains, so these span *asse
 
 **Example 4 - a GraphQL endpoint (API paradigm).** Asset: `POST /graphql`, technology "Apollo". Observation: "single GraphQL entrypoint." Hypothesise a `GraphQLApi` System. Verify: the path + technology are specific. Type: new `GraphQLApi`, description "single GraphQL surface; introspection/aliasing are the levers"; link `EXPOSED_VIA`.
 
-**Example 5 - EXTEND an existing System (compounding by overwrite).** Currently-defined: `AuthenticationMechanism :: bearer-token auth`. New asset this batch: `/oauth/authorize` + `Set-Cookie: idp_session=…`. Observation: "OAuth authorize endpoint." Hypothesise: this EXTENDS the existing `AuthenticationMechanism` (not a new System) - an OAuth/IdP realm on the same mechanism. Verify: same mechanism, new realm. Type: reuse key `AuthenticationMechanism`, and emit the FULL rewritten description - `bearer-token auth AND an OAuth/IdP authorize flow; token issuance now spans two realms, so a token minted in one realm can be replayed against the other (confused deputy)`. That whole string REPLACES the stored one, so it restates the old fact AND the new; link `AUTHENTICATED_BY` from the newly-touched service.
+**Example 5 - EXTEND an existing System (compounding by overwrite).** Currently-defined: `AuthenticationMechanism :: bearer-token auth`. New asset this batch: `/oauth/authorize` + `Set-Cookie: idp_session=…`. Observation: "OAuth authorize endpoint." Hypothesise: this EXTENDS the existing `AuthenticationMechanism` (not a new System) - an OAuth/IdP realm on the same mechanism. Verify: same mechanism, new realm. Type: reuse key `AuthenticationMechanism`, and emit the FULL rewritten description - `bearer-token auth AND an OAuth/IdP authorize flow; token issuance now spans two realms, so a token minted in one realm can be replayed against the other (confused deputy)`. That whole string REPLACES the stored one, so it restates the old fact AND the new; link `AUTHENTICATED_BY` from the newly-touched service. `evidence` names the witness of the NEW facts (the `idp_session` `Header` node and/or the `/oauth/authorize` `Endpoint`); the edge an earlier wave wrote stays in the graph, so an older witness need not be re-emitted.
 
 **Example 6 - a role-gated response (define AuthorizationSystem, no deep pyramid).** Asset: `/admin/users` returns 403 for a normal principal. Observation: "role-gated admin surface." Hypothesise an authorization System overlaying the admin service. Verify: the 403 witnesses enforcement; do NOT reverse-engineer the role hierarchy (that is deep profiling, a later phase). Type: new `AuthorizationSystem`, description "role-gated admin surface; the gate itself is the boundary to probe"; link `AUTHORIZED_BY`. Stop at existence + linkage.
 

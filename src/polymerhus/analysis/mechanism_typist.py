@@ -2,11 +2,14 @@
 mechanism-typing proposer slice.
 
 Sole owner of MECHANISM TYPING: it defines/extends the cross-cutting `System`s the
-target lies on and links them to Services as typed `Service->System` edges - NEVER
-as Service props (the mechanism-as-System correction). BREADTH-ONLY (grilled #9):
-it emits `L1DeltaBatch{systems, system_edges}`; all System DEEPENING (WebPresentation
-rendering/navigation, authz inverse-pyramid, backward-recon probes, the AnatomyResult
-triple) is Phase B (epic #39; deepening #41; System under-typing #40).
+target lies on, links them to Services as typed `Service->System` edges - NEVER
+as Service props (the mechanism-as-System correction) - and grounds each System on
+the L0 nodes whose observation witnesses it (the `EVIDENCED_BY` cross-layer edges,
+#354: `SystemProposal.evidence` -> `l1_curator.enrich(system_evidence=...)`).
+BREADTH-ONLY (grilled #9): it emits `L1DeltaBatch{systems, system_edges}`; all System
+DEEPENING (WebPresentation rendering/navigation, authz inverse-pyramid,
+backward-recon probes, the AnatomyResult triple) is Phase B (epic #39; deepening #41;
+System under-typing #40).
 
 Algorithm (grilled #9) - THREE sequential calls over one `service` chunk delivered
 AFTER the Assigner (`chunking.CONCERN_ROLES["service"] = ("assigner", "mechanism_typist")`):
@@ -18,7 +21,8 @@ AFTER the Assigner (`chunking.CONCERN_ROLES["service"] = ("assigner", "mechanism
      degrades to an empty batch (FAIL-CLOSED).
   2. SYSTEMS EXTRACTION (structured): the prose -> `systems` deltas (new/extended, each
      carrying a COMPOUNDED NL `description` prop that folds in the adversarial insight -
-     never emptied; the description is the System-side discriminative attribute). Soft
+     never emptied; the description is the System-side discriminative attribute - plus
+     its `evidence` witnesses, the L0 nodes the claim is grounded on, #354). Soft
      pass-through on exhaustion.
   3. SERVICES LINKING (structured): the prose + systems + services split PRIMARY (those
      aggregating this chunk's assets, live from AGGREGATES) vs SECONDARY (other
@@ -102,13 +106,22 @@ def narrow_to_typing(batch: L1DeltaBatch) -> L1DeltaBatch:
 
 
 def drop_unknown_vocabulary(
-    batch: L1DeltaBatch, *, kinds: frozenset[str], rels: frozenset[str]
+    batch: L1DeltaBatch, *, kinds: frozenset[str], rels: frozenset[str],
+    evidence_labels: frozenset[str] | None = None,
 ) -> L1DeltaBatch:
-    """Keep only Systems whose `kind` is known and edges whose `rel` AND `kind` are
-    known. The sole-writer would reject an unknown value anyway (rel/kind are
-    interpolated into Cypher), but shaping it out HERE means the proposer emits only
-    values the writer accepts, never relying on the guard."""
-    systems = [s for s in batch.systems if s.kind in kinds]
+    """Keep only Systems whose `kind` is known, edges whose `rel` AND `kind` are
+    known, and System WITNESSES whose L0 label the writer accepts (#354, the same
+    discipline: the proposer emits only values the writer accepts, never relying on
+    the guard). `evidence_labels` defaults to `l1_curator.EVIDENCE_L0_LABELS`; the
+    witness' IDENTITY shape is the builder's guard to reject item-wise."""
+    if evidence_labels is None:
+        evidence_labels = _known_evidence_labels()
+    systems = []
+    for s in batch.systems:
+        if s.kind not in kinds:
+            continue
+        kept = [w for w in s.evidence if w.label in evidence_labels]
+        systems.append(s.model_copy(update={"evidence": kept}) if len(kept) != len(s.evidence) else s)
     edges = [e for e in batch.system_edges if e.rel in rels and e.kind in kinds]
     return batch.model_copy(update={"systems": systems, "system_edges": edges})
 
@@ -122,7 +135,11 @@ def _merge_systems(primary, fallback):
     primary wins on a conflicting prop, but a fallback fills a missing key OR supplies
     props the primary lacks - an attribute ONLY the fallback carried (a new `pages`
     list, an updated `rendering_model`) must not be dropped, since extending a System
-    overwrites its attributes (operator ruling 2026-10-16)."""
+    overwrites its attributes (operator ruling 2026-10-16).
+
+    WITNESSES (#354) merge by UNION, not by the primary-wins prop rule: a witness is
+    an independent grounding fact, and the edge MERGE is idempotent, so a node the
+    co-producing call read must not lose its edge to a call-order accident."""
     out: dict = {}
     for s in primary:
         out[(s.kind, s.discriminator)] = s
@@ -132,11 +149,31 @@ def _merge_systems(primary, fallback):
         if existing is None:
             out[k] = s
             continue
+        update: dict = {}
         merged_props = dict(s.props or {})
         merged_props.update(existing.props or {})  # primary wins on a conflicting key
         if merged_props != (existing.props or {}):
-            out[k] = existing.model_copy(update={"props": merged_props})
+            update["props"] = merged_props
+        merged_evidence = _merge_witnesses(existing.evidence, s.evidence)
+        if merged_evidence != list(existing.evidence):
+            update["evidence"] = merged_evidence
+        if update:
+            out[k] = existing.model_copy(update=update)
     return list(out.values())
+
+
+def _merge_witnesses(primary, fallback) -> list:
+    """Union two witness lists, deduped on (label, identity) - identity key order
+    never splits a duplicate. Primary's order first (the richer call's reading)."""
+    seen: set = set()
+    merged: list = []
+    for w in list(primary or []) + list(fallback or []):
+        key = (w.label, _idkey(w.identity or {}))
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(w)
+    return merged
 
 
 def _reconcile_webpresentation(systems: list, edges: list) -> tuple[list, list]:
@@ -206,6 +243,11 @@ def _known_kinds() -> frozenset[str]:
 def _known_rels() -> frozenset[str]:
     from polymerhus.analysis.l1_curator import SYSTEM_EDGE_RELS
     return SYSTEM_EDGE_RELS
+
+
+def _known_evidence_labels() -> frozenset[str]:
+    from polymerhus.analysis.l1_curator import EVIDENCE_L0_LABELS
+    return frozenset(EVIDENCE_L0_LABELS)
 
 
 # --- primary/secondary service partition (linking context, grilled #9 Q3) ------
@@ -371,6 +413,19 @@ def _reflection_prompt(chunk: Chunk, inventory: dict | None, *,
     )
 
 
+def _witness_guide() -> str:
+    """The witness labels a System may be grounded on, each with the identity keys
+    the sole-writer MATCHes it on (#354). Rendered from the writer's
+    `EVIDENCE_L0_LABELS` and the read side's `l0_stream.L0_IDENTITY_KEYS`, so the
+    prompt can never drift from what the writer accepts."""
+    from polymerhus.analysis.l0_stream import L0_IDENTITY_KEYS
+    from polymerhus.analysis.l1_curator import EVIDENCE_L0_LABELS
+
+    return "; ".join(
+        f"{label} ({'/'.join(L0_IDENTITY_KEYS.get(label, ()))})" for label in EVIDENCE_L0_LABELS
+    )
+
+
 def _systems_prompt(inventory: dict | None) -> str:
     from polymerhus.analysis.l1_curator import vocabulary_prompt
 
@@ -397,6 +452,19 @@ def _systems_prompt(inventory: dict | None) -> str:
         "merged into it, so the new text must stand alone - and it MAY also overwrite other "
         "attributes (e.g. `pages`, `rendering_model`) with updated values. Never emit an "
         "empty description. "
+        # WITNESS (#354): the EVIDENCED_BY writer's input contract. The witness is an
+        # L0 NODE (label + identity), not a prose note - the writer MATCHes it, so a
+        # ref the graph does not hold writes no edge.
+        "WITNESS EVERY SYSTEM (`evidence`). Each `systems` entry carries an `evidence` "
+        "list naming the L0 node(s) whose observation actually witness that mechanism - "
+        "the header, technology, certificate or endpoint you read it on - each as "
+        "`{label, identity}`. Use ONLY these labels, with the identity keys the write "
+        f"MATCHes on: {_witness_guide()}. Give the identity keys the node ACTUALLY "
+        "carries (omit one you cannot read - never send null or blank) and enough of "
+        "them to name ONE node. Each witness becomes one `EVIDENCED_BY` edge from the "
+        "System to that L0 node; a witness the graph does not hold writes NO edge, so "
+        "never invent a node, and NEVER drop a System for lack of one - a claim with no "
+        "witness in the slice is still emitted, with an empty `evidence` list. "
         # WebPresentation is PER (service, page-cluster), not a singleton (#53): the
         # downstream agent must locate the exact page a service is exposed on.
         "SPECIAL CASE - WebPresentation: emit ONE per (owning service, page cluster) from the "

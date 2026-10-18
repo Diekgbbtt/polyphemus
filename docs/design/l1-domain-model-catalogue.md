@@ -192,7 +192,7 @@ No change needed by #48, and worth stating why: the row below already reads `L1D
 |---|---|---|---|
 | `AGGREGATES` | `L1Service` -> L0 node | judgment envelope: `confidence`, `status` (`committed`), `evidence_refs[]`, `prov_*`, `ts`, `endpoint_template` (for Endpoints) | membership/assignment (interface-agreement A, `L1D-25`); N:M; the lazy fetch hop of traversal-then-fetch |
 | `SURFACES_AT` | `L1DataItem` -> L0 Parameter/Header/field | `prov_job`, `first/last_seen` | where a logical data item appears on the concrete surface |
-| `EVIDENCED_BY` | `L1System` -> L0 node | `prov_job`, `first/last_seen` | the L0 fingerprint evidence for a System (a `Server:` header, a cookie) |
+| `EVIDENCED_BY` | `L1System` -> L0 node | `prov_*`, `first/last_seen` | the L0 fingerprint evidence for a System (a `Server:` header, a cookie). Written by the mechanism-typist for every System it types (each `evidence` witness becomes one edge, #354); a witness the graph does not hold writes no edge. Also produced by the reconcile relabel remap (a mis-typed Service re-kinded to a System). The witness labels are the fixed `l1_curator.EVIDENCE_L0_LABELS` - Endpoint, BaseURL, Header, Technology, Certificate - and the node is `MATCH`ed, never created. |
 
 ### 5.2 Intra-L1 (L1 -> L1) edges
 

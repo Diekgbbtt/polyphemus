@@ -158,6 +158,49 @@ def test_default_curate_with_enrichment_skips_enrich_when_no_enrichment_deltas(m
     assert export.services_written == 1
 
 
+# --- #354: the System witnesses reach the EVIDENCED_BY writer on the SAME path ---
+
+def test_default_curate_writes_each_system_witness_as_evidence(monkeypatch):
+    """The typist's `SystemProposal.evidence` rides the default curate path into the
+    sole-writer, provenance-stamped - with no call-site change beyond the existing
+    `enrich(project_id, **enrich_deltas)` seam."""
+    calls = {}
+    monkeypatch.setattr(real_l1_curator, "l1_curate", lambda s, sy, p: (len(s), len(sy)))
+    monkeypatch.setattr(real_l1_curator, "write_aggregates", lambda a, p: len(a))
+    monkeypatch.setattr(real_l1_curator, "enrich",
+                        lambda p, **d: (calls.update(d), {k: len(v) for k, v in d.items()})[1])
+
+    batch = L1DeltaBatch(systems=[SystemProposal(
+        kind="IdentificationSystem", props={"description": "cookie session"},
+        evidence=[L0Ref(label="Header", identity={"name": "sid", "endpoint": "/login",
+                                                  "baseurl": "https://a"})])])
+    prov = Provenance(job="analyser:run-77", model="m", prompt_id=None)
+    export = default_curate_with_enrichment_fn(batch, "proj-1", prov)
+
+    (delta,) = calls["system_evidence"]
+    assert (delta.kind, delta.l0.label, delta.l0.identity["name"]) == ("IdentificationSystem", "Header", "sid")
+    assert delta.provenance.job == "analyser:run-77"      # system-supplied, never the LLM's
+    assert export.systems_written == 1
+    assert export.enrichment["system_evidence"] == 1      # the receipt surfaces the count
+
+
+def test_an_unwitnessed_system_is_written_and_no_evidence_is_attempted(monkeypatch):
+    """The withhold-the-unproven-claim rule is unchanged: a System whose claim has no
+    witness in the slice is still written; it simply carries no EVIDENCED_BY edge, so
+    no evidence statement is even attempted."""
+    calls = {"enrich": False}
+    monkeypatch.setattr(real_l1_curator, "l1_curate", lambda s, sy, p: (len(s), len(sy)))
+    monkeypatch.setattr(real_l1_curator, "write_aggregates", lambda a, p: len(a))
+    monkeypatch.setattr(real_l1_curator, "enrich", lambda p, **k: calls.__setitem__("enrich", k))
+
+    batch = L1DeltaBatch(systems=[SystemProposal(kind="WAF", props={"description": "unwitnessed"})])
+    export = default_curate_with_enrichment_fn(batch, "proj-1", PROV)
+
+    assert export.systems_written == 1     # written, not withheld
+    assert calls["enrich"] is False        # and edgeless: nothing to write
+    assert export.enrichment is None
+
+
 # `_invoke_with_retry` was RETIRED (#73): structured analyser calls now retry via the
 # single escalating-budget layer, covered by
 # tests/test_llm_providers.py::test_escalating_invoke_*.

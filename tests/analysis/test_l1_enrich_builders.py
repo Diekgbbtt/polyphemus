@@ -10,9 +10,12 @@ from polymerhus.analysis import l1_curator
 from polymerhus.analysis.analyser_types import (
     L1DeltaBatch,
     SystemEdgeProposal,
+    SystemProposal,
     enrichment_proposals_to_deltas,
 )
 from polymerhus.analysis.l1_types import (
+    L1_SINGLETON,
+    L0Ref,
     Provenance,
     SystemEdgeDelta,
 )
@@ -100,9 +103,28 @@ def test_enrichment_mapping_injects_provenance():
         system_edges=[SystemEdgeProposal(service_slug="s", kind="RESTApi", rel="EXPOSED_VIA")],
     )
     deltas = enrichment_proposals_to_deltas(batch, PROV)
-    assert set(deltas) == {"system_edges"}
+    assert set(deltas) == {"system_edges", "system_evidence"}
     assert deltas["system_edges"][0].provenance is PROV
+    assert deltas["system_evidence"] == []  # no witness proposed -> nothing to write
+
+
+def test_evidence_mapping_carries_each_witness_with_system_provenance():
+    """#354: every `evidence` entry of every System becomes one provenance-stamped
+    `SystemEvidenceDelta` addressed at the System's exact key."""
+    batch = L1DeltaBatch(systems=[
+        SystemProposal(kind="RESTApi",
+                       evidence=[L0Ref(label="Endpoint", identity={"path": "/graphql", "baseurl": "https://a"})]),
+        SystemProposal(kind="WAF", discriminator="cloudflare",
+                       evidence=[L0Ref(label="Header", identity={"name": "cf-ray", "endpoint": "/", "baseurl": "https://a"})]),
+    ])
+    evidence = enrichment_proposals_to_deltas(batch, PROV)["system_evidence"]
+    assert [(d.kind, d.discriminator, d.l0.label) for d in evidence] == [
+        ("RESTApi", L1_SINGLETON, "Endpoint"),
+        ("WAF", "cloudflare", "Header"),
+    ]
+    assert all(d.provenance is PROV for d in evidence)
 
 
 def test_enrichment_proposals_have_no_provenance_field():
     assert "provenance" not in SystemEdgeProposal.model_fields
+    assert "provenance" not in SystemProposal.model_fields

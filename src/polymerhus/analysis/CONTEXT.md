@@ -28,7 +28,7 @@ _Avoid_: reading, fact (a fact is what the sole-writer has committed).
 
 **Cross-layer edge**:
 An edge from an L1 (judged) node down onto an L0 (observed) node, anchoring an inference to the observations that license it; the L0 target is always `MATCH`ed, never `MERGE`d.
-The live ones are `AGGREGATES` (assignment) and `EVIDENCED_BY` (reconcile); `SURFACES_AT` is legacy (RETIRED below).
+The live ones are `AGGREGATES` (assignment) and `EVIDENCED_BY` (mechanism evidence); `SURFACES_AT` is legacy (RETIRED below).
 
 **AGGREGATES**:
 The assignment edge from an L1 `Service` to an L0 node, carrying the judgment envelope: "I judge element e belongs to service S, on this evidence".
@@ -41,6 +41,13 @@ Nothing writes it anymore; legacy graphs may still carry it (read-only).
 
 **EVIDENCED_BY**:
 The cross-layer edge from an L1 `System` to the L0 node that fingerprints it (a `Server:` header, a cookie); carries provenance and timestamps only.
+The mechanism-typist is its primary writer (each System it types carries the L0 node(s) whose observation witnesses the claim, named as `{label, identity}` witnesses); the reconcile relabel remap still produces it when a mis-typed Service is re-kinded to a System.
+A witness the graph does not hold writes no edge, and a claim with no witness stays a written-but-edgeless System - the edge is `MATCH`ed onto evidence, never manufactured for it.
+
+**Witness**:
+The L0 node an L1 claim is anchored to: for a System, the observed element the mechanism was read on (a header, a technology, a certificate, an endpoint, a base URL).
+It is named by label + the L0 node's own identity keys, because the edge is `MATCH`ed onto it.
+_Not to be confused with_: an Observation (the triager's own claim, anchored to a broad asset), or the NL `description` (what the analyst judged).
 
 **Application Overview**:
 The structured macro framing of the deployed solution: a canonical `domain` (the target's stable identity), a generalised `description` of the offered features, and the canonical navigation `journeys` (each >= 3 steps naming specific surface parts).
@@ -329,7 +336,7 @@ _Avoid_: analyser (the whole-model term).
 - **Ground** (output side, epistemic; #48) - REMOVED 2026-10-15 with the data plane (`docs/design/drop-data-modeller.md`): the DataPlane Analyser's substitute for Withhold is gone with the analyser.
 
 **TechnicalSystem / mechanism-typist**:
-The sole owner of mechanism TYPING (agent spec #9) - it defines/extends the cross-cutting `System`s the streamed surface evidences and links them to Services as typed `Service->System` edges, never Service props. BREADTH-ONLY: it emits `L1DeltaBatch{systems, system_edges}`; all System DEEPENING (WebPresentation rendering/navigation, authz inverse-pyramid, backward-recon probes, the `AnatomyResult` triple) is Phase B (epic #39).
+The sole owner of mechanism TYPING (agent spec #9) - it defines/extends the cross-cutting `System`s the streamed surface evidences and links them to Services as typed `Service->System` edges, never Service props. BREADTH-ONLY: it emits `L1DeltaBatch{systems, system_edges}` plus each System's `evidence` witnesses (the `EVIDENCED_BY` grounding, #354); all System DEEPENING (WebPresentation rendering/navigation, authz inverse-pyramid, backward-recon probes, the `AnatomyResult` triple) is Phase B (epic #39).
 It runs a THREE-call chain over one chunk delivered AFTER the Assigner: a hypothesis-driven free-text **reflection** (define which Systems the assets impact, verify soundly against tool-grounded evidence - exhaustion fails the step CLOSED), then structured **systems extraction**, then structured **services linking** (soft pass-through on later-step exhaustion).
 Every turn binds the read-only `graph_view`, the HTTP-history pair, and the bounded `exec` tool (D-A2 extended past assigner-only; see `docs/design/typist-tool-workflows.md`); the reflection turn carries them as tools while keeping `response_format` prose, so the request shape never toggles.
 The role prompt rides the seam default on all three calls (byte-identical, cache-safe).

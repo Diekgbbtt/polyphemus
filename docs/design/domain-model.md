@@ -334,7 +334,7 @@ Three cross-layer edges carry claims from the observed store into the judged sto
 |---|---|---|---|
 | `AGGREGATES` | `L1Service` -> L0 node | judgment envelope `{status, evidence_refs, prov_*, ts, endpoint_template?}` (the graded `confidence` member REMOVED 2026-10-15, `docs/design/drop-aggregate-confidence.md`) | the assignment judgment: "I judge element e belongs to service S, on this evidence" (`L1D-25`, `src/polymerhus/analysis/l1_curator.py:351-409`) |
 | `SURFACES_AT` | `L1DataItem` -> L0 Parameter/Header/field | `prov_job`, `first/last_seen` | RETIRED 2026-10-15 with the data plane (`docs/design/drop-data-modeller.md`); legacy graphs may still carry it (read-only) |
-| `EVIDENCED_BY` | `L1System` -> L0 node | `prov_job`, `first/last_seen` | the observed fingerprint that grounds a judged mechanism (a `Server:` header, a cookie) (`l1-domain-model-catalogue.md` §5.1) |
+| `EVIDENCED_BY` | `L1System` -> L0 node | `prov_*`, `first/last_seen` | the observed fingerprint that grounds a judged mechanism (a `Server:` header, a cookie) (`l1-domain-model-catalogue.md` §5.1); written by the mechanism-typist for every System it types (`l1_curator.build_system_evidence_cypher`, #354) and by the reconcile relabel remap |
 
 Crossing this boundary means an inference is being anchored to the observations that license it, which is what keeps L1 defeasible: pull the evidence and the judgment loses its ground.
 
