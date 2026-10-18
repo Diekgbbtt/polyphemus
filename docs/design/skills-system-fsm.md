@@ -43,5 +43,5 @@ After each merge into the trunk: run `verify.sh`, update the completion ledger r
 ## Current pointers (2026-10-18)
 
 - Trunk: `feat/skills-system` (worktree `.claude/worktrees/feat-skills-system`); tip: the B1 decisions commit; contains W0 landing, W0/W1 completion, W2 cortex.
-- Work items in flight (S2): `feat/w1-taxonomy`, `feat/w0-parent-conformance`, `feat/w2-cortex-refresh`, one implementation subagent each.
+- S2 progress: `feat/w2-cortex-refresh` done, reviewed (CLEAR, four minor fixes applied), merged into the trunk; `feat/w1-taxonomy` done and waiting for the combined W0+W1 review; `feat/w0-parent-conformance` in flight.
 - S3: round 1 (the four adversarial rulings) presented to the operator.
