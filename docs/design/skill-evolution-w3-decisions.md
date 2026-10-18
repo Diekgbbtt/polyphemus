@@ -8,7 +8,7 @@
 
 ## D-W3-1 - Single revision per pass: workflow-enforced, no hard blocker (resolves open ruling 1)
 
-**Ruling.** The write happens only at the END of the evolver's workflow, after it has: absorbed the notes, grounded on the current version, done the fundamental technical claim verification probes, optionally read the HTTP-history database, optionally read the auth-store context or either of the two graphs, and loaded its authoring meta-skill.
+**Ruling.** The write happens only at the END of the evolver's workflow, after it has: absorbed the notes, grounded on the current version, done the fundamental technical claim verification probes (falsification attempts over the read surfaces, D-W3-6), optionally read the HTTP-history database, optionally read the auth-store context or either of the two graphs, and loaded its authoring meta-skill.
 The prompt's workflow discipline is the enforcement.
 The symbolic layer does not block tool calls; the harness keeps settling `published` from the version delta.
 
@@ -78,6 +78,30 @@ The current prompt additionally FORBIDS these reads ("You never touch a live tar
 If it means (ii), activating test-executor-pod probes against the target, that is a much larger change and needs its own ruling.
 
 ---
+
+## D-W3-6 - Verification is falsification-based, over the read-only surfaces (round 2; resolves the "verification probes" clarification)
+
+**Ruling.** The evolver's technical claim verification uses the tools that interact with the environment and the persistence stores to actively try to FALSIFY each lesson's claim: the probes look for technical evidence that contradicts the claim, and the lesson is confirmed only when falsification cannot be proved.
+This is the sense of "fundamental technical claim verification probes": falsification attempts over the read surfaces, not live test-executor pod probes.
+
+**Consequence.** The verification step sits in the workflow before any revision (D-W3-1, D-W3-5); its discipline is falsification, never confirmation-seeking.
+
+## D-W3-7 - The corrections scope: both readings, one structural and one semantic (round 2)
+
+**Ruling.** Both readings of "corrections only to already target-specified skills" hold.
+(b) Structural: the enforcement is the schema validation implementing the data contracts and the classes that parse the data; a genuinely new name is refused structurally.
+(a) Semantic: a defect-type lesson that yields a correction cannot be produced from the skill's base version alone; corrections regard mainly target-specific details, so they are anchored to the target-specified skill.
+The original phrasing (reset session, 2026-09-28): "corrections can only be made only to already target-specified skills, as corrections regard mainly target-specific details".
+
+**Consequence.** The W3 pass states both: the structural gate stays in the code; the semantic rule lands in the evolver's adjudication text.
+
+## Open - the lesson validity gate, reframed (round 2 re-ask)
+
+**Grounding (found 2026-10-18, session `ses_f35794155ffeYYGr0eO9LYPn51`).** The original C3 rationale is a semantic gate with per-kind acceptance conditions: specification (no payload literals, concrete payload vectors observed, encodings/body shapes/communication protocol, introspected technology-stack configuration, observed backend data relationships); optimization (executed defence-bypass or proxy techniques); anti-pattern (blocking states and structural dead-ends); corrections (only against already target-specified details). The gate transforms-or-rejects the lesson and applies a critical-thinking/bias assessment; it supersedes the prompt's "lesson types are intent hints, never enforced" stance.
+
+**The round-2 claim (2026-10-18).** No heuristics-based semantic control on lesson content; a loose data-structure check instead, placed upstream at the note-tool write layer.
+
+**Status.** The claim does not fulfil the original's per-kind conditions and its supersession of the intent-hints stance; the reconciliation is re-asked before this decision is recorded.
 
 ## What this forces next
 
