@@ -369,8 +369,11 @@ def test_runner_channel_accumulates_appended_messages_in_order():
     wholesale."""
     from langchain_core.messages import BaseMessage
 
-    from polymerhus.attack.hunting.pod.agents import RUNNER_SYSTEM, TRIAGER_SYSTEM
     from polymerhus.attack.hunting.pod.graph import build_pod_graph
+    from polymerhus.attack.hunting.pod.prompts import (
+        runner_system_prompt,
+        triager_system_prompt,
+    )
 
     steps = iter([
         RunnerStep(action="tool_call", tool="exec", command="curl -k -sS https://t/"),
@@ -391,14 +394,14 @@ def test_runner_channel_accumulates_appended_messages_in_order():
     msgs = final["runner_messages"]
     assert all(isinstance(m, BaseMessage) for m in msgs)     # the typed channel
     assert [m.type for m in msgs] == ["system", "human", "ai", "human", "ai"]
-    assert msgs[0].content == RUNNER_SYSTEM                  # the system prompt
+    assert msgs[0].content == runner_system_prompt()         # the system prompt
     assert "action: tool_call" in msgs[2].content            # turn 1's proposal
     assert "TOOL RESULT" in msgs[3].content                  # the recorded observation
     assert "action: conclude" in msgs[4].content             # turn 2: appended, not replaced
 
     tmsgs = final["triager_messages"]                        # the critic's own channel
     assert [m.type for m in tmsgs] == ["system", "human", "ai"]
-    assert tmsgs[0].content == TRIAGER_SYSTEM
+    assert tmsgs[0].content == triager_system_prompt()
     assert "terminate" in tmsgs[2].content
 
 

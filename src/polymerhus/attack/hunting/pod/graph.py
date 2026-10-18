@@ -62,10 +62,12 @@ import logging
 from langgraph.graph import END, START, StateGraph
 
 from polymerhus.attack.hunting.pod.agents import (
-    RUNNER_SYSTEM,
-    TRIAGER_SYSTEM,
     default_runner_step_fn,
     default_triager_fn,
+)
+from polymerhus.attack.hunting.pod.prompts import (
+    runner_system_prompt,
+    triager_system_prompt,
 )
 from polymerhus.attack.hunting.pod.config import (
     EXEC_TIMEOUT_S,
@@ -333,7 +335,7 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
         log.start_run()
         log.record_variant(VariantSpec(ref="v0", parent_ref=None, spec=spec))
         violations = validate_spec(spec)
-        runner_messages = [{"role": "system", "content": RUNNER_SYSTEM}]
+        runner_messages = [{"role": "system", "content": runner_system_prompt()}]
         if not violations and not production_runner:
             runner_messages.append(
                 {"role": "human",
@@ -344,7 +346,7 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
             "current_variant_ref": "v0", "feedback": "",
             "runner_messages": _dicts_to_lc(runner_messages),
             "triager_messages": _dicts_to_lc(
-                [{"role": "system", "content": TRIAGER_SYSTEM}]),
+                [{"role": "system", "content": triager_system_prompt()}]),
             "tool_calls": 0, "stretch_obs": 0,
         }
 

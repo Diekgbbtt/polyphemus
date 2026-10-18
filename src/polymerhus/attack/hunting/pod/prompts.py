@@ -1,5 +1,11 @@
 """The pod's mined prompt verbatims (T7 re-write, D84-10/16).
 
+The served prompts are the base verbatims below plus the shared cortex (C1,
+`attack/hunting/cortex.py`), appended by `runner_system_prompt` /
+`triager_system_prompt`. The cortex is composed LAZILY (never at import, no
+import-time I/O) and single-sourced, so the pod reads the identical map as the
+hunt-orchestrator and the hunter.
+
 Two agents, two roles, two sessions: the `pod_runner` (actor) and the
 `pod_triager` (critic). The system prompts below are the STABLE layer, repeated
 every turn as the `create_agent` `system_prompt` (D84-10): role, paradigm, the
@@ -31,6 +37,22 @@ from __future__ import annotations
 # HUNTING_LIGHTRAG_TOOL gate is REMOVED; the former symptom-technique typed
 # seam is retired).
 KB_TOOL = "query_lightrag"
+
+
+def runner_system_prompt() -> str:
+    """The Runner's served system prompt: the P0-P3 base plus the shared cortex
+    (C1). Composed lazily so importing this module performs no I/O."""
+    from polymerhus.attack.hunting.cortex import with_cortex  # noqa: PLC0415
+
+    return with_cortex(POD_RUNNER_SYSTEM)
+
+
+def triager_system_prompt() -> str:
+    """The Triager's served system prompt: the critic base plus the shared
+    cortex (C1). Composed lazily so importing this module performs no I/O."""
+    from polymerhus.attack.hunting.cortex import with_cortex  # noqa: PLC0415
+
+    return with_cortex(POD_TRIAGER_SYSTEM)
 
 
 POD_RUNNER_SYSTEM = f"""# Role
