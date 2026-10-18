@@ -78,7 +78,7 @@ Re-check the draft against the survivors and the existing body before publishing
 - Carry the body alone on a `procedure` write: `name`, `description`, and `version` are store-owned, so never supply or invent them.
 - Cite the lesson keys you consumed in `source_note_ids`.
 - The shared catalogue is never yours to write.
-- A refusal is new evidence, and each coded error has ONE meaning here. `skill_target` is the reachable repairable refusal: the `target` you typed was wrong (`SKILL.md` instead of `procedure`, or an unsafe reference name) - correct it and re-issue at most one repaired write; a second refusal closes the pass. `skill_invalid` and `store_unavailable` are terminal: they name a defect in the bundle's stored metadata (a missing or invalid bootstrap) or a degraded store, neither of which content you author can repair - close without writing.
+- A refusal is new evidence, and each coded error has ONE meaning here. `skill_target` is the reachable repairable refusal: the `target` you typed was wrong (`SKILL.md` instead of `procedure`, or an unsafe reference name) - correct it and re-issue at most one repaired write; a second refusal closes the pass. `skill_invalid` and `store_unavailable` are terminal: `skill_invalid` names a defect outside the body you author (the skill's stored metadata, or a skill name the store refuses) and `store_unavailable` a degraded store, so neither is repairable from your content - close without writing.
 
 ## Loop discipline
 
