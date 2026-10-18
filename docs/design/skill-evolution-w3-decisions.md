@@ -95,18 +95,23 @@ The original phrasing (reset session, 2026-09-28): "corrections can only be made
 
 **Consequence.** The W3 pass states both: the structural gate stays in the code; the semantic rule lands in the evolver's adjudication text.
 
-## Open - the lesson validity gate, reframed (round 2 re-ask)
+## D-W3-8 - The lesson validity gate, reconciled (round 2, option (a) refined)
 
-**Grounding (found 2026-10-18, session `ses_f35794155ffeYYGr0eO9LYPn51`).** The original C3 rationale is a semantic gate with per-kind acceptance conditions: specification (no payload literals, concrete payload vectors observed, encodings/body shapes/communication protocol, introspected technology-stack configuration, observed backend data relationships); optimization (executed defence-bypass or proxy techniques); anti-pattern (blocking states and structural dead-ends); corrections (only against already target-specified details). The gate transforms-or-rejects the lesson and applies a critical-thinking/bias assessment; it supersedes the prompt's "lesson types are intent hints, never enforced" stance.
+**Ruling.** The three stored lesson types stay (`specification | extension | defect`) and the lesson record keeps its shape: NO RDF-notion field is added at the note-tool write layer, because lesson RDF would overlap the other note types of the general episodic-memory stores.
+The per-kind acceptance conditions (from the original C3 rationale, reset session 2026-09-28) become the evolver's falsification checklist (D-W3-6), applied inside the pass.
+The transform-or-reject discipline is NOT dropped: it moves to a layer internal to the SkillEvolver's chain of thought, and the stored lessons remain as they are.
+The RDF notion scoping surfaces in the `meta/meta-usage-skill` reading protocol, which `load_skill` appends to every non-meta skill (`skills.py:699`, `PROTOCOL_SEPARATOR`); never in the `record_skill_lesson` tool description.
 
-**The round-2 claim (2026-10-18).** No heuristics-based semantic control on lesson content; a loose data-structure check instead, placed upstream at the note-tool write layer.
+**Rejected.** The stored notion scope field; the RDF in the record tool's description; dropping transform-or-reject entirely; any heuristics-based rewriting of stored lesson content.
 
-**Status.** The claim does not fulfil the original's per-kind conditions and its supersession of the intent-hints stance; the reconciliation is re-asked before this decision is recorded.
+**Supersedes.** The 2026-09-28 transform-semantics ruling ("a transformed lesson is a revision audit: the lesson content is replaced"): the transform is now internal and the stored lesson is never rewritten.
+
+**Consequence.** The W3 pass updates the usage protocol with the notion-scoping discipline, and the evolver prompt with the per-kind falsification checklist plus the internal transform-or-reject; the lesson schema and the record tool description stay untouched for the RDF part.
 
 ## What this forces next
 
 - The W3 pass: prompt surgery (the workflow order, the read-only grounding discipline, the write-at-the-end rule), the read-surface grants, the revision store with systematic provenance, the version-format fix, the version-field pin, and the launch + status endpoints.
-- Round 2 of the grilling: the lesson-kind vocabulary versus the acceptance conditions, the corrections scope, and the acceptance-gate wording.
+- Round 2 is closed: the stored lesson types stay the three ratified ones; the acceptance conditions become the falsification checklist; the gate is internal to the evolver (D-W3-6..D-W3-8).
 - W4: the nested loader; its scope is unaffected, but the suite's version format must keep working through the bump fix above.
 
 ## Provenance
