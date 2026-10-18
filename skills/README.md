@@ -14,6 +14,7 @@ skills/meta/<meta-skill-name>/SKILL.md
 ```
 
 Flat: one directory per skill, `name` == directory. There are no module-routing layers, with one structural family: the meta family under `skills/meta/`.
+The nested-catalogue mount (W4, `SkillCatalogue`) serves the well-formed suite (`skills-unspurious/`), not this directory: it indexes `<group>/<leaf>/SKILL.md` under the logical root `web-vulnerability-testing/` and reports flat leaf names.
 Role prompts are NOT skills and do not live here: each role's system prompt lives with its owning module in a `prompts/` dir (`src/polymerhus/recon/domain/prompts/`, `src/polymerhus/recon/crawl/prompts/`, `src/polymerhus/attack/hunting/prompts/`, `src/polymerhus/analysis/prompts/`) and is read directly by its module (fail-closed, memoized, no cross-module imports).
 The meta family (`skills/meta/`) holds the skills exempt from the usage-protocol append, by a path rule (`is_meta_skill`: any loader path under `skills/meta/`), never a per-skill list: the two protocol/authoring skills `meta/meta-write-skill` (authoring rules) and `meta/meta-usage-skill` (usage protocol), plus task-specific meta-authoring skills such as `meta/authn-skill-writing`.
 
@@ -22,6 +23,9 @@ The meta family (`skills/meta/`) holds the skills exempt from the usage-protocol
 `skill_for(name)` loads `skills/<name>/SKILL.md` (e.g. `webpage-profile`, `lightrag-query`).
 It strips the YAML frontmatter, caches the body, and degrades to the caller-supplied fallback on a missing or unreadable file.
 Only on-demand skill readers call it; no role prompt loads through here.
+A second catalogue can be mounted as an index over an explicit root (`SkillCatalogue`, W4): the well-formed suite's nested layout (`<group>/<leaf>/SKILL.md`, `skills-unspurious/`) then resolves by flat leaf name whichever group holds it, reports leaf names only, refuses a duplicate name loudly with both colliding paths named, and resolves `references/` and `scripts/` inside the owning leaf at either level (rules R1-R4 and R8 in `docs/design/skills-taxonomy.md`).
+Mounting never repoints this directory: the flat layout and the meta family's path-shaped names above are unchanged, and `skill_for`/`list_skills`/`skill_meta`/`validate_skill` follow a mount only when a caller passes it (`catalogue=`).
+No agent surface binds a mount today: `load_skill` and the L1 index read this catalogue only.
 
 ## Runtime loading (`build_load_skill_tool()::load_skill`)
 
