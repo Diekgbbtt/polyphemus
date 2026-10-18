@@ -84,13 +84,42 @@ else
   pending "defence-bypass / proxy-techniques families (C1)"
 fi
 
-# 8. The 101 children exist and name == directory.
-child_count=$(find skills-unspurious -mindepth 3 -maxdepth 3 -name SKILL.md | wc -l | tr -d ' ')
-if [ "$child_count" = "101" ]; then
-  pass "101 child SKILL.md present (found $child_count)"
+# 8. The 101 CLASS children exist (the two family groups are excluded from the
+# class count), each family parent's `## Variants` line set equals its child
+# leaf set (R9), and name == directory for every level-2 skill (family leaves
+# included).
+class_children=$(find skills-unspurious -mindepth 3 -maxdepth 3 -name SKILL.md \
+  -not -path 'skills-unspurious/defence-bypass/*' \
+  -not -path 'skills-unspurious/proxy-techniques/*' | wc -l | tr -d ' ')
+if [ "$class_children" = "101" ]; then
+  pass "101 class child SKILL.md present (found $class_children)"
 else
-  failed "101 child SKILL.md present (found $child_count)"
+  failed "101 class child SKILL.md present (found $class_children)"
 fi
+
+fam_ok=1
+for fam in defence-bypass proxy-techniques; do
+  parent="skills-unspurious/$fam/SKILL.md"
+  if [ ! -f "$parent" ]; then
+    printf '      family parent missing: %s\n' "$parent"
+    fam_ok=0
+    continue
+  fi
+  listed=$(awk '/^## Variants$/{f=1;next} f && /^## /{exit} f && /^- /{sub(/^- /,""); sub(/ - .*/,""); print}' "$parent" | sort)
+  leaves=$(find "skills-unspurious/$fam" -mindepth 2 -maxdepth 2 -name SKILL.md | sed 's|/SKILL.md$||; s|.*/||' | sort)
+  if [ "$listed" != "$leaves" ]; then
+    printf '      %s: ## Variants lines != child leaves\n' "$fam"
+    printf '        listed: %s\n' "$(printf '%s' "$listed" | tr '\n' ' ')"
+    printf '        leaves: %s\n' "$(printf '%s' "$leaves" | tr '\n' ' ')"
+    fam_ok=0
+  fi
+done
+if [ "$fam_ok" = "1" ]; then
+  pass "each family parent's ## Variants lines equal its child leaves (R9)"
+else
+  failed "each family parent's ## Variants lines equal its child leaves (R9)"
+fi
+
 mismatch=0
 while IFS= read -r f; do
   dir=$(basename "$(dirname "$f")")

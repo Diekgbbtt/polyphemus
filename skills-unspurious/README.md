@@ -28,6 +28,15 @@ skills-unspurious/<class>/<variant>/SKILL.md
 skills-unspurious/<class>/<variant>/references/<name>.md   # only when a bulky proof belongs outside the body
 ```
 
+A technique family is a level-1 group like a class, with its own variants at level 2 and no intermediate directory:
+
+```
+skills-unspurious/<family>/SKILL.md
+skills-unspurious/<family>/<family>-<discriminator>/SKILL.md
+```
+
+A family leaf is named `<family>-<discriminator>` (rule R5), where the discriminator is the variant's first bent step.
+
 The nested path is the taxonomy target (`web-vulnerability-testing -> <class> -> <variant>`, folded under the parent class directory), as fixed by `docs/design/skills-taxonomy.md`.
 The name of a skill is precisely the leaf sub-directory holding its `SKILL.md`, and its frontmatter `name` equals it; the loader-facing identity is that flat leaf (rule R3 in the taxonomy spec).
 The nested layout is loadable (W4): the catalogue mount (`SkillCatalogue` in `src/polymerhus/app/llm/skills.py`) indexes this directory under the logical root and resolves a skill by its flat leaf name whichever group holds it, reports leaf names only, and refuses a duplicate name loudly, naming both colliding paths (rules R1-R4).
@@ -38,6 +47,9 @@ The mount never repoints the live catalogue root `skills/`, which other streams 
 
 - The 30 kept level-1 skills (`two-principal-authz` included as the cross-cutting entry), de-spuriated per the Phase 2 checklist.
 - 101 variant skills across 28 decomposed classes, authored against the ontology and reviewed.
+- The two technique families, `defence-bypass` and `proxy-techniques` (C1 of #278): level-1 groups beside the classes, each a conformed parent plus six variant leaves, authored against the ontology and the variant boundary.
+  - `defence-bypass` - `defence-bypass-signature-evasion`, `defence-bypass-encoding-differential`, `defence-bypass-parser-confusion`, `defence-bypass-allowance-gap`, `defence-bypass-edge-origin-differential`, `defence-bypass-throttle-evasion`.
+  - `proxy-techniques` - `proxy-techniques-dns-rebinding`, `proxy-techniques-redirect-chain`, `proxy-techniques-url-parser-differential`, `proxy-techniques-channel-wrapping`, `proxy-techniques-cache-deception`, `proxy-techniques-relay-forwarding`.
 - `INVENTORY.md` - the KEEP / DISCARD / BORDERLINE classification with a rationale per source directory.
 - `SCREAMING-REPORT.md` - the de-spuriation record: what was removed, adapted, extracted, and the arsenal gaps.
 - `_migration/high-value-targets/` - the extracted high-value-target material for the future threat-modeller migration.
@@ -53,6 +65,7 @@ The mount never repoints the live catalogue root `skills/`, which other streams 
 - Discarded: 18 (the tool skills and the technology skills) plus `cve-exploitation`.
 - Group trees: 46 flat duplicates dropped after folding their unique content.
 - Decomposed: 28 classes into 101 variants; `graphql` does not decompose and stands as one skill.
+- Families: 2 level-1 groups with 12 variant leaves between them (`defence-bypass` 6, `proxy-techniques` 6); each parent carries its `## Variants` line set equal to its own leaves (rule R9), and the 101 class children are counted apart from them.
 
 ## Conventions
 
@@ -71,6 +84,6 @@ The mount never repoints the live catalogue root `skills/`, which other streams 
 - The 30 parents are conformed to the ontology sections (`## Adversarial Capabilities`, `## Trust Assumptions`) per the B2 ruling recorded in `docs/design/skills-taxonomy-decisions.md` (D-T7); each parent gains a `## Variants` section, and `graphql` keeps its full body without one (D-T8).
 - The nested loader (W4) is implemented: the suite mounts as an index over this directory under the logical root `web-vulnerability-testing/`, resolves flat leaves, reports leaf names only, refuses duplicate names, and keeps the root out of every reported name (rules R1-R4 and R8 in the taxonomy spec).
   The mount seam and its conformance tests are `SkillCatalogue` in `src/polymerhus/app/llm/skills.py` and `tests/recon/test_skill_catalogue.py`.
-- The taxonomy and naming spec is ratified as B1 (`docs/design/skills-taxonomy.md`, compiled from `docs/design/skills-taxonomy-decisions.md`); the `defence-bypass` and `proxy-techniques` families (#278) are authored per it (C1) and the classes are rewired to them (C2).
+- The taxonomy and naming spec is ratified as B1 (`docs/design/skills-taxonomy.md`, compiled from `docs/design/skills-taxonomy-decisions.md`); the `defence-bypass` and `proxy-techniques` families (#278) are authored per it (C1) with six leaves each, and the classes name them at their bypass and proxy steps (C2).
   The 70 leaves that do not yet carry their class prefix are normalisation debt (#372).
 - Suite enrichment from the local repositories runs as D1a-D1c.
