@@ -49,6 +49,22 @@ to one project, and the `meta-usage-skill` reading protocol appended by the read
 path to every load except meta-family skills (`skills/meta/`). Loader, store,
 writer, and protocol injection are one domain
 here so they cannot drift; the prompt/compaction domain stays unaware of skills.
+
+#236 makes the skill surface artifact-declared and adds the description-only
+listing. `skill_agent_binding(role_id, task_skills=...)` unions an artifact's
+declared skill names (a ratified `HuntConfig` for the hunter, a
+`TestImplementationSpec` for the pod runner) with the role baseline: the names
+resolve through the SAME store seam the loader uses (project bundle first, then
+the catalogue), the union is de-duplicated and sorted, the meta family is
+refused, and the added set is capped at `MAX_TASK_SKILLS` AFTER resolution - an
+unresolvable name is warned and skipped, never silently dropped, and the
+baseline is never displaced. The L1 index middleware renders the resolved
+descriptions, so the artifact set rides the #221 mechanism with no new
+rendering path. The same ONE `load_skill` tool gains the listing mode: no name
+lists the catalogue's descriptions (all, or the `pattern` regex), meta excluded,
+capped at `MAX_SKILL_LISTING`; `build_load_skill_tool(description_only=True)`
+is that surface without bodies (the hunt-orchestrator's grant, composed in
+`attack/hunting/actors.build_orchestrator_read_grants`).
 """
 from __future__ import annotations
 
