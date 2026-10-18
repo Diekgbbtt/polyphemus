@@ -18,7 +18,7 @@
 | S1 | Trunk assembly: W0 landing + W0/W1 completion + W2 cortex integrated | merge commits on `feat/skills-system`; `verify.sh` FAIL-free (DONE) |
 | S2 | Residual wave: W1-taxonomy (B1, B3/B4 records), W0-parent-conformance (B2), W2-refresh | DONE 2026-10-18: all three merged after their single review rounds and fix passes; `verify.sh` NO-FAILURES (1 pending: the C1 families) |
 | S3 | W3: four rulings (round 1), remaining grill points (round 2), ADR compiled, then prompt surgery + validity gate | rulings answered; ADR committed; W3 subagent done, one review, merge |
-| S4 | W4: nested-taxonomy loader (flat-leaf identity, uniqueness hard error, level-2 nesting, logical root mount, scaffold, conformance tests, README) | one review, merge, targeted test suite green, `verify.sh` FAIL-free |
+| S4 | W4: nested-taxonomy loader (flat-leaf identity, uniqueness hard error, level-2 nesting, logical root mount, scaffold, conformance tests, README) | DONE 2026-10-18: merged after the single review round (CLEAR); 16 conformance tests green; the wider targeted suites green; `verify.sh` NO-FAILURES (1 pending: C1) |
 | S5 | W5: artifact `skills` field, `load_skill` descriptions command, runtime rendering, agent workflows (C5, workflow ticket #236); per the 2026-10-18 ruling: the pod runner/triager prompt refactoring plus the skills loading/listing binding for all four hunting-module agents | one review, merge, targeted suites green |
 | S6 | W6: `defence-bypass` and `proxy-techniques` families (C1) + cross-reference wiring (C2) | one review, merge, `verify.sh` family check PASS |
 | S7 | W7: C4-full enrichment (D1a proposal report first, operator-assessed; then D1b surgical pass, D1c references/scripts) | D1a accepted by the operator; one review, merge, `verify.sh` ALL-CHECKS-PASS |
@@ -43,6 +43,7 @@ After each merge into the trunk: run `verify.sh`, update the completion ledger r
 ## Current pointers (2026-10-18)
 
 - Trunk: `feat/skills-system` (worktree `.claude/worktrees/feat-skills-system`); tip: the B1 decisions commit; contains W0 landing, W0/W1 completion, W2 cortex.
-- S2: COMPLETE - `feat/w2-cortex-refresh` (review CLEAR, fixes merged), `feat/w0-parent-conformance` (review CLEAR, fixes merged), `feat/w1-taxonomy` (review BLOCKED on a stale README line, fixed, merged); trunk tip `a0076955`; `verify.sh` NO-FAILURES (1 pending: the C1 families).
-- S3: round 1 (the four adversarial rulings) presented to the operator; awaiting the answers.
-- Open operator gates: A1 status wording; the W6/W7 reading; the four W3 rulings.
+- S2: COMPLETE - all three residual items merged after their single review rounds (W2, W0, W1).
+- S3: round 1 ANSWERED and recorded (`skill-evolution-w3-decisions.md`, D-W3-1..D-W3-5); round 2 pending; one clarification open (the "verification probes" reading).
+- S4: COMPLETE - the W4 mount seam merged after review CLEAR (`7ac935d6`).
+- Open operator gates: the W3 round-2 answers; the D1a enrichment report (W7).
