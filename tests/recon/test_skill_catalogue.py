@@ -242,7 +242,9 @@ def test_a_bundle_path_cannot_escape_the_leaf(tmp_path) -> None:
     _write_bundle(tmp_path, "group", "variant")
     catalogue = skills.SkillCatalogue(tmp_path)
 
-    for hostile in ("../SKILL.md", "../group/SKILL.md", "/etc/passwd"):
+    # The separator rule of `validate_path_component` applies here too: a
+    # backslash target would traverse the bundle on Windows.
+    for hostile in ("../SKILL.md", "../group/SKILL.md", "/etc/passwd", "..\\evil"):
         with pytest.raises(ValueError):
             catalogue.bundle_path("variant", hostile)
     # An unknown skill resolves nothing, whatever the artefact.

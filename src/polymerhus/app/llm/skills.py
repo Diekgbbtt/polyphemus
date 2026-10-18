@@ -314,11 +314,14 @@ class SkillCatalogue:
         """The path of one skill-local bundle artefact (R8) under the leaf's own
         directory: `references/<slug>.md`, `scripts/<slug>`, or the bundle
         directory itself for an empty `relative`. Returns None for an unknown
-        name. A `relative` that is absolute or escapes the leaf directory raises
-        ValueError - a traversal attempt is refused, never followed."""
+        name. A `relative` that is absolute, carries a backslash, or escapes the
+        leaf directory raises ValueError - a traversal attempt is refused, never
+        followed (the same separator rule `validate_path_component` applies)."""
         target = Path(relative)
-        if target.is_absolute() or ".." in target.parts:
-            raise ValueError(f"skill_bundle: {relative!r} escapes the skill bundle")
+        if target.is_absolute() or ".." in target.parts or "\\" in relative:
+            raise ValueError(
+                f"skill_bundle: {relative!r} is not a safe bundle-relative path"
+            )
         bundle = self._bundles.get(name)
         if bundle is None:
             return None
