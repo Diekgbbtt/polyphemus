@@ -72,6 +72,7 @@ from polymerhus.attack.hunting.mover import (
     orchestrator_session_id,
     pod_session_id,
     run_delivery_tick,
+    threat_modeller_session_id,
 )
 from polymerhus.app.llm.actor import AgentInbox, AgentMessage, STOP
 from polymerhus.app.llm.provider_failure import ProviderUnavailableError
@@ -162,6 +163,16 @@ def is_run_session_id(session_id: str, run_id: str) -> bool:
         session_id == run_id
         or session_id == f"hunting:{run_id}"
         or session_id.startswith(f"hunting:{run_id}:")
+    )
+
+
+def is_modeller_session_id(session_id: str, run_id: str) -> bool:
+    """True for the run's modelling PASS session: the renamed
+    `hunting:<run_id>:threat-modeller` (S1 4.1) and - for the one-window alias -
+    the legacy `hunting:<run_id>:orchestrator` an interrupted old run is
+    registered under."""
+    return session_id in (
+        threat_modeller_session_id(run_id), orchestrator_session_id(run_id),
     )
 
 
@@ -314,8 +325,8 @@ async def is_run_quiesced(
 ) -> bool:
     """The quiesce predicate: the run's work is exhausted. ALL must hold:
 
-    - the orchestrator session is settled (its registry entry gone - a live
-      pass may still author configs);
+    - the modeller pass session is settled (its registry entry gone - a live
+      pass may still write a model and produce loop files);
     - no hunter is still mid-graph (`state.hunters_in_graph`) - a running graph
       may yet write a produced spec after quiesce;
     - no pod session is live - an in-flight pod may still deliver an export;
@@ -325,11 +336,10 @@ async def is_run_quiesced(
     ended, they author nothing more, and they settle on the run-terminal
     `settle` message once the surfer proves quiesce."""
     live = {sid for sid in control.live_session_ids() if is_run_session_id(sid, run_id)}
-    # designed-not-built: the quiesce key becomes `threat_modeller_session_id`
-    # with the bootstrap re-wire in T2b (#386); keying the NEW id before the
-    # swap would quiesce a run whose live pass is still registered under the
-    # legacy segment.
-    if orchestrator_session_id(run_id) in live:
+    # The run's modelling pass, keyed on the renamed segment (S1 4.1, T2b #386);
+    # the legacy `orchestrator` segment stays accepted for one window, so a
+    # resumed old run is never quiesced while its pass is still live.
+    if any(is_modeller_session_id(sid, run_id) for sid in live):
         return False
     if any(is_pod_session_id(sid) for sid in live):
         return False
@@ -831,6 +841,7 @@ __all__ = [
     "THREAT_MODELLER_ROLE",
     "derive_thread_role",
     "is_hunter_session_id",
+    "is_modeller_session_id",
     "is_pod_session_id",
     "is_run_quiesced",
     "is_run_session_id",

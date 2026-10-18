@@ -1,8 +1,10 @@
 """#110: the hunting module runtime entry points - the start/stop lifecycle, the
 tear-down flush hook, the fixed store root, and the scheduling marshalling
-harness. No live PG / live LLM / live Neo4j: the pg accessors and the
-orchestration seams are faked, exactly the seam contract (seam 3) the tests
-assert against."""
+harness. No live PG / live LLM / live Neo4j: the pg accessors and the modeller
+pass seam are faked, exactly the seam contract (seam 3) the tests assert
+against. The modeller pass itself (its gates, the store) is the subject of
+`test_hunting_modeller_wiring.py` and `test_threat_modeller.py`.
+"""
 from __future__ import annotations
 
 import asyncio
@@ -10,84 +12,44 @@ import asyncio
 import pytest
 
 from polymerhus.attack.hunting import runtime as hunting_runtime
-from polymerhus.attack.hunting.hunt_orchestrator import (
-    DeliveredCandidate,
-    OrchestratorReport,
-    OrchestratorTools,
-    ReadOnlyGraphView,
-    Witness,
-    run_orchestration,
-)
+from polymerhus.attack.hunting.hunt_orchestrator import HuntConfig
 from polymerhus.attack.hunting.hunt_store import HuntStore
 from polymerhus.attack.hunting.hunter_memory import HunterMemoryStore
+from polymerhus.attack.hunting.threat_model_store import ThreatModelStore
+from polymerhus.attack.hunting.threat_modeller import (
+    ThreatModellerDegradedError,
+    UnitOutcome,
+    run_modeller_pass,
+)
+
+from tests.hunting_fixtures import ScriptedModellerTurns
 
 SERVICE_A = "Service:slug:a"
+UNIT = "Service:slug:a"
 FAULT_X = "fault-x"
 
 
-def _candidate(unit_id: str = SERVICE_A, fault_class: str = FAULT_X) -> DeliveredCandidate:
-    return DeliveredCandidate(
-        unit_id=unit_id,
-        fault_class=fault_class,
-        applies_witnesses=Witness(deterministic="witness", llm="witness"),
-        match_verdict="applies",
-    )
+def _outcome(unit_id: str = SERVICE_A, status: str = "completed") -> UnitOutcome:
+    return UnitOutcome(unit_id=unit_id, status=status)
 
 
-def _tools(store) -> OrchestratorTools:
-    return OrchestratorTools(
-        store_reads=store,
-        graph_view=ReadOnlyGraphView("rt-project", read_fn=lambda cy, p: []),
-    )
+def _recording_pass(seen: list | None = None):
+    """The injectable modeller pass body: records the unit and returns a
+    completed `UnitOutcome` (no LLM, no store)."""
+    seen = seen if seen is not None else []
+
+    async def run(project_id, run_id, unit_id, tools, **kwargs):
+        seen.append((project_id, run_id, unit_id))
+        return _outcome(unit_id)
+
+    run.seen = seen
+    return run
 
 
-def _phase_seams(tools):
-    """The three fixture phase seams under the agent-sole write model (#294):
-    each emulates the AGENT's store tool call - hypothesise carries the pair
-    with one CSRF class and writes the draft, ratify amends to ratified and
-    writes it, note appends one note - all through the pass's wrapped store
-    seam, so the harness never persists anything itself."""
-    import uuid
-
-    from polymerhus.attack.hunting.hunt_orchestrator import (
-        EnvisionedDirection,
-        GateDecision,
-        NoteDecision,
-        NoteRecord,
-        RatifyDecision,
-        mint_hunt_config,
-        revival_key,
-    )
-
-    def hypothesise(inp):
-        directions = []
-        for c in inp.candidates:
-            direction = EnvisionedDirection(
-                unit_id=c.unit_id, fault_class=c.fault_class, carried=True,
-                rationale="r", research_direction="rd",
-                vulnerability_classes=["CSRF"])
-            directions.append(direction)
-            for config in mint_hunt_config(
-                    direction, surface_context={},
-                    prior_hunt_insights=[]):
-                tools.store_reads.write_config("rt-project", config)
-        return GateDecision(directions=directions)
-
-    def ratify(inp):
-        configs = []
-        for draft in inp.configs:
-            amended = draft.model_copy(deep=True)
-            amended.status = "ratified"
-            tools.store_reads.update_config("rt-project", amended)
-            configs.append(amended)
-        return RatifyDecision(configs=configs)
-
-    def note(inp):
-        key = revival_key(inp.pair.unit_id, inp.pair.fault_class)
-        tools.store_reads.append_note("rt-project", key, "fixture note")
-        return NoteDecision(notes=[NoteRecord(key=key, note="fixture note")])
-
-    return hypothesise, ratify, note
+def _stores(tmp_path):
+    return (HuntStore(tmp_path / "hunts"),
+            HunterMemoryStore(tmp_path / "hunter"),
+            ThreatModelStore(root_dir=tmp_path / "models"))
 
 
 class _FakePg:
@@ -184,22 +146,26 @@ async def _noop_pod_builder(spec, **kw):
             "evidence": {"trail": []}, "clean": True, "iterations": 0}
 
 
-def test_start_hunting_persists_running_then_complete(tmp_path, monkeypatch):
-    """The entry point opens the run `running`, schedules the orchestrator
-    pass and the run-scoped surfer as sessions, drives them to quiesce (the
-    fixture phase seams write one ratified config; the fake hunt session
-    concludes without specs), and lands `complete`."""
-    fake = _FakePg()
+def _patch_pg(monkeypatch, fake):
     monkeypatch.setattr("polymerhus.app.clients.pg.create_hunting_run", fake.create_hunting_run)
     monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_status", fake.set_hunting_run_status)
     monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
 
-    tools = _tools(HuntStore(tmp_path))
-    h, r, n = _phase_seams(tools)
+
+def test_start_hunting_persists_running_then_complete(tmp_path, monkeypatch):
+    """The entry point opens the run `running`, schedules the modeller pass and
+    the run-scoped surfer as sessions, drives them to quiesce (the pass writes
+    the unit's model; the fake hunt session concludes without specs), and lands
+    `complete`."""
+    fake = _FakePg()
+    _patch_pg(monkeypatch, fake)
+    hunt, hunter, models = _stores(tmp_path)
+
     hid = asyncio.run(hunting_runtime.start_hunting(
-        "rt-project", candidates=[_candidate()], tools=tools,
-        hypothesise_fn=h, ratify_fn=r, note_fn=n,
+        "rt-project", candidates=[_delivered_candidate()],
+        modeller_pass_fn=_recording_pass(),
         control=_FakeControl(),
+        hunt_store=hunt, hunter_store=hunter, threat_store=models,
         hunter_builder=_noop_hunter_builder, pod_builder=_noop_pod_builder,
         tick_interval=0.001,
     ))
@@ -208,170 +174,64 @@ def test_start_hunting_persists_running_then_complete(tmp_path, monkeypatch):
     assert fake.statuses == [("running", "rt-hunt-0001"), ("rt-hunt-0001", "complete")]
 
 
-def test_empty_candidate_launch_reasons_over_platform_selection(monkeypatch):
-    """#200: an empty `candidates` launch runs the platform's OWN FaultSource
-    selection over the live L1 - the pass reasons over the selected candidate,
-    never a vacuous empty pass. This is the red loop: before the wiring
-    `start_hunting` feeds `candidates or ()` straight into the pass, so an
-    empty launch reasons over NOTHING."""
-    from tests.hunting_fixtures import build_graphql_fault, build_hunting_l1
+def _delivered_candidate(unit_id: str = SERVICE_A, fault_class: str = FAULT_X):
+    from polymerhus.attack.hunting.hunt_orchestrator import (
+        DeliveredCandidate,
+        Witness,
+    )
 
+    return DeliveredCandidate(
+        unit_id=unit_id,
+        fault_class=fault_class,
+        applies_witnesses=Witness(deterministic="witness", llm="witness"),
+        match_verdict="applies",
+    )
+
+
+def test_caller_supplied_candidates_stay_the_override(monkeypatch):
+    """#200: a non-empty caller batch is consumed as-is, never re-selected; the
+    pass runs over its distinct unit ids."""
     fake = _FakePg()
-    monkeypatch.setattr("polymerhus.app.clients.pg.create_hunting_run", fake.create_hunting_run)
-    monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_status", fake.set_hunting_run_status)
-    monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
-
-    received: list[list] = []
-
-    async def capturing_orchestrator(project_id, run_id, candidates, tools, **kw):
-        received.append(list(candidates))
-        return OrchestratorReport(pairs_processed=len(candidates))
+    _patch_pg(monkeypatch, fake)
+    seen: list = []
+    supplied = [_delivered_candidate()]
 
     asyncio.run(hunting_runtime.start_hunting(
-        "rt-project", candidates=(),
-        fault_entries=(build_graphql_fault(),), read_fn=build_hunting_l1(),
-        orchestrator_fn=capturing_orchestrator,
-        control=_FakeControl(),
-        tick_interval=0.001,
-    ))
-    assert received, "the orchestrator pass must be reached on an empty launch"
-    assert received[0], "an empty launch must reason over the platform's own selected candidates, not a vacuous set"
-    assert {c.unit_id for c in received[0]} == {
-        "Service:s1",              # GraphQLApi-fronted -> deterministic pass
-        "GraphQLApi",              # IS the presupposed System -> pass
-        "RESTApi",                 # no outgoing edge -> UNKNOWN -> pass
-    }
-    assert all(c.match_verdict == "applies" for c in received[0])
-
-
-def test_empty_candidate_launch_all_pruned_is_a_meaningful_empty_pass(
-        monkeypatch, caplog):
-    """#200: an L1 whose units are ALL pruned by the deterministic stage (an
-    enum-kinds fault with no linked Systems) is a MEANINGFUL empty pass - the
-    selection ran and reported, never a silent vacuous pass. The selection
-    summary surfaces via the log line."""
-    from tests.hunting_fixtures import build_hunting_l1
-    from polymerhus.attack.hunting.fault_source import FaultEntry
-
-    fake = _FakePg()
-    monkeypatch.setattr("polymerhus.app.clients.pg.create_hunting_run", fake.create_hunting_run)
-    monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_status", fake.set_hunting_run_status)
-    monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
-
-    received: list[list] = []
-
-    async def capturing_orchestrator(project_id, run_id, candidates, tools, **kw):
-        received.append(list(candidates))
-        return OrchestratorReport(pairs_processed=len(candidates))
-
-    with caplog.at_level("INFO", logger="polymerhus.attack.hunting.fault_source"):
-        asyncio.run(hunting_runtime.start_hunting(
-            "rt-project", candidates=(),
-            fault_entries=(FaultEntry(fault_id="waf-bypass",
-                                      enum_kinds=frozenset({"WAF"})),),
-            read_fn=build_hunting_l1(),
-            orchestrator_fn=capturing_orchestrator,
-            control=_FakeControl(),
-            tick_interval=0.001,
-        ))
-    assert received and received[0] == []
-    assert any("selection" in record.message and "pruned_by_tag" in record.message
-               for record in caplog.records), \
-        "the all-pruned empty pass must surface the selection summary"
-
-
-def test_empty_candidate_launch_reasons_through_the_real_pass(tmp_path,
-                                                              monkeypatch):
-    """#200 end-to-end: an empty launch runs the REAL `arun_orchestration`
-    over the platform-selected candidates - the phase machine hypothesises /
-    ratifies / notes the selected pairs, the configs land in the store, and
-    the run completes (pairs_processed > 0, never the vacuous 0)."""
-    from tests.hunting_fixtures import build_graphql_fault, build_hunting_l1
-
-    fake = _FakePg()
-    monkeypatch.setattr("polymerhus.app.clients.pg.create_hunting_run", fake.create_hunting_run)
-    monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_status", fake.set_hunting_run_status)
-    monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
-
-    store = HuntStore(tmp_path)
-    tools = _tools(store)
-    h, r, n = _phase_seams(tools)
-    asyncio.run(hunting_runtime.start_hunting(
-        "rt-project", candidates=(),
-        fault_entries=(build_graphql_fault(),), read_fn=build_hunting_l1(),
-        tools=tools,
-        hypothesise_fn=h, ratify_fn=r, note_fn=n,
+        "rt-project", candidates=supplied,
+        modeller_pass_fn=_recording_pass(seen),
         control=_FakeControl(),
         hunter_builder=_noop_hunter_builder, pod_builder=_noop_pod_builder,
         tick_interval=0.001,
     ))
-    assert fake.statuses == [("running", "rt-hunt-0001"), ("rt-hunt-0001", "complete")]
-    ratified = [c for c in store.read_configs("rt-project")
-                if c.get("status") == "ratified"]
-    assert {c.get("unit_id") for c in ratified} == {
-        "Service:s1", "GraphQLApi", "RESTApi"}
-    assert all(c.get("fault_class") == "graphql-introspection" for c in ratified)
+    assert seen and seen[0][2] == SERVICE_A
 
 
-def test_callersupplied_candidates_stay_the_override(monkeypatch):
-    """#200: a non-empty caller batch is consumed as-is, never re-selected (the
-    harness / integration / eval seams keep driving selection externally)."""
-    from polymerhus.attack.hunting.hunt_orchestrator import Witness
-
-    fake = _FakePg()
-    monkeypatch.setattr("polymerhus.app.clients.pg.create_hunting_run", fake.create_hunting_run)
-    monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_status", fake.set_hunting_run_status)
-    monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
-
-    supplied = [
-        DeliveredCandidate(
-            unit_id=SERVICE_A, fault_class=FAULT_X,
-            applies_witnesses=Witness(deterministic="w", llm="w"),
-            match_verdict="applies"),
-    ]
-    received: list[list] = []
-
-    async def capturing_orchestrator(project_id, run_id, candidates, tools, **kw):
-        received.append(list(candidates))
-        return OrchestratorReport(pairs_processed=len(candidates))
-
-    asyncio.run(hunting_runtime.start_hunting(
-        "rt-project", candidates=supplied,
-        orchestrator_fn=capturing_orchestrator,
-        control=_FakeControl(),
-        tick_interval=0.001,
-    ))
-    assert received and received[0] == supplied
-
-
-def test_default_tools_ground_on_the_app_owned_store_root():
+def test_default_tools_ground_on_the_app_owned_store_roots():
     """With no tools injected the entry point builds the seam defaults: the
-    HuntStore at the app-owned data root and the read-only graph view."""
+    ThreatModelStore at the app-owned data root (the modeller's store) and the
+    read-only graph view (its grounding read)."""
     from polymerhus.app.data_root import DATA_ROOT
 
-    store = HuntStore()
+    store = ThreatModelStore()
 
     assert store._root == DATA_ROOT
     assert store._project_dir("proj-1") == (
-        DATA_ROOT / "proj-1" / "hunting" / "orchestration"
+        DATA_ROOT / "proj-1" / "hunting" / "threat_modeller"
     )
 
 
-def test_failing_orchestration_still_lands_a_terminal_status(monkeypatch):
-    """Fail-open: an orchestration pass that raises degrades to `failed` - the
-    entry point never raises through the control plane."""
+def test_failing_modeller_pass_still_lands_a_terminal_status(monkeypatch):
+    """Fail-open: a pass that raises degrades to `failed` - the entry point
+    never raises through the control plane."""
     fake = _FakePg()
-    monkeypatch.setattr("polymerhus.app.clients.pg.create_hunting_run", fake.create_hunting_run)
-    monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_status", fake.set_hunting_run_status)
-    monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
+    _patch_pg(monkeypatch, fake)
 
-    async def boom(*args, **kwargs):
-        raise RuntimeError("orchestration blew up (fixture)")
-
-    monkeypatch.setattr("polymerhus.attack.hunting.hunt_orchestrator.arun_orchestration", boom)
+    async def boom(project_id, run_id, unit_id, tools, **kwargs):
+        raise RuntimeError("pass blew up (fixture)")
 
     hid = asyncio.run(hunting_runtime.start_hunting(
-        "rt-project", candidates=[_candidate()],
+        "rt-project", candidates=[_delivered_candidate()],
+        modeller_pass_fn=boom,
         control=_FakeControl(), tick_interval=0.001,
     ))
     assert hid == "rt-hunt-0001"
@@ -380,58 +240,24 @@ def test_failing_orchestration_still_lands_a_terminal_status(monkeypatch):
 
 # --- #329: a provider-caused pass abort pauses the run, never fails it ---------
 
-def _patch_pg(monkeypatch, fake):
-    monkeypatch.setattr("polymerhus.app.clients.pg.create_hunting_run", fake.create_hunting_run)
-    monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_status", fake.set_hunting_run_status)
-    monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
-
-
 def test_provider_caused_pass_abort_persists_interrupted(monkeypatch):
     """#329 AC1: a sustained provider throttle does not fail the run outright -
     the pass aborts operator-visibly but the run lands the resumable terminal
     `interrupted`, never `failed`."""
-    from polymerhus.attack.hunting.hunt_orchestrator import HuntOrchestrationDegradedError
-
     fake = _FakePg()
     _patch_pg(monkeypatch, fake)
 
-    async def provider_abort(*args, **kwargs):
-        raise HuntOrchestrationDegradedError(
-            phase="hypothesise", streak=5, threshold=5, provider_cause=True)
-
-    monkeypatch.setattr(
-        "polymerhus.attack.hunting.hunt_orchestrator.arun_orchestration",
-        provider_abort)
+    async def provider_abort(project_id, run_id, unit_id, tools, **kwargs):
+        raise ThreatModellerDegradedError(
+            state="TRUST_MODELLED", streak=5, threshold=5, provider_cause=True)
 
     hid = asyncio.run(hunting_runtime.start_hunting(
-        "rt-project", candidates=[_candidate()],
+        "rt-project", candidates=[_delivered_candidate()],
+        modeller_pass_fn=provider_abort,
         control=_FakeControl(), tick_interval=0.001,
     ))
     assert hid == "rt-hunt-0001"
     assert fake.statuses == [("running", "rt-hunt-0001"), ("rt-hunt-0001", "interrupted")]
-
-
-def test_non_provider_pass_abort_still_fails(monkeypatch):
-    """A degradation abort that is NOT provider-caused remains a genuine domain
-    failure: it lands `failed`, unchanged."""
-    from polymerhus.attack.hunting.hunt_orchestrator import HuntOrchestrationDegradedError
-
-    fake = _FakePg()
-    _patch_pg(monkeypatch, fake)
-
-    async def degraded_abort(*args, **kwargs):
-        raise HuntOrchestrationDegradedError(
-            phase="hypothesise", streak=5, threshold=5, provider_cause=False)
-
-    monkeypatch.setattr(
-        "polymerhus.attack.hunting.hunt_orchestrator.arun_orchestration",
-        degraded_abort)
-
-    asyncio.run(hunting_runtime.start_hunting(
-        "rt-project", candidates=[_candidate()],
-        control=_FakeControl(), tick_interval=0.001,
-    ))
-    assert fake.statuses == [("running", "rt-hunt-0001"), ("rt-hunt-0001", "failed")]
 
 
 def test_provider_caused_pass_abort_records_the_cause_on_the_run(monkeypatch):
@@ -440,24 +266,20 @@ def test_provider_caused_pass_abort_records_the_cause_on_the_run(monkeypatch):
     transient throttle (resumable) from consumed credits (terminal) after the
     process that observed the failure is gone."""
     from polymerhus.app.llm.provider_failure import ProviderUnavailableError
-    from polymerhus.attack.hunting.hunt_orchestrator import HuntOrchestrationDegradedError
 
     fake = _FakePg()
     _patch_pg(monkeypatch, fake)
 
-    async def provider_abort(*args, **kwargs):
-        raise HuntOrchestrationDegradedError(
-            phase="hypothesise", streak=5, threshold=5, provider_cause=True,
+    async def provider_abort(project_id, run_id, unit_id, tools, **kwargs):
+        raise ThreatModellerDegradedError(
+            state="TRUST_MODELLED", streak=5, threshold=5, provider_cause=True,
             provider_error=ProviderUnavailableError(
                 "Go usage limit exceeded", status_code=429,
                 quota_exhausted=True))
 
-    monkeypatch.setattr(
-        "polymerhus.attack.hunting.hunt_orchestrator.arun_orchestration",
-        provider_abort)
-
     asyncio.run(hunting_runtime.start_hunting(
-        "rt-project", candidates=[_candidate()],
+        "rt-project", candidates=[_delivered_candidate()],
+        modeller_pass_fn=provider_abort,
         control=_FakeControl(), tick_interval=0.001,
     ))
 
@@ -475,12 +297,10 @@ def test_provider_caused_pass_abort_records_the_cause_on_the_run(monkeypatch):
 def test_provider_abort_stops_the_runs_sessions_before_the_terminal(monkeypatch):
     """#331 stop-only: on a provider-caused abort the handler STOPS the run's
     affected sessions (per-session `cancel_run`, reached through the shared
-    control plane: the orchestrator pass, the surfer mover so it cannot keep
+    control plane: the modeller pass, the surfer mover so it cannot keep
     dispatching, every hunter/pod), DRAINS them, and only then stamps
-    `interrupted`. Before this stop leg the `interrupted` stamp raced a still-live
-    surfer session (the #331 verifier finding)."""
+    `interrupted`."""
     from polymerhus.app.llm.provider_failure import ProviderUnavailableError
-    from polymerhus.attack.hunting.hunt_orchestrator import HuntOrchestrationDegradedError
 
     fake = _FakePg()
     _patch_pg(monkeypatch, fake)
@@ -516,24 +336,23 @@ def test_provider_abort_stops_the_runs_sessions_before_the_terminal(monkeypatch)
     monkeypatch.setattr(
         "polymerhus.app.clients.pg.set_hunting_run_status", recording_status)
 
-    async def provider_abort(*args, **kwargs):
-        raise HuntOrchestrationDegradedError(
-            phase="hypothesise", streak=5, threshold=5, provider_cause=True,
+    async def provider_abort(project_id, run_id, unit_id, tools, **kwargs):
+        raise ThreatModellerDegradedError(
+            state="TRUST_MODELLED", streak=5, threshold=5, provider_cause=True,
             provider_error=ProviderUnavailableError(
                 "Go usage limit exceeded", status_code=429, quota_exhausted=True))
 
-    monkeypatch.setattr(
-        "polymerhus.attack.hunting.hunt_orchestrator.arun_orchestration",
-        provider_abort)
-
     asyncio.run(hunting_runtime.start_hunting(
-        "rt-project", candidates=[_candidate()],
+        "rt-project", candidates=[_delivered_candidate()],
+        modeller_pass_fn=provider_abort,
         control=control, tick_interval=0.001,
     ))
 
     hid = "rt-hunt-0001"
     assert f"hunting:{hid}:surfer" in cancelled, (
         "the surfer session must be stopped so it cannot keep dispatching")
+    # the modeller pass session already settled by raising the abort, so it is
+    # no longer live; the surfer is the session that must be hard-cancelled
     assert hid not in cancelled, (
         "the run's outer bootstrap marker must never be cancelled")
     assert f"hunting:{hid}" not in cancelled, (
@@ -543,18 +362,29 @@ def test_provider_abort_stops_the_runs_sessions_before_the_terminal(monkeypatch)
         "no run session may be live when the interrupted terminal lands")
 
 
+def _ratified_config() -> HuntConfig:
+    return HuntConfig(
+        hunt_id=f"{UNIT}::{FAULT_X}::CSRF",
+        unit_id=UNIT, fault_class=FAULT_X, vulnerability_class="CSRF",
+        rationale="r", research_direction="rd",
+    )
+
+
 def test_hunter_provider_failure_interrupts_the_run(tmp_path, monkeypatch):
     """#312: a provider failure inside a dispatched HUNTER - after the pass has
-    ratified and the surfer consumed the configs - must pause the run as the
-    resumable `interrupted` with the provider cause, never let it quiesce
+    modelled and the surfer consumed a ratified config - must pause the run as
+    the resumable `interrupted` with the provider cause, never let it quiesce
     `complete` with zero specs and no reason. This is the trial-2 outcome: 11
     configs consumed, 0 specs authored, no typed reason. The #329/#331 fixes
-    scoped the orchestrator pass and the pod verdict; the hunter harness still
-    swallowed the typed provider error and the run quiesced silently."""
+    scoped the pass and the pod verdict; the hunter harness still swallowed the
+    typed provider error and the run quiesced silently."""
     from polymerhus.app.llm.provider_failure import ProviderUnavailableError
 
     fake = _FakePg()
     _patch_pg(monkeypatch, fake)
+    hunt, hunter, models = _stores(tmp_path)
+    hunting_runtime.enqueue_hunt_config("rt-project", _ratified_config(),
+                                        hunt_store=hunt)
 
     async def provider_hunter(config):
         raise ProviderUnavailableError(
@@ -563,13 +393,10 @@ def test_hunter_provider_failure_interrupts_the_run(tmp_path, monkeypatch):
     def provider_hunter_builder(*, run_id, project_id, hunter_store, **kw):
         return provider_hunter, None
 
-    tools = _tools(HuntStore(tmp_path))
-    h, r, n = _phase_seams(tools)
     hid = asyncio.run(hunting_runtime.start_hunting(
-        "rt-project", candidates=[_candidate()], tools=tools,
-        hypothesise_fn=h, ratify_fn=r, note_fn=n,
-        hunt_store=HuntStore(tmp_path),
-        hunter_store=HunterMemoryStore(tmp_path),
+        "rt-project", candidates=[_delivered_candidate()],
+        modeller_pass_fn=_recording_pass(),
+        hunt_store=hunt, hunter_store=hunter, threat_store=models,
         control=_FakeControl(),
         hunter_builder=provider_hunter_builder, pod_builder=_noop_pod_builder,
         tick_interval=0.001,
@@ -591,8 +418,7 @@ def test_raw_hunter_provider_error_at_the_real_seam_interrupts_the_run(
     typed error. The harness classifies the raw raise at its own seam, the
     surfer records it, and the run pauses as `interrupted` with the provider
     cause - instead of quiescing `complete` with zero specs (the trial-2
-    outcome). The sibling test above injects the typed error directly; this one
-    drives the production turn, which is where the defect lived."""
+    outcome)."""
     from langgraph.checkpoint.memory import InMemorySaver  # noqa: PLC0415
 
     from tests.hunting_fixtures import (  # noqa: PLC0415
@@ -605,6 +431,9 @@ def test_raw_hunter_provider_error_at_the_real_seam_interrupts_the_run(
 
     fake = _FakePg()
     _patch_pg(monkeypatch, fake)
+    hunt, hunter, models = _stores(tmp_path)
+    hunting_runtime.enqueue_hunt_config("rt-project", _ratified_config(),
+                                        hunt_store=hunt)
 
     def raw_hunter_builder(*, run_id, project_id, hunter_store, **kw):
         dispatch = build_hunting_agent(
@@ -615,13 +444,10 @@ def test_raw_hunter_provider_error_at_the_real_seam_interrupts_the_run(
         )
         return dispatch, None
 
-    tools = _tools(HuntStore(tmp_path))
-    h, r, n = _phase_seams(tools)
     hid = asyncio.run(hunting_runtime.start_hunting(
-        "rt-project", candidates=[_candidate()], tools=tools,
-        hypothesise_fn=h, ratify_fn=r, note_fn=n,
-        hunt_store=HuntStore(tmp_path),
-        hunter_store=HunterMemoryStore(tmp_path),
+        "rt-project", candidates=[_delivered_candidate()],
+        modeller_pass_fn=_recording_pass(),
+        hunt_store=hunt, hunter_store=hunter, threat_store=models,
         control=_FakeControl(),
         hunter_builder=raw_hunter_builder, pod_builder=_noop_pod_builder,
         tick_interval=0.001,
@@ -652,17 +478,11 @@ def test_start_hunting_fail_open_when_pg_is_unavailable(monkeypatch, caplog):
     """Fail-open: with the PG row AND the status write unavailable the run still
     proceeds (a generated id keys the trail) and nothing raises."""
     fake = _FakePg(fail_create=True, fail_status=True)
-    monkeypatch.setattr("polymerhus.app.clients.pg.create_hunting_run", fake.create_hunting_run)
-    monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_status", fake.set_hunting_run_status)
-    monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
-
-    async def recording(*args, **kwargs):
-        return None
-
-    monkeypatch.setattr("polymerhus.attack.hunting.hunt_orchestrator.arun_orchestration", recording)
+    _patch_pg(monkeypatch, fake)
 
     hid = asyncio.run(hunting_runtime.start_hunting(
-        "rt-project", candidates=[_candidate()],
+        "rt-project", candidates=[_delivered_candidate()],
+        modeller_pass_fn=_recording_pass(),
         control=_FakeControl(), tick_interval=0.001,
     ))
     assert hid  # an id still keyed the run despite the PG outage
@@ -672,17 +492,15 @@ def test_start_hunting_fail_open_when_pg_is_unavailable(monkeypatch, caplog):
 def test_pinned_run_id_keys_the_run(tmp_path, monkeypatch):
     """A caller-pinned run_id keys the status writes (the store trail uses it)."""
     fake = _FakePg()
-    fake.create_hunting_run = lambda project_id: fake.next_id  # recording running in create
-    monkeypatch.setattr("polymerhus.app.clients.pg.create_hunting_run", fake.create_hunting_run)
-    monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_status", fake.set_hunting_run_status)
-    monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
+    fake.create_hunting_run = lambda project_id: fake.next_id
+    _patch_pg(monkeypatch, fake)
+    hunt, hunter, models = _stores(tmp_path)
 
-    tools = _tools(HuntStore(tmp_path))
-    h, r, n = _phase_seams(tools)
     hid = asyncio.run(hunting_runtime.start_hunting(
-        "rt-project", run_id="pinned-run", candidates=[_candidate()],
-        tools=tools, hypothesise_fn=h, ratify_fn=r, note_fn=n,
+        "rt-project", run_id="pinned-run", candidates=[_delivered_candidate()],
+        modeller_pass_fn=_recording_pass(),
         control=_FakeControl(),
+        hunt_store=hunt, hunter_store=hunter, threat_store=models,
         hunter_builder=_noop_hunter_builder, pod_builder=_noop_pod_builder,
         tick_interval=0.001,
     ))
@@ -699,18 +517,14 @@ def test_stop_hunting_persists_stopped(monkeypatch):
 
 def test_stop_hunting_cancels_a_running_run(tmp_path, monkeypatch):
     """The run stop: stop_hunting cancels EVERY session of the run (the outer
-    bootstrap task, the orchestrator pass, the surfer), and the run lands
+    bootstrap task, the modeller pass, the surfer), and the run lands
     `stopped` - the task's own cancellation never re-stamps a status over the
     stop."""
     fake = _FakePg()
-    monkeypatch.setattr("polymerhus.app.clients.pg.create_hunting_run", fake.create_hunting_run)
-    monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_status", fake.set_hunting_run_status)
-    monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
+    _patch_pg(monkeypatch, fake)
 
-    async def slow(*args, **kwargs):
+    async def slow(project_id, run_id, unit_id, tools, **kwargs):
         await asyncio.sleep(30)
-
-    monkeypatch.setattr("polymerhus.attack.hunting.hunt_orchestrator.arun_orchestration", slow)
 
     from polymerhus.app.runtime import RuntimeManager
 
@@ -718,12 +532,13 @@ def test_stop_hunting_cancels_a_running_run(tmp_path, monkeypatch):
     rm.start()
     rm.register_module("hunting")
     try:
-        # mirror launch_hunting: the row opens (running) BEFORE the schedule
         hunting_run_id = fake.create_hunting_run("rt-project")
         rm.schedule(
             "hunting",
             hunting_runtime.start_hunting(
                 "rt-project", run_id=hunting_run_id,
+                candidates=[_delivered_candidate()],
+                modeller_pass_fn=slow,
                 hunt_store=HuntStore(tmp_path / "hunts"),
                 hunter_store=HunterMemoryStore(tmp_path / "hunter"),
                 pod_store=None,
@@ -772,9 +587,8 @@ def test_hunting_pg_calls_offload_via_asyncio_to_thread(tmp_path, monkeypatch):
     pg accessors are ONLY reached from the worker loop through the offload,
     never as direct sync calls."""
     fake = _FakePg()
-    monkeypatch.setattr("polymerhus.app.clients.pg.create_hunting_run", fake.create_hunting_run)
-    monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_status", fake.set_hunting_run_status)
-    monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
+    _patch_pg(monkeypatch, fake)
+    hunt, hunter, models = _stores(tmp_path)
 
     offloaded: list[tuple[object, tuple]] = []
     orig_to_thread = hunting_runtime.asyncio.to_thread
@@ -785,12 +599,11 @@ def test_hunting_pg_calls_offload_via_asyncio_to_thread(tmp_path, monkeypatch):
 
     monkeypatch.setattr(hunting_runtime.asyncio, "to_thread", spied_to_thread)
 
-    tools = _tools(HuntStore(tmp_path))
-    h, r, n = _phase_seams(tools)
     hid = asyncio.run(hunting_runtime.start_hunting(
-        "rt-project", candidates=[_candidate()], tools=tools,
-        hypothesise_fn=h, ratify_fn=r, note_fn=n,
+        "rt-project", candidates=[_delivered_candidate()],
+        modeller_pass_fn=_recording_pass(),
         control=_FakeControl(),
+        hunt_store=hunt, hunter_store=hunter, threat_store=models,
         hunter_builder=_noop_hunter_builder, pod_builder=_noop_pod_builder,
         tick_interval=0.001,
     ))
@@ -877,20 +690,27 @@ def test_cancel_hunting_is_a_safe_no_op_with_no_active_run():
     hunting_runtime.cancel_hunting("rt-hunt-none")
 
 
-# the run_orchestration sync lane still works through the module boundaries
+# the modeller pass's sync lane still works through the module boundaries
 def test_explicit_root_store_trail_is_written(tmp_path):
-    store = HuntStore(tmp_path)
-    tools = _tools(store)
-    h, r, n = _phase_seams(tools)
-    report = run_orchestration(
-        "rt-project", "run-rt", [_candidate()], tools,
-        hypothesise_fn=h, ratify_fn=r, note_fn=n,
+    """The sync lane (`run_modeller_pass`) models one unit end to end: the five
+    gate writes land through the real store and the produced loop file exists."""
+    store = ThreatModelStore(root_dir=tmp_path)
+    outcome = run_modeller_pass(
+        "rt-project", "run-rt", UNIT,
+        _modeller_tools(store),
+        turn_fn=ScriptedModellerTurns(),
     )
-    assert report.pairs_processed == 1
-    assert report.configs_ratified == 1
-    # the per-project topology: the ratified config lands in produced/
-    assert len(store.read_configs("rt-project")) == 1
-    assert len(store.read_notes("rt-project")) == 1
+    assert outcome.status == "completed"
+    assert store.read_model("rt-project", UNIT)["state"] == "COMPLETED"
+    assert [loop["loop_id"] for loop in store.read_loop_files("rt-project", UNIT)] \
+        == ["loop-1"]
+
+
+def _modeller_tools(store):
+    from polymerhus.attack.hunting.threat_modeller_tools import ModellerTools
+
+    return ModellerTools(threat_store=store, project_id="rt-project",
+                         run_id="run-rt")
 
 
 def test_hunting_run_terminal_invokes_exactly_one_run_scoped_flush(tmp_path, monkeypatch):
@@ -909,16 +729,14 @@ def test_hunting_run_terminal_invokes_exactly_one_run_scoped_flush(tmp_path, mon
         )[1],
     )
     fake = _FakePg()
-    monkeypatch.setattr("polymerhus.app.clients.pg.create_hunting_run", fake.create_hunting_run)
-    monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_status", fake.set_hunting_run_status)
-    monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
+    _patch_pg(monkeypatch, fake)
+    hunt, hunter, models = _stores(tmp_path)
 
-    tools = _tools(HuntStore(tmp_path))
-    h, r, n = _phase_seams(tools)
     hid = asyncio.run(hunting_runtime.start_hunting(
-        "rt-project", candidates=[_candidate()], tools=tools,
-        hypothesise_fn=h, ratify_fn=r, note_fn=n,
+        "rt-project", candidates=[_delivered_candidate()],
+        modeller_pass_fn=_recording_pass(),
         control=_FakeControl(),
+        hunt_store=hunt, hunter_store=hunter, threat_store=models,
         hunter_builder=_noop_hunter_builder, pod_builder=_noop_pod_builder,
         tick_interval=0.001,
     ))
@@ -964,21 +782,16 @@ class _FakeRoleManager:
 
 def test_run_bootstrap_registers_and_reaps_the_agent_submodules(monkeypatch):
     """#317: the bootstrap registers the run's three roles on boot and reaps
-    them at the run terminal; the orchestrator pass launches when its role is up."""
+    them at the run terminal; the modeller pass launches when its role is up."""
     fake = _FakePg()
     _patch_pg(monkeypatch, fake)
     manager = _FakeRoleManager()
     monkeypatch.setattr(hunting_runtime, "_app_runtime", lambda: manager)
-
-    launched: list[str] = []
-
-    async def capturing_orchestrator(project_id, run_id, candidates, tools, **kw):
-        launched.append(run_id)
-        return OrchestratorReport(pairs_processed=0)
+    seen: list = []
 
     asyncio.run(hunting_runtime.start_hunting(
-        "rt-project", candidates=[_candidate()],
-        orchestrator_fn=capturing_orchestrator,
+        "rt-project", candidates=[_delivered_candidate()],
+        modeller_pass_fn=_recording_pass(seen),
         control=_FakeControl(),
         hunter_builder=_noop_hunter_builder, pod_builder=_noop_pod_builder,
         tick_interval=0.001,
@@ -989,56 +802,50 @@ def test_run_bootstrap_registers_and_reaps_the_agent_submodules(monkeypatch):
         ("hunting", "rt-hunt-0001", "hunter"),
         ("hunting", "rt-hunt-0001", "pod"),
     ]
-    assert launched == ["rt-hunt-0001"]
+    assert [run_id for _p, run_id, _u in seen] == ["rt-hunt-0001"]
     assert manager.reaped == [("hunting", "rt-hunt-0001")]
 
 
-def test_orchestrator_pass_not_launched_when_its_role_is_stopped(monkeypatch):
-    """#317: with the modeller role `PAUSED` (the renamed `orchestrator` key),
-    the bootstrap does NOT launch the pass (the surfer still runs, so
-    pre-produced configs can dispatch)."""
+def test_modeller_pass_not_launched_when_its_role_is_stopped(monkeypatch):
+    """#317: with the modeller role `PAUSED`, the bootstrap does NOT launch the
+    pass (the surfer still runs, so pre-produced configs can dispatch)."""
     fake = _FakePg()
     _patch_pg(monkeypatch, fake)
     manager = _FakeRoleManager(paused={"threat_modeller"})
     monkeypatch.setattr(hunting_runtime, "_app_runtime", lambda: manager)
-
-    launched: list[str] = []
-
-    async def capturing_orchestrator(project_id, run_id, candidates, tools, **kw):
-        launched.append(run_id)
-        return OrchestratorReport(pairs_processed=0)
+    seen: list = []
 
     asyncio.run(hunting_runtime.start_hunting(
-        "rt-project", candidates=[_candidate()],
-        orchestrator_fn=capturing_orchestrator,
+        "rt-project", candidates=[_delivered_candidate()],
+        modeller_pass_fn=_recording_pass(seen),
         control=_FakeControl(),
         hunter_builder=_noop_hunter_builder, pod_builder=_noop_pod_builder,
         tick_interval=0.001,
     ))
 
-    assert launched == []                       # the pass was gated off
+    assert seen == []                          # the pass was gated off
     assert manager.reaped == [("hunting", "rt-hunt-0001")]
     # the surfer ran on the empty produced set and quiesced the run.
     assert fake.statuses[-1] == ("rt-hunt-0001", "complete")
 
 
-def test_surfer_not_started_when_the_orchestrator_is_refused(monkeypatch):
-    """S3: when the orchestrator session is REFUSED by admission (not merely its
-    role paused), the bootstrap fails the run WITHOUT starting the surfer - the
-    pre-change rule, so a run never carries a surfer with no orchestrator."""
+def test_surfer_not_started_when_the_modeller_is_refused(monkeypatch):
+    """S3: when the modeller session is REFUSED by admission (not merely its
+    role paused), the bootstrap fails the run WITHOUT starting the surfer - a
+    run never carries a surfer with no pass."""
     fake = _FakePg()
     _patch_pg(monkeypatch, fake)
     manager = _FakeRoleManager()
     monkeypatch.setattr(hunting_runtime, "_app_runtime", lambda: manager)
-    control = _FakeControl(refuse={"hunting:rt-hunt-0001:orchestrator"})
+    control = _FakeControl(refuse={"hunting:rt-hunt-0001:threat-modeller"})
 
     asyncio.run(hunting_runtime.start_hunting(
-        "rt-project", candidates=[_candidate()],
+        "rt-project", candidates=[_delivered_candidate()],
         control=control,
         hunter_builder=_noop_hunter_builder, pod_builder=_noop_pod_builder,
         tick_interval=0.001,
     ))
 
-    # only the orchestrator session was attempted; the surfer was NOT started.
-    assert control.started == ["hunting:rt-hunt-0001:orchestrator"]
+    # only the modeller session was attempted; the surfer was NOT started.
+    assert control.started == ["hunting:rt-hunt-0001:threat-modeller"]
     assert fake.statuses[-1] == ("rt-hunt-0001", "failed")

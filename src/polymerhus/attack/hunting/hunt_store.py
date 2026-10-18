@@ -66,10 +66,9 @@ from polymerhus.app.memory.store import BoundedRecordStore
 logger = logging.getLogger(__name__)
 
 # The semantic-key separator (single-sourced, M1): the revival key
-# (`<unit_id>::<fault_class>`, hunt_orchestrator.revival_key) is the 2-part
-# prefix of a semantic key, so both MUST use the same separator or the
-# prefix matching drifts. `::` is safe - it appears in neither unit ids nor
-# fault/class ids.
+# (`<unit_id>::<fault_class>`) is the 2-part prefix of a semantic key, so
+# both MUST use the same separator or the prefix matching drifts. `::` is
+# safe - it appears in neither unit ids nor fault/class ids.
 KEY_SEPARATOR = "::"
 
 # The config file-name convention (G4): <unit_id>_<CWE_ID>_<vulnerability_class>.yaml.

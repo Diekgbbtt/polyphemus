@@ -221,7 +221,8 @@ def seed_hunt_config(project_id: str, *, unit_id: str, fault_class: str,
     (the surfer refuses an unratifiable ratified config and the run wedges on
     the retained produced item - the at-least-once contract), so the required
     `hunt_id` and the top-level `rationale` / `research_direction` slots ship by
-    default, mirroring the orchestrator mint. It also carries a real adapted
+    default, the shape the (retired) planner minted. It also carries a real
+    adapted
     surface card + caveats
     + a tool-registry entry so a dispatched HUNTER runs genuine multi-turn
     research (a bare 4-key config makes the graph short-circuit in ~1-2s and

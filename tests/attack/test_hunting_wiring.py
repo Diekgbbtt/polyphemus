@@ -12,7 +12,7 @@ No live LLM, no live DB, no live process.
 
 Covers, per AC:
 
-- AC1: bootstrapping schedules the orchestrator pass AND the run-scoped
+- AC1: bootstrapping schedules the modeller pass AND the run-scoped
   surfer as sessions (their Q13-extension session ids land in the control
   plane); the ONE-live-run-per-project guard refuses a second concurrent
   launch and lets a run's own pinned row through.
@@ -37,26 +37,18 @@ from polymerhus.attack.hunting import runtime as hunting_runtime
 from polymerhus.attack.hunting.hunt_orchestrator import (
     DeliveredCandidate,
     DispatchResult,
-    EnvisionedDirection,
-    GateDecision,
-    NoteDecision,
-    NoteRecord,
-    OrchestratorTools,
-    RatifyDecision,
-    ReadOnlyGraphView,
     Witness,
-    mint_hunt_config,
-    revival_key,
 )
 from polymerhus.attack.hunting.hunt_store import HuntStore
 from polymerhus.attack.hunting.hunter_memory import HunterMemoryStore
 from polymerhus.attack.hunting.mover import (
     hunter_session_id,
-    orchestrator_session_id,
     pod_session_id,
+    threat_modeller_session_id,
 )
 from polymerhus.attack.hunting.pod.pod_memory import PodMemoryStore
 from polymerhus.attack.hunting.surfer import surfer_session_id
+from polymerhus.attack.hunting.threat_modeller import UnitOutcome
 
 UNIT = "Service:slug:a"
 # The production fault class IS a CWE id (the `_`-joined fault_key folder is
@@ -89,86 +81,25 @@ def _candidate() -> DeliveredCandidate:
     )
 
 
-def _tools(store) -> OrchestratorTools:
-    return OrchestratorTools(
-        store_reads=store,
-        graph_view=ReadOnlyGraphView(PROJECT, read_fn=lambda cy, p: []),
-    )
+async def _noop_pass(project_id, run_id, unit_id, tools, **kwargs):
+    """These tests are about the SURFER/mover pipeline, not the modeller: the
+    pass models nothing (a degraded unit, no loop files), so only the
+    PRE-PRODUCED configs drive dispatch."""
+    return UnitOutcome(unit_id=unit_id, status="degraded")
 
 
-def _write_agent_drafts(tools, inp, directions):
-    """Emulate the AGENT's `hunts_store(write, status='hypothesised')` tool call
-    for each carried direction (#294: the agent's tool call is the sole writer;
-    the harness never backfills)."""
-    import uuid
-
-    for direction in directions:
-        for config in mint_hunt_config(
-                direction, surface_context={},
-                prior_hunt_insights=[]):
-            tools.store_reads.write_config(PROJECT, config)
-
-
-def _single_class_seams(store):
-    """The fixture phase seams under the agent-sole model (#294): one candidate,
-    ONE elicited CSRF class, the draft written and then ratified by the agent's
-    store tool calls, one note appended - the minimal pipeline driver."""
-    tools = _tools(store)
-
-    def hypothesise(inp):
-        directions = [EnvisionedDirection(
-            unit_id=c.unit_id, fault_class=c.fault_class, carried=True,
-            rationale="r", research_direction="rd",
-            vulnerability_classes=[CLASS]) for c in inp.candidates]
-        _write_agent_drafts(tools, inp, directions)
-        return GateDecision(directions=directions)
-
-    def ratify(inp):
-        configs = []
-        for draft in inp.configs:
-            amended = draft.model_copy(deep=True)
-            amended.status = "ratified"
-            tools.store_reads.update_config(PROJECT, amended)
-            configs.append(amended)
-        return RatifyDecision(configs=configs)
-
-    def note(inp):
-        key = revival_key(inp.pair.unit_id, inp.pair.fault_class)
-        tools.store_reads.append_note(PROJECT, key, "fixture note")
-        return NoteDecision(notes=[NoteRecord(key=key, note="fixture note")])
-
-    return hypothesise, ratify, note
-
-
-def _fanout_seams(store, classes=("CSRF", "IDOR", "XSS")):
-    """The fan-out fixture under the agent-sole model (#294): ONE candidate
-    eliciting THREE distinct classes, so the agent writes one config per class
-    (AC2's N-config fan-out)."""
-    tools = _tools(store)
-
-    def hypothesise(inp):
-        directions = [EnvisionedDirection(
-            unit_id=c.unit_id, fault_class=c.fault_class, carried=True,
-            rationale="r", research_direction="rd",
-            vulnerability_classes=list(classes)) for c in inp.candidates]
-        _write_agent_drafts(tools, inp, directions)
-        return GateDecision(directions=directions)
-
-    def ratify(inp):
-        configs = []
-        for draft in inp.configs:
-            amended = draft.model_copy(deep=True).model_copy(
-                update={"status": "ratified"})
-            tools.store_reads.update_config(PROJECT, amended)
-            configs.append(amended)
-        return RatifyDecision(configs=configs)
-
-    def note(inp):
-        key = revival_key(inp.pair.unit_id, inp.pair.fault_class)
-        tools.store_reads.append_note(PROJECT, key, "fan-out note")
-        return NoteDecision(notes=[NoteRecord(key=key, note="fan-out note")])
-
-    return hypothesise, ratify, note
+def _preproduce(hunt, classes=("CSRF",), *, unit=UNIT, fault=FAULT):
+    """Pre-produce one RATIFIED config per class directly into the project's
+    hunt store - the dispatch input the retired planner used to mint. T4 (#377)
+    replaces this family with produced loop files."""
+    for cls in classes:
+        hunt.write_config(PROJECT, {
+            "hunt_id": f"{unit}::{fault}::{cls}",
+            "unit_id": unit,
+            "fault_class": fault,
+            "vulnerability_class": cls,
+            "status": "ratified",
+        })
 
 
 class _FakePg:
@@ -274,32 +205,36 @@ async def _wait_until(pred, timeout=5):
     raise AssertionError(f"condition not met within {timeout}s")
 
 
-# --- AC1: the bootstrap schedules the orchestrator pass + the surfer; one
+# --- AC1: the bootstrap schedules the modeller pass + the surfer; one
 # live hunting run per project is enforced. ----------------------------------
 
 def test_bootstrap_schedules_orchestrator_and_surfer_sessions(stores, monkeypatch):
-    """Bootstrapping a run schedules the orchestrator pass under its ADR Q13
-    session id and the run-scoped surfer under its Q13-extension id, then
-    drives them to a `complete` quiesce (a ratified config -> a fake hunt
-    session concluding with no specs)."""
+    """Bootstrapping a run schedules the modeller pass under its ADR Q13 session
+    id and the run-scoped surfer under its Q13-extension id, then drives them to
+    a `complete` quiesce (a pre-produced ratified config -> a fake hunt session
+    concluding with no specs)."""
     fake = _FakePg()
     monkeypatch.setattr("polymerhus.app.clients.pg.create_hunting_run", fake.create_hunting_run)
     monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_status", fake.set_hunting_run_status)
     monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
     hunt, hunter, pod = stores
     control = _FakeControl()
-    h, r, n = _single_class_seams(hunt)
+    _preproduce(hunt)
 
     hid = asyncio.run(hunting_runtime.start_hunting(
-        PROJECT, candidates=[_candidate()], tools=_tools(hunt),
-        hypothesise_fn=h, ratify_fn=r, note_fn=n,
+        PROJECT,
+        candidates=[_candidate()],
+        modeller_pass_fn=_noop_pass,
         control=control,
-        hunt_store=hunt, hunter_store=hunter, pod_store=pod,
-        hunter_builder=_noop_hunts, pod_builder=_noop_pods,
+        hunt_store=hunt,
+        hunter_store=hunter,
+        pod_store=pod,
+        hunter_builder=_noop_hunts,
+        pod_builder=_noop_pods,
         tick_interval=0.001,
     ))
     assert hid == RUN
-    assert orchestrator_session_id(RUN) in control.started
+    assert threat_modeller_session_id(RUN) in control.started
     assert surfer_session_id(RUN) in control.started
     assert fake.statuses == [("running", RUN), (RUN, "complete")]
     assert control.live(RUN) == set()
@@ -328,9 +263,15 @@ def test_guard_refuses_a_second_live_run_per_project(stores, monkeypatch):
     control = _FakeControl()
 
     hid = asyncio.run(hunting_runtime.start_hunting(
-        PROJECT, candidates=[_candidate()], tools=_tools(hunt),
-        control=control, hunt_store=hunt, hunter_store=hunter, pod_store=pod,
-        hunter_builder=_noop_hunts, pod_builder=_noop_pods,
+        PROJECT,
+        candidates=[_candidate()],
+        modeller_pass_fn=_noop_pass,
+        control=control,
+        hunt_store=hunt,
+        hunter_store=hunter,
+        pod_store=pod,
+        hunter_builder=_noop_hunts,
+        pod_builder=_noop_pods,
     ))
     assert hid is None                      # refused
     assert control.started == []            # nothing scheduled
@@ -351,9 +292,16 @@ def test_guard_refusal_closes_a_preopened_row_in_band(stores, monkeypatch):
     control = _FakeControl()
 
     hid = asyncio.run(hunting_runtime.start_hunting(
-        PROJECT, run_id=RUN, candidates=[_candidate()], tools=_tools(hunt),
-        control=control, hunt_store=hunt, hunter_store=hunter, pod_store=pod,
-        hunter_builder=_noop_hunts, pod_builder=_noop_pods,
+        PROJECT,
+        run_id=RUN,
+        candidates=[_candidate()],
+        modeller_pass_fn=_noop_pass,
+        control=control,
+        hunt_store=hunt,
+        hunter_store=hunter,
+        pod_store=pod,
+        hunter_builder=_noop_hunts,
+        pod_builder=_noop_pods,
     ))
     assert hid is None                 # refused
     assert control.started == []       # nothing scheduled
@@ -367,16 +315,23 @@ def test_guard_lets_the_runs_own_pinned_row_through(stores, monkeypatch):
     monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
     hunt, hunter, pod = stores
     control = _FakeControl()
-    h, r, n = _single_class_seams(hunt)
+    _preproduce(hunt)
 
     hid = asyncio.run(hunting_runtime.start_hunting(
-        PROJECT, run_id=RUN, candidates=[_candidate()], tools=_tools(hunt),
-        hypothesise_fn=h, ratify_fn=r, note_fn=n,
-        control=control, hunt_store=hunt, hunter_store=hunter, pod_store=pod,
-        hunter_builder=_noop_hunts, pod_builder=_noop_pods, tick_interval=0.001,
+        PROJECT,
+        run_id=RUN,
+        candidates=[_candidate()],
+        modeller_pass_fn=_noop_pass,
+        control=control,
+        hunt_store=hunt,
+        hunter_store=hunter,
+        pod_store=pod,
+        hunter_builder=_noop_hunts,
+        pod_builder=_noop_pods,
+        tick_interval=0.001,
     ))
     assert hid == RUN
-    assert orchestrator_session_id(RUN) in control.started
+    assert threat_modeller_session_id(RUN) in control.started
     assert fake.statuses == [(RUN, "complete")]
 
 
@@ -389,14 +344,20 @@ def test_ratified_config_dispatches_one_hunter_and_moves(stores, monkeypatch):
     monkeypatch.setattr("polymerhus.app.clients.pg.create_hunting_run", fake.create_hunting_run)
     monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_status", fake.set_hunting_run_status)
     monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
-    h, r, n = _single_class_seams(hunt)
+    _preproduce(hunt)
     control = _FakeControl()
 
     asyncio.run(hunting_runtime.start_hunting(
-        PROJECT, candidates=[_candidate()], tools=_tools(hunt),
-        hypothesise_fn=h, ratify_fn=r, note_fn=n,
-        control=control, hunt_store=hunt, hunter_store=hunter, pod_store=pod,
-        hunter_builder=_noop_hunts, pod_builder=_noop_pods, tick_interval=0.001,
+        PROJECT,
+        candidates=[_candidate()],
+        modeller_pass_fn=_noop_pass,
+        control=control,
+        hunt_store=hunt,
+        hunter_store=hunter,
+        pod_store=pod,
+        hunter_builder=_noop_hunts,
+        pod_builder=_noop_pods,
+        tick_interval=0.001,
     ))
     # ONE hunter dispatched for the produced ratified config, under the Q13 id
     assert hunter_session_id(RUN, f"{UNIT}_{FAULT}_{CLASS}") in control.started
@@ -414,7 +375,7 @@ def test_n_configs_fan_out_but_the_gate_caps_concurrent_hunters(stores, monkeypa
     monkeypatch.setattr("polymerhus.app.clients.pg.create_hunting_run", fake.create_hunting_run)
     monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_status", fake.set_hunting_run_status)
     monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
-    h, r, n = _fanout_seams(hunt)
+    _preproduce(hunt, classes=("CSRF", "IDOR", "XSS"))
     control = _FakeControl(gate=asyncio.Semaphore(2))
     tracking = {"now": 0, "max": 0, "sees": []}
 
@@ -431,11 +392,17 @@ def test_n_configs_fan_out_but_the_gate_caps_concurrent_hunters(stores, monkeypa
         return dispatch, None
 
     asyncio.run(hunting_runtime.start_hunting(
-        PROJECT, candidates=[_candidate()], tools=_tools(hunt),
-        hypothesise_fn=h, ratify_fn=r, note_fn=n,
-        control=control, gate=control.gate(), tick_interval=0.001,
-        hunt_store=hunt, hunter_store=hunter, pod_store=pod,
-        hunter_builder=gated_hunts, pod_builder=_noop_pods,
+        PROJECT,
+        candidates=[_candidate()],
+        modeller_pass_fn=_noop_pass,
+        control=control,
+        gate=control.gate(),
+        tick_interval=0.001,
+        hunt_store=hunt,
+        hunter_store=hunter,
+        pod_store=pod,
+        hunter_builder=gated_hunts,
+        pod_builder=_noop_pods,
     ))
     assert len(tracking["sees"]) == 3                 # all three configs dispatched
     assert tracking["max"] == 2                       # the gate capped concurrency
@@ -451,7 +418,7 @@ def test_specified_spec_dispatches_one_pod_through_the_same_mover(stores, monkey
     monkeypatch.setattr("polymerhus.app.clients.pg.create_hunting_run", fake.create_hunting_run)
     monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_status", fake.set_hunting_run_status)
     monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
-    h, r, n = _single_class_seams(hunt)
+    _preproduce(hunt)
     control = _FakeControl()
     pod_calls: list[tuple[str, str]] = []
 
@@ -479,11 +446,16 @@ def test_specified_spec_dispatches_one_pod_through_the_same_mover(stores, monkey
                 "evidence": {"trail": []}, "clean": True, "iterations": 1}
 
     asyncio.run(hunting_runtime.start_hunting(
-        PROJECT, candidates=[_candidate()], tools=_tools(hunt),
-        hypothesise_fn=h, ratify_fn=r, note_fn=n,
-        control=control, tick_interval=0.001,
-        hunt_store=hunt, hunter_store=hunter, pod_store=pod,
-        hunter_builder=spec_hunts, pod_builder=spec_pods,
+        PROJECT,
+        candidates=[_candidate()],
+        modeller_pass_fn=_noop_pass,
+        control=control,
+        tick_interval=0.001,
+        hunt_store=hunt,
+        hunter_store=hunter,
+        pod_store=pod,
+        hunter_builder=spec_hunts,
+        pod_builder=spec_pods,
     ))
     assert pod_calls == [(SPEC_FILE, "")]                  # the semantic spec id crossed the handoff
     assert pod_session_id(RUN, FAULT_KEY, SPEC_FILE) in control.started
@@ -504,7 +476,7 @@ def test_pod_provider_failure_interrupts_the_run(stores, monkeypatch):
     monkeypatch.setattr("polymerhus.app.clients.pg.create_hunting_run", fake.create_hunting_run)
     monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_status", fake.set_hunting_run_status)
     monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
-    h, r, n = _single_class_seams(hunt)
+    _preproduce(hunt)
 
     def spec_hunts(*, run_id, project_id, hunter_store, **kw):
         async def dispatch(config):
@@ -529,11 +501,16 @@ def test_pod_provider_failure_interrupts_the_run(stores, monkeypatch):
             "Go usage limit exceeded", status_code=429, quota_exhausted=True)
 
     asyncio.run(hunting_runtime.start_hunting(
-        PROJECT, candidates=[_candidate()], tools=_tools(hunt),
-        hypothesise_fn=h, ratify_fn=r, note_fn=n,
-        control=_FakeControl(), tick_interval=0.001,
-        hunt_store=hunt, hunter_store=hunter, pod_store=pod,
-        hunter_builder=spec_hunts, pod_builder=throttled_pods,
+        PROJECT,
+        candidates=[_candidate()],
+        modeller_pass_fn=_noop_pass,
+        control=_FakeControl(),
+        tick_interval=0.001,
+        hunt_store=hunt,
+        hunter_store=hunter,
+        pod_store=pod,
+        hunter_builder=spec_hunts,
+        pod_builder=throttled_pods,
     ))
     _, status, stats = fake.stats_writes[-1]
     assert status == "interrupted"
@@ -544,40 +521,34 @@ def test_pod_provider_failure_interrupts_the_run(stores, monkeypatch):
 def test_unratified_config_is_refused_and_stays_produced(stores, monkeypatch):
     """The status gate: a produced HYPOTHESISED (not yet ratified) config must
     NOT dispatch a hunter - it stays produced (never dropped, at-least-once) -
-    and, once the orchestrator settles, it is not "work left to dispatch":
-    it never blocks the run's quiesce (the dispatchable-status gate the
-    quiesce predicate shares)."""
+    and, once the pass settles, it is not "work left to dispatch": it never
+    blocks the run's quiesce (the dispatchable-status gate the quiesce
+    predicate shares)."""
     hunt, hunter, pod = stores
     fake = _FakePg()
     monkeypatch.setattr("polymerhus.app.clients.pg.create_hunting_run", fake.create_hunting_run)
     monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_status", fake.set_hunting_run_status)
     monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
 
-    # The pass ends with the draft HYPOTHESISED (the agent writes the draft but
-    # the ratify seam returns nothing ratified): no hunter may ever dispatch.
-    tools = _tools(hunt)
-
-    def hypothesise(inp):
-        directions = [EnvisionedDirection(
-            unit_id=c.unit_id, fault_class=c.fault_class, carried=True,
-            rationale="r", research_direction="rd",
-            vulnerability_classes=[CLASS]) for c in inp.candidates]
-        _write_agent_drafts(tools, inp, directions)
-        return GateDecision(directions=directions)
-
-    def ratify(inp):
-        return RatifyDecision(configs=[])
-
-    def note(inp):
-        return NoteDecision(notes=[])
-
+    # The produced config is still HYPOTHESISED (its ratification never
+    # landed): no hunter may ever dispatch for it.
+    hunt.write_config(PROJECT, {
+        "hunt_id": f"{UNIT}::{FAULT}::{CLASS}",
+        "unit_id": UNIT, "fault_class": FAULT, "vulnerability_class": CLASS,
+        "status": "hypothesised",
+    })
     control = _FakeControl()
     asyncio.run(hunting_runtime.start_hunting(
-        PROJECT, candidates=[_candidate()], tools=tools,
-        hypothesise_fn=hypothesise, ratify_fn=ratify, note_fn=note,
-        control=control, tick_interval=0.001,
-        hunt_store=hunt, hunter_store=hunter, pod_store=pod,
-        hunter_builder=_noop_hunts, pod_builder=_noop_pods,
+        PROJECT,
+        candidates=[_candidate()],
+        modeller_pass_fn=_noop_pass,
+        control=control,
+        tick_interval=0.001,
+        hunt_store=hunt,
+        hunter_store=hunter,
+        pod_store=pod,
+        hunter_builder=_noop_hunts,
+        pod_builder=_noop_pods,
     ))
     assert not any(":hunt:" in sid for sid in control.started)
     assert not any(":hunt:" in sid for sid in control.live(RUN))
@@ -617,7 +588,7 @@ def test_idle_loop_consumes_and_records_a_delivered_pod_export(stores, monkeypat
     monkeypatch.setattr("polymerhus.app.clients.pg.create_hunting_run", fake.create_hunting_run)
     monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_status", fake.set_hunting_run_status)
     monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
-    h, r, n = _single_class_seams(hunt)
+    _preproduce(hunt)
     control = _FakeControl()
     export = {"verdict": "successful", "terminal_reason": "symptom-confirmed",
               "evidence": {"trail": []}, "clean": True, "iterations": 1,
@@ -643,11 +614,16 @@ def test_idle_loop_consumes_and_records_a_delivered_pod_export(stores, monkeypat
         return export
 
     asyncio.run(hunting_runtime.start_hunting(
-        PROJECT, candidates=[_candidate()], tools=_tools(hunt),
-        hypothesise_fn=h, ratify_fn=r, note_fn=n,
-        control=control, tick_interval=0.001,
-        hunt_store=hunt, hunter_store=hunter, pod_store=pod,
-        hunter_builder=spec_hunts, pod_builder=export_pods,
+        PROJECT,
+        candidates=[_candidate()],
+        modeller_pass_fn=_noop_pass,
+        control=control,
+        tick_interval=0.001,
+        hunt_store=hunt,
+        hunter_store=hunter,
+        pod_store=pod,
+        hunter_builder=spec_hunts,
+        pod_builder=export_pods,
     ))
     notes = hunter.read_notes(PROJECT)
     assert len(notes) == 1
@@ -707,10 +683,16 @@ def test_cross_run_specified_spec_dispatches_a_pod_without_a_parent(stores,
 
     control = _FakeControl()
     asyncio.run(hunting_runtime.start_hunting(
-        PROJECT, candidates=[], tools=_tools(hunt),
-        control=control, tick_interval=0.001,
-        hunt_store=hunt, hunter_store=hunter, pod_store=pod,
-        hunter_builder=_noop_hunts, pod_builder=record_pods,
+        PROJECT,
+        candidates=[],
+        modeller_pass_fn=_noop_pass,
+        control=control,
+        tick_interval=0.001,
+        hunt_store=hunt,
+        hunter_store=hunter,
+        pod_store=pod,
+        hunter_builder=_noop_hunts,
+        pod_builder=record_pods,
     ))
     # the pod ran, and the spec moved produced -> consumed (the marker)
     assert pod_calls == [SPEC_FILE]
@@ -747,7 +729,7 @@ def test_run_does_not_complete_while_a_session_is_live(stores, monkeypatch):
     monkeypatch.setattr("polymerhus.app.clients.pg.create_hunting_run", fake.create_hunting_run)
     monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_status", fake.set_hunting_run_status)
     monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
-    h, r, n = _single_class_seams(hunt)
+    _preproduce(hunt)
     control = _FakeControl()
     release = asyncio.Event()
 
@@ -773,11 +755,16 @@ def test_run_does_not_complete_while_a_session_is_live(stores, monkeypatch):
 
     async def _body():
         task = asyncio.get_running_loop().create_task(hunting_runtime.start_hunting(
-            PROJECT, candidates=[_candidate()], tools=_tools(hunt),
-            hypothesise_fn=h, ratify_fn=r, note_fn=n,
-            control=control, tick_interval=0.001,
-            hunt_store=hunt, hunter_store=hunter, pod_store=pod,
-            hunter_builder=spec_hunts, pod_builder=blocked_pod,
+            PROJECT,
+            candidates=[_candidate()],
+            modeller_pass_fn=_noop_pass,
+            control=control,
+            tick_interval=0.001,
+            hunt_store=hunt,
+            hunter_store=hunter,
+            pod_store=pod,
+            hunter_builder=spec_hunts,
+            pod_builder=blocked_pod,
         ))
         await _wait_until(lambda: any(
             ":pod:" in sid for sid in control.live(RUN)))
@@ -803,17 +790,22 @@ def test_run_does_not_complete_while_produced_is_non_empty(stores, monkeypatch):
     monkeypatch.setattr("polymerhus.app.clients.pg.create_hunting_run", fake.create_hunting_run)
     monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_status", fake.set_hunting_run_status)
     monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
-    h, r, n = _single_class_seams(hunt)
+    _preproduce(hunt)
     hunt_refuse = hunter_session_id(RUN, f"{UNIT}_{FAULT}_{CLASS}")
     control = _FakeControl(refuse={hunt_refuse})
 
     async def _body():
         task = asyncio.get_running_loop().create_task(hunting_runtime.start_hunting(
-            PROJECT, candidates=[_candidate()], tools=_tools(hunt),
-            hypothesise_fn=h, ratify_fn=r, note_fn=n,
-            control=control, tick_interval=0.001,
-            hunt_store=hunt, hunter_store=hunter, pod_store=pod,
-            hunter_builder=_noop_hunts, pod_builder=_noop_pods,
+            PROJECT,
+            candidates=[_candidate()],
+            modeller_pass_fn=_noop_pass,
+            control=control,
+            tick_interval=0.001,
+            hunt_store=hunt,
+            hunter_store=hunter,
+            pod_store=pod,
+            hunter_builder=_noop_hunts,
+            pod_builder=_noop_pods,
         ))
         # The refused dispatch is retried every tick; the config stays produced.
         await _wait_until(lambda: bool(hunt.read_produced_configs(PROJECT)))
@@ -838,7 +830,7 @@ def test_stop_cancels_every_session_and_leaves_the_registry_empty(stores, monkey
     monkeypatch.setattr("polymerhus.app.clients.pg.create_hunting_run", fake.create_hunting_run)
     monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_status", fake.set_hunting_run_status)
     monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
-    h, r, n = _single_class_seams(hunt)
+    _preproduce(hunt)
 
     def block_hunts(*, run_id, project_id, hunter_store, **kw):
         async def dispatch(config):
@@ -868,10 +860,15 @@ def test_stop_cancels_every_session_and_leaves_the_registry_empty(stores, monkey
         rm.schedule(
             "hunting",
             hunting_runtime.start_hunting(
-                PROJECT, run_id=hunting_run_id, candidates=[_candidate()],
-                tools=_tools(hunt), hypothesise_fn=h, ratify_fn=r, note_fn=n,
-                hunt_store=hunt, hunter_store=hunter, pod_store=pod,
-                hunter_builder=block_hunts, pod_builder=block_pods,
+                PROJECT,
+                run_id=hunting_run_id,
+                candidates=[_candidate()],
+                modeller_pass_fn=_noop_pass,
+                hunt_store=hunt,
+                hunter_store=hunter,
+                pod_store=pod,
+                hunter_builder=block_hunts,
+                pod_builder=block_pods,
                 tick_interval=0.01,
             ),
             name=hunting_run_id,
@@ -908,7 +905,7 @@ def test_undispatchable_statuses_never_block_quiesce(stores, monkeypatch):
     monkeypatch.setattr("polymerhus.app.clients.pg.create_hunting_run", fake.create_hunting_run)
     monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_status", fake.set_hunting_run_status)
     monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
-    h, r, n = _single_class_seams(hunt)
+    _preproduce(hunt)
 
     def draft_hunts(*, run_id, project_id, hunter_store, **kw):
         async def dispatch(config):
@@ -926,11 +923,16 @@ def test_undispatchable_statuses_never_block_quiesce(stores, monkeypatch):
 
     control = _FakeControl()
     asyncio.run(hunting_runtime.start_hunting(
-        PROJECT, candidates=[_candidate()], tools=_tools(hunt),
-        hypothesise_fn=h, ratify_fn=r, note_fn=n,
-        control=control, tick_interval=0.001,
-        hunt_store=hunt, hunter_store=hunter, pod_store=pod,
-        hunter_builder=draft_hunts, pod_builder=_noop_pods,
+        PROJECT,
+        candidates=[_candidate()],
+        modeller_pass_fn=_noop_pass,
+        control=control,
+        tick_interval=0.001,
+        hunt_store=hunt,
+        hunter_store=hunter,
+        pod_store=pod,
+        hunter_builder=draft_hunts,
+        pod_builder=_noop_pods,
     ))
     # the hypothesised draft stayed produced but never blocked completion
     assert fake.statuses == [("running", RUN), (RUN, "complete")]

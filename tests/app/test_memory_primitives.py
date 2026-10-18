@@ -40,8 +40,8 @@ def test_hunting_tool_contract_reexports_the_shared_definitions():
 
 
 def test_hunting_seams_bind_the_shared_tool_base():
-    from polymerhus.attack.hunting import actors, hunter_tools
+    from polymerhus.attack.hunting import hunter_tools, threat_modeller_tools
 
-    assert actors.StoreToolBase is shared_contract.StoreToolBase
+    assert threat_modeller_tools.StoreToolBase is shared_contract.StoreToolBase
     assert hunter_tools.StoreToolBase is shared_contract.StoreToolBase
     assert hunter_tools.StoreNotesTool is shared_contract.StoreNotesTool

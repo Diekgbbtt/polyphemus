@@ -1,13 +1,12 @@
 """Unit tier: the hunting MAILBOX actors (`attack/hunting/actors.py`, #94).
 
-`arun_orchestration` drives the Q8 gate turn and the D2 re-match judge as
-inbox-request turns of ONE `HuntOrchestratorActor` per run on the
-`hunting_orchestrator` session thread (purely stateful, exactly like the
-recon-orchestrator), and each hunt's authoring/judging rides a per-hunt
-`HuntingHunterActor` on its `HuntSession` thread. These tests exercise the
-actors at the public client seams (`reason` / `author` / `judge` /
-`stop` / the registry) with FAKE models and an `InMemorySaver`; the unit tier
-touches no live model and no live database (CODING_STANDARD sections 6, 10).
+`threat_modeller.arun_modeller_pass` drives one turn per gate state on ONE
+`ThreatModellerActor` per run (`hunting_threat_modeller` session thread), and
+each hunt's authoring/judging rides a per-hunt `HuntingHunterActor` on its
+`HuntSession` thread. These tests exercise the actors at the public seams
+(`turn` / `author` / `judge` / `stop` / the registry) with a FAKE session agent
+or fake models and an `InMemorySaver`; the unit tier touches no live model and
+no live database (CODING_STANDARD sections 6, 10).
 """
 from __future__ import annotations
 
@@ -15,59 +14,30 @@ import asyncio
 import json
 
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 from langgraph.checkpoint.memory import InMemorySaver
 
 from polymerhus.attack.hunting.actors import (
-    HuntOrchestratorActor,
     HuntingActorRegistry,
     HuntingHunterActor,
+    ThreatModellerActor,
 )
-from polymerhus.attack.hunting.hunt_orchestrator import (
-    DeliveredCandidate,
-    EnvisionedDirection,
-    GateDecision,
-    GateInput,
-    PhaseTurnInput,
-    Witness,
+from polymerhus.attack.hunting.threat_model import ModelState
+from polymerhus.attack.hunting.threat_model_store import ThreatModelStore
+from polymerhus.attack.hunting.threat_modeller import (
+    GATE_HINTS,
+    ModellerTurnInput,
+    STATE_INSTRUCTIONS,
+    TOOL_SURFACE,
+)
+from polymerhus.attack.hunting.threat_modeller_tools import (
+    ModellerTools,
+    ModellerUnit,
 )
 from lightrag.tool import LightRagQueryTool
 
-
-class _ToolFake(BaseChatModel):
-    """A one-reply scripted model emitting a NAMED tool call each turn - the
-    shape `ToolStrategy(GateDecision | RatifyDecision | NoteDecision)` consumes,
-    so the session turn's `content` is the parsed pydantic object."""
-
-    call_name: str
-    args: dict = {}
-
-    def _generate(self, messages, stop=None, run_manager=None, **kwargs):
-        return ChatResult(generations=[ChatGeneration(message=AIMessage(
-            content="",
-            tool_calls=[{"name": self.call_name, "args": self.args, "id": "c1", "type": "tool_call"}],
-        ))])
-
-    async def _agenerate(self, messages, stop=None, run_manager=None, **kwargs):
-        # Async-native on purpose: `ainvoke` on a SYNC-only BaseChatModel routes
-        # `_generate` through `run_in_executor`, and langgraph (1.2.5) deadlocks
-        # that path when the agent thread RESUMES from a checkpoint - the second
-        # turn's model call never returns. Production models (ChatOpenAI) are
-        # async-native, so the fakes must mirror that.
-        return self._generate(
-            messages,
-            stop=stop,
-            run_manager=run_manager.get_sync() if run_manager else None,
-            **kwargs,
-        )
-
-    @property
-    def _llm_type(self) -> str:
-        return "fake"
-
-    def bind_tools(self, tools, **kwargs):
-        return self
+from tests.hunting_fixtures import modeller_gate_payloads
 
 
 class _TextFake(BaseChatModel):
@@ -141,248 +111,126 @@ class _ToolLoopFake(BaseChatModel):
         return self
 
 
-def _factory(args_list):
-    """A `model_factory` yielding a fresh scripted model per turn, walking the
-    script (one build per `run_session_agent` turn)."""
-    cursor = {"i": 0}
+# --- the threat modeller actor (S1 4.4, T2b #386) ------------------------------
 
-    def make(role_id):
-        i = cursor["i"]
-        cursor["i"] = i + 1
-        args = args_list[min(i, len(args_list) - 1)]
-        return _ToolFake(call_name=args[0], args=args[1])
+def test_threat_modeller_actor_binds_the_surface_and_serves_a_turn(tmp_path,
+                                                                   monkeypatch):
+    """The actor harness: a fake session agent stands in for
+    `run_session_agent`, so the REAL actor path runs end to end - the bound
+    tool surface (the modeller's exactly, plus the role's load_skill/auth
+    binding), the `_on_message` turn composition (a HumanMessage carrying the
+    unit/state/sections/instruction/model), the gate write through the bound
+    store tool, the reply delivered through the actor's inbox middleware, and
+    the clean `stop()`."""
+    import polymerhus.app.llm.actor as llm_actor
 
-    return make
+    store = ThreatModelStore(root_dir=tmp_path)
+    tools = ModellerTools(threat_store=store, project_id="proj-1", run_id="run-1",
+                          unit_cell=ModellerUnit())
+    seen: dict = {}
 
+    async def fake_run_session_agent(role_id, thread_id, initial_messages,
+                                     **kwargs):
+        seen["role_id"] = role_id
+        seen["thread_id"] = thread_id
+        seen.update(kwargs)
+        message = await kwargs["inbox"].get()
+        if message.kind == "stop":
+            return None
+        # the fake "model": compose the turn through the actor's OWN handler,
+        # write the gate through the BOUND tool, deliver the reply through the
+        # actor's inbox middleware
+        messages = kwargs["on_message"](message, None)
+        surface = {tool.name: tool for tool in kwargs["tools"]}
+        seen["gate_write"] = surface["hunts_store"].invoke({
+            "cmd": "write", "state": ModelState.UNIT_TECHNICAL_SHARP.value,
+            "sections": modeller_gate_payloads()[
+                ModelState.UNIT_TECHNICAL_SHARP],
+        })
+        seen["read"] = surface["hunts_store"].invoke({"cmd": "read"})
+        seen["note"] = surface["notes"].invoke({
+            "cmd": "write", "option": "append", "note_name": "grounding",
+            "kind": "freeform", "body": "the catalogue id is caller-supplied",
+        })
+        delivery = next(
+            item for item in kwargs["middleware"]
+            if type(item).__name__ == "InboxDispatchMiddleware")
+        delivery.after_agent(
+            {"messages": messages, "structured_response": messages[0].content},
+            None,
+        )
+        seen["surface"] = surface
+        seen["messages"] = messages
 
-def _gate_input() -> GateInput:
-    return GateInput(candidates=[
-        DeliveredCandidate(
-            unit_id="Service:slug:a",
-            fault_class="fault-x",
-            applies_witnesses=Witness(deterministic="clause-1", llm="matches"),
-            match_verdict="applies",
-        ),
-    ])
+    monkeypatch.setattr(llm_actor, "run_session_agent", fake_run_session_agent)
 
-
-# --- the hunt-orchestrator actor -------------------------------------------------
-
-def test_hunt_orchestrator_actor_reason_on_one_thread():
-    """ONE actor per run: a Q8 gate turn on the `hunting_orchestrator` thread
-    replying its structured object, and stop() ends it cleanly."""
-    gate_args = {"directions": [
-        {"unit_id": "Service:slug:a", "fault_class": "fault-x", "carried": True,
-         "rationale": "plausible"}
-    ]}
+    turn_input = ModellerTurnInput(
+        unit_id="Service:slug:a",
+        state=ModelState.UNIT_TECHNICAL_SHARP,
+        sections=("technical_sharpening",),
+        instruction=STATE_INSTRUCTIONS[ModelState.UNIT_TECHNICAL_SHARP],
+        model=None,
+    )
 
     async def _drive():
-        actor = HuntOrchestratorActor(
-            "run1", checkpointer=InMemorySaver(),
-            model_factory=_factory([("GateDecision", gate_args)]),
-            observe=False,
+        # the pass retargets the run's unit cell before the first turn (the
+        # stable-seam pattern: the actor captures its surface once, the cell is
+        # what follows the run from unit to unit)
+        tools.unit_cell.retarget(project_id="proj-1", run_id="run-1",
+                                 unit_id="Service:slug:a")
+        actor = ThreatModellerActor(
+            "run-1", checkpointer=InMemorySaver(), tools=tools,
+            project_id="proj-1", compaction=False, observe=False,
         )
-        decision = await actor.reason(_gate_input())
+        content = await actor.turn(turn_input)
         await actor.stop()
-        return decision
+        return actor, content
 
-    decision = asyncio.run(_drive())
-    assert isinstance(decision, GateDecision)
-    assert decision.directions[0].carried is True
+    actor, content = asyncio.run(_drive())
+
+    # the run-scoped session thread and role
+    assert seen["role_id"] == "hunting_threat_modeller"
+    assert seen["thread_id"] == actor.thread_id
+    assert "run-1" in seen["thread_id"]
+    # the bound surface is the modeller's exactly, plus the role's read-only
+    # skill + auth binding (never graph_view / kb_query / the fault-KB aid)
+    names = set(seen["surface"])
+    assert set(TOOL_SURFACE) <= names
+    assert {"load_skill", "auth_store"} <= names
+    assert not {"graph_view", "kb_query", "query_lightrag"} & names
+    # `_on_message` composed the turn: ONE HumanMessage carrying the unit, the
+    # state, the gate sections, the instruction, and the fresh-model marker
+    [human] = seen["messages"]
+    assert isinstance(human, HumanMessage)
+    assert "Service:slug:a" in human.content
+    assert "UNIT_TECHNICAL_SHARP" in human.content
+    assert "technical_sharpening" in human.content
+    assert STATE_INSTRUCTIONS[ModelState.UNIT_TECHNICAL_SHARP] in human.content
+    assert "(not written yet)" in human.content
+    # the gate write landed through the bound tool, and its response carries the
+    # next-state hint (S1 9.3: the hint rides the tool response, never the turn)
+    assert seen["gate_write"]["ok"] is True
+    assert seen["gate_write"]["hint"] == GATE_HINTS[
+        ModelState.UNIT_TECHNICAL_SHARP]
+    # the bound read reports the persisted state and the written sections
+    assert seen["read"]["unit_id"] == "Service:slug:a"
+    assert seen["read"]["state"] == ModelState.UNIT_TECHNICAL_SHARP.value
+    assert "technical_sharpening" in seen["read"]["sections"]
+    # the bound notes tool wrote under the unit-bound key
+    assert seen["note"] == {"ok": True, "key": "Service-slug-a:grounding"}
+    assert store.read_model("proj-1", "Service:slug:a")["state"] == \
+        ModelState.UNIT_TECHNICAL_SHARP.value
+    # the reply the middleware delivered is the turn's return value
+    assert content is not None and "Service:slug:a" in content
 
 
-def test_hypothesise_retries_once_on_a_wrong_union_member():
-    """The relaxed (voluntary) rung can return the wrong union member on the
-    hypothesise turn (NoteDecision / RatifyDecision). A wrong member is retried
-    ONCE with an explicit correction, so a good retry recovers the pair instead
-    of silently losing it (and feeding the degraded-turn breaker)."""
-    gate_args = {"directions": [
-        {"unit_id": "Service:slug:a", "fault_class": "fault-x", "carried": True,
-         "rationale": "plausible"}]}
-    note_args = {"notes": []}
-    factory = _factory([("NoteDecision", note_args), ("GateDecision", gate_args)])
-
+def test_threat_modeller_actor_turn_with_no_input_is_a_no_decision():
+    """A None turn is a no-decision without spawning the session agent."""
     async def _drive():
-        actor = HuntOrchestratorActor(
-            "run1", checkpointer=InMemorySaver(), model_factory=factory, observe=False,
-        )
-        decision = await actor.hypothesise(_gate_input())
-        await actor.stop()
-        return decision
-
-    decision = asyncio.run(_drive())
-    assert isinstance(decision, GateDecision)
-    assert decision.directions[0].carried is True
-
-
-def test_hypothesise_gives_up_after_a_failed_retry():
-    """A retry that is STILL the wrong member degrades to no-decision (None)."""
-    note_args = {"notes": []}
-    factory = _factory([("NoteDecision", note_args), ("NoteDecision", note_args)])
-
-    async def _drive():
-        actor = HuntOrchestratorActor(
-            "run1", checkpointer=InMemorySaver(), model_factory=factory, observe=False,
-        )
-        decision = await actor.hypothesise(_gate_input())
-        await actor.stop()
-        return decision
+        actor = ThreatModellerActor("run-1", observe=False)
+        return await actor.turn(None)
 
     assert asyncio.run(_drive()) is None
-
-
-def test_hunt_orchestrator_actor_fail_open_on_raising_model():
-    """A dead/raising actor never aborts the pass: reason degrades to None,
-    which the pass's fail-open canon handles (carry)."""
-    class _Boom(BaseChatModel):
-        def _generate(self, messages, stop=None, run_manager=None, **kwargs):
-            raise RuntimeError("llm down")
-
-        async def _agenerate(self, messages, stop=None, run_manager=None, **kwargs):
-            raise RuntimeError("llm down")
-
-        @property
-        def _llm_type(self) -> str:
-            return "fake"
-
-    async def _drive():
-        actor = HuntOrchestratorActor(
-            "run1", checkpointer=InMemorySaver(), model_factory=lambda role: _Boom(),
-            observe=False,
-        )
-        decision = await actor.reason(_gate_input())
-        await actor.stop()
-        return decision
-
-    decision = asyncio.run(_drive())
-    assert decision is None
-
-
-def test_orchestrator_actor_records_the_provider_degrade_cause():
-    """#329: a turn that dies on a provider 429 is swallowed into a no-decision
-    (the actor survives), and the actor RECORDS the exception so the pass can
-    classify the abort as provider-caused."""
-    import httpx
-    import openai
-
-    from polymerhus.app.llm.provider_failure import is_provider_unavailable
-
-    def _rate_limit():
-        request = httpx.Request("POST", "https://api.example.test/v1")
-        return openai.RateLimitError(
-            "Rate limit exceeded", response=httpx.Response(429, request=request),
-            body=None)
-
-    class _Throttled(BaseChatModel):
-        def _generate(self, messages, stop=None, run_manager=None, **kwargs):
-            raise _rate_limit()
-
-        async def _agenerate(self, messages, stop=None, run_manager=None, **kwargs):
-            raise _rate_limit()
-
-        @property
-        def _llm_type(self) -> str:
-            return "fake"
-
-        def bind_tools(self, tools, **kwargs):
-            return self
-
-    async def _drive():
-        actor = HuntOrchestratorActor(
-            "run1", checkpointer=InMemorySaver(),
-            model_factory=lambda role: _Throttled(), observe=False,
-        )
-        decision = await actor.reason(_gate_input())
-        cause = actor.last_degrade_cause()
-        await actor.stop()
-        return decision, cause
-
-    decision, cause = asyncio.run(_drive())
-    assert decision is None
-    assert cause is not None
-    assert is_provider_unavailable(cause)
-
-
-def test_hunt_orchestrator_actor_reason_without_candidates_is_noop():
-    async def _drive():
-        actor = HuntOrchestratorActor("run1", checkpointer=InMemorySaver(), observe=False)
-        out = await actor.reason(GateInput(candidates=[]))
-        await actor.stop()
-        return out
-
-    assert asyncio.run(_drive()) is None  # never spawned a turn
-
-
-def test_hunt_orchestrator_actor_stop_is_idempotent_without_spawn():
-    async def _drive():
-        actor = HuntOrchestratorActor("run1", checkpointer=InMemorySaver(), observe=False)
-        await actor.stop()  # never spawned: no-op
-        await actor.stop()  # idempotent
-
-    asyncio.run(_drive())  # must not raise
-
-
-def test_hunt_orchestrator_thread_keeps_one_system_message():
-    """#187: ONE gate-skill SystemMessage per hunting_orchestrator thread, added
-    once at the front (as `system_prompt`), never re-added per phase turn. A run
-    that drives several hypothesise/ratify/note turns on the SAME thread sends
-    EVERY model call the SAME single gate-skill SystemMessage at the front - the
-    old per-turn `SystemMessage(content=_gate_skill())` re-add stacked a
-    byte-identical copy into the trail on every turn (the ~145K of ~14 stale
-    copies behind the #187 timeout)."""
-    gate_args = {"directions": [
-        {"unit_id": "Service:slug:a", "fault_class": "fault-x", "carried": True,
-         "rationale": "plausible"}]}
-    ratify_args = {"configs": []}
-    note_args = {"notes": []}
-    seen: list = []
-    cursor = {"i": 0}
-    script = [
-        ("GateDecision", gate_args), ("RatifyDecision", ratify_args),
-        ("NoteDecision", note_args),
-        ("GateDecision", gate_args), ("RatifyDecision", ratify_args),
-        ("NoteDecision", note_args),
-    ]
-
-    class _Recording(_ToolFake):
-        def _generate(self, messages, stop=None, run_manager=None, **kwargs):
-            seen.append(list(messages))
-            return super()._generate(messages, stop=stop, run_manager=run_manager, **kwargs)
-
-    def factory(role_id):
-        i = cursor["i"]
-        cursor["i"] = i + 1
-        name, args = script[min(i, len(script) - 1)]
-        return _Recording(call_name=name, args=args)
-
-    async def _drive():
-        actor = HuntOrchestratorActor(
-            "run1", checkpointer=InMemorySaver(), model_factory=factory, observe=False,
-        )
-        phase_input = PhaseTurnInput(pair=_gate_input().candidates[0])
-        for _ in range(2):
-            assert await actor.hypothesise(_gate_input()) is not None
-            assert await actor.ratify(phase_input) is not None
-            assert await actor.note(phase_input) is not None
-        await actor.stop()
-        return actor
-
-    actor = asyncio.run(_drive())
-    assert len(seen) == 6  # six phase turns on the same thread
-    for model_input in seen:
-        system_messages = [m for m in model_input
-                           if isinstance(m, SystemMessage)
-                           and not str(m.content or "").startswith("[running summary]")]
-        assert len(system_messages) == 1, "exactly ONE gate-skill system message per call"
-        assert "hunt-orchestrator" in str(system_messages[0].content)
-        assert model_input[0] is system_messages[0], "the gate skill sits once at the front"
-    # The messages CHANNEL (the persisted trail) carries NO per-turn skill copies:
-    # only the six phase HumanMessages survive on the thread.
-    trail = actor._task.result().turns[-1].messages
-    plain_system = [m for m in trail if isinstance(m, SystemMessage)]
-    assert plain_system == []
-    humans = [m for m in trail if isinstance(m, HumanMessage)]
-    assert len(humans) == 6
 
 
 # --- the per-hunt hunting-hunter actor --------------------------------------------
@@ -607,88 +455,5 @@ def test_lightrag_tool_always_bound(monkeypatch):
 def test_run_scoped_actors_tag_turns_with_the_run_id():
     """Convergence join: both run-scoped actors expose the bare run id as the
     turn tags now that the hand-written agent/gate spans are gone."""
-    from polymerhus.attack.hunting.actors import HuntingHunterActor, HuntOrchestratorActor
-
-    assert HuntOrchestratorActor("run1")._extra_tags == ["run1"]
+    assert ThreatModellerActor("run1")._extra_tags == ["run1"]
     assert HuntingHunterActor("run1", "hunt-a")._extra_tags == ["run1"]
-
-
-# --- A6: the hunt verdict strategy is negotiated, not pinned --------------------
-
-import pytest as _pytest
-
-
-@_pytest.fixture(autouse=True)
-def _a6_negotiated_tool_strategy(monkeypatch):
-    """A6: the actor's `structured_response_format` negotiation resolves to
-    `ToolStrategy` in this scripted-model suite (the fakes emit the
-    ToolStrategy tool-call shape), while production negotiates per profile."""
-    from langchain.agents.structured_output import ToolStrategy
-    import polymerhus.app.llm.session as _S
-
-    def _fake(role_id, schema, *, tools_bound):
-        return ToolStrategy(schema)
-
-    monkeypatch.setattr(_S, "structured_response_format", _fake)
-
-
-def test_a6_hunt_verdict_uses_the_negotiated_strategy(monkeypatch):
-    """A6: the hunt orchestrator computes `response_format` from the REAL
-    binding fact via `structured_response_format("hunting_orchestrator",
-    <gate union>, tools_bound=...)` and passes its result through to the
-    session agent (no raw pin)."""
-    from typing import get_args
-    from langchain.agents.structured_output import ToolStrategy
-    import polymerhus.app.llm.actor as _A
-    import polymerhus.app.llm.session as _S
-    from polymerhus.attack.hunting.hunt_orchestrator import NoteDecision, RatifyDecision
-
-    calls = {}
-    sentinel = ToolStrategy(GateDecision)
-
-    def _fake_format(role_id, schema, *, tools_bound):
-        calls.update(role_id=role_id, schema=schema, tools_bound=tools_bound)
-        return sentinel
-
-    monkeypatch.setattr(_S, "structured_response_format", _fake_format)
-    seen = {}
-
-    async def _fake_run(*args, **kwargs):
-        seen.update(kwargs)
-        return None
-
-    monkeypatch.setattr(_A, "run_session_agent", _fake_run)
-
-    async def _drive():
-        actor = HuntOrchestratorActor("run1", checkpointer=InMemorySaver(),
-                                      model_factory=_factory([("GateDecision", {})]),
-                                      observe=False, project_id="proj-1")
-        await actor._ensure_started()
-        await actor.stop()
-
-    asyncio.run(_drive())
-    assert calls["role_id"] == "hunting_orchestrator"
-    assert set(get_args(calls["schema"])) == {
-        GateDecision, RatifyDecision, NoteDecision}
-    assert calls["tools_bound"] is False  # no tool surface in this drive
-    assert seen["response_format"] is sentinel
-    # The orchestrator's turns are scoped to the run's project in the usage ledger.
-    assert seen["usage_scope"] == "proj-1"
-
-
-# --- #292: the conciseness directive in the orchestrator tool descriptions ----
-
-def test_orchestrator_store_tool_descriptions_carry_the_conciseness_directive():
-    """The orchestrator's `hunts_store` / `notes` tool descriptions carry the
-    single-sourced conciseness directive verbatim (#292), so the model reads the
-    writing cap wherever it decides what to write."""
-    from types import SimpleNamespace
-
-    from polymerhus.attack.hunting.actors import build_orchestrator_tool_surface
-    from polymerhus.attack.hunting.llm import HUNTING_CONCISENESS_DIRECTIVE
-
-    tools = SimpleNamespace(graph_view=None, store_reads=None, phase_context=None)
-    surface = {t.name: t for t in build_orchestrator_tool_surface(
-        tools, run_id="run1", project_id="proj-1")}
-    for name in ("hunts_store", "notes"):
-        assert HUNTING_CONCISENESS_DIRECTIVE in surface[name].description, name

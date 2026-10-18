@@ -26,10 +26,12 @@ from polymerhus.app.memory.tool_contract import NoteWrite, NotesRead
 from polymerhus.attack.hunting.threat_modeller import (
     GATE_HINTS,
     TOOL_SURFACE,
-    ModellerNotesHandle,
-    ModellerTools,
     UnitOutcome,
     arun_modeller_pass,
+)
+from polymerhus.attack.hunting.threat_modeller_tools import (
+    ModellerNotesHandle,
+    ModellerTools,
     build_modeller_tool_surface,
     build_vulnerability_suite_tools,
     suite_seam_from_tools,
@@ -47,154 +49,16 @@ def _no_degraded_backoff(monkeypatch):
     monkeypatch.setenv("HUNT_TURN_DEGRADED_BACKOFF_BASE_S", "0")
 
 
-def _evidence(ref: str = "GET /catalogue") -> dict:
-    return {"kind": "request", "ref": ref}
-
-
-def _payloads() -> dict[str, dict]:
-    """The five gate payloads, the minimum the completion checker needs.
-
-    The literal content is the T1 fixture shape (a known-good worked example),
-    never derived from the code under test.
-    """
-    return {
-        ModelState.UNIT_TECHNICAL_SHARP: {
-            "technical_sharpening": {
-                "interface_agreements": [{
-                    "id": "ia-1",
-                    "statement": "The catalogue endpoint reads the item id from the query.",
-                    "confidence": "OBSERVED",
-                    "evidences": [_evidence()],
-                }],
-                "control_flows": [{
-                    "id": "cf-1",
-                    "statement": "The handler authorises before the lookup.",
-                    "confidence": "INFERRED",
-                    "evidences": [_evidence("framework default")],
-                }],
-                "data_flows": [{
-                    "id": "df-1",
-                    "statement": "The item body is rendered into the product page.",
-                    "confidence": "OBSERVED",
-                    "evidences": [_evidence()],
-                }],
-            },
-        },
-        ModelState.TRUST_MODELLED: {
-            "trust_model": {
-                "trust_agreements": [{
-                    "id": "ta-1",
-                    "boundary": "anonymous caller -> catalogue lookup",
-                    "interface_agreement_refs": ["ia-1"],
-                    "statement": "The lookup trusts the caller's item id.",
-                    "confidence": "INFERRED",
-                    "evidences": [_evidence()],
-                }],
-                "dynamic_state_trust": {
-                    "states": [{
-                        "id": "ds-1",
-                        "variables": ["item_id"],
-                        "confidence": "OBSERVED",
-                        "evidences": [_evidence()],
-                    }],
-                    "transitions": [{
-                        "id": "tr-1",
-                        "source": "ds-1",
-                        "target": "ds-1",
-                        "guard": "any item id",
-                        "confidence": "INFERRED",
-                        "evidences": [_evidence()],
-                    }],
-                    "violations": [{
-                        "id": "vi-1",
-                        "kind": "trust-transition",
-                        "statement": "A caller can force the state before the owner check.",
-                        "maps_to_fault": "fault-1",
-                        "confidence": "ASSUMED",
-                        "evidences": [_evidence()],
-                    }],
-                },
-            },
-        },
-        ModelState.TRUST_ASSUMPTIONS_WRITTEN: {
-            "assumptions": [{
-                "id": "as-1",
-                "statement": "The handler omits the ownership check.",
-                "fault": {
-                    "id": "fault-1",
-                    "label": "improper authorisation on the item lookup",
-                    "description": "The handler does not check item ownership.",
-                },
-                "boundary_ref": "ta-1",
-                "confidence": "ASSUMED",
-                "evidences": [_evidence("note:catalogue")],
-            }],
-        },
-        ModelState.VULNERABILITIES_WRITTEN: {
-            "vulnerabilities": [{
-                "id": "v-1",
-                "fault_ref": "fault-1",
-                "canonical_class": "IDOR",
-                "web_vulnerability_class": "idor",
-                "characterisation": "An anonymous caller reads another user's item.",
-                "confidence": "INFERRED",
-                "evidences": [_evidence()],
-            }],
-        },
-        ModelState.COMPLETED: {
-            "failure_modes": [{
-                "id": "fm-1",
-                "vulnerability_ref": "v-1",
-                "mode": "read of another tenant's item",
-                "feasibility": "feasible",
-                "feasibility_rationale": "The id is caller-supplied.",
-                "confidence": "INFERRED",
-                "evidences": [_evidence()],
-            }],
-            "loops": [{
-                "fault_ref": "fault-1",
-                "vulnerability_ref": "v-1",
-                "failure_mode_refs": ["fm-1"],
-                "canonical_class": "IDOR",
-                "web_vulnerability_class": "idor",
-                "likelihood": "high",
-                "likelihood_rationale": "An anonymous caller controls the id.",
-                "risk_factors": {
-                    "attack_vector": "network",
-                    "attack_requirements": "none",
-                    "privileges_required": "none",
-                    "complexity": "low",
-                },
-                "confidence": "INFERRED",
-                "evidences": [_evidence()],
-            }],
-        },
-    }
-
-
-class _ScriptedTurns:
-    """The fake turn seam: each state's turn writes its gate through the BOUND
-    `hunts_store` tool (never the store directly), so the test drives exactly
-    what the model drives. Returns the tool responses and the turn inputs."""
-
-    def __init__(self, states=None, payloads=None):
-        self.states = list(states or ModelState)
-        self.payloads = payloads if payloads is not None else _payloads()
-        self.turn_inputs: list = []
-        self.responses: list = []
-
-    def store_tool(self, turn):
-        return next(tool for tool in turn.tools if tool.name == "hunts_store")
-
-    def __call__(self, turn):
-        self.turn_inputs.append(turn)
-        if turn.state not in self.states:
-            return None
-        payload = self.payloads[turn.state]
-        self.responses.append(self.store_tool(turn).invoke({
-            "cmd": "write", "state": turn.state.value, "sections": payload,
-        }))
-        return None
+# The shared worked example and the scripted turn seam live in
+# `tests/hunting_fixtures.py`: the runtime wiring tests (T2b) drive the SAME
+# five-gate payloads, so the fixture has one home.
+from tests.hunting_fixtures import (  # noqa: E402
+    ScriptedModellerTurns as _ScriptedTurns,
+    _evidence,
+)
+from tests.hunting_fixtures import (  # noqa: E402
+    modeller_gate_payloads as _payloads,
+)
 
 
 def _tools(store, **kwargs) -> ModellerTools:
@@ -730,7 +594,9 @@ def test_the_suite_gap_reaches_the_unit_outcome(tmp_path):
 def test_injected_suite_tools_still_report_their_gaps(tmp_path):
     """The injected-pair lane exposes the same seam: a caller that supplies its
     own `skill_list` / `skill_load` pair must not lose the gap record."""
-    from polymerhus.attack.hunting.threat_modeller import VulnerabilitySuiteSeam
+    from polymerhus.attack.hunting.threat_modeller_tools import (
+        VulnerabilitySuiteSeam,
+    )
 
     store = ThreatModelStore(root_dir=tmp_path)
     seam = VulnerabilitySuiteSeam()

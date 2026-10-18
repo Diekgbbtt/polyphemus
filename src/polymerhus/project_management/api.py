@@ -823,15 +823,21 @@ class HuntingPodLaunch(BaseModel):
 
 @router.post("/projects/{project_id}/hunting/orchestrator", status_code=202)
 async def launch_orchestrator_only(project_id: str, body: HuntingOrchestratorLaunch) -> dict:
-    """'Orchestrator only': schedule ONE orchestration pass through the
-    launcher seam - no surfer, no dispatch, no run (T5). The pass consumes
-    the candidate batch and writes its ratified configs into the project's
-    HuntStore for a later run to dispatch. The outcome is asynchronous; the
-    response carries the pass's run id for observability. 404 unknown project;
-    503 fail-closed on the control plane (a real LLM pass must never ride the
-    uvicorn request loop); admission refusal maps to 503."""
+    """The modeller-only launch (the planner-era path and label): schedule ONE
+    modelling pass through the launcher seam - no surfer, no dispatch, no run
+    (T5). The pass models the selected units into the project's threat model
+    store, where a later run's surfer dispatches the produced loops. The
+    outcome is asynchronous; the response carries the pass's run id for
+    observability. 404 unknown project; 503 fail-closed on the control plane (a
+    real LLM pass must never ride the uvicorn request loop); admission refusal
+    maps to 503.
+
+    designed-for-removal: the `/hunting/orchestrator` path and the
+    `component: "orchestrator"` label are the planner-era wire names; they
+    retire with the component-name hygiene sweep (T10)."""
     from polymerhus.app.clients import pg
     from polymerhus.attack.hunting import runtime as hunting_runtime
+    from polymerhus.attack.hunting.mover import threat_modeller_session_id
 
     if not await asyncio.to_thread(pg.project_exists, project_id):
         raise HTTPException(status_code=404, detail="unknown project")
@@ -845,10 +851,10 @@ async def launch_orchestrator_only(project_id: str, body: HuntingOrchestratorLau
     run_id = str(uuid.uuid4())
     try:
         hunting_runtime.schedule_hunting(
-            hunting_runtime.launch_orchestrator(
+            hunting_runtime.launch_modeller(
                 project_id, run_id=run_id, candidates=candidates,
             ),
-            name=f"hunting:{run_id}:orchestrator",
+            name=threat_modeller_session_id(run_id),
         )
     except Exception as exc:  # noqa: BLE001 - map admission refusal, re-raise the rest
         _admission_refused_503(exc)

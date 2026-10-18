@@ -492,10 +492,11 @@ def test_pod_launch_unknown_project_404(monkeypatch):
 
 
 def test_orchestrator_launch_schedules_the_pass_via_the_launcher_seam(monkeypatch):
-    """Orchestrator-only launch schedules ONE orchestration pass through the
-    launcher seam under the ADR Q13 orchestrator session id (no surfer, no run
-    row) and acks asynchronously - the pass consumes its candidate inbox on
-    the loop."""
+    """The modeller-only launch schedules ONE modelling pass through the
+    launcher seam under the ADR Q13 modeller session id (no surfer, no run row)
+    and acks asynchronously - the pass models its selected units on the loop.
+    The `/hunting/orchestrator` path and the `orchestrator` component label are
+    the planner-era wire names (T10 hygiene); the BODY is the modeller's."""
     monkeypatch.setattr(pg, "project_exists", lambda pid: True)
     fake_runtime = _FakeRuntime()
     from polymerhus.attack.hunting import runtime as hunting_runtime
@@ -507,7 +508,7 @@ def test_orchestrator_launch_schedules_the_pass_via_the_launcher_seam(monkeypatc
     def record_pass(*_a, **_kw):
         return _pass_ran()
 
-    monkeypatch.setattr(hunting_runtime, "launch_orchestrator", record_pass)
+    monkeypatch.setattr(hunting_runtime, "launch_modeller", record_pass)
 
     resp = client.post("/projects/p1/hunting/orchestrator", json={
         "candidates": [{"unit_id": "Service:slug:a", "fault_class": "fault-x"}],
@@ -518,7 +519,8 @@ def test_orchestrator_launch_schedules_the_pass_via_the_launcher_seam(monkeypatc
     assert body["component"] == "orchestrator"
     assert body["dispatched_asynchronously"] is True
     assert body["run_id"]
-    assert fake_runtime.scheduled == [f"hunting:{body['run_id']}:orchestrator"]
+    assert fake_runtime.scheduled == [
+        f"hunting:{body['run_id']}:threat-modeller"]
 
 
 def test_hunt_launch_never_fabricates_a_dependency_error_without_a_run(monkeypatch):

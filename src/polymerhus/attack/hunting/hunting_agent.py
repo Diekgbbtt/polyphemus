@@ -1,7 +1,8 @@
 """The hunting agent (#83, as of #164 W5): the turn-by-turn ReAct host.
 
-The hunt-orchestrator (#82) feeds this module one declarative `HuntConfig` per
-hunt (IA-2); the harness drives the model through the ratified tool surface
+The hunt store (#82; the config family retires with T4 #377) feeds this module
+one declarative `HuntConfig` per hunt (IA-2); the harness drives the model
+through the ratified tool surface
 (`hunts_store` / `notes` / `graph_view` / `kb_query` / `exec`, R3/R1/R2) as a
 turn-by-turn ReAct loop OVER the state-graph hunter (`hunter_graph.py`).
 Persistence rides the per-project hunter memory store (spec 6) - the harness
@@ -705,7 +706,7 @@ def build_hunting_agent(
 def build_sync_hunting_agent(**kwargs):
     """The SYNC lane of the hunting-agent harness: a thin wrapper that runs the
     async `build_hunting_agent` dispatch to completion, so the harness canon is
-    never re-implemented (the mirror of `hunt_orchestrator.run_orchestration`).
+    never re-implemented.
 
     Sync injectable seams travel through `asyncio.to_thread` inside the canon;
     async seams are awaited natively. When called from a running event loop,

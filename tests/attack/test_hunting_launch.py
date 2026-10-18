@@ -1,15 +1,14 @@
 """T5: the singular-launch launcher seams at the runtime tier - enqueue hunt
 configs / test specs into the per-project produced families and the
-orchestrator-only pass (tracker #174; spec #169 "Singular component launches";
+modeller-only pass (tracker #174; spec #169 "Singular component launches";
 ADR #169 Q4/Q6).
 
 The seams are asserted directly through temp-root stores, no live run and no
 live control plane: an enqueued config comes back RATIFIED (the mover's
 hunter-dispatch gate), an enqueued spec comes back SPECIFIED (the mover's
 pod-dispatch gate), a replay of the same identity raises the storage novelty
-gate (the server-side at-most-once marker), and the orchestrator-only pass
-consumes its candidate batch under the run's module context. No LLM, no DB,
-no process.
+gate (the server-side at-most-once marker), and the modeller-only pass models
+its selected units under the run's module context. No LLM, no DB, no process.
 """
 from __future__ import annotations
 
@@ -18,10 +17,8 @@ import asyncio
 import pytest
 
 from polymerhus.attack.hunting import runtime as hunting_runtime
-from polymerhus.attack.hunting.hunt_orchestrator import (
-    HuntConfig,
-    OrchestratorReport,
-)
+from polymerhus.attack.hunting.hunt_orchestrator import HuntConfig
+from polymerhus.attack.hunting.threat_modeller import UnitOutcome
 from polymerhus.attack.hunting.hunt_store import (
     DuplicateConfigError,
     HuntStore,
@@ -31,7 +28,18 @@ UNIT = "Service:slug:a"
 FAULT = "fault-x"
 CLASS = "CSRF"
 FAULT_KEY = f"{UNIT}_{FAULT}_{CLASS}"
-RUN = "orchestrator-only-run"
+RUN = "modeller-only-run"
+
+
+def _candidate():
+    from polymerhus.attack.hunting.hunt_orchestrator import (
+        DeliveredCandidate,
+        Witness,
+    )
+
+    return DeliveredCandidate(
+        unit_id=UNIT, fault_class=FAULT,
+        applies_witnesses=Witness(deterministic="w"), match_verdict="applies")
 
 
 def _config() -> HuntConfig:
@@ -121,41 +129,58 @@ def test_resume_pod_fail_closed_when_no_session_is_registered(tmp_path):
         hunting_runtime.resume_pod_session(_EmptyRuntime(), "")
 
 
-def _empty_report():
-    return OrchestratorReport(pairs_processed=1)
+def _unit_outcome(unit_id: str) -> UnitOutcome:
+    return UnitOutcome(unit_id=unit_id, status="completed")
 
 
-def test_launch_orchestrator_drives_the_pass_under_the_module_context(tmp_path):
-    """The orchestrator-only coroutine drives ONE pass under the hunting module
-    context with no surfer and no run row: the injected pass body runs and
-    returns its report. The launch succeeds without any control plane (the
-    coroutine is what the launcher seam schedules)."""
+def test_launch_modeller_drives_the_pass_under_the_module_context(tmp_path):
+    """The modeller-only coroutine drives ONE modelling pass under the hunting
+    module context with no surfer and no run row: the injected pass body runs
+    once per selected distinct unit and returns its outcome. The launch
+    succeeds without any control plane (the coroutine is what the launcher
+    seam schedules)."""
     hunt_store = HuntStore(tmp_path / "hunts")
-    reports: list[tuple[str, str]] = []
+    reports: list[tuple[str, str, str]] = []
 
-    async def _pass(project_id, run_id, candidates, tools, **kw):
-        reports.append((project_id, run_id))
-        return _empty_report()
+    async def _pass(project_id, run_id, unit_id, tools, **kw):
+        reports.append((project_id, run_id, unit_id))
+        return _unit_outcome(unit_id)
 
-    asyncio.run(hunting_runtime.launch_orchestrator(
-        "p1", run_id=RUN, candidates=[], hunt_store=hunt_store,
-        orchestrator_fn=_pass,
+    from polymerhus.attack.hunting.hunt_orchestrator import (
+        DeliveredCandidate,
+        Witness,
+    )
+
+    candidates = [
+        DeliveredCandidate(
+            unit_id="Service:b", fault_class=FAULT,
+            applies_witnesses=Witness(deterministic="w"), match_verdict="applies"),
+        DeliveredCandidate(
+            unit_id="Service:a", fault_class=FAULT,
+            applies_witnesses=Witness(deterministic="w"), match_verdict="applies"),
+    ]
+
+    outcomes = asyncio.run(hunting_runtime.launch_modeller(
+        "p1", run_id=RUN, candidates=candidates,
+        modeller_pass_fn=_pass,
     ))
 
-    assert reports == [("p1", RUN)]
+    # the transitional order: the selection's distinct unit ids, sorted
+    assert reports == [("p1", RUN, "Service:a"), ("p1", RUN, "Service:b")]
+    assert [outcome.unit_id for outcome in outcomes] == ["Service:a", "Service:b"]
     # no run row was opened or written by the pass (no pg accessors touched)
     assert not hunt_store.read_produced_configs("p1")
 
 
-def test_launch_orchestrator_never_raises_through_the_control_plane(tmp_path):
+def test_launch_modeller_never_raises_through_the_control_plane(tmp_path):
     """Fail-open: a degraded pass (its body raises) is logged, the coroutine
     returns normally - the singular launch never 500s the caller."""
-    hunt_store = HuntStore(tmp_path / "hunts")
 
-    async def _exploding_pass(project_id, run_id, candidates, tools, **kw):
+    async def _exploding_pass(project_id, run_id, unit_id, tools, **kw):
         raise RuntimeError("pass degraded")
 
-    asyncio.run(hunting_runtime.launch_orchestrator(
-        "p1", run_id=RUN, candidates=[], hunt_store=hunt_store,
-        orchestrator_fn=_exploding_pass,
+    asyncio.run(hunting_runtime.launch_modeller(
+        "p1", run_id=RUN,
+        candidates=[_candidate()],
+        modeller_pass_fn=_exploding_pass,
     ))

@@ -302,7 +302,7 @@ class DispatchControlPlane(Protocol):
         ...
 
     def start_session(self, session_id: str, coro: Any) -> Any:
-        """Schedule a run SESSION (the orchestrator pass, the run-scoped
+        """Schedule a run SESSION (the modeller pass, the run-scoped
         surfer) under its Q13 session id and return an awaitable of its
         outcome, or None when not admitted. The mover never calls this - the
         run bootstrap does, so it can await the sessions' settle."""

@@ -50,8 +50,8 @@ and a `specified` write starts the next loop iteration (`hypothesised`). The
 terminal `concluded` phase is the harness's idle landing, not a graph node.
 
 This module builds (never compiles) the graph; `build_hunter_graph` takes
-injectable node closures (mirroring `orchestrator_graph.build_hunting_graph`) so
-a pass compiles IN-MEMORY and the harness supplies the default passive nodes.
+injectable node closures so a pass compiles IN-MEMORY and the harness supplies
+the default passive nodes.
 No driver and no I/O at import (CODING_STANDARD section 6).
 """
 from __future__ import annotations
