@@ -601,47 +601,16 @@ def get_recon_status(project_id: str, run_id: str) -> dict:
 
 # --- #110: the three hunting seam endpoints (seam contract 3.3) -----------------
 
-class _HuntingCandidateIn(BaseModel):
-    """The wire shape of one candidate: a `(unit_id, fault_class)` pair with the
-    match verdict + applicability witnesses. The orchestrator's normalize stage
-    still drops malformed / de-duplicates downstream (O7/O10)."""
-    unit_id: str
-    fault_class: str
-    verdict: str = "applies"
-    deterministic_witness: str | None = None
-    llm_witness: str | None = None
-
-
-def _hunting_candidates(body_candidates) -> list:
-    """Build the typed `DeliveredCandidate` batch from the wire shape, used by
-    the whole-pipeline and orchestrator-only launches. The verdict is coerced
-    onto the three-valued match-verdict Literal (a foreign value survives the
-    orchestrator's normalize-stage degrade, O7/O10)."""
-    from polymerhus.attack.hunting.hunt_orchestrator import (
-        DeliveredCandidate,
-        Witness,
-    )
-
-    verdicts = {"applies", "does-not-apply", "insufficient-evidence"}
-    return [
-        DeliveredCandidate(
-            unit_id=c.unit_id,
-            fault_class=c.fault_class,
-            applies_witnesses=Witness(
-                deterministic=c.deterministic_witness, llm=c.llm_witness,
-            ),
-            match_verdict=c.verdict if c.verdict in verdicts else "applies",
-        )
-        for c in body_candidates
-    ]
-
-
 class HuntingLaunch(BaseModel):
-    """The hunting launch body (#110): the optional initial candidate batch. An
-    omitted/empty batch triggers the platform's OWN FaultSource selection over the
-    live L1 (#200, spec 4.1) - a meaningful pass, never the vacuous O1 empty pass;
-    a supplied batch stays the caller override."""
-    candidates: list[_HuntingCandidateIn] = []
+    """The hunting launch body (#110).
+
+    The caller-supplied candidate batch is RETIRED (T3 #376): a run's unit set is
+    its INTAKE - the L1 inventory read at run start, ordered by live L1 edge
+    count / aggregated endpoints / unit id and frozen for the run (S1 7.1-7.2) -
+    so the pass has no wire input. The body stays as the endpoint's typed request
+    shape (today it carries nothing) instead of being dropped: the launch
+    contract is T5's, and what retired is the candidate path, not the launch.
+    """
 
 
 @router.post("/projects/{project_id}/hunting", status_code=201)
@@ -677,13 +646,11 @@ async def launch_hunting(project_id: str, body: HuntingLaunch) -> dict:
         )
     await _hunting_live_run_guard(project_id)
 
-    candidates = _hunting_candidates(body.candidates)
-
     hunting_run_id = await asyncio.to_thread(pg.create_hunting_run, project_id)
     try:
         hunting_runtime.schedule_hunting(
             hunting_runtime.start_hunting(
-                project_id, run_id=hunting_run_id, candidates=candidates,
+                project_id, run_id=hunting_run_id,
             ),
             name=f"hunting:{hunting_run_id}",
         )
@@ -782,14 +749,11 @@ async def get_hunting_status(project_id: str, hunting_run_id: str) -> dict:
 # ADR G4) are the server-side at-most-once marker for a replayed enqueue (409).
 
 class HuntingOrchestratorLaunch(BaseModel):
-    """Orchestrator-only launch body: the candidate batch the pass consumes.
-    The pass itself writes the ratified configs into the project's HuntStore -
-    this endpoint schedules the pass, it never fakes the orchestrator's output
-    (the produced/consumed topology has no orchestrator INPUT family; the
-    candidate batch is in-memory at schedule, so the minimal faithful reading
-    of the orchestrator's "enqueue" is scheduling its pass)."""
-
-    candidates: list[_HuntingCandidateIn] = []
+    """Modeller-only launch body. The pass reads the L1 inventory itself (T3
+    #376 retired the caller-supplied candidate batch), freezes and orders it,
+    and writes its models and loop files into the project's threat model store -
+    this endpoint schedules the pass, it never fakes the pass's output.
+    """
 
 
 class HuntingHuntLaunch(BaseModel):
@@ -847,13 +811,10 @@ async def launch_orchestrator_only(project_id: str, body: HuntingOrchestratorLau
             detail="hunting control-plane runtime has not landed",
         )
 
-    candidates = _hunting_candidates(body.candidates)
     run_id = str(uuid.uuid4())
     try:
         hunting_runtime.schedule_hunting(
-            hunting_runtime.launch_modeller(
-                project_id, run_id=run_id, candidates=candidates,
-            ),
+            hunting_runtime.launch_modeller(project_id, run_id=run_id),
             name=threat_modeller_session_id(run_id),
         )
     except Exception as exc:  # noqa: BLE001 - map admission refusal, re-raise the rest

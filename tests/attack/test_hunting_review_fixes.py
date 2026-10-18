@@ -19,10 +19,6 @@ from __future__ import annotations
 import asyncio
 
 from polymerhus.attack.hunting import runtime as hunting_runtime
-from polymerhus.attack.hunting.hunt_orchestrator import (
-    DeliveredCandidate,
-    Witness,
-)
 from polymerhus.attack.hunting.hunt_store import HuntStore
 from polymerhus.attack.hunting.hunter_memory import HunterMemoryStore
 from polymerhus.attack.hunting.threat_model_store import ThreatModelStore
@@ -32,18 +28,12 @@ from polymerhus.attack.hunting.threat_modeller import (
 )
 from polymerhus.attack.hunting.threat_modeller_tools import ModellerTools
 
-from tests.hunting_fixtures import ScriptedModellerTurns
+from tests.hunting_fixtures import ScriptedModellerTurns, intake_unit
 
 PROJECT = "gap-proj"
 RUN = "gap-run"
 UNIT = "Service:gap-unit"
 STALL_TIMEOUT = 0.05
-
-
-def _candidate(unit_id: str = UNIT) -> DeliveredCandidate:
-    return DeliveredCandidate(
-        unit_id=unit_id, fault_class="fault-x",
-        applies_witnesses=Witness(deterministic="w"), match_verdict="applies")
 
 
 # --- 1: the run-level dispatch-gap warning ------------------------------------
@@ -69,7 +59,7 @@ def test_a_completed_model_with_nothing_dispatchable_names_the_t4_gap(
 
     with caplog.at_level("WARNING", logger="polymerhus.attack.hunting.runtime"):
         hid = asyncio.run(hunting_runtime.start_hunting(
-            PROJECT, candidates=[_candidate()],
+            PROJECT, intake_units=[intake_unit(UNIT)],
             modeller_kwargs={"turn_fn": ScriptedModellerTurns()},
             graph_read_fn=lambda cypher, params: [],
             control=_FakeControl(),
@@ -115,7 +105,7 @@ def test_a_run_with_a_dispatchable_config_does_not_claim_a_dispatch_gap(
 
     with caplog.at_level("WARNING", logger="polymerhus.attack.hunting.runtime"):
         asyncio.run(hunting_runtime.start_hunting(
-            PROJECT, candidates=[_candidate()],
+            PROJECT, intake_units=[intake_unit(UNIT)],
             modeller_kwargs={"turn_fn": ScriptedModellerTurns()},
             graph_read_fn=lambda cypher, params: [],
             control=_FakeControl(),
@@ -314,3 +304,84 @@ def test_the_sink_is_shared_by_the_surface_builder(tmp_path):
     assert tools.seam_gaps is not None
     assert len(tools.seam_gaps.gaps) == 2
     assert all("exec" in gap for gap in tools.seam_gaps.gaps)
+
+
+def test_the_stop_reap_is_bounded_by_the_drain_timeout(monkeypatch):
+    """T3 #376 carry-forward: `stop_hunting`'s actor reap is bounded by the same
+    drain timeout as the provider-failure path - a stalled actor's task is
+    cancelled and the `stopped` terminal still lands."""
+    from polymerhus.attack.hunting import threat_modeller as tm
+    from tests.attack.test_hunting_modeller_wiring import _FakePg
+
+    fake = _FakePg()
+    monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_status",
+                        fake.set_hunting_run_status)
+    monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs",
+                        fake.list_hunting_runs)
+
+    class _StalledActor:
+        def __init__(self):
+            self._task = asyncio.ensure_future(asyncio.sleep(30))
+            self.stop_entered = False
+
+        async def stop(self):
+            self.stop_entered = True
+            await asyncio.sleep(30)
+
+        def last_degrade_cause(self):
+            return None
+
+    actor = None
+
+    async def _drive():
+        nonlocal actor
+        actor = _StalledActor()
+        tm._MODELLER_ACTORS.clear()
+        tm._MODELLER_ACTORS[RUN] = actor
+        # the stop's own drain bound is 30s; shrink the bounded awaits so the
+        # test stays fast (a real 30s wait would not prove the bound)
+        real_wait_for = asyncio.wait_for
+        monkeypatch.setattr(
+            asyncio, "wait_for",
+            lambda aw, timeout: real_wait_for(aw, timeout=min(timeout, STALL_TIMEOUT)))
+        await real_wait_for(hunting_runtime.stop_hunting(RUN), timeout=5)
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        return actor
+
+    actor = asyncio.run(_drive())
+
+    assert actor.stop_entered is True, "the reap must attempt the stop"
+    assert actor._task.cancelled() is True, (
+        "a reap that times out must cancel the actor's task")
+    assert tm._MODELLER_ACTORS == {}
+    assert fake.statuses == [(RUN, "stopped")]
+
+
+def test_the_dispatch_gap_survives_a_transient_pending_work_read_failure(
+        tmp_path, monkeypatch, caplog):
+    """T3 #376 carry-forward: the dispatch-gap report is guarded - a transient
+    failure of the surfer's pending-work read must not raise into the run
+    terminal; the gap line still lands."""
+    from polymerhus.attack.hunting.surfer import run_work_remaining
+    from tests.attack.test_hunting_modeller_wiring import _FakePg
+
+    def _explode(*_a, **_kw):
+        raise OSError("store read failed (fixture)")
+
+    monkeypatch.setattr(
+        "polymerhus.attack.hunting.surfer.run_work_remaining", _explode)
+    from polymerhus.attack.hunting.surfer import RunDispatchState
+
+    with caplog.at_level("WARNING", logger="polymerhus.attack.hunting.runtime"):
+        reason = hunting_runtime.report_dispatch_gap(
+            "p1", RUN,
+            [UnitOutcome(unit_id=UNIT, status="completed")],
+            state=RunDispatchState(),
+            hunt_store=HuntStore(tmp_path / "hunts"),
+            hunter_store=HunterMemoryStore(tmp_path / "hunter"),
+        )
+
+    assert reason is not None and "#377" in reason
+    assert any("pending-work read degraded" in record.message
+               for record in caplog.records)

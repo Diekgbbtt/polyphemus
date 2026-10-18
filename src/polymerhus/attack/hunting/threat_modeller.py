@@ -731,10 +731,17 @@ def _finalise(project_id: str, unit_id: str, tools: ModellerTools,
     """The completion validation call (S1 6.6) and the outcome.
 
     The store's COMPLETED write already ran the non-blocking checker; the pass
-    reads the recorded outcome and archives an invalid model to `abandoned/` (a
-    degraded unit, never a dispatchable one). A model that did not reach
-    COMPLETED is degraded with its recorded state and stays in place for the run
-    driver to decide."""
+    reads the recorded outcome and archives an INVALID model to `abandoned/` (a
+    degraded unit, never a dispatchable one).
+
+    A model that did not reach COMPLETED is degraded too, and its PARTIAL model
+    is archived to `abandoned/` with it (S1 7.7: "if a partial model exists, the
+    store moves its unit directory to abandoned/"). The retry policy follows from
+    that move: a later run retries the unit from scratch, because no produced
+    model is left to resume from - the partial was never a consumable model and
+    the in-flight exclusion would otherwise skip the unit for the rest of the
+    producing run's life.
+    """
     store = tools.threat_store
     model = _read_model(tools, project_id, unit_id)
     outcome = UnitOutcome(
@@ -756,9 +763,9 @@ def _finalise(project_id: str, unit_id: str, tools: ModellerTools,
         return outcome
     if model.get("state") != ModelState.COMPLETED.value:
         outcome.reason = (
-            f"the model did not reach COMPLETED (state={model.get('state')!r}); "
-            f"the partial model stays for the run driver"
+            f"the model did not reach COMPLETED (state={model.get('state')!r})"
         )
+        _archive_degraded(store, project_id, unit_id, outcome)
         return outcome
     validation = model.get("validation") or {}
     if validation.get("valid") is True:
@@ -773,13 +780,24 @@ def _finalise(project_id: str, unit_id: str, tools: ModellerTools,
         "the COMPLETED model failed the completion check: "
         + "; ".join(str(finding) for finding in findings)
     )
-    archive = getattr(store, "archive_unit", None)
-    if callable(archive):
-        try:
-            outcome.archived = archive(project_id, unit_id, outcome.reason) is not None
-        except Exception as exc:  # noqa: BLE001 - the archive is best-effort
-            logger.warning("threat model archive failed for %s (%s)", unit_id, exc)
+    _archive_degraded(store, project_id, unit_id, outcome)
     return outcome
+
+
+def _archive_degraded(store, project_id: str, unit_id: str,
+                      outcome: UnitOutcome) -> None:
+    """Archive a degraded unit's model to `abandoned/` (S1 7.7), best-effort.
+
+    `outcome.archived` records whether a model directory actually moved; a store
+    without the archive seam (a scripted test store) leaves it False. The reason
+    is logged by the store with the archived directory."""
+    archive = getattr(store, "archive_unit", None)
+    if not callable(archive):
+        return
+    try:
+        outcome.archived = archive(project_id, unit_id, outcome.reason) is not None
+    except Exception as exc:  # noqa: BLE001 - the archive is best-effort
+        logger.warning("threat model archive failed for %s (%s)", unit_id, exc)
 
 
 def run_modeller_pass(*args, **kwargs) -> UnitOutcome:

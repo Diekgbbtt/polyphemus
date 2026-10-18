@@ -548,6 +548,37 @@ class ThreatModelStore(BoundedRecordStore):
                     found.add(unit_id)
             return sorted(found)
 
+    def read_produced_units(self, project_id: str) -> list[dict]:
+        """Every produced model's `{unit_id, run_id, state}` (S2 9.3).
+
+        The intake freeze reads the produced family to tell an in-flight model
+        (its producing run is live or resumable) from a stale one. Ordered by
+        unit directory name; a document without a readable unit id or run id
+        contributes nothing (the freeze never guesses an identity it cannot
+        attribute).
+        """
+        with self._lock_for(project_id):
+            produced = self._family_dir(project_id, "produced")
+            if not produced.exists():
+                return []
+            found: list[dict] = []
+            for directory in sorted(produced.iterdir()):
+                if not directory.is_dir():
+                    continue
+                raw = self._load_document(directory / f"{directory.name}.yaml")
+                if raw is None:
+                    continue
+                unit_id = raw.get("unit_id")
+                run_id = raw.get("run_id")
+                if not isinstance(unit_id, str) or not unit_id:
+                    continue
+                found.append({
+                    "unit_id": unit_id,
+                    "run_id": run_id if isinstance(run_id, str) else "",
+                    "state": raw.get("state"),
+                })
+            return found
+
     def archive_unit(self, project_id: str, unit_id: str, reason: str) -> Path | None:
         """Move the unit's produced directory to abandoned/ (S2 7.7).
 

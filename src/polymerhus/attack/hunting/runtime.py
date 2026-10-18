@@ -15,10 +15,22 @@ plane drives and the tear-down hooks it calls:
                              #169 Q2a/Q12), waits for quiesce (the pass done,
                              produced dirs drained, every dispatched session
                              settled), and persists the terminal status.
+                             As of T3 (#376) the pass runs over the run's OWN
+                             INTAKE: the L1 inventory read and frozen at run
+                             start, ordered by live L1 edge count, with the
+                             completed/in-flight exclusions applied - and the
+                             run's symbolic accumulator, halt and resume state
+                             land on the run row's `stats` (the run record,
+                             S2 9.2) after every unit. A run row that already
+                             carries a run record RESUMES it (S1 7.5). It is
+                             the only place the intake, the halt and the record
+                             meet: the store never reads it and the surfer
+                             never writes it.
                              Fail-open: a collaborator failure never raises
                              through the control plane - it lands a terminal
                              status. The blocking-sync-pg calls
                              (`create_hunting_run`, `set_hunting_run_status`,
+                             `set_hunting_run_stats`, `get_hunting_run`,
                              `list_hunting_runs`) offload via
                              `asyncio.to_thread` onto the shared executor,
                              never the worker loop.
@@ -345,21 +357,231 @@ def resume_pod_session(runtime, session_id: str) -> None:
     runtime.resume_session("hunting", session_id)
 
 
-def transitional_unit_order(candidates) -> tuple[str, ...]:
-    """The T2b TRANSITIONAL unit order: the selection's distinct unit ids, sorted
-    by unit id - stable and deterministic across runs (S1 7.2's sort key is not
-    wired yet).
+def _read_only_l1_read(project_id: str):
+    """The read-only L1 graph read seam (never a write-capable client).
 
-    designed-for-removal - T3 (#376): the intake order replaces this (live L1
-    edge count desc, aggregated endpoints desc, unit id asc) together with the
-    intake freeze, the exclusions, the accumulator, and the halt. Until then the
-    bootstrap must still model each selected unit exactly once, in an order a
-    resumed run can reproduce."""
-    return tuple(sorted({
-        unit_id for unit_id in (
-            getattr(candidate, "unit_id", "") for candidate in candidates
-        ) if unit_id
-    }))
+    Shared by the modeller's grounding provider and the run's INTAKE read (S1
+    7.1: the runtime reads the L1 inventory at run start); a failed construction
+    leaves the seam None and its consumer degrades fail-open."""
+    try:
+        from polymerhus.attack.hunting.hunt_orchestrator import (  # noqa: PLC0415
+            ReadOnlyGraphView,
+        )
+
+        return ReadOnlyGraphView(project_id).read
+    except Exception:  # noqa: BLE001 - fail-open: the read degrades
+        logger.warning(
+            "start_hunting: L1 read seam unavailable for project %s; the "
+            "grounding and the intake degrade (fail-open)", project_id,
+        )
+        return None
+
+
+def _read_model_document(store, project_id: str, unit_id: str) -> dict | None:
+    """The persisted model for `unit_id`, fail-open to None (a degraded read is
+    an unknown model, never a raise into the run)."""
+    read = getattr(store, "read_model", None) if store is not None else None
+    if not callable(read):
+        return None
+    try:
+        return read(project_id, unit_id)
+    except Exception as exc:  # noqa: BLE001 - fail-open is the read contract
+        logger.warning(
+            "hunting: threat model read for %s degraded (%s)", unit_id, exc)
+        return None
+
+
+def _produced_run_statuses(project_id: str, produced: list[dict]) -> dict[str, str]:
+    """The producing runs' statuses for the intake freeze (S2 9.3).
+
+    Blocking pg read (the caller offloads). Fail-open: with no readable row the
+    status map stays empty, and the freeze then treats the produced model as
+    in-flight - it never destroys a model it cannot attribute. A run id with no
+    row (the modeller-only launch writes models under a run that never opened a
+    row) is therefore never mistaken for a stale one.
+    """
+    run_ids = {str(entry.get("run_id") or "") for entry in produced}
+    run_ids.discard("")
+    if not run_ids:
+        return {}
+    try:
+        from polymerhus.app.clients import pg  # noqa: PLC0415
+
+        rows = pg.list_hunting_runs(project_id)
+    except Exception as exc:  # noqa: BLE001 - fail-open: unknown stays in-flight
+        logger.warning(
+            "hunting: run-status read for project %s degraded (%s); produced "
+            "models are treated as in-flight (fail-open)", project_id, exc,
+        )
+        return {}
+    return {
+        str(row.get("hunting_run_id")): str(row.get("status"))
+        for row in rows
+        if row.get("hunting_run_id") in run_ids
+    }
+
+
+def _freeze_intake(store, project_id: str, units) -> object:
+    """The intake freeze (S1 7.1, S2 9.3): the exclusions from the store's
+    consumed/produced families and the producing runs' statuses.
+
+    Blocking store/pg reads: the caller offloads. Fail-open per source - a
+    degraded read contributes no exclusion, so the run degrades to modelling the
+    unit rather than silently skipping it (S1 5.7)."""
+    from polymerhus.attack.hunting.unit_intake import (  # noqa: PLC0415
+        freeze_intake,
+    )
+
+    completed: list[str] = []
+    produced: list[dict] = []
+    if store is not None:
+        try:
+            completed = store.read_completed_units(project_id)
+        except Exception as exc:  # noqa: BLE001 - fail-open: no exclusion
+            logger.warning(
+                "hunting: completed-model read for project %s degraded (%s); "
+                "no completed exclusion (fail-open)", project_id, exc)
+        try:
+            produced = store.read_produced_units(project_id)
+        except Exception as exc:  # noqa: BLE001 - fail-open: no exclusion
+            logger.warning(
+                "hunting: produced-model read for project %s degraded (%s); "
+                "no in-flight exclusion (fail-open)", project_id, exc)
+    archive = getattr(store, "archive_unit", None) if store is not None else None
+
+    def archive_fn(unit_id: str, reason: str):
+        """Move the stale produced directory to `abandoned/` (S2 9.3)."""
+        return archive(project_id, unit_id, reason) if callable(archive) else None
+
+    return freeze_intake(
+        units,
+        completed_ids=completed,
+        produced=produced,
+        run_statuses=_produced_run_statuses(project_id, produced),
+        archive_fn=archive_fn if produced else None,
+    )
+
+
+def _resume_intake(store, project_id: str, record: dict) -> object:
+    """The resumed run from its persisted record (S1 7.5).
+
+    Blocking store reads: the caller offloads. `risk_total` is recomputed from
+    `model_sums` and the models on disk, and every unit at or after the recorded
+    position whose model is already complete is adopted rather than re-modelled
+    - the crash window between the model commit and the run-record write."""
+    from polymerhus.attack.hunting.run_lifecycle import resume_run  # noqa: PLC0415
+
+    order = tuple(str(unit) for unit in record.get("intake_order") or ())
+    position = int(record.get("intake_position") or 0)
+    models = {
+        unit_id: _read_model_document(store, project_id, unit_id)
+        for unit_id in order[position:]
+    }
+    return resume_run(record, models=models)
+
+
+async def _run_intake(
+    project_id: str,
+    run_id: str,
+    *,
+    tools,
+    pass_fn,
+    pass_kwargs: dict,
+    intake_units=None,
+    intake_read_fn=None,
+    record: dict | None = None,
+    record_fn=None,
+) -> tuple[list, object]:
+    """Freeze the intake, order it, and model it ONE UNIT AT A TIME (S1 7.1-7.5).
+
+    The run reads the L1 inventory and freezes the unit set (or resumes a
+    persisted run record), orders it once, applies the exclusions, and models
+    each admitted unit through `pass_fn`. After every unit the run record is
+    updated: the model document commits first (inside the pass, through the
+    store) and the run record follows, so a crash between the two leaves a
+    complete model the resume adopts - never a stale risk total.
+
+    Returns `(outcomes, run)`. A raising pass propagates: the run terminal
+    classifies it (the degradation breaker's typed abort, or fail-open
+    `failed`)."""
+    from polymerhus.attack.hunting import run_lifecycle as lifecycle  # noqa: PLC0415
+    from polymerhus.attack.hunting.unit_intake import read_intake  # noqa: PLC0415
+
+    store = getattr(tools, "threat_store", None)
+
+    async def _write_record() -> None:
+        if record_fn is None:
+            return
+        try:
+            await record_fn(run.record())
+        except Exception as exc:  # noqa: BLE001 - fail-open: the run continues
+            logger.warning(
+                "hunting run %s: run-record write failed (%s); the total stays "
+                "re-derivable from the models on disk", run_id, exc,
+            )
+
+    threshold, basis = lifecycle.threshold_config()
+    if record:
+        run = await asyncio.to_thread(
+            _resume_intake, store, project_id, record)
+        logger.info(
+            "hunting run %s: resumed the intake at position %d of %d "
+            "(halt=%s, risk_total=%d)",
+            run_id, run.intake_position, len(run.intake_order), run.halt,
+            run.accumulator.total,
+        )
+    else:
+        units = (
+            tuple(intake_units) if intake_units is not None
+            else await asyncio.to_thread(
+                read_intake, project_id, read_fn=intake_read_fn)
+        )
+        plan = await asyncio.to_thread(
+            _freeze_intake, store, project_id, units)
+        run = lifecycle.ThreatModelRun.start(
+            plan.order, excluded=plan.excluded,
+            threshold=threshold, basis=basis,
+        )
+        logger.info(
+            "hunting run %s: froze %d unit(s) (excluded %d, archived %d); "
+            "intake order %s",
+            run_id, len(plan.order), len(plan.excluded), len(plan.archived),
+            list(plan.order),
+        )
+        await _write_record()
+
+    outcomes: list = []
+    while (unit_id := run.next_unit) is not None:
+        outcome = await pass_fn(project_id, run_id, unit_id, tools, **pass_kwargs)
+        outcomes.append(outcome)
+        model = await asyncio.to_thread(
+            _read_model_document, store, project_id, unit_id)
+        status = getattr(outcome, "status", "")
+        if status == "completed" and model is not None:
+            run.complete_unit(unit_id, lifecycle.model_sum(unit_id, model))
+        else:
+            reason = (getattr(outcome, "reason", "")
+                      or f"the pass returned {status!r} for this unit")
+            run.degrade_unit(unit_id, reason)
+        run.keep_trajectory(
+            lifecycle.trajectory_entry(unit_id, entry)
+            for entry in getattr(outcome, "trail", ())
+        )
+        await _write_record()
+        logger.info(
+            "hunting run %s: modelled unit %s (%s); risk_total %d/%d%s",
+            run_id, unit_id, status, run.accumulator.total,
+            run.accumulator.threshold,
+            " HALTED" if run.halt else "",
+        )
+        if run.halt:
+            logger.info(
+                "hunting run %s: the risk budget halted the intake at %s; the "
+                "blocked unit %s is never modelled",
+                run_id, run.crossing_unit, run.blocked_unit,
+            )
+            break
+    return outcomes, run
 
 
 def _default_modeller_tools(
@@ -399,17 +621,7 @@ def _default_modeller_tools(
                 "runs with its gate writes degraded (fail-open)"
             )
     if graph_read_fn is None:
-        try:
-            from polymerhus.attack.hunting.hunt_orchestrator import (  # noqa: PLC0415
-                ReadOnlyGraphView,
-            )
-
-            graph_read_fn = ReadOnlyGraphView(project_id).read
-        except Exception:  # noqa: BLE001 - fail-open: the projection is a gap
-            logger.warning(
-                "start_hunting: L1 read seam unavailable; the unit projection "
-                "is a recorded gap (fail-open)"
-            )
+        graph_read_fn = _read_only_l1_read(project_id)
     tools = ModellerTools(
         threat_store=threat_store, project_id=project_id, run_id=run_id,
         unit_cell=ModellerUnit(),
@@ -461,7 +673,12 @@ def report_dispatch_gap(
     The two suppressors are the run's own facts: a hunter dispatch recorded on
     the run state (`state.hunter_inboxes` - a config the mover admitted), and a
     still-dispatchable produced item (`run_work_remaining`, the surfer's own
-    predicate). Either one means the gap did not bite."""
+    predicate). Either one means the gap did not bite.
+
+    `run_work_remaining` is a blocking store read and it is a best-effort READ:
+    a transient read failure must not turn the run's terminal path into a raise
+    (the caller awaits this inside the quiesce hand-off), so a failed read is
+    treated as "no pending work" and the gap line is logged - never silently."""
     from polymerhus.attack.hunting.surfer import (  # noqa: PLC0415
         run_work_remaining,
     )
@@ -470,8 +687,16 @@ def report_dispatch_gap(
                  if getattr(outcome, "status", "") == "completed"]
     if not completed or state.hunter_inboxes:
         return None
-    if run_work_remaining(project_id, hunt_store=hunt_store,
-                          hunter_store=hunter_store):
+    try:
+        pending = run_work_remaining(project_id, hunt_store=hunt_store,
+                                     hunter_store=hunter_store)
+    except Exception as exc:  # noqa: BLE001 - a read failure is not a run failure
+        logger.warning(
+            "hunting run %s: the pending-work read degraded (%s); reporting the "
+            "dispatch gap (fail-open)", run_id, exc,
+        )
+        pending = False
+    if pending:
         return None
     reason = (
         f"{len(completed)} unit model(s) produced and NOTHING is dispatchable: "
@@ -482,77 +707,24 @@ def report_dispatch_gap(
     return reason
 
 
-async def _run_modeller_units(
-    project_id: str,
-    run_id: str,
-    *,
-    tools,
-    pass_fn,
-    pass_kwargs: dict,
-    candidates,
-    fault_entries=None,
-    read_fn=None,
-    match_fn=None,
-    unit_ids_fn=None,
-) -> list:
-    """Select the run's units, order them (the transitional order), and model
-    them ONE AT A TIME (S1 4.6: a pass mutates the shared tool seams, so two
-    concurrent passes would interleave unit identities and gate readings).
-
-    Returns the per-unit outcomes in order. A raising pass propagates: the run
-    terminal classifies it (the degradation breaker's typed abort, or fail-open
-    `failed`)."""
-    from polymerhus.attack.hunting.fault_source import (  # noqa: PLC0415
-        materialize_candidates,
-    )
-
-    selected, summary = await asyncio.to_thread(
-        materialize_candidates,
-        project_id, candidates,
-        fault_entries=fault_entries, read_fn=read_fn,
-        match_fn=match_fn, unit_ids_fn=unit_ids_fn,
-    )
-    order = transitional_unit_order(selected)
-    logger.info(
-        "hunting run %s: selected %d unit(s) (faults evaluated %d, minted %d, "
-        "pruned by predicate %d, pruned by tag %d, passed %d, caller supplied "
-        "%s); modelling order %s",
-        run_id, len(order), summary.faults_evaluated, summary.units_minted,
-        summary.pruned_by_predicate, summary.pruned_by_tag, summary.passed,
-        summary.caller_supplied, list(order),
-    )
-    outcomes = []
-    for unit_id in order:
-        outcome = await pass_fn(project_id, run_id, unit_id, tools, **pass_kwargs)
-        outcomes.append(outcome)
-        logger.info(
-            "hunting run %s: modelled unit %s (%s)",
-            run_id, unit_id, getattr(outcome, "status", outcome),
-        )
-    return outcomes
-
-
 async def launch_modeller(
     project_id: str,
     *,
     run_id: str,
-    candidates: list | tuple | None = None,
+    intake_units=None,
+    intake_read_fn=None,
     tools=None,
     threat_store=None,
     graph_read_fn=None,
     modeller_pass_fn=None,
     modeller_kwargs=None,
-    fault_entries=None,
-    read_fn=None,
-    match_fn=None,
-    unit_ids_fn=None,
 ) -> Any:
     """The modeller-ONLY launch coroutine (spec #169 "Singular component
-    launches"): ONE modelling pass over the run's selected units and NOTHING
-    else - no run-scoped surfer, no dispatch, no `hunting_runs` row. It is the
-    same pass body the whole-pipeline bootstrap schedules: the selection's
-    distinct units are modelled to COMPLETED and their produced loop files land
-    in the per-project threat model store. designed-not-built - T4 (#377): no
+    launches"): ONE modelling pass over the run's INTAKE and NOTHING else - no
+    run-scoped surfer, no dispatch, no `hunting_runs` row. It is the same pass
+    body the whole-pipeline bootstrap schedules: the frozen intake's units are
+    modelled in order to COMPLETED and their produced loop files land in the
+    per-project threat model store. designed-not-built - T4 (#377): no
     production path translates a loop file into a dispatchable item yet, so the
     launch (like the whole-pipeline run) produces models and dispatches nothing.
     The control plane schedules THIS coroutine under the ADR Q13 modeller
@@ -564,16 +736,16 @@ async def launch_modeller(
     it acks with) retires with the component-name hygiene sweep (T10). The
     runtime entry point itself is the modeller pass.
 
-    #200 selection wiring (shared with `start_hunting`): an EMPTY candidate
-    batch triggers the platform's OWN FaultSource selection over the live L1
-    (`materialize_candidates`, the deterministic stage + pass-through match);
-    a non-empty caller batch is the override. The selection summary is recorded
-    in the log line.
+    #376 intake wiring (shared with `start_hunting`): with no injected intake the
+    runtime reads the project's L1 inventory (`unit_intake.read_intake` over the
+    read-only graph view), freezes the unit set, orders it (live L1 edge count,
+    aggregated endpoints, unit id) and excludes the units whose models already
+    exist. The retired FaultSource selection path is gone: the intake order IS
+    the modelling order.
 
-    The produced/consumed topology carries the modeller's OUTPUT (loop files)
-    but never its INPUT (the candidate batch is in-memory at schedule), so the
-    minimal faithful reading of "enqueues into the component's handoff family"
-    is scheduling its pass; the component consumes its unit set asynchronously.
+    This launch has no run row, so it writes NO run record: the run record is the
+    `hunting_runs` row's `stats`, and a modeller-only launch has none.
+
     Fail-open: a modeller failure never raises through the control plane
     (logged). Injectable seams (s6): `modeller_pass_fn` and `modeller_kwargs`
     substitute the pass body / its kwargs for tests."""
@@ -588,13 +760,14 @@ async def launch_modeller(
                 project_id, run_id, threat_store=threat_store,
                 graph_read_fn=graph_read_fn)
         try:
-            return await _run_modeller_units(
+            outcomes, _run = await _run_intake(
                 project_id, run_id, tools=tools,
                 pass_fn=modeller_pass_fn or arun_modeller_pass,
                 pass_kwargs=dict(modeller_kwargs or {}),
-                candidates=candidates, fault_entries=fault_entries,
-                read_fn=read_fn, match_fn=match_fn, unit_ids_fn=unit_ids_fn,
+                intake_units=intake_units,
+                intake_read_fn=intake_read_fn,
             )
+            return outcomes
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001 - fail-open into the launch
@@ -783,7 +956,8 @@ async def start_hunting(
     project_id: str,
     *,
     run_id: str | None = None,
-    candidates: list | tuple | None = None,
+    intake_units=None,
+    intake_read_fn=None,
     tools=None,
     control=None,
     gate=None,
@@ -797,13 +971,10 @@ async def start_hunting(
     modeller_kwargs=None,
     threat_store=None,
     graph_read_fn=None,
-    fault_entries=None,
-    read_fn=None,
-    match_fn=None,
-    unit_ids_fn=None,
 ) -> str | None:
     """The hunting bootstrap entry point (seam 3.1) - rewired by T4 (#173),
-    then by T2b (#386): the run's pass is the MODELLER's.
+    then by T2b (#386), then by T3 (#376): the run's pass is the MODELLER's, over
+    the run's OWN intake.
 
     Schedules nothing itself - the control plane (or the marshalling harness)
     drives it onto the hunting loop. Sets the hunting module context for its
@@ -816,14 +987,25 @@ async def start_hunting(
     then waits for quiesce: the pass has settled, the surfer has proven the
     produced dirs drained and every dispatched session (hunter, pod) settled,
     the remaining idle hunters are settled, and ONLY then is `complete`
-    persisted. The pass models the selected units ONE AT A TIME (the
-    transitional distinct-unit order; T3 #376 replaces it with the intake
-    order), writing each unit's threat model through the store. `failed`
-    persists when a session was not admitted or a collaborator degrades. The
-    run-scoped surfer dispatches one hunter per ratified config and one pod per
-    specified spec through the mover, and the hunt sessions idle-loop over their
-    inboxes (verdict handling stubbed, ADR Q16) - the whole pipeline is
-    observable through this coroutine.
+    persisted. The pass models the intake's units ONE AT A TIME (S1 7.1-7.4:
+    the freeze, the order, the exclusions, the symbolic accumulator and the
+    progressive halt), writing each unit's threat model through the store and
+    the run record onto the run row. `failed` persists when a session was not
+    admitted or a collaborator degrades. The run-scoped surfer dispatches one
+    hunter per ratified config and one pod per specified spec through the mover,
+    and the hunt sessions idle-loop over their inboxes (verdict handling
+    stubbed, ADR Q16) - the whole pipeline is observable through this coroutine.
+
+    The INTERLEAVE (S1 7.3): the pass and the surfer are independent sessions,
+    so the surfer moves and dispatches produced loop files while the pass models
+    the next unit. The pass never waits for dispatch: `_run_intake` awaits only
+    the pass body, the model read and the run-record write.
+
+    RESUME (S1 7.5): when the run row already carries a run record with an
+    `intake_order`, the run RESUMES it - it re-enters at the recorded
+    `intake_position`, adopts the models already committed, recomputes
+    `risk_total`, and never re-sorts or re-freezes the intake. A halted record
+    resumes as halted, so a resumed halted run dispatches and models nothing.
 
     designed-not-built - T4 (#377): the modeller's produced LOOP FILES are not
     dispatchable yet (no path translates a loop into a hunt config), so a run
@@ -842,20 +1024,11 @@ async def start_hunting(
     `threat_store` / `graph_read_fn` the modeller's store and its grounding read
     seam, `tools` the whole modeller tool seam, `modeller_pass_fn` /
     `modeller_kwargs` the pass body and its turn seam, `hunter_builder` /
-    `pod_builder` the produce seams, `fault_entries` / `read_fn` / `match_fn` /
-    `unit_ids_fn` the #200 selection seams (injected by tests; the production
-    defaults load the real fault-KB and read the live L1), and `tick_interval`
-    the surfer's lap period - the contract-tier tests inject fakes for all of
-    them and never touch a live driver.
-
-    #200 selection wiring: an EMPTY `candidates` batch (the `POST /hunting`
-    default) triggers the platform's OWN FaultSource selection over the live
-    L1 - `materialize_candidates` enumerates the project's kind-qualified
-    units, loads the fault-KB matching facet, runs the deterministic stage
-    with the pass-through match, and translates the survivors into the pass's
-    intake. A non-empty caller batch is the override, never re-selected. The
-    selection summary is recorded in a log line, so an all-pruned empty launch
-    is a MEANINGFUL empty pass - never a vacuous one.
+    `pod_builder` the produce seams, `intake_units` the frozen unit snapshot
+    (tests; the production path reads the L1 inventory through `intake_read_fn`,
+    which defaults to the same read-only seam as the grounding read), and
+    `tick_interval` the surfer's lap period - the contract-tier tests inject
+    fakes for all of them and never touch a live driver.
 
     Returns the `hunting_run_id`, or `None` when the ONE-live-run-per-project
     guard refused the launch. The run id keys both the `hunting_runs` row and
@@ -956,6 +1129,11 @@ async def start_hunting(
             tools = _default_modeller_tools(
                 project_id, hunting_run_id, threat_store=threat_store,
                 graph_read_fn=graph_read_fn)
+        if intake_read_fn is None:
+            # the intake reads the SAME read-only L1 view as the grounding read
+            # unless a caller injects its own seam (never the write-capable
+            # client, and never a second live read of its own)
+            intake_read_fn = graph_read_fn or _read_only_l1_read(project_id)
 
         # The shared control plane + the hunting dispatch gate (Q12/Q15).
         control = control if control is not None else RuntimeControlPlane()
@@ -1009,16 +1187,51 @@ async def start_hunting(
 
         pass_outcomes: list = []
 
+        # RESUME (S1 7.5): the run row's stats ARE the run record. A row that
+        # already carries an intake order is a stopped run resuming: it re-enters
+        # at the recorded position, adopts the models already committed, and
+        # never re-freezes or re-sorts the intake. Fail-open: an unreadable row
+        # leaves the run fresh (its models are on disk, so nothing is lost).
+        try:
+            row = await asyncio.to_thread(pg.get_hunting_run, hunting_run_id)
+        except Exception as exc:  # noqa: BLE001 - fail-open: no resume state
+            logger.warning(
+                "start_hunting: run-record read for %s failed (%s); the run "
+                "starts fresh (fail-open)", hunting_run_id, exc,
+            )
+            row = None
+        resume_record = dict((row or {}).get("stats") or {})
+        if not resume_record.get("intake_order"):
+            resume_record = None
+
+        async def _write_run_record(record: dict) -> None:
+            """Persist the run record onto the run row (S1 9.4, S2 9.2).
+
+            Blocking pg write, offloaded like every other pg call here. Fail-open:
+            a failed record write warns and the run continues - the total stays
+            re-derivable from the models on disk, and the resume recomputes it."""
+            try:
+                await asyncio.to_thread(
+                    pg.set_hunting_run_stats, hunting_run_id, record)
+            except Exception as exc:  # noqa: BLE001 - fail-open
+                logger.warning(
+                    "start_hunting: run record write for %s failed (%s); "
+                    "continuing (fail-open)", hunting_run_id, exc,
+                )
+
         async def _modeller_units_pass():
-            """The run's ONE pass session: select, order, and model the units one
-            at a time (see `_run_modeller_units`). The outcomes are kept for the
-            run terminal's dispatch-gap report (T4 #377)."""
-            outcomes = await _run_modeller_units(
+            """The run's ONE pass session: freeze the intake (or resume the run
+            record), order it, and model the units one at a time (see
+            `_run_intake`). The outcomes are kept for the run terminal's
+            dispatch-gap report (T4 #377)."""
+            outcomes, _run = await _run_intake(
                 project_id, hunting_run_id, tools=tools,
                 pass_fn=modeller_pass_fn or arun_modeller_pass,
                 pass_kwargs=dict(modeller_kwargs or {}),
-                candidates=candidates, fault_entries=fault_entries,
-                read_fn=read_fn, match_fn=match_fn, unit_ids_fn=unit_ids_fn,
+                intake_units=intake_units,
+                intake_read_fn=intake_read_fn,
+                record=resume_record,
+                record_fn=_write_run_record,
             )
             pass_outcomes.append(outcomes)
             return outcomes
@@ -1259,19 +1472,32 @@ async def stop_hunting(hunting_run_id: str) -> None:
         )
 
         _cancel_run_sessions(hunting_run_id)
+        drain_timeout = 30.0
         try:
             await asyncio.wait_for(
                 _wait_no_run_sessions(
                     RuntimeControlPlane(), hunting_run_id, interval=0.5),
-                timeout=30.0,
+                timeout=drain_timeout,
             )
         except Exception:  # noqa: BLE001 - fail-open: the drain is best-effort
             logger.warning(
                 "stop_hunting: session-drain wait for %s did not settle within "
-                "30s (fail-open)", hunting_run_id,
+                "%ss (fail-open)", hunting_run_id, drain_timeout,
             )
+        # The reap is BOUNDED by the same drain timeout as the provider-failure
+        # path: the actor's task finishes only after its in-flight turn does, so
+        # an unbounded await would delay the `stopped` terminal behind a stalled
+        # probe/model turn. A timed-out reap cancels the actor's task
+        # (`_reap_modeller`'s finally), so no live turn outlives the stop.
         try:
-            await _reap_modeller(hunting_run_id)
+            await asyncio.wait_for(
+                _reap_modeller(hunting_run_id), timeout=drain_timeout)
+        except TimeoutError:
+            logger.warning(
+                "stop_hunting: actor reap for %s did not settle within %ss; the "
+                "actor task was cancelled (fail-open)", hunting_run_id,
+                drain_timeout,
+            )
         except Exception:  # noqa: BLE001 - fail-open
             logger.warning(
                 "stop_hunting: actor reap failed for %s (fail-open)", hunting_run_id

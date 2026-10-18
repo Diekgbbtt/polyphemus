@@ -1,0 +1,534 @@
+"""Contract tier: the T3 (#376) run lifecycle through the run bootstrap -
+the intake record, the symbolic accumulator, the progressive halt, the resume
+rules, the commit order, the interleave and the degraded units (S1 7.1-7.5, S2
+7.4 and 9.2-9.4).
+
+No live LLM, no live DB, no live Neo4j: the control plane, the pg accessors and
+the modeller turn seam are injected (the `test_hunting_modeller_wiring` fakes),
+and the real `ThreatModelStore` runs on a temp root - so the model the pass
+commits and the run record the driver writes are both observable.
+"""
+from __future__ import annotations
+
+import asyncio
+
+from polymerhus.attack.hunting import runtime as hunting_runtime
+from polymerhus.attack.hunting.hunt_store import HuntStore
+from polymerhus.attack.hunting.hunter_memory import HunterMemoryStore
+from polymerhus.attack.hunting.threat_model import ModelState
+from polymerhus.attack.hunting.threat_model_store import ThreatModelStore
+from polymerhus.attack.hunting.run_lifecycle import RUN_RECORD_KEYS
+from polymerhus.attack.hunting.threat_modeller import UnitOutcome
+
+from tests.attack.test_hunting_modeller_wiring import (
+    _FakeControl,
+    _FakePg,
+    _noop_pod_builder,
+    _patch_pg,
+)
+from tests.hunting_fixtures import ScriptedModellerTurns, intake_unit
+
+PROJECT = "lifecycle-proj"
+RUN = "lifecycle-run"
+UNIT_A = "Service:slug:a"
+UNIT_B = "GraphQLApi"
+UNIT_C = "RESTApi"
+
+
+def _stores(tmp_path):
+    return (HuntStore(tmp_path / "hunts"),
+            HunterMemoryStore(tmp_path / "hunter"),
+            ThreatModelStore(root_dir=tmp_path / "models"))
+
+
+def _unit(unit_id: str, edges: int) -> object:
+    return intake_unit(unit_id, live_edges=edges)
+
+
+def _units(*triples) -> list:
+    return [_unit(unit_id, edges) for unit_id, edges in triples]
+
+
+def _seed_record(**overrides) -> dict:
+    """A persisted run record (the run row's `stats`) for a resume."""
+    record = {
+        "intake_order": [],
+        "intake_position": 0,
+        "intake_excluded": [],
+        "risk_threshold": 12,
+        "threshold_basis": "default",
+        "risk_weights": {"none": 0, "low": 1, "medium": 2, "high": 3,
+                         "critical": 4},
+        "risk_total": 0,
+        "risk_breakdown": {"none": 0, "low": 0, "medium": 0, "high": 0,
+                           "critical": 0},
+        "model_sums": [],
+        "crossing_unit": None,
+        "blocked_unit": None,
+        "halt": False,
+        "degraded_units": [],
+        "trajectory": [],
+    }
+    record.update(overrides)
+    return record
+
+
+def _completed_sum(unit_id: str, total: int = 3) -> dict:
+    """The recorded sum of one completed model: one `high` loop (weight 3)."""
+    return {
+        "unit_id": unit_id,
+        "total": total,
+        "breakdown": {"none": 0, "low": 0, "medium": 0, "high": 1,
+                      "critical": 0},
+    }
+
+
+def _resume_fake(record: dict) -> _FakePg:
+    """A fake pg whose run row already carries `record` (the resume read)."""
+    fake = _FakePg()
+    fake.records[RUN] = dict(record)
+    return fake
+
+
+def _write_completed_model(models: ThreatModelStore, unit_id: str) -> None:
+    """Drive the REAL store to a COMPLETED, valid model for `unit_id` through
+    its five gates (the shared worked example: one `high` loop)."""
+    from polymerhus.attack.hunting.threat_model import ModelState
+
+    from tests.hunting_fixtures import modeller_gate_payloads
+
+    for state, sections in modeller_gate_payloads().items():
+        models.write_sections(PROJECT, unit_id, state, sections, run_id="earlier-run")
+    assert models.read_model(PROJECT, unit_id)["state"] == ModelState.COMPLETED.value
+
+
+async def _noop_hunter_builder(*, run_id, project_id, hunter_store, **kw):
+    async def dispatch(config):
+        return None
+    return dispatch, None
+
+
+async def _recording_pass(seen: list):
+    async def run(project_id, run_id, unit_id, tools, **kwargs):
+        seen.append(unit_id)
+        return UnitOutcome(unit_id=unit_id, status="degraded")
+    return run
+
+
+def test_the_run_record_carries_every_fixed_key_and_the_accumulated_sum(
+        tmp_path, monkeypatch):
+    """S1 7.4 / S2 9.2: the bootstrap freezes the intake, records it before the
+    first unit, updates the accumulator after every COMPLETED write, and the
+    run record carries every fixed key."""
+    fake = _FakePg()
+    _patch_pg(monkeypatch, fake)
+    hunt, hunter, models = _stores(tmp_path)
+
+    asyncio.run(hunting_runtime.start_hunting(
+        PROJECT, run_id=RUN,
+        intake_units=_units((UNIT_A, 3), (UNIT_B, 1)),
+        modeller_kwargs={"turn_fn": ScriptedModellerTurns()},
+        control=_FakeControl(),
+        hunt_store=hunt, hunter_store=hunter, threat_store=models,
+        hunter_builder=_noop_hunter_builder, pod_builder=_noop_pod_builder,
+        tick_interval=0.001,
+    ))
+
+    record = fake.run_record(RUN)
+    assert set(record) == set(RUN_RECORD_KEYS)
+    assert record["intake_order"] == [UNIT_A, UNIT_B]
+    assert record["intake_position"] == 2
+    assert record["intake_excluded"] == []
+    assert record["risk_threshold"] == 12
+    assert record["threshold_basis"] == "default"
+    assert record["risk_weights"] == {"none": 0, "low": 1, "medium": 2,
+                                      "high": 3, "critical": 4}
+    # one `high` loop per unit (the shared worked example): 3 + 3
+    assert record["risk_total"] == 6
+    assert record["risk_breakdown"] == {"none": 0, "low": 0, "medium": 0,
+                                        "high": 2, "critical": 0}
+    assert record["model_sums"] == [_completed_sum(UNIT_A), _completed_sum(UNIT_B)]
+    assert record["crossing_unit"] is None
+    assert record["blocked_unit"] is None
+    assert record["halt"] is False
+    assert record["degraded_units"] == []
+    assert [entry["unit_id"] for entry in record["trajectory"]] == [
+        UNIT_A] * 5 + [UNIT_B] * 5
+    assert {entry["to_state"] for entry in record["trajectory"]} == {
+        state.value for state in ModelState}
+    assert all(entry["outcome"] == "gate" for entry in record["trajectory"])
+    assert record["trajectory"][-1]["signal"] == ModelState.COMPLETED.value
+
+
+def test_the_halt_completes_the_crossing_unit_and_never_models_the_blocked_one(
+        tmp_path, monkeypatch):
+    """S1 7.4 / S2 7.4: the accumulator is checked after each COMPLETED write;
+    on an inclusive crossing the crossing unit is fully modelled and the NEXT
+    unit in the intake order is never modelled - it is recorded as the blocked
+    unit with `halt` set."""
+    monkeypatch.setenv("HUNT_RISK_THRESHOLD", "5")
+    fake = _FakePg()
+    _patch_pg(monkeypatch, fake)
+    hunt, hunter, models = _stores(tmp_path)
+    seen: list[str] = []
+
+    async def recording_pass(project_id, run_id, unit_id, tools, **kwargs):
+        seen.append(unit_id)
+        # one `high` loop's worth of budget (3), committed through the store
+        from tests.hunting_fixtures import modeller_gate_payloads
+        for state, sections in modeller_gate_payloads().items():
+            tools.threat_store.write_sections(
+                project_id, unit_id, state, sections, run_id=run_id)
+        return UnitOutcome(unit_id=unit_id, status="completed")
+
+    asyncio.run(hunting_runtime.start_hunting(
+        PROJECT, run_id=RUN,
+        intake_units=_units((UNIT_A, 3), (UNIT_B, 2), (UNIT_C, 1)),
+        modeller_pass_fn=recording_pass,
+        control=_FakeControl(),
+        hunt_store=hunt, hunter_store=hunter, threat_store=models,
+        hunter_builder=_noop_hunter_builder, pod_builder=_noop_pod_builder,
+        tick_interval=0.001,
+    ))
+
+    assert seen == [UNIT_A, UNIT_B]              # the blocked unit is never seen
+    record = fake.run_record(RUN)
+    assert record["threshold_basis"] == "override"
+    assert record["risk_threshold"] == 5
+    assert record["risk_total"] == 6             # 3 + 3, inclusive `>=`
+    assert record["crossing_unit"] == UNIT_B
+    assert record["blocked_unit"] == UNIT_C
+    assert record["halt"] is True
+    assert record["intake_position"] == 2
+    assert models.read_model(PROJECT, UNIT_C) is None
+
+
+def test_a_degraded_unit_is_recorded_and_the_run_continues(tmp_path, monkeypatch):
+    """S1 7.7: a degraded unit contributes no budget, is recorded with its
+    reason, and the run continues to the next unit."""
+    fake = _FakePg()
+    _patch_pg(monkeypatch, fake)
+    hunt, hunter, models = _stores(tmp_path)
+    seen: list[str] = []
+
+    async def mixed_pass(project_id, run_id, unit_id, tools, **kwargs):
+        seen.append(unit_id)
+        if unit_id == UNIT_B:
+            return UnitOutcome(unit_id=unit_id, status="degraded",
+                               reason="the target was unreachable")
+        from tests.hunting_fixtures import modeller_gate_payloads
+        for state, sections in modeller_gate_payloads().items():
+            tools.threat_store.write_sections(
+                project_id, unit_id, state, sections, run_id=run_id)
+        return UnitOutcome(unit_id=unit_id, status="completed")
+
+    asyncio.run(hunting_runtime.start_hunting(
+        PROJECT, run_id=RUN,
+        intake_units=_units((UNIT_A, 2), (UNIT_B, 1)),
+        modeller_pass_fn=mixed_pass,
+        control=_FakeControl(),
+        hunt_store=hunt, hunter_store=hunter, threat_store=models,
+        hunter_builder=_noop_hunter_builder, pod_builder=_noop_pod_builder,
+        tick_interval=0.001,
+    ))
+
+    assert seen == [UNIT_A, UNIT_B]
+    record = fake.run_record(RUN)
+    assert record["degraded_units"] == [
+        {"unit_id": UNIT_B, "reason": "the target was unreachable"}]
+    assert record["risk_total"] == 3             # the degraded unit is zero
+    assert [entry["unit_id"] for entry in record["model_sums"]] == [UNIT_A]
+    assert record["intake_position"] == 2
+    assert record["halt"] is False
+
+
+def test_a_resumed_run_re_enters_at_the_intake_position(tmp_path, monkeypatch):
+    """S1 7.5: a stopped run resumes from the persisted run record - it re-enters
+    at `intake_position`, keeps the recorded order and threshold, recomputes the
+    total from `model_sums`, and models only the units that remain."""
+    fake = _resume_fake(_seed_record(
+        intake_order=[UNIT_A, UNIT_B],
+        intake_position=1,
+        risk_total=3,
+        risk_breakdown={"none": 0, "low": 0, "medium": 0, "high": 1,
+                        "critical": 0},
+        model_sums=[_completed_sum(UNIT_A)],
+    ))
+    _patch_pg(monkeypatch, fake)
+    hunt, hunter, models = _stores(tmp_path)
+    _write_completed_model(models, UNIT_A)
+    seen: list[str] = []
+
+    async def recording_pass(project_id, run_id, unit_id, tools, **kwargs):
+        seen.append(unit_id)
+        from tests.hunting_fixtures import modeller_gate_payloads
+        for state, sections in modeller_gate_payloads().items():
+            tools.threat_store.write_sections(
+                project_id, unit_id, state, sections, run_id=run_id)
+        return UnitOutcome(unit_id=unit_id, status="completed")
+
+    asyncio.run(hunting_runtime.start_hunting(
+        PROJECT, run_id=RUN,
+        intake_units=_units((UNIT_A, 3), (UNIT_B, 1)),
+        modeller_pass_fn=recording_pass,
+        control=_FakeControl(),
+        hunt_store=hunt, hunter_store=hunter, threat_store=models,
+        hunter_builder=_noop_hunter_builder, pod_builder=_noop_pod_builder,
+        tick_interval=0.001,
+    ))
+
+    assert seen == [UNIT_B]                      # UNIT_A is never re-modelled
+    record = fake.run_record(RUN)
+    assert set(record) == set(RUN_RECORD_KEYS)
+    assert record["intake_order"] == [UNIT_A, UNIT_B]
+    assert record["intake_position"] == 2
+    assert record["risk_total"] == 6
+    assert [entry["unit_id"] for entry in record["model_sums"]] == [
+        UNIT_A, UNIT_B]
+
+
+def test_a_crash_between_the_model_and_the_run_record_leaves_no_stale_total(
+        tmp_path, monkeypatch):
+    """S1 7.5 commit order: the model document commits BEFORE the run-record
+    update. A crash between the two leaves a complete model the record does not
+    mention; the resume ADOPTS it, so the recorded total can never be stale."""
+    fake = _resume_fake(_seed_record(
+        intake_order=[UNIT_A, UNIT_B],
+        intake_position=0,
+        risk_total=0,                            # stale: the record never updated
+        model_sums=[],
+    ))
+    _patch_pg(monkeypatch, fake)
+    hunt, hunter, models = _stores(tmp_path)
+    _write_completed_model(models, UNIT_A)       # committed, unrecorded
+    seen: list[str] = []
+
+    async def recording_pass(project_id, run_id, unit_id, tools, **kwargs):
+        seen.append(unit_id)
+        return UnitOutcome(unit_id=unit_id, status="degraded")
+
+    asyncio.run(hunting_runtime.start_hunting(
+        PROJECT, run_id=RUN,
+        modeller_pass_fn=recording_pass,
+        control=_FakeControl(),
+        hunt_store=hunt, hunter_store=hunter, threat_store=models,
+        hunter_builder=_noop_hunter_builder, pod_builder=_noop_pod_builder,
+        tick_interval=0.001,
+    ))
+
+    assert seen == [UNIT_B]                      # the committed unit is adopted
+    record = fake.run_record(RUN)
+    assert record["intake_position"] == 2
+    assert record["risk_total"] == 3             # the adopted model's sum
+    assert [entry["unit_id"] for entry in record["model_sums"]] == [UNIT_A]
+
+
+def test_a_halted_run_resumes_dispatch_only(tmp_path, monkeypatch):
+    """S1 7.5: a halted run resumes with the dequeue closed - it models nothing
+    more and the halt's audit trail survives the restart."""
+    fake = _resume_fake(_seed_record(
+        intake_order=[UNIT_A, UNIT_B, UNIT_C],
+        intake_position=2,
+        risk_total=6,
+        model_sums=[_completed_sum(UNIT_A), _completed_sum(UNIT_B)],
+        crossing_unit=UNIT_B, blocked_unit=UNIT_C, halt=True,
+    ))
+    _patch_pg(monkeypatch, fake)
+    hunt, hunter, models = _stores(tmp_path)
+
+    async def exploding_pass(project_id, run_id, unit_id, tools, **kwargs):
+        raise AssertionError(f"a halted run must not model {unit_id}")
+
+    asyncio.run(hunting_runtime.start_hunting(
+        PROJECT, run_id=RUN,
+        modeller_pass_fn=exploding_pass,
+        control=_FakeControl(),
+        hunt_store=hunt, hunter_store=hunter, threat_store=models,
+        hunter_builder=_noop_hunter_builder, pod_builder=_noop_pod_builder,
+        tick_interval=0.001,
+    ))
+
+    assert fake.statuses[-1] == (RUN, "complete")
+    record = fake.run_record(RUN)
+    assert record["halt"] is True
+    assert record["crossing_unit"] == UNIT_B
+    assert record["blocked_unit"] == UNIT_C
+    assert record["intake_position"] == 2
+    assert record["risk_total"] == 6
+
+
+def test_the_freeze_excludes_the_completed_and_the_in_flight_units(
+        tmp_path, monkeypatch):
+    """S2 9.3: a unit whose COMPLETED model already lives in `consumed/` is
+    excluded (`completed`) and a unit whose model is in flight in `produced/`
+    under a RESUMABLE run is skipped (`in-flight`) - both recorded with their
+    reason and never modelled."""
+    fake = _FakePg()
+    # the producing run paused as `interrupted`: resumable, so its produced
+    # model is in flight (a second writer would break the sole-writer rule)
+    fake.statuses.append(("paused-run", "interrupted"))
+    _patch_pg(monkeypatch, fake)
+    hunt, hunter, models = _stores(tmp_path)
+    _write_completed_model(models, UNIT_A)
+    # the model moves with its last loop file: the unit is decided in consumed/
+    assert models.consume_loop(PROJECT, UNIT_A, "loop-1") is True
+    assert models.read_completed_units(PROJECT) == [UNIT_A]
+    models.write_sections(PROJECT, UNIT_B, ModelState.TRUST_MODELLED, {
+        "trust_model": {"trust_agreements": [{
+            "id": "ta-1", "boundary": "b", "statement": "s",
+            "confidence": "INFERRED", "evidences": []}]},
+    }, run_id="paused-run")
+    seen: list[str] = []
+
+    async def recording_pass(project_id, run_id, unit_id, tools, **kwargs):
+        seen.append(unit_id)
+        return UnitOutcome(unit_id=unit_id, status="degraded")
+
+    asyncio.run(hunting_runtime.start_hunting(
+        PROJECT, run_id=RUN,
+        intake_units=_units((UNIT_A, 3), (UNIT_B, 2), (UNIT_C, 1)),
+        modeller_pass_fn=recording_pass,
+        control=_FakeControl(),
+        hunt_store=hunt, hunter_store=hunter, threat_store=models,
+        hunter_builder=_noop_hunter_builder, pod_builder=_noop_pod_builder,
+        tick_interval=0.001,
+    ))
+
+    assert seen == [UNIT_C]
+    record = fake.run_record(RUN)
+    assert record["intake_order"] == [UNIT_C]
+    assert record["intake_excluded"] == [
+        {"unit_id": UNIT_A, "reason": "completed"},
+        {"unit_id": UNIT_B, "reason": "in-flight"},
+    ]
+
+
+def test_a_stale_produced_model_of_a_terminal_run_is_archived_and_retried(
+        tmp_path, monkeypatch):
+    """S2 9.3: a produced model whose producing run is terminal and not
+    resumable is stale - the freeze archives it to `abandoned/` and the unit is
+    retried in the same run."""
+    fake = _FakePg()
+    fake.statuses.append(("dead-run", "failed"))      # terminal, not resumable
+    _patch_pg(monkeypatch, fake)
+    hunt, hunter, models = _stores(tmp_path)
+    models.write_sections(PROJECT, UNIT_B, ModelState.TRUST_MODELLED, {
+        "trust_model": {"trust_agreements": [{
+            "id": "ta-1", "boundary": "b", "statement": "s",
+            "confidence": "INFERRED", "evidences": []}]},
+    }, run_id="dead-run")
+    seen: list[str] = []
+
+    async def recording_pass(project_id, run_id, unit_id, tools, **kwargs):
+        seen.append(unit_id)
+        return UnitOutcome(unit_id=unit_id, status="degraded")
+
+    asyncio.run(hunting_runtime.start_hunting(
+        PROJECT, run_id=RUN,
+        intake_units=_units((UNIT_B, 2)),
+        modeller_pass_fn=recording_pass,
+        control=_FakeControl(),
+        hunt_store=hunt, hunter_store=hunter, threat_store=models,
+        hunter_builder=_noop_hunter_builder, pod_builder=_noop_pod_builder,
+        tick_interval=0.001,
+    ))
+
+    assert seen == [UNIT_B]
+    record = fake.run_record(RUN)
+    assert record["intake_order"] == [UNIT_B]
+    assert record["intake_excluded"] == []
+    assert models.read_abandoned_units(PROJECT) == [UNIT_B]
+
+
+def test_an_abandoned_model_is_ignored_and_the_unit_is_retried(
+        tmp_path, monkeypatch):
+    """S2 9.3: `abandoned/` is a graveyard, never an exclusion - a unit with an
+    abandoned model is retried and modelled again."""
+    fake = _FakePg()
+    _patch_pg(monkeypatch, fake)
+    hunt, hunter, models = _stores(tmp_path)
+    models.write_sections(PROJECT, UNIT_A, ModelState.UNIT_TECHNICAL_SHARP, {
+        "technical_sharpening": {"interface_agreements": [{
+            "id": "ia-1", "statement": "s", "confidence": "OBSERVED",
+            "evidences": []}]},
+    }, run_id="dead-run")
+    assert models.archive_unit(PROJECT, UNIT_A, "degraded (fixture)") is not None
+    seen: list[str] = []
+
+    async def recording_pass(project_id, run_id, unit_id, tools, **kwargs):
+        seen.append(unit_id)
+        return UnitOutcome(unit_id=unit_id, status="degraded")
+
+    asyncio.run(hunting_runtime.start_hunting(
+        PROJECT, run_id=RUN,
+        intake_units=_units((UNIT_A, 1)),
+        modeller_pass_fn=recording_pass,
+        control=_FakeControl(),
+        hunt_store=hunt, hunter_store=hunter, threat_store=models,
+        hunter_builder=_noop_hunter_builder, pod_builder=_noop_pod_builder,
+        tick_interval=0.001,
+    ))
+
+    assert seen == [UNIT_A]
+    assert fake.run_record(RUN)["intake_excluded"] == []
+
+
+def test_the_modeller_does_not_wait_for_dispatch(tmp_path, monkeypatch):
+    """S1 7.3: the pass and the surfer are independent sessions - the surfer
+    dispatches produced work while the pass is still modelling, so the pass
+    never waits for a dispatch."""
+    fake = _FakePg()
+    _patch_pg(monkeypatch, fake)
+    hunt, hunter, models = _stores(tmp_path)
+    hunt.write_config(PROJECT, {
+        "hunt_id": f"{UNIT_C}::fault-x::CSRF", "unit_id": UNIT_C,
+        "fault_class": "fault-x", "vulnerability_class": "CSRF",
+        "status": "ratified", "rationale": "r", "research_direction": "rd",
+    })
+    events: list[str] = []
+
+    async def slow_pass(project_id, run_id, unit_id, tools, **kwargs):
+        events.append(f"model:{unit_id}")
+        await asyncio.sleep(0.05)
+        events.append(f"modelled:{unit_id}")
+        return UnitOutcome(unit_id=unit_id, status="degraded")
+
+    def hunter_builder(*, run_id, project_id, hunter_store, **kw):
+        async def dispatch(config):
+            events.append("dispatch")
+            return None
+        return dispatch, None
+
+    asyncio.run(hunting_runtime.start_hunting(
+        PROJECT, run_id=RUN,
+        intake_units=_units((UNIT_A, 1)),
+        modeller_pass_fn=slow_pass,
+        control=_FakeControl(),
+        hunt_store=hunt, hunter_store=hunter, threat_store=models,
+        hunter_builder=hunter_builder, pod_builder=_noop_pod_builder,
+        tick_interval=0.001,
+    ))
+
+    assert "dispatch" in events, "the surfer must dispatch the produced config"
+    assert events.index("dispatch") < events.index(f"modelled:{UNIT_A}"), (
+        "the hunt dispatched while the pass was still modelling the unit"
+    )
+
+
+def test_the_runtime_no_longer_selects_units_through_the_fault_source_path():
+    """S1 7.1/9.1: the intake order REPLACES the selection path. The runtime
+    carries no fault-source/KB selection seam, no candidate intake, and no
+    transitional order: a run's unit set is read from the L1 inventory (or an
+    injected snapshot) and frozen."""
+    import inspect
+
+    source = inspect.getsource(hunting_runtime)
+    for retired in ("fault_source", "fault_kb", "symptom_kb", "fault_risk",
+                    "materialize_candidates", "select(", "DeliveredCandidate",
+                    "Witness", "transitional_unit_order"):
+        assert retired not in source, f"the runtime must not carry {retired!r}"
+
+    parameters = inspect.signature(hunting_runtime.start_hunting).parameters
+    for retired in ("candidates", "fault_entries", "match_fn", "unit_ids_fn"):
+        assert retired not in parameters, f"{retired!r} is a retired seam"
+    assert not hasattr(hunting_runtime, "transitional_unit_order")

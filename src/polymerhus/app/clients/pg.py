@@ -252,6 +252,24 @@ def set_hunting_run_status(
         )
 
 
+def set_hunting_run_stats(hunting_run_id: str, stats: dict) -> None:
+    """Merge a run record onto a hunting run's row (T3 #376; the `set_run_stats`
+    discipline of #34).
+
+    Additive JSONB: a top-level key REPLACES its previous value, so the driver
+    writes the whole accumulator state (`intake_position`, `risk_total`,
+    `model_sums`, ...) on every update and the row always carries a complete run
+    record. The run's STATUS is deliberately untouched - an operator stop that
+    landed between two record writes must never be resurrected by a stats write.
+    """
+    with psycopg.connect(config.POSTGRES_DSN) as conn, conn.cursor() as cur:
+        cur.execute(
+            "UPDATE hunting_runs SET stats = COALESCE(stats, '{}'::jsonb) || %s::jsonb "
+            "WHERE hunting_run_id = %s",
+            (json.dumps(stats or {}), hunting_run_id),
+        )
+
+
 def get_hunting_run(hunting_run_id: str) -> dict | None:
     """The 1:1 read path for a hunting run's lifecycle row."""
     with psycopg.connect(config.POSTGRES_DSN) as conn, conn.cursor() as cur:

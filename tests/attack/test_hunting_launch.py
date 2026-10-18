@@ -24,22 +24,13 @@ from polymerhus.attack.hunting.hunt_store import (
     HuntStore,
 )
 
+from tests.hunting_fixtures import intake_unit
+
 UNIT = "Service:slug:a"
 FAULT = "fault-x"
 CLASS = "CSRF"
 FAULT_KEY = f"{UNIT}_{FAULT}_{CLASS}"
 RUN = "modeller-only-run"
-
-
-def _candidate():
-    from polymerhus.attack.hunting.hunt_orchestrator import (
-        DeliveredCandidate,
-        Witness,
-    )
-
-    return DeliveredCandidate(
-        unit_id=UNIT, fault_class=FAULT,
-        applies_witnesses=Witness(deterministic="w"), match_verdict="applies")
 
 
 def _config() -> HuntConfig:
@@ -146,26 +137,14 @@ def test_launch_modeller_drives_the_pass_under_the_module_context(tmp_path):
         reports.append((project_id, run_id, unit_id))
         return _unit_outcome(unit_id)
 
-    from polymerhus.attack.hunting.hunt_orchestrator import (
-        DeliveredCandidate,
-        Witness,
-    )
-
-    candidates = [
-        DeliveredCandidate(
-            unit_id="Service:b", fault_class=FAULT,
-            applies_witnesses=Witness(deterministic="w"), match_verdict="applies"),
-        DeliveredCandidate(
-            unit_id="Service:a", fault_class=FAULT,
-            applies_witnesses=Witness(deterministic="w"), match_verdict="applies"),
-    ]
-
     outcomes = asyncio.run(hunting_runtime.launch_modeller(
-        "p1", run_id=RUN, candidates=candidates,
+        "p1", run_id=RUN,
+        intake_units=[intake_unit("Service:b", live_edges=1),
+                      intake_unit("Service:a", live_edges=3)],
         modeller_pass_fn=_pass,
     ))
 
-    # the transitional order: the selection's distinct unit ids, sorted
+    # the intake order: live L1 edge count descending, then unit id
     assert reports == [("p1", RUN, "Service:a"), ("p1", RUN, "Service:b")]
     assert [outcome.unit_id for outcome in outcomes] == ["Service:a", "Service:b"]
     # no run row was opened or written by the pass (no pg accessors touched)
@@ -181,6 +160,6 @@ def test_launch_modeller_never_raises_through_the_control_plane(tmp_path):
 
     asyncio.run(hunting_runtime.launch_modeller(
         "p1", run_id=RUN,
-        candidates=[_candidate()],
+        intake_units=[intake_unit(UNIT)],
         modeller_pass_fn=_exploding_pass,
     ))

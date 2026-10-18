@@ -118,8 +118,42 @@ def test_launch_returns_the_surrogate_id_and_schedules(monkeypatch):
 
     recorded: list[tuple] = []
 
-    def fake_start(project_id, *, run_id=None, candidates=None, **kw):
-        recorded.append((project_id, run_id, candidates))
+    def fake_start(project_id, *, run_id=None, **kw):
+        recorded.append((project_id, run_id, dict(kw)))
+
+        async def _finish():
+            return run_id
+
+        return _finish()
+
+    monkeypatch.setattr(hunting_runtime, "start_hunting", fake_start)
+
+    resp = client.post("/projects/p1/hunting", json={})
+
+    assert resp.status_code == 201
+    assert resp.json() == {"hunting_run_id": RUN_ID}
+    assert fake_runtime.scheduled == [f"hunting:{RUN_ID}"]
+    # the row opens SYNCHRONOUSLY before scheduling; the launch carries NO
+    # candidate batch any more (T3 #376: the run's intake is the L1 inventory)
+    (pid, rid, kwargs) = recorded[0]
+    assert pid == "p1" and rid == RUN_ID
+    assert "candidates" not in kwargs
+    assert "intake_units" not in kwargs
+
+
+def test_a_caller_supplied_candidate_body_is_ignored_not_a_launch_input(
+        monkeypatch):
+    """T3 #376: the candidate wire batch is retired - a client that still sends
+    one gets a normal launch (the pass reads the L1 inventory itself), never a
+    caller-controlled unit set."""
+    monkeypatch.setattr(pg, "project_exists", lambda pid: True)
+    monkeypatch.setattr(pg, "create_hunting_run", lambda pid: RUN_ID)
+    fake_runtime = _FakeRuntime()
+    hunting_runtime = _patch_control_plane(monkeypatch, fake_runtime)
+    scheduled: list[tuple] = []
+
+    def fake_start(project_id, *, run_id=None, **kw):
+        scheduled.append((run_id, dict(kw)))
 
         async def _finish():
             return run_id
@@ -133,37 +167,7 @@ def test_launch_returns_the_surrogate_id_and_schedules(monkeypatch):
     ]})
 
     assert resp.status_code == 201
-    assert resp.json() == {"hunting_run_id": RUN_ID}
-    assert fake_runtime.scheduled == [f"hunting:{RUN_ID}"]
-    # the row opens SYNCHRONOUSLY before scheduling, and the launch carries the
-    # candidate batch into the scheduled entry point
-    (pid, rid, candidates) = recorded[0]
-    assert pid == "p1" and rid == RUN_ID
-    assert [c.unit_id for c in candidates] == ["Service:slug:a"]
-    assert [c.fault_class for c in candidates] == ["fault-x"]
-
-
-def test_launch_empty_batch_is_an_empty_pass_scheduled(monkeypatch):
-    monkeypatch.setattr(pg, "project_exists", lambda pid: True)
-    monkeypatch.setattr(pg, "create_hunting_run", lambda pid: RUN_ID)
-    fake_runtime = _FakeRuntime()
-    hunting_runtime = _patch_control_plane(monkeypatch, fake_runtime)
-    recorded: list[tuple] = []
-
-    def fake_start(project_id, *, run_id=None, candidates=None, **kw):
-        recorded.append((candidates,))
-
-        async def _finish():
-            return run_id
-
-        return _finish()
-
-    monkeypatch.setattr(hunting_runtime, "start_hunting", fake_start)
-
-    resp = client.post("/projects/p1/hunting", json={})
-
-    assert resp.status_code == 201
-    assert recorded[0] == ([],)  # an empty batch launches an O1 empty pass
+    assert scheduled == [(RUN_ID, {})]
 
 
 def test_launch_unknown_project_404(monkeypatch):
@@ -510,9 +514,7 @@ def test_orchestrator_launch_schedules_the_pass_via_the_launcher_seam(monkeypatc
 
     monkeypatch.setattr(hunting_runtime, "launch_modeller", record_pass)
 
-    resp = client.post("/projects/p1/hunting/orchestrator", json={
-        "candidates": [{"unit_id": "Service:slug:a", "fault_class": "fault-x"}],
-    })
+    resp = client.post("/projects/p1/hunting/orchestrator", json={})
 
     assert resp.status_code == 202
     body = resp.json()

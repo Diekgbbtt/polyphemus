@@ -19,11 +19,7 @@ import inspect
 import pytest
 
 from polymerhus.attack.hunting import runtime as hunting_runtime
-from polymerhus.attack.hunting.hunt_orchestrator import (
-    DeliveredCandidate,
-    ReadOnlyGraphView,
-    Witness,
-)
+from polymerhus.attack.hunting.hunt_orchestrator import ReadOnlyGraphView
 from polymerhus.attack.hunting.hunt_store import HuntStore
 from polymerhus.attack.hunting.hunter_memory import HunterMemoryStore
 from polymerhus.attack.hunting.mover import (
@@ -46,8 +42,9 @@ from polymerhus.attack.hunting.threat_modeller_tools import ModellerTools
 
 from tests.hunting_fixtures import (
     ScriptedModellerTurns,
-    build_graphql_fault,
     build_hunting_l1,
+    build_intake_l1,
+    intake_unit,
 )
 
 PROJECT = "wiring-proj-1"
@@ -57,23 +54,18 @@ UNIT_B = "GraphQLApi"
 UNIT_C = "RESTApi"
 
 
-def _candidate(unit_id: str) -> DeliveredCandidate:
-    return DeliveredCandidate(
-        unit_id=unit_id,
-        fault_class="fault-x",
-        applies_witnesses=Witness(deterministic="witness", llm="witness"),
-        match_verdict="applies",
-    )
-
-
 class _FakePg:
     """The fake pg accessors (the `test_hunting_runtime` seam contract): mint a
-    deterministic run id, record every status write in order, fail on demand."""
+    deterministic run id, record every status write in order, carry the merged
+    run record (the `stats` JSONB the driver updates), fail on demand."""
 
-    def __init__(self, *, fail_create: bool = False):
+    def __init__(self, *, fail_create: bool = False, resume_record: dict | None = None):
         self.fail_create = fail_create
         self.statuses: list[tuple[str, str]] = []
         self.stats_writes: list[tuple[str, str, dict | None]] = []
+        self.records: dict[str, dict] = {}
+        if resume_record is not None:
+            self.records[RUN] = dict(resume_record)
 
     def create_hunting_run(self, project_id: str) -> str:
         if self.fail_create:
@@ -85,6 +77,18 @@ class _FakePg:
                                stats: dict | None = None) -> None:
         self.statuses.append((hunting_run_id, status))
         self.stats_writes.append((hunting_run_id, status, stats))
+
+    def set_hunting_run_stats(self, hunting_run_id: str, stats: dict) -> None:
+        self.records.setdefault(hunting_run_id, {}).update(stats or {})
+
+    def get_hunting_run(self, hunting_run_id: str) -> dict | None:
+        if hunting_run_id not in self.records:
+            return None
+        return {"hunting_run_id": hunting_run_id,
+                "stats": dict(self.records[hunting_run_id])}
+
+    def run_record(self, hunting_run_id: str) -> dict:
+        return dict(self.records[hunting_run_id])
 
     def list_hunting_runs(self, project_id: str) -> list[dict]:
         state: dict[str, dict] = {}
@@ -136,6 +140,8 @@ class _FakeControl:
 def _patch_pg(monkeypatch, fake):
     monkeypatch.setattr("polymerhus.app.clients.pg.create_hunting_run", fake.create_hunting_run)
     monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_status", fake.set_hunting_run_status)
+    monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_stats", fake.set_hunting_run_stats)
+    monkeypatch.setattr("polymerhus.app.clients.pg.get_hunting_run", fake.get_hunting_run)
     monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
 
 
@@ -181,7 +187,7 @@ def test_start_hunting_models_each_distinct_unit_in_a_deterministic_order(
         PROJECT,
         # the caller batch keeps a duplicate and an unsorted order: the
         # transitional order is the DISTINCT set, sorted by unit id
-        candidates=[_candidate(UNIT_B), _candidate(UNIT_A), _candidate(UNIT_B)],
+        intake_units=[intake_unit(UNIT_B), intake_unit(UNIT_A), intake_unit(UNIT_B)],
         modeller_pass_fn=recording_pass,
         control=control,
         hunt_store=hunt, hunter_store=hunter, threat_store=models,
@@ -197,10 +203,59 @@ def test_start_hunting_models_each_distinct_unit_in_a_deterministic_order(
     assert fake.statuses == [("running", RUN), (RUN, "complete")]
 
 
-def test_the_selection_supplies_the_transitional_unit_order(monkeypatch):
-    """S1 7.1: an empty launch selects through the platform's own FaultSource
-    over the live L1 and the modeller pass runs over exactly the selected
-    distinct units - never a vacuous empty pass."""
+def test_the_l1_inventory_supplies_the_intake_order(tmp_path, monkeypatch):
+    """S1 7.1-7.2: with no injected snapshot the run reads the L1 inventory and
+    freezes it - ordered by live L1 edge count descending, aggregated endpoints
+    descending, unit id ascending - and models exactly those units. A retired
+    edge family never counts; a System's endpoints sum its connected Services.
+    The retired FaultSource selection has no call site."""
+    fake = _FakePg()
+    _patch_pg(monkeypatch, fake)
+    hunt, hunter, models = _stores(tmp_path)
+    seen: list[str] = []
+
+    async def recording_pass(project_id, run_id, unit_id, tools, **kwargs):
+        seen.append(unit_id)
+        return UnitOutcome(unit_id=unit_id, status="completed")
+
+    read = build_intake_l1(
+        units=[
+            {"labels": ["L1Service"],
+             "props": {"business_function_slug": "s1"},
+             "edge_families": ["EXPOSED_VIA"], "endpoints": 2},
+            {"labels": ["L1Service"],
+             "props": {"business_function_slug": "s3"},
+             "edge_families": ["EXPOSED_VIA", "AUTHENTICATED_BY"],
+             "endpoints": 1},
+            {"labels": ["L1System"],
+             "props": {"kind": "GraphQLApi", "discriminator": "__singleton__"},
+             "edge_families": ["EXPOSED_VIA", "EXPOSED_VIA", "ROUTED_BY",
+                               "RENDERED_BY"],
+             "endpoints": 0},
+        ],
+        systems=[{"kind": "GraphQLApi", "disc": "__singleton__", "services": [
+            {"slug": "s1", "endpoints": 2},
+            {"slug": "s3", "endpoints": 1},
+        ]}],
+    )
+
+    hid = asyncio.run(hunting_runtime.start_hunting(
+        PROJECT, intake_read_fn=read,
+        modeller_pass_fn=recording_pass,
+        control=_FakeControl(),
+        hunt_store=hunt, hunter_store=hunter, threat_store=models,
+        hunter_builder=_noop_hunter_builder, pod_builder=_noop_pod_builder,
+        tick_interval=0.001,
+    ))
+
+    assert hid == RUN
+    assert seen == ["GraphQLApi", "Service:s3", "Service:s1"]
+    assert fake.statuses == [("running", RUN), (RUN, "complete")]
+
+
+def test_an_empty_intake_is_a_recorded_empty_pass(monkeypatch):
+    """S1 7.1: an L1 with no unit is an EMPTY intake - the freeze is recorded in
+    the run record, and no modeller pass is launched for nothing."""
     fake = _FakePg()
     _patch_pg(monkeypatch, fake)
     seen: list[str] = []
@@ -210,48 +265,17 @@ def test_the_selection_supplies_the_transitional_unit_order(monkeypatch):
         return UnitOutcome(unit_id=unit_id, status="degraded")
 
     asyncio.run(hunting_runtime.start_hunting(
-        PROJECT, candidates=(),
-        fault_entries=(build_graphql_fault(),), read_fn=build_hunting_l1(),
+        PROJECT, intake_read_fn=build_intake_l1(),
         modeller_pass_fn=recording_pass,
         control=_FakeControl(),
         hunter_builder=_noop_hunter_builder, pod_builder=_noop_pod_builder,
         tick_interval=0.001,
     ))
 
-    assert seen == ["GraphQLApi", "RESTApi", "Service:s1"]   # sorted by unit id
-    assert fake.statuses == [("running", RUN), (RUN, "complete")]
-
-
-def test_an_all_pruned_selection_is_a_meaningful_empty_modelling_pass(
-        monkeypatch, caplog):
-    """S1 7.1: an L1 whose units are ALL pruned is a MEANINGFUL empty pass - the
-    selection ran and reported, and no modeller pass is launched for nothing."""
-    from polymerhus.attack.hunting.fault_source import FaultEntry
-
-    fake = _FakePg()
-    _patch_pg(monkeypatch, fake)
-    seen: list[str] = []
-
-    async def recording_pass(project_id, run_id, unit_id, tools, **kwargs):
-        seen.append(unit_id)
-        return UnitOutcome(unit_id=unit_id, status="degraded")
-
-    with caplog.at_level("INFO", logger="polymerhus.attack.hunting.fault_source"):
-        asyncio.run(hunting_runtime.start_hunting(
-            PROJECT, candidates=(),
-            fault_entries=(FaultEntry(fault_id="waf-bypass",
-                                      enum_kinds=frozenset({"WAF"})),),
-            read_fn=build_hunting_l1(),
-            modeller_pass_fn=recording_pass,
-            control=_FakeControl(),
-            hunter_builder=_noop_hunter_builder, pod_builder=_noop_pod_builder,
-            tick_interval=0.001,
-        ))
-
     assert seen == []
-    assert any("selection" in record.message and "pruned_by_tag" in record.message
-               for record in caplog.records), \
-        "the all-pruned empty pass must surface the selection summary"
+    record = fake.run_record(RUN)
+    assert record["intake_order"] == []
+    assert record["intake_position"] == 0
     assert fake.statuses == [("running", RUN), (RUN, "complete")]
 
 
@@ -265,7 +289,7 @@ def test_a_launched_unit_writes_its_model_through_the_real_store(
     hunt, hunter, models = _stores(tmp_path)
 
     hid = asyncio.run(hunting_runtime.start_hunting(
-        PROJECT, candidates=[_candidate(UNIT_A)],
+        PROJECT, intake_units=[intake_unit(UNIT_A)],
         modeller_kwargs={"turn_fn": ScriptedModellerTurns()},
         control=_FakeControl(),
         hunt_store=hunt, hunter_store=hunter, threat_store=models,
@@ -294,7 +318,7 @@ def test_the_launched_pass_grounds_on_the_live_unit_projection(
     turns = ScriptedModellerTurns()
 
     asyncio.run(hunting_runtime.start_hunting(
-        PROJECT, candidates=[_candidate("Service:s1")],
+        PROJECT, intake_units=[intake_unit("Service:s1")],
         modeller_kwargs={"turn_fn": turns},
         graph_read_fn=build_hunting_l1(),
         control=_FakeControl(),
@@ -330,7 +354,7 @@ def test_the_run_completes_with_one_model_and_no_planner_artifacts(
     from pathlib import Path
 
     asyncio.run(hunting_runtime.start_hunting(
-        PROJECT, candidates=[_candidate(UNIT_A)],
+        PROJECT, intake_units=[intake_unit(UNIT_A)],
         modeller_pass_fn=recording_pass,
         control=_FakeControl(),
         hunt_store=hunt, hunter_store=hunter, threat_store=models,
@@ -425,7 +449,7 @@ def test_a_provider_caused_pass_abort_persists_interrupted(tmp_path, monkeypatch
                 quota_exhausted=True))
 
     asyncio.run(hunting_runtime.start_hunting(
-        PROJECT, candidates=[_candidate(UNIT_A)],
+        PROJECT, intake_units=[intake_unit(UNIT_A)],
         modeller_pass_fn=provider_abort,
         control=_FakeControl(),
         hunt_store=hunt, hunter_store=hunter, threat_store=models,
@@ -457,7 +481,7 @@ def test_a_non_provider_pass_abort_fails_the_run(tmp_path, monkeypatch):
             provider_cause=False)
 
     asyncio.run(hunting_runtime.start_hunting(
-        PROJECT, candidates=[_candidate(UNIT_A)],
+        PROJECT, intake_units=[intake_unit(UNIT_A)],
         modeller_pass_fn=poisoned_abort,
         control=_FakeControl(),
         hunt_store=hunt, hunter_store=hunter, threat_store=models,
@@ -487,7 +511,7 @@ def test_the_run_terminal_reaps_the_modeller_actor(tmp_path, monkeypatch):
     monkeypatch.setattr(tm, "_reap_modeller", recording_reap)
 
     asyncio.run(hunting_runtime.start_hunting(
-        PROJECT, candidates=[_candidate(UNIT_A)],
+        PROJECT, intake_units=[intake_unit(UNIT_A)],
         modeller_kwargs={"turn_fn": ScriptedModellerTurns()},
         control=_FakeControl(),
         hunt_store=hunt, hunter_store=hunter, threat_store=models,
@@ -565,7 +589,7 @@ def test_the_modeller_pass_is_serial_per_run(tmp_path, monkeypatch):
         return UnitOutcome(unit_id=unit_id, status="completed")
 
     asyncio.run(hunting_runtime.start_hunting(
-        PROJECT, candidates=[_candidate(UNIT_A), _candidate(UNIT_B)],
+        PROJECT, intake_units=[intake_unit(UNIT_A), intake_unit(UNIT_B)],
         modeller_pass_fn=slow_pass,
         control=control,
         hunt_store=hunt, hunter_store=hunter, threat_store=models,
@@ -618,7 +642,7 @@ def test_the_run_scoped_actor_completes_every_unit_of_the_run(tmp_path, monkeypa
             pass
 
     asyncio.run(hunting_runtime.start_hunting(
-        PROJECT, candidates=[_candidate(UNIT_A), _candidate(UNIT_B)],
+        PROJECT, intake_units=[intake_unit(UNIT_A), intake_unit(UNIT_B)],
         modeller_kwargs={"actor_factory": _FakeActor},
         control=_FakeControl(),
         hunt_store=hunt, hunter_store=hunter, threat_store=models,

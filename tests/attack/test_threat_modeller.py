@@ -157,8 +157,10 @@ def test_each_gate_write_response_carries_the_next_state_hint(tmp_path):
 
 def test_a_pass_that_never_completes_reports_a_degraded_unit(tmp_path):
     """No fabricated result: a scripted run that stops after the sharpening
-    gate yields a degraded outcome carrying the persisted state, and the
-    partial model stays for the run driver to decide."""
+    gate yields a degraded outcome carrying the persisted state, and its PARTIAL
+    model is archived to `abandoned/` (S1 7.7) - never left in `produced/`,
+    where the in-flight exclusion would skip the unit for the rest of the
+    producing run's life."""
     store = ThreatModelStore(root_dir=tmp_path)
     turns = _ScriptedTurns(states=[ModelState.UNIT_TECHNICAL_SHARP])
 
@@ -168,7 +170,28 @@ def test_a_pass_that_never_completes_reports_a_degraded_unit(tmp_path):
     assert outcome.status == "degraded"
     assert outcome.state == ModelState.UNIT_TECHNICAL_SHARP.value
     assert "did not reach COMPLETED" in outcome.reason
-    assert store.read_model(PROJECT, UNIT) is not None
+    assert outcome.archived is True
+    assert store.read_model(PROJECT, UNIT) is None
+    assert store.read_abandoned_units(PROJECT) == [UNIT]
+
+
+def test_a_degraded_units_retry_re_authors_every_gate_from_scratch(tmp_path):
+    """S1 7.7 retry policy: the archived partial leaves no persisted state, so a
+    retry asks for the first gate again and models the unit to COMPLETED."""
+    store = ThreatModelStore(root_dir=tmp_path)
+    first = _ScriptedTurns(states=[ModelState.UNIT_TECHNICAL_SHARP])
+    asyncio.run(arun_modeller_pass(
+        PROJECT, RUN, UNIT, _tools(store), turn_fn=first))
+
+    retry = _ScriptedTurns()
+    outcome = asyncio.run(arun_modeller_pass(
+        PROJECT, RUN, UNIT, _tools(store), turn_fn=retry))
+
+    assert outcome.status == "completed"
+    assert [turn.state for turn in retry.turn_inputs] == list(ModelState)
+    assert store.read_model(PROJECT, UNIT)["state"] == ModelState.COMPLETED.value
+    assert store.read_abandoned_units(PROJECT) == [UNIT]
+
 
 
 def test_a_crossing_gate_write_hints_and_the_state_jumps_forward(tmp_path):

@@ -8,16 +8,18 @@ only the config and dispatch vocabulary with live consumers:
 - `HuntConfig` / `ConfigStatus` - the config the surfer, the mover, the hunter
   harness and the API hand-off still carry (one config per dispatched hunter);
 - `DispatchResult` - one hunt session's dispatch outcome;
-- `DeliveredCandidate` / `Witness` - the FaultSource selection output the
-  runtime's transitional unit order, the pod config and the API's wire shape
-  read;
 - `ReadOnlyGraphView` / `ReadOnlyGraphViewError` - the read-only L0/L1 graph
   seam the hunter, the pod and the modeller's grounding provider share;
 - `hunt_id_for` - the derived config identity the hunting API uses.
 
 designed-for-removal: the module name and every type above retire with the
-consumer tickets - the config family with T3 (#376), T4 (#377) and T6 (#379),
-the selection with T3. Nothing here may grow a new consumer.
+consumer tickets - the config family with T4 (#377) and T6 (#379), the module
+name with the component-name hygiene sweep (T10, #379). Nothing here may grow a
+new consumer.
+
+Retired in T3 (#376): the FaultSource selection output (`DeliveredCandidate` /
+`Witness`) - the run's unit set is its INTAKE now (`unit_intake`), so nothing
+consumes a delivered candidate any more.
 
 This module imports no driver and performs no I/O at import (CODING_STANDARD 6).
 """
@@ -34,24 +36,6 @@ from polymerhus.attack.hunting.hunt_store import semantic_key
 # `noted` is a LOOP state, never a config status; `consumed` is tautological in
 # the produced/consumed topology, never a status enum member.
 ConfigStatus = Literal["hypothesised", "ratified", "dropped"]
-
-
-class Witness(BaseModel):
-    """The applies-witness pair of a delivered candidate: a deterministic
-    half (the violated predicate clause) and an LLM half (the match rationale)."""
-
-    deterministic: str | None = None
-    llm: str | None = None
-
-
-class DeliveredCandidate(BaseModel):
-    """A FaultSource output (IA-1): one `(testable-unit, fault-class)` pair with
-    its applies-witnesses and the three-valued match verdict (D2)."""
-
-    unit_id: str
-    fault_class: str
-    applies_witnesses: Witness
-    match_verdict: Literal["applies", "does-not-apply", "insufficient-evidence"]
 
 
 class HuntConfig(BaseModel):

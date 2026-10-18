@@ -22,9 +22,10 @@ from polymerhus.attack.hunting.threat_modeller import (
     run_modeller_pass,
 )
 
-from tests.hunting_fixtures import ScriptedModellerTurns
+from tests.hunting_fixtures import ScriptedModellerTurns, intake_unit
 
 SERVICE_A = "Service:slug:a"
+OTHER_UNIT = "GraphQLApi"
 UNIT = "Service:slug:a"
 FAULT_X = "fault-x"
 
@@ -61,6 +62,7 @@ class _FakePg:
         self.fail_status = fail_status
         self.statuses: list[tuple[str, str]] = []
         self.stats_writes: list[tuple[str, str, dict | None]] = []
+        self.records: dict[str, dict] = {}
         self.next_id = "rt-hunt-0001"
 
     def create_hunting_run(self, project_id: str) -> str:
@@ -75,6 +77,15 @@ class _FakePg:
             raise OSError("pg down (fixture)")
         self.statuses.append((hunting_run_id, status))
         self.stats_writes.append((hunting_run_id, status, stats))
+
+    def set_hunting_run_stats(self, hunting_run_id: str, stats: dict) -> None:
+        self.records.setdefault(hunting_run_id, {}).update(stats or {})
+
+    def get_hunting_run(self, hunting_run_id: str) -> dict | None:
+        if hunting_run_id not in self.records:
+            return None
+        return {"hunting_run_id": hunting_run_id,
+                "stats": dict(self.records[hunting_run_id])}
 
     def list_hunting_runs(self, project_id: str) -> list[dict]:
         """The ONE-live-run-per-project guard read: every run the fake opened
@@ -149,6 +160,8 @@ async def _noop_pod_builder(spec, **kw):
 def _patch_pg(monkeypatch, fake):
     monkeypatch.setattr("polymerhus.app.clients.pg.create_hunting_run", fake.create_hunting_run)
     monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_status", fake.set_hunting_run_status)
+    monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_stats", fake.set_hunting_run_stats)
+    monkeypatch.setattr("polymerhus.app.clients.pg.get_hunting_run", fake.get_hunting_run)
     monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
 
 
@@ -162,7 +175,7 @@ def test_start_hunting_persists_running_then_complete(tmp_path, monkeypatch):
     hunt, hunter, models = _stores(tmp_path)
 
     hid = asyncio.run(hunting_runtime.start_hunting(
-        "rt-project", candidates=[_delivered_candidate()],
+        "rt-project", intake_units=[intake_unit(SERVICE_A)],
         modeller_pass_fn=_recording_pass(),
         control=_FakeControl(),
         hunt_store=hunt, hunter_store=hunter, threat_store=models,
@@ -174,36 +187,22 @@ def test_start_hunting_persists_running_then_complete(tmp_path, monkeypatch):
     assert fake.statuses == [("running", "rt-hunt-0001"), ("rt-hunt-0001", "complete")]
 
 
-def _delivered_candidate(unit_id: str = SERVICE_A, fault_class: str = FAULT_X):
-    from polymerhus.attack.hunting.hunt_orchestrator import (
-        DeliveredCandidate,
-        Witness,
-    )
-
-    return DeliveredCandidate(
-        unit_id=unit_id,
-        fault_class=fault_class,
-        applies_witnesses=Witness(deterministic="witness", llm="witness"),
-        match_verdict="applies",
-    )
-
-
-def test_caller_supplied_candidates_stay_the_override(monkeypatch):
-    """#200: a non-empty caller batch is consumed as-is, never re-selected; the
-    pass runs over its distinct unit ids."""
+def test_the_injected_intake_snapshot_is_the_unit_set(monkeypatch):
+    """S1 7.1: the run's unit set is its frozen intake - the runtime models the
+    injected snapshot's units and nothing else (the injection seam the tests
+    drive; the production path reads the L1 inventory)."""
     fake = _FakePg()
     _patch_pg(monkeypatch, fake)
     seen: list = []
-    supplied = [_delivered_candidate()]
 
     asyncio.run(hunting_runtime.start_hunting(
-        "rt-project", candidates=supplied,
+        "rt-project", intake_units=[intake_unit(SERVICE_A), intake_unit(OTHER_UNIT)],
         modeller_pass_fn=_recording_pass(seen),
         control=_FakeControl(),
         hunter_builder=_noop_hunter_builder, pod_builder=_noop_pod_builder,
         tick_interval=0.001,
     ))
-    assert seen and seen[0][2] == SERVICE_A
+    assert [unit for _p, _r, unit in seen] == sorted([SERVICE_A, OTHER_UNIT])
 
 
 def test_default_tools_ground_on_the_app_owned_store_roots():
@@ -230,7 +229,7 @@ def test_failing_modeller_pass_still_lands_a_terminal_status(monkeypatch):
         raise RuntimeError("pass blew up (fixture)")
 
     hid = asyncio.run(hunting_runtime.start_hunting(
-        "rt-project", candidates=[_delivered_candidate()],
+        "rt-project", intake_units=[intake_unit(SERVICE_A)],
         modeller_pass_fn=boom,
         control=_FakeControl(), tick_interval=0.001,
     ))
@@ -252,7 +251,7 @@ def test_provider_caused_pass_abort_persists_interrupted(monkeypatch):
             state="TRUST_MODELLED", streak=5, threshold=5, provider_cause=True)
 
     hid = asyncio.run(hunting_runtime.start_hunting(
-        "rt-project", candidates=[_delivered_candidate()],
+        "rt-project", intake_units=[intake_unit(SERVICE_A)],
         modeller_pass_fn=provider_abort,
         control=_FakeControl(), tick_interval=0.001,
     ))
@@ -278,7 +277,7 @@ def test_provider_caused_pass_abort_records_the_cause_on_the_run(monkeypatch):
                 quota_exhausted=True))
 
     asyncio.run(hunting_runtime.start_hunting(
-        "rt-project", candidates=[_delivered_candidate()],
+        "rt-project", intake_units=[intake_unit(SERVICE_A)],
         modeller_pass_fn=provider_abort,
         control=_FakeControl(), tick_interval=0.001,
     ))
@@ -343,7 +342,7 @@ def test_provider_abort_stops_the_runs_sessions_before_the_terminal(monkeypatch)
                 "Go usage limit exceeded", status_code=429, quota_exhausted=True))
 
     asyncio.run(hunting_runtime.start_hunting(
-        "rt-project", candidates=[_delivered_candidate()],
+        "rt-project", intake_units=[intake_unit(SERVICE_A)],
         modeller_pass_fn=provider_abort,
         control=control, tick_interval=0.001,
     ))
@@ -394,7 +393,7 @@ def test_hunter_provider_failure_interrupts_the_run(tmp_path, monkeypatch):
         return provider_hunter, None
 
     hid = asyncio.run(hunting_runtime.start_hunting(
-        "rt-project", candidates=[_delivered_candidate()],
+        "rt-project", intake_units=[intake_unit(SERVICE_A)],
         modeller_pass_fn=_recording_pass(),
         hunt_store=hunt, hunter_store=hunter, threat_store=models,
         control=_FakeControl(),
@@ -445,7 +444,7 @@ def test_raw_hunter_provider_error_at_the_real_seam_interrupts_the_run(
         return dispatch, None
 
     hid = asyncio.run(hunting_runtime.start_hunting(
-        "rt-project", candidates=[_delivered_candidate()],
+        "rt-project", intake_units=[intake_unit(SERVICE_A)],
         modeller_pass_fn=_recording_pass(),
         hunt_store=hunt, hunter_store=hunter, threat_store=models,
         control=_FakeControl(),
@@ -481,7 +480,7 @@ def test_start_hunting_fail_open_when_pg_is_unavailable(monkeypatch, caplog):
     _patch_pg(monkeypatch, fake)
 
     hid = asyncio.run(hunting_runtime.start_hunting(
-        "rt-project", candidates=[_delivered_candidate()],
+        "rt-project", intake_units=[intake_unit(SERVICE_A)],
         modeller_pass_fn=_recording_pass(),
         control=_FakeControl(), tick_interval=0.001,
     ))
@@ -497,7 +496,7 @@ def test_pinned_run_id_keys_the_run(tmp_path, monkeypatch):
     hunt, hunter, models = _stores(tmp_path)
 
     hid = asyncio.run(hunting_runtime.start_hunting(
-        "rt-project", run_id="pinned-run", candidates=[_delivered_candidate()],
+        "rt-project", run_id="pinned-run", intake_units=[intake_unit(SERVICE_A)],
         modeller_pass_fn=_recording_pass(),
         control=_FakeControl(),
         hunt_store=hunt, hunter_store=hunter, threat_store=models,
@@ -537,7 +536,7 @@ def test_stop_hunting_cancels_a_running_run(tmp_path, monkeypatch):
             "hunting",
             hunting_runtime.start_hunting(
                 "rt-project", run_id=hunting_run_id,
-                candidates=[_delivered_candidate()],
+                intake_units=[intake_unit(SERVICE_A)],
                 modeller_pass_fn=slow,
                 hunt_store=HuntStore(tmp_path / "hunts"),
                 hunter_store=HunterMemoryStore(tmp_path / "hunter"),
@@ -600,7 +599,7 @@ def test_hunting_pg_calls_offload_via_asyncio_to_thread(tmp_path, monkeypatch):
     monkeypatch.setattr(hunting_runtime.asyncio, "to_thread", spied_to_thread)
 
     hid = asyncio.run(hunting_runtime.start_hunting(
-        "rt-project", candidates=[_delivered_candidate()],
+        "rt-project", intake_units=[intake_unit(SERVICE_A)],
         modeller_pass_fn=_recording_pass(),
         control=_FakeControl(),
         hunt_store=hunt, hunter_store=hunter, threat_store=models,
@@ -733,7 +732,7 @@ def test_hunting_run_terminal_invokes_exactly_one_run_scoped_flush(tmp_path, mon
     hunt, hunter, models = _stores(tmp_path)
 
     hid = asyncio.run(hunting_runtime.start_hunting(
-        "rt-project", candidates=[_delivered_candidate()],
+        "rt-project", intake_units=[intake_unit(SERVICE_A)],
         modeller_pass_fn=_recording_pass(),
         control=_FakeControl(),
         hunt_store=hunt, hunter_store=hunter, threat_store=models,
@@ -790,7 +789,7 @@ def test_run_bootstrap_registers_and_reaps_the_agent_submodules(monkeypatch):
     seen: list = []
 
     asyncio.run(hunting_runtime.start_hunting(
-        "rt-project", candidates=[_delivered_candidate()],
+        "rt-project", intake_units=[intake_unit(SERVICE_A)],
         modeller_pass_fn=_recording_pass(seen),
         control=_FakeControl(),
         hunter_builder=_noop_hunter_builder, pod_builder=_noop_pod_builder,
@@ -816,7 +815,7 @@ def test_modeller_pass_not_launched_when_its_role_is_stopped(monkeypatch):
     seen: list = []
 
     asyncio.run(hunting_runtime.start_hunting(
-        "rt-project", candidates=[_delivered_candidate()],
+        "rt-project", intake_units=[intake_unit(SERVICE_A)],
         modeller_pass_fn=_recording_pass(seen),
         control=_FakeControl(),
         hunter_builder=_noop_hunter_builder, pod_builder=_noop_pod_builder,
@@ -840,7 +839,7 @@ def test_surfer_not_started_when_the_modeller_is_refused(monkeypatch):
     control = _FakeControl(refuse={"hunting:rt-hunt-0001:threat-modeller"})
 
     asyncio.run(hunting_runtime.start_hunting(
-        "rt-project", candidates=[_delivered_candidate()],
+        "rt-project", intake_units=[intake_unit(SERVICE_A)],
         control=control,
         hunter_builder=_noop_hunter_builder, pod_builder=_noop_pod_builder,
         tick_interval=0.001,

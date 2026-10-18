@@ -194,10 +194,10 @@ def build_hunter_agent(memory_store, *, run_id="run-1", project_id=PROJECT,
 
 
 class _HuntingL1:
-    """The #200 fixture L1 read seam: serves the L1 INVENTORY cyphers
-    (`read_l1_inventory`'s services/systems reads) AND the per-unit projection
-    reads, so `materialize_candidates` -> `select` -> `build_projection` run
-    against one deterministic in-memory model."""
+    """The fixture L1 read seam: serves the L1 INVENTORY cyphers
+    (`read_l1_inventory`'s services/systems reads) and the per-unit projection
+    reads, so the modeller's grounding provider runs against one deterministic
+    in-memory model."""
 
     def __init__(self, *, services=(), systems=(), units=()):
         self.services = list(services)
@@ -225,7 +225,7 @@ class _HuntingL1:
 
 
 def build_hunting_l1():
-    """The #200 fixture L1: s1 fronted by a GraphQLApi System, s3 fronted by a
+    """The fixture L1: s1 fronted by a GraphQLApi System, s3 fronted by a
     RESTApi System, plus the two Systems themselves (kind-qualified singleton
     identities, the projection reader's convention)."""
     return _HuntingL1(
@@ -255,23 +255,6 @@ def build_hunting_l1():
                                                 "discriminator": "__singleton__"},
                                       "edges": []},
         },
-    )
-
-
-def build_graphql_fault():
-    """The #200 fixture matching fault: a hardened predicate that passes any
-    unit reachable via a GraphQLApi System (the deterministic stage)."""
-    from polymerhus.attack.hunting.fault_source import FaultEntry
-    from polymerhus.attack.hunting.predicate import (  # noqa: PLC0415
-        Clause,
-        ClauseForm,
-        TypedPredicate,
-    )
-    return FaultEntry(
-        fault_id="graphql-introspection",
-        predicate=TypedPredicate(target="Both", clauses=(
-            Clause(ClauseForm.REACHABLE_VIA, key="EXPOSED_VIA",
-                   values=("GraphQLApi",)),)),
     )
 
 
@@ -402,6 +385,48 @@ def modeller_gate_payloads() -> dict:
             }],
         },
     }
+
+
+# --- the run intake fixtures (T3, #376) ---------------------------------------
+
+def intake_unit(unit_id: str, *, live_edges: int = 0, endpoints: int = 0,
+                kind: str | None = None):
+    """One frozen intake unit (S1 7.1): the run bootstrap's `intake_units` seam.
+
+    The counts are the run's own snapshot of the live L1 edge count and the
+    aggregated endpoint count; the ordering under them is the runtime's."""
+    from polymerhus.attack.hunting.unit_intake import IntakeUnit
+
+    return IntakeUnit(
+        unit_id=unit_id,
+        kind=kind or ("service" if unit_id.startswith("Service:") else "system"),
+        live_edge_count=live_edges,
+        endpoint_count=endpoints,
+    )
+
+
+def build_intake_l1(*, units=(), systems=()):
+    """The T3 intake read seam fixture: serves the intake Cyphers.
+
+    `units` are the raw unit rows (`labels`, `props`, `edge_families`,
+    `endpoints`); `systems` are the System rows with the Services each is
+    connected to over a live L1 edge and those Services' `AGGREGATES`
+    out-degrees."""
+    def read(cypher, params):
+        if "AS edge_families" in cypher:
+            return [dict(unit) for unit in units]
+        if "AS slug" in cypher:
+            return [
+                {"kind": system["kind"],
+                 "disc": system.get("disc", "__singleton__"),
+                 "slug": service["slug"],
+                 "endpoints": service.get("endpoints", 0)}
+                for system in systems
+                for service in system.get("services", ())
+            ]
+        return []
+
+    return read
 
 
 class ScriptedModellerTurns:

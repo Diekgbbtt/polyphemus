@@ -779,6 +779,24 @@ def test_a_zero_loop_completed_model_is_consumed_without_a_dispatch(tmp_path):
     assert (root / "consumed" / unit_name / f"{unit_name}.yaml").exists()
 
 
+def test_read_produced_units_reports_each_produced_model_and_its_run(tmp_path):
+    """S2 9.3: the intake freeze reads the produced family itself - the unit id,
+    the producing run, and the persisted state - so it can tell an in-flight
+    model from a stale one."""
+    store = ThreatModelStore(tmp_path)
+    _write_to_completed(store, loops=[_loop("high")])
+    store.write_sections(
+        PROJECT, "Service:other", "UNIT_TECHNICAL_SHARP",
+        {"technical_sharpening": _sharpening()}, run_id="run-2",
+    )
+
+    assert store.read_produced_units(PROJECT) == [
+        {"unit_id": UNIT, "run_id": RUN, "state": "COMPLETED"},
+        {"unit_id": "Service:other", "run_id": "run-2",
+         "state": "UNIT_TECHNICAL_SHARP"},
+    ]
+
+
 def test_a_write_after_the_move_is_a_noop_returning_the_consumed_path(tmp_path):
     store = ThreatModelStore(tmp_path)
     _write_zero_loop_completed(store)
