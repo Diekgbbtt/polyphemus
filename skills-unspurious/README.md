@@ -66,8 +66,7 @@ The loader is still flat; teaching it the nested path and the global uniqueness 
 - The boundary and the ontology are validated by the operator (2026-09-28); the W0 residual documentation debt is closed by the W0+W1 completion stream (see `docs/design/w0-w1-completion-ledger.md`).
 - `graphql` produces no variants; it stands as one skill with no `## Variants` section (rule R10 in the taxonomy spec; the outlier confirmation is D-T8).
 - `two-principal-authz` is kept as a cross-cutting reference and excluded from the 29 decomposed classes; the taxonomy spec places it in a labelled cross-cutting group (rule R7).
-- The 30 parents are not yet re-authored to the new ontology sections (`## Adversarial Capabilities`, `## Trust Assumptions`); only the variants carry them.
-  The B2 operator ruling is recorded in `docs/design/skills-taxonomy-decisions.md` (D-T7): the parents are conformed now, each gaining a `## Variants` section, and `graphql` keeps its full body without one (D-T8).
+- The 30 parents are conformed to the ontology sections (`## Adversarial Capabilities`, `## Trust Assumptions`) per the B2 ruling recorded in `docs/design/skills-taxonomy-decisions.md` (D-T7); each parent gains a `## Variants` section, and `graphql` keeps its full body without one (D-T8).
 - The nested loader (W4) is required before this layout loads; it is out of scope for the W0+W1 completion stream.
 - The taxonomy and naming spec is ratified as B1 (`docs/design/skills-taxonomy.md`, compiled from `docs/design/skills-taxonomy-decisions.md`); the `defence-bypass` and `proxy-techniques` families (#278) are authored per it (C1) and the classes are rewired to them (C2).
   The 70 leaves that do not yet carry their class prefix are normalisation debt (#372).

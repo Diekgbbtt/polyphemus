@@ -1,6 +1,7 @@
 # The skills suite taxonomy and naming spec
 
-*Status: **normative** (B1). This is the naming and taxonomy spec of the well-formed web-vulnerability-testing skills suite.
+*Status: **normative** (B1).
+This is the naming and taxonomy spec of the well-formed web-vulnerability-testing skills suite.
 It fixes the logical suite root, the physical grouping, the loader-facing identity of a skill, the name uniqueness rule and the leaf naming convention, the family and borderline placement, the parent contract, the metadata and bundle rules, and the map of the suite as authored.
 It is written from the ratified decision record `docs/design/skills-taxonomy-decisions.md` (D-T1..D-T9; rounds 1 and 2 ratified 2026-10-03, round 3 recorded 2026-10-18); every rule below traces to a ruling there, and this document adds no rule of its own.
 Its consumers are W4 (the nested-taxonomy loader), the W6 families (`defence-bypass`, `proxy-techniques`), and every later author of a suite skill.*
