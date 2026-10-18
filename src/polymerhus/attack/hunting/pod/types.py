@@ -70,6 +70,15 @@ class TestImplementationSpec(BaseModel):
     # Variant lineage (D67-08): a derived variant records its parent + why.
     parent_spec_ref: str | None = None
     provenance: dict = Field(default_factory=dict)
+    # The artifact-declared skill configuration (#236): the flat skill names the
+    # hunter decides the downstream pod runner should carry for this spec. The
+    # pod graph resolves them at the session binding (project bundle first, then
+    # the shared catalogue), unions them with the `pod_runner` baseline
+    # (`ROLE_SKILLS`), and the L1 index middleware renders each resolved skill's
+    # frontmatter `description` into the runner's system prompt. An unresolvable
+    # name is warned and skipped at the binding - the ONE policy - and the
+    # roster baseline is never displaced.
+    skills: list[str] = Field(default_factory=list)
 
 
 class ProbeStep(BaseModel):

@@ -599,5 +599,97 @@ def test_a6_hunt_verdict_uses_the_negotiated_strategy(monkeypatch):
     assert calls["role_id"] == "hunting_orchestrator"
     assert set(get_args(calls["schema"])) == {
         GateDecision, RatifyDecision, NoteDecision, MatchVerdict}
-    assert calls["tools_bound"] is False  # no tool surface in this drive
+    # #236: the orchestrator's read grants are unconditional, so a tool surface
+    # is always bound and the negotiation reads True.
+    assert calls["tools_bound"] is True
     assert seen["response_format"] is sentinel
+
+
+def test_hunt_orchestrator_actor_binds_the_read_grants(monkeypatch, tmp_path):
+    """#236: the orchestrator's session binds exactly `ORCHESTRATOR_SURFACE` -
+    the three seam-backed tools plus the two operator-ruled read grants. The
+    description-only `load_skill` lists descriptions and refuses a named load;
+    `record_skill_lesson` and `write_skill` are never on this surface."""
+    from polymerhus.attack.hunting.hunt_orchestrator import (
+        ORCHESTRATOR_READ_GRANTS,
+        ORCHESTRATOR_SURFACE,
+        OrchestratorTools,
+        ReadOnlyGraphView,
+    )
+    from polymerhus.attack.hunting.hunt_store import HuntStore
+
+    seen = {}
+
+    async def fake_run_session_agent(*args, **kwargs):
+        seen.update(kwargs)
+        return None
+
+    monkeypatch.setattr("polymerhus.app.llm.actor.run_session_agent",
+                        fake_run_session_agent)
+    store = HuntStore(tmp_path)
+    tools = OrchestratorTools(
+        store_reads=store,
+        graph_view=ReadOnlyGraphView("project-1", read_fn=lambda cy, p: []),
+    )
+
+    async def _drive():
+        actor = HuntOrchestratorActor(
+            "run1", tools=tools, project_id="project-1",
+            checkpointer=InMemorySaver(), observe=False,
+        )
+        await actor._ensure_started()
+        await actor.stop()
+
+    asyncio.run(_drive())
+
+    by_name = {t.name: t for t in seen["tools"]}
+    assert set(by_name) == set(ORCHESTRATOR_SURFACE)
+    assert set(by_name) == {"hunts_store", "notes", "graph_view",
+                            "search_http_history", "get_http_artifact",
+                            "load_skill"}
+    assert ORCHESTRATOR_READ_GRANTS <= set(by_name)
+    assert "record_skill_lesson" not in by_name
+    assert "write_skill" not in by_name
+    # The grants carry no auth capability and no `authn` skill (the
+    # orchestrator's listing surface is capability-free).
+    assert "auth_store" not in by_name
+    # The description-only load: the listing works, a named load is refused.
+    listing = by_name["load_skill"].invoke({"pattern": "^ssrf$"})
+    assert "- ssrf: " in listing
+    refused = by_name["load_skill"].invoke({"name": "ssrf"})
+    assert "description-only" in refused
+    # The HTTP-history read pair is the SAME implementation the hunter binds.
+    from polymerhus.attack.hunting.hunter_tools import (
+        HttpHistoryGetTool,
+        HttpHistorySearchTool,
+    )
+    assert isinstance(by_name["search_http_history"], HttpHistorySearchTool)
+    assert isinstance(by_name["get_http_artifact"], HttpHistoryGetTool)
+
+
+def test_hunt_orchestrator_actor_binds_the_read_grants_without_a_store_seam(
+    monkeypatch,
+):
+    """The grants are UNCONDITIONAL: a drive with no store seam still binds the
+    HTTP-history read pair and the description-only listing (the seam-backed
+    three are the only part gated on the injected tools object)."""
+    from polymerhus.attack.hunting.hunt_orchestrator import ORCHESTRATOR_READ_GRANTS
+
+    seen = {}
+
+    async def fake_run_session_agent(*args, **kwargs):
+        seen.update(kwargs)
+        return None
+
+    monkeypatch.setattr("polymerhus.app.llm.actor.run_session_agent",
+                        fake_run_session_agent)
+
+    async def _drive():
+        actor = HuntOrchestratorActor("run1", checkpointer=InMemorySaver(),
+                                      observe=False)
+        await actor._ensure_started()
+        await actor.stop()
+
+    asyncio.run(_drive())
+
+    assert {t.name for t in seen["tools"]} == set(ORCHESTRATOR_READ_GRANTS)

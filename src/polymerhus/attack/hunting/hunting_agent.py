@@ -500,7 +500,10 @@ def build_hunting_agent(
         # request-only alongside the five hunter tools AND registered in the
         # harness executor map, joined by the tool name; the index middleware
         # joins the turn middleware and carries the role's bounded skill set.
-        binding = auth_capable_binding(_HUNTER_ROLE)
+        # The ratified config's artifact-declared skills (#236) union into that
+        # set: the binding resolves each name, warns and skips an unresolvable
+        # one, and the L1 index renders every resolved description.
+        binding = auth_capable_binding(_HUNTER_ROLE, task_skills=config.skills)
         tools = list(tools) + binding.tools
         tools_by_name = {tool.name: tool for tool in tools}
         middleware = list(middleware) + binding.middleware

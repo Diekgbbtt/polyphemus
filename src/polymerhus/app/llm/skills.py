@@ -49,6 +49,22 @@ to one project, and the `meta-usage-skill` reading protocol appended by the read
 path to every load except meta-family skills (`skills/meta/`). Loader, store,
 writer, and protocol injection are one domain
 here so they cannot drift; the prompt/compaction domain stays unaware of skills.
+
+#236 makes the skill surface artifact-declared and adds the description-only
+listing. `skill_agent_binding(role_id, task_skills=...)` unions an artifact's
+declared skill names (a ratified `HuntConfig` for the hunter, a
+`TestImplementationSpec` for the pod runner) with the role baseline: the names
+resolve through the SAME store seam the loader uses (project bundle first, then
+the catalogue), the union is de-duplicated and sorted, the meta family is
+refused, and the added set is capped at `MAX_TASK_SKILLS` AFTER resolution - an
+unresolvable name is warned and skipped, never silently dropped, and the
+baseline is never displaced. The L1 index middleware renders the resolved
+descriptions, so the artifact set rides the #221 mechanism with no new
+rendering path. The same ONE `load_skill` tool gains the listing mode: no name
+lists the catalogue's descriptions (all, or the `pattern` regex), meta excluded,
+capped at `MAX_SKILL_LISTING`; `build_load_skill_tool(description_only=True)`
+is that surface without bodies (the hunt-orchestrator's grant, composed in
+`attack/hunting/actors.build_orchestrator_read_grants`).
 """
 from __future__ import annotations
 
@@ -349,12 +365,92 @@ SKILL_LOAD_CONTRACT = (
     "shadows it.\n\n"
     "EVERY skill carries a data section (frontmatter with name, description, "
     "metadata.version) so callers can tell what was loaded.\n\n"
+    "LISTING MODE - call load_skill with no name to list the catalogue's skill "
+    "descriptions (name + when-to-use), optionally narrowed by `pattern` (a "
+    "regex searched against each skill's name and description). The listing is "
+    "the discovery surface for a skill outside your bound index, it never "
+    "returns a body, it excludes the meta-family skills, and it is capped (the "
+    "omitted count is stated). A description-only binding (the "
+    "hunt-orchestrator's) refuses a named load: it lists, it never reads "
+    "bodies.\n\n"
     "PHASE-GATING CONVENTION - load at phase entry, once per thread, never "
     "speculatively mid-reasoning: call load_skill once when your phase starts "
     "for each skill your phase needs, then reason from the returned body. "
     "Repeat loads are cache-cheap but a second load buys nothing new. "
     "`refresh` is the development hot-reload path only - never set it mid-run."
 )
+
+# The listing-mode header (the description-only surface): the header teaching
+# the discovery move, followed by one `- name: description` line per skill the
+# pattern matched, sorted. Rendered from each skill's frontmatter, so the
+# listing can never drift from the catalogue.
+SKILL_LIST_HEADER = (
+    "Skill descriptions available through the `load_skill` listing (call "
+    "`load_skill` with no name to list them all, or pass `pattern` - a regex - "
+    "to narrow; the listing excludes the meta-family skills):"
+)
+
+# The hard ceiling on one description listing (#236): the catalogue and a
+# project's own bundles are both unbounded in principle, so the listing is
+# capped and the omitted count is stated - never an unbounded prompt growth.
+MAX_SKILL_LISTING = 32
+
+
+def list_skill_descriptions(
+    *,
+    project_id: str | None = None,
+    store: "SkillStore | None" = None,
+    pattern: str = "",
+) -> str:
+    """Render the description-only listing of the skill catalogue (#236): the
+    header plus one `- name: description` line per skill, sorted, resolved
+    through the SAME store seam the loader uses (the per-project bundle first,
+    then the shared catalogue). The project's own bundles are enumerated too, so
+    a project-authored skill is discoverable.
+
+    The meta-family skills are excluded (the mechanism's job, never the
+    author's), the listing is capped at `MAX_SKILL_LISTING` with the omitted
+    count stated, and `pattern` is a regex searched against each skill's NAME
+    and its DESCRIPTION (so both a name filter and a text filter work).
+    Fail-open, always loud: an invalid pattern, an empty result, and a
+    truncation each render an explicit line - never a blank or silently absent
+    listing."""
+    seam = store if store is not None else SkillStore()
+    names = set(list_skills())
+    names.update(seam.list_skills(project_id))
+    matcher = None
+    if pattern:
+        try:
+            matcher = re.compile(pattern)
+        except re.error as exc:
+            return f"load_skill: invalid pattern {pattern!r} ({exc}); nothing listed."
+    lines = [SKILL_LIST_HEADER]
+    listed = 0
+    omitted = 0
+    for name in sorted(names):
+        if is_meta_skill(name):
+            continue
+        meta = seam.meta(name, project_id=project_id)
+        description = meta.get("description") if isinstance(meta, dict) else None
+        if not isinstance(description, str) or not description:
+            continue
+        line = f"- {name}: {description}"
+        if matcher is not None and not (
+            matcher.search(name) or matcher.search(description)
+        ):
+            continue
+        if listed >= MAX_SKILL_LISTING:
+            omitted += 1
+            continue
+        lines.append(line)
+        listed += 1
+    if omitted:
+        lines.append(f"- ({omitted} more skills match; narrow with `pattern`)")
+    elif not listed:
+        lines.append(
+            f"(no skill matches {pattern!r})" if pattern else "(no skill resolves)"
+        )
+    return "\n".join(lines)
 
 
 # The L1 skill index (Q3): the header teaching the L2 move, followed by one
@@ -483,6 +579,99 @@ def skills_for_role(role_id: str) -> tuple[str, ...]:
     return ROLE_SKILLS.get(role_id, ())
 
 
+# The hard ceiling on the artifact-declared additions ONE binding accepts
+# (#236): the artifact is LLM-authored, so the exclusion of the meta family and
+# this cap are the MECHANISM's job, never the author's goodwill. The cap applies
+# to the RESOLVED additions (a name that resolves nothing is skipped first), in
+# deterministic sorted order; the dropped tail is named in a warning - never a
+# silent drop.
+MAX_TASK_SKILLS = 8
+
+
+def _resolve_task_skills(
+    task_skills,
+    *,
+    role_id: str,
+    project_id: str | None,
+    seam: "SkillStore",
+) -> list[str]:
+    """Resolve an artifact-declared skill list into the names that may join the
+    role's bounded set (#236): the ONE policy for identifiers that resolve to
+    nothing is WARN PLUS SKIP - an LLM-authored artifact is never trusted to
+    name only existing skills, and a stale name must degrade the hunt's skill
+    set, never crash the dispatch or render a blank line.
+
+    Order of the gates, each loud:
+
+    - a malformed declaration (a bare string, a non-iterable, a non-string
+      entry, an empty name) degrades to nothing with a warning;
+    - a meta-family name (`is_meta_skill`) is refused with a warning: the meta
+      skills stay unadvertised, so no artifact can advertise them;
+    - each remaining name is RESOLVED through the SAME store seam the loader
+      uses (the per-project bundle first, then the shared catalogue): a name
+      whose frontmatter carries no non-empty `description` is warned and
+      skipped, so the survivors are exactly the names the L1 index can render;
+    - only THEN does the cap apply to the RESOLVED additions (sorted,
+      de-duplicated, capped at `MAX_TASK_SKILLS`, the dropped tail named in the
+      warning): unresolvable junk can never consume the budget and evict a
+      valid declaration.
+
+    Import performs no I/O; the resolution reads frontmatter (the binding call
+    is the deliberate read site, never an import)."""
+    if task_skills is None:
+        return []
+    if isinstance(task_skills, str) or not isinstance(task_skills, (list, tuple, set, frozenset)):
+        logger.warning(
+            "skill binding: %s declared %r as its task skills (not a list of "
+            "names); ignored",
+            role_id, task_skills,
+        )
+        return []
+    candidates: list[str] = []
+    seen: set[str] = set()
+    for raw in task_skills:
+        if not isinstance(raw, str) or not raw.strip():
+            logger.warning(
+                "skill binding: %s declared a non-name %r in its task skills; "
+                "skipped",
+                role_id, raw,
+            )
+            continue
+        name = raw.strip()
+        if name in seen:
+            continue
+        seen.add(name)
+        if is_meta_skill(name):
+            logger.warning(
+                "skill binding: %s declared the meta-family skill %r; meta "
+                "skills stay unadvertised, skipped",
+                role_id, name,
+            )
+            continue
+        candidates.append(name)
+    resolved: list[str] = []
+    for name in sorted(candidates):
+        meta = seam.meta(name, project_id=project_id)
+        description = meta.get("description") if isinstance(meta, dict) else None
+        if not isinstance(description, str) or not description:
+            logger.warning(
+                "skill binding: %s declared %r but no skill resolves under "
+                "that name (project bundle or shared catalogue); skipped",
+                role_id, name,
+            )
+            continue
+        resolved.append(name)
+    if len(resolved) > MAX_TASK_SKILLS:
+        logger.warning(
+            "skill binding: %s resolved %d task skills; the cap keeps the "
+            "first %d and drops %s",
+            role_id, len(resolved), MAX_TASK_SKILLS,
+            resolved[MAX_TASK_SKILLS:],
+        )
+        resolved = resolved[:MAX_TASK_SKILLS]
+    return resolved
+
+
 @dataclass(frozen=True)
 class SkillAgentBinding:
     """One tool-calling agent's complete skill surface, in the three pieces its
@@ -506,6 +695,7 @@ def skill_agent_binding(
     with_write_skill: bool = False,
     store: "SkillStore | None" = None,
     lesson_store: "LessonStore | None" = None,
+    task_skills=None,
 ) -> SkillAgentBinding:
     """Build the ONE per-agent skill binding (the `skill_agent_seams` successor,
     Q3 -> #221): every tool-calling agent binds its whole skill surface through
@@ -520,11 +710,31 @@ def skill_agent_binding(
     `with_write_skill`/`store`/`lesson_store` reach `build_skill_tools`, so a
     read-only agent (the default) can never acquire the write tool by accident.
 
+    `task_skills` is the ARTIFACT-DECLARED configuration (#236): the skill names
+    a ratified `HuntConfig` (for the hunter) or a `TestImplementationSpec` (for
+    the pod runner) declared for this dispatch. The declared names are resolved
+    through the same store seam the loader uses (project bundle first, then the
+    shared catalogue), unioned with the role's baseline set, de-duplicated and
+    sorted - so the rendered index is byte-stable across the turns of one hunt.
+    The baseline is NEVER displaced: an artifact adds skills, it cannot remove
+    the role's declared discipline. The meta family is refused and the added set
+    is capped (`MAX_TASK_SKILLS`); an identifier that resolves to nothing is
+    warned and skipped (the ONE documented policy - see `_resolve_task_skills`).
+    A declaration against an EXEMPT role is warned and ignored: the roster's
+    exemption is a considered capability-minimalism decision, not
+    artifact-overridable.
+
     An UNDECLARED role id raises: the roster is the considered decision for every
     tool-calling role, so an unlisted one (usually a typo) is a wiring defect
     caught at construction, not a silent no-op. A DECLARED role with an empty
     set is exempt and returns an inert binding (no middleware, no tools, no
     skills in the context): the site stays uniform, and nothing dead is bound.
+
+    The description-only surface (the hunt-orchestrator's #236 grant) is NOT a
+    binding mode: production composes it directly through
+    `build_load_skill_tool(description_only=True)` in
+    `attack/hunting/actors.build_orchestrator_read_grants`, beside the
+    HTTP-history read pair, so the roster and this seam stay untouched by it.
     Import performs no I/O."""
     if role_id not in ROLE_SKILLS:
         raise ValueError(
@@ -534,6 +744,14 @@ def skill_agent_binding(
             "typo) is a wiring defect."
         )
     names = ROLE_SKILLS[role_id]
+    if task_skills is not None and not names:
+        logger.warning(
+            "skill binding: %s is declared exempt in ROLE_SKILLS but its "
+            "artifact declared %r; the exemption is not artifact-overridable, "
+            "ignored",
+            role_id, task_skills,
+        )
+        task_skills = None
     if not names:
         return SkillAgentBinding(
             role_id=role_id, middleware=[], tools=[], context={}
@@ -543,6 +761,23 @@ def skill_agent_binding(
     # per-project bundles (a project-authored skill such as `authn`) and
     # `load_skill` reads them - one seam, no per-site plumbing.
     project_id = _resolve_project_id(project_id)
+    # The artifact-declared names resolve through the SAME store seam the loader
+    # and the index render use (project bundle first, then catalogue), so the
+    # declared set and the rendered index can never disagree. The store is
+    # constructed only when something was declared (its construction performs no
+    # I/O; the frontmatter reads are this call's deliberate work).
+    if task_skills:
+        resolved = _resolve_task_skills(
+            task_skills,
+            role_id=role_id,
+            project_id=project_id,
+            seam=store if store is not None else SkillStore(),
+        )
+    else:
+        resolved = []
+    # De-duplicated and sorted: the union is a SET, and its order must not
+    # depend on the declaration order (byte-stable prompt prefix per hunt).
+    union = sorted({*names, *resolved})
     return SkillAgentBinding(
         role_id=role_id,
         middleware=[skill_index_middleware(store=store)],
@@ -553,7 +788,7 @@ def skill_agent_binding(
             lesson_store=lesson_store,
             role_id=role_id,
         ),
-        context={"skills": list(names), "project_id": project_id},
+        context={"skills": union, "project_id": project_id},
     )
 
 
@@ -658,9 +893,12 @@ def _resolve_project_id(project_id: str | None) -> str:
 
 
 def build_load_skill_tool(
-    project_id: str | None = None, store: "SkillStore | None" = None
+    project_id: str | None = None,
+    store: "SkillStore | None" = None,
+    *,
+    description_only: bool = False,
 ):
-    """Build the ONE shared `load_skill` agent-callable tool (#222, #234).
+    """Build the ONE shared `load_skill` agent-callable tool (#222, #234, #236).
 
     The tool is the single loader made agent-reachable: it reads through the
     shared store seam (the per-project bundle first, then the repo catalogue -
@@ -673,6 +911,18 @@ def build_load_skill_tool(
     path). Import performs no I/O (CODING_STANDARD section 6); the default store
     is constructed lazily inside the factory call, never at import.
 
+    LISTING MODE (#236): called with no name, the tool lists the catalogue's
+    skill descriptions - all of them, or the ones matching the `pattern` regex -
+    through `list_skill_descriptions`, which excludes the meta-family skills and
+    respects `MAX_SKILL_LISTING`. This is the SAME tool, never a fork of the
+    load path.
+
+    `description_only=True` builds the description-only surface (the
+    hunt-orchestrator's binding): the listing works and a NAMED load is refused
+    loudly in-band - this binding never returns a skill body. Both modes carry
+    the same `SKILL_LOAD_CONTRACT` description, so no agent reads a divergent
+    contract.
+
     Fail-open is preserved end to end: a missing protocol appends nothing, an
     unknown skill still degrades to `''`, and loading a meta-family skill
     returns its bare body (no protocol on the protocol skills: no blackloops).
@@ -684,12 +934,22 @@ def build_load_skill_tool(
     seam = store if store is not None else SkillStore()
 
     @tool
-    def load_skill(name: str, refresh: bool = False) -> str:
+    def load_skill(name: str = "", pattern: str = "", refresh: bool = False) -> str:
         """Placeholder - the real contract is assigned below (the `@tool`
         decorator reads the docstring at decoration time, so the interpolated
         `SKILL_LOAD_CONTRACT` is set on the returned tool explicitly)."""
         if refresh:
             clear_cache()
+        if not name:
+            return list_skill_descriptions(
+                project_id=project_id, store=seam, pattern=pattern
+            )
+        if description_only:
+            return (
+                "load_skill: this binding is description-only - skill bodies are "
+                "not available here. Call load_skill with no name (optionally "
+                f"pattern=<regex>) to list descriptions; {name!r} was not loaded."
+            )
         body = seam.read(name, project_id=project_id)
         if not body or is_meta_skill(name):
             return body
@@ -992,6 +1252,28 @@ class SkillStore:
         )
 
     # -- reads: project-first resolution, always fail-open --------------------
+
+    def list_skills(self, project_id: str | None = None) -> list[str]:
+        """The project's own skill-bundle names, sorted: every directory under
+        the project `skills/` bucket that carries a `SKILL.md`, minus the
+        scaffold-owned reserved names (`lessons`, `evolution` - directories, not
+        bundles). The listing surface's project half (#236): a project-authored
+        skill such as `authn` is discoverable. A missing bucket is the valid
+        empty; an unreadable one and an unsafe project id degrade to `[]` - a
+        listing never raises."""
+        if project_id is None:
+            return []
+        try:
+            base = self._project_skills_root(project_id)
+            return sorted(
+                child.name
+                for child in base.iterdir()
+                if child.is_dir()
+                and child.name not in RESERVED_SKILL_NAMES
+                and (child / "SKILL.md").is_file()
+            )
+        except (OSError, ValueError):
+            return []
 
     def read(self, name: str, project_id: str | None = None, fallback: str = "") -> str:
         """The skill body for `name`, frontmatter stripped: the per-project
@@ -1942,6 +2224,8 @@ __all__ = [
     "CONSUMED_CODE",
     "LESSON_TYPES",
     "LOGICAL_SUITE_ROOT",
+    "MAX_SKILL_LISTING",
+    "MAX_TASK_SKILLS",
     "META_SKILLS_PREFIX",
     "META_USAGE_SKILL",
     "META_WRITE_SKILL",
@@ -1949,6 +2233,7 @@ __all__ = [
     "RECORD_LESSON_CONTRACT",
     "ROLE_SKILLS",
     "SKILL_INDEX_HEADER",
+    "SKILL_LIST_HEADER",
     "SKILL_LOAD_CONTRACT",
     "WRITE_SKILL_CONTRACT",
     "DuplicateSkillNameError",
@@ -1968,6 +2253,7 @@ __all__ = [
     "build_write_skill_tool",
     "clear_cache",
     "is_meta_skill",
+    "list_skill_descriptions",
     "list_skills",
     "render_skill_index",
     "skill_agent_binding",

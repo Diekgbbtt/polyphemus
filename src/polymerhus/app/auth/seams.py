@@ -36,6 +36,7 @@ AUTHN_SKILL = "authn"
 def auth_capable_binding(
     role_id: str, *, store=None, skill_store=None, lesson_store=None,
     project_id: str | None = None, with_write_skill: bool = False,
+    task_skills=None,
 ):
     """Wrap `skill_agent_binding(role_id)` with the auth capability.
 
@@ -51,6 +52,9 @@ def auth_capable_binding(
     `project_id` scopes the armed surface explicitly (default: the tool-owned
     project, resolved lazily), production resolves the project scope
     tool-owned, so neither the site nor the harness passes an identity.
+    `task_skills` is the artifact-declared skill configuration (#236): it
+    reaches `skill_agent_binding` verbatim, which resolves, unions, caps, and
+    warns - the auth wrapper never re-implements that policy.
     """
     from polymerhus.app.auth.tool import build_auth_store_tool  # noqa: PLC0415
     from polymerhus.app.llm.skills import (  # noqa: PLC0415
@@ -62,7 +66,8 @@ def auth_capable_binding(
     )
 
     binding = skill_agent_binding(
-        role_id, store=skill_store, lesson_store=lesson_store
+        role_id, store=skill_store, lesson_store=lesson_store,
+        task_skills=task_skills,
     )
     if not binding.tools:
         if not with_write_skill:
