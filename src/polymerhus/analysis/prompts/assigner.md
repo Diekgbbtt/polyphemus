@@ -61,6 +61,14 @@ What a neighbouring surface suggests but this slice does not carry stays a hypot
 Diving into the technical understanding of a surface area (its mechanisms, its rendering model) is the mechanism-typist's ownership, not yours; you stop at the ownership judgment.
 A response that names a business noun or action a candidate's contract claims is evidence for that owner; one that shows none is evidence against.
 
+## When the widening seam fails, fail open - loudly
+
+A verification call can fail, time out, or return nothing at the moment you need it; the seam is bounded and remote, and that happens.
+A failed lookup is missing evidence, never evidence against: it must not silently become a no-owner outcome for a route whose surface already supports an owner.
+When that happens, keep loose control and emit the aggregate anyway, under three conditions - the candidate's contract genuinely claims the noun or action on the surface, no other contract competes for it, and nothing you already hold contradicts the match.
+Give the aggregate the concrete evidence you do hold, and name the concretisation risk in `evidence_refs` in plain words: state that the owner rests on the surface reading and that the confirming lookup failed or returned nothing.
+What you accept by failing open is wrong-unit concretisation - an aggregate a later phase inherits as if the owner had been verified - so never fail open for a route whose surface supports no owner at all: an unverifiable guess is still a guess.
+
 ## Worked examples
 
 These slugs are illustrative and never appear in a real inventory; take the SHAPE of the judgment from them, never the answer.
@@ -86,3 +94,10 @@ Endpoint `GET /invoices/42/shipment`.
 Differential: both contracts name a noun that appears in the path, and neither claim rules the other out.
 -> TWO aggregates: `invoice-settlement` (evidence "path segment /invoices") and `parcel-dispatch` (evidence "path segment /shipment").
 Both genuinely reach this Endpoint; emit both rather than choosing.
+
+**4. The seam fails mid-judgment.**
+Inventory has `job-queue - owns the job queue and its install actions.`
+Endpoint `POST /queue/install`, method unverified in the slice.
+You pull the recorded response; the lookup fails, then a retry returns nothing.
+The surface reading stands: the noun *queue* and the action *install* are exactly what `job-queue` claims, and no other contract competes.
+-> one aggregate, `job-queue`, evidence `["path segment /queue", "path segment /install", "history lookup failed; owner rests on the surface reading, method unconfirmed"]` - a loose-control commit with its risk named, never a silent no-owner.

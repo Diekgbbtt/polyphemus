@@ -17,8 +17,16 @@ Metrics per spec (plan section 3, W2.2):
   owning service slug). An `EVIDENCED_BY` edge from a System to a matching
   endpoint is accepted as the fallback.
 - M3 typed backbone: share of required backbone items present and non-empty.
+  For Service units the spine is the Service's own props: `business_function`
+  resolves the managed `business_function_slug` prop, and the mechanism slots
+  `api_paradigm`/`auth_methods` are NOT Service requirements - the domain model
+  places them System-side (`docs/design/l1-domain-model-catalogue.md` section 3)
+  and M4 measures them as `EXPOSED_VIA -> RESTApi/GraphQLApi` and
+  `AUTHENTICATED_BY -> AuthenticationMechanism` edges (operator ruling 2026-10-18).
   For System units the backbone is the node description plus the
-  threat-modeller sufficiency statements (keyword coverage over the node text).
+  threat-modeller sufficiency statements (keyword coverage over the node text;
+  a statement declared `satisfied_by: capability_gap` counts as
+  satisfied-by-declaration - operator ruling 2026-10-18).
 - M4 service-to-system edges: share of required typed edges present
   (rel plus target kind and discriminator; the spec declares the discriminator
   mode). For System units the requirement is inbound: the GT Services that must
@@ -52,6 +60,13 @@ SYSTEM_EDGE_RELS = (
     "FRONTED_BY", "PROTECTED_BY", "ROUTED_BY", "SHAPES_DATA_OF",
     "ON_REQUEST_PATH", "DEPENDS_ON",
 )
+
+# Service-prop aliases (operator ruling 2026-10-18, grounded in
+# `docs/design/l1-domain-model-catalogue.md` section 3): the spine's
+# `business_function` is the managed `business_function_slug` prop. The
+# mechanism slots (`api_paradigm`, `auth_methods`) are System-side and are no
+# longer Service requirements; they are read through M4 edges.
+_PROP_ALIASES = {"business_function": "business_function_slug"}
 
 
 # --- spec loading and lint ----------------------------------------------------
@@ -312,12 +327,15 @@ def _backbone(spec: dict, snapshot: dict) -> dict:
         items = []
         for field in backbone["required"]:
             name = field["field"]
-            present = name in props and _non_empty(props.get(name))
+            prop = _PROP_ALIASES.get(name, name)
+            present = prop in props and _non_empty(props.get(prop))
             item = {"item": f"field:{name}", "present": present,
                     "expected": field.get("expected")}
-            if "expected" in field and name in props:
+            if prop != name:
+                item["reads_prop"] = prop
+            if "expected" in field and prop in props:
                 item["value_matches_expected"] = _match_value(
-                    props.get(name), field["expected"])
+                    props.get(prop), field["expected"])
             items.append(item)
     else:
         match = unit["match"]
@@ -334,6 +352,11 @@ def _backbone(spec: dict, snapshot: dict) -> dict:
                           "present": name in props and _non_empty(props.get(name))})
         for statement in (backbone.get("threat_modeller_sufficiency") or {}).get(
                 "statements", []):
+            if statement.get("satisfied_by") == "capability_gap":
+                items.append({"item": f"statement:{statement['id']}", "present": True,
+                              "keywords": statement["keywords"],
+                              "satisfied_by": "capability_gap"})
+                continue
             covered = all(kw.lower() in text for kw in statement["keywords"])
             items.append({"item": f"statement:{statement['id']}", "present": covered,
                           "keywords": statement["keywords"]})
@@ -449,6 +472,10 @@ def render_text(label: str, project_id: str, corpus: Path, result: dict) -> str:
                 detail += f" value_match={item['value_matches_expected']}"
             if item.get("keywords"):
                 detail += f" keywords={item['keywords']}"
+            if item.get("reads_prop"):
+                detail += f" (reads {item['reads_prop']})"
+            if item.get("satisfied_by"):
+                detail += f" (satisfied_by={item['satisfied_by']})"
             lines.append(f"   - {item['item']}: {mark}{detail}")
         m4 = spec["m4"]
         lines.append(f"M4 edges: {m4['share']:.2f} ({m4['matched']}/{m4['total']})")

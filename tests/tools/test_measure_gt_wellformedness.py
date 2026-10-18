@@ -310,6 +310,49 @@ def test_render_text_carries_the_target_score():
     assert "M1 placement: FAIL" in text
 
 
+def test_business_function_resolves_the_managed_slug_prop():
+    """Operator ruling 2026-10-18: the Service spine's `business_function` is
+    the Service's managed `business_function_slug` prop."""
+    spec = _service_spec()
+    spec["typed_backbone"]["required"] = [
+        {"field": "business_function", "non_empty": True},
+        {"field": "exposure", "expected": "public"},
+    ]
+    snapshot = _snapshot(
+        services={"svc": {"props": {"business_function_slug": "svc",
+                                    "exposure": "public"}}},
+        aggregates={"svc": []},
+    )
+    result = tool.score_spec(spec, snapshot)
+    item = next(i for i in result["m3"]["items"]
+                if i["item"] == "field:business_function")
+    assert item["present"] is True
+    assert item["reads_prop"] == "business_function_slug"
+    assert result["m3"]["share"] == pytest.approx(1.0)
+
+
+def test_capability_gap_statements_count_as_satisfied():
+    """Operator ruling 2026-10-18: a statement the spec itself declares a
+    capability gap counts as satisfied-by-declaration, never as missing
+    keyword coverage."""
+    spec = _system_spec()
+    spec["typed_backbone"]["threat_modeller_sufficiency"]["statements"][1][
+        "satisfied_by"] = "capability_gap"
+    snapshot = _snapshot(
+        systems=[{"kind": "AuthorizationSystem", "discriminator": "__singleton__",
+                  "props": {"description":
+                            "Unsecured access is answered 302 with a REDIRECT."}}],
+    )
+    result = tool.score_spec(spec, snapshot)
+    s2 = next(i for i in result["m3"]["items"] if i["item"] == "statement:S2")
+    assert s2["present"] is True
+    assert s2["satisfied_by"] == "capability_gap"
+    assert result["m3"]["share"] == pytest.approx(1.0)
+    text = tool.render_text("label", "p", Path("/corpus"), {
+        "specs": [result], "target_score": result["score"], "spec_count": 1})
+    assert "satisfied_by=capability_gap" in text
+
+
 def test_target_filter_selects_only_that_target(tmp_path: Path):
     spec_text = (
         "schema: gt-unit-spec/v1\n"

@@ -1,8 +1,10 @@
 # GT unit well-formedness - arm J outcome assessment (Task Area 2, W2.3)
 
-Status: complete (2026-10-17).
+Status: complete (2026-10-17); corrected baseline added 2026-10-18 (section 2.4).
 Branch: `feat/recon-coverage-and-eval-wellformedness`.
 Plan: `docs/design/plans/2026-10-17-recon-coverage-and-eval-wellformedness.md`, W2.2 + W2.3.
+Amendment 2026-10-18 (operator rulings): the M3 Service spine and the capability-gap statement handling were corrected (section 2.4); the corrected numbers are the arm K comparison baseline.
+The original 2026-10-17 readings stay visible in sections 2.1-2.3 and are labelled as superseded where they change.
 
 This document reports how well the four arm J produced graphs represent the ground-truth units of the vulnerability corpus.
 It also reports Goal 2: the analysis-phase-only caching ratio against the 70% target.
@@ -22,7 +24,8 @@ Metrics per spec, as fixed by the plan (W2.2):
   For System units it reads the endpoints surfaced through the linked services, mirroring `attack.hunting.unit_projection`.
   An `EVIDENCED_BY` edge is accepted as the fallback.
 - M3 typed backbone: share of required backbone items present and non-empty.
-  For System units the backbone is the node description plus the threat-modeller sufficiency statements (keyword coverage over the node text).
+  For Service units the spine is the Service's own props: `business_function` resolves the managed `business_function_slug` prop, and the mechanism slots `api_paradigm` and `auth_methods` are System-side - measured by M4 as `EXPOSED_VIA -> RESTApi/GraphQLApi` and `AUTHENTICATED_BY -> AuthenticationMechanism` - and are not Service requirements (operator ruling 2026-10-18).
+  For System units the backbone is the node description plus the threat-modeller sufficiency statements (keyword coverage over the node text); a statement declared `satisfied_by: capability_gap` counts as satisfied-by-declaration (operator ruling 2026-10-18).
 - M4 service-to-system edges: share of required typed edges present.
   For Service units the requirement is outbound (`rel` plus target kind and discriminator mode).
   For System units the requirement is inbound: the GT Services that must carry an edge to the System.
@@ -40,6 +43,7 @@ Known limits, stated for honesty:
 - The System statement check is a keyword proxy over the node text, not a semantic judgment.
 - `kind_any` accepts a RESTApi overlay under any discriminator, because the pipeline's convention uses shared overlays (`core-rest`, `manager-rest`, `same-origin-json-api`) where the corpus authors per-service names (`<slug>::rest`).
 - Capability-gap carriers declared in the specs (path-position file names, JSON body fields) are excluded from M2 by design.
+- A statement the spec itself declares a capability gap (wj-004's log sink and outbound lookup) is satisfied-by-declaration, not by evidence: the chain's own `capability_gaps` text names it unobservable.
 
 ### 1.2 The spec format (D3)
 
@@ -96,6 +100,45 @@ M1 passes for all 13 specs in all four runs: the analyser always placed the unit
   Missing comfyui edges follow the missing aggregates (`user-data-file`, `model-download`, `manager-preferences`).
   In white-jotter the misses are specific: `AUTHORIZED_BY` from `account-registration`, `EXPOSED_VIA RESTApi` from `article-publishing` and `book-search`.
 
+### 2.4 Corrected baseline (2026-10-18)
+
+Operator rulings corrected three criterion inputs; the tool and the corpus specs were amended, and the tool keeps 15 unit tests plus a clean 13-spec lint.
+
+- The Service spine counts `business_function` (the managed `business_function_slug`), `exposure`, and `service_contract`.
+- `api_paradigm` and `auth_methods` left the Service requirements: the domain model places them System-side (`docs/design/l1-domain-model-catalogue.md` section 3), and M4 already measures the edges.
+- wj-004 statements S1 (log/principal) and S4 (lookup) carry `satisfied_by: capability_gap`, matching the spec's own declared capability gaps.
+
+Corrected target scores:
+
+| run | project id | before | corrected |
+|---|---|---|---|
+| comfyui base | `2df3ad9d-eb9c-4789-a118-44139a745ca2` | 0.25 | 0.45 |
+| comfyui formal | `d04b947f-d6c3-48be-9b18-1c4eef851241` | 0.28 | 0.48 |
+| white-jotter base | `bf0d9408-d403-457f-b769-076dd9cd9138` | 0.33 | 0.49 |
+| white-jotter formal | `f16de150-b032-4566-871b-2df6fa4d48a9` | 0.50 | 0.66 |
+
+Corrected per-unit scores:
+
+| spec | comfyui base | comfyui formal | wj base | wj formal |
+|---|---|---|---|---|
+| comfyui-001 | 0.33 | 0.33 | - | - |
+| comfyui-002 | 0.33 | 0.33 | - | - |
+| comfyui-003 | 0.67 | 0.67 | - | - |
+| comfyui-004 | 0.71 | 0.71 | - | - |
+| comfyui-005 | 0.33 | 0.50 | - | - |
+| comfyui-006 | 0.33 | 0.33 | - | - |
+| wj-001 | - | - | 0.67 | 0.80 |
+| wj-002 | - | - | 0.13 | 0.61 |
+| wj-003 | - | - | 0.56 | 0.56 |
+| wj-004 | - | - | 0.20 | 0.77 |
+| wj-005 | - | - | 0.67 | 0.67 |
+| wj-006 | - | - | 0.67 | 0.67 |
+| wj-007 | - | - | 0.56 | 0.56 |
+
+Reading: every produced Service now passes the spine 3/3, and every remaining deficit is a defect the D-classes name (M2 items, M4 edges).
+wj-004's remaining M3 miss is S2 alone (the `username` carrier), which no L0 node witnesses.
+These corrected numbers are the arm K comparison baseline.
+
 ## 3. Goal 2 - analysis-phase cache ratios
 
 Source: the durable per-project usage surface, `GET http://127.0.0.1:8080/projects/{id}/usage` on the eval host.
@@ -151,13 +194,15 @@ Two independent defects share one outcome (0/17 parameter items matched):
 - Recon mints placeholder names. The comfyui `Parameter` nodes on the view routes are named `EXPR` and `EXPREXPREXPR` on `/view`, `/viewvideo`, `/api/view`, and `/internal/view`; the real names (`filename`, `subfolder`, `type`) arrive in captured query strings but never become node names.
 - Analysis never aggregates `Parameter` nodes. The white-jotter graph holds a correct `keywords` Parameter on `/api/search`, and `book-search` still aggregates only the Endpoint.
 
-### D-5 Typed spine is re-homed by design (measurement interpretation; operator ruling proposed)
+### D-5 Typed spine mechanism slots are System-side (resolved, operator ruling 2026-10-18)
 
-Every Service fails `api_paradigm` and `auth_methods` in M3, and every run is identical (2/5).
-The pipeline deliberately re-homes these: curation re-homes `api_paradigm` onto the RESTApi System via `EXPOSED_VIA` and `auth_methods` onto the AuthenticationMechanism via `AUTHENTICATED_BY` (`src/polymerhus/analysis/prompts/curation.md`).
-The information is therefore reachable for a threat modeller through the typed edges, and those edges mostly pass M4.
-The genuinely absent field is `business_function` (the prose description): no produced Service carries it.
-Proposal: either mark the two re-homed fields as satisfied-by-edge in the specs, or have the analyser stamp them on the Service as well; a ruling is requested.
+The earlier reading - "the pipeline re-homes `api_paradigm` and `auth_methods` away from the Service, and `business_function` is genuinely absent" - was wrong.
+The operator's ruling, grounded in `docs/design/l1-domain-model-catalogue.md` section 3, corrected the criterion:
+
+- `api_paradigm` and `auth_methods` are mechanism slots: System-side, reached by an edge (`EXPOSED_VIA -> RESTApi/GraphQLApi`; `AUTHENTICATED_BY -> AuthenticationMechanism`).
+  They are no longer Service spine requirements, and M4 measures them where the GT expects them.
+- `business_function` IS a Service attribute: the managed `business_function_slug` prop carries it, and the criterion now resolves the field to that prop.
+- The Service spine is `business_function`, `exposure`, `service_contract`; every produced Service passes it (section 2.4).
 
 ### D-6 RESTApi discriminator convention (recorded, not scored)
 
@@ -218,3 +263,5 @@ Two white-jotter System specs show the intended behaviour at the analysis layer:
 Goal 2 passes with margin on all four runs.
 
 Next: W2.4 and W2.5 select the relevant L0 chunks per GT unit and derive the optimal typist and assigner paths plus the failure-mode clusters (`docs/experiments/2026-10-17-typist-assigner-optimal-paths.md`).
+
+Corrected baseline (2026-10-18, section 2.4): comfyui 0.45 base / 0.48 formal, white-jotter 0.49 base / 0.66 formal; these corrected numbers are the arm K comparison point.
