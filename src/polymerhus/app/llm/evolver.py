@@ -46,10 +46,8 @@ import asyncio
 import dataclasses
 import functools
 import logging
-import os
 import threading
 import time
-import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -68,6 +66,7 @@ from polymerhus.app.llm.skills import (
     SkillStore,
     SkillUnknownError,
     StoreUnavailableError,
+    dump_text_atomic,
     skill_agent_binding,
 )
 
@@ -192,30 +191,15 @@ class EvolutionPassStore:
         return loaded if isinstance(loaded, dict) else None
 
     def _dump(self, path: Path, record: dict) -> None:
-        """Write one record atomically (temp file in the SAME directory, then
-        `os.replace`); a failed dump is a loud `StoreUnavailableError`."""
+        """Write one record through the skills domain's ONE atomic whole-file
+        write (`skills.dump_text_atomic`); a failed dump is a loud
+        `StoreUnavailableError`."""
         import yaml  # noqa: PLC0415 - already a production dependency
 
-        try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = path.with_name(f".{path.name}.{uuid.uuid4().hex[:8]}.tmp")
-            try:
-                tmp.write_text(
-                    yaml.safe_dump(
-                        record, sort_keys=False, allow_unicode=True, width=4096
-                    ),
-                    encoding="utf-8",
-                )
-                os.replace(tmp, path)
-            finally:
-                try:
-                    tmp.unlink()
-                except FileNotFoundError:
-                    pass
-        except OSError as exc:
-            raise StoreUnavailableError(
-                f"store_unavailable: cannot persist the pass record {path} ({exc})"
-            ) from exc
+        dump_text_atomic(
+            path,
+            yaml.safe_dump(record, sort_keys=False, allow_unicode=True, width=4096),
+        )
 
     def get(self, project_id: str, pass_id: str) -> dict | None:
         """The recorded pass, or None: an unknown identifier, an unreadable

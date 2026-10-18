@@ -918,6 +918,31 @@ def _dump_frontmatter(meta: dict) -> str:
     return f"---\n{body}---\n\n"
 
 
+def dump_text_atomic(path: Path, text: str) -> None:
+    """Write `text` atomically: dump to a temp file in the SAME directory, then
+    `os.replace` onto the target, so every file on disk is whole and a crash
+    mid-dump never leaves a partial target (the #220 auth-store
+    `_dump_yaml_atomic` discipline for prose).
+
+    The ONE atomic whole-file write of the skills domain: `SkillStore` and the
+    evolution pass-record store both go through it, so the discipline cannot
+    drift between stores. A failed dump is a loud `StoreUnavailableError`."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{uuid.uuid4().hex[:8]}.tmp")
+    try:
+        tmp.write_text(text, encoding="utf-8")
+        os.replace(tmp, path)
+    except OSError as exc:
+        raise StoreUnavailableError(
+            f"store_unavailable: cannot persist {path} ({exc})"
+        ) from exc
+    finally:
+        try:
+            tmp.unlink()
+        except FileNotFoundError:
+            pass
+
+
 class SkillStore:
     """The per-project skill-bundle store (#234): the one seam the loader and
     the writer share, and - since D-W3-2 - the owner of the bundle's revision
@@ -1014,24 +1039,10 @@ class SkillStore:
 
     @staticmethod
     def _dump_text_atomic(path: Path, text: str) -> None:
-        """Write `text` atomically: dump to a temp file in the SAME directory,
-        then `os.replace` onto the target, so every file on disk is whole and
-        a crash mid-dump never leaves a partial target (the #220 auth-store
-        `_dump_yaml_atomic` discipline for prose)."""
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_name(f".{path.name}.{uuid.uuid4().hex[:8]}.tmp")
-        try:
-            tmp.write_text(text, encoding="utf-8")
-            os.replace(tmp, path)
-        except OSError as exc:
-            raise StoreUnavailableError(
-                f"store_unavailable: cannot persist {path} ({exc})"
-            ) from exc
-        finally:
-            try:
-                tmp.unlink()
-            except FileNotFoundError:
-                pass
+        """The store's atomic whole-file write; delegates to the ONE shared
+        implementation (`dump_text_atomic`), which the pass-record store reuses
+        so the temp-file-plus-replace discipline cannot drift between stores."""
+        dump_text_atomic(path, text)
 
     def _ensure_bundle(self, project_id: str, skill: str) -> Path:
         """Create the bundle on first use: the skill directory plus its
