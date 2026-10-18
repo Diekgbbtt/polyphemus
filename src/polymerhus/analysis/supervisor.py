@@ -444,6 +444,7 @@ def run_analyser_chunked(
     write_fn=None,
     checkpointer=None,
     store=None,
+    auth_store=None,
     observe: bool = True,
 ):
     """Sync wrapper over `analyse_chunked` for callers that own no event loop.
@@ -455,7 +456,11 @@ def run_analyser_chunked(
     current surface", exactly as before. Kept so every existing caller and test is
     unchanged; there is exactly ONE implementation, in the coroutine below. A caller
     already on an event loop (the analysis consumer) must await `analyse_chunked`
-    directly - `asyncio.run` cannot be called from a running loop."""
+    directly - `asyncio.run` cannot be called from a running loop.
+
+    `auth_store` (#364) is the injectable auth-store handle the proposer turns
+    bind their read-only auth view from; production leaves it None and the store
+    resolves lazily inside the tool factory, exactly like the recon binding."""
     import asyncio
 
     from polymerhus.analysis.feed import L0Chunk
@@ -476,7 +481,8 @@ def run_analyser_chunked(
         return asyncio.run(analyse_chunked(
             chunk, invoke_fn=invoke_fn, typist_invoke_fn=typist_invoke_fn,
             inventory_fn=inventory_fn,
-            write_fn=write_fn, checkpointer=checkpointer, store=store, observe=observe,
+            write_fn=write_fn, checkpointer=checkpointer, store=store,
+            auth_store=auth_store, observe=observe,
         )).export
 
 
@@ -490,6 +496,7 @@ async def analyse_chunked(
     checkpointer=None,
     store=None,
     session_checkpointer=None,
+    auth_store=None,
     observe: bool = True,
 ) -> "PassResult":
     """The CHUNK-FED analyser (#34, completed by #48, payload-fed by #74): consume
@@ -508,7 +515,12 @@ async def analyse_chunked(
 
     Every collaborator is injectable; the defaults are the live ones. Fail-open
     throughout: a read, LLM or write failure degrades that step, never the run.
-    Returns a `PassResult` carrying the export AND the census of what was observed."""
+    Returns a `PassResult` carrying the export AND the census of what was observed.
+
+    `auth_store` (#364) is the auth-store handle threaded into BOTH roles'
+    stateful seams (production leaves it None; the store then resolves lazily
+    inside the tool factory, exactly like the recon binding), so each turn binds
+    the read-only auth view beside its surface tools."""
     from polymerhus.analysis.assigner import make_assigner_body
     from polymerhus.analysis.assigner import stateful_invoke_fn as assigner_stateful_invoke_fn
     from polymerhus.analysis.chunking import admit_for_role, chunks_for_job
@@ -579,8 +591,10 @@ async def analyse_chunked(
     # Tests inject `session_checkpointer` (an isolated `InMemorySaver`); an explicitly
     # injected `invoke_fn`/`typist_invoke_fn` still wins.
     session_cp = session_checkpointer if session_checkpointer is not None else get_session_checkpointer()
-    invoke_fn = invoke_fn or assigner_stateful_invoke_fn(run_id, session_cp, project_id)
-    typist_invoke_fn = typist_invoke_fn or typist_stateful_invoke_fn(run_id, session_cp, project_id)
+    invoke_fn = invoke_fn or assigner_stateful_invoke_fn(
+        run_id, session_cp, project_id, auth_store=auth_store)
+    typist_invoke_fn = typist_invoke_fn or typist_stateful_invoke_fn(
+        run_id, session_cp, project_id, auth_store=auth_store)
 
     assigner_inner = make_assigner_body(invoke_fn=invoke_fn, inventory_fn=inventory_fn)
 

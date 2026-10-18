@@ -558,12 +558,17 @@ def default_invoke_fn():
     return invoke
 
 
-def stateful_invoke_fn(run_id: str, checkpointer, project_id: str | None = None):
+def stateful_invoke_fn(run_id: str, checkpointer, project_id: str | None = None,
+                       auth_store=None):
     """The STATEFUL Assigner call (#94): the `assigner` role runs as a session on its
     own per-run thread (`AnalysisSession(run_id, "assigner")`, distinct from every
     other agent's thread), reset at each chunk boundary. Structured output is
     `L1DeltaBatch` (#44-safe). Same `(messages)` shape as
     the legacy seam, so `make_assigner_body` is unchanged.
+
+    `auth_store` is the injectable auth-store handle (#364): the read-only
+    auth view binds it on every turn. None resolves the production store lazily
+    inside the tool factory, exactly like the recon binding.
 
     The role prompt is bound ONCE as the agent's ephemeral leading block (the
     converged seam, `proposer_turn.session_invoke_fn`), so it is the stable prefix of
@@ -581,7 +586,7 @@ def stateful_invoke_fn(run_id: str, checkpointer, project_id: str | None = None)
     config degrades the profile/window, never the session."""
     from polymerhus.analysis.proposer_turn import session_invoke_fn
 
-    return session_invoke_fn("assigner", run_id, checkpointer, project_id)
+    return session_invoke_fn("assigner", run_id, checkpointer, project_id, auth_store)
 
 
 def make_assigner_body(*, invoke_fn, inventory_fn):
