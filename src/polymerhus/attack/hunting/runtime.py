@@ -508,17 +508,34 @@ async def _run_intake(
     from polymerhus.attack.hunting.unit_intake import read_intake  # noqa: PLC0415
 
     store = getattr(tools, "threat_store", None)
+    persisted: dict = dict(record or {})
 
     async def _write_record() -> None:
+        nonlocal persisted
         if record_fn is None:
             return
+        current = run.record()
         try:
-            await record_fn(run.record())
+            await record_fn(current)
+            persisted = current
         except Exception as exc:  # noqa: BLE001 - fail-open: the run continues
             logger.warning(
                 "hunting run %s: run-record write failed (%s); the total stays "
                 "re-derivable from the models on disk", run_id, exc,
             )
+
+    async def _write_record_if_changed() -> None:
+        """Persist the record only when a fixed key moved (S2 9.2).
+
+        The unit loop writes the record after every unit, but a RESUME can
+        advance the state without a single loop iteration: its adoption may
+        recompute the total, adopt a model sum, cross the halt, or find the
+        intake already exhausted. Without this write the row would keep the
+        pre-crash record for a run that has moved on."""
+        current = run.record()
+        if any(current.get(key) != persisted.get(key)
+               for key in lifecycle.RUN_RECORD_KEYS):
+            await _write_record()
 
     threshold, basis = lifecycle.threshold_config()
     if record:
@@ -530,6 +547,7 @@ async def _run_intake(
             run_id, run.intake_position, len(run.intake_order), run.halt,
             run.accumulator.total,
         )
+        await _write_record_if_changed()
     else:
         units = (
             tuple(intake_units) if intake_units is not None
@@ -581,6 +599,10 @@ async def _run_intake(
                 run_id, run.crossing_unit, run.blocked_unit,
             )
             break
+    # The loop's last iteration already wrote the record; this covers the run
+    # that never entered it (an intake already exhausted, or a resume that
+    # halted on adoption) and any post-loop state change.
+    await _write_record_if_changed()
     return outcomes, run
 
 

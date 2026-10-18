@@ -128,6 +128,44 @@ def test_read_intake_counts_every_l1_edge_in_both_directions():
     assert params["project_id"] == PROJECT
 
 
+def test_the_endpoint_count_ranges_over_every_aggregates_out_edge():
+    """S1 7.2: the tie-break reads the unit's `AGGREGATES` OUT-edges, so the
+    count must not narrow the target to the L0 `:Endpoint` label (the repo's
+    other aggregate reads range over the family alone)."""
+    seen: list[str] = []
+
+    def read(cypher, params):
+        seen.append(cypher)
+        return []
+
+    read_intake(PROJECT, read_fn=read)
+
+    assert len(seen) == 2                 # the unit read and the adjacency read
+    for cypher in seen:
+        assert "AGGREGATES" in cypher
+        assert ":Endpoint" not in cypher, (
+            "the AGGREGATES count must not narrow the target label"
+        )
+
+
+def test_the_system_adjacency_read_is_filtered_by_the_live_families():
+    """S1 7.2: a System's endpoint count sums the Services connected by a LIVE L1
+    edge - the adjacency read carries the family filter in its cypher AND the
+    live family set as its parameter (a retired family must never contribute)."""
+    seen: list[tuple[str, dict]] = []
+
+    def read(cypher, params):
+        seen.append((cypher, dict(params or {})))
+        return []
+
+    read_intake(PROJECT, read_fn=read)
+
+    adjacency_cypher, adjacency_params = seen[1]
+    assert "s:L1Service" in adjacency_cypher
+    assert "type(r) IN $families" in adjacency_cypher
+    assert adjacency_params["families"] == sorted(LIVE_L1_FAMILIES)
+
+
 def test_read_intake_fails_open_to_an_empty_intake():
     """S1 5.7 / the read contract: a degraded L1 read degrades the intake to the
     empty set with a warning, never a raise into the run."""
@@ -192,17 +230,77 @@ def test_freeze_intake_excludes_completed_and_in_flight_units():
     assert plan.archived == ()
 
 
+def test_a_stopped_producing_run_is_resumable_so_its_model_is_in_flight():
+    """S1 7.5 / S2 9.3: a `stopped` run resumes from the persisted run record, so
+    its produced model is IN FLIGHT - the new run skips the unit and never
+    archives the stopped run's model. `complete` / `failed` stay terminal and
+    not resumable, so only their stale models are archived."""
+    archived: list[str] = []
+
+    plan = freeze_intake(
+        [_unit("Service:a", live_edges=2)],
+        produced=[{"unit_id": "Service:a", "run_id": "stopped-run"}],
+        run_statuses={"stopped-run": "stopped"},
+        archive_fn=lambda unit_id, reason: archived.append(unit_id) or "moved",
+    )
+
+    assert plan.order == ()
+    assert [(entry.unit_id, entry.reason) for entry in plan.excluded] == [
+        ("Service:a", "in-flight")]
+    assert plan.archived == ()
+    assert archived == []
+
+
+def test_the_freeze_records_only_archives_that_actually_moved():
+    """S2 9.3: `IntakePlan.archived` names the units whose stale produced model
+    MOVED to `abandoned/`. A store that reports nothing to move, and a freeze
+    with no archive seam, are not archives - and a FAILED archive leaves the
+    stale model in place, so the unit is not retried into it."""
+    units = [_unit("Service:a", live_edges=1)]
+    produced = [{"unit_id": "Service:a", "run_id": "dead-run"}]
+    statuses = {"dead-run": "complete"}
+
+    no_seam = freeze_intake(units, produced=produced, run_statuses=statuses)
+    assert no_seam.order == ("Service:a",)
+    assert no_seam.archived == ()
+
+    nothing_moved = freeze_intake(
+        units, produced=produced, run_statuses=statuses,
+        archive_fn=lambda unit_id, reason: None)
+    assert nothing_moved.order == ("Service:a",)
+    assert nothing_moved.archived == ()
+
+    moved = freeze_intake(
+        units, produced=produced, run_statuses=statuses,
+        archive_fn=lambda unit_id, reason: f"abandoned/{unit_id}")
+    assert moved.order == ("Service:a",)
+    assert moved.archived == ("Service:a",)
+
+    def _explode(unit_id, reason):
+        raise OSError("disk full (fixture)")
+
+    failed = freeze_intake(
+        units, produced=produced, run_statuses=statuses, archive_fn=_explode)
+    assert failed.order == ()          # never retried into a stale model
+    assert failed.archived == ()
+
+
 def test_a_stale_produced_model_of_a_terminal_run_is_archived_and_retried():
     """S2 9.3: when the producing run is terminal and not resumable, the intake
     moves the stale produced directory to `abandoned/` and retries the unit -
     the unit stays in the intake order."""
     archived: list[tuple[str, str]] = []
 
+    def _archive(unit_id: str, reason: str) -> str:
+        """The store's archive seam: it MOVED the directory (a non-None path)."""
+        archived.append((unit_id, reason))
+        return f"abandoned/{unit_id}"
+
     plan = freeze_intake(
         [_unit("Service:a", live_edges=2)],
         produced=[{"unit_id": "Service:a", "run_id": "old-run"}],
         run_statuses={"old-run": "complete"},
-        archive_fn=lambda unit_id, reason: archived.append((unit_id, reason)),
+        archive_fn=_archive,
     )
 
     assert plan.order == ("Service:a",)

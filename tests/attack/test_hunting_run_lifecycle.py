@@ -90,15 +90,14 @@ def _resume_fake(record: dict) -> _FakePg:
     return fake
 
 
-def _write_completed_model(models: ThreatModelStore, unit_id: str) -> None:
+def _write_completed_model(models: ThreatModelStore, unit_id: str,
+                           *, run_id: str = "earlier-run") -> None:
     """Drive the REAL store to a COMPLETED, valid model for `unit_id` through
     its five gates (the shared worked example: one `high` loop)."""
-    from polymerhus.attack.hunting.threat_model import ModelState
-
     from tests.hunting_fixtures import modeller_gate_payloads
 
     for state, sections in modeller_gate_payloads().items():
-        models.write_sections(PROJECT, unit_id, state, sections, run_id="earlier-run")
+        models.write_sections(PROJECT, unit_id, state, sections, run_id=run_id)
     assert models.read_model(PROJECT, unit_id)["state"] == ModelState.COMPLETED.value
 
 
@@ -532,3 +531,191 @@ def test_the_runtime_no_longer_selects_units_through_the_fault_source_path():
     for retired in ("candidates", "fault_entries", "match_fn", "unit_ids_fn"):
         assert retired not in parameters, f"{retired!r} is a retired seam"
     assert not hasattr(hunting_runtime, "transitional_unit_order")
+
+
+def test_a_stopped_runs_produced_model_is_in_flight_and_its_unit_is_skipped(
+        tmp_path, monkeypatch):
+    """S1 7.5 / S2 9.3: a `stopped` run is RESUMABLE (it resumes from the
+    persisted run record), so its produced model must be treated as in flight -
+    the next run SKIPS the unit and never archives (destroys) the stopped run's
+    model and its pending loop files."""
+    fake = _FakePg()
+    fake.statuses.append(("stopped-run", "stopped"))
+    _patch_pg(monkeypatch, fake)
+    hunt, hunter, models = _stores(tmp_path)
+    _write_completed_model(models, UNIT_A,
+                           run_id="stopped-run")   # the stopped run's model
+    seen: list[str] = []
+
+    async def recording_pass(project_id, run_id, unit_id, tools, **kwargs):
+        seen.append(unit_id)
+        return UnitOutcome(unit_id=unit_id, status="degraded")
+
+    asyncio.run(hunting_runtime.start_hunting(
+        PROJECT, run_id=RUN,
+        intake_units=_units((UNIT_A, 3), (UNIT_B, 1)),
+        modeller_pass_fn=recording_pass,
+        control=_FakeControl(),
+        hunt_store=hunt, hunter_store=hunter, threat_store=models,
+        hunter_builder=_noop_hunter_builder, pod_builder=_noop_pod_builder,
+        tick_interval=0.001,
+    ))
+
+    assert seen == [UNIT_B]                         # the stopped unit is skipped
+    record = fake.run_record(RUN)
+    assert record["intake_excluded"] == [
+        {"unit_id": UNIT_A, "reason": "in-flight"}]
+    # the stopped run's produced model SURVIVES: nothing was archived
+    assert models.read_abandoned_units(PROJECT) == []
+    assert models.read_model(PROJECT, UNIT_A)["state"] == ModelState.COMPLETED.value
+
+
+def test_a_resume_that_models_nothing_re_persists_the_recomputed_record(
+        tmp_path, monkeypatch):
+    """S1 7.5: a resume whose ADOPTION itself crosses the threshold halts before
+    the unit loop runs, so no loop iteration can write the record. The persisted
+    row must still carry the recomputed total, the adopted model sum and the
+    halt fields - the pre-crash record would otherwise read `risk_total=0` and
+    `halt=false` for a run that is already halted."""
+    fake = _resume_fake(_seed_record(
+        intake_order=[UNIT_A, UNIT_B],
+        intake_position=0,
+        risk_threshold=3,                 # one adopted `high` loop crosses it
+        threshold_basis="override",
+        risk_total=0,                     # stale: the record never updated
+        model_sums=[],
+    ))
+    _patch_pg(monkeypatch, fake)
+    hunt, hunter, models = _stores(tmp_path)
+    _write_completed_model(models, UNIT_A)       # committed before the crash
+
+    async def exploding_pass(project_id, run_id, unit_id, tools, **kwargs):
+        raise AssertionError(f"the halt must stop the dequeue at {unit_id}")
+
+    asyncio.run(hunting_runtime.start_hunting(
+        PROJECT, run_id=RUN,
+        modeller_pass_fn=exploding_pass,
+        control=_FakeControl(),
+        hunt_store=hunt, hunter_store=hunter, threat_store=models,
+        hunter_builder=_noop_hunter_builder, pod_builder=_noop_pod_builder,
+        tick_interval=0.001,
+    ))
+
+    record = fake.run_record(RUN)
+    assert record["risk_total"] == 3
+    assert [entry["unit_id"] for entry in record["model_sums"]] == [UNIT_A]
+    assert record["halt"] is True
+    assert record["crossing_unit"] == UNIT_A
+    assert record["blocked_unit"] == UNIT_B
+    assert record["intake_position"] == 1
+    assert fake.statuses[-1] == (RUN, "complete")
+
+
+class _RecordingPg(_FakePg):
+    """The wiring fake pg plus a shared event log: every record write lands as
+    `("record", <the model_sums unit ids it carries>)`, so a test can assert the
+    commit ORDER against the model writes."""
+
+    def __init__(self, events: list):
+        super().__init__()
+        self.events = events
+
+    def set_hunting_run_stats(self, hunting_run_id: str, stats: dict) -> None:
+        self.events.append((
+            "record",
+            tuple(entry["unit_id"]
+                  for entry in (stats or {}).get("model_sums") or []),
+        ))
+        super().set_hunting_run_stats(hunting_run_id, stats)
+
+
+class _RecordingStore:
+    """Wraps the real store and logs every gate write as
+    `("model", unit_id, gate)`; every other store call proxies."""
+
+    def __init__(self, inner, events: list):
+        self._inner = inner
+        self.events = events
+
+    def write_sections(self, project_id, unit_id, state, sections, *, run_id):
+        self.events.append(
+            ("model", unit_id, str(getattr(state, "value", state))))
+        return self._inner.write_sections(
+            project_id, unit_id, state, sections, run_id=run_id)
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+
+class _RaisingCompletedStore(_RecordingStore):
+    """The commit-order failure injection: the COMPLETED write raises, so the
+    model document never lands."""
+
+    def write_sections(self, project_id, unit_id, state, sections, *, run_id):
+        if str(getattr(state, "value", state)) == "COMPLETED":
+            self.events.append(("model-failed", unit_id, "COMPLETED"))
+            raise OSError("model commit failed (fixture)")
+        return super().write_sections(
+            project_id, unit_id, state, sections, run_id=run_id)
+
+
+def test_the_model_commits_before_the_run_record_on_every_unit(tmp_path, monkeypatch):
+    """S1 7.5 commit order: the model document commits BEFORE the run-record
+    update. The event log proves it per unit: each unit's COMPLETED write
+    precedes the record write that counts its sum, in intake order."""
+    events: list = []
+    fake = _RecordingPg(events)
+    _patch_pg(monkeypatch, fake)
+    hunt, hunter, models = _stores(tmp_path)
+    recording = _RecordingStore(models, events)
+
+    asyncio.run(hunting_runtime.start_hunting(
+        PROJECT, run_id=RUN,
+        intake_units=_units((UNIT_A, 2), (UNIT_B, 1)),
+        modeller_kwargs={"turn_fn": ScriptedModellerTurns()},
+        control=_FakeControl(),
+        hunt_store=hunt, hunter_store=hunter, threat_store=recording,
+        hunter_builder=_noop_hunter_builder, pod_builder=_noop_pod_builder,
+        tick_interval=0.001,
+    ))
+
+    for unit_id in (UNIT_A, UNIT_B):
+        commit = events.index(("model", unit_id, "COMPLETED"))
+        counted = next(
+            index for index, event in enumerate(events)
+            if event[0] == "record" and unit_id in event[1])
+        assert commit < counted, (
+            f"{unit_id}: the run record counted the unit before its model "
+            f"committed ({events})"
+        )
+    assert events.index(("model", UNIT_A, "COMPLETED")) < events.index(
+        ("model", UNIT_B, "COMPLETED"))
+
+
+def test_a_failed_model_commit_is_never_counted_in_the_run_record(
+        tmp_path, monkeypatch):
+    """The commit order's failure injection: when the COMPLETED write raises the
+    model never lands, so the run record must carry NO sum for that unit - an
+    order that recorded the sum first would claim a model that does not exist."""
+    events: list = []
+    fake = _RecordingPg(events)
+    _patch_pg(monkeypatch, fake)
+    hunt, hunter, models = _stores(tmp_path)
+    recording = _RaisingCompletedStore(models, events)
+
+    asyncio.run(hunting_runtime.start_hunting(
+        PROJECT, run_id=RUN,
+        intake_units=_units((UNIT_A, 1)),
+        modeller_kwargs={"turn_fn": ScriptedModellerTurns()},
+        control=_FakeControl(),
+        hunt_store=hunt, hunter_store=hunter, threat_store=recording,
+        hunter_builder=_noop_hunter_builder, pod_builder=_noop_pod_builder,
+        tick_interval=0.001,
+    ))
+
+    assert ("model-failed", UNIT_A, "COMPLETED") in events
+    record = fake.run_record(RUN)
+    assert record["model_sums"] == []
+    assert record["risk_total"] == 0
+    assert [entry["unit_id"] for entry in record["degraded_units"]] == [UNIT_A]
+    assert record["intake_position"] == 1

@@ -48,7 +48,8 @@ logger = logging.getLogger(__name__)
 LIVE_L1_FAMILIES: frozenset[str] = frozenset(SYSTEM_EDGE_RELS)
 
 # The L0-facing `AGGREGATES` hinge (S1 7.2): it is NOT an L1 edge - it feeds
-# the aggregated-endpoint tie-break only. The other L0-facing family,
+# the aggregated-endpoint tie-break only, counted over the unit's `AGGREGATES`
+# out-edges without narrowing the target label. The other L0-facing family,
 # `EVIDENCED_BY`, is never an L1 hop and so never even reaches the count.
 AGGREGATES_FAMILY = "AGGREGATES"
 
@@ -187,10 +188,20 @@ class IntakePlan:
 
 
 # The producing-run statuses that still hold a produced model (S2 9.3): a
-# `running` run is live, an `interrupted` run is the resumable terminal (#331 -
-# the earlier run must be resumed to drain its produced loops). Every other
-# status is terminal and not resumable, so its produced model is stale.
-RESUMABLE_RUN_STATUSES: frozenset[str] = frozenset({"running", "interrupted"})
+# `running` run is live, and `interrupted` (the resumable provider pause) and
+# `stopped` (the operator's deliberate end, which resumes from the persisted run
+# record, S1 7.5) are both RESUMABLE - the earlier run must be resumed to drain
+# its produced loops, so its model is in flight, never stale. A status we cannot
+# read (None) is treated as in flight too: the freeze never destroys a produced
+# model it cannot attribute.
+#
+# OWNED ELSEWHERE: the finer #331 derivation (`interrupted` with
+# `quota_exhausted=true` is terminal, `quota_exhausted=false` is resumable after
+# `retry_after_s`) belongs to the deferred #331 resume ticket; until it lands,
+# every `interrupted` run is treated as resumable.
+RESUMABLE_RUN_STATUSES: frozenset[str] = frozenset(
+    {"running", "interrupted", "stopped"}
+)
 
 
 def freeze_intake(
@@ -212,7 +223,10 @@ def freeze_intake(
       attribute.
     - A produced model whose producing run is terminal and not resumable is
       STALE: its unit directory moves to `abandoned/` (`archive_fn`) and the
-      unit is retried.
+      unit is retried. `archived` records ONLY the units that actually MOVED; a
+      failed archive leaves the stale model in place, so the unit is NOT retried
+      into it (a stale COMPLETED model would seed the retry's tracker and be
+      re-counted as if the run had modelled it).
     - An `abandoned/` model is ignored and the unit retried: the freeze does not
       read that family at all.
 
@@ -247,17 +261,30 @@ def freeze_intake(
             f"stale produced model: its producing run {run_id} is {status!r}, "
             f"terminal and not resumable; the unit is retried"
         )
-        if archive_fn is not None:
+        destination = None
+        if archive_fn is None:
+            logger.warning(
+                "unit intake: %s (no archive seam: the caller owns the stale "
+                "produced directory)", reason,
+            )
+        else:
             try:
-                archive_fn(unit.unit_id, reason)
+                destination = archive_fn(unit.unit_id, reason)
             except Exception as exc:  # noqa: BLE001 - the archive is best-effort
                 logger.warning(
                     "unit intake: archiving the stale produced model of %s "
-                    "failed (%s); the unit is still retried", unit.unit_id, exc,
+                    "failed (%s); the unit is NOT retried this run (a stale "
+                    "model must never be modelled into)", unit.unit_id, exc,
                 )
                 continue
-        archived.append(unit.unit_id)
-        logger.warning("unit intake: %s", reason)
+            if destination is None:
+                logger.warning(
+                    "unit intake: the archive of %s reported nothing to move; "
+                    "the unit is retried", unit.unit_id,
+                )
+            else:
+                archived.append(unit.unit_id)
+                logger.warning("unit intake: %s", reason)
         kept.append(unit)
     return IntakePlan(
         order=tuple(unit.unit_id for unit in kept),
@@ -290,7 +317,7 @@ def read_intake(project_id: str, *, read_fn=None) -> tuple[IntakeUnit, ...]:
             "WHERE type(r) IN $families "
             "RETURN labels(u) AS labels, properties(u) AS props, "
             "collect(type(r)) AS edge_families, "
-            f"COUNT {{ (u)-[:{AGGREGATES_FAMILY}]->(:Endpoint) }} AS endpoints",
+            f"COUNT {{ (u)-[:{AGGREGATES_FAMILY}]->(e) }} AS endpoints",
             {"project_id": project_id, "families": sorted(LIVE_L1_FAMILIES)},
         )
         service_rows = read_fn(
@@ -300,7 +327,7 @@ def read_intake(project_id: str, *, read_fn=None) -> tuple[IntakeUnit, ...]:
             "WHERE type(r) IN $families AND s.project_id = $project_id "
             "RETURN u.kind AS kind, u.discriminator AS disc, "
             "s.business_function_slug AS slug, "
-            f"COUNT {{ (s)-[:{AGGREGATES_FAMILY}]->(:Endpoint) }} AS endpoints",
+            f"COUNT {{ (s)-[:{AGGREGATES_FAMILY}]->(e) }} AS endpoints",
             {"project_id": project_id, "families": sorted(LIVE_L1_FAMILIES)},
         )
         # the mapper runs INSIDE the guard: a malformed row degrades the whole
