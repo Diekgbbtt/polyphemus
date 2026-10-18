@@ -30,7 +30,9 @@ skills-unspurious/<class>/<variant>/references/<name>.md   # only when a bulky p
 
 The nested path is the taxonomy target (`web-vulnerability-testing -> <class> -> <variant>`, folded under the parent class directory), as fixed by `docs/design/skills-taxonomy.md`.
 The name of a skill is precisely the leaf sub-directory holding its `SKILL.md`, and its frontmatter `name` equals it; the loader-facing identity is that flat leaf (rule R3 in the taxonomy spec).
-The loader is still flat; teaching it the nested path and the global uniqueness check is a later stream (W4), so the nested layout is not yet loadable.
+The nested layout is loadable (W4): the catalogue mount (`SkillCatalogue` in `src/polymerhus/app/llm/skills.py`) indexes this directory under the logical root and resolves a skill by its flat leaf name whichever group holds it, reports leaf names only, and refuses a duplicate name loudly, naming both colliding paths (rules R1-R4).
+`references/` and `scripts/` resolve inside the owning leaf, at level 1 or level 2 (rule R8).
+The mount never repoints the live catalogue root `skills/`, which other streams own; a caller follows a mount only by passing it.
 
 ## What is here
 
@@ -67,7 +69,8 @@ The loader is still flat; teaching it the nested path and the global uniqueness 
 - `graphql` produces no variants; it stands as one skill with no `## Variants` section (rule R10 in the taxonomy spec; the outlier confirmation is D-T8).
 - `two-principal-authz` is kept as a cross-cutting reference and excluded from the 29 decomposed classes; the taxonomy spec places it in a labelled cross-cutting group (rule R7).
 - The 30 parents are conformed to the ontology sections (`## Adversarial Capabilities`, `## Trust Assumptions`) per the B2 ruling recorded in `docs/design/skills-taxonomy-decisions.md` (D-T7); each parent gains a `## Variants` section, and `graphql` keeps its full body without one (D-T8).
-- The nested loader (W4) is required before this layout loads; it is out of scope for the W0+W1 completion stream.
+- The nested loader (W4) is implemented: the suite mounts as an index over this directory under the logical root `web-vulnerability-testing/`, resolves flat leaves, reports leaf names only, refuses duplicate names, and keeps the root out of every reported name (rules R1-R4 and R8 in the taxonomy spec).
+  The mount seam and its conformance tests are `SkillCatalogue` in `src/polymerhus/app/llm/skills.py` and `tests/recon/test_skill_catalogue.py`.
 - The taxonomy and naming spec is ratified as B1 (`docs/design/skills-taxonomy.md`, compiled from `docs/design/skills-taxonomy-decisions.md`); the `defence-bypass` and `proxy-techniques` families (#278) are authored per it (C1) and the classes are rewired to them (C2).
   The 70 leaves that do not yet carry their class prefix are normalisation debt (#372).
 - Suite enrichment from the local repositories runs as D1a-D1c.
