@@ -36,7 +36,11 @@ Write contract:
 - A name collision (S2 4.2): two distinct unit ids that sanitise to the same
   `<unit_name>` are disambiguated with `-<first 8 hex of sha256(unit_id)>` on
   the later name. The store checks the existing directory's model `unit_id`
-  before it writes; a mismatch triggers the suffix.
+  before it writes; a readable DIFFERENT id triggers the suffix. An empty
+  directory (a crash between the atomic write's parent mkdir and its replace)
+  is reused, and an UNREADABLE model document refuses with a coded error -
+  never a suffix (which would fork one unit into two directories) and never a
+  clobber (the identity is unknown).
 - The notes file uses the shared bounded whole-file primitive (`#341`); the
   model and loop files are single-model files and are not bounded records.
 - Every whole-file write routes through the shared atomic primitive (`#340`),
@@ -58,6 +62,7 @@ import os
 import re
 import shutil
 from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -151,6 +156,15 @@ def _loop_rank(stem: str) -> int:
     return int(suffix) if suffix.isdigit() else 0
 
 
+@dataclass(frozen=True)
+class _FamilyState:
+    """One family directory's read of a derived unit name (S2 4.2)."""
+
+    directory: bool
+    model: bool
+    unit_id: str | None
+
+
 class ThreatModelIdentityError(ValueError):
     """A write whose derivation input is missing or malformed (the coded
     teaching rejection of the store-write decisions). `fields` names the
@@ -182,6 +196,40 @@ class ThreatModelSchemaVersionError(ValueError):
 class UnitDirectoryCollisionError(ValueError):
     """Both the plain and the collision-suffixed unit names are held by a
     different unit id: writing would clobber another unit's model."""
+
+
+class ThreatModelDirectoryError(ValueError):
+    """A unit directory exists at the derived name and cannot be reused.
+
+    Its model document is unreadable (a truncated or hand-edited file), or the
+    produced/consumed/abandoned copies disagree on the unit id. The store
+    refuses the write: the collision suffix is reserved for a readable,
+    genuinely different unit id, and guessing a second directory would
+    silently fork one unit's model."""
+
+    def __init__(self, name: str):
+        super().__init__(
+            f"threat model store: unit directory {name!r} carries an unreadable "
+            f"model document or disagreeing unit ids; refusing to write rather "
+            f"than create a second directory for the same unit"
+        )
+        self.name = name
+
+
+class ThreatModelDocumentError(ValueError):
+    """An existing model document cannot be merged.
+
+    Its persisted `state` is not one of the five workflow gates (a corrupt or
+    foreign document). The store refuses with a coded error instead of a raw
+    pydantic/enum `ValueError`."""
+
+    def __init__(self, path: Path, state: Any):
+        super().__init__(
+            f"threat model store: {path} carries unknown state {state!r}; "
+            f"known: {tuple(member.value for member in ModelState)}"
+        )
+        self.path = path
+        self.state = state
 
 
 class ThreatModelStore(BoundedRecordStore):
@@ -243,31 +291,52 @@ class ThreatModelStore(BoundedRecordStore):
 
     # --- derived unit names (S2 4.2) -------------------------------------------
 
-    def _name_holder(self, project_id: str, name: str) -> tuple[str, str | None]:
-        """Whether `name` is free, held by one unit, or unsafe.
+    def _family_holder(self, project_id: str, name: str, family: str) -> _FamilyState:
+        """The ONE family-level read of a derived unit name (S2 4.2): whether
+        the directory exists, whether its model document exists, and the unit
+        id the document carries (`None` when unreadable or absent). Every name
+        scan and the archive both build on this primitive."""
+        directory = self._unit_dir(project_id, name, family)
+        if not directory.exists():
+            return _FamilyState(directory=False, model=False, unit_id=None)
+        path = directory / f"{name}.yaml"
+        if not path.exists():
+            return _FamilyState(directory=True, model=False, unit_id=None)
+        raw = self._load_raw(path)
+        unit_id = raw.get("unit_id") if raw is not None else None
+        if not isinstance(unit_id, str) or not unit_id:
+            return _FamilyState(directory=True, model=True, unit_id=None)
+        return _FamilyState(directory=True, model=True, unit_id=unit_id)
 
-        Returns `("free", None)`, `("self", unit_id)` when every existing
-        directory for the name carries the same unit id, or `("other",
-        None)` when a directory exists but is unreadable or carries a different
-        (or mixed) identity. Inspecting all families keeps a collision that
-        lands in consumed/ or abandoned/ from being re-used.
+    def _classify_name(self, project_id: str, name: str) -> tuple[str, str | None]:
+        """Classify one candidate name across all three families.
+
+        - `("free", None)`: no directory anywhere.
+        - `("empty", None)`: a directory exists but NO model document does (the
+          crash window between the atomic write's parent mkdir and its
+          `os.replace`): the name is reusable.
+        - `("held", unit_id)`: every existing model document carries the SAME
+          unit id - that unit owns the name.
+        - `("unreadable", None)`: a model document exists but is unreadable, or
+          the families disagree on the unit id: the identity is unknown, and
+          the caller must refuse rather than guess.
         """
         present = False
+        model_present = False
         found: set[str] = set()
         for family in _FAMILIES:
-            directory = self._unit_dir(project_id, name, family)
-            if not directory.exists():
-                continue
-            present = True
-            raw = self._load_raw(directory / f"{name}.yaml")
-            unit_id = raw.get("unit_id") if raw is not None else None
-            if isinstance(unit_id, str) and unit_id:
-                found.add(unit_id)
+            state = self._family_holder(project_id, name, family)
+            present = present or state.directory
+            model_present = model_present or state.model
+            if state.unit_id is not None:
+                found.add(state.unit_id)
         if not present:
             return "free", None
-        if len(found) == 1:
-            return "self", next(iter(found))
-        return "other", None
+        if not model_present:
+            return "empty", None
+        if len(found) != 1:
+            return "unreadable", None
+        return "held", next(iter(found))
 
     def _candidate_names(self, unit_id: str) -> tuple[str, str]:
         base = sanitise_unit_name(unit_id)
@@ -278,17 +347,23 @@ class ThreatModelStore(BoundedRecordStore):
 
         A name already held by THIS unit is reused (a retried write, a unit
         whose earlier copy lives in abandoned/ or consumed/); otherwise the
-        first free candidate is taken; a name held by another unit triggers the
-        hash suffix. Both candidates held by other units is a coded refusal.
+        first free or empty candidate is taken; a name held by another unit
+        triggers the hash suffix. An unreadable holder refuses with a coded
+        error - never a suffix (that would fork the unit's directory) and never
+        a clobber (the identity is unknown).
         """
         plain, suffixed = self._candidate_names(unit_id)
-        for name in (plain, suffixed):
-            holder, holder_id = self._name_holder(project_id, name)
-            if holder == "self" and holder_id == unit_id:
+        classified = {
+            name: self._classify_name(project_id, name) for name in (plain, suffixed)
+        }
+        for name, (kind, _) in classified.items():
+            if kind == "unreadable":
+                raise ThreatModelDirectoryError(name)
+        for name, (kind, holder) in classified.items():
+            if kind == "held" and holder == unit_id:
                 return name
-        for name in (plain, suffixed):
-            holder, _ = self._name_holder(project_id, name)
-            if holder == "free":
+        for name, (kind, _) in classified.items():
+            if kind in ("free", "empty"):
                 return name
         raise UnitDirectoryCollisionError(
             f"threat model store: both candidate directories {plain!r} and "
@@ -329,23 +404,31 @@ class ThreatModelStore(BoundedRecordStore):
 
     def read_loop_files(self, project_id: str, unit_id: str) -> list[dict]:
         """The unit's loop files in rank order: produced/ first, then
-        consumed/ (the produced-to-consumed move is per loop file). A missing
-        unit or a zero-loop model yields [] - a valid empty result, never a
-        failure. A malformed record is skipped fail-open (T4 owns the dispatch
+        consumed/. Returns [] unless the model is `COMPLETED` AND
+        `validation.valid` - S2 4.3: a loop file is never read for a model
+        whose state is not COMPLETED, so the crash window (loop files written,
+        the model document not yet committed) never surfaces as work. The
+        invalidity gate repeats the one consumability predicate (S2 10.5), so
+        an invalid COMPLETED model's files are never dispatched. A missing unit
+        or a zero-loop model yields [] - a valid empty result, never a failure.
+        A malformed loop record is skipped fail-open (T4 owns the dispatch
         refuse-and-log rule)."""
         with self._lock_for(project_id):
             for family in _READ_FAMILIES:
                 path = self._find_model_path(project_id, unit_id, family)
                 if path is None:
                     continue
+                raw = self._load_document(path)
+                if raw is None or not self._consumable(raw):
+                    return []
                 directory = path.parent
                 records: list[dict] = []
                 for loop_path in sorted(
                     directory.glob("loop-*.yaml"), key=lambda item: _loop_rank(item.stem)
                 ):
-                    raw = self._load_raw(loop_path)
-                    if raw is not None:
-                        records.append(raw)
+                    record = self._load_raw(loop_path)
+                    if record is not None:
+                        records.append(record)
                 return records
             return []
 
@@ -465,22 +548,7 @@ class ThreatModelStore(BoundedRecordStore):
                     found.add(unit_id)
             return sorted(found)
 
-    def _family_holder(
-        self, project_id: str, name: str, family: str
-    ) -> tuple[bool, str | None]:
-        """Whether one family directory exists and which unit id its model
-        carries (`None` when the directory is present but the model is
-        unreadable or carries no id)."""
-        directory = self._unit_dir(project_id, name, family)
-        if not directory.exists():
-            return False, None
-        raw = self._load_raw(directory / f"{name}.yaml")
-        unit_id = raw.get("unit_id") if raw is not None else None
-        if isinstance(unit_id, str) and unit_id:
-            return True, unit_id
-        return True, None
-
-    def archive_unit(self, project_id: str, unit_id: str, reason: str) -> Path:
+    def archive_unit(self, project_id: str, unit_id: str, reason: str) -> Path | None:
         """Move the unit's produced directory to abandoned/ (S2 7.7).
 
         The harness calls this for a degraded unit or a COMPLETED model whose
@@ -488,7 +556,11 @@ class ThreatModelStore(BoundedRecordStore):
         whose earlier attempt is already abandoned is REPLACED by the newest
         degraded copy - abandoned/ is a graveyard for debugging, not a history
         log, and it never carries two models for one unit. A consumed model is
-        never touched (it is decided). Returns the abandoned unit directory.
+        never touched (it is decided).
+
+        Returns the abandoned unit directory when one exists after the call
+        (moved now, or already archived); None when there is nothing to archive
+        or the unit's model is already decided in consumed/.
 
         `reason` is the harness-recorded degradation reason; it is logged here
         (the run record is the durable home of the degraded-unit findings).
@@ -497,31 +569,25 @@ class ThreatModelStore(BoundedRecordStore):
             produced_path = self._find_model_path(project_id, unit_id, "produced")
             if produced_path is None:
                 for name in self._candidate_names(unit_id):
-                    exists, holder = self._family_holder(project_id, name, "abandoned")
-                    if exists and holder == unit_id:
+                    state = self._family_holder(project_id, name, "abandoned")
+                    if state.directory and state.unit_id == unit_id:
                         return self._unit_dir(project_id, name, "abandoned")
                 if self._find_model_path(project_id, unit_id, "consumed") is not None:
                     logger.warning(
                         "threat model store: archive of %s skipped - its model "
                         "already lives in consumed/ (decided)", unit_id,
                     )
-                    return self._unit_dir(
-                        project_id, self._unit_name_for_write(project_id, unit_id),
-                        "abandoned",
-                    )
+                    return None
                 logger.warning(
                     "threat model store: archive of %s skipped - no produced "
                     "model to archive (%s)", unit_id, reason,
                 )
-                return self._unit_dir(
-                    project_id, self._unit_name_for_write(project_id, unit_id),
-                    "abandoned",
-                )
+                return None
             produced_name = produced_path.parent.name
             destination_name = None
             for name in (produced_name, *self._candidate_names(unit_id)):
-                exists, holder = self._family_holder(project_id, name, "abandoned")
-                if not exists or holder == unit_id:
+                state = self._family_holder(project_id, name, "abandoned")
+                if not state.directory or state.unit_id == unit_id:
                     destination_name = name
                     break
             if destination_name is None:
@@ -565,9 +631,19 @@ class ThreatModelStore(BoundedRecordStore):
 
     @staticmethod
     def _section_value(value: Any) -> Any:
-        """The JSON-safe section content: a typed section model or a raw dict."""
+        """The JSON-safe section content.
+
+        A typed section object (or a list of them) renders through
+        `model_dump(mode="json")`; a plain mapping or list payload passes
+        through for pydantic to validate, so T2 may send either form.
+        """
         if hasattr(value, "model_dump"):
             return value.model_dump(mode="json")
+        if isinstance(value, (list, tuple)):
+            return [
+                item.model_dump(mode="json") if hasattr(item, "model_dump") else item
+                for item in value
+            ]
         return value
 
     def write_sections(
@@ -637,7 +713,7 @@ class ThreatModelStore(BoundedRecordStore):
                 # unreadable body): never merge into a document we cannot read.
                 raise ThreatModelSchemaVersionError(model_path, self._raw_version(model_path))
             now = datetime.now(timezone.utc)
-            doc = self._merged_document(existing, unit_id, run_id, gate, sections, now)
+            doc = self._merged_document(existing, unit_id, run_id, gate, sections, now, model_path)
             self._commit(project_id, unit_name, doc, gate, now)
             return model_path
 
@@ -657,6 +733,7 @@ class ThreatModelStore(BoundedRecordStore):
         gate: ModelState,
         sections: Mapping[str, Any],
         now: datetime,
+        path: Path,
     ) -> PartialThreatModel:
         """The merged, parsed document: identity bound, sections applied, the
         state kept monotonic, and - at COMPLETED - the loops normalised and
@@ -674,7 +751,10 @@ class ThreatModelStore(BoundedRecordStore):
         else:
             doc = {key: value for key, value in existing.items()}
             doc["updated_at"] = now
-            persisted = ModelState(doc["state"])
+            try:
+                persisted = ModelState(doc["state"])
+            except (KeyError, ValueError) as exc:
+                raise ThreatModelDocumentError(path, doc.get("state")) from exc
             doc["state"] = max(persisted, gate, key=STATE_ORDER.__getitem__).value
         for key, value in sections.items():
             doc[key] = self._section_value(value)

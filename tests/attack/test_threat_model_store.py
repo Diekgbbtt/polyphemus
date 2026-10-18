@@ -23,6 +23,8 @@ from polymerhus.attack.hunting.threat_model import (
     check_completion,
 )
 from polymerhus.attack.hunting.threat_model_store import (
+    ThreatModelDirectoryError,
+    ThreatModelDocumentError,
     ThreatModelIdentityError,
     ThreatModelSchemaVersionError,
     ThreatModelStore,
@@ -335,6 +337,31 @@ def test_an_unknown_schema_version_refuses_to_load_and_never_migrates(tmp_path):
     assert document.read_bytes() == before  # no silent migration
 
 
+def test_a_persisted_document_with_an_unknown_state_is_a_coded_refusal(tmp_path):
+    store = ThreatModelStore(tmp_path)
+    name = "Service-catalogue-and-discovery"
+    unit_dir = tmp_path / PROJECT / "hunting" / "threat_modeller" / "produced" / name
+    unit_dir.mkdir(parents=True)
+    (unit_dir / f"{name}.yaml").write_text(
+        yaml.safe_dump({
+            "schema_version": 1,
+            "unit_id": UNIT,
+            "unit_kind": "service",
+            "run_id": RUN,
+            "created_at": "2026-10-18T00:00:00Z",
+            "updated_at": "2026-10-18T00:00:00Z",
+            "state": "BOGUS",
+        }),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ThreatModelDocumentError):
+        store.write_sections(
+            PROJECT, UNIT, "UNIT_TECHNICAL_SHARP",
+            {"technical_sharpening": _sharpening()}, run_id=RUN,
+        )
+
+
 # --- the COMPLETED write: loops, risk profile, validation --------------------
 
 def test_completed_ranks_loops_emits_one_file_per_non_none_loop(tmp_path):
@@ -416,6 +443,56 @@ def test_a_failing_model_write_after_the_loop_files_leaves_the_previous_state(
     assert model["validation"] is None
 
 
+def test_read_loop_files_is_empty_for_a_model_below_completed(tmp_path, monkeypatch):
+    # S2 4.3: a loop file is never read for a model whose state is not
+    # COMPLETED - the crash window leaves files on disk that must not surface
+    # as dispatch work
+    store = ThreatModelStore(tmp_path)
+    for state, sections in _sections_below_completed():
+        store.write_sections(PROJECT, UNIT, state, sections, run_id=RUN)
+    unit_name = "Service-catalogue-and-discovery"
+    produced = (
+        tmp_path / PROJECT / "hunting" / "threat_modeller" / "produced" / unit_name
+    )
+
+    def _fail_the_model_write(path, body):
+        if path.name == f"{unit_name}.yaml":
+            raise OSError("simulated crash between the loop files and the commit")
+        return _dump_yaml(path, body)
+
+    monkeypatch.setattr(store, "_dump_yaml_atomic", _fail_the_model_write)
+    with pytest.raises(OSError):
+        store.write_sections(PROJECT, UNIT, "COMPLETED", _completed_sections(), run_id=RUN)
+
+    assert (produced / "loop-1.yaml").exists()
+    assert store.read_loop_files(PROJECT, UNIT) == []
+
+
+def test_read_loop_files_is_empty_for_an_invalid_completed_model(tmp_path):
+    store = ThreatModelStore(tmp_path)
+    store.write_sections(
+        PROJECT, UNIT, "UNIT_TECHNICAL_SHARP",
+        {"technical_sharpening": _sharpening()}, run_id=RUN,
+    )
+    store.write_sections(
+        PROJECT, UNIT, "TRUST_ASSUMPTIONS_WRITTEN",
+        {"assumptions": [{**_assumptions()[0], "boundary_ref": ""}]}, run_id=RUN,
+    )
+    store.write_sections(
+        PROJECT, UNIT, "VULNERABILITIES_WRITTEN",
+        {"vulnerabilities": _vulnerabilities()}, run_id=RUN,
+    )
+    store.write_sections(PROJECT, UNIT, "COMPLETED", _completed_sections(), run_id=RUN)
+
+    produced = (
+        tmp_path / PROJECT / "hunting" / "threat_modeller" / "produced"
+        / "Service-catalogue-and-discovery"
+    )
+    assert (produced / "loop-1.yaml").exists()  # emitted, but never read
+    assert store.read_model(PROJECT, UNIT)["validation"]["valid"] is False
+    assert store.read_loop_files(PROJECT, UNIT) == []
+
+
 def test_a_lower_gate_write_deletes_the_orphan_loop_files(tmp_path, monkeypatch):
     store = ThreatModelStore(tmp_path)
     for state, sections in _sections_below_completed():
@@ -470,6 +547,51 @@ def test_completion_reports_missing_necessary_attributes(tmp_path):
     assert "trust_model.dynamic_state_trust.states" in validation["missing"]
     assert validation["unclosed"] == []
     assert validation["referential_errors"] == []
+
+
+def test_write_sections_accepts_typed_section_objects(tmp_path):
+    # T2 may bind either plain payloads or the schema's typed section objects
+    from polymerhus.attack.hunting.threat_model import (
+        FailureMode,
+        Loop,
+        TechnicalSharpening,
+        TrustModel,
+    )
+
+    store = ThreatModelStore(tmp_path)
+    store.write_sections(
+        PROJECT, UNIT, "UNIT_TECHNICAL_SHARP",
+        {"technical_sharpening": TechnicalSharpening.model_validate(_sharpening())},
+        run_id=RUN,
+    )
+    store.write_sections(
+        PROJECT, UNIT, "TRUST_MODELLED",
+        {"trust_model": TrustModel.model_validate(_trust_model())},
+        run_id=RUN,
+    )
+    store.write_sections(
+        PROJECT, UNIT, "TRUST_ASSUMPTIONS_WRITTEN",
+        {"assumptions": _assumptions()}, run_id=RUN,
+    )
+    store.write_sections(
+        PROJECT, UNIT, "VULNERABILITIES_WRITTEN",
+        {"vulnerabilities": _vulnerabilities()}, run_id=RUN,
+    )
+
+    store.write_sections(
+        PROJECT, UNIT, "COMPLETED",
+        {
+            "failure_modes": [FailureMode.model_validate(mode) for mode in _failure_modes()],
+            "loops": [Loop.model_validate(_loop("high"))],
+        },
+        run_id=RUN,
+    )
+
+    model = store.read_model(PROJECT, UNIT)
+    assert model["technical_sharpening"]["interface_agreements"][0]["id"] == "ia-1"
+    assert model["trust_model"]["trust_agreements"][0]["id"] == "ta-1"
+    assert model["validation"]["valid"] is True
+    assert [loop["id"] for loop in model["loops"]] == ["loop-1"]
 
 
 def test_completion_reports_referential_errors(tmp_path):
@@ -726,7 +848,62 @@ def test_archive_unit_moves_a_degraded_partial_model(tmp_path):
     assert store.read_abandoned_units(PROJECT) == [UNIT]
 
 
+def test_archive_returns_none_when_there_is_nothing_to_archive(tmp_path):
+    store = ThreatModelStore(tmp_path)
+
+    assert store.archive_unit(PROJECT, UNIT, "no model was ever written") is None
+
+    _write_to_completed(store)
+    assert store.consume_loop(PROJECT, UNIT, "loop-1") is True
+    assert store.read_completed_units(PROJECT) == [UNIT]
+    assert store.archive_unit(PROJECT, UNIT, "already decided") is None
+
+
 # --- the collision-safe unit name (S2 4.2) ------------------------------------
+
+def test_an_empty_produced_unit_directory_is_reused(tmp_path):
+    # a crash between the atomic write's parent mkdir and its os.replace
+    # leaves an empty unit directory; the identity is unknown, so the store
+    # must reuse the plain name rather than invent a suffixed sibling
+    store = ThreatModelStore(tmp_path)
+    root = _threat_modeller_root(tmp_path)
+    unit_dir = root / "produced" / "Service-catalogue-and-discovery"
+    unit_dir.mkdir(parents=True)
+
+    store.write_sections(
+        PROJECT, UNIT, "UNIT_TECHNICAL_SHARP",
+        {"technical_sharpening": _sharpening()}, run_id=RUN,
+    )
+
+    assert sorted(directory.name for directory in (root / "produced").iterdir()) == [
+        "Service-catalogue-and-discovery",
+    ]
+    assert (unit_dir / "Service-catalogue-and-discovery.yaml").exists()
+    assert store.read_model(PROJECT, UNIT)["unit_id"] == UNIT
+
+
+def test_a_corrupt_model_document_refuses_instead_of_suffixing(tmp_path):
+    # a truncated model file leaves an unknown identity at the derived name;
+    # the suffix is only for a readable DIFFERENT unit id, so the write must
+    # refuse with a coded error, never create a second directory
+    store = ThreatModelStore(tmp_path)
+    root = _threat_modeller_root(tmp_path)
+    unit_dir = root / "produced" / "Service-catalogue-and-discovery"
+    unit_dir.mkdir(parents=True)
+    (unit_dir / "Service-catalogue-and-discovery.yaml").write_text(
+        "unit_id: [not: a mapping", encoding="utf-8",
+    )
+
+    with pytest.raises(ThreatModelDirectoryError):
+        store.write_sections(
+            PROJECT, UNIT, "UNIT_TECHNICAL_SHARP",
+            {"technical_sharpening": _sharpening()}, run_id=RUN,
+        )
+
+    assert sorted(directory.name for directory in (root / "produced").iterdir()) == [
+        "Service-catalogue-and-discovery",
+    ]
+
 
 def test_two_unit_ids_that_sanitise_alike_get_distinct_unit_directories(tmp_path):
     colliding_a = "Service:alpha/beta"
@@ -806,6 +983,18 @@ def test_notes_are_bounded(tmp_path, monkeypatch):
     notes = store.read_notes(PROJECT)
 
     assert [note["body"] for note in notes] == ["body 3", "body 2", "body 1"]
+
+
+def test_the_note_kinds_match_the_patterns_single_source():
+    # The store keeps its own copy of the note-kinds vocabulary (S2 10.1: a
+    # store does not import another store's namespace), guarded against drift
+    # from the pattern's single source. `phase_summary` is the hunter's kind
+    # and is reserved for the hunter (S1 5.2), so it is never admitted here.
+    from polymerhus.attack.hunting.hunt_store import ProjectMemoryStore
+    from polymerhus.attack.hunting.threat_model_store import NOTE_KINDS
+
+    assert NOTE_KINDS == ProjectMemoryStore.NOTE_KINDS
+    assert "phase_summary" not in NOTE_KINDS
 
 
 # --- the exported risk contract (for T3) and the read defaults ----------------

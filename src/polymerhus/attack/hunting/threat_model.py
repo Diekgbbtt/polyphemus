@@ -384,13 +384,17 @@ def normalise_loops(loops: list[Loop]) -> list[Loop]:
 
 
 def _check_necessary(model: UnitThreatModel) -> list[str]:
-    """The fixed necessary-attribute set (S2 5.7), as dotted finding paths."""
+    """The fixed necessary-attribute set (S2 5.7), as dotted finding paths.
+
+    The boundary is a pydantic-validated `UnitThreatModel`: `unit_kind` and
+    the risk-factor values are already enum-checked by the schema, so no
+    finding can exist for them and none is emitted (the store rejects an
+    invalid shape at the write seam).
+    """
     missing: list[str] = []
     sharpening = model.technical_sharpening
     if not model.unit_id:
         missing.append("unit_id")
-    if not isinstance(model.unit_kind, UnitKind):
-        missing.append("unit_kind")
     if not sharpening.interface_agreements:
         missing.append("technical_sharpening.interface_agreements")
     if not sharpening.control_flows:
@@ -436,8 +440,6 @@ def _check_necessary(model: UnitThreatModel) -> list[str]:
     for loop in model.loops:
         if not loop.likelihood_rationale:
             missing.append(f"loop:{loop.id}.likelihood_rationale")
-        if not _valid_risk_factors(loop.risk_factors):
-            missing.append(f"loop:{loop.id}.risk_factors")
         if not loop.evidences:
             missing.append(f"loop:{loop.id}.evidences")
     weights = [RISK_WEIGHTS[loop.likelihood] for loop in model.loops]
@@ -448,22 +450,14 @@ def _check_necessary(model: UnitThreatModel) -> list[str]:
         missing.append("loops.ids")
     if model.risk_profile is None:
         missing.append("risk_profile")
-    elif model.risk_profile != compute_risk_profile(model.loops):
-        if model.risk_profile.total != compute_risk_profile(model.loops).total:
-            missing.append("risk_profile.total")
-        if model.risk_profile.breakdown != compute_risk_profile(model.loops).breakdown:
-            missing.append("risk_profile.breakdown")
+    else:
+        expected = compute_risk_profile(model.loops)
+        if model.risk_profile != expected:
+            if model.risk_profile.total != expected.total:
+                missing.append("risk_profile.total")
+            if model.risk_profile.breakdown != expected.breakdown:
+                missing.append("risk_profile.breakdown")
     return missing
-
-
-def _valid_risk_factors(factors: RiskFactors) -> bool:
-    """The four risk factors must carry the CVSS v4.0 metric value sets."""
-    return (
-        isinstance(factors.attack_vector, AttackVector)
-        and isinstance(factors.attack_requirements, AttackRequirements)
-        and isinstance(factors.privileges_required, PrivilegesRequired)
-        and isinstance(factors.complexity, Complexity)
-    )
 
 
 def _check_references(model: UnitThreatModel) -> list[str]:
@@ -576,6 +570,12 @@ def check_completion(
     findings; `valid` is true only when the model parsed and all three finding
     lists are empty. The stored risk profile is REGRESSION-checked against a
     fresh recomputation from the loops, never trusted.
+
+    The boundary is a pydantic-validated `UnitThreatModel`, so
+    `Validation.parseable` is always true here: the store rejects an
+    unparseable write at the write seam (S1 6.6) before any model reaches the
+    checker. The flag stays on the record so a later caller that validates a
+    raw document can report a parse failure without a schema change.
     """
     missing = _check_necessary(model)
     referential_errors = _check_references(model)
