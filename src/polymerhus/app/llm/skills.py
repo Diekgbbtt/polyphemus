@@ -1090,7 +1090,11 @@ class SkillStore:
             "description": source["description"],
             "metadata": {"version": version},
         }
-        return _dump_frontmatter(composed) + _strip_frontmatter(body), previous_version, version
+        return (
+            _dump_frontmatter(composed) + _strip_frontmatter(body),
+            previous_version,
+            version,
+        )
 
     def _bundle_version(self, project_id: str, skill: str) -> str:
         """The bundle's current version through the same seam the loader uses

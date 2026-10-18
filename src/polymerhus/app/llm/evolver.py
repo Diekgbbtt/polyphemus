@@ -274,7 +274,9 @@ class EvolutionPassStore:
         )
         return record
 
-    def discard(self, project_id: str, pass_id: str, *, launched_at: str | None = None) -> None:
+    def discard(
+        self, project_id: str, pass_id: str, *, launched_at: str | None = None
+    ) -> None:
         """Drop the slot's record on a refused launch. With `launched_at`
         given, only a record still carrying that launch stamp is dropped, so a
         refused launch never removes a newer pass's record."""
