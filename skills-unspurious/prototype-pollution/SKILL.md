@@ -1,126 +1,177 @@
 ---
 name: prototype-pollution
 description: Client and server prototype pollution testing covering JavaScript object merge bugs, Node.js RCE chains, and filter bypasses
+metadata:
+  version: 1.0.0
 ---
 
 # Prototype Pollution
 
-Prototype pollution corrupts shared object prototypes (`Object.prototype`, `Array.prototype`, etc.), leading to application logic bypass, denial of service, and - on Node.js - remote code execution via gadget chains. Test anywhere user input merges into objects without safe key filtering.
+Prototype pollution corrupts shared object prototypes through unsafe merges of user-controlled keys, which leads to logic bypass, denial of service, and remote code execution on runtimes with consuming sinks. Test anywhere user input merges into objects without safe key filtering.
 
 ## Attack Surface
 
-**Languages & Runtimes**
-- JavaScript/TypeScript (browser and Node.js)
-- JSON parsers that preserve `__proto__`, `constructor`, `prototype` keys
-- Server-side template engines and config merge utilities
+**Runtimes**
+- Browser-consumed objects and server-side runtimes that share prototype-based objects
+- Structured parsers that preserve prototype-shaped keys
+- Template engines and configuration merge utilities
 
 **Input Vectors**
-- JSON request bodies, query strings, multipart form fields
-- URL-encoded nested objects (`__proto__[key]=value`)
-- WebSocket messages, GraphQL variables, file import formats (JSON, YAML)
+- Structured request bodies, query strings, and form fields
+- Encoded nested objects in parameter notation
+- Socket messages, schema-layer variables, and import formats
 
 **Vulnerable Patterns**
-- Deep merge/extend: `lodash.merge`, `jQuery.extend`, custom `Object.assign` loops
-- Query parsers: `qs`, `body-parser` with nested object support
-- Client-side routing, state hydration, analytics SDK config merges
+- Recursive merge and extend helpers: deep merge functions, framework extend calls, custom assign loops
+- Query and body parsers that build nested objects from bracketed keys
+- Routing, state hydration, and SDK configuration merges that consume shared defaults
+- Stored inputs that a later job, export pipeline, or render path merges
+
+## Reconnaissance
+
+### Merge-Point Discovery
+
+- Trace every extend, merge, defaults, deep-copy, and configuration-merge call that consumes user-influenced data
+- Note parsers that build nested structures from bracketed or dotted keys
+- Note stored inputs that a background job or export merges second-order
+
+### Baseline Canary
+
+- Send a benign pollution marker under a unique key, then read an unrelated object, a later request, or a rendering path for the marker
+- Verify through response behavior, error text, or a follow-up read that shares the object state
+- A marker that never lands marks a safe merge; a marker that lands marks the candidate surface
+
+### Shape and Channel Matrix
+
+- Enumerate the key-shape families accepted per carrier: prototype-key forms, constructor-chain forms, and encoded nested forms
+- Send the same marker over each carrier the endpoint accepts and record which merges it
+
+## Detection Channels
+
+- Follow-up reads prove corruption when a marker set through one input becomes observable through a later request or an unrelated object.
+- Routing shifts signal effect when navigation, route guards, or view selection behave differently after the marker is sent.
+- Auth-interface shifts signal effect when privilege-gated controls render, unlock, or disappear once the marker lands.
+- Rendering shifts signal effect when markup, script-loader behavior, or configuration-driven output changes in a way tied to the marker.
+- Response deltas signal effect when status codes, error text, or timing shift after the marker is sent.
+- Template output shifts signal effect when rendered server output carries the marker or a computed result tied to it.
+- Out-of-band effects prove execution when a delay or a created artifact shows a process-spawning sink consumed the polluted property.
+
+## Adversarial Capabilities
+
+Prototype pollution testing presupposes a merge path that consumes user-controlled keys, a marker channel, and a consuming gadget, and it consumes all three.
+- Reach a merge, extend, or configuration path that consumes attacker-shaped keys.
+- Deliver the same key shape over every carrier the endpoint accepts.
+- Observe shared object state through an unrelated read, a later request, or a rendering path.
+- Enumerate the dependency inventory where white-box access exists and match polluted keys to consuming sinks.
+- Hold a privilege contrast where a polluted flag changes an authorization outcome.
+
+## Trust Assumptions
+
+The class rests on one agreement: objects are built from the application's own defaults, and caller-supplied keys never reach the shared prototype.
+The agreement holds merged input to own, application-chosen keys, holds shared prototypes frozen or absent from merge paths, holds consuming gadgets to properties the application set itself, and holds every carrier class to the same key filtering.
+Sensitive logic and execution position leak when a caller-supplied key lands on a shared prototype that a consuming gadget reads.
+Each variant breaks one clause at a different consumer: browser-side routing, rendering, and privilege consumers, or server-side template and process-spawning consumers.
 
 ## Key Vulnerabilities
 
-### Client-Side Prototype Pollution
+### Client-Side Effects
 
-**Gadget Effects**
-- Bypass auth checks reading `user.isAdmin` when polluted on prototype
-- DOM XSS via polluted properties consumed by `innerHTML`, `document.write`, script loaders
-- Cookie/session manipulation if app reads config from polluted defaults
+- Privilege flags read from shared defaults grant UI or route access once polluted
+- Markup and script-loader sinks consume polluted properties and reach script execution
+- Routing, analytics, and SDK configuration read polluted defaults and change behavior
+- Trusted-content channels that also merge keys carry the same class
 
-**Payload Shapes**
-```json
-{"__proto__": {"isAdmin": true}}
-{"constructor": {"prototype": {"isAdmin": true}}}
-{"__proto__.polluted": "yes"}
-```
+### Server-Side Merge Sinks
 
-**URL-encoded (qs-style)**
-```
-?__proto__[isAdmin]=true
-?constructor[prototype][isAdmin]=true
-```
+- Deep merge and extend helpers that recurse into attacker-controlled structured input
+- Body and query parsers that construct nested objects from bracketed keys
+- Document loaders that honour prototype keys rather than constructing keyless objects
+- Parse-then-merge patterns that copy attacker input onto shared state
 
-### Server-Side Prototype Pollution (Node.js)
+### Process and Template Chains
 
-**Common Sinks**
-- `lodash.merge`, `lodash.defaultsDeep`, `deep-extend`, `merge-options`
-- Express/query parsers accepting nested objects
-- YAML `load()` (not `safeLoad`) with prototype keys
-- JSON.parse → merge into existing object without null prototype
+- Polluted properties consumed by template rendering reach expression evaluation
+- Environment-like properties consumed by process spawners reach command execution
+- Module-resolution and require-path properties can redirect loading when polluted
+- Gadget availability is inventory-specific: confirm the consuming sink and its version before claiming execution
 
-**RCE Gadget Chains (Node.js)**
-Pollute properties consumed by child_process, template engines, or require paths:
-```json
-{"__proto__": {"shell": "/proc/self/exe", "argv0": "node", "NODE_OPTIONS": "--require /tmp/evil.js"}}
-{"__proto__": {"outputFunctionName": "x;process.mainModule.require('child_process').execSync('id')//"}}
-```
+### Freeze and Seal Gaps
 
-Gadget availability depends on package versions - enumerate `node_modules` in white-box scans.
+- Pollution before a freeze applies to the instance but not the prototype it inherits from
+- Objects created after the merge inherit the polluted property without further input
 
-### Filter Bypasses
+## Advanced Techniques
 
-**Key Sanitization Bypasses**
-- Unicode normalization: `__proto__` variants, fullwidth underscores
-- Nested forms: `constructor.prototype` instead of `__proto__`
-- Array pollution: `__proto__[0]`, `[].__proto__`
-- JSON `$` or `.` keys in some parsers (MongoDB-style operators overlap - see nosql_injection skill)
+**Second-Order and Stored Pollution**
+- Store the marker through a normal write, then trigger the merge in a background job, export, or report pipeline
+- Stored forms survive restarts of the request path and reach consumers the request never touches
 
-**Freeze/Seal Gaps**
-- Pollution before `Object.freeze` on instance but not prototype
-- Pollution affecting newly created objects after merge
+**Split and Layered Delivery**
+- Split the key shape across several parameters that merge sequentially into one object
+- Layer encoding around the key so the parser unwraps one layer and the merge unwraps the next
+
+## Bypass Techniques
+
+**Key Shaping**
+- Substitute one prototype-key form for another when a filter removes only the obvious one
+- Chain through the constructor path when the direct prototype key is filtered
+- Nested and encoded forms that unwrap after the filter stage
+
+**Carrier Switching**
+- Move the same marker between structured body, form fields, query string, and socket messages
+- Bracket and dotted notation where parsers disagree on which is the key
+
+**Filter Gaps**
+- Array and index shapes that reach the prototype through a different path
+- Normalization variants of the key that compare unequal to a filter list
+- Second-order delivery where the stored form merges after the filter stage
+
+## Chaining Attacks
+
+- Pollution to markup-sink execution on the client
+- Pollution to template evaluation or process spawn on the server
+- Pollution plus schema-layer variables where a resolver passes variables into a merge
+- Pollution plus decoding of untrusted blobs where a decoded object graph merges into shared state
+- Pollution plus shared caches where polluted defaults carry into rendered output
 
 ## Testing Methodology
 
-1. **Identify merge points** - Search for extend/merge/defaults/deep copy on user-controlled objects
-2. **Baseline probe** - Inject benign pollution marker:
-   ```json
-    {"__proto__": {"ppPolluted": "yes"}}
-   ```
-   Verify via response behavior, error messages, or follow-up request reading shared state
-3. **Shape variants** - Test `__proto__`, `constructor.prototype`, nested bracket notation
-4. **Channel matrix** - JSON body, query string, multipart, WebSocket for same endpoint
-5. **Gadget hunting (Node.js)** - Map polluted keys to sinks in dependency tree (ejs, pug, handlebars, child_process wrappers)
-6. **Client-side** - Check if polluted properties affect routing, auth UI, or DOM sinks
+1. **Identify merge points** - Search for extend, merge, defaults, and deep-copy calls on user-controlled objects
+2. **Baseline canary** - Inject a benign marker under a unique key and verify it lands on shared state
+3. **Shape variants** - Test prototype-key, constructor-chain, and nested bracket notation
+4. **Channel matrix** - Send the same key over each carrier the endpoint accepts
+5. **Gadget mapping** - Map polluted keys to consuming sinks in the dependency inventory: template, process, routing
+6. **Consumer proof** - Confirm the effect at the consumer (routing change, rendering change, execution artifact) rather than at the key echo
+
+## Variants
+
+- prototype-pollution-client-side - Turn merged keys into browser-consumed routing, auth, and rendering effects, proved through unrelated reads and interface shifts.
+- prototype-pollution-server-side - Turn merged keys into server template and process-spawning sink execution, proved through follow-up reads plus out-of-band effects.
 
 ## False Positives
 
-- Parser strips `__proto__` before merge - marker property never appears on prototype
-- Framework uses `Object.create(null)` for options objects throughout
-- Polluted key visible in JSON echo but never merged into object graph
-- Client-side pollution blocked by frozen prototypes in modern hardened libraries (verify no behavioral change)
-- WAF blocks payload but alternate encoding also blocked consistently
-
-## Bypass Methods
-
-- Switch from `__proto__` to `constructor[prototype]` when only one is filtered
-- Use array notation: `__proto__[key]`, `[].__proto__.key`
-- Content-type switching: JSON vs `application/x-www-form-urlencoded` vs multipart
-- Split pollution across multiple parameters merged sequentially
-- Second-order pollution: store payload, trigger merge in background job or export pipeline
+- The parser strips prototype-shaped keys before the merge, so the marker never appears on the shared prototype
+- Options objects are constructed with no prototype throughout
+- The polluted key is visible in a structured echo but never merged into an object graph
+- Client-side pollution blocked by frozen prototypes in hardened consumers - verify there is no behavioral change
+- A payload filter blocks the probe and alternate encodings reproduce the filter rather than the pollution
 
 ## Pro Tips
 
-1. Always verify pollution with a unique canary key (`ppPolluted_<random>`) before attempting RCE gadgets
-2. In white-box scans, grep for `merge`, `extend`, `defaultsDeep`, `assign` with user input
-3. Check both request parsing and response template config merges (second-order)
-4. Node gadget chains are version-specific - confirm package version before claiming RCE
-5. Combine with client-side template injection if polluted keys flow into rendering config
+1. Verify pollution with a unique canary key before attempting any execution gadget
+2. In white-box scope, grep for merge, extend, defaults, and assign calls that consume user input
+3. Check both request parsing and response-side configuration merges; second-order merges are easy to miss
+4. Server gadget chains are version-specific - confirm the package version before claiming execution
+5. Combine with template injection when polluted keys flow into rendering configuration
+6. Prefer the consumer effect as proof: a routing change, an interface shift, or an execution artifact beats a reflected marker
 
 ## Tooling
 
-Detection is mostly about payload shapes (above) plus manual verification with present arsenal tools.
-
-- **Param spraying** - No dedicated prototype-pollution fuzzer is installed, so spray the URL/param shapes across many endpoints with `ffuf` or a small `python3`/`curl` loop keyed on a canary property and check each response for the pollution effect.
-- **BlackFan `client-side-prototype-pollution`** - not a tool but the canonical **gadget reference**: maps polluted keys to concrete DOM-XSS sinks per library (jQuery, Popper, Wistia, etc.). Use it to turn a confirmed pollution into real impact.
-
-For server-side gadget hunting there is no reliable one-click tool - enumerate `node_modules` in white-box scope and match polluted keys to sinks (`ejs`/`pug` `outputFunctionName`, `child_process` `shell`/`NODE_OPTIONS`) as covered above.
+Detection is mostly about key shapes plus manual verification, so use a spray harness and a gadget reference:
+- A request-spraying harness that fans the same canary key across many endpoints and carriers, then flags responses that show the pollution effect
+- Published gadget references that map polluted keys to concrete client-side sinks per library, used to turn a confirmed pollution into real impact
+- For server-side chains there is no one-click tool: enumerate the dependency inventory in white-box scope and match polluted keys to consuming sinks
 
 ## Summary
 
-Any unsafe recursive merge of user-controlled keys is a prototype pollution candidate. Block `__proto__`, `constructor`, and `prototype` keys, use null-prototype objects, and validate impact with behavioral proof - not just reflected keys.
+Any unsafe recursive merge of user-controlled keys is a prototype pollution candidate. Filter prototype keys at every merge boundary, construct options objects without a prototype, freeze shared prototypes, and validate impact with behavioral proof rather than a reflected key.
