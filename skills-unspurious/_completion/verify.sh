@@ -108,7 +108,7 @@ fi
 
 # 9. No em dashes in authored Markdown (U+2014, built from bytes to avoid a literal).
 emdash=$(printf '\342\200\224')
-targets="skills-unspurious docs/design/skills-variant-boundary.md docs/design/skills-ontology.md docs/design/skills-system-decomposition.md docs/design/w0-w1-completion-ledger.md"
+targets="skills-unspurious docs/design/skills-variant-boundary.md docs/design/skills-ontology.md docs/design/skills-system-decomposition.md docs/design/skills-taxonomy.md docs/design/skills-taxonomy-decisions.md docs/design/skills-system-fsm.md docs/design/w0-w1-completion-ledger.md"
 if grep -rl "$emdash" $targets >/dev/null 2>&1; then
   printf 'FAIL  no em dashes in authored Markdown; offenders:\n'
   grep -rln "$emdash" $targets | sed 's/^/      /'

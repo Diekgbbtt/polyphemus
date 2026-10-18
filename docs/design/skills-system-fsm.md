@@ -16,7 +16,7 @@
 |---|---|---|
 | S0 | B1 grilling closure (3 rounds; decisions compiled) | `docs/design/skills-taxonomy-decisions.md` committed on the trunk (DONE) |
 | S1 | Trunk assembly: W0 landing + W0/W1 completion + W2 cortex integrated | merge commits on `feat/skills-system`; `verify.sh` FAIL-free (DONE) |
-| S2 | Residual wave: W1-taxonomy (B1, B3/B4 records), W0-parent-conformance (B2), W2-refresh | per item: subagent report, one adversarial review round, review fixes, merge into the trunk, `verify.sh` FAIL-free |
+| S2 | Residual wave: W1-taxonomy (B1, B3/B4 records), W0-parent-conformance (B2), W2-refresh | DONE 2026-10-18: all three merged after their single review rounds and fix passes; `verify.sh` NO-FAILURES (1 pending: the C1 families) |
 | S3 | W3: four rulings (round 1), remaining grill points (round 2), ADR compiled, then prompt surgery + validity gate | rulings answered; ADR committed; W3 subagent done, one review, merge |
 | S4 | W4: nested-taxonomy loader (flat-leaf identity, uniqueness hard error, level-2 nesting, logical root mount, scaffold, conformance tests, README) | one review, merge, targeted test suite green, `verify.sh` FAIL-free |
 | S5 | W5: artifact `skills` field, `load_skill` descriptions command, runtime rendering, agent workflows (C5, workflow ticket #236) | one review, merge, targeted suites green |
@@ -43,5 +43,6 @@ After each merge into the trunk: run `verify.sh`, update the completion ledger r
 ## Current pointers (2026-10-18)
 
 - Trunk: `feat/skills-system` (worktree `.claude/worktrees/feat-skills-system`); tip: the B1 decisions commit; contains W0 landing, W0/W1 completion, W2 cortex.
-- S2 progress: `feat/w2-cortex-refresh` done, reviewed (CLEAR, four minor fixes applied), merged into the trunk; `feat/w1-taxonomy` done and waiting for the combined W0+W1 review; `feat/w0-parent-conformance` in flight.
-- S3: round 1 (the four adversarial rulings) presented to the operator.
+- S2: COMPLETE - `feat/w2-cortex-refresh` (review CLEAR, fixes merged), `feat/w0-parent-conformance` (review CLEAR, fixes merged), `feat/w1-taxonomy` (review BLOCKED on a stale README line, fixed, merged); trunk tip `a0076955`; `verify.sh` NO-FAILURES (1 pending: the C1 families).
+- S3: round 1 (the four adversarial rulings) presented to the operator; awaiting the answers.
+- Open operator gates: A1 status wording; the W6/W7 reading; the four W3 rulings.
