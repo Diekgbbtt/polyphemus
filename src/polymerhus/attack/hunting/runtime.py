@@ -910,6 +910,11 @@ async def start_hunting(
 
 
         try:
+            # designed-not-built: the new-run session id is
+            # `threat_modeller_session_id` (S1 4.1); the swap rides the
+            # bootstrap re-wire in T2b (#386), together with the planner
+            # retirement. Until then the archived id is the live one, so a run
+            # recorded under the legacy segment resumes under it unchanged.
             orchestrator_id = orchestrator_session_id(hunting_run_id)
             surfer_id = surfer_session_id(hunting_run_id)
             # #317: the modeller pass is gated on the modeller role state (the

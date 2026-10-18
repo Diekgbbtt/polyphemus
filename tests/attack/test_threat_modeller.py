@@ -21,9 +21,12 @@ import yaml
 
 from polymerhus.attack.hunting.threat_model import ModelState
 from polymerhus.attack.hunting.threat_model_store import ThreatModelStore
+from polymerhus.app.memory.tool_contract import NoteWrite, NotesRead
+
 from polymerhus.attack.hunting.threat_modeller import (
     GATE_HINTS,
     TOOL_SURFACE,
+    ModellerNotesHandle,
     ModellerTools,
     UnitOutcome,
     arun_modeller_pass,
@@ -481,6 +484,332 @@ def test_a_retargeted_unit_cell_lets_one_surface_follow_the_run(tmp_path):
     for unit_id in ("Service:first", "Service:second"):
         assert store.read_model(PROJECT, unit_id)["state"] == "UNIT_TECHNICAL_SHARP"
         assert store.read_model(PROJECT, unit_id)["unit_id"] == unit_id
+
+
+def test_a_run_scoped_actor_capture_completes_every_unit_of_the_run(tmp_path):
+    """The per-run actor captures its tool surface ONCE. A run-scoped tracker
+    (shared through `ModellerTools`) is what keeps a second unit's gate writes
+    observed - otherwise the captured tool holds a pre-pass seam, the second
+    unit's writes land unobserved, and the breaker aborts a unit whose COMPLETED
+    write already succeeded."""
+    from polymerhus.attack.hunting.threat_modeller import ModellerUnit, PassiveGateTracker
+
+    store = ThreatModelStore(root_dir=tmp_path)
+    tools = ModellerTools(threat_store=store, project_id=PROJECT, run_id=RUN,
+                          tracker=PassiveGateTracker(), unit_cell=ModellerUnit())
+    captured: dict = {}
+
+    def captured_surface():
+        # the actor's `_ensure_started`: built once, on the first turn, and
+        # reused for every later unit of the same run
+        if "surface" not in captured:
+            captured["surface"] = build_modeller_tool_surface(
+                PROJECT, tools.unit_cell.unit_id, tools)
+        return captured["surface"]
+
+    class _ActorShaped:
+        def __init__(self):
+            self.turns = []
+
+        def __call__(self, turn):
+            self.turns.append(turn)
+            captured_surface()["hunts_store"].invoke({
+                "cmd": "write", "state": turn.state.value,
+                "sections": _payloads()[turn.state]})
+            return None
+
+    for unit_id in ("Service:first", "Service:second"):
+        turns = _ActorShaped()
+        outcome = asyncio.run(arun_modeller_pass(
+            PROJECT, RUN, unit_id, tools, turn_fn=turns))
+
+        assert outcome.status == "completed"
+        assert outcome.state == ModelState.COMPLETED.value
+        # the outcome carries THIS unit's writes, not the run's whole history
+        assert [write.state for write in outcome.gate_writes] == list(ModelState)
+        assert len(turns.turns) == len(ModelState)
+
+    assert tools.tracker.state is ModelState.COMPLETED
+    for unit_id in ("Service:first", "Service:second"):
+        persisted = store.read_model(PROJECT, unit_id)
+        assert persisted["state"] == ModelState.COMPLETED.value
+        assert persisted["validation"]["valid"] is True
+
+
+def test_a_pass_seeded_from_a_completed_model_re_authors_nothing(tmp_path):
+    """A resume (or a replayed unit) seeds the tracker from the persisted model:
+    the states at or behind it are never re-asked, so a lower-gate write can
+    never overwrite a COMPLETED model's sections."""
+    store = ThreatModelStore(root_dir=tmp_path)
+    first = _ScriptedTurns()
+    asyncio.run(arun_modeller_pass(PROJECT, RUN, UNIT, _tools(store),
+                                   turn_fn=first))
+
+    class _Replay(_ScriptedTurns):
+        def __call__(self, turn):
+            self.turn_inputs.append(turn)
+            # a resume that would regress the sharpening section
+            self.store_tool(turn).invoke({
+                "cmd": "write", "state": "UNIT_TECHNICAL_SHARP",
+                "sections": {
+                    "technical_sharpening": {
+                        "interface_agreements": [{
+                            "id": "ia-1", "statement": "re-authored",
+                            "confidence": "ASSUMED", "evidences": [_evidence()],
+                        }],
+                        "control_flows": [],
+                        "data_flows": [],
+                    }}})
+            return None
+
+    replay = _Replay()
+    outcome = asyncio.run(arun_modeller_pass(PROJECT, RUN, UNIT, _tools(store),
+                                             turn_fn=replay))
+
+    assert replay.turn_inputs == []          # seeded COMPLETED: nothing re-asked
+    assert outcome.status == "completed"
+    assert outcome.state == ModelState.COMPLETED.value
+    assert [write.state for write in outcome.gate_writes] == []
+    model = store.read_model(PROJECT, UNIT)
+    assert model["state"] == ModelState.COMPLETED.value
+    assert (model["technical_sharpening"]["interface_agreements"][0]["statement"]
+            == "The catalogue endpoint reads the item id from the query.")
+
+
+def test_a_run_scoped_store_is_never_double_wrapped(tmp_path):
+    """A caller that already hands a tracking store keeps it: wrapping again
+    would record every write on a second, unreachable tracker."""
+    from polymerhus.attack.hunting.threat_modeller import PassiveGateTracker
+
+    store = ThreatModelStore(root_dir=tmp_path)
+    tracker = PassiveGateTracker()
+    tools = ModellerTools(threat_store=store, project_id=PROJECT, run_id=RUN,
+                          tracker=tracker)
+
+    asyncio.run(arun_modeller_pass(PROJECT, RUN, UNIT, tools, turn_fn=_ScriptedTurns()))
+
+    assert tracker.state is ModelState.COMPLETED
+    assert [write.state for write in tracker.writes] == list(ModelState)
+    assert len(tools.threat_store.tracker.writes) == len(ModelState)
+
+
+def test_the_notes_read_filters_by_key(tmp_path):
+    """The key filter is live: a read with a note name returns that note only,
+    where a read with no key returns the unit's notes."""
+    store = ThreatModelStore(root_dir=tmp_path)
+    surface = build_modeller_tool_surface(PROJECT, UNIT, _tools(store))
+    for name, kind in (("grounding", "freeform"),
+                       ("boundary-check", "implicit_test_primitive")):
+        surface["notes"].invoke({
+            "cmd": "write", "option": "append", "note_name": name,
+            "kind": kind, "body": f"note for {name}"})
+
+    filtered = surface["notes"].invoke({"cmd": "read", "key": "grounding"})
+    unfiltered = surface["notes"].invoke({"cmd": "read"})
+
+    assert [note["note_name"] for note in filtered["notes"]] == ["grounding"]
+    assert filtered["key"] == "Service-catalogue-and-discovery:grounding"
+    assert {note["note_name"] for note in unfiltered["notes"]} == {
+        "grounding", "boundary-check"}
+
+
+def test_a_notes_read_with_no_bound_unit_is_a_coded_rejection():
+    """The sibling store tool returns a coded rejection for an unbound
+    identity; the notes handle must not raise where it does."""
+    handle = ModellerNotesHandle(store=None, project_id=PROJECT, unit_id="")
+    read = handle.read(NotesRead(key="grounding"))
+    write = handle.write(NoteWrite(action="append", note_name="grounding",
+                                   body="x"))
+
+    assert read["error"] in ("invalid_args", "threat model store unavailable")
+    assert read["notes"] == []
+    assert write["ok"] is False
+
+
+def test_a_write_carrying_a_unit_id_is_rejected(tmp_path):
+    """The unit identity is bound: a write that tries to address another unit
+    is a coded rejection, never a silently ignored field."""
+    store = ThreatModelStore(root_dir=tmp_path)
+    surface = build_modeller_tool_surface(PROJECT, UNIT, _tools(store))
+
+    rejection = surface["hunts_store"].invoke({
+        "cmd": "write", "state": "UNIT_TECHNICAL_SHARP",
+        "sections": _payloads()[ModelState.UNIT_TECHNICAL_SHARP],
+        "unit_id": "Service:another-unit",
+    })
+
+    assert rejection["error"] == "hunts_store_write_rejected"
+    assert rejection["fields"] == ["unit_id"]
+    assert store.read_model(PROJECT, "Service:another-unit") is None
+    assert store.read_model(PROJECT, UNIT) is None
+
+
+def test_the_read_response_carries_the_written_section_names(tmp_path):
+    """The read lists the sections the model actually holds, not a static
+    catalogue of the schema's section names."""
+    store = ThreatModelStore(root_dir=tmp_path)
+    store.write_sections(PROJECT, UNIT, ModelState.UNIT_TECHNICAL_SHARP,
+                         _payloads()[ModelState.UNIT_TECHNICAL_SHARP], run_id=RUN)
+    store.write_sections(PROJECT, UNIT, ModelState.TRUST_MODELLED,
+                         _payloads()[ModelState.TRUST_MODELLED], run_id=RUN)
+    surface = build_modeller_tool_surface(PROJECT, UNIT, _tools(store))
+
+    read = surface["hunts_store"].invoke({"cmd": "read"})
+
+    assert read["sections"] == ["technical_sharpening", "trust_model"]
+
+
+def test_a_consumed_identity_write_does_not_advance_the_tracker(tmp_path):
+    """The move-aware no-op write (S2 4.5): a write for an identity that lives
+    in consumed/ re-creates nothing, so the tracker must not claim a gate write
+    that never landed."""
+    from polymerhus.attack.hunting.threat_modeller import(
+        PassiveGateTracker,
+        TrackingThreatModelStore,
+    )
+
+    store = ThreatModelStore(root_dir=tmp_path)
+    asyncio.run(arun_modeller_pass(PROJECT, RUN, UNIT, _tools(store),
+                                   turn_fn=_ScriptedTurns()))
+    for loop in store.read_loop_files(PROJECT, UNIT):
+        store.consume_loop(PROJECT, UNIT, loop["loop_id"])
+    assert store.consume_model_if_done(PROJECT, UNIT) is True
+    assert store.read_model(PROJECT, UNIT)["state"] == ModelState.COMPLETED.value
+
+    tracker = PassiveGateTracker()
+    wrapped = TrackingThreatModelStore(store, tracker)
+    surface = build_modeller_tool_surface(
+        PROJECT, UNIT,
+        ModellerTools(threat_store=wrapped, project_id=PROJECT, run_id=RUN))
+    response = surface["hunts_store"].invoke({
+        "cmd": "write", "state": "TRUST_MODELLED",
+        "sections": _payloads()[ModelState.TRUST_MODELLED]})
+
+    assert response["ok"] is True
+    assert tracker.writes == []
+    assert tracker.state is None
+    from polymerhus.attack.hunting.threat_model_store import sanitise_unit_name
+    produced = (tmp_path / PROJECT / "hunting" / "threat_modeller" / "produced"
+                / sanitise_unit_name(UNIT))
+    assert not produced.exists()
+
+
+def test_the_suite_gap_reaches_the_unit_outcome(tmp_path):
+    """A degraded class mapping must leave the seam: the pass carries the
+    recorded suite gaps into the unit outcome so the run can report it."""
+    store = ThreatModelStore(root_dir=tmp_path)
+
+    class _ProbingSuite(_ScriptedTurns):
+        def __call__(self, turn):
+            self.turn_inputs.append(turn)
+            suite_load = next(tool for tool in turn.tools
+                              if tool.name == "skill_load")
+            self.responses.append(suite_load.invoke({"name": "idor"}))
+            self.store_tool(turn).invoke({
+                "cmd": "write", "state": turn.state.value,
+                "sections": _payloads()[turn.state]})
+            return None
+
+    turns = _ProbingSuite()
+    outcome = asyncio.run(arun_modeller_pass(
+        PROJECT, RUN, UNIT, _tools(store), turn_fn=turns))
+
+    assert outcome.status == "completed"
+    assert outcome.suite_gaps
+    assert any("suite_unavailable" in gap for gap in outcome.suite_gaps)
+
+
+def test_the_turn_carries_the_projection_and_the_surface_overview(tmp_path):
+    """S1 4.6 / 5.6: the modeller is fed the unit projection and the L1
+    application-surface overview, and a source that cannot be reached degrades
+    with a RECORDED gap instead of silence."""
+    store = ThreatModelStore(root_dir=tmp_path)
+    tools = _tools(
+        store,
+        projection={"unit_id": UNIT, "data_items": {"reads": ["item"]}},
+        surface_overview={"core_features": ["catalogue"],
+                          "user_journeys": ["browse -> add -> publish"]},
+    )
+    turns = _ScriptedTurns()
+    asyncio.run(arun_modeller_pass(PROJECT, RUN, UNIT, tools, turn_fn=turns))
+
+    first = turns.turn_inputs[0]
+    assert first.projection["unit_id"] == UNIT
+    assert first.surface_overview["core_features"] == ["catalogue"]
+    assert first.context_gaps == ()
+
+    absent = _ScriptedTurns()
+    # a unit with no model yet: the seeded tracker must not skip the states
+    asyncio.run(arun_modeller_pass(PROJECT, RUN, "Service:second-unit",
+                                   _tools(store), turn_fn=absent))
+    gaps = absent.turn_inputs[0].context_gaps
+    assert len(gaps) == 2
+    assert any("projection unavailable" in gap for gap in gaps)
+    assert any("surface overview unavailable" in gap for gap in gaps)
+
+
+def test_a_context_provider_supplies_the_grounding_per_unit(tmp_path):
+    """A live provider is the seam the run driver wires: it is called per unit
+    and a raising read degrades to the recorded gaps."""
+    store = ThreatModelStore(root_dir=tmp_path)
+    seen: list[str] = []
+
+    def provider(unit_id: str) -> dict:
+        seen.append(unit_id)
+        return {"projection": {"unit_id": unit_id}, "surface_overview": {"a": 1}}
+
+    turns = _ScriptedTurns()
+    outcome = asyncio.run(arun_modeller_pass(
+        PROJECT, RUN, UNIT,
+        _tools(store, context_provider=provider), turn_fn=turns))
+
+    assert seen == [UNIT]
+    assert turns.turn_inputs[0].projection == {"unit_id": UNIT}
+    assert outcome.context_gaps == []
+
+    def broken(unit_id: str) -> dict:
+        raise RuntimeError("graph unavailable")
+
+    broken_turns = _ScriptedTurns()
+    asyncio.run(arun_modeller_pass(
+        PROJECT, RUN, "Service:third-unit",
+        _tools(store, context_provider=broken), turn_fn=broken_turns))
+    assert broken_turns.turn_inputs[0].context_gaps
+
+
+def test_the_actor_registry_is_keyed_by_run_id_under_a_factory():
+    """Both lanes key the registry by run id, so the reap seam and the
+    degrade-cause lookup address the same actor the pass built."""
+    from polymerhus.attack.hunting import threat_modeller as tm
+
+    stops: list[str] = []
+
+    class _FakeActor:
+        def __init__(self, run_id: str):
+            self.run_id = run_id
+            self.tools = None
+            self.project_id = None
+
+        async def turn(self, turn_input):
+            return None
+
+        async def stop(self):
+            stops.append(self.run_id)
+
+        def last_degrade_cause(self):
+            return None
+
+    tm._MODELLER_ACTORS.clear()
+    with pytest.raises(tm.ThreatModellerDegradedError):
+        asyncio.run(arun_modeller_pass(
+            PROJECT, RUN, UNIT, _tools(None), actor_factory=_FakeActor))
+
+    assert set(tm._MODELLER_ACTORS) == {RUN}
+
+    asyncio.run(tm._reap_modeller(RUN))
+
+    assert stops == [RUN]
+    assert tm._MODELLER_ACTORS == {}
 
 
 def test_the_modeller_tool_surface_is_exactly_the_bound_tools(tmp_path):

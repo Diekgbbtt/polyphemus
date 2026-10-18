@@ -78,9 +78,17 @@ def _close_coro(coro: Any) -> None:
 # --- the ADR Q13 session-id scheme (pure) ---------------------------------------
 
 # The renamed session segment (S1 4.1, impact map section 6): the modeller's
-# session id segment; the legacy segment stays accepted for one window.
+# session id segment; the legacy segment stays accepted for one window. THIS is
+# the ONE home of the segment vocabulary - `threat_modeller_session_id` and
+# `orchestrator_session_id` below build from it, and the classifier
+# (`surfer.derive_thread_role`) reads `THREAT_MODELLER_SEGMENTS`. The role tag it
+# classifies as (`surfer.THREAT_MODELLER_ROLE`) is a DIFFERENT vocabulary.
 MODELLER_SESSION_SEGMENT = "threat-modeller"
 MODELLER_SESSION_SEGMENT_LEGACY = "orchestrator"
+THREAT_MODELLER_SEGMENTS = (
+    MODELLER_SESSION_SEGMENT, MODELLER_SESSION_SEGMENT_LEGACY,
+)
+
 
 def threat_modeller_session_id(run_id: str) -> str:
     """The ADR Q13 modeller session id, renamed in place (S1 4.1):
@@ -609,6 +617,7 @@ __all__ = [
     "hunter_session_id",
     "MODELLER_SESSION_SEGMENT",
     "MODELLER_SESSION_SEGMENT_LEGACY",
+    "THREAT_MODELLER_SEGMENTS",
     "orchestrator_session_id",
     "threat_modeller_session_id",
     "pod_session_id",

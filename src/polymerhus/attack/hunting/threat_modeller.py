@@ -52,6 +52,7 @@ import threading
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 from langchain_core.tools import BaseTool
@@ -71,15 +72,13 @@ if TYPE_CHECKING:  # the actor is a lazy import (CODING_STANDARD section 6)
 
 logger = logging.getLogger(__name__)
 
-# The role identity (S1 4.1, impact-map section 6): the runtime session segment,
-# the actor/session role, and the LLM role id are ONE string; the provider env
-# var is its uppercase form. `hunting_orchestrator` + `orchestrator` stay
-# accepted for one change window (the alias) so an interrupted old run resumes
-# under its recorded session id and role.
+# The role identity (S1 4.1, impact-map section 6): the actor/session role and
+# the LLM role id are ONE string; the provider env var is its uppercase form.
+# The SESSION segment (`threat-modeller`) and its legacy alias live with the Q13
+# scheme in `mover.py`, and the agent-sub-module role tag (`threat_modeller`, the
+# runtime's per-role gate key) in `surfer.py`/`app/runtime.py`: three distinct
+# vocabularies the rename keeps aligned.
 MODELLER_ROLE = "hunting_threat_modeller"
-MODELLER_ROLE_LEGACY = "hunting_orchestrator"
-MODELLER_SESSION_SEGMENT = "threat-modeller"
-MODELLER_SESSION_SEGMENT_LEGACY = "orchestrator"
 MODELLER_MODEL_KEY = "LLM_HUNTING_THREAT_MODELLER"
 MODELLER_MODEL_KEY_LEGACY = "LLM_HUNTING_ORCHESTRATOR"
 
@@ -289,6 +288,23 @@ class DegradedTurnBreaker:
 
 # --- the passive gate tracker (S1 6.1) ----------------------------------------
 
+class TrailEntry(BaseModel):
+    """One typed tracker trail entry (S1 6.1: a trajectory entry records the
+    unit, the signal, the from-state, the to-state, the outcome, and the time).
+
+    `kind` is `gate` (a forward write, with the states it skipped), `lower_gate`
+    (a write behind the tracked state - content only) or `seeded` (the resumed
+    state a pass started from)."""
+
+    kind: Literal["gate", "lower_gate", "seeded"]
+    state: str
+    previous_state: str | None = None
+    tracked: str | None = None
+    skipped: list[str] = Field(default_factory=list)
+    sections: list[str] = Field(default_factory=list)
+    at: datetime
+
+
 class GateWrite(BaseModel):
     """One observed gate write: the state the model asked for, the sections it
     carried, when it landed, and whether it advanced the tracked state."""
@@ -310,8 +326,32 @@ class PassiveGateTracker:
 
     def __init__(self) -> None:
         self.writes: list[GateWrite] = []
-        self.trail: list[dict] = []
+        self.trail: list[TrailEntry] = []
         self.state: ModelState | None = None
+
+    def reset(self) -> None:
+        """Clear the observation for a NEW unit's pass.
+
+        ONE tracker is run-scoped (the actor captures its tools once), so a pass
+        starts from a clean reading; the run's accumulated writes stay readable
+        only until the next unit's pass resets them (the run driver owns the
+        cross-unit history)."""
+        self.writes = []
+        self.trail = []
+        self.state = None
+
+    def seed(self, state: ModelState | None) -> None:
+        """Seed the tracked state from the PERSISTED model (a resume, or a
+        replayed unit). A seeded state at or ahead of a state the pass would ask
+        for makes the pass skip it, so a resume never re-authors a gate that is
+        already written, and a COMPLETED model's sections are never regressed."""
+        self.state = state
+        if state is not None:
+            # only a REAL resume rides the trail; a fresh unit has nothing to
+            # seed and nothing to report
+            self.trail.append(TrailEntry(
+                kind="seeded", state=state.value,
+                at=datetime.now(timezone.utc)))
 
     def observe(self, state: ModelState, sections: Mapping[str, Any]) -> GateWrite:
         """Record one gate write. `advanced` is True only when this write moved
@@ -319,8 +359,9 @@ class PassiveGateTracker:
         trail, never the state)."""
         from .threat_model import STATE_ORDER  # noqa: PLC0415 - one home for the order
 
+        previous = self.state
         rank = STATE_ORDER[state]
-        current = STATE_ORDER[self.state] if self.state is not None else -1
+        current = STATE_ORDER[previous] if previous is not None else -1
         advanced = rank > current
         write = GateWrite(
             state=state,
@@ -330,24 +371,24 @@ class PassiveGateTracker:
         )
         self.writes.append(write)
         if advanced:
+            # the states between the previous and the written one, ordered by
+            # their OWN rank - never by the enum's declaration order
             skipped = [
-                member.value for member in ModelState
-                if current < STATE_ORDER[member] < rank
+                member.value for member in sorted(
+                    (m for m in ModelState if current < STATE_ORDER[m] < rank),
+                    key=STATE_ORDER.__getitem__)
             ]
             self.state = state
-            self.trail.append({
-                "kind": "gate", "state": state.value, "from": (
-                    None if current < 0 else
-                    [m.value for m in ModelState][current]),
-                "skipped": skipped, "sections": list(sections),
-                "at": write.observed_at.isoformat(),
-            })
+            self.trail.append(TrailEntry(
+                kind="gate", state=state.value,
+                previous_state=previous.value if previous is not None else None,
+                skipped=skipped, sections=list(sections),
+                at=write.observed_at))
         else:
-            self.trail.append({
-                "kind": "lower_gate", "state": state.value,
-                "tracked": self.state.value if self.state else None,
-                "sections": list(sections), "at": write.observed_at.isoformat(),
-            })
+            self.trail.append(TrailEntry(
+                kind="lower_gate", state=state.value,
+                tracked=self.state.value if self.state is not None else None,
+                sections=list(sections), at=write.observed_at))
         return write
 
     def write_states(self) -> list[str]:
@@ -381,11 +422,25 @@ class TrackingThreatModelStore:
                                               run_id=run_id)
         path = self._inner.write_sections(project_id, unit_id, gate, sections,
                                          run_id=run_id)
+        if is_consumed_path(path):
+            # the move-aware no-op write (S2 4.5): the identity is decided, the
+            # store re-created nothing, so the tracker must not claim a write
+            return path
         self._tracker.observe(gate, sections)
         return path
 
     def __getattr__(self, name):
         return getattr(self._inner, name)
+
+
+def is_consumed_path(path: Any) -> bool:
+    """True when a store write landed as the move-aware no-op (S2 4.5): the
+    identity already lives in `consumed/`, so the returned path sits under that
+    family and no produced copy was written."""
+    try:
+        return Path(path).parent.parent.name == "consumed"
+    except Exception:  # noqa: BLE001 - an unreadable path is never a no-op claim
+        return False
 
 
 @dataclass
@@ -408,10 +463,15 @@ class ModellerUnit:
         self.unit_id = unit_id
 
 
+# The model document's section names, in document order: the read reports the
+# sections a model actually carries, never a static schema catalogue.
+MODEL_SECTIONS: tuple[str, ...] = (
+    "technical_sharpening", "trust_model", "assumptions", "vulnerabilities",
+    "failure_modes", "loops",
+)
+
+
 # --- the `hunts_store` tool for the threat model (S1 5.1) ---------------------
-
-_WRITE_INTENT_FIELDS = ("state", "sections")
-
 
 class ModellerHuntsStoreArgs(BaseModel):
     """The modeller's `hunts_store` args contract.
@@ -520,13 +580,12 @@ class ModellerHuntsStoreTool(StoreToolBase):
             logger.warning("hunts_store read degraded for %s (%s)", unit_id, exc)
             return {"error": f"hunts_store read degraded: {exc}", "unit_id": unit_id}
         if model is None:
-            return {"unit_id": unit_id, "model": None,
+            return {"unit_id": unit_id, "model": None, "sections": [],
                     "detail": "no threat model exists for this unit"}
         return {
             "unit_id": unit_id,
             "state": model.get("state"),
-            "sections": ["technical_sharpening", "trust_model", "assumptions",
-                         "vulnerabilities", "failure_modes", "loops"],
+            "sections": [name for name in MODEL_SECTIONS if model.get(name)],
             "model": model,
             "risk_profile": model.get("risk_profile"),
             "validation": model.get("validation"),
@@ -538,6 +597,11 @@ class ModellerHuntsStoreTool(StoreToolBase):
                 ["unit_id"],
                 "no unit is bound to this tool; the gate write cannot derive the "
                 "unit directory")
+        if args.unit_id:
+            return self._rejected(
+                ["unit_id"],
+                "the unit identity is BOUND to this tool; a write never carries "
+                "a unit id - drop the field and retry")
         if args.state is None or str(args.state).strip() == "":
             return self._rejected(
                 ["state"],
@@ -630,7 +694,7 @@ class ModellerNotesArgs(BaseModel):
 
 _MODEL_NOTES_FIELD_MAP = NotesFieldMap(
     key=None,
-    read_key=None,
+    read_key="key",
     action="option",
     note="body",
     note_id="note_id",
@@ -669,6 +733,11 @@ class ModellerNotesHandle:
         return sanitise_unit_name(self._bound_unit)
 
     def read(self, query) -> dict:
+        if not self._bound_unit:
+            # the sibling store tool returns a coded rejection for an unbound
+            # identity; the handle must not raise where it does
+            return {"notes": [], "error": "invalid_args",
+                    "detail": "no unit is bound to this notes tool"}
         if self._store is None:
             return {"error": "threat model store unavailable", "degraded": True}
         key = query.key or ""
@@ -931,13 +1000,17 @@ def suite_seam_from_tools(tools: Sequence[Any]) -> VulnerabilitySuiteSeam | None
 class ModellerTools:
     """The modeller's tool seams (S1 5).
 
-    `threat_store` is the per-project `ThreatModelStore` (the pass wraps it in
-    its tracker); `exec_fn` / `http_search_fn` / `http_get_fn` are the live
-    probe and HTTP-history seams (each absent degrades fail-open); `suite_tools`
-    is an injectable pre-built `skill_list` / `skill_load` pair (default: built
-    from `suite_classes` / `suite_read_fn`). The auth store and the project
-    skill are NOT seams here: they arrive through the role's `load_skill`
-    binding (the recon-orchestrator coupling, `app/auth/seams.py`)."""
+    `threat_store` is the per-project `ThreatModelStore`; `tracker` is the
+    RUN-scoped passive tracker, wrapped once around the store and reset at each
+    unit's pass (the actor's captured tools share it); `unit_cell` is the
+    retargetable unit identity; `exec_fn` / `http_search_fn` / `http_get_fn` are
+    the live probe and HTTP-history seams (each absent degrades fail-open);
+    `suite` / `suite_tools` / `suite_classes` / `suite_read_fn` are the
+    web-vulnerability suite seam and its injectable pair; `context_provider`
+    plus the explicit `projection` / `surface_overview` are the grounding-input
+    seams (S1 4.6, 5.6). The auth store and the project skill are NOT seams
+    here: they arrive through the role's `load_skill` binding (the
+    recon-orchestrator coupling, `app/auth/seams.py`)."""
 
     threat_store: Any = None
     project_id: str = ""
@@ -948,7 +1021,19 @@ class ModellerTools:
     suite_tools: Sequence[Any] = ()
     suite_classes: Sequence[str] = ()
     suite_read_fn: Callable[[str], str] | None = None
+    suite: VulnerabilitySuiteSeam | None = None
     unit_cell: ModellerUnit | None = None
+    # The RUN-scoped passive tracker. The per-run actor captures its tool
+    # surface once, so the tracker (and the store wrapper around it) must be
+    # shared by every unit's pass and reset at each pass start - a per-pass
+    # tracker would leave the captured tool writing through a stale seam.
+    tracker: PassiveGateTracker | None = None
+    # The grounding inputs (S1 4.6, 5.6): the L1 unit projection and the L1
+    # application-surface overview. `context_provider(unit_id)` supplies them per
+    # unit when a live source exists; the explicit fields are the direct seam.
+    context_provider: Callable[[str], dict] | None = None
+    projection: Any = None
+    surface_overview: Any = None
 
 
 def build_modeller_tool_surface(
@@ -982,8 +1067,13 @@ def build_modeller_tool_surface(
     if tools.suite_tools:
         surface.extend(tools.suite_tools)
     else:
-        surface.extend(build_vulnerability_suite_tools(
-            classes=tools.suite_classes, read_fn=tools.suite_read_fn))
+        if tools.suite is None:
+            # ONE seam per tools instance, so the pass can read the gaps it
+            # recorded (a fresh seam per surface build would lose them)
+            tools.suite = VulnerabilitySuiteSeam(
+                classes=tuple(tools.suite_classes),
+                read_fn=tools.suite_read_fn)
+        surface.extend(build_vulnerability_suite_tools(suite=tools.suite))
     return {tool.name: tool for tool in surface}
 
 
@@ -1003,6 +1093,11 @@ class ModellerTurnInput(BaseModel):
     sections: tuple[str, ...]
     instruction: str
     model: dict | None = None
+    # The grounding inputs (S1 4.6, 5.6) and the gaps where one is absent; the
+    # composed turn renders both (llm._compose_modeller_prompt).
+    projection: Any = None
+    surface_overview: Any = None
+    context_gaps: tuple[str, ...] = ()
     tools: Any = Field(default=None, exclude=True)
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
@@ -1025,7 +1120,9 @@ class UnitOutcome(BaseModel):
     validation: dict | None = None
     risk_profile: dict | None = None
     gate_writes: list[GateWrite] = Field(default_factory=list)
-    trail: list[dict] = Field(default_factory=list)
+    trail: list[TrailEntry] = Field(default_factory=list)
+    suite_gaps: list[str] = Field(default_factory=list)
+    context_gaps: list[str] = Field(default_factory=list)
     archived: bool = False
     reason: str = ""
 
@@ -1066,26 +1163,34 @@ async def arun_modeller_pass(
     provider failure surfaces through the breaker as a typed abort so the
     runtime pauses the run as `interrupted`.
     """
-    tracker = PassiveGateTracker()
+    # The RUN-scoped tracker (Critical fix): reset for this unit, seed from the
+    # persisted model, and share ONE store wrapper with the captured tools. The
+    # tools object is MUTATED in place, because the per-run actor captured a
+    # surface over it on its first turn and a copy would strand that surface on
+    # a stale seam.
+    tracker = tools.tracker
+    if tracker is None:
+        tracker = PassiveGateTracker()
+        tools.tracker = tracker
+    else:
+        tracker.reset()
     if tools.unit_cell is not None:
         # the per-run actor's tools are captured once: retarget the unit cell so
         # every gate write lands on THIS unit (the stable-seam pattern, #294)
         tools.unit_cell.retarget(
             project_id=tools.project_id or project_id,
             run_id=tools.run_id or run_id, unit_id=unit_id)
-    if tools.threat_store is not None:
-        tools = ModellerTools(
-            threat_store=TrackingThreatModelStore(tools.threat_store, tracker),
-            project_id=tools.project_id or project_id,
-            run_id=tools.run_id or run_id,
-            exec_fn=tools.exec_fn,
-            http_search_fn=tools.http_search_fn,
-            http_get_fn=tools.http_get_fn,
-            suite_tools=tools.suite_tools,
-            suite_classes=tools.suite_classes,
-            suite_read_fn=tools.suite_read_fn,
-            unit_cell=tools.unit_cell,
-        )
+    if tools.threat_store is not None and not isinstance(
+            tools.threat_store, TrackingThreatModelStore):
+        tools.threat_store = TrackingThreatModelStore(tools.threat_store, tracker)
+    first_write = len(tracker.writes)
+    first_trail = len(tracker.trail)
+    first_gap = len(tools.suite.gaps) if tools.suite is not None else 0
+    persisted = _read_model(tools, project_id, unit_id)
+    tracker.seed(ModelState(persisted["state"])
+                 if persisted and persisted.get("state") in set(ModelState)
+                 else None)
+    context, context_gaps = _grounding_context(tools, unit_id)
     surface = build_modeller_tool_surface(
         project_id, unit_id, tools) if _bindable(tools) else {}
     breaker = DegradedTurnBreaker.from_env()
@@ -1096,13 +1201,17 @@ async def arun_modeller_pass(
     for state in ModelState:
         if tracker.state is not None and \
                 _rank(tracker.state) >= _rank(state):
-            # already observed (a forward jump rides the trail) - never re-ask
+            # already observed (a forward jump rides the trail, a seeded resume
+            # rides its seeded entry) - never re-ask
             continue
         await breaker.before_turn(state.value)
         model = _read_model(tools, project_id, unit_id)
         turn = ModellerTurnInput(
             unit_id=unit_id, state=state, sections=GATE_SECTIONS[state],
             instruction=STATE_INSTRUCTIONS[state], model=model,
+            projection=context.get("projection"),
+            surface_overview=context.get("surface_overview"),
+            context_gaps=context_gaps,
             tools=list(surface.values()),
         )
         cause: BaseException | None = None
@@ -1116,14 +1225,53 @@ async def arun_modeller_pass(
             logger.warning("threat modeller %s turn failed (%s)", state.value, exc)
             cause = exc
         if cause is None and len(tracker.writes) == advanced_before:
-            cause = _actor_degrade_cause(actor_factory, run_id)
+            cause = _actor_degrade_cause(run_id)
         outcome = True if tracker.state is not None and \
             _rank(tracker.state) >= _rank(state) else None
         breaker.record_outcome(state.value, outcome, cause=cause)
         if tracker.state is LAST_GATE:
             break
 
-    return _finalise(project_id, unit_id, tools, tracker)
+    return _finalise(project_id, unit_id, tools, tracker,
+                     first_write=first_write, first_trail=first_trail,
+                     first_gap=first_gap, context_gaps=context_gaps)
+
+
+def _grounding_context(tools: ModellerTools, unit_id: str) -> tuple[dict, tuple[str, ...]]:
+    """The unit's grounding inputs (S1 4.6, 5.6) and the gaps where one is absent.
+
+    `context_provider(unit_id)` is the live seam; the explicit `projection` /
+    `surface_overview` fields are the direct seam. A provider that raises, and a
+    source that is absent, degrade to a recorded gap - never a raise into the
+    pass (S1 5.7: a failed read degrades to an empty set and is recorded).
+
+    designed-not-built: no production caller supplies a provider yet, so both
+    sources render as recorded gaps on every turn. The bootstrap that wires them
+    is T2b (#386): the unit projection through the existing
+    `unit_projection.build_projection(project_id, unit_id, read_fn=...)` read
+    over the live L1 graph, and the L1 application-surface overview from its own
+    entity once that lands. Nothing here is faked: an unwired source is an empty
+    value plus a named gap."""
+    context: dict = {
+        "projection": tools.projection,
+        "surface_overview": tools.surface_overview,
+    }
+    if tools.context_provider is not None:
+        try:
+            supplied = tools.context_provider(unit_id)
+        except Exception as exc:  # noqa: BLE001 - a read failure degrades
+            logger.warning("modeller grounding context degraded for %s (%s)",
+                           unit_id, exc)
+            supplied = None
+        if isinstance(supplied, Mapping):
+            context.update({k: v for k, v in supplied.items()
+                            if k in ("projection", "surface_overview") and v})
+    gaps: list[str] = []
+    if not context.get("projection"):
+        gaps.append("unit projection unavailable")
+    if not context.get("surface_overview"):
+        gaps.append("L1 application-surface overview unavailable")
+    return context, tuple(gaps)
 
 
 def _bindable(tools: ModellerTools) -> bool:
@@ -1151,13 +1299,12 @@ def _read_model(tools: ModellerTools, project_id: str, unit_id: str) -> dict | N
         return None
 
 
-def _actor_degrade_cause(actor_factory, run_id: str) -> BaseException | None:
+def _actor_degrade_cause(run_id: str) -> BaseException | None:
     """The actor's most recent degraded-turn cause, when a production actor
-    produced this pass (a scripted seam has none). The registry is keyed by the
-    injected factory when one was given, else by the run id."""
+    produced this pass (a scripted seam has none). ONE registry key (the run id)
+    serves both the default and the injected-factory lane."""
     with _MODELLER_LOCK:
-        actor = _MODELLER_ACTORS.get(actor_factory if actor_factory is not None
-                                     else run_id)
+        actor = _MODELLER_ACTORS.get(run_id)
     getter = getattr(actor, "last_degrade_cause", None)
     if getter is None:
         return None
@@ -1168,7 +1315,9 @@ def _actor_degrade_cause(actor_factory, run_id: str) -> BaseException | None:
 
 
 def _finalise(project_id: str, unit_id: str, tools: ModellerTools,
-              tracker: PassiveGateTracker) -> UnitOutcome:
+              tracker: PassiveGateTracker, *, first_write: int = 0,
+              first_trail: int = 0, first_gap: int = 0,
+              context_gaps: tuple[str, ...] = ()) -> UnitOutcome:
     """The completion validation call (S1 6.6) and the outcome.
 
     The store's COMPLETED write already ran the non-blocking checker; the pass
@@ -1184,8 +1333,11 @@ def _finalise(project_id: str, unit_id: str, tools: ModellerTools,
         state=(model or {}).get("state", ""),
         validation=(model or {}).get("validation"),
         risk_profile=(model or {}).get("risk_profile"),
-        gate_writes=list(tracker.writes),
-        trail=list(tracker.trail),
+        gate_writes=list(tracker.writes[first_write:]),
+        trail=list(tracker.trail[first_trail:]),
+        suite_gaps=(list(tools.suite.gaps[first_gap:])
+                    if tools.suite is not None else []),
+        context_gaps=list(context_gaps),
     )
     if model is None:
         outcome.reason = "no threat model was written for this unit"
@@ -1249,23 +1401,23 @@ def _actor_turn_fn(run_id: str, project_id: str, tools: ModellerTools,
 
 def _resolve_actor(run_id: str, project_id: str, tools: ModellerTools,
                    actor_factory=None) -> "ThreatModellerActor":
-    if actor_factory is not None:
-        with _MODELLER_LOCK:
-            actor = _MODELLER_ACTORS.get(actor_factory)
-            if actor is None:
+    """The run's ONE actor, from the registry keyed by `run_id` in BOTH lanes
+    (the default constructor and an injected factory): one key means the reap
+    seam and the degrade-cause lookup can never address a different actor than
+    the pass built."""
+    with _MODELLER_LOCK:
+        actor = _MODELLER_ACTORS.get(run_id)
+        if actor is None:
+            if actor_factory is not None:
                 actor = actor_factory(run_id)
-                _MODELLER_ACTORS[actor_factory] = actor
-    else:
-        with _MODELLER_LOCK:
-            actor = _MODELLER_ACTORS.get(run_id)
-            if actor is None:
+            else:
                 from polymerhus.attack.hunting.actors import (  # noqa: PLC0415
                     ThreatModellerActor,
                 )
 
                 actor = ThreatModellerActor(run_id, tools=tools,
                                             project_id=project_id)
-                _MODELLER_ACTORS[run_id] = actor
+            _MODELLER_ACTORS[run_id] = actor
     actor.tools = tools
     actor.project_id = project_id
     return actor
@@ -1274,7 +1426,11 @@ def _resolve_actor(run_id: str, project_id: str, tools: ModellerTools,
 async def _reap_modeller(run_id: str) -> None:
     """The module's stop path for the per-run modeller actor: reap and drop the
     actor the registry holds for `run_id`, if any. Called by the runtime
-    teardown (never by a pass's `finally`)."""
+    teardown (never by a pass's `finally`).
+
+    designed-not-built: no production caller yet. The bootstrap re-wire that
+    adopts this seam is T2b (#386), alongside the `threat_modeller_session_id`
+    swap; until then the planner's `_reap_orchestrator` is the live one."""
     with _MODELLER_LOCK:
         actor = _MODELLER_ACTORS.pop(run_id, None)
     if actor is not None:
@@ -1291,10 +1447,9 @@ __all__ = [
     "MODELLER_MODEL_KEY",
     "MODELLER_MODEL_KEY_LEGACY",
     "MODELLER_ROLE",
-    "MODELLER_SESSION_SEGMENT",
-    "MODELLER_SESSION_SEGMENT_LEGACY",
     "ModellerHuntsStoreArgs",
     "ModellerHuntsStoreTool",
+    "MODEL_SECTIONS",
     "ModellerNotesArgs",
     "ModellerNotesHandle",
     "ModellerTools",

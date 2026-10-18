@@ -78,7 +78,11 @@ def auth_capable_binding(
         if project_id is None:
             from polymerhus.app.config import config  # noqa: PLC0415 - lazy, no env at import
             project_id = config.PROJECT_ID
-        skills = [AUTHN_SKILL] if with_write_skill else []
+        # The read-only arming still declares the per-project authentication
+        # procedure, so the armed role's prompt has a named skill to load; the
+        # write capability (never the skill set) is what `with_write_skill`
+        # grants, so naming `authn` leaks nothing.
+        skills = [AUTHN_SKILL]
         return SkillAgentBinding(
             role_id=role_id,
             middleware=[skill_index_middleware(store=skill_store)],

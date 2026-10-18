@@ -178,10 +178,17 @@ Tracked on #386.
 
 **What to build.**
 Re-point the hunting bootstrap from the planner to the modeller pass with a transitional distinct-unit order.
+Swap the new-run session id to `threat_modeller_session_id` at both sites and adopt the modeller actor-reap seam.
+Split the modeller pass's tool layer into `threat_modeller_tools.py` (the store tool, the notes tool, the suite pair, `ModellerTools`, and the surface builder), leaving `threat_modeller.py` the pass and the tracker.
 Delete the planner: the pass, the phase nodes, the candidate and gate types, the in-turn prune, the materialisation render, the ratify and note turns, the orchestrator actor, the tool surface, and the planner prompt.
 Delete or rewrite the planner tests and fixtures.
 Add the actor-harness test for `ThreatModellerActor`.
 Update the role and modeller terms in `attack/hunting/CONTEXT.md`.
+
+**Hazards this slice inherits from T2a.**
+- The session id is swapped in two places that must move together: `runtime.start_hunting`'s registered id and `surfer`'s quiesce key. Keying the new id before the swap quiesces a run whose live pass is still registered under the legacy segment; both sites carry a `designed-not-built` marker naming this ticket.
+- The modeller actor-reap seam (`_reap_modeller`) has no caller until this slice; it is marked `designed-not-built` and its registry is keyed by run id in both the default and the injected-factory lane, so the reap and the degrade-cause lookup cannot address a different actor than the pass built.
+- The pass's grounding inputs (`context_provider`, and the explicit `projection` / `surface_overview` seams) are wired to a live source here: the L1 unit projection read and the L1 application-surface overview. Until then both render as recorded gaps on every turn.
 
 **Acceptance criteria.**
 - `start_hunting` runs the modeller pass as the production path; the planner has no call site.

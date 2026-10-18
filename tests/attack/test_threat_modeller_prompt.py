@@ -162,6 +162,47 @@ def test_the_turn_prompt_degrades_a_missing_model_to_a_denotation():
     assert "(not written yet)" in _compose_modeller_prompt(turn)
 
 
+def test_the_prompt_renders_the_grounding_inputs_and_their_gaps():
+    """S1 4.6 / 5.6: the composed turn carries the unit projection and the L1
+    application-surface overview when present, and names each absent source so
+    the model grounds on what it has and records the gap."""
+    turn = ModellerTurnInput(
+        unit_id="Service:catalogue-and-discovery",
+        state=ModelState.UNIT_TECHNICAL_SHARP,
+        sections=GATE_SECTIONS[ModelState.UNIT_TECHNICAL_SHARP],
+        instruction=STATE_INSTRUCTIONS[ModelState.UNIT_TECHNICAL_SHARP],
+        projection={"unit_id": "Service:catalogue-and-discovery",
+                    "data_items": {"reads": ["item"]}},
+        surface_overview={"core_features": ["catalogue"],
+                          "user_journeys": ["browse -> add -> publish"]},
+    )
+
+    rendered = _compose_modeller_prompt(turn)
+
+    assert "Unit projection" in rendered
+    assert "data_items" in rendered
+    assert "Application-surface overview" in rendered
+    assert "browse -> add -> publish" in rendered
+
+    absent = ModellerTurnInput(
+        unit_id="Service:catalogue-and-discovery",
+        state=ModelState.UNIT_TECHNICAL_SHARP,
+        sections=GATE_SECTIONS[ModelState.UNIT_TECHNICAL_SHARP],
+        instruction=STATE_INSTRUCTIONS[ModelState.UNIT_TECHNICAL_SHARP],
+        context_gaps=("unit projection unavailable",
+                      "L1 application-surface overview unavailable"),
+    )
+    degraded = _compose_modeller_prompt(absent)
+    assert "unit projection unavailable" in degraded
+    assert "L1 application-surface overview unavailable" in degraded
+
+
+def test_the_prompt_names_the_read_command():
+    """The store's read needs `cmd='read'` (the schema's discriminator); a
+    prompt that says "no arguments" sends an invalid call."""
+    assert "cmd='read'" in _modeller_skill()
+
+
 def test_the_session_segment_and_the_role_are_renamed_with_the_legacy_alias():
     """The runtime session segment is `threat-modeller`; the recorded legacy
     segment still classifies as the modeller role (one-window alias)."""
@@ -189,6 +230,9 @@ def test_the_role_binds_the_project_skill_and_the_auth_store_by_site_arming():
     assert "write_skill" not in names
     assert binding.middleware
     assert binding.context["project_id"] == "proj-1"
+    # the read-only arming still names a loadable skill, so the prompt's "load
+    # the skill named in your context" is actionable
+    assert binding.context["skills"] == ["authn"]
 
 
 def test_the_modeller_actor_speaks_on_the_renamed_role_and_thread():

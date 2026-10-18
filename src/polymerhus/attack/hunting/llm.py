@@ -246,17 +246,28 @@ def _compose_modeller_prompt(turn) -> str:
         "",
         str(getattr(turn, "instruction", "") or ""),
         "",
+        "Grounding inputs:",
+        "  Unit projection: " + (
+            _render_grounding(getattr(turn, "projection", None)) or "(unavailable)"),
+        "  Application-surface overview: " + (
+            _render_grounding(getattr(turn, "surface_overview", None))
+            or "(unavailable)"),
+    ]
+    for gap in getattr(turn, "context_gaps", ()) or ():
+        lines.append(f"  Grounding gap: {gap}")
+    lines += [
+        "",
         "The persisted model at this turn's start:",
     ]
     if not isinstance(model, dict):
         lines.append("  (not written yet)")
     else:
+        from polymerhus.attack.hunting.threat_modeller import (  # noqa: PLC0415
+            MODEL_SECTIONS,
+        )
+
         lines.append(f"  state: {model.get('state')}")
-        written = [
-            name for name in ("technical_sharpening", "trust_model", "assumptions",
-                              "vulnerabilities", "failure_modes", "loops")
-            if model.get(name)
-        ]
+        written = [name for name in MODEL_SECTIONS if model.get(name)]
         lines.append(f"  sections written: {', '.join(written) or '(none)'}")
         if model.get("risk_profile"):
             lines.append(f"  risk profile: {model['risk_profile']}")
@@ -269,6 +280,26 @@ def _compose_modeller_prompt(turn) -> str:
         "`notes`: the decision nodes and the rationales of the branches you took.",
     ]
     return "\n".join(lines)
+
+
+def _render_grounding(value, limit: int = 4000) -> str:
+    """One grounding input rendered for the turn: a mapping as its JSON, a
+    string as itself, an object as its `model_dump` when it has one. Bounded by
+    `limit` characters so one oversized read cannot flood the turn; an absent
+    value renders "" (the caller names the gap)."""
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value[:limit]
+    if hasattr(value, "model_dump"):
+        try:
+            value = value.model_dump(mode="json")
+        except Exception:  # noqa: BLE001 - a render failure is a denoted gap
+            return ""
+    try:
+        return json.dumps(value, ensure_ascii=False, default=str)[:limit]
+    except Exception:  # noqa: BLE001 - a render failure is a denoted gap
+        return ""
 
 
 def _system_render(info) -> str:

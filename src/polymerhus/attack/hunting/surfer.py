@@ -64,6 +64,7 @@ from polymerhus.attack.hunting.hunter_memory import (
     config_key_from_fault_key,
 )
 from polymerhus.attack.hunting.mover import (
+    THREAT_MODELLER_SEGMENTS,
     HuntConfigItem,
     ProducedItem,
     TestSpecItem,
@@ -82,12 +83,14 @@ logger = logging.getLogger(__name__)
 # `hunting:<run_id>:<segment>` shape - the first free segment).
 SURFER_SESSION_SEGMENT = "surfer"
 
-# The modeller role the renamed session segments classify as (#317, S1 4.1).
-# `orchestrator` stays accepted as the one-window legacy segment so an
-# interrupted old run's live pass is gated by the same role handle.
+# The agent-sub-module role tag the renamed session segments classify as
+# (#317, S1 4.1). It is the ROLE vocabulary (`app/runtime._AGENT_ROLES_BY_MODULE`
+# declares the same key beside `hunter` and `pod`), NOT the session segment: the
+# spec's session segment is `threat-modeller` (underscore-free, a session-id
+# part) and lives with the Q13 scheme in `mover.py`. `orchestrator` stays
+# accepted as the one-window legacy segment so an interrupted old run's live pass
+# is gated by the same role handle.
 THREAT_MODELLER_ROLE = "threat_modeller"
-MODELLER_SESSION_SEGMENT = "threat-modeller"
-MODELLER_SESSION_SEGMENT_LEGACY = "orchestrator"
 
 # The produced->consumed rename is the at-least-once marker (Q3), so the surfer
 # ticks forever ONLY while work remains; the pause between laps gives freshly
@@ -131,7 +134,7 @@ def derive_thread_role(session_id: str) -> str:
     if len(parts) < 3:
         return "infra"
     segment = parts[2]
-    if segment in (MODELLER_SESSION_SEGMENT, MODELLER_SESSION_SEGMENT_LEGACY):
+    if segment in (THREAT_MODELLER_SEGMENTS):
         return THREAT_MODELLER_ROLE
     if segment.startswith("hunt:"):
         return "hunter"
@@ -322,6 +325,10 @@ async def is_run_quiesced(
     ended, they author nothing more, and they settle on the run-terminal
     `settle` message once the surfer proves quiesce."""
     live = {sid for sid in control.live_session_ids() if is_run_session_id(sid, run_id)}
+    # designed-not-built: the quiesce key becomes `threat_modeller_session_id`
+    # with the bootstrap re-wire in T2b (#386); keying the NEW id before the
+    # swap would quiesce a run whose live pass is still registered under the
+    # legacy segment.
     if orchestrator_session_id(run_id) in live:
         return False
     if any(is_pod_session_id(sid) for sid in live):
@@ -821,8 +828,6 @@ __all__ = [
     "SurferReport",
     "SURFER_SESSION_SEGMENT",
     "build_run_dispatch",
-    "MODELLER_SESSION_SEGMENT",
-    "MODELLER_SESSION_SEGMENT_LEGACY",
     "THREAT_MODELLER_ROLE",
     "derive_thread_role",
     "is_hunter_session_id",

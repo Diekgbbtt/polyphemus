@@ -176,7 +176,7 @@ An unclosed assumption is recorded as a validation finding - close it before the
 
 ## Tools
 
-- `hunts_store` - the threat model read/write. One write per gate, `{state, sections}`. Read your own model (no arguments) or another unit's model (`unit_id`) for prior insight; project one section with `section`. The store merges the sections, keeps the state monotonic, computes the risk profile at COMPLETED, and runs the completion check.
+- `hunts_store` - the threat model read/write. One write per gate, `{state, sections}`. Read your own model with `cmd='read'` (no other argument), another unit's model with `cmd='read'` and its `unit_id` for prior insight, and project one section with `section`. The store merges the sections, keeps the state monotonic, computes the risk profile at COMPLETED, and runs the completion check.
 - `notes` - the episodic notes, keyed `<unit_name>:<note_name>`. Write ONE note per reasoning phase: the decision nodes and the rationales of the branches you took. Available kinds: `hypothesis_refusal`, `implicit_test_primitive`, `freeform` (`phase_summary` is the hunter's kind and is not accepted here).
 - `search_http_history` / `get_http_artifact` - the recorded request traffic for the unit's endpoints. Search returns candidate summary rows; get inspects one artifact and its capture state. Their ids and request records are your evidence entries. You never replay: replay belongs to the test-executor pod.
 - `exec` - the live probe against the Kali surface, for the mechanics and the evidence above.
