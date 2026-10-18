@@ -57,6 +57,22 @@ def test_the_assigner_skill_widens_the_http_pair_past_disambiguation_only():
     assert "never a trawl" in skill       # the bound is intact
 
 
+def test_the_assigner_skill_fails_open_when_the_widening_seam_fails():
+    """Operator ruling 2026-10-18 (C5): a failed or dropped verification call
+    must not silently become a no-owner outcome. The skill teaches the loose-
+    control fallback - emit the aggregate on the surface evidence and name the
+    wrong-unit-concretisation risk - and fences it against garden-variety
+    guessing."""
+    from polymerhus.analysis.assigner import _load_assigner_skill
+
+    skill = _load_assigner_skill()
+    assert "fail open" in skill.lower()
+    assert "loose control" in skill.lower()
+    assert "concretisation" in skill.lower()
+    assert "missing evidence" in skill.lower()
+    assert "unverifiable guess is still a guess" in skill
+
+
 # --- the mechanism-typist's tool-use specs ------------------------------------
 
 def test_the_typist_skill_specifies_when_and_how_to_use_the_tools():
