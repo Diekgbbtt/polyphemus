@@ -19,7 +19,7 @@
 | S2 | Residual wave: W1-taxonomy (B1, B3/B4 records), W0-parent-conformance (B2), W2-refresh | DONE 2026-10-18: all three merged after their single review rounds and fix passes; `verify.sh` NO-FAILURES (1 pending: the C1 families) |
 | S3 | W3: four rulings (round 1), remaining grill points (round 2), ADR compiled, then prompt surgery + validity gate | rulings answered; ADR committed; W3 subagent done, one review, merge |
 | S4 | W4: nested-taxonomy loader (flat-leaf identity, uniqueness hard error, level-2 nesting, logical root mount, scaffold, conformance tests, README) | one review, merge, targeted test suite green, `verify.sh` FAIL-free |
-| S5 | W5: artifact `skills` field, `load_skill` descriptions command, runtime rendering, agent workflows (C5, workflow ticket #236) | one review, merge, targeted suites green |
+| S5 | W5: artifact `skills` field, `load_skill` descriptions command, runtime rendering, agent workflows (C5, workflow ticket #236); per the 2026-10-18 ruling: the pod runner/triager prompt refactoring plus the skills loading/listing binding for all four hunting-module agents | one review, merge, targeted suites green |
 | S6 | W6: `defence-bypass` and `proxy-techniques` families (C1) + cross-reference wiring (C2) | one review, merge, `verify.sh` family check PASS |
 | S7 | W7: C4-full enrichment (D1a proposal report first, operator-assessed; then D1b surgical pass, D1c references/scripts) | D1a accepted by the operator; one review, merge, `verify.sh` ALL-CHECKS-PASS |
 | S8 | Final integration: trunk to `dev` as one PR (human-merged) | PR open; operator merges |

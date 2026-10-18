@@ -13,7 +13,7 @@ Nothing is pushed; integration is a later human-merged PR.
 
 - Machine checks: `skills-unspurious/_completion/verify.sh`.
 - Independent verification agent: a fresh adversarial reviewer dispatched after each phase.
-- Operator gates: B1 (taxonomy grilling), B2 (parent-conformance ruling), D1a (enrichment proposal report), and the final acceptance of the A1 status wording.
+- Operator gates: B1 (taxonomy grilling; answered 2026-10-03 and 2026-10-18), B2 (parent-conformance ruling; answered 2026-10-18), the A1 status wording (accepted 2026-10-18), and D1a (enrichment proposal report; pending).
 
 ## Task table
 

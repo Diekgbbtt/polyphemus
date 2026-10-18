@@ -42,7 +42,7 @@ The decisions already recorded in `skill-evolution-232-decisions.md` (D232-1..14
 | **W2** - cortex (C1) | **Landed** (cortex built and hardened; the residual register/gaps refresh merged into the trunk) | the design doc `docs/design/cortex-cognitive-architecture-map.md`, the injected verbatim `src/polymerhus/attack/hunting/prompts/COGNITIVE_ARCHITECTURE_MAP.md`, and the contract tests (`tests/attack/test_cortex.py`, 18 passed); the register and gaps re-derived from code in the refresh | carried forward: the hunt-orchestrator description-only surface and request-history grants (W5/W6); `#282` and `#283` integration tickets |
 | **W3** - lesson validity gate + SkillEvolver fix (C3) | **Next on the maintainer lane** | inputs landed (the notion set, the boundary); the four adversarial-review rulings remain open (one-revision enforcement, `source_note_ids` audit, `version` semantics, 200 vs 202) | prompt surgery first, then the gate |
 | **W4** - nested taxonomy loader (C2b) | **Not started** | the suite README: the loader is still flat, the nested layout is not yet loadable | after W1 ratification |
-| **W5** - artifact `skills` field, `load_skill` descriptions, runtime rendering, agent workflows (C5) | **Not started**; workflow ticket **#236** exists | interface decisions settled (operator answers 1/14/15) | needs W2 and W4 |
+| **W5** - artifact `skills` field, `load_skill` descriptions, runtime rendering, agent workflows (C5) | **Not started**; workflow ticket **#236** exists | interface decisions settled (operator answers 1/14/15) | needs W2 and W4; scope clarified 2026-10-18: the pod runner/triager prompt refactoring and the skills loading/listing binding for all hunting-module agents are this stream's work (the hunter/orchestrator prompt refactoring is another workstream's) |
 | **W6** - bypass/proxy technique families (split from C4) | **In the completion stream (C1/C2); ticket #278** (`workflow`) | extracted material at `skills-unspurious/_migration/bypass-proxy-techniques/low-hanging-fruit.md`; the classes cross-reference the future families at their steps | author the two families (C1), then wire the cross-references (C2) |
 | **W7** - C4-full enrichment | **In the completion stream (D1a-D1c)** | the verbatim algorithm below; sources verified (`~/hacking-skills` 43 files, `~/claude-bug-hunter` 105, `~/anthropic-cybersecurity-skills` 399, `~/awsome-offensive-security-skill` 370) | proposal report (D1a, operator-assessed), surgical enrichment (D1b), references/scripts pass (D1c) |
 | **Carried from #232** | stub landed; four adversarial rulings open | `docs/design/skill-evolution-232-decisions.md`, "Adversarial review findings and open rulings" | C3 resolves or absorbs them |
@@ -113,6 +113,11 @@ Skills are bound to the agents at runtime with the native LangGraph primitives, 
 **C2/C4/C5 delivery split.** C2 first delivers the base (solid enough to be consumed by other workstreams already); C4-full enriches it in parallel; C5 delivers the rendering, the context and workflow modification, and the artifact typed-surface change.
 
 **KB mapping lacks.** The missing RDF<->KB type counterparts are intended; the hunter and the pod's runner interpret a lack as a necessity to use the cognitive system described in the cortex, which will most likely end in a knowledge-base query, organically.
+
+## Settled decisions (operator rulings, 2026-10-18)
+
+**Skills-synergic prompts and bindings split.** The hunter and hunt-orchestrator prompt refactoring toward a skills-synergic version is executed by another workstream; the test-executor pod's runner and triager prompt refactoring toward that version is this stream's work (W5).
+Regardless of who refactors any prompt, the skills loading and listing capability binding, with the specific tools, for every agent in the hunting module (hunter, hunt-orchestrator, pod runner, pod triager) is this stream's work (W5).
 
 ## Deferred and open items
 
