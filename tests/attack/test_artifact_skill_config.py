@@ -247,6 +247,114 @@ def test_a_non_list_skills_value_degrades_the_graph_context(tmp_path, caplog):
     assert _spec_task_skills({}) == ()
 
 
+# --- a minted variant keeps (or re-declares) the run's skills ------------------
+
+
+def _exec_and_conclude_factory(seen: list):
+    """A two-call scripted model for ONE runner stretch: a real `exec` tool call
+    (so the stretch records an observation and the graph routes to the triager),
+    then a plain conclusion."""
+
+    class _Model(BaseChatModel):
+        calls: int = 0
+
+        def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+            seen.append(list(messages))
+            self.calls += 1
+            if self.calls == 1:
+                return ChatResult(generations=[ChatGeneration(message=AIMessage(
+                    content="", tool_calls=[{
+                        "name": "exec",
+                        "args": {"command": "curl -k -sS https://t/"},
+                        "id": "c1",
+                    }]))])
+            return ChatResult(generations=[ChatGeneration(
+                message=AIMessage(content="stretch concluded"))])
+
+        async def _agenerate(self, messages, stop=None, run_manager=None, **kwargs):
+            return self._generate(
+                messages,
+                stop=stop,
+                run_manager=run_manager.get_sync() if run_manager else None,
+                **kwargs,
+            )
+
+        @property
+        def _llm_type(self) -> str:
+            return "fake"
+
+        def bind_tools(self, tools, **kwargs):
+            return self
+
+    def make(role_id):
+        return _Model()
+
+    return make
+
+
+def _variant_triager(variant_spec: dict):
+    """An injected triager that mints one variant (then terminates on the next
+    lap), so the graph path mint -> runner stretch 2 is exercised."""
+
+    laps = {"n": 0}
+
+    def triager_fn(spec, observation, messages, log):
+        laps["n"] += 1
+        if laps["n"] == 1:
+            return {
+                "classification": "symptom-absent", "action": "variant",
+                "declined_attribute": "payload vector",
+                "variant_spec": variant_spec,
+                "feedback": "try the derived variant",
+            }
+        return {
+            "classification": "symptom-absent", "action": "terminate",
+            "verdict": "unsuccessful", "terminal_reason": "space-exhausted",
+            "clean": True, "note": "done",
+        }
+
+    return triager_fn
+
+
+def test_a_minted_variant_inherits_the_parent_specs_declared_skills(tmp_path):
+    """#236 mechanism: the triager's variant spec replaces `state["spec"]`
+    wholesale, so the symbolic layer carries the parent's declaration onto a
+    variant that does not state its own - the runner's LATER stretch still
+    renders the skill the run was configured with."""
+    seen: list = []
+    env = asyncio.run(arun_pod(
+        _spec(skills=["ssrf"]), exec_fn=_exec(), trace_fn=_no_trace,
+        memory_store=PodMemoryStore(tmp_path), spec_id=SPEC_ID,
+        triager_fn=_variant_triager({"testing_pattern": "blind-boolean"}),
+        model_factory=_exec_and_conclude_factory(seen),
+    ))
+
+    assert env["evidence"]["iterations"] == 2, "the variant lap must have run"
+    systems = _system_messages(seen)
+    assert len(systems) >= 3, "two runner stretches, one model call each"
+    for system in systems:
+        assert f"- ssrf: {skill_meta('ssrf')['description']}" in system
+
+
+def test_a_minted_variant_with_its_own_declaration_wins(tmp_path):
+    """A variant that states its own `skills` replaces the inherited set: the
+    later stretch renders the variant's declaration, not the parent's."""
+    seen: list = []
+    asyncio.run(arun_pod(
+        _spec(skills=["ssrf"]), exec_fn=_exec(), trace_fn=_no_trace,
+        memory_store=PodMemoryStore(tmp_path), spec_id=SPEC_ID,
+        triager_fn=_variant_triager({
+            "testing_pattern": "blind-boolean", "skills": ["csrf"],
+        }),
+        model_factory=_exec_and_conclude_factory(seen),
+    ))
+
+    systems = _system_messages(seen)
+    last = systems[-1]
+    assert f"- csrf: {skill_meta('csrf')['description']}" in last
+    assert "ssrf" not in last
+
+
 # --- the surfer dispatch: the artifact rides the parsed config/spec -----------
 
 
