@@ -132,17 +132,21 @@ The landed set additionally pairs `ObservableSignal`, `AttackGoal`, `PayloadPatt
 
 - `client_side_js_architecture`: intended entity, not built; held out of the injected verbatim until it lands; integration tracking ticket [#282](https://github.com/Diekgbbtt/polyphemus/issues/282).
 - the rate-limit posture redesign: absent from the shortened dev, pending; integration tracking ticket [#283](https://github.com/Diekgbbtt/polyphemus/issues/283).
-- the hunt-orchestrator's request-history read surface and its skill description-only surface (`load_skill` all-or-regex listing): STILL PENDING - the shipped surface is exactly `hunts_store` / `notes` / `graph_view` (the `TOOL_SURFACE` frozenset, `build_orchestrator_tool_surface` in `attack/hunting/actors.py`), and `hunting_orchestrator` is declared skill-EXEMPT in `ROLE_SKILLS` (`app/llm/skills.py`), so the orchestrator holds no `load_skill` binding (and no listing mode exists) today; it is tied to the C5 workstream (W5's `load_skill` descriptions command, W6's orchestrator surface). The hunt-orchestrator reasons to them as read-only and never reaches skill bodies or lesson writing.
+- the hunt-orchestrator's request-history read surface and its skill description-only surface (`load_skill` all-or-regex listing): STILL PENDING - the shipped surface is exactly `hunts_store` / `notes` / `graph_view` (the `TOOL_SURFACE` frozenset in `attack/hunting/hunt_orchestrator.py`, `build_orchestrator_tool_surface` in `attack/hunting/actors.py`), and `hunting_orchestrator` is declared skill-EXEMPT in `ROLE_SKILLS` (`app/llm/skills.py`), so the orchestrator holds no `load_skill` binding (and no listing mode exists) today.
+  It is tied to the C5 workstream (W5's `load_skill` descriptions command, W6's orchestrator surface).
+  The workstream and component codes resolve in `docs/design/skills-system-decomposition.md`.
+  The hunt-orchestrator reasons to them as read-only and never reaches skill bodies or lesson writing.
 - the pod triager's EXHAUSTION rule laundering a degraded KB tool into a clean `space-exhausted` verdict (the operational root of the degraded-is-not-absent rule): RESOLVED - the round-2 cortex fixes landed the degraded-is-not-absent principle in the injected map (`1f186ec0`, section 10), and the operational fix closed issue [#304](https://github.com/Diekgbbtt/polyphemus/issues/304) on 2026-10-06 (`4f088f62`, review gaps in `9a01f3d3`, on dev).
 
 ## 7. Known gaps and drift findings
 
-1. RESOLVED: the pod prompt module docstring now records the binding truth - the pod `runner` and `triager` roles carry `load_skill`/`record_skill_lesson` through the universal `build_skill_tools` binding, while the base prompts stay in code.
+1. RESOLVED: the pod prompt module docstring now records the binding truth - the pod `pod_runner` and `pod_triager` roles carry `load_skill`/`record_skill_lesson` through the universal `build_skill_tools` binding, while the base prompts stay in code.
 2. The hunt-orchestrator's frozen three-tool surface versus the operator's request-history and skill-description grants (reopened by the skills-plumbing stream).
 3. `graph_view`'s published contract advertises four L0 labels while the allowlist has fifteen (`Secret`, `Technology` invisible to agents).
 4. The hunter's KB queries leave no durable trail (Langfuse only), where the pod records a durable KB observation.
 5. `rate_limit_posture` was force-reverted from dev; the redesign is pending (the `configurator` role is reserved for it).
-6. RESOLVED: the term "cortex" now lives in the owning glossary (`attack/hunting/CONTEXT.md`, "The cortex (C1, built)"); it no longer lives only in the ephemeral `skills-system-decomposition.md` glossary - the path guardrail lifted once the cortex and its design doc landed on the trunk.
+6. RESOLVED: the term "cortex" now lives in the owning glossary (`attack/hunting/CONTEXT.md`, "The cortex (built)").
+   It no longer lives only in the ephemeral `skills-system-decomposition.md` glossary - the path guardrail lifted once the cortex and its design doc landed on the trunk.
 
 ## 8. Injection points
 
