@@ -10,6 +10,10 @@ vulnerability.
 Metrics per spec (plan section 3, W2.2):
 
 - M1 placement (gate): the produced L1 node matching the unit key exists.
+  A Service spec may also name `match.aliases` (alternate business-function
+  slugs): the bootstrapped L1 re-decomposed the target's surface between arms,
+  so the GT primary slug and the produced slug bridge through the alias list;
+  on an alias match the aliased service's props and edges are scored.
 - M2 L0 grounding: share of required L0 items (endpoints and parameters)
   aggregated by the produced unit. Service units read the unit's own
   `AGGREGATES` edges; System units read the endpoints surfaced via the linked
@@ -287,8 +291,17 @@ def _placement(spec: dict, snapshot: dict) -> dict:
     unit = spec["unit"]
     match = unit["match"]
     if unit["kind"] == "Service":
-        found = match["business_function_slug"] in snapshot["services"]
-        return {"pass": found, "identity": match["business_function_slug"]}
+        # `match.aliases` bridges vocabularies: the bootstrapped L1 (arm K)
+        # re-decomposed a target's surface, so the GT's primary slug and the
+        # produced slug can differ while denoting the same business function.
+        primary = match["business_function_slug"]
+        candidates = [primary, *(match.get("aliases") or [])]
+        for slug in candidates:
+            if slug in snapshot["services"]:
+                return {"pass": True, "identity": slug,
+                        "alias_of": None if slug == primary else primary}
+        return {"pass": False, "identity": primary,
+                "aliases_tried": candidates[1:]}
     for system in snapshot["systems"]:
         if (system["kind"] == match["kind"]
                 and (match.get("discriminator") in (None, system["discriminator"]))):
@@ -388,7 +401,44 @@ def _backbone(spec: dict, snapshot: dict) -> dict:
             "share": (len(matched) / len(items)) if items else 1.0}
 
 
-def _system_edges(spec: dict, snapshot: dict) -> dict:
+def _alias_map(specs: list[dict]) -> dict[str, str]:
+    """GT slug -> bootstrapped slug, from every Service spec's `match.aliases`
+    (first alias wins). The bootstrapped L1 renamed/redivided a target's surface
+    (arm K), so GT cross-references (M4 discriminator prefixes, inbound
+    `from_service`) must bridge to the produced vocabulary."""
+    mapping: dict[str, str] = {}
+    for spec in specs:
+        match = spec["unit"]["match"]
+        primary = match.get("business_function_slug")
+        if primary:
+            for alias in match.get("aliases") or []:
+                mapping.setdefault(primary, alias)
+    return mapping
+
+
+def _bridge_slug(slug: str | None, alias_map: dict[str, str], services: dict) -> str | None:
+    """The produced-vocabulary form of a GT slug: its alias when the produced
+    graph carries that alias, else the slug unchanged (arm J is a no-op)."""
+    if not slug:
+        return slug
+    alias = alias_map.get(slug)
+    return alias if alias and alias in services else slug
+
+
+def _bridge_discriminator(disc: str | None, alias_map: dict[str, str],
+                          services: dict) -> str | None:
+    """The produced-vocabulary form of a GT discriminator `<slug>::<rest>`."""
+    if not disc or "::" not in disc:
+        return disc
+    slug, _, rest = disc.partition("::")
+    bridged = _bridge_slug(slug, alias_map, services)
+    return f"{bridged}::{rest}" if bridged != slug else disc
+
+
+def _system_edges(spec: dict, snapshot: dict,
+                  alias_map: dict[str, str] | None = None) -> dict:
+    alias_map = alias_map or {}
+    services = snapshot["services"]
     unit = spec["unit"]
     required = spec["service_to_system_edges"]["required"]
     mode = spec["service_to_system_edges"].get("mode", "outbound")
@@ -396,12 +446,16 @@ def _system_edges(spec: dict, snapshot: dict) -> dict:
     if mode == "inbound":
         match = unit["match"]
         for edge in required:
+            from_slug = _bridge_slug(edge["from_service"], alias_map, services)
             found = any(
-                e["service_slug"] == edge["from_service"] and e["rel"] == edge["rel"]
+                e["service_slug"] == from_slug and e["rel"] == edge["rel"]
                 and e["kind"] == match["kind"]
                 and e["discriminator"] == match["discriminator"]
                 for e in snapshot["system_edges"])
-            items.append({"required": edge, "status": "matched" if found else "missing"})
+            items.append({"required": edge, "status": "matched" if found else "missing",
+                          "bridged_from_service": (from_slug
+                                                   if from_slug != edge["from_service"]
+                                                   else None)})
     else:
         service_slug = unit["match"]["business_function_slug"]
         for edge in required:
@@ -410,17 +464,27 @@ def _system_edges(spec: dict, snapshot: dict) -> dict:
                           if e["service_slug"] == service_slug
                           and e["rel"] == edge["rel"]
                           and e["kind"] == edge["target_kind"]]
-            if disc_mode == "kind_any":
+
+            def _first(disc: str | None):
+                return next((e for e in candidates if e["discriminator"] == disc), None)
+
+            if disc_mode == "any_of":
+                expected_list = list(edge["target_discriminator"])
+                expected_list += [b for b in (
+                    _bridge_discriminator(d, alias_map, services)
+                    for d in edge["target_discriminator"]) if b not in expected_list]
                 hit = next((e for e in candidates
-                            if e["discriminator"] == edge["target_discriminator"]), None)
+                            if e["discriminator"] in expected_list), None)
+            elif disc_mode == "kind_any":
+                expected = edge["target_discriminator"]
+                bridged = _bridge_discriminator(expected, alias_map, services)
+                hit = _first(expected) or _first(bridged)
                 if hit is None:
                     hit = candidates[0] if candidates else None
-            elif disc_mode == "any_of":
-                hit = next((e for e in candidates
-                            if e["discriminator"] in edge["target_discriminator"]), None)
             else:  # exact
-                hit = next((e for e in candidates
-                            if e["discriminator"] == edge["target_discriminator"]), None)
+                expected = edge["target_discriminator"]
+                bridged = _bridge_discriminator(expected, alias_map, services)
+                hit = _first(expected) or _first(bridged)
             items.append({
                 "required": edge,
                 "status": "matched" if hit else "missing",
@@ -434,12 +498,33 @@ def _system_edges(spec: dict, snapshot: dict) -> dict:
             "share": (len(matched) / len(items)) if items else 1.0}
 
 
-def score_spec(spec: dict, snapshot: dict) -> dict:
-    """One GT spec's verdict against a produced-graph snapshot."""
+def score_spec(spec: dict, snapshot: dict,
+               alias_map: dict[str, str] | None = None) -> dict:
+    """One GT spec's verdict against a produced-graph snapshot.
+
+    A Service spec may name `match.aliases` (alternate business-function slugs):
+    on an alias match the ALIASED service's props and edges are scored, and the
+    report records the alias (bootstrapped-vocabulary bridge, 2026-10-18).
+    `alias_map` (GT slug -> produced slug, from every spec) additionally bridges
+    the M4 discriminator prefixes and inbound `from_service` references;
+    `score_target` supplies the full map, a direct call derives it from the
+    one spec (arm J no-ops either way)."""
+    if alias_map is None:
+        alias_map = _alias_map([spec])
     m1 = _placement(spec, snapshot)
-    m2 = _l0_items(spec, snapshot)
-    m3 = _backbone(spec, snapshot)
-    m4 = _system_edges(spec, snapshot)
+    scoring_spec = spec
+    primary = spec["unit"]["match"].get("business_function_slug")
+    if (spec["unit"]["kind"] == "Service" and m1["pass"]
+            and m1["identity"] != primary):
+        scoring_spec = {
+            **spec,
+            "unit": {**spec["unit"],
+                     "match": {**spec["unit"]["match"],
+                               "business_function_slug": m1["identity"]}},
+        }
+    m2 = _l0_items(scoring_spec, snapshot)
+    m3 = _backbone(scoring_spec, snapshot)
+    m4 = _system_edges(scoring_spec, snapshot, alias_map)
     score = ((m2["share"] + m3["share"] + m4["share"]) / 3.0) if m1["pass"] else 0.0
     return {
         "bundle": spec["bundle"],
@@ -453,7 +538,8 @@ def score_spec(spec: dict, snapshot: dict) -> dict:
 
 
 def score_target(specs: list[dict], snapshot: dict) -> dict:
-    results = [score_spec(spec, snapshot) for spec in specs]
+    alias_map = _alias_map(specs)
+    results = [score_spec(spec, snapshot, alias_map) for spec in specs]
     mean = sum(r["score"] for r in results) / len(results) if results else 0.0
     return {"specs": results, "target_score": mean, "spec_count": len(results)}
 
@@ -469,7 +555,12 @@ def render_text(label: str, project_id: str, corpus: Path, result: dict) -> str:
         if vuln:
             lines.append(f"   vuln: {vuln.get('type')}  {vuln.get('fault_class')}")
         m1 = spec["m1"]
-        lines.append(f"M1 placement: {'PASS' if m1['pass'] else 'FAIL'} ({m1['identity']})")
+        ident = m1["identity"]
+        if m1.get("alias_of"):
+            ident = f"{m1['alias_of']} -> {ident} (alias)"
+        elif m1.get("aliases_tried"):
+            ident = f"{ident} (aliases tried: {', '.join(m1['aliases_tried'])})"
+        lines.append(f"M1 placement: {'PASS' if m1['pass'] else 'FAIL'} ({ident})")
         m2 = spec["m2"]
         lines.append(f"M2 L0 grounding: {m2['share']:.2f} "
                      f"({m2['matched']}/{m2['total']}; endpoints "

@@ -159,6 +159,24 @@ In `white-jotter-004`, the two declared-gap statements gained the guard fields:
 
 Both reasons are substrings of the bundle's declared gap text ("the logging sink and the outbound lookup are capability gaps"), which the lint now enforces; the other 12 specs declare no gap markers.
 
+### 2.4.2 The bootstrapped-vocabulary bridge (added for arm K)
+
+The arm K data dependency replaced the operator KB with the regenerated bootstrapped L1, which re-decomposed both targets' surfaces (comfyui: 19 services; white-jotter: 11). The GT units keep their arm J identity keys, so the criterion gained an explicit, auditable alias bridge:
+
+- `unit.match.aliases` lists the bootstrapped slug per Service unit. A Service matches on its primary key or any alias; on an alias match the aliased service's props and edges are scored, and the report prints `primary -> alias (alias)`.
+- The same map bridges the M4 cross-references: an expected discriminator `<old-slug>::<rest>` is retried as `<alias-slug>::<rest>`, and a System spec's inbound `from_service` is retried as its alias. The bridge is a no-op when the produced graph carries the primary slug (arm J), verified by an IDENTICAL per-unit re-measure of every arm J formal and base run.
+- The EXPOSED_VIA M4 items were re-grounded to `discriminator_mode: kind_any`: the bootstrapped model defines shared RESTApi overlays (`core-http`, `manager-http`) and, for comfyui, ONE shared WebPresentation shell (`graph-authoring::editor-shell`), so the per-service exact discriminators described the old vocabulary, not the structure. The exact match is still reported (`exact_discriminator`).
+  On white-jotter the bootstrapped model still defines per-service `WebPresentation` shells (`sign-in::credential-pages`, `library-catalog::catalogue-pages`, ...), so the kind-level item keeps discriminating there.
+
+Mappings recorded (arm J slug -> bootstrapped slug):
+
+| target | mapping |
+|---|---|
+| comfyui | `user-data-file` -> `editor-settings`; `image-upload` -> `asset-upload`; `image-viewing` -> `artefact-serving`; `manager-preferences` -> `extension-manager-configuration`; `model-download` -> `model-installation` |
+| white-jotter | `account-sign-in` -> `sign-in`; `article-publishing` -> `article-management`; `book-search` -> `library-catalog`; `book-cover-serving` -> `media-asset-serving`; `account-registration` -> `register` |
+
+The arm J formal/base numbers under the bridged instrument remain 0.48 / 0.45 (comfyui) and 0.66 / 0.49 (white-jotter, re-measured at the arm K close with the same spec set).
+
 ## 3. Goal 2 - analysis-phase cache ratios
 
 Source: the durable per-project usage surface, `GET http://127.0.0.1:8080/projects/{id}/usage` on the eval host.

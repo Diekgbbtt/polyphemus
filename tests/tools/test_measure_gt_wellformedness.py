@@ -394,6 +394,71 @@ def test_lint_flags_an_undeclared_capability_gap_marker(tmp_path: Path):
     assert any("capability_gap" in issue for issue in issues)
 
 
+def test_a_service_alias_bridges_the_bootstrapped_vocabulary():
+    """The bootstrapped L1 (arm K, 2026-10-18) re-decomposed the surface: a GT
+    unit names its arm J slug while the produced graph carries the bootstrapped
+    slug; `match.aliases` bridges the two, and the ALIASED service's props and
+    edges are scored."""
+    spec = _service_spec()
+    spec["unit"]["match"]["aliases"] = ["svc-bootstrapped"]
+    snapshot = _snapshot(
+        services={"svc-bootstrapped": {"props": {"api_paradigm": "rest",
+                                                 "exposure": "public"}}},
+        aggregates={"svc-bootstrapped": [
+            {"label": "Endpoint", "method": "POST", "path": "/upload"},
+            {"label": "Endpoint", "method": "GET", "path": "/view"},
+            {"label": "Parameter", "name": "image", "position": "body",
+             "endpoint_path": "/upload"},
+        ]},
+        systems=[
+            {"kind": "RESTApi", "discriminator": "core-rest", "props": {}},
+            {"kind": "WebPresentation", "discriminator": "svc-bootstrapped::shell",
+             "props": {}},
+        ],
+        system_edges=[
+            {"service_slug": "svc-bootstrapped", "rel": "EXPOSED_VIA",
+             "kind": "RESTApi", "discriminator": "core-rest"},
+            {"service_slug": "svc-bootstrapped", "rel": "EXPOSED_VIA",
+             "kind": "WebPresentation", "discriminator": "svc-bootstrapped::shell"},
+        ],
+    )
+    result = tool.score_spec(spec, snapshot)
+    assert result["m1"]["pass"] is True
+    assert result["m1"]["identity"] == "svc-bootstrapped"
+    assert result["m1"]["alias_of"] == "svc"
+    assert result["m2"]["share"] == pytest.approx(1.0)
+    assert result["score"] == pytest.approx(1.0)
+    wp = next(i for i in result["m4"]["items"]
+              if i["required"]["target_kind"] == "WebPresentation")
+    assert wp["status"] == "matched"
+    assert wp["exact_discriminator"] is False   # bridged, not literal
+    assert wp["actual_discriminator"] == "svc-bootstrapped::shell"
+    text = tool.render_text("label", "p", Path("/corpus"), {
+        "specs": [result], "target_score": result["score"], "spec_count": 1})
+    assert "(alias)" in text
+
+
+def test_an_inbound_system_edge_bridges_a_renamed_source():
+    """The bootstrapped vocabulary renames a System spec's `from_service`
+    sources; the alias map bridges them (the wj-002/wj-004 pattern)."""
+    spec = _system_spec()
+    spec["service_to_system_edges"] = {"mode": "inbound", "required": [
+        {"rel": "AUTHORIZED_BY", "from_service": "article-publishing"},
+    ]}
+    snapshot = _snapshot(
+        services={"library-catalog": {"props": {}}},
+        systems=[{"kind": "AuthorizationSystem", "discriminator": "__singleton__",
+                  "props": {"description": "302 redirect"}}],
+        system_edges=[{"service_slug": "library-catalog", "rel": "AUTHORIZED_BY",
+                       "kind": "AuthorizationSystem",
+                       "discriminator": "__singleton__"}],
+    )
+    result = tool.score_spec(spec, snapshot,
+                             {"article-publishing": "library-catalog"})
+    assert result["m4"]["share"] == pytest.approx(1.0)
+    assert result["m4"]["items"][0]["bridged_from_service"] == "library-catalog"
+
+
 def test_target_filter_selects_only_that_target(tmp_path: Path):
     spec_text = (
         "schema: gt-unit-spec/v1\n"
