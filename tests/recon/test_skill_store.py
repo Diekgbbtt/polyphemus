@@ -292,6 +292,46 @@ def test_a_corrupt_manifest_refuses_the_next_write_and_reads_fail_open(
     assert store.read("auth_workflow", project_id="proj-1") == "# First\n"
 
 
+def test_a_provenance_failure_raises_loudly_after_the_bundle_lands(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Pins the ACCEPTED write ordering (D-W3-2): the bundle file lands first,
+    so a provenance (snapshot or manifest) failure raises `store_unavailable`
+    naming the landed file, while `SKILL.md` keeps the new body and version and
+    the manifest keeps exactly its previous entries."""
+    monkeypatch.setattr(skills, "_SKILLS_ROOT", _catalogue(tmp_path))
+    store = _store(tmp_path)
+    store.write("proj-1", "auth_workflow", "procedure", "# First\n")
+    real = skills.dump_text_atomic
+
+    def fail_on_revisions_paths(path, text):
+        if "revisions" in path.parts:
+            raise skills.StoreUnavailableError(
+                f"store_unavailable: cannot persist {path} (disk full)"
+            )
+        return real(path, text)
+
+    monkeypatch.setattr(skills, "dump_text_atomic", fail_on_revisions_paths)
+
+    with pytest.raises(skills.StoreUnavailableError) as excinfo:
+        store.write("proj-1", "auth_workflow", "procedure", "# Second\n")
+
+    # Loud, and naming the file whose revision could not be recorded.
+    assert "SKILL.md" in str(excinfo.value)
+    assert "its provenance record did not" in str(excinfo.value)
+    # The bundle landed: the new body at the bumped version.
+    text = (
+        tmp_path / "data" / "proj-1" / "skills" / "auth_workflow" / "SKILL.md"
+    ).read_text(encoding="utf-8")
+    assert "version: '1.2'\n" in text and "# Second\n" in text
+    # The manifest keeps its previous entries: the failed revision is neither
+    # indexed nor half-written.
+    revisions = store.revisions("proj-1", "auth_workflow")
+    assert [r["ordinal"] for r in revisions] == [1]
+    assert revisions[0]["version"] == "1.1"
+    assert revisions[0]["previous_version"] == "1.0"
+
+
 def test_revisions_of_an_unknown_skill_read_as_empty(tmp_path: Path) -> None:
     store = _store(tmp_path)
 

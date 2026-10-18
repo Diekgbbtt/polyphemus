@@ -601,14 +601,20 @@ def test_a_relaunch_replaces_the_slot_record(tmp_path: Path) -> None:
 
     store = EvolutionPassStore(root_dir=tmp_path / "data")
     pass_id = evolution_pass_id(PROJECT, SKILL)
-    first = store.start(PROJECT, SKILL, pass_id)
-    store.finish(PROJECT, pass_id, EvolutionOutcome("no_write", SKILL, version="1.0"))
+    store.start(PROJECT, SKILL, pass_id)
+    store.finish(
+        PROJECT, pass_id, EvolutionOutcome("no_write", SKILL, version="1.0")
+    )
+    assert store.get(PROJECT, pass_id)["outcome"]["decision"] == "no_write"
 
     second = store.start(PROJECT, SKILL, pass_id)
 
-    record = store.get(PROJECT, pass_id)
-    assert record["status"] == "running" and record["outcome"] is None
-    assert record["launched_at"] != first["launched_at"] or second == record
+    # The identifier addresses the pass SLOT: the relaunch's running record
+    # replaces the finished one, outcome and finish stamp included.
+    assert store.get(PROJECT, pass_id) == second
+    assert second["status"] == "running"
+    assert second["outcome"] is None
+    assert second["finished_at"] is None
 
 
 def test_discard_drops_only_the_matching_running_record(tmp_path: Path) -> None:
