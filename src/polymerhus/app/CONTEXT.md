@@ -47,6 +47,11 @@ It is explicitly not a bounded-context glossary: the meaning of what these modul
   The read sits at the seam because the module checkpointer prunes to the latest checkpoint per thread, so the interrupted parent tuple is gone once the new input is written.
   A normal, completed turn carries no signal and is left untouched, so pre-existing completed-turn poison is deliberately not auto-repaired.
   Recovery never drops or rewrites a message to hide the violation from the wire (#280).
+- **A tool round the model emitted is never abandoned mid-flight.**
+  The session seam's blackloop cut (`session._should_cut`, #206) ABORTS the live graph run (`stream.close()`), and the model node's output is discarded with it: the round never reaches ToolNode, no TOOL observation exists for it, and the recovery the cut routes to answers the step with a substituted conclusion.
+  The cut is therefore scoped to a turn with NO tools bound - #206's own scope, where the turn's whole output surface is the streamed content the capture already holds - and a tool-bound turn streams to completion under the model's own output ceiling, where a genuine blackloop still surfaces as the `LengthFinishReasonError` (shape A) or empty-content (shape B) signature the recovery already handles.
+  Both outcomes are logged (`blackloop cut: ...` / `reasoning budget crossed ... on a turn with tools bound`); the cut used to be silent on the turn and in the container log.
+  Evidence (#369): in BOTH formal arm J analysis runs the assigner's big-chunk verification round was cut mid-flight (45,267 and 108,065 reasoning chars against the 40k default, the content line arriving after the crossing), and the recovery then committed the `L1DeltaBatch` without the searches it had requested.
 
 ## Patterns to repeat
 

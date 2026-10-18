@@ -295,7 +295,10 @@ async def _aread_pending_resumption(agent, config: dict) -> None:
 # normal thinking burst (~9k tokens, recon CONTEXT.md - a blackloop burns past
 # the ceiling, a normal heavy-thinking turn must NOT be cut) - ~10k tokens at
 # ~4 chars/token. The cut is fail-open (a false positive routes to a cheap
-# recovery; a missed blackloop is caught by the empty-content signature).
+# recovery; a missed blackloop is caught by the empty-content signature) AND
+# loss-free only for a turn with no tools bound: a tool-bound turn is never
+# aborted mid-flight, because the abort discards the tool round it emitted and
+# the recovery then answers the step with a substituted conclusion (#369).
 _DEFAULT_REASONING_BUDGET_CHARS = 40_000
 
 
@@ -314,14 +317,18 @@ def _reasoning_budget_chars(override: int | None) -> int:
 class _StreamCapture:
     """Accumulate the reasoning + content a streamed model call emits, with running
     character counts so the blackloop cut is O(1) per chunk (a blackloop burns the
-    full 131k-token budget - never re-sum the trail)."""
+    full 131k-token budget - never re-sum the trail). `cut_crossing_reported` is the
+    per-turn once-flag for the cut watch's report (#369): the crossing HOLDS for every
+    later chunk, and a crossed turn must report itself exactly once."""
 
-    __slots__ = ("reasoning_parts", "reasoning_chars", "content_parts")
+    __slots__ = ("reasoning_parts", "reasoning_chars", "content_parts",
+                 "cut_crossing_reported")
 
     def __init__(self) -> None:
         self.reasoning_parts: list[str] = []
         self.reasoning_chars: int = 0
         self.content_parts: list[str] = []
+        self.cut_crossing_reported: bool = False
 
     def consume(self, chunk) -> None:
         from polymerhus.app.llm.streaming import extract_content, extract_reasoning
@@ -462,7 +469,9 @@ def run_session_turn(
     captured per chunk; a stream that burns reasoning past `reasoning_budget_chars`
     (default 20k, env `LLM_BLACKLOOP_REASONING_BUDGET`) with no content emitted is
     CUT mid-flight and surfaced as `blackloop=True` with the captured reasoning - the
-    recovery turn's material, never lost (fail-open: the cut never raises).
+    recovery turn's material, never lost (fail-open: the cut never raises). The cut's
+    scope is the NO-TOOLS-BOUND turn (#206): a tool-bound turn is never cut, because
+    the abort discards the tool round the model emitted (#369, `_should_cut`).
 
     `extra_tags` appends caller-owned join keys (the bare run id) to the recorded
     `langfuse_tags` (default None = today's tags, unchanged).
@@ -498,6 +507,9 @@ def run_session_turn(
             _attach_compaction_metadata(config, middleware, thread_id)
             _attach_blackloop_metadata(config, thread_id)
         budget = _reasoning_budget_chars(reasoning_budget_chars)
+        # #369: the cut's TURN scope - a turn with tools bound may emit an ACTION, and
+        # a mid-flight abort would discard the round it asked for (see `_should_cut`).
+        tools_bound = bool(tools)
         capture = _StreamCapture()
         result: dict | None = None
         blackloop = False
@@ -508,7 +520,7 @@ def run_session_turn(
             for mode, payload in stream:
                 if mode == "messages":
                     capture.consume(payload[0])
-                    if _should_cut(capture, budget):
+                    if _should_cut(capture, budget, tools_bound=tools_bound):
                         blackloop = True
                         break
                 elif isinstance(payload, dict) and "messages" in payload:
@@ -565,7 +577,8 @@ async def arun_session_turn(
     absent means no context-carried bindings for this turn.
 
     T1 (#213): streamed generation is the DEFAULT mode here too - same blackloop
-    cut + reasoning capture as the sync turn, driven on the event loop.
+    cut + reasoning capture as the sync turn (the cut's no-tools-bound scope
+    included), driven on the event loop.
 
     `thread_id` is a typed `SessionAddress` (`session_address.py`) - or, for
     back-compat, a raw thread-id string - exactly as `stateful_turn` accepts: the
@@ -598,6 +611,9 @@ async def arun_session_turn(
             _attach_compaction_metadata(config, middleware, thread_id)
             _attach_blackloop_metadata(config, thread_id)
         budget = _reasoning_budget_chars(reasoning_budget_chars)
+        # #369: the cut's TURN scope - a turn with tools bound may emit an ACTION, and
+        # a mid-flight abort would discard the round it asked for (see `_should_cut`).
+        tools_bound = bool(tools)
         capture = _StreamCapture()
         result: dict | None = None
         blackloop = False
@@ -608,7 +624,7 @@ async def arun_session_turn(
             async for mode, payload in stream:
                 if mode == "messages":
                     capture.consume(payload[0])
-                    if _should_cut(capture, budget):
+                    if _should_cut(capture, budget, tools_bound=tools_bound):
                         blackloop = True
                         break
                 elif isinstance(payload, dict) and "messages" in payload:
@@ -631,14 +647,47 @@ async def arun_session_turn(
         return turn
 
 
-def _should_cut(capture: _StreamCapture, budget: int) -> bool:
+def _should_cut(capture: _StreamCapture, budget: int, *, tools_bound: bool) -> bool:
+    """Whether the streaming turn must be CUT now (#206), reporting the crossing once.
+
+    The cut ABORTS the live graph run (`stream.close()`), and the model node's output
+    is discarded with it. It is therefore scoped to the turns whose abort cannot
+    discard an ACTION the model asked the world to perform: a turn with NO tools bound
+    (#206's scope - every no-tool session role), whose whole output surface is the
+    streamed content this capture already holds. A TOOL-BOUND turn's surface includes
+    its tool round, and the mid-flight abort discards that round: it never reaches
+    ToolNode, no TOOL observation exists for it, and the `stateful_turn` recovery the
+    cut routes to answers the step with a SUBSTITUTED conclusion - so an analysis
+    proposer committed its `L1DeltaBatch` without the verification round it had
+    requested (#369; both formal arm J runs, cut at 19:59:06 and 20:53:53). A
+    tool-bound turn is therefore never cut: it runs to completion under the model's own
+    output ceiling, and a genuine blackloop still surfaces as the
+    `LengthFinishReasonError` (shape A) or empty-content (shape B) signature the
+    recovery already handles. Both outcomes are reported - the cut itself was silent
+    on the turn and in the container log (no `blackloop` line exists for either formal
+    run), which is what made #369 hard to see."""
     from polymerhus.app.llm.streaming import should_cut_stream
 
-    return should_cut_stream(
+    if not should_cut_stream(
         accumulated_reasoning_chars=capture.reasoning_chars,
         accumulated_content=capture.content,
         reasoning_budget_chars=budget,
-    )
+    ):
+        return False
+    if not capture.cut_crossing_reported:
+        capture.cut_crossing_reported = True
+        if tools_bound:
+            logger.warning(
+                "reasoning budget crossed (%d reasoning chars, budget %d, no content) "
+                "on a turn with tools bound: streaming to completion - a cut here "
+                "would discard the tool round the model emitted (#369)",
+                capture.reasoning_chars, budget)
+        else:
+            logger.warning(
+                "blackloop cut: %d reasoning chars, budget %d, no content; the "
+                "generation is aborted (fail-open: the turn routes to the recovery)",
+                capture.reasoning_chars, budget)
+    return not tools_bound
 
 
 # Test seam for probe validation - when set, the session runs the real

@@ -101,7 +101,12 @@ def should_cut_stream(
     reasoning_budget_chars: int,
 ) -> bool:
     """The blackloop predicate: accumulated reasoning passed the detection bound with
-    no content emitted -> cut. Content present or reasoning under budget -> no cut."""
+    no content emitted -> cut. Content present or reasoning under budget -> no cut.
+    Pure stream state: the caller owns the TURN scope. The cut ABORTS the live graph
+    run, so it is applied only to a turn with no tools bound - where the turn's whole
+    output surface is the content this predicate already sees. On a tool-bound turn the
+    abort would discard the tool round the model emitted (#369), so the caller streams
+    such a turn to completion instead (`session._should_cut`)."""
     reasoning = accumulated_reasoning_chars or 0
     return not accumulated_content and reasoning >= reasoning_budget_chars
 

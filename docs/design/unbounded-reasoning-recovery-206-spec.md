@@ -2,7 +2,8 @@
 
 The recovery capability for the shared LLM session seam: a no-tool session agent that
 enters an unbounded reasoning loop on a high-reasoning model must not lose its step.
-Status: operator-grilled 2026-09-07. Companion to the #210 window-splitting spec
+Status: operator-grilled 2026-09-07. Amended 2026-10-18 (#369): the cut is scoped to
+a turn with no tools bound - see the amendment at the end of this file. Companion to the #210 window-splitting spec
 (`compaction-window-splitting-210-spec.md`), whose chunked progressive-fold seams this
 spec wires onto, and to #208 (httpx-reprofile one-pod amplifier removal, independent).
 
@@ -214,3 +215,32 @@ blocking edges. #208 is independent (amplifier removal).
   feasibility is confirmed (the compiled `create_agent` graph streams;
   `ReasoningPreservingChatOpenAI` preserves reasoning). The #40465 opencode-go reliability
   issue (flash connection drop) is a known risk to flag for the live walkthrough.
+
+## Amendment 2026-10-18 (#369): the cut's turn scope is "no tools bound"
+
+Decision 3's cut ABORTS the live `create_agent` run (`stream.close()`): the model node's
+output is discarded with it, so an emitted tool round never reaches ToolNode, no TOOL
+observation exists for it, and the recovery (Decision 4) then answers the step with a
+substituted conclusion - the exact production shape of #369.
+In BOTH formal arm J analysis runs the assigner's big-chunk verification round was cut
+mid-flight (generations `5f437dad0095952b` 19:59:06, 45,267 reasoning chars, and
+`f2106593a5d75af9` 20:53:53, 108,065 reasoning chars, against the 40,000-char default;
+each emitted its content line AFTER the crossing), and the recovery generation - whose
+request carries the verbatim Decision 7 instruction - committed the `L1DeltaBatch` with
+no evidence in both runs.
+The aborted run is the ERROR-level `LangGraph` chain the census attributes to the
+analysis window, and no `blackloop` line exists in the container log: the cut was silent
+on the turn and in the log.
+
+The cut now applies only to a turn with NO TOOLS BOUND - Decision 8's own scope ("every
+no-tool session role"; "Tool-bound loops ... are out of scope"), which the assigner and
+mechanism-typist left when they gained their surface tools (2026-10-12 / 2026-10-14)
+without re-negotiating Decision 3.
+A tool-bound turn streams to completion under the model's own output ceiling, and a
+genuine blackloop still surfaces as the Shape A (`LengthFinishReasonError`) or Shape B
+(empty-content) signature Decisions 2/4 already recover.
+`session._should_cut` reports both outcomes (the cut, and the tool-bound no-cut), so the
+mechanism is never silent again.
+Residual cost, named rather than hidden: a tool-bound turn that genuinely blackloops now
+burns its completion ceiling instead of being cut early - per-turn cost for the
+correctness that an emitted round is never dropped.

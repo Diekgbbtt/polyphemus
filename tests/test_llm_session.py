@@ -11,6 +11,8 @@ public seam - `run_session_turn` - with a FAKE tool-calling model and an
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
 
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.language_models import BaseChatModel
@@ -504,6 +506,180 @@ def test_arun_session_turn_cuts_blackloop_and_thread_stays_resumable():
     recovered = asyncio.run(_cut_then_recover())
     assert recovered.content == "recovered"
     assert recovered.blackloop is False
+
+
+# --- #369: the cut must never discard a tool round the model emitted -----------
+#
+# The cut ABORTS the live graph run (`stream.close()`), so an emitted tool round is
+# discarded with it and the next generation commits without the results - the
+# production shape (both formal arm J runs): a batch turn emitted its verification
+# round, no TOOL observation followed, and the blackloop recovery committed the
+# L1DeltaBatch. A tool-bound turn therefore never takes the cut.
+
+_TOOL_ROUND_INPUTS: list = []
+
+
+@tool
+def _search(q: str) -> str:
+    """Search the recorded HTTP history for a query."""
+    _TOOL_ROUND_INPUTS.append(q)
+    return f"recorded:{q}"
+
+
+class _RoundStreamFake(BaseChatModel):
+    """A streaming model with a SCRIPTED multi-call sequence: each model call streams
+    the next reply's reasoning pieces, its content pieces, then its tool-call chunks -
+    the shape a tool-bound proposer turn has (a long deliberation, a content line, then
+    the round the model asks the tool layer to execute)."""
+
+    replies: list = []
+    idx: dict = {}
+
+    def _reply(self) -> dict:
+        i = self.idx.get("i", 0)
+        self.idx["i"] = i + 1
+        return self.replies[min(i, len(self.replies) - 1)]
+
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+        reply = self._reply()
+        return ChatResult(generations=[ChatGeneration(message=AIMessage(
+            content="".join(reply.get("content") or ()),
+            tool_calls=[{"name": tc["name"], "args": json.loads(tc["args"]),
+                         "id": tc["id"]} for tc in (reply.get("tool_calls") or ())],
+        ))])
+
+    def _stream(self, messages, stop=None, run_manager=None, **kwargs):
+        reply = self._reply()
+        for piece in reply.get("reasoning") or ():
+            yield ChatGenerationChunk(message=AIMessageChunk(
+                content="", additional_kwargs={"reasoning_content": piece}))
+        for piece in reply.get("content") or ():
+            yield ChatGenerationChunk(message=AIMessageChunk(content=piece))
+        for tc in reply.get("tool_calls") or ():
+            yield ChatGenerationChunk(message=AIMessageChunk(
+                content="", tool_call_chunks=[{"name": tc["name"], "args": tc["args"],
+                                               "id": tc["id"], "index": 0}]))
+        yield ChatGenerationChunk(message=AIMessageChunk(content=""))
+
+    @property
+    def _llm_type(self) -> str:
+        return "fake"
+
+    def bind_tools(self, tools, **kwargs):
+        return self
+
+
+def _round_factory(*scripts):
+    """A `model_factory` handing out one scripted `_RoundStreamFake` per SEMANTIC turn:
+    each turn's model walks its own script (one reply per model call), so a later turn -
+    a recovery, say - gets the next script."""
+
+    state = {"i": 0}
+
+    def make(role_id):
+        i = min(state["i"], len(scripts) - 1)
+        state["i"] += 1
+        return _RoundStreamFake(replies=[dict(r) for r in scripts[i]], idx={})
+
+    return make
+
+
+# 1500 reasoning chars: past the 1000-char detection bound with no content yet - the
+# crossing that cut the production turn (the emitted round came after it).
+_BURN_REPLY = {"reasoning": ["burn " * 300], "content": []}
+_ROUND_REPLY = {**_BURN_REPLY, "tool_calls": [
+    {"name": "_search", "args": '{"q": "nodes"}', "id": "call_1"}]}
+_COMMIT_REPLY = {"reasoning": ["converged"], "content": ["committed"]}
+
+
+def test_tool_bound_turn_is_not_cut_and_its_emitted_round_executes(caplog):
+    """#369: a turn with tools bound is never cut mid-flight - the model's emitted round
+    EXECUTES, and every emitted call is answered before the next model step on the same
+    thread (the invariant the ticket states). The crossing is reported: the cut used to
+    leave no line at all."""
+    _TOOL_ROUND_INPUTS.clear()
+    saver = InMemorySaver()
+    factory = _round_factory([_ROUND_REPLY, _COMMIT_REPLY])
+    with caplog.at_level(logging.WARNING):
+        turn = run_session_turn(
+            "assigner", "t-round", [HumanMessage(content="the chunk")],
+            checkpointer=saver, tools=[_search], model_factory=factory, observe=False,
+            reasoning_budget_chars=1000,
+        )
+
+    assert _TOOL_ROUND_INPUTS == ["nodes"]     # the emitted round RAN
+    assert turn.blackloop is False
+    assert turn.content == "committed"         # the model's own conclusion, post-tool
+    ai_idx = next(i for i, m in enumerate(turn.messages)
+                  if getattr(m, "tool_calls", None))
+    tool_idx = next(i for i, m in enumerate(turn.messages)
+                    if getattr(m, "tool_call_id", None) == "call_1")
+    assert tool_idx == ai_idx + 1              # the answer directly follows the call
+    assert turn.messages[tool_idx].content == "recorded:nodes"
+    assert "reasoning budget crossed" in caplog.text   # never silent
+
+
+def test_arun_tool_bound_turn_is_not_cut_and_its_emitted_round_executes():
+    """Same contract on the async path (`arun_session_turn`), the parent-coordinator
+    entry point: a tool-bound turn's emitted round executes, never cut."""
+    _TOOL_ROUND_INPUTS.clear()
+    saver = InMemorySaver()
+
+    async def _one():
+        return await arun_session_turn(
+            "assigner", "t-round-async", [HumanMessage(content="the chunk")],
+            checkpointer=saver, tools=[_search],
+            model_factory=_round_factory([_ROUND_REPLY, _COMMIT_REPLY]), observe=False,
+            reasoning_budget_chars=1000,
+        )
+
+    turn = asyncio.run(_one())
+    assert _TOOL_ROUND_INPUTS == ["nodes"]
+    assert turn.blackloop is False
+    assert turn.content == "committed"
+    assert [getattr(m, "tool_call_id", None) for m in turn.messages].count("call_1") == 1
+
+
+def test_tool_bound_batch_turn_does_not_take_the_blackloop_recovery():
+    """#369: the cut routes to the recovery generation, whose instruction ("END THIS
+    STEP NOW ... the single most defensible conclusion") is what turned a dropped
+    verification round into a committed batch. A tool-bound turn never reaches that
+    path: the round runs and the model's own conclusion is the turn's result."""
+    import polymerhus.app.llm.session as S
+    from polymerhus.app.llm.session import stateful_turn
+
+    _TOOL_ROUND_INPUTS.clear()
+    saver = InMemorySaver()
+    factory = _round_factory(
+        [_ROUND_REPLY, {**_COMMIT_REPLY, "content": ["committed with evidence"]}],
+        # only reached if the cut still fires and substitutes a conclusion:
+        [{"reasoning": ["ok"], "content": ["substituted conclusion"]}],
+    )
+    result = stateful_turn(
+        "assigner", "run9:assigner", [HumanMessage(content="the chunk")],
+        checkpointer=saver, tools=[_search], model_factory=factory, observe=False,
+        reasoning_budget_chars=1000,
+    )
+
+    assert result == "committed with evidence"
+    assert _TOOL_ROUND_INPUTS == ["nodes"]
+    assert S._last_blackloop_recovery.get("run9:assigner") is None
+
+
+def test_no_tool_blackloop_cut_logs_the_cut(caplog):
+    """#369: the cut was invisible on the turn and in the container log (no `blackloop`
+    line exists for either formal run) - the cut now logs what it aborted."""
+    saver = InMemorySaver()
+    with caplog.at_level(logging.WARNING):
+        turn = run_session_turn(
+            "assigner", "t-cut-log", [HumanMessage(content="go")],
+            checkpointer=saver,
+            model_factory=_stream_factory(
+                reasoning_pieces=["Need maybe mention"] * 500, content_pieces=[]),
+            observe=False, reasoning_budget_chars=1000,
+        )
+    assert turn.blackloop is True
+    assert "blackloop cut" in caplog.text
 
 
 # --- T2 (#214): the recovery turn inside `stateful_turn` ---------------------
