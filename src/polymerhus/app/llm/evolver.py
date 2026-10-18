@@ -421,8 +421,10 @@ def build_evolver_read_tools(project_id: str) -> list:
 def _build_lessons_prompt(skill: str, version: str, records: list[dict]) -> "HumanMessage":
     """One HumanMessage carrying EVERY selected record in its FULL stored shape
     (D232-9: never the lesson prose alone, never a digest), rendered as YAML -
-    the same shape the shard holds - plus a header naming the skill, its
-    current version, and the instruction."""
+    the same shape the shard holds - grouped under the dispatched skill with
+    its current version, plus the instruction. The prose fields stay the
+    substance the model reads; the harness's own outcome vocabulary never
+    appears here (the result is read from the store, D-W3-1)."""
     from langchain_core.messages import HumanMessage  # noqa: PLC0415 - lazy, no import side effects
 
     import yaml  # noqa: PLC0415 - already a production dependency
@@ -434,11 +436,13 @@ def _build_lessons_prompt(skill: str, version: str, records: list[dict]) -> "Hum
     )
     body = yaml.safe_dump(records, sort_keys=False, allow_unicode=True)
     instruction = (
-        "\nDecide whether these lessons ground a revision of the procedure: "
-        "create a new skill, update the existing one, or write nothing "
-        "(zero-skip is the default when no objectively grounded change exists). "
-        "If you change the procedure, publish it with write_skill into the "
-        "project bundle and cite the consumed lesson keys in source_note_ids."
+        "\nVerify these lessons against the read surfaces before you trust them. "
+        "Decide whether the survivors ground a revision of the procedure: "
+        "create a new skill, update the existing one, or write nothing - "
+        "writing nothing is the default when no objectively grounded change "
+        "exists. If you change the procedure, publish it with write_skill into "
+        "the project bundle and cite the consumed lesson keys in "
+        "source_note_ids."
     )
     return HumanMessage(content=header + body + instruction)
 
