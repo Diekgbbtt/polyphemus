@@ -18,7 +18,11 @@ The pass is the workflow the role prompt implements:
     produce  - one stateful turn on the per-`(project, skill)` thread, every
                selected record pasted in FULL (key, type, lesson, expected,
                evidence, base_version, agent, written_at) into one
-               `HumanMessage`
+               `HumanMessage`; the turn's surface is the role's bound tools,
+               the armed project-bound `write_skill`, and the READ-ONLY
+               target-context tools the workflow grounds on (D-W3-5:
+               `search_http_history`, `get_http_artifact`, `auth_store`,
+               `graph_view`)
     publish  - the AGENT calls its armed project-bound `write_skill`; the store
                re-validates structurally and bumps `metadata.version`
     outcome  - `EvolutionOutcome` carries the decision, the version read back,
@@ -159,6 +163,51 @@ def _load_evolver_prompt() -> str:
     return text
 
 
+def build_evolver_read_tools(project_id: str) -> list:
+    """The pass's READ-ONLY target-context surface (D-W3-5): the hunting
+    module's `search_http_history` / `get_http_artifact`, the app auth store's
+    `auth_store`, and the shared read-only L0/L1 `graph_view`.
+
+    Each tool is the SAME single implementation its other bindings use, with
+    the production seam bound here: the Kali HTTP-history client, the
+    project-scoped `ReadOnlyGraphView` (which refuses write-shaped cypher), and
+    the auth store. The evolver never writes through any of them (D-W3-5): the
+    prompt carries the read-only discipline, `graph_view` refuses writes at the
+    tool, and the only write path on the pass's surface stays `write_skill`.
+
+    The hunting import resolves LAZILY inside the call (CODING_STANDARD
+    section 6): the evolver lives in the app layer, a store-only test must not
+    pay the hunting import, and the direction app -> attack already exists at
+    the REST launch seam.
+    """
+    from polymerhus.app.auth.tool import build_auth_store_tool  # noqa: PLC0415
+    from polymerhus.app.clients.kali_http_history import (  # noqa: PLC0415
+        default_http_get_fn,
+        default_http_search_fn,
+    )
+    from polymerhus.attack.hunting.graph_view_tool import (  # noqa: PLC0415
+        build_graph_view_tool,
+    )
+    from polymerhus.attack.hunting.hunt_orchestrator import (  # noqa: PLC0415
+        ReadOnlyGraphView,
+    )
+    from polymerhus.attack.hunting.hunter_tools import (  # noqa: PLC0415
+        HttpHistoryGetTool,
+        HttpHistorySearchTool,
+    )
+
+    return [
+        HttpHistorySearchTool(
+            http_search_fn=default_http_search_fn, project_id=project_id
+        ),
+        HttpHistoryGetTool(
+            http_get_fn=default_http_get_fn, project_id=project_id
+        ),
+        build_auth_store_tool(project_id=project_id),
+        build_graph_view_tool(ReadOnlyGraphView(project_id).read),
+    ]
+
+
 def _build_lessons_prompt(skill: str, version: str, records: list[dict]) -> "HumanMessage":
     """One HumanMessage carrying EVERY selected record in its FULL stored shape
     (D232-9: never the lesson prose alone, never a digest), rendered as YAML -
@@ -227,6 +276,7 @@ async def arun_evolution_pass(
     lesson_store: LessonStore | None = None,
     model=None,
     turn_fn=None,
+    read_tools=None,
 ) -> EvolutionOutcome:
     """One bounded pass for one `(project, skill)` (D232-9). Never raises: every
     failure is a coded `EvolutionOutcome` decision."""
@@ -271,7 +321,8 @@ async def arun_evolution_pass(
             detail=f"store_unavailable: {exc}",
         )
 
-    # produce: the role's bound surface plus the armed project write tool, the
+    # produce: the role's bound surface, the armed project write tool, and the
+    # read-only target-context tools the workflow grounds on (D-W3-5); the
     # prompt as the single HumanMessage, and the injectable turn seam.
     try:
         binding = skill_agent_binding(
@@ -281,6 +332,12 @@ async def arun_evolution_pass(
             store=skill_store,
             lesson_store=lesson_store,
         )
+        reads = (
+            read_tools
+            if read_tools is not None
+            else build_evolver_read_tools(project_id)
+        )
+        tools = list(binding.tools) + list(reads)
         system_prompt = _load_evolver_prompt()
         prompt = _build_lessons_prompt(skill, version, records)
     except Exception as exc:  # noqa: BLE001 - fail-open
@@ -295,7 +352,7 @@ async def arun_evolution_pass(
         await turn(
             thread_id,
             prompt,
-            tools=binding.tools,
+            tools=tools,
             middleware=binding.middleware,
             system_prompt=system_prompt,
             context=binding.context,
@@ -431,6 +488,7 @@ __all__ = [
     "append_posted_lessons",
     "arun_evolution_pass",
     "arun_evolver_controller",
+    "build_evolver_read_tools",
     "due_skills",
     "evolver_session_id",
     "evolver_thread_id",

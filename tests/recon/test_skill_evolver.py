@@ -227,12 +227,17 @@ def test_a_grounded_pass_publishes_and_marks_the_lessons_consumed(
     assert [r["key"] for r in lesson_store.read(PROJECT, skill=SKILL)] == [
         "skill:ssrf:1:consumed"
     ]
-    # The turn held the role's bound surface plus the armed project write tool.
+    # The turn held the role's bound surface, the armed project write tool, and
+    # the read-only target-context surface (D-W3-5).
     call = turn.calls[0]
     assert [t.name for t in call["tools"]] == [
         "load_skill",
         "record_skill_lesson",
         "write_skill",
+        "search_http_history",
+        "get_http_artifact",
+        "auth_store",
+        "graph_view",
     ]
     assert call["context"]["skills"] == ["meta/meta-write-skill"]
     assert call["context"]["project_id"] == PROJECT
@@ -333,6 +338,142 @@ def test_the_payload_carries_every_selected_record_in_full(
         "written_at",
     ):
         assert needle in content
+
+
+# --- the read-only target-context surface (D-W3-5) ----------------------------
+
+
+def test_the_read_surface_is_the_four_named_target_context_tools() -> None:
+    from polymerhus.app.auth.tool import AUTH_STORE_CONTRACT
+    from polymerhus.app.llm.evolver import build_evolver_read_tools
+    from polymerhus.attack.hunting.graph_view_tool import GRAPH_VIEW_CONTRACT
+    from polymerhus.attack.hunting.http_history_contract import (
+        GET_HTTP_ARTIFACT_DESCRIPTION,
+        SEARCH_HTTP_HISTORY_DESCRIPTION,
+    )
+
+    tools = build_evolver_read_tools(PROJECT)
+
+    assert [t.name for t in tools] == [
+        "search_http_history",
+        "get_http_artifact",
+        "auth_store",
+        "graph_view",
+    ]
+    # Each tool carries its single-sourced contract verbatim: the evolver reads
+    # the same contracts every other binding renders, never a re-spelling.
+    assert tools[0].description == SEARCH_HTTP_HISTORY_DESCRIPTION
+    assert tools[1].description == GET_HTTP_ARTIFACT_DESCRIPTION
+    assert tools[2].description == AUTH_STORE_CONTRACT
+    assert tools[3].description == GRAPH_VIEW_CONTRACT
+
+
+def test_the_graph_view_in_the_read_surface_refuses_write_shaped_cypher() -> None:
+    from polymerhus.app.llm.evolver import build_evolver_read_tools
+    from polymerhus.attack.hunting.hunt_orchestrator import ReadOnlyGraphViewError
+
+    graph = build_evolver_read_tools(PROJECT)[3]
+
+    with pytest.raises(ReadOnlyGraphViewError):
+        graph.invoke({"cypher": "MATCH (n) DETACH DELETE n"})
+
+
+def test_the_http_readers_are_bound_to_the_pass_project_and_the_recording_seam(
+    monkeypatch,
+) -> None:
+    import json
+
+    from polymerhus.app.clients import kali_http_history
+    from polymerhus.app.llm.evolver import build_evolver_read_tools
+
+    seen: list[tuple] = []
+    monkeypatch.setattr(
+        kali_http_history,
+        "default_http_search_fn",
+        lambda project_id, filters, cursor, limit, text: seen.append(
+            ("search", project_id)
+        ) or {"summaries": []},
+    )
+    monkeypatch.setattr(
+        kali_http_history,
+        "default_http_get_fn",
+        lambda project_id, artifact_id, include_body=False: seen.append(
+            ("get", project_id, artifact_id)
+        ) or {"artifact_id": artifact_id},
+    )
+
+    tools = build_evolver_read_tools(PROJECT)
+    assert json.loads(tools[0].invoke({"text": "login"})) == {"summaries": []}
+    assert json.loads(tools[1].invoke({"artifact_id": "http_A"})) == {
+        "artifact_id": "http_A"
+    }
+    assert seen == [("search", PROJECT), ("get", PROJECT, "http_A")]
+
+
+def test_the_pass_carries_an_injectable_read_surface_seam(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(skills, "_SKILLS_ROOT", _catalogue(tmp_path))
+    _project_bundle(tmp_path)
+    skill_store, lesson_store = _stores(tmp_path)
+    _seed_lesson(lesson_store)
+    turn = _FakeTurn()
+
+    class _FakeReadTool:
+        """Any tool-shaped object stands in for the read surface."""
+
+        name = "fake_read_tool"
+
+    asyncio.run(
+        arun_evolution_pass(
+            PROJECT, SKILL, skill_store=skill_store, lesson_store=lesson_store,
+            turn_fn=turn, read_tools=[_FakeReadTool()],
+        )
+    )
+
+    assert [t.name for t in turn.calls[0]["tools"]] == [
+        "load_skill",
+        "record_skill_lesson",
+        "write_skill",
+        "fake_read_tool",
+    ]
+
+
+# --- the prompt's ratified discipline (D-W3-1/5/6/8) ---------------------------
+
+
+def test_the_role_prompt_carries_the_w3_workflow_discipline() -> None:
+    """Pin the ratified prompt surgery at the text level: the write-at-the-end
+    order (D-W3-1), the read-only grounding over the NAMED read tools (D-W3-5),
+    the falsification checklist (D-W3-6), the corrections semantic (D-W3-7),
+    and the internal transform-or-reject (D-W3-8). The harness-side tree and
+    its vocabulary are gone."""
+    from polymerhus.app.llm.evolver import _load_evolver_prompt
+
+    prompt = _load_evolver_prompt()
+
+    for needle in (
+        "The write is LAST",
+        "search_http_history",
+        "get_http_artifact",
+        "auth_store",
+        "graph_view",
+        'command: "read"',
+        "corrections can only be made to already target-specified details",
+        "falsification cannot be proved",
+        "the stored lesson is never rewritten",
+    ):
+        assert needle in prompt, needle
+    for gone in (
+        "ARMED",
+        "SCAN",
+        "COOLDOWN",
+        "SETTLE",
+        "harness tracks",
+        "symbolic layer",
+        "zero_skip",
+    ):
+        assert gone not in prompt, gone
 
 
 # --- posted lessons (the endpoint's injection surface, D232-10) ----------------
