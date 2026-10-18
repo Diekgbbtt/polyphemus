@@ -13,6 +13,7 @@ Recovered 2026-10-16 from the uncommitted `eval-data-dependencies` worktree copy
 - `validate_data_dependencies.py` - the shape validator for the three work items.
 - `assessment/` - the graded measurement framework (added in W1): criteria, rubric, LLM judge, baseline.
 - `run_external_bootstrap.py` - the mechanised runner (added in W2, spec: Diekgbbtt/polyphemus#358).
+- `publish_data_dependencies.py` - publishes a regenerated set to the eval host's designed data root (per-target replace, hash-verified landing).
 - `runner/` - the runner module: CLI, config, harness adapter, environment drivers, wrappers, gates, state, orchestrator.
 - `run.example.yaml` - a working eval-server regeneration config.
 
@@ -40,3 +41,19 @@ python3 tools/bootstrap/run_external_bootstrap.py resume --rundir .bootstrap-run
 Per target, serial: bring the target up and wait for readiness from accurate signals, move any pre-existing KB and staging bundle for that target aside (the run regenerates from scratch), drive one opencode worker session through the authn phase and then the authenticated L1 crawl, gate every phase with the validator (bounded verbatim repair on a red gate), verify teardown by observation, and persist a resumable run state. Design and decisions: `docs/design/external-bootstrap-architecture.md`; environment facts: `docs/design/external-bootstrap-dependency-audit.md`.
 
 Quality instruments: the two validator gates above (a phase never advances on red) and the assessment framework (`assessment/assess.py`) after the run.
+
+## Publishing to the eval host
+
+The eval system reads one directory per target at `/root/eval-dd/data/<target>/` on the eval host (pinned by the setups YAMLs through `operator_kb`/`data_dir`).
+Publish an accepted set there before an eval run:
+
+```
+python3 tools/bootstrap/publish_data_dependencies.py \
+    --kbs eval/data/webexploitbench \
+    --staging eval/data-dependencies \
+    --ssh eval-server-polyphemus \
+    --dest /root/eval-dd/data --backup
+```
+
+The publisher assembles exactly the design's files per target, replaces the target's directory (`rsync --delete`), verifies the landing by content hash, and refuses an incomplete set.
+The contract is in `DATA-DEPENDENCIES.md` ("Wire time").

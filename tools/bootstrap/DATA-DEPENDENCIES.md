@@ -43,9 +43,28 @@ eval/data-dependencies/
 ```
 
 This mirrors `<data_root>/<project_id>/{auth,skills}` exactly, which is the layout the `AuthStore` (`src/polymerhus/app/auth/store.py`) and `SkillStore` read.
-No seeding into a live store is required at build time: the creator authors these files directly, and the eval trial seeds them later through `target_config.auth`.
+No seeding into a live store is required at build time: the creator authors these files directly, and the eval trial places them later through the data-dependency placement endpoints, from the per-target directory on the eval host (see "Wire time" below).
 
 `<target>` is the WebExploitBench target name (`comfyui`, `dify`, ...).
+
+### Wire time - publishing to the eval host
+
+The eval system reads one directory per target at `/root/eval-dd/data/<target>/` on the eval host.
+The setups YAMLs pin that path through `operator_kb` and `data_dir`, and the trial's placement helper reads `auth/{overview,credentials}.yaml`, `skills/authn/`, and the operator KB from it.
+Publish the regenerated set there with:
+
+```
+python3 tools/bootstrap/publish_data_dependencies.py \
+    --kbs eval/data/webexploitbench \
+    --staging eval/data-dependencies \
+    --ssh eval-server-polyphemus \
+    --dest /root/eval-dd/data --backup
+```
+
+The publisher assembles exactly the design's files per target (assessment records stay out) and replaces the target's directory with `rsync --delete`, so no mined-run leftovers survive.
+It verifies the landing by content hash, and it refuses an incomplete set: a missing `operator_kb.md`, `l1-surface.yaml`, or `auth/overview.yaml` fails that target before anything is sent.
+`--backup` snapshots the whole current data root once, to `/root/eval-dd/data-pre-publish-<stamp>.tar.gz`, before the first change.
+It never prints file contents, and it does not touch `/root/eval-dd/staging` (the mined run's record) or the committed KB root.
 
 ### Secrets policy
 

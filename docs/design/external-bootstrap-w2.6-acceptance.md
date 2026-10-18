@@ -71,6 +71,16 @@ The assessors' top findings, kept as follow-ups:
 
 The regenerated set is accepted.
 
+## Publication to the eval host
+
+The accepted set was published to the eval system's designed data root on 2026-10-18, so an eval configured from `eval/setups/webexploitbench-8.yaml` loads the regenerated artifacts (`operator_kb`, `l1-surface.yaml`, the AuthContext, and the authn skill) through the setup helpers' data-dependency placement.
+
+- Location: `/root/eval-dd/data/<target>/` on `eval-server-polyphemus` (the path the setups pin through `operator_kb` and `data_dir`).
+- Method: `tools/bootstrap/publish_data_dependencies.py --kbs eval/data/webexploitbench --staging eval/data-dependencies --ssh eval-server-polyphemus --dest /root/eval-dd/data --backup` (per-target replacement with `rsync --delete`, landing verified by content hash, incomplete sets refused).
+- Snapshot before the change: `/root/eval-dd/data-pre-publish-20261018-130206.tar.gz` (the complete mined-run data root).
+- Verification: all eight target directories match the local set exactly by remote path and sha256 (6-11 files per target); every KB carries the structured Overview; `skills/authn/` is present for the seven authenticated targets and absent for comfyui (unauthenticated); no mined-run leftovers remain.
+- Untouched by design: `/root/eval-dd/staging/` (the mined run's staging record) and the committed KB root.
+
 ## Fixes the e2e surfaced (all committed)
 
 1. `588e9118` - a resumed run must re-align an adopted session's agent and model: a session persists the lane it was created with.
