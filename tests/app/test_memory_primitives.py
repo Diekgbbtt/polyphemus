@@ -25,6 +25,11 @@ def test_hunting_stores_build_on_the_shared_bounded_store_base():
     assert issubclass(
         hunter_memory.HunterMemoryStore, shared_store.BoundedRecordStore
     )
+    from polymerhus.attack.hunting import threat_model_store
+
+    assert issubclass(
+        threat_model_store.ThreatModelStore, shared_store.BoundedRecordStore
+    )
 
 
 def test_hunting_tool_contract_reexports_the_shared_definitions():
