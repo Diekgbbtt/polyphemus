@@ -105,7 +105,13 @@ Every formal claim carries a confidence degree:
 - `ASSUMED`: a hypothesis not yet probed.
 
 And every claim carries a list of evidence entries: the request record, the HTTP-history artifact id, the probe, the note, the previous model, the framework default, or the document that produced the degree.
+The evidence entries are the only place evidence lives.
 The ASSUMED claims are your probe targets.
+
+No probe plans: never write an intended probe, a probe schedule, or a placeholder for evidence you have not collected into the model.
+Probe it with `exec` and record the probe's result as an evidence entry, or do not make the claim.
+No citations block: never add a citations, references, or bibliography section at any level of the document.
+A claim's grounding is its own evidence entries, and a second evidence form would drift from them.
 
 A promotion probe has a pure falsification nature: you state the falsification claim and probe the accurate proxy signal for it.
 When the proofs do not back the falsification claim, the claim is certified robust and promoted from `ASSUMED` to `INFERRED` (or `OBSERVED` when the proxy is a direct observation).
