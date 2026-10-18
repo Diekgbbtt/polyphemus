@@ -17,8 +17,10 @@
 | ID | Ticket | Blocked by | Spec |
 |---|---|---|---|
 | T1 | Threat model store, schema, and completion checker | - | S2 4-5, 7, 10 |
-| T2 | Threat modeller agent and five-gate workflow | T1 | S1 3-9 |
-| T3 | Run lifecycle: intake, ordering, risk budget, halt, resume | T1, T2 | S1 7; S2 7.4, 9 |
+| T2a | Threat modeller agent, five gates, tools, prompt material | T1 | S1 3-9 |
+| T2b | Planner retirement and modeller wiring | T2a | S1 4.4, 7.1-7.4, 9.1 |
+| T2c | Residual type retirement (folded into T3, T4, T6) | T2b | S1 9.1 |
+| T3 | Run lifecycle: intake, ordering, risk budget, halt, resume | T1, T2a, T2b | S1 7; S2 7.4, 9 |
 | T4 | Per-loop dispatch: surfer, mover, runtime | T1, T3 | S2 8; S1 7.6 |
 | T5 | Hunter harness pass FSM | - | S4 14 |
 | T6 | Hunter spec set, store, tools, and removals | T5 | S3 8.6-8.8 |
@@ -28,8 +30,10 @@
 | T10 | Documentation, hygiene, eval translation, fault-KB | T2, T4, T7, T9 | S1 9.5-9.6; impact map |
 
 The frontier is T1, T5, and T8.
-The loop dispatches one implementer at a time, so the practical order is T1, T2, T3, T4, T5, T6, T7, T8, T9, T10.
+The loop dispatches one implementer at a time, so the practical order is T1, T2a, T2b, T3, T4, T5, T6, T7, T8, T9, T10.
 A different order is valid when the blockers are closed.
+The T2 split is recorded in the ticket tracker: #375 (T2a), #386 (T2b), and the folded T2c scope in #376, #377, and #379.
+The split happened because the original T2 could not complete in one implementation context. The T2a increment is additive; the production path changes only in T2b.
 
 ## 3. Data dependency map
 
@@ -71,9 +75,10 @@ Do not duplicate the type.
 
 ```
 T1 store
-  -> T2 modeller pass: five gates, hints, tools, completion
-      -> T3 run driver: intake order, accumulator, halt, resume, trajectory
-          -> T4 surfer/mover: per-loop dispatch, sequencing, quiesce
+  -> T2a modeller pass: five gates, hints, tools, completion, prompt
+      -> T2b planner retirement and bootstrap wiring (transitional unit order)
+          -> T3 run driver: intake order, accumulator, halt, resume, trajectory
+              -> T4 surfer/mover: per-loop dispatch, sequencing, quiesce
 ```
 
 The modeller writes the model.
@@ -139,28 +144,55 @@ The store computes `risk_profile`; the checker recomputes it.
 - The risk profile is store-computed and checker-recomputed.
 - Tests use a temporary project root.
 
-### T2 - Threat modeller agent and five-gate workflow
+### T2a - Threat modeller agent, five gates, tools, and prompt material
+
+Delivered at `89663bcd`; the review is tracked on #375.
+This increment is additive: the planner stays as the production path until T2b.
 
 **What to build.**
-Rewrite the planner into the threat modeller.
-Implement the five states and their gate sections.
-Bind the modeller tool surface.
-Implement the passive tracker and the gate hints.
-Implement the completion validation call.
-Rename the runtime session segment, the actor role, the LLM role, and the provider environment variable, with a one-window alias for old runs.
-Remove the planner types and surfaces.
-Write the modeller prompt material.
+The per-unit modeller pass.
+The five states and their gate sections.
+The modeller tool surface.
+The passive tracker and the gate hints.
+The completion validation call.
+The runtime session segment, the actor role, the LLM role, and the provider environment variable rename, with a one-window alias for old runs.
+The modeller prompt material.
+The back-edge removal.
 
 **Acceptance criteria.**
 - A scripted modeller turn writes all five gates to the real store.
 - The model state is monotonic; a lower-gate write does not regress it.
 - Each gate hint is injected in the tool response.
 - The tool surface is exactly the modeller's; `graph_view`, `kb_query`, and the fault-KB aid are absent.
-- The prompt carries the five states, the trust method, the confidence rules, the evidence rules, the live-authority rule, the drop rule, the closure check, the scoring ontology, the probe rules, and the saturation stop.
+- The write payload is `{state, sections}`; the unit identity is bound at construction.
+- The prompt carries the required material in S1 section 8.
 - The completion validation runs; an invalid model is archived.
-- No `HuntConfig`, candidate gate, back-edge, or materialisation path remains.
-- A provider failure pauses the run as `interrupted`.
+- The rename is in place with the one-window alias.
+- The back-edge surface is gone.
+- The prompt contract tests pass.
 - Tests use a fake turn seam and the real store.
+
+### T2b - Planner retirement and modeller wiring
+
+Tracked on #386.
+
+**What to build.**
+Re-point the hunting bootstrap from the planner to the modeller pass with a transitional distinct-unit order.
+Delete the planner: the pass, the phase nodes, the candidate and gate types, the in-turn prune, the materialisation render, the ratify and note turns, the orchestrator actor, the tool surface, and the planner prompt.
+Delete or rewrite the planner tests and fixtures.
+Add the actor-harness test for `ThreatModellerActor`.
+Update the role and modeller terms in `attack/hunting/CONTEXT.md`.
+
+**Acceptance criteria.**
+- `start_hunting` runs the modeller pass as the production path; the planner has no call site.
+- The planner types and nodes are gone; no dead import remains.
+- The actor-harness test drives the real actor with a fake session.
+- The breaker and the provider-failure path survive the move.
+- The targeted suites pass.
+
+### T2c - Residual type retirement
+
+Folded into the consumers: the `HuntConfig` / `DispatchResult` / `DeliveredCandidate` retirement lands with T3 (#376), T4 (#377), and T6 (#379); the fault-source/KB selection retirement lands with T3; the fault-KB disposition lands with T10.
 
 ### T3 - Run lifecycle: intake, ordering, risk budget, halt, resume
 
@@ -172,6 +204,8 @@ The run record keys.
 The resume rules and the commit order.
 The interleave with the surfer.
 The degraded units and the trajectory.
+Retire the runtime selection consumers of `fault_source`, `fault_kb`, `symptom_kb`, and `fault_risk`.
+Replace the transitional distinct-unit order that T2b introduces.
 
 **Acceptance criteria.**
 - The ordering counts live L1 edges in both directions, excludes retired families, and breaks ties by aggregated endpoints then unit id.
@@ -183,6 +217,7 @@ The degraded units and the trajectory.
 - A halted run resumes dispatch only.
 - A crash between the model and the run record cannot leave a stale total.
 - The modeller does not wait for dispatch.
+- The runtime no longer selects units through the fault-source/KB path.
 - Tests cover the pure algorithms and the integration path.
 
 ### T4 - Per-loop dispatch: surfer, mover, runtime
@@ -196,6 +231,7 @@ The quiesce predicate.
 The zero-loop consume.
 The model document move.
 The role-gate interaction.
+Retire the dispatch consumers of `HuntConfig`, `DispatchResult`, and `DeliveredCandidate`; the loop item is the dispatch record.
 
 **Acceptance criteria.**
 - One loop file dispatches one hunter.
@@ -206,6 +242,7 @@ The role-gate interaction.
 - The work read and the dispatch read share the validity predicate.
 - A malformed loop is refused without wedging the quiesce.
 - A stale loop from another run is not dispatched.
+- The dispatch path no longer carries `HuntConfig`, `DispatchResult`, or `DeliveredCandidate`.
 - Tests cover the mover deduction and an integration path with the real store.
 
 ### T5 - Hunter harness pass FSM
@@ -243,6 +280,7 @@ The move-aware write.
 The notes `phase_summary`.
 The `skill_list` / `skill_load` binding.
 The removals: materialisation, `derive_verdict`, `SpecItem.experiment_ref`, the FaultItem draft, the old per-config key.
+The hunter-side `HuntConfig` and `DispatchResult` retirement and the fault-KB aid removal.
 
 **Acceptance criteria.**
 - A batched `specs` write creates the set.
@@ -255,6 +293,7 @@ The removals: materialisation, `derive_verdict`, `SpecItem.experiment_ref`, the 
 - The skill tools are bound.
 - The removals leave no dead surface.
 - The pod dispatch path stays.
+- The hunter tools and store no longer consume `HuntConfig`, `DispatchResult`, or the fault-KB aid.
 - Tests cover the store, the tools, the status lifecycle, and the removals.
 
 ### T7 - Hunter production prompt work phase
