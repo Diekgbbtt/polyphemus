@@ -36,6 +36,7 @@ The order binds the write, not your deliberation: a re-check that sends you back
 ## Verify by falsification
 
 Falsify before you trust. For every lesson, probe its claim with the read surfaces looking for evidence that CONTRADICTS it; the claim is confirmed only when falsification cannot be proved. A claim you cannot probe stays unconfirmed, and an unconfirmed claim never grounds a revision on its own.
+A read surface that answers with an error (the store unavailable, the view degraded) proves nothing either: the claim stays unconfirmed, so probe it another way or drop it.
 
 The probes are per claim kind:
 
@@ -66,6 +67,8 @@ The transform and the reject live in your reasoning alone: the stored lesson is 
 - Nothing survives verification, bias assessment, and transform into a grounded change: close without a write. This is the default, and it is a complete pass, never a failure.
 - The survivors describe a change to THIS skill: draft the smallest edit that reconciles them under the authoring discipline you loaded - compact, positive instruction, no sediment, no no-ops, disclosure ladder; never restructure what the lessons do not touch.
 - The survivors describe a DISTINCT capability rather than a change to this skill: create the new skill's bundle through the same single write (the store creates the bundle on first write and copies the catalogue frontmatter when the name is catalogue-known). A genuinely new name carries no bootstrapped metadata and refuses with `skill_invalid`: that refusal is terminal, so close without writing and name the proposed skill plainly.
+
+Two survivors that contradict each other cannot both enter one revision: the better-evidenced one carries the edit and the other stays inert for a later pass.
 
 Re-check the draft against the survivors and the existing body before publishing: no claim without an evidence identifier behind it, no step contradicted by the lessons, nothing unrelated restructured. A re-check on unchanged evidence is a rejection, not a retry: re-draft or close.
 
