@@ -36,7 +36,7 @@ AUTHN_SKILL = "authn"
 def auth_capable_binding(
     role_id: str, *, store=None, skill_store=None, lesson_store=None,
     project_id: str | None = None, with_write_skill: bool = False,
-    task_skills=None, description_only: bool = False,
+    task_skills=None,
 ):
     """Wrap `skill_agent_binding(role_id)` with the auth capability.
 
@@ -54,11 +54,7 @@ def auth_capable_binding(
     tool-owned, so neither the site nor the harness passes an identity.
     `task_skills` is the artifact-declared skill configuration (#236): it
     reaches `skill_agent_binding` verbatim, which resolves, unions, caps, and
-    warns - the auth wrapper never re-implements that policy. `description_only`
-    is the hunt-orchestrator's grant (#236, the cortex decision): the wrapper
-    returns that binding UNCHANGED - the description-only surface carries no
-    auth capability and no `authn` skill, because it carries no bounded set and
-    never loads a body.
+    warns - the auth wrapper never re-implements that policy.
     """
     from polymerhus.app.auth.tool import build_auth_store_tool  # noqa: PLC0415
     from polymerhus.app.llm.skills import (  # noqa: PLC0415
@@ -69,11 +65,6 @@ def auth_capable_binding(
         skill_index_middleware,
     )
 
-    if description_only:
-        return skill_agent_binding(
-            role_id, store=skill_store, lesson_store=lesson_store,
-            description_only=True,
-        )
     binding = skill_agent_binding(
         role_id, store=skill_store, lesson_store=lesson_store,
         task_skills=task_skills,

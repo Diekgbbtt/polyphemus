@@ -124,17 +124,6 @@ def test_listing_includes_a_project_bundle(tmp_path, catalogue) -> None:
     assert "lessons" not in out
 
 
-def test_a_description_only_binding_lists_but_refuses_a_named_load(catalogue) -> None:
-    tool = skills.build_load_skill_tool(description_only=True)
-
-    listed = tool.invoke({})
-    assert "- alpha: Alpha does alpha things." in listed
-
-    refused = tool.invoke({"name": "alpha"})
-    assert "description-only" in refused
-    assert "# Body of alpha" not in refused
-
-
 def test_the_default_binding_still_loads_bodies(catalogue) -> None:
     out = skills.build_load_skill_tool().invoke({"name": "alpha"})
 
@@ -150,37 +139,30 @@ def test_both_modes_carry_the_one_contract(catalogue) -> None:
         assert "LISTING MODE" in tool.description
 
 
-# --- the description-only BINDING (the hunt-orchestrator's grant) --------------
+# --- the description-only surface (the hunt-orchestrator's grant) --------------
+#
+# The grant is composed in production by
+# `attack/hunting/actors.build_orchestrator_read_grants` (tested through the
+# actor in `tests/attack/test_hunting_actors.py`); these pin the tool it builds.
 
 
-def test_the_description_only_binding_is_the_exempt_roles_grant() -> None:
-    binding = skills.skill_agent_binding(
-        "hunting_orchestrator", description_only=True
-    )
+def test_the_description_only_tool_lists_but_refuses_a_named_load() -> None:
+    tool = skills.build_load_skill_tool(description_only=True)
 
-    assert binding.middleware == []
-    assert binding.context == {}
-    assert [t.name for t in binding.tools] == ["load_skill"]
-    tool = binding.tools[0]
-    # the listing works (narrowed here: the live catalogue exceeds the cap)
-    assert "- ssrf: " in tool.invoke({"pattern": "^ssrf$"})
-    assert "description-only" in tool.invoke({"name": "ssrf"})  # no bodies
+    listing = tool.invoke({"pattern": "^ssrf$"})
+    assert "- ssrf: " in listing
+
+    refused = tool.invoke({"name": "ssrf"})
+    assert "description-only" in refused
+    assert refused.strip() != ""
 
 
-def test_the_description_only_binding_is_refused_on_a_bound_role() -> None:
-    """Swapping a considered bounded set for the listing would silently drop
-    the role's declared discipline: a wiring defect, refused at construction."""
-    with pytest.raises(ValueError, match="BOUND role"):
-        skills.skill_agent_binding("pod_runner", description_only=True)
+def test_the_description_only_tool_never_returns_a_body() -> None:
+    """Whatever the skill, the description-only surface returns no body: the
+    refusal is the only answer to a named load."""
+    tool = skills.build_load_skill_tool(description_only=True)
 
-
-def test_the_auth_wrapper_returns_the_description_only_binding_unchanged() -> None:
-    """The orchestrator carries no auth capability and no `authn` skill: the
-    description-only grant is capability-free."""
-    from polymerhus.app.auth.seams import auth_capable_binding
-
-    binding = auth_capable_binding("hunting_orchestrator", description_only=True)
-
-    assert [t.name for t in binding.tools] == ["load_skill"]
-    assert binding.context == {}
-    assert binding.middleware == []
+    for name in ("ssrf", "csrf", "lightrag-query"):
+        out = tool.invoke({"name": name})
+        assert "description-only" in out
+        assert "# " not in out, "no body may leak through the refusal"

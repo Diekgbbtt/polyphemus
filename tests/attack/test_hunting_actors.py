@@ -650,6 +650,9 @@ def test_hunt_orchestrator_actor_binds_the_read_grants(monkeypatch, tmp_path):
     assert ORCHESTRATOR_READ_GRANTS <= set(by_name)
     assert "record_skill_lesson" not in by_name
     assert "write_skill" not in by_name
+    # The grants carry no auth capability and no `authn` skill (the
+    # orchestrator's listing surface is capability-free).
+    assert "auth_store" not in by_name
     # The description-only load: the listing works, a named load is refused.
     listing = by_name["load_skill"].invoke({"pattern": "^ssrf$"})
     assert "- ssrf: " in listing
