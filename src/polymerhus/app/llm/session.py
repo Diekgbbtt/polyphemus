@@ -467,7 +467,7 @@ def run_session_turn(
     T1 (#213): the model call is STREAMED (the operator's 2026-09-07 ruling - streamed
     generation is the DEFAULT session mode), so `reasoning_content` AND `content` are
     captured per chunk; a stream that burns reasoning past `reasoning_budget_chars`
-    (default 20k, env `LLM_BLACKLOOP_REASONING_BUDGET`) with no content emitted is
+    (default 40k chars, env `LLM_BLACKLOOP_REASONING_BUDGET`) with no content emitted is
     CUT mid-flight and surfaced as `blackloop=True` with the captured reasoning - the
     recovery turn's material, never lost (fail-open: the cut never raises). The cut's
     scope is the NO-TOOLS-BOUND turn (#206): a tool-bound turn is never cut, because
@@ -1069,9 +1069,12 @@ def _recover_blackloop(
     segmented into window-fitting spans (S3) and replayed as an assistant message
     (the D11 surface - a foldable thread span the native turn-end compaction folds,
     seam S1; never a handler-side summary). The recovery is itself a streamed
-    generation under the SAME detection bound, so a re-blackloop is cut. Fail-open:
-    a recovery that fails (re-blackloop, exception, empty) returns None, never
-    raises.
+    generation: for a NO-TOOLS role it stays under the same detection bound, so a
+    re-blackloop is cut; for a tool-bound role the recovery carries the same tools
+    (the #369 fix), so it is never cut and runs to the model's completion ceiling -
+    a blackloop there surfaces as the Shape A/B signature (accepted trade, #206
+    amendment). Fail-open: a recovery that fails (exception, empty) returns None,
+    never raises.
 
     T5 (#217): the recovery records a `blackloop_recovery` field on its trace
     metadata (shape, output_produced, cut point) - D11 recipe, never gating."""

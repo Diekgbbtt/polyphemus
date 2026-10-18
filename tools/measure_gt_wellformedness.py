@@ -17,16 +17,20 @@ Metrics per spec (plan section 3, W2.2):
   owning service slug). An `EVIDENCED_BY` edge from a System to a matching
   endpoint is accepted as the fallback.
 - M3 typed backbone: share of required backbone items present and non-empty.
-  For Service units the spine is the Service's own props: `business_function`
-  resolves the managed `business_function_slug` prop, and the mechanism slots
-  `api_paradigm`/`auth_methods` are NOT Service requirements - the domain model
-  places them System-side (`docs/design/l1-domain-model-catalogue.md` section 3)
-  and M4 measures them as `EXPOSED_VIA -> RESTApi/GraphQLApi` and
+  For Service units the spine is the Service's own props (`exposure`,
+  `service_contract`); the `business_function` attribute is the managed
+  `business_function_slug`, which IS the M1 placement key and is therefore
+  measured at M1 - never double-counted here (review finding P1, 2026-10-18).
+  The mechanism slots `api_paradigm`/`auth_methods` are System-side (the domain
+  model in `docs/design/l1-domain-model-catalogue.md` section 3) and M4 measures
+  them as `EXPOSED_VIA -> RESTApi/GraphQLApi` and
   `AUTHENTICATED_BY -> AuthenticationMechanism` edges (operator ruling 2026-10-18).
   For System units the backbone is the node description plus the
   threat-modeller sufficiency statements (keyword coverage over the node text;
   a statement declared `satisfied_by: capability_gap` counts as
-  satisfied-by-declaration - operator ruling 2026-10-18).
+  satisfied-by-declaration only with a `gap_reason` naming one of the bundle's
+  declared `edges_to_l0.capability_gaps` - operator ruling 2026-10-18, guarded
+  per review finding P2).
 - M4 service-to-system edges: share of required typed edges present
   (rel plus target kind and discriminator; the spec declares the discriminator
   mode). For System units the requirement is inbound: the GT Services that must
@@ -60,13 +64,6 @@ SYSTEM_EDGE_RELS = (
     "FRONTED_BY", "PROTECTED_BY", "ROUTED_BY", "SHAPES_DATA_OF",
     "ON_REQUEST_PATH", "DEPENDS_ON",
 )
-
-# Service-prop aliases (operator ruling 2026-10-18, grounded in
-# `docs/design/l1-domain-model-catalogue.md` section 3): the spine's
-# `business_function` is the managed `business_function_slug` prop. The
-# mechanism slots (`api_paradigm`, `auth_methods`) are System-side and are no
-# longer Service requirements; they are read through M4 edges.
-_PROP_ALIASES = {"business_function": "business_function_slug"}
 
 
 # --- spec loading and lint ----------------------------------------------------
@@ -114,9 +111,25 @@ def load_spec(path: Path) -> dict:
     return data
 
 
+def _declared_capability_gaps(spec: dict) -> list[str]:
+    """The bundle's declared capability gaps (`edges_to_l0.capability_gaps`)."""
+    return [str(gap) for gap in (spec.get("edges_to_l0", {}).get("capability_gaps") or [])]
+
+
+def _gap_is_declared(spec: dict, statement: dict) -> bool:
+    """A `satisfied_by: capability_gap` marker counts as satisfied-by-declaration
+    ONLY with a `gap_reason` naming one of the bundle's declared capability gaps
+    (review finding P2: the marker must not be an unguarded escape hatch)."""
+    reason = str(statement.get("gap_reason") or "").strip().lower()
+    if not reason:
+        return False
+    return any(reason in gap.lower() for gap in _declared_capability_gaps(spec))
+
+
 def lint_specs(paths: list[Path]) -> list[str]:
     """Completeness lint (plan W2.1 verification): every spec parses, carries at
-    least one L0 requirement and at least one backbone item."""
+    least one L0 requirement and at least one backbone item, and every declared
+    capability-gap marker names a declared gap."""
     issues: list[str] = []
     for path in paths:
         try:
@@ -128,6 +141,14 @@ def lint_specs(paths: list[Path]) -> list[str]:
             issues.append(f"{path}: no backbone requirement")
         if not (spec["edges_to_l0"].get("endpoints") or []):
             issues.append(f"{path}: no required endpoint")
+        for statement in (spec["typed_backbone"].get("threat_modeller_sufficiency")
+                          or {}).get("statements", []):
+            if (statement.get("satisfied_by") == "capability_gap"
+                    and not _gap_is_declared(spec, statement)):
+                issues.append(
+                    f"{path}: statement {statement.get('id')} marked "
+                    "satisfied_by capability_gap without a gap_reason naming a "
+                    "declared capability gap")
     return issues
 
 
@@ -327,15 +348,12 @@ def _backbone(spec: dict, snapshot: dict) -> dict:
         items = []
         for field in backbone["required"]:
             name = field["field"]
-            prop = _PROP_ALIASES.get(name, name)
-            present = prop in props and _non_empty(props.get(prop))
+            present = name in props and _non_empty(props.get(name))
             item = {"item": f"field:{name}", "present": present,
                     "expected": field.get("expected")}
-            if prop != name:
-                item["reads_prop"] = prop
-            if "expected" in field and prop in props:
+            if "expected" in field and name in props:
                 item["value_matches_expected"] = _match_value(
-                    props.get(prop), field["expected"])
+                    props.get(name), field["expected"])
             items.append(item)
     else:
         match = unit["match"]
@@ -352,14 +370,19 @@ def _backbone(spec: dict, snapshot: dict) -> dict:
                           "present": name in props and _non_empty(props.get(name))})
         for statement in (backbone.get("threat_modeller_sufficiency") or {}).get(
                 "statements", []):
-            if statement.get("satisfied_by") == "capability_gap":
+            if (statement.get("satisfied_by") == "capability_gap"
+                    and _gap_is_declared(spec, statement)):
                 items.append({"item": f"statement:{statement['id']}", "present": True,
                               "keywords": statement["keywords"],
-                              "satisfied_by": "capability_gap"})
+                              "satisfied_by": "capability_gap",
+                              "gap_reason": statement.get("gap_reason")})
                 continue
             covered = all(kw.lower() in text for kw in statement["keywords"])
-            items.append({"item": f"statement:{statement['id']}", "present": covered,
-                          "keywords": statement["keywords"]})
+            item = {"item": f"statement:{statement['id']}", "present": covered,
+                    "keywords": statement["keywords"]}
+            if statement.get("satisfied_by") == "capability_gap":
+                item["gap_undeclared"] = True
+            items.append(item)
     matched = [i for i in items if i["present"]]
     return {"items": items, "matched": len(matched), "total": len(items),
             "share": (len(matched) / len(items)) if items else 1.0}
@@ -472,10 +495,12 @@ def render_text(label: str, project_id: str, corpus: Path, result: dict) -> str:
                 detail += f" value_match={item['value_matches_expected']}"
             if item.get("keywords"):
                 detail += f" keywords={item['keywords']}"
-            if item.get("reads_prop"):
-                detail += f" (reads {item['reads_prop']})"
             if item.get("satisfied_by"):
-                detail += f" (satisfied_by={item['satisfied_by']})"
+                reason = item.get("gap_reason")
+                detail += (f" (satisfied_by={item['satisfied_by']}"
+                           + (f": {reason})" if reason else ")"))
+            if item.get("gap_undeclared"):
+                detail += " (gap marker undeclared)"
             lines.append(f"   - {item['item']}: {mark}{detail}")
         m4 = spec["m4"]
         lines.append(f"M4 edges: {m4['share']:.2f} ({m4['matched']}/{m4['total']})")

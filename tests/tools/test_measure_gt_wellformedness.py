@@ -310,9 +310,11 @@ def test_render_text_carries_the_target_score():
     assert "M1 placement: FAIL" in text
 
 
-def test_business_function_resolves_the_managed_slug_prop():
-    """Operator ruling 2026-10-18: the Service spine's `business_function` is
-    the Service's managed `business_function_slug` prop."""
+def test_business_function_is_not_aliased_to_the_placement_key():
+    """Review finding P1 (2026-10-18): the `business_function` attribute is the
+    managed `business_function_slug`, which IS the M1 placement key. M1 checks
+    it; the M3 spine must not double-count it, and a spine that names
+    `business_function` reads the literal prop (no alias)."""
     spec = _service_spec()
     spec["typed_backbone"]["required"] = [
         {"field": "business_function", "non_empty": True},
@@ -324,20 +326,21 @@ def test_business_function_resolves_the_managed_slug_prop():
         aggregates={"svc": []},
     )
     result = tool.score_spec(spec, snapshot)
+    assert result["m1"]["pass"] is True
     item = next(i for i in result["m3"]["items"]
                 if i["item"] == "field:business_function")
-    assert item["present"] is True
-    assert item["reads_prop"] == "business_function_slug"
-    assert result["m3"]["share"] == pytest.approx(1.0)
+    assert item["present"] is False
 
 
 def test_capability_gap_statements_count_as_satisfied():
-    """Operator ruling 2026-10-18: a statement the spec itself declares a
-    capability gap counts as satisfied-by-declaration, never as missing
-    keyword coverage."""
+    """Operator ruling 2026-10-18 + review guard P2: a statement the spec itself
+    declares a capability gap counts as satisfied-by-declaration, but only with
+    a `gap_reason` naming one of the bundle's declared capability gaps."""
     spec = _system_spec()
-    spec["typed_backbone"]["threat_modeller_sufficiency"]["statements"][1][
-        "satisfied_by"] = "capability_gap"
+    spec["edges_to_l0"]["capability_gaps"] = ["the log sink is unobservable"]
+    statement = spec["typed_backbone"]["threat_modeller_sufficiency"]["statements"][1]
+    statement["satisfied_by"] = "capability_gap"
+    statement["gap_reason"] = "log sink"
     snapshot = _snapshot(
         systems=[{"kind": "AuthorizationSystem", "discriminator": "__singleton__",
                   "props": {"description":
@@ -347,10 +350,48 @@ def test_capability_gap_statements_count_as_satisfied():
     s2 = next(i for i in result["m3"]["items"] if i["item"] == "statement:S2")
     assert s2["present"] is True
     assert s2["satisfied_by"] == "capability_gap"
+    assert s2["gap_reason"] == "log sink"
     assert result["m3"]["share"] == pytest.approx(1.0)
     text = tool.render_text("label", "p", Path("/corpus"), {
         "specs": [result], "target_score": result["score"], "spec_count": 1})
     assert "satisfied_by=capability_gap" in text
+
+
+def test_a_capability_gap_marker_without_a_declared_reason_does_not_count():
+    """Review guard P2: the marker is not an escape hatch - without a
+    `gap_reason` naming a declared capability gap, the statement falls back to
+    keyword coverage and the item flags the undeclared marker."""
+    spec = _system_spec()
+    statement = spec["typed_backbone"]["threat_modeller_sufficiency"]["statements"][1]
+    statement["satisfied_by"] = "capability_gap"
+    statement["gap_reason"] = "an undeclared reason"
+    snapshot = _snapshot(
+        systems=[{"kind": "AuthorizationSystem", "discriminator": "__singleton__",
+                  "props": {"description":
+                            "Unsecured access is answered 302 with a REDIRECT."}}],
+    )
+    result = tool.score_spec(spec, snapshot)
+    s2 = next(i for i in result["m3"]["items"] if i["item"] == "statement:S2")
+    assert s2["present"] is False          # 'log' is absent: coverage applies
+    assert s2["gap_undeclared"] is True
+    text = tool.render_text("label", "p", Path("/corpus"), {
+        "specs": [result], "target_score": result["score"], "spec_count": 1})
+    assert "gap marker undeclared" in text
+
+
+def test_lint_flags_an_undeclared_capability_gap_marker(tmp_path: Path):
+    """Review guard P2: the corpus lint rejects a capability_gap marker whose
+    reason does not name a declared `edges_to_l0.capability_gaps` entry."""
+    import yaml
+
+    spec = _system_spec()
+    statement = spec["typed_backbone"]["threat_modeller_sufficiency"]["statements"][1]
+    statement["satisfied_by"] = "capability_gap"
+    statement["gap_reason"] = "log sink"   # not declared in this spec
+    path = tmp_path / "spec.yaml"
+    path.write_text(yaml.safe_dump(spec), encoding="utf-8")
+    issues = tool.lint_specs([path])
+    assert any("capability_gap" in issue for issue in issues)
 
 
 def test_target_filter_selects_only_that_target(tmp_path: Path):

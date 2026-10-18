@@ -24,8 +24,9 @@ Metrics per spec, as fixed by the plan (W2.2):
   For System units it reads the endpoints surfaced through the linked services, mirroring `attack.hunting.unit_projection`.
   An `EVIDENCED_BY` edge is accepted as the fallback.
 - M3 typed backbone: share of required backbone items present and non-empty.
-  For Service units the spine is the Service's own props: `business_function` resolves the managed `business_function_slug` prop, and the mechanism slots `api_paradigm` and `auth_methods` are System-side - measured by M4 as `EXPOSED_VIA -> RESTApi/GraphQLApi` and `AUTHENTICATED_BY -> AuthenticationMechanism` - and are not Service requirements (operator ruling 2026-10-18).
-  For System units the backbone is the node description plus the threat-modeller sufficiency statements (keyword coverage over the node text); a statement declared `satisfied_by: capability_gap` counts as satisfied-by-declaration (operator ruling 2026-10-18).
+  For Service units the spine is the Service's own props (`exposure`, `service_contract`); the `business_function` attribute is the managed `business_function_slug`, which IS the M1 placement key, so it is measured at M1 and never double-counted (review finding P1, 2026-10-18).
+  The mechanism slots `api_paradigm` and `auth_methods` are System-side - measured by M4 as `EXPOSED_VIA -> RESTApi/GraphQLApi` and `AUTHENTICATED_BY -> AuthenticationMechanism` - and are not Service requirements (operator ruling 2026-10-18).
+  For System units the backbone is the node description plus the threat-modeller sufficiency statements (keyword coverage over the node text); a statement declared `satisfied_by: capability_gap` counts as satisfied-by-declaration only with a `gap_reason` naming a declared `edges_to_l0.capability_gaps` entry (operator ruling 2026-10-18, guarded per review finding P2).
 - M4 service-to-system edges: share of required typed edges present.
   For Service units the requirement is outbound (`rel` plus target kind and discriminator mode).
   For System units the requirement is inbound: the GT Services that must carry an edge to the System.
@@ -102,11 +103,12 @@ M1 passes for all 13 specs in all four runs: the analyser always placed the unit
 
 ### 2.4 Corrected baseline (2026-10-18)
 
-Operator rulings corrected three criterion inputs; the tool and the corpus specs were amended, and the tool keeps 15 unit tests plus a clean 13-spec lint.
+Operator rulings corrected three criterion inputs; the tool and the corpus specs were amended, and the tool keeps 17 unit tests plus a clean 13-spec lint.
+The post-review hardening (2026-10-18) removed a tautological spine item (P1) and guarded the capability-gap marker (P2); the corrected numbers below are IDENTICAL before and after that hardening (verified per unit).
 
-- The Service spine counts `business_function` (the managed `business_function_slug`), `exposure`, and `service_contract`.
+- The Service spine is `exposure` + `service_contract`; the `business_function` attribute IS the managed `business_function_slug`, the M1 placement key, so M1 measures it and M3 never double-counts it (P1: the earlier alias made 1 of 3 items a tautology).
 - `api_paradigm` and `auth_methods` left the Service requirements: the domain model places them System-side (`docs/design/l1-domain-model-catalogue.md` section 3), and M4 already measures the edges.
-- wj-004 statements S1 (log/principal) and S4 (lookup) carry `satisfied_by: capability_gap`, matching the spec's own declared capability gaps.
+- wj-004 statements S1 (log/principal) and S4 (lookup) carry `satisfied_by: capability_gap` plus a `gap_reason` ("logging sink" / "outbound lookup") that names the spec's own declared capability gap; the lint and the scoring both enforce the pairing (P2).
 
 Corrected target scores:
 
@@ -135,9 +137,27 @@ Corrected per-unit scores:
 | wj-006 | - | - | 0.67 | 0.67 |
 | wj-007 | - | - | 0.56 | 0.56 |
 
-Reading: every produced Service now passes the spine 3/3, and every remaining deficit is a defect the D-classes name (M2 items, M4 edges).
+Reading: every produced Service now passes the spine 2/2 (`exposure` + `service_contract`), and every remaining deficit is a defect the D-classes name (M2 items, M4 edges).
 wj-004's remaining M3 miss is S2 alone (the `username` carrier), which no L0 node witnesses.
 These corrected numbers are the arm K comparison baseline.
+The corpus change set is reproduced in section 2.4.1 because the corpus is local-only.
+
+### 2.4.1 The corpus spec changes (reproduced; the corpus is local-only)
+
+Across the 11 Service specs (comfyui-001..006, wj-001, wj-003, wj-005..007), these spine lines were REMOVED from `typed_backbone.required`:
+
+- `- {field: api_paradigm, expected: rest}` (or the per-unit expectation)
+- `- {field: auth_methods, expected: [...]}`
+- `- {field: business_function, non_empty: true}`
+
+The remaining spine is `exposure` + `service_contract`; the paradigm/auth coverage lives in each spec's `service_to_system_edges`, and the business function is the `unit.match.business_function_slug` M1 key.
+
+In `white-jotter-004`, the two declared-gap statements gained the guard fields:
+
+- S1: `..., satisfied_by: capability_gap, gap_reason: "logging sink"`
+- S4: `..., satisfied_by: capability_gap, gap_reason: "outbound lookup"`
+
+Both reasons are substrings of the bundle's declared gap text ("the logging sink and the outbound lookup are capability gaps"), which the lint now enforces; the other 12 specs declare no gap markers.
 
 ## 3. Goal 2 - analysis-phase cache ratios
 
@@ -201,8 +221,8 @@ The operator's ruling, grounded in `docs/design/l1-domain-model-catalogue.md` se
 
 - `api_paradigm` and `auth_methods` are mechanism slots: System-side, reached by an edge (`EXPOSED_VIA -> RESTApi/GraphQLApi`; `AUTHENTICATED_BY -> AuthenticationMechanism`).
   They are no longer Service spine requirements, and M4 measures them where the GT expects them.
-- `business_function` IS a Service attribute: the managed `business_function_slug` prop carries it, and the criterion now resolves the field to that prop.
-- The Service spine is `business_function`, `exposure`, `service_contract`; every produced Service passes it (section 2.4).
+- `business_function` IS a Service attribute: the managed `business_function_slug` prop carries it - it IS the M1 placement key, so M1 measures it and the M3 spine does not double-count it (review finding P1).
+- The Service spine is `exposure` + `service_contract`; every produced Service passes it (section 2.4).
 
 ### D-6 RESTApi discriminator convention (recorded, not scored)
 
