@@ -83,8 +83,9 @@ MODELLER_MODEL_KEY = "LLM_HUNTING_THREAT_MODELLER"
 MODELLER_MODEL_KEY_LEGACY = "LLM_HUNTING_ORCHESTRATOR"
 
 # The tool surface (S1 5): exactly these, nothing more. `graph_view` is not
-# bound (the agent is fed the unit projection and the application-surface
-# overview), the testing-methodology KB stays with the hunters and the pod, and
+# bound (the unit projection and the L1 application-surface overview reach the
+# turn through the pass's context seam; the live source is designed-not-built
+# until T2b), the testing-methodology KB stays with the hunters and the pod, and
 # the fault-KB aid tool is withdrawn - fault hypothesisation is trust-model
 # driven, never copied from an outside repository.
 TOOL_SURFACE: tuple[str, ...] = (
@@ -1066,6 +1067,10 @@ def build_modeller_tool_surface(
     ]
     if tools.suite_tools:
         surface.extend(tools.suite_tools)
+        if tools.suite is None:
+            # the injected pair carries its own seam: adopt it, so the pass can
+            # still read the gaps that lane recorded
+            tools.suite = suite_seam_from_tools(tools.suite_tools)
     else:
         if tools.suite is None:
             # ONE seam per tools instance, so the pass can read the gaps it
@@ -1159,6 +1164,11 @@ async def arun_modeller_pass(
     dispatch (S1 7.3) - the store's produced loop files are the handoff to the
     run-scoped surfer.
 
+    ONE pass at a time per run: the pass mutates the shared `ModellerTools`
+    (the run-scoped tracker, the store wrapper, the unit cell, the suite seam),
+    so two concurrent passes over the same tools would interleave their unit
+    identities and their gate readings.
+
     Fail-open: a raising turn is a no-decision (the breaker counts it); a
     provider failure surfaces through the breaker as a typed abort so the
     runtime pauses the run as `interrupted`.
@@ -1168,6 +1178,12 @@ async def arun_modeller_pass(
     # tools object is MUTATED in place, because the per-run actor captured a
     # surface over it on its first turn and a copy would strand that surface on
     # a stale seam.
+    if isinstance(tools.threat_store, TrackingThreatModelStore) \
+            and tools.tracker is None:
+        # a caller-supplied wrapper owns its tracker: adopting it (instead of
+        # creating a second one) is what keeps the captured tool's writes
+        # observed - a fresh tracker would see nothing and abort the pass
+        tools.tracker = tools.threat_store.tracker
     tracker = tools.tracker
     if tracker is None:
         tracker = PassiveGateTracker()

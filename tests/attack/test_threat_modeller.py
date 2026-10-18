@@ -576,21 +576,29 @@ def test_a_pass_seeded_from_a_completed_model_re_authors_nothing(tmp_path):
             == "The catalogue endpoint reads the item id from the query.")
 
 
-def test_a_run_scoped_store_is_never_double_wrapped(tmp_path):
-    """A caller that already hands a tracking store keeps it: wrapping again
-    would record every write on a second, unreachable tracker."""
-    from polymerhus.attack.hunting.threat_modeller import PassiveGateTracker
+def test_a_prewrapped_store_shares_its_own_tracker(tmp_path):
+    """A caller may hand a tracking store WITHOUT the `tracker` field. The pass
+    then adopts that store's own tracker: creating a second one would observe
+    nothing (the captured tool writes through the wrapper) and abort at the
+    fifth state while the model is already COMPLETED and valid."""
+    from polymerhus.attack.hunting.threat_modeller import (
+        PassiveGateTracker,
+        TrackingThreatModelStore,
+    )
 
     store = ThreatModelStore(root_dir=tmp_path)
     tracker = PassiveGateTracker()
-    tools = ModellerTools(threat_store=store, project_id=PROJECT, run_id=RUN,
-                          tracker=tracker)
+    wrapped = TrackingThreatModelStore(store, tracker)
+    tools = ModellerTools(threat_store=wrapped, project_id=PROJECT, run_id=RUN)
 
-    asyncio.run(arun_modeller_pass(PROJECT, RUN, UNIT, tools, turn_fn=_ScriptedTurns()))
+    outcome = asyncio.run(arun_modeller_pass(PROJECT, RUN, UNIT, tools,
+                                             turn_fn=_ScriptedTurns()))
 
-    assert tracker.state is ModelState.COMPLETED
+    assert outcome.status == "completed"
+    assert tools.threat_store is wrapped          # never double-wrapped
+    assert tools.tracker is tracker               # the wrapper's own tracker
     assert [write.state for write in tracker.writes] == list(ModelState)
-    assert len(tools.threat_store.tracker.writes) == len(ModelState)
+    assert [write.state for write in outcome.gate_writes] == list(ModelState)
 
 
 def test_the_notes_read_filters_by_key(tmp_path):
@@ -716,6 +724,34 @@ def test_the_suite_gap_reaches_the_unit_outcome(tmp_path):
 
     assert outcome.status == "completed"
     assert outcome.suite_gaps
+    assert any("suite_unavailable" in gap for gap in outcome.suite_gaps)
+
+
+def test_injected_suite_tools_still_report_their_gaps(tmp_path):
+    """The injected-pair lane exposes the same seam: a caller that supplies its
+    own `skill_list` / `skill_load` pair must not lose the gap record."""
+    from polymerhus.attack.hunting.threat_modeller import VulnerabilitySuiteSeam
+
+    store = ThreatModelStore(root_dir=tmp_path)
+    seam = VulnerabilitySuiteSeam()
+    tools = _tools(store, suite_tools=build_vulnerability_suite_tools(suite=seam))
+
+    class _ProbingSuite(_ScriptedTurns):
+        def __call__(self, turn):
+            self.turn_inputs.append(turn)
+            suite_load = next(tool for tool in turn.tools
+                              if tool.name == "skill_load")
+            suite_load.invoke({"name": "idor"})
+            self.store_tool(turn).invoke({
+                "cmd": "write", "state": turn.state.value,
+                "sections": _payloads()[turn.state]})
+            return None
+
+    outcome = asyncio.run(arun_modeller_pass(PROJECT, RUN, UNIT, tools,
+                                             turn_fn=_ProbingSuite()))
+
+    assert tools.suite is seam
+    assert outcome.status == "completed"
     assert any("suite_unavailable" in gap for gap in outcome.suite_gaps)
 
 

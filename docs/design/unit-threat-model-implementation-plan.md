@@ -186,6 +186,7 @@ Add the actor-harness test for `ThreatModellerActor`.
 Update the role and modeller terms in `attack/hunting/CONTEXT.md`.
 
 **Hazards this slice inherits from T2a.**
+- A modeller pass is SERIAL per run: it mutates the shared `ModellerTools` (the run-scoped tracker, the store wrapper, the unit cell, the suite seam). Every consumer this slice wires must dequeue one unit at a time; a concurrent second pass over the same tools would interleave unit identities and gate readings.
 - The session id is swapped in two places that must move together: `runtime.start_hunting`'s registered id and `surfer`'s quiesce key. Keying the new id before the swap quiesces a run whose live pass is still registered under the legacy segment; both sites carry a `designed-not-built` marker naming this ticket.
 - The modeller actor-reap seam (`_reap_modeller`) has no caller until this slice; it is marked `designed-not-built` and its registry is keyed by run id in both the default and the injected-factory lane, so the reap and the degrade-cause lookup cannot address a different actor than the pass built.
 - The pass's grounding inputs (`context_provider`, and the explicit `projection` / `surface_overview` seams) are wired to a live source here: the L1 unit projection read and the L1 application-surface overview. Until then both render as recorded gaps on every turn.
