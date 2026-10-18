@@ -53,7 +53,8 @@ Resubmit an authorized request through the queue or worker path and verify wheth
 
 Coerce method and content-type framings while holding the contradictory carrier constant, since per-stack middleware often resolves identity differently.
 Pollute duplicate carrier fields with both orderings to probe which occurrence wins at each layer.
-Treat cache-key confusion across tenant headers as defeat detail shared with the bypass family, recording only the identity verdict here.
+Treat parser coercion as the defence-bypass family's parser step, recording only the identity verdict here.
+Treat cache-key confusion across tenant headers as defeat detail shared with the proxy-techniques family at its shared-cache step.
 
 ## Chaining Attacks
 

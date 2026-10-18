@@ -69,9 +69,7 @@ Blind translated craft plus blind gated sequencing stay secondary here, reusing 
 
 Bypass forms stay aspects inside this variant because no encoding or parsing difference changes the inference step itself.
 - Address encoding families such as decimal plus hex plus octal plus mapped forms reach the fetcher past a naive textual allowlist.
-- Parser differentials between the enforcing side and the fetching side smuggle an internal destination through a split parse.
-- Redirect chains convert one allowlisted first hop into an internal second hop for the inference probe.
-- Short-lived attacker-controlled resolution answers differently across the check-time and fetch-time lookups.
+- Parser differentials, redirect chains, and short-lived resolution carry an internal destination to the fetch side, and the proxy-techniques family owns those mechanics; record only the inference verdict here.
 
 ## Chaining Attacks
 

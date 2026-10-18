@@ -54,7 +54,7 @@ Decide each handle separately, since creation-time checks never cover retrieval-
 
 Vary key casing and encoding shapes on stored-link handles to probe normalization gaps in scope checks.
 Coerce content-disposition and conditional-request shapes on retrieval while holding the handle constant, reading only the binding verdict.
-Treat cache-key confusion as defeat detail shared with the bypass family, recording only the redemption verdict here.
+Treat cache-key confusion as defeat detail shared with the proxy-techniques family at its shared-cache step, recording only the redemption verdict here.
 
 ## Chaining Attacks
 
@@ -85,7 +85,7 @@ Create handles under every role before redeeming, since symmetric baselines deci
 Track scope and expiry per handle explicitly, since retrieval paths fail on exactly those two clauses.
 Test finalize, cancel, and approve transitions as well as reads, since write-side redemption gaps carry the larger impact.
 Prove impact with role-separated before-and-after diffs of artifact state, since paired evidence survives scrutiny.
-Name the proxy family at edge-reached retrieval steps rather than restating its mechanics.
+Name the proxy-techniques family at edge-reached retrieval steps rather than restating its mechanics.
 
 ## Summary
 

@@ -137,14 +137,8 @@ Each variant breaks one clause: the canonical-address clause, the hop clause, th
 **Address Encoding**
 - Decimal, octal, and hexadecimal notations, IPv6 and mapped forms, and mixed notation the parser accepts
 
-**DNS Rebinding**
-- A first resolution the check approves, a second that reaches the interior, served from short-lived records under attacker control
-
-**Parser Differentials**
-- Inconsistencies in scheme, host, port, path, and decoding between the validation side and the fetch side
-
-**Redirect Chains**
-- A destination inside the approved set that hops outside it; protocol switches and nested redirects through the chain
+**Relay Mechanics**
+- Short-lived resolution, redirect chains, and destination parse differentials are generic relay steps, and the proxy-techniques family owns them; name it at the hop rather than restating the mechanics here
 
 **Carrier Switching**
 - Move the same destination between direct parameters, stored fields, embedded links, and derived values until one reaches the fetcher unfiltered

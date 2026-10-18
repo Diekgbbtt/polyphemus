@@ -103,6 +103,8 @@ Request smuggling is the same primitive at the request layer: inject a header th
 - **Forwarding alias poisoning**: the backend builds canonical URLs from forwarded values, and the cache stores the response with attacker-controlled links
 - **Cache deception**: trick the cache into storing an authenticated response at a public-looking URL by appending a cacheable extension
 
+The shared-cache keying mechanics these shapes work are the proxy-techniques family's step; name it there and keep the injection detail here.
+
 ### Authority Confusion
 
 Backends often trust the authority header or its forwarding alias when constructing absolute URLs: password reset messages, authorization callbacks, canonical links. A forged authority produces a message pointing at attacker infrastructure that still carries the victim's token.

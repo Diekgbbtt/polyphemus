@@ -85,7 +85,7 @@ Test list and search endpoints before bulk writes, since they seed identifiers a
 Decide every bulk position independently, since first-element validation masks mid-array gaps.
 Vary page windows beyond the cooperative sequence, since filters often bind only the expected cursor.
 Prove batch impact with role-separated rereads of each affected row, since acknowledgements overstate and understate alike.
-Name the bypass family at parser-coercion steps rather than restating its mechanics.
+Name the defence-bypass family at parser-coercion steps rather than restating its mechanics.
 
 ## Summary
 

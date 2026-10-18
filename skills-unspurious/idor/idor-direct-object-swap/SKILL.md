@@ -54,7 +54,7 @@ Read the verdict from the differential between the two responses, never from a s
 
 Coerce the transport framing when a first attempt is rejected, varying content type and serialization while keeping the swapped identifier constant.
 Pollute duplicate reference fields with both orderings and read which occurrence the service honors.
-Treat parser disagreements as defeat detail shared with the bypass family, recording only the authorization verdict here.
+Treat parser disagreements as defeat detail shared with the defence-bypass family at its parser step, recording only the authorization verdict here.
 
 ## Chaining Attacks
 

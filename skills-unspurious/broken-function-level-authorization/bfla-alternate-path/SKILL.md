@@ -36,7 +36,7 @@ A before-and-after state snapshot showing the privileged change completes the pr
 This variant presupposes a working lower-role session plus knowledge of one privileged action, and it consumes direct-call ability outside the interface.
 It consumes the ability to resubmit one action body through changed routes, method framings, and content-type handlers while holding the token constant.
 It consumes the ability to route around edge gates toward the core entry where the engagement permits it.
-Reach steps owned by the proxy family are named here rather than restated.
+Steps owned by the defence-bypass family at its edge-versus-core step are named here rather than restated.
 
 ## Trust Assumptions
 
@@ -48,7 +48,7 @@ The agreement fails when the check lives only on the primary route or edge gate 
 Middleware-stack diffing plus alias, shadow-route, parser-specific, and direct-to-core resubmission is the bent step this variant owns over the parent.
 Resubmit each privileged action through every alias and legacy route with the same body, and record which chain authorized the call.
 Resubmit through each sibling parser handler, since one permissive chain among strict siblings is the gap this variant hunts.
-Resubmit around the edge gate toward the core entry where exposure permits, and treat the proxy reach as an invoked step while recording only the authorization verdict here.
+Resubmit around the edge gate toward the core entry where exposure permits, and treat the edge-versus-core reach as the defence-bypass family's invoked step while recording only the authorization verdict here.
 The parent exercise step covers transports and method overrides but never describes chain diffing or shadow resubmission, so this variant owns that procedure.
 
 ## Advanced Techniques
