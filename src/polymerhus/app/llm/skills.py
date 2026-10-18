@@ -803,6 +803,11 @@ def validate_skill(
 # A reference name is one safe file stem - no separators, no traversal.
 _REFERENCE_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 
+# The accepted version shapes (D-W3-2): `major`, `major.minor`, and the
+# ratified suite's `major.minor.patch` (a missing minor counts as 0 for the
+# bump, exactly as before; the patch is read and ignored).
+_VERSION_RE = re.compile(r"(\d+)(?:\.(\d+))?(?:\.(\d+))?")
+
 
 class SkillTargetError(ValueError):
     """The denoted unsupported-target signal: `target` is neither `procedure`
@@ -863,15 +868,19 @@ def _frontmatter_violations(meta: dict, *, skill: str) -> list[str]:
 
 
 def _bump_version(version: str) -> str:
-    """The operator's monotonic version rule: `major.minor`, minor +1, one
-    decimal place. A missing minor part counts as 0."""
-    major, _, minor = str(version).partition(".")
-    try:
-        return f"{int(major)}.{int(minor or 0) + 1}"
-    except ValueError as exc:
+    """The operator's monotonic version rule (D-W3-2): `major.minor` or
+    `major.minor.patch` - the ratified suite's form - plus the historical bare
+    `major` (a missing minor counts as 0). Major is read, minor is bumped by
+    one, the patch is read and ignored, and the emitted version is always
+    `major.(minor+1)`. Any other shape refuses: a version is a dotted numeric
+    identity, never a longer tuple or a non-numeric part."""
+    match = _VERSION_RE.fullmatch(str(version).strip())
+    if match is None:
         raise SkillInvalidError(
-            f"skill_invalid: version {version!r} is not major.minor"
-        ) from exc
+            f"skill_invalid: version {version!r} is not major, major.minor, or "
+            "major.minor.patch"
+        )
+    return f"{int(match.group(1))}.{int(match.group(2) or 0) + 1}"
 
 
 def _dump_frontmatter(meta: dict) -> str:

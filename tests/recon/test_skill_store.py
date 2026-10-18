@@ -173,6 +173,47 @@ def test_write_refuses_without_bootstrapped_metadata(tmp_path: Path, monkeypatch
     ).exists()
 
 
+# --- write: the version rule (D-W3-2) ----------------------------------------
+
+
+@pytest.mark.parametrize(
+    "bootstrapped,expected",
+    [("1", "1.1"), ("1.0", "1.1"), ("1.0.0", "1.1"), ("2.6", "2.7"), ("1.8.3", "1.9")],
+)
+def test_the_version_bump_accepts_major_minor_and_major_minor_patch(
+    tmp_path: Path, monkeypatch, bootstrapped: str, expected: str
+) -> None:
+    """D-W3-2: the ratified suite carries `1.0.0`, so the one-minor bump reads
+    major and minor, ignores the patch, and emits `major.(minor+1)`; the bare
+    `major` keeps its historical missing-minor-is-0 reading."""
+    monkeypatch.setattr(
+        skills, "_SKILLS_ROOT", _catalogue(tmp_path, version=bootstrapped)
+    )
+    store = _store(tmp_path)
+
+    store.write("proj-1", "auth_workflow", "procedure", "# body\n")
+
+    text = (
+        tmp_path / "data" / "proj-1" / "skills" / "auth_workflow" / "SKILL.md"
+    ).read_text(encoding="utf-8")
+    assert f"version: '{expected}'\n" in text
+
+
+@pytest.mark.parametrize(
+    "bootstrapped", ["nope", "1.", ".1", "1.2.3.4", "1.x", "-1.0", ""]
+)
+def test_the_version_bump_refuses_anything_but_the_ratified_forms(
+    tmp_path: Path, monkeypatch, bootstrapped: str
+) -> None:
+    monkeypatch.setattr(
+        skills, "_SKILLS_ROOT", _catalogue(tmp_path, version=bootstrapped)
+    )
+    store = _store(tmp_path)
+
+    with pytest.raises(SkillInvalidError):
+        store.write("proj-1", "auth_workflow", "procedure", "# body\n")
+
+
 def test_write_refuses_a_malformed_bootstrap_version(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(skills, "_SKILLS_ROOT", _catalogue(tmp_path, version="nope"))
     store = _store(tmp_path)
