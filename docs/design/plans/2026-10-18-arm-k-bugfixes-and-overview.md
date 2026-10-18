@@ -391,4 +391,7 @@ curl -s http://127.0.0.1:8080/projects/<pid>/usage                            # 
 
 ## Status log
 
-- 2026-10-18: plan authored; W0 pending.
+- 2026-10-18: plan authored (this doc committed first on `feat/recon-coverage-and-eval-wellformedness`).
+- 2026-10-18: **W0 landed and merged to dev** (`68acd614`): corrected criterion (Service spine via `business_function_slug`; mechanism slots System-side; capability-gap statements satisfied-by-declaration; 15 tool tests + lint clean), arm J re-baseline (comfyui 0.45/0.48, white-jotter 0.49/0.66), `eval/setups/webexploitbench-arm-k.yaml`, and the C5 fail-open assigner node with its workflow test.
+- 2026-10-18: **W1.4 #365 merged** (`38300b01`; branch commit `30c64604`): method hints from discovery into minting and probing; `tests/recon` 1063 passed / 18 skipped; the DELETE mint-only decision is recorded on the ticket as the one flagged scope call.
+- 2026-10-18: **W1.1 #369 dispatched** (background diagnosis first); **W1.2 #354 dispatched** (grill-first). W1.3 #364 staged (worktree `fix-364-auth-store` ready).
