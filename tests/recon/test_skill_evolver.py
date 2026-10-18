@@ -153,7 +153,9 @@ def test_a_pass_without_lessons_zero_skips_and_never_calls_the_model(
 
     assert outcome.decision == "zero_skip"
     assert outcome.consumed_keys == ()
-    assert outcome.version is None
+    # D-W3-3: the resolved version whenever the skill resolved; `zero_skip`
+    # carries the base version the pass read.
+    assert outcome.version == "1.0"
     assert turn.calls == []
     assert (
         skill_store.meta(SKILL, project_id=PROJECT)["metadata"]["version"] == "1.0"
@@ -176,6 +178,9 @@ def test_a_pass_on_an_unresolvable_skill_is_skill_unknown_without_a_model_call(
 
     assert outcome.decision == "skill_unknown"
     assert outcome.consumed_keys == ()
+    # D-W3-3: only `skill_unknown` carries None - no skill resolved, so no
+    # version was ever read.
+    assert outcome.version is None
     assert turn.calls == []
 
 
@@ -338,6 +343,44 @@ def test_the_payload_carries_every_selected_record_in_full(
         "written_at",
     ):
         assert needle in content
+
+
+def test_the_outcome_version_is_the_resolved_version_per_decision(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """D-W3-3 pins the vocabulary: `published` carries the new version;
+    `zero_skip`, `no_write`, and `degraded` carry the base version the pass
+    read; only `skill_unknown` carries None."""
+    monkeypatch.setattr(skills, "_SKILLS_ROOT", _catalogue(tmp_path))
+    _project_bundle(tmp_path)
+    skill_store, lesson_store = _stores(tmp_path)
+    _seed_lesson(lesson_store)
+
+    degraded = asyncio.run(
+        arun_evolution_pass(
+            PROJECT, SKILL, skill_store=skill_store, lesson_store=lesson_store,
+            turn_fn=_FakeTurn(exc=RuntimeError("transport down")),
+        )
+    )
+    unknown = asyncio.run(
+        arun_evolution_pass(
+            PROJECT, "no-such-skill", skill_store=skill_store,
+            lesson_store=lesson_store, turn_fn=_FakeTurn(),
+        )
+    )
+    # The degraded pass consumed the first lesson; seed a fresh one for the
+    # no-write pass (a separate pass over a fresh selection).
+    _seed_lesson(lesson_store)
+    no_write = asyncio.run(
+        arun_evolution_pass(
+            PROJECT, SKILL, skill_store=skill_store, lesson_store=lesson_store,
+            turn_fn=_FakeTurn(),
+        )
+    )
+
+    assert degraded.decision == "degraded" and degraded.version == "1.0"
+    assert unknown.decision == "skill_unknown" and unknown.version is None
+    assert no_write.decision == "no_write" and no_write.version == "1.0"
 
 
 # --- the read-only target-context surface (D-W3-5) ----------------------------

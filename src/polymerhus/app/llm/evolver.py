@@ -25,8 +25,10 @@ The pass is the workflow the role prompt implements:
                `graph_view`)
     publish  - the AGENT calls its armed project-bound `write_skill`; the store
                re-validates structurally and bumps `metadata.version`
-    outcome  - `EvolutionOutcome` carries the decision, the version read back,
-               the consumed keys, and the thread id
+    outcome  - `EvolutionOutcome` carries the decision, the resolved version
+               (the new one when `published`, else the base version the pass
+               read - `None` only for `skill_unknown`, D-W3-3), the consumed
+               keys, and the thread id
 
 The controller is a per-hunting-run session (scheduled by the hunting bootstrap
 alongside the orchestrator pass and the surfer, cancelled with the run): per
@@ -98,9 +100,12 @@ def evolver_thread_id(project_id: str, skill: str) -> str:
 @dataclasses.dataclass(frozen=True)
 class EvolutionOutcome:
     """One pass's outcome. `decision` is the closed vocabulary
-    `published | zero_skip | skill_unknown | no_write | degraded`; `version` is
-    the version read back after the turn (None when no skill resolved);
-    `consumed_keys` are the lesson keys this pass marked consumed."""
+    `published | zero_skip | skill_unknown | no_write | degraded`; `version`
+    is the RESOLVED version (D-W3-3): the new version a `published` pass read
+    back, the base version a `zero_skip` / `no_write` / `degraded` pass read,
+    and `None` only for `skill_unknown` and for a failure before any base
+    version resolved; `consumed_keys` are the lesson keys this pass marked
+    consumed."""
 
     decision: str
     skill: str
@@ -307,7 +312,9 @@ async def arun_evolution_pass(
             detail=f"store_unavailable: {exc}",
         )
     if not records:
-        return EvolutionOutcome("zero_skip", skill, thread_id=thread_id)
+        return EvolutionOutcome(
+            "zero_skip", skill, version=version, thread_id=thread_id
+        )
 
     # mark: the selected keys are consumed as they are loaded for pasting, so a
     # crash cannot re-paste them into a later pass (D232-2's accepted trade: a
