@@ -67,7 +67,7 @@ Two-principal authorization testing presupposes two identities, owner-created ob
 - Create and own objects under the first principal, and capture the identifiers the application returns.
 - Hold the owner's grant flows and the token or link each issues.
 - Replay every operation under the second principal's session with the owner's identifiers.
-- Read differentials (status, size, validator, timing) when content stays masked.
+- Compare the second principal's responses by status, size, validator, and timing whenever the content stays masked.
 - Snapshot state before and after each write so a durable foreign effect is attributable.
 
 ## Trust Assumptions

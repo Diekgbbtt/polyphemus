@@ -1,6 +1,6 @@
 ---
 name: prototype-pollution
-description: Client and server prototype pollution testing covering JavaScript object merge bugs, Node.js RCE chains, and filter bypasses
+description: Client and server prototype pollution testing covering JavaScript object merge bugs, server-side runtime RCE chains, and filter bypasses
 metadata:
   version: 1.0.0
 ---

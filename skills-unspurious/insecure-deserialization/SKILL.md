@@ -1,6 +1,6 @@
 ---
 name: insecure-deserialization
-description: Insecure deserialization testing for Java, Python, PHP, .NET, Ruby, and Node.js covering gadget chains, type confusion, and safe validation
+description: Insecure deserialization testing across runtime languages covering gadget chains, type confusion, and safe validation
 metadata:
   version: 1.0.0
 ---

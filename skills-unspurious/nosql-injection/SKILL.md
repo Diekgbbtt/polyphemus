@@ -1,6 +1,6 @@
 ---
 name: nosql-injection
-description: NoSQL injection testing covering MongoDB operator injection, authentication bypass, blind extraction, GraphQL variable injection, and Redis/DynamoDB/Elasticsearch/Neo4j-specific attack surfaces
+description: NoSQL injection testing covering operator injection, authentication bypass, blind extraction, GraphQL variable injection, and datastore-specific attack surfaces
 metadata:
   version: 1.0.0
 ---

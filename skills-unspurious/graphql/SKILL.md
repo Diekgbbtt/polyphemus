@@ -1,6 +1,6 @@
 ---
 name: graphql
-description: OWASP GraphQL security testing - introspection, injection, DoS, IDOR/BFLA, batching, GraphiQL, and excessive errors
+description: GraphQL security testing - introspection, injection, DoS, IDOR/BFLA, batching, and excessive errors
 metadata:
   version: 1.0.0
 ---

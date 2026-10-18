@@ -1,6 +1,6 @@
 ---
 name: ssti
-description: Server-side template injection across Jinja / Mako / Velocity / Freemarker / Thymeleaf / Twig / Handlebars / EJS / ERB with engine fingerprinting, sandbox escape, and RCE gadget chains
+description: Server-side template injection across template engines with engine fingerprinting, sandbox escape, and RCE gadget chains
 metadata:
   version: 1.0.0
 ---
