@@ -489,7 +489,16 @@ async def get_hunting_status(project_id: str, hunting_run_id: str) -> dict:
     return row
 
 
-# --- #232 D232-10: the skill-evolution trigger --------------------------------
+# --- #232 D232-10 / D-W3-4: the skill-evolution launch + status pair ----------
+#
+# The #232 trigger awaited the pass and returned the outcome with 200; D-W3-4
+# supersedes that with the app module's REST principles: the launch starts one
+# pass and returns its identifier (202), and the status endpoint, given that
+# identifier, serves the DURABLE pass record (200), 404 for an unknown
+# identifier. The record is written by the launch and finished by the launcher
+# (`attack/hunting/runtime.launch_evolution_pass`), so it survives the request
+# and the process: a re-read by an operator, an e2e run, or another service
+# works without holding a future.
 
 
 class SkillEvolveLaunch(BaseModel):
@@ -499,20 +508,26 @@ class SkillEvolveLaunch(BaseModel):
     lessons: list[dict] | None = None
 
 
-@router.post("/projects/{project_id}/skills/{skill}/evolve")
-async def evolve_skill(
+@router.post(
+    "/projects/{project_id}/skills/{skill}/evolve", status_code=202
+)
+async def launch_skill_evolution(
     project_id: str, skill: str, body: SkillEvolveLaunch | None = None
 ) -> dict:
-    """Force ONE skill-evolution pass (#232 D232-10): append any posted lessons
-    (store-stamped, agent = operator) and schedule the pass through the hunting
-    launcher seam, then await its `EvolutionOutcome` and return it.
+    """Start ONE skill-evolution pass (#232 D232-10, D-W3-4) and return its
+    identifier: any posted lessons are appended first (store-stamped, agent =
+    operator), then the pass is scheduled through the hunting launcher seam and
+    its durable record is started. The pass itself runs on the worker loop, so
+    the response does not await it; poll the status endpoint with `pass_id`.
 
     Fail-closed on the control plane: with no active runtime this is a 503,
-    never an in-process pass on the request loop. A malformed posted lesson is
-    the store's coded refusal mapped to 400. The pass itself never raises: its
-    failures are coded outcome decisions."""
+    never an in-process pass on the request loop (a refused launch leaves no
+    record behind). A malformed posted lesson is the store's coded refusal
+    mapped to 400; an unwritable pass record is a 503 (the launch cannot
+    honour its side of the status contract)."""
     from polymerhus.app.clients import pg
     from polymerhus.app.llm import evolver
+    from polymerhus.app.llm.skills import StoreUnavailableError
     from polymerhus.attack.hunting import runtime as hunting_runtime
 
     if not await asyncio.to_thread(pg.project_exists, project_id):
@@ -523,19 +538,60 @@ async def evolve_skill(
             detail="hunting control-plane runtime has not landed",
         )
     lessons = (body.lessons if body is not None else None) or []
+    records = evolver.EvolutionPassStore()
+    pass_id = evolver.evolution_pass_id(project_id, skill)
+    launched: dict | None = None
     try:
         if lessons:
             await asyncio.to_thread(
                 evolver.append_posted_lessons, project_id, skill, lessons
             )
-        future = hunting_runtime.launch_evolution_pass(project_id, skill)
-    except ValueError as exc:  # the store's coded lesson/skill refusals
+        # The record is started BEFORE the pass is scheduled: the pass may
+        # finish before the launcher call returns, and the running record must
+        # not overwrite a finished one.
+        launched = await asyncio.to_thread(
+            records.start, project_id, skill, pass_id
+        )
+        hunting_runtime.launch_evolution_pass(project_id, skill, records=records)
+    except StoreUnavailableError as exc:  # a write refusal, before ValueError
+        raise HTTPException(
+            status_code=503, detail=f"pass record unavailable: {exc}"
+        ) from exc
+    except ValueError as exc:  # the store's coded lesson/skill/target refusals
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001 - map admission refusal, re-raise the rest
+        if launched is not None:
+            await asyncio.to_thread(
+                records.discard,
+                project_id,
+                pass_id,
+                launched_at=launched.get("launched_at"),
+            )
         _admission_refused_503(exc)
         raise
-    outcome = await asyncio.wrap_future(future)
-    return outcome.to_dict()
+    return launched
+
+
+@router.get("/projects/{project_id}/evolution-passes/{pass_id}")
+async def get_skill_evolution_status(project_id: str, pass_id: str) -> dict:
+    """The durable evolution-pass record addressed by its identifier (#232
+    D-W3-4): `status` is `running` or `finished`, and a finished pass carries
+    the `outcome` - the decision, the version (the NEW version on `published`,
+    D-W3-3), and the consumed lesson keys, which are the update's identity.
+    The full update provenance (the old version, the note keys, and the
+    revision body) lives in the skill bundle's revision manifest (D-W3-2).
+
+    A pure durable read: no runtime and no database are consulted, so the
+    record stays reachable while the control plane is down. An unknown
+    identifier - never launched, or launched for another project - is a 404."""
+    from polymerhus.app.llm import evolver
+
+    record = await asyncio.to_thread(evolver.EvolutionPassStore().get, project_id, pass_id)
+    if record is None:
+        raise HTTPException(
+            status_code=404, detail="no evolution pass for that identifier"
+        )
+    return record
 
 
 # --- T5: singular component launches (spec #169 "Singular component launches",

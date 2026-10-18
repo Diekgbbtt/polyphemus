@@ -332,6 +332,25 @@ def test_concurrent_rewrites_append_one_revision_each(tmp_path: Path, monkeypatc
 # --- write: coded refusals, nothing persisted -------------------------------
 
 
+@pytest.mark.parametrize("reserved", sorted(skills.RESERVED_SKILL_NAMES))
+def test_write_refuses_a_scaffold_owned_directory_name(
+    tmp_path: Path, monkeypatch, reserved: str
+) -> None:
+    """`skills/lessons` and `skills/evolution` are scaffold-owned fixed
+    directories, never skill bundles: a write refuses, and a read stays
+    fail-open (the catalogue fallback)."""
+    monkeypatch.setattr(skills, "_SKILLS_ROOT", _catalogue(tmp_path))
+    store = _store(tmp_path)
+
+    with pytest.raises(SkillInvalidError):
+        store.write("proj-1", reserved, "procedure", "# body\n")
+
+    assert store.read(reserved, project_id="proj-1", fallback="FB") == "FB"
+    assert not (
+        tmp_path / "data" / "proj-1" / "skills" / reserved / "SKILL.md"
+    ).exists()
+
+
 def test_write_refuses_without_bootstrapped_metadata(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(skills, "_SKILLS_ROOT", tmp_path / "empty")
     store = _store(tmp_path)

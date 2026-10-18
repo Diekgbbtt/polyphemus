@@ -46,19 +46,28 @@ import asyncio
 import dataclasses
 import functools
 import logging
+import os
+import threading
 import time
+import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover - typing only; the runtime import is lazy
     from langchain_core.messages import HumanMessage
 
+from polymerhus.app.data_root import (
+    DATA_ROOT,
+    project_dir,
+    validate_path_component,
+)
 from polymerhus.app.llm.session_address import ModuleScopedSession
 from polymerhus.app.llm.skills import (
     LessonInvalidError,
     LessonStore,
     SkillStore,
     SkillUnknownError,
+    StoreUnavailableError,
     skill_agent_binding,
 )
 
@@ -95,6 +104,200 @@ def evolver_thread_id(project_id: str, skill: str) -> str:
         tool=skill,
         role_id=EVOLVER_ROLE_ID,
     ).thread_id
+
+
+# --- the durable per-pass record (D-W3-4) -------------------------------------
+#
+# The REST trigger is a launch + status pair, so one pass must stay addressable
+# AFTER the request that started it ended. The identifier is the launcher's
+# schedule name (`skills:evolve:<project_id>:<skill>`, D-W3-4's named stable
+# candidate), and the record is one YAML file per identifier under the
+# project's skills bucket:
+#
+#     <data_root>/<project_id>/skills/evolution/<pass_id>.yaml
+#
+# A relaunch for the same (project, skill) replaces the slot's record: the
+# identifier addresses the skill's pass slot, and the newest pass is what the
+# status endpoint reports. Writes are atomic under the per-project lock (the
+# skill store's discipline); reads are fail-open.
+
+EVOLUTION_PASSES_DIRNAME = "skills/evolution"
+
+_PASS_LOCKS: dict[str, threading.Lock] = {}
+_PASS_LOCKS_GUARD = threading.Lock()
+
+
+def evolution_pass_id(project_id: str, skill: str) -> str:
+    """The pass identifier: the launcher's schedule name
+    `skills:evolve:<project_id>:<skill>` (D-W3-4). Stable for the pass slot of
+    one `(project, skill)` and human-addressable, so the launch can hand it out
+    and the status endpoint can read the record back from it."""
+    return f"skills:evolve:{project_id}:{skill}"
+
+
+def _pass_lock(root: Path, project_id: str) -> threading.Lock:
+    """The per-(root, project) pass-record lock (the skill store's pattern)."""
+    key = f"{root}::{project_id}"
+    with _PASS_LOCKS_GUARD:
+        lock = _PASS_LOCKS.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            _PASS_LOCKS[key] = lock
+        return lock
+
+
+def _utc_now() -> str:
+    import datetime  # noqa: PLC0415 - stdlib, kept local like the store's stamps
+
+    return datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+
+class EvolutionPassStore:
+    """The durable per-pass record store behind the launch + status pair
+    (D-W3-4): `start` writes the running record a launch hands out,
+    `finish` stamps the outcome the launcher read back, and `get` is the
+    status endpoint's read. `discard` drops a running record whose launch was
+    refused, and only when it is still that same record (a stale discard never
+    removes a newer pass's record).
+
+    Rooted under the app-owned data root (default `DATA_ROOT`); the
+    explicit-root constructor is kept for the tests' temp stores. Import
+    performs no I/O."""
+
+    def __init__(self, root_dir: str | Path | None = None):
+        self._root = Path(root_dir) if root_dir is not None else DATA_ROOT
+
+    def _record_file(self, project_id: str, pass_id: str) -> Path:
+        """The record file for one pass identifier. Both components are
+        validated: an unsafe id (separators, traversal, control characters) is
+        refused, never escaped into a path. The `:` separators of the schedule
+        name are the one character a file name must not carry verbatim, so the
+        stem encodes them."""
+        validate_path_component(pass_id, "pass_id")
+        base = project_dir(project_id, EVOLUTION_PASSES_DIRNAME, root=self._root)
+        return base / f"{pass_id.replace(':', '_')}.yaml"
+
+    def _read(self, path: Path) -> dict | None:
+        """One record file's mapping; a missing, unreadable, or unparseable
+        file degrades to None with a warning (fail-open, the read doctrine)."""
+        import yaml  # noqa: PLC0415 - already a production dependency
+
+        try:
+            loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return None
+        except (OSError, yaml.YAMLError) as exc:
+            logger.warning("skill evolver: unreadable pass record %s: %s", path, exc)
+            return None
+        return loaded if isinstance(loaded, dict) else None
+
+    def _dump(self, path: Path, record: dict) -> None:
+        """Write one record atomically (temp file in the SAME directory, then
+        `os.replace`); a failed dump is a loud `StoreUnavailableError`."""
+        import yaml  # noqa: PLC0415 - already a production dependency
+
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_name(f".{path.name}.{uuid.uuid4().hex[:8]}.tmp")
+            try:
+                tmp.write_text(
+                    yaml.safe_dump(
+                        record, sort_keys=False, allow_unicode=True, width=4096
+                    ),
+                    encoding="utf-8",
+                )
+                os.replace(tmp, path)
+            finally:
+                try:
+                    tmp.unlink()
+                except FileNotFoundError:
+                    pass
+        except OSError as exc:
+            raise StoreUnavailableError(
+                f"store_unavailable: cannot persist the pass record {path} ({exc})"
+            ) from exc
+
+    def get(self, project_id: str, pass_id: str) -> dict | None:
+        """The recorded pass, or None: an unknown identifier, an unreadable
+        record, and an unsafe identifier all read as None (fail-open - the
+        status endpoint maps None to 404)."""
+        try:
+            path = self._record_file(project_id, pass_id)
+        except ValueError as exc:
+            logger.warning("skill evolver: unsafe pass id %r: %s", pass_id, exc)
+            return None
+        return self._read(path)
+
+    def start(self, project_id: str, skill: str, pass_id: str) -> dict:
+        """Persist the RUNNING record a launch hands out, replacing any record
+        the slot held (a relaunch supersedes the previous pass's record)."""
+        path = self._record_file(project_id, pass_id)
+        record = {
+            "pass_id": pass_id,
+            "project_id": project_id,
+            "skill": skill,
+            "status": "running",
+            "launched_at": _utc_now(),
+            "finished_at": None,
+            "outcome": None,
+        }
+        with _pass_lock(self._root, project_id):
+            self._dump(path, record)
+        logger.info(
+            "skill evolver: pass %s launched for %s/%s", pass_id, project_id, skill
+        )
+        return record
+
+    def finish(self, project_id: str, pass_id: str, outcome) -> dict:
+        """Stamp the finished record with the pass outcome, keeping the
+        launch stamp the record already carries."""
+        path = self._record_file(project_id, pass_id)
+        with _pass_lock(self._root, project_id):
+            record = self._read(path) or {}
+            record.update(
+                {
+                    "pass_id": pass_id,
+                    "project_id": project_id,
+                    "skill": record.get("skill") or "",
+                    "status": "finished",
+                    "launched_at": record.get("launched_at") or _utc_now(),
+                    "finished_at": _utc_now(),
+                    "outcome": outcome.to_dict() if outcome is not None else None,
+                }
+            )
+            self._dump(path, record)
+        logger.info(
+            "skill evolver: pass %s finished for %s (%s)",
+            pass_id,
+            project_id,
+            (record.get("outcome") or {}).get("decision", "unknown"),
+        )
+        return record
+
+    def discard(self, project_id: str, pass_id: str, *, launched_at: str | None = None) -> None:
+        """Drop the slot's record on a refused launch. With `launched_at`
+        given, only a record still carrying that launch stamp is dropped, so a
+        refused launch never removes a newer pass's record."""
+        try:
+            path = self._record_file(project_id, pass_id)
+        except ValueError:
+            return
+        with _pass_lock(self._root, project_id):
+            record = self._read(path)
+            if record is None:
+                return
+            if launched_at is not None and record.get("launched_at") != launched_at:
+                return
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                pass
+            except OSError as exc:  # noqa: BLE001 - fail-open cleanup
+                logger.warning(
+                    "skill evolver: could not drop the refused pass record %s: %s",
+                    path,
+                    exc,
+                )
 
 
 @dataclasses.dataclass(frozen=True)
@@ -488,15 +691,18 @@ def append_posted_lessons(
 
 
 __all__ = [
+    "EVOLUTION_PASSES_DIRNAME",
     "EVOLUTION_RUN_PREFIX",
     "EVOLVER_ROLE_ID",
     "EVOLVER_SESSION_SEGMENT",
     "EvolutionOutcome",
+    "EvolutionPassStore",
     "append_posted_lessons",
     "arun_evolution_pass",
     "arun_evolver_controller",
     "build_evolver_read_tools",
     "due_skills",
+    "evolution_pass_id",
     "evolver_session_id",
     "evolver_thread_id",
 ]

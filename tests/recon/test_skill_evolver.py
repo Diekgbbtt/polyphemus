@@ -519,6 +519,117 @@ def test_the_role_prompt_carries_the_w3_workflow_discipline() -> None:
         assert gone not in prompt, gone
 
 
+# --- the durable pass record (D-W3-4) -----------------------------------------
+
+
+def test_the_pass_id_is_the_launcher_schedule_name() -> None:
+    from polymerhus.app.llm.evolver import evolution_pass_id
+
+    assert evolution_pass_id(PROJECT, SKILL) == f"skills:evolve:{PROJECT}:{SKILL}"
+
+
+def test_the_pass_record_round_trips_start_and_finish(tmp_path: Path) -> None:
+    from polymerhus.app.llm.evolver import (
+        EvolutionOutcome,
+        EvolutionPassStore,
+        evolution_pass_id,
+    )
+
+    store = EvolutionPassStore(root_dir=tmp_path / "data")
+    pass_id = evolution_pass_id(PROJECT, SKILL)
+
+    running = store.start(PROJECT, SKILL, pass_id)
+
+    assert running["pass_id"] == pass_id
+    assert running["project_id"] == PROJECT and running["skill"] == SKILL
+    assert running["status"] == "running"
+    assert running["launched_at"]
+    assert running["finished_at"] is None and running["outcome"] is None
+    assert store.get(PROJECT, pass_id) == running
+
+    outcome = EvolutionOutcome(
+        "published", SKILL, version="1.1",
+        consumed_keys=("skill:ssrf:1",), thread_id="t-1",
+    )
+    finished = store.finish(PROJECT, pass_id, outcome)
+
+    assert finished["status"] == "finished"
+    assert finished["finished_at"]
+    assert finished["launched_at"] == running["launched_at"]
+    assert finished["outcome"] == outcome.to_dict()
+    assert store.get(PROJECT, pass_id) == finished
+
+
+def test_the_pass_record_is_durable_under_the_projects_skills_bucket(
+    tmp_path: Path,
+) -> None:
+    from polymerhus.app.llm.evolver import (
+        EvolutionPassStore,
+        evolution_pass_id,
+    )
+
+    store = EvolutionPassStore(root_dir=tmp_path / "data")
+    store.start(PROJECT, SKILL, evolution_pass_id(PROJECT, SKILL))
+
+    files = sorted(
+        (tmp_path / "data" / PROJECT / "skills" / "evolution").glob("*.yaml")
+    )
+    assert [f.name for f in files] == ["skills_evolve_proj-1_ssrf.yaml"]
+    # A FRESH store instance reads the same record: no in-memory state.
+    assert EvolutionPassStore(root_dir=tmp_path / "data").get(
+        PROJECT, evolution_pass_id(PROJECT, SKILL)
+    )["status"] == "running"
+
+
+def test_an_unknown_or_unsafe_pass_id_reads_as_none(tmp_path: Path) -> None:
+    from polymerhus.app.llm.evolver import EvolutionPassStore
+
+    store = EvolutionPassStore(root_dir=tmp_path / "data")
+
+    assert store.get(PROJECT, "skills:evolve:proj-1:never") is None
+    assert store.get(PROJECT, "../escape") is None
+    assert store.get(PROJECT, "..") is None
+    assert store.get(PROJECT, "") is None
+
+
+def test_a_relaunch_replaces_the_slot_record(tmp_path: Path) -> None:
+    from polymerhus.app.llm.evolver import (
+        EvolutionOutcome,
+        EvolutionPassStore,
+        evolution_pass_id,
+    )
+
+    store = EvolutionPassStore(root_dir=tmp_path / "data")
+    pass_id = evolution_pass_id(PROJECT, SKILL)
+    first = store.start(PROJECT, SKILL, pass_id)
+    store.finish(PROJECT, pass_id, EvolutionOutcome("no_write", SKILL, version="1.0"))
+
+    second = store.start(PROJECT, SKILL, pass_id)
+
+    record = store.get(PROJECT, pass_id)
+    assert record["status"] == "running" and record["outcome"] is None
+    assert record["launched_at"] != first["launched_at"] or second == record
+
+
+def test_discard_drops_only_the_matching_running_record(tmp_path: Path) -> None:
+    from polymerhus.app.llm.evolver import (
+        EvolutionPassStore,
+        evolution_pass_id,
+    )
+
+    store = EvolutionPassStore(root_dir=tmp_path / "data")
+    pass_id = evolution_pass_id(PROJECT, SKILL)
+    launched = store.start(PROJECT, SKILL, pass_id)
+
+    store.discard(PROJECT, pass_id, launched_at="another-launch")
+    assert store.get(PROJECT, pass_id) == launched
+
+    store.discard(PROJECT, pass_id, launched_at=launched["launched_at"])
+    assert store.get(PROJECT, pass_id) is None
+    # Idempotent: discarding an absent record is a no-op, never a raise.
+    store.discard(PROJECT, pass_id)
+
+
 # --- posted lessons (the endpoint's injection surface, D232-10) ----------------
 
 

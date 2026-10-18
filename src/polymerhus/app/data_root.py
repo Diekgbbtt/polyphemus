@@ -41,6 +41,7 @@ DATA_ROOT = Path(__file__).resolve().parents[3] / "data"
 PROJECT_SCAFFOLD: tuple[str, ...] = (
     "skills",
     "skills/lessons",
+    "skills/evolution",
     "auth",
     "hunting/orchestration",
     "hunting/orchestration/hunt_configs/produced",
