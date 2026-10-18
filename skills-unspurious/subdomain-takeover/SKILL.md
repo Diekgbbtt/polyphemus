@@ -1,142 +1,197 @@
 ---
 name: subdomain-takeover
 description: Subdomain takeover testing for dangling DNS records and unclaimed cloud resources
+metadata:
+  version: 1.0.0
 ---
 
 # Subdomain Takeover
 
-Subdomain takeover lets an attacker serve content from a trusted subdomain by claiming resources referenced by dangling DNS (CNAME/A/ALIAS/NS) or mis-bound provider configurations. Consequences include phishing on a trusted origin, cookie and CORS pivot, OAuth redirect abuse, and CDN cache poisoning.
+Subdomain takeover lets an attacker serve content from a trusted name the owner no longer controls, by claiming the resource a dangling record still points at, by binding the name on edge infrastructure that does not verify ownership, or by seizing an orphaned delegation. Consequences run through every consumer that trusts the name: redirected credentials, session carriage, script inclusion, and cache persistence. Claim nothing before scope is confirmed.
 
 ## Attack Surface
 
-- Dangling CNAME/A/ALIAS to third-party services (hosting, storage, serverless, CDN)
-- Orphaned NS delegations (child zones with abandoned/expired nameservers)
-- Decommissioned SaaS integrations (support, docs, marketing, forms) referenced via CNAME
-- CDN "alternate domain" mappings (CloudFront/Fastly/Azure CDN) lacking ownership verification
-- Storage and static hosting endpoints (S3/Blob/GCS buckets, GitHub/GitLab Pages)
+**Binding Types**
+- Dangling records (alias, address, or canonical forms) that resolve to a decommissioned or unclaimed external endpoint
+- Orphaned delegations: a child zone delegated to nameservers whose domain has expired or no longer serves
+- Alternate-domain mappings on edge infrastructure that serve a name without proof of ownership
+- Decommissioned integration bindings (support, documentation, forms, marketing) still referenced by a record
+- Mail bindings pointing at a decommissioned provider: a trust surface carried without a claim procedure of its own
+
+**Trust Consumers**
+- Cookie scopes, origin checks, redirect allowlists, script-source policies, and certificate issuance all place trust in the name itself
 
 ## Reconnaissance
 
 ### Enumeration Pipeline
 
-- Subdomain inventory: combine CT (crt.sh APIs), passive DNS sources, in-house asset lists, IaC/terraform outputs
-- Resolver sweep: use IPv4/IPv6-aware resolvers; track NXDOMAIN vs SERVFAIL vs provider-branded 4xx/5xx
-- Record graph: build a CNAME graph and collapse chains to identify external endpoints
+- Name inventory: certificate-transparency logs, passive DNS sources, in-house asset lists, and infrastructure-as-code outputs
+- Resolver sweep across every record type (address, canonical, delegation, mail, and verification), keeping canonical chains
+- Track NXDOMAIN versus SERVFAIL versus provider-branded error codes to locate the failure at the record, resolver, or provider layer
+- Build the record graph and collapse chains to their terminal external endpoint
 
-### DNS Indicators
+### Dangling-Record Indicators
 
-- CNAME targets ending in provider domains: `github.io`, `amazonaws.com`, `cloudfront.net`, `azurewebsites.net`, `blob.core.windows.net`, `fastly.net`, `vercel.app`, `netlify.app`, `herokudns.com`, `trafficmanager.net`, `azureedge.net`, `akamaized.net`
-- Orphaned NS: subzone delegated to nameservers on a domain that has expired or no longer hosts authoritative servers
-- MX to third-party mail providers with decommissioned domains
-- TXT/verification artifacts (`asuid`, `_dnsauth`, `_github-pages-challenge`) suggesting previous external bindings
+- A canonical target whose resource no longer exists or whose endpoint is unclaimed
+- Verification artifacts in record text that suggest a previous external binding
+- Mail records pointing at decommissioned providers
+- Records kept after a decommission, where nothing removes or re-verifies the name
 
-### HTTP Fingerprints
+### Delegation Indicators
 
-Service-specific unclaimed messages (examples):
-- **GitHub Pages**: "There isn't a GitHub Pages site here."
-- **Fastly**: "Fastly error: unknown domain"
-- **Heroku**: "No such app" or "There's nothing here, yet."
-- **S3 static site**: "NoSuchBucket" / "The specified bucket does not exist"
-- **CloudFront**: 403/400 with "The request could not be satisfied"
-- **Azure App Service**: default 404 for azurewebsites.net unless custom-domain verified
-- **Shopify**: "Sorry, this shop is currently unavailable"
+- A child zone delegated to nameservers on a domain that has expired or no longer answers authoritatively
+- Delegations that outrank parent records, so control of the delegated servers controls every label below
 
-TLS clues: certificate CN/SAN referencing provider default host instead of the custom subdomain
+### Edge and Binding Indicators
+
+- Provider unclaimed-resource responses: an unknown-name or missing-resource message carrying a provider signature
+- Certificate subject mismatch: the presented certificate names the provider default rather than the requested name
+- Edge differentials across status families for the same name, which show a partial alternate-domain configuration
+- Binding flows that accept the name before ownership verification completes
+
+## Detection Channels
+
+- A provider unclaimed-resource response for the requested name, which is the classic claimable signal.
+- A certificate naming the provider default rather than the requested name, which corroborates an external binding.
+- NXDOMAIN versus SERVFAIL versus provider-branded error codes across resolvers, which locate the failure layer.
+- The terminal external endpoint of a canonical chain, which decides which binding must be examined.
+- Edge differentials across status families for one name, which show a partially configured alternate domain.
+- A nameserver domain that fails expiry or liveness checks, which marks a delegation orphaned.
+- A verification artifact in record text without a live binding, which signals a previous external mapping.
+- A claim that succeeds and then serves attacker content for the name, which proves takeover.
+- A certificate issued for the claimed name, which proves control over TLS-terminating clients.
+- An authorization response or redirect that follows attacker-served content for the name, which proves a trust-chain effect.
+
+## Adversarial Capabilities
+
+Subdomain takeover testing presupposes a name inventory, record resolution, and an authorized claim path, and it consumes all three.
+- Operate an account on the provider a record points at, able to create a resource with the exact required name.
+- Register an expired nameserver domain and host authoritative servers for it.
+- Add the target name as an alternate domain on attacker-held edge capacity.
+- Resolve and probe the name over both plain and TLS channels, and read provider signatures.
+- Serve a minimal unique proof page and confirm it through the name.
+- Confirm scope before any claim step; claiming a name outside authorization is not a test.
+
+## Trust Assumptions
+
+The class rests on one agreement: every record points at a resource the owner still controls, and every binding path verifies ownership before the provider serves the name.
+The agreement holds dangling records to live, owned endpoints, holds binding flows to verification before service, holds delegations to nameservers that stay owned and answer authoritatively, and holds alternate-domain mappings to proof of ownership.
+Name control leaks when a clause fails: a record outlives its resource, a binding flow accepts a name before verification, a delegation points at a domain someone else can register, or edge capacity serves a name without proof.
+Each variant breaks one clause: the dangling-record clause, the alternate-name clause, or the delegation clause.
 
 ## Key Vulnerabilities
 
-### Claim Third-Party Resource
+### Dangling-Record Resource Claim
 
-- Create the resource with the exact required name:
-  - Storage/hosting: S3 bucket "sub.example.com" (website endpoint)
-  - Pages hosting: create repo/site and add the custom domain
-  - Serverless/app hosting: create app/site matching the target hostname
+- Create the missing resource with the exact name the record resolves to, where the provider does not check that the requester owns the name
+- Binding flows differ per resource type; some accept the name before verification completes, others after
+- Resource variants of one provider (website endpoint versus API endpoint) differ in claimability and in their unclaimed signature
+- Race windows: re-claim the exact name immediately after the owner deletes or releases it
+- Wildcard records widen the set of claimable labels reachable under one endpoint
 
-### CDN Alternate Domains
+### Alternate-Domain Binding
 
-- Add the victim subdomain as an alternate domain on your CDN distribution if the provider does not enforce domain ownership checks
-- Upload a TLS cert or use managed cert issuance
+- Add the target name as an alternate domain on attacker-held edge capacity where the provider does not verify ownership
+- Certificate handling decides the effect: a certificate for the claimed name makes the takeover usable over TLS
+- Cache keys on shared edge infrastructure decide proof shape and how long a response persists
 
-### NS Delegation Takeover
+### Delegation Takeover
 
-- If a child zone is delegated to nameservers under an expired domain, register that domain and host authoritative NS
-- Publish records to control all hosts under the delegated subzone
+- Where a child zone is delegated to nameservers on an expired domain, register that domain and host authoritative servers
+- Publish records for the delegated subzone, which yields control of every label below the delegation
+- Delegation outranks parent records, so the effect is subzone-wide rather than single-name
 
 ### Mail Surface
 
-- If MX points to a decommissioned provider, takeover could enable email receipt for that subdomain
+- Mail records pointing at a decommissioned provider name a receipt surface; the class carries it without a claim procedure of its own
+- Treat any receipt capability as an impact statement, not a claim step
+
+### Trust Consumers
+
+- Cookies, origin checks, redirect allowlists, and script-source policies turn control of the name into session or script effects
+- Certificate issuance plus monitoring: control of the name with issuance reach yields verifiable evidence
 
 ## Advanced Techniques
 
-### Blind and Cache Channels
+**Edge and Blind Channels**
 
-- CDN edge behavior: 404/421 vs 403 differentials reveal whether an alt name is partially configured
-- Cache poisoning: once taken over, exploit cache keys to persist malicious responses
+- Read edge differentials to detect partial configuration before attempting any claim
+- After takeover, reason about cache keys and TTLs to know how long the proof persists on shared capacity
 
-### CT and TLS
+**Certificate Evidence**
 
-- Use CT logs to detect unexpected certificate issuance for your subdomain
-- For PoC, issue a DV cert post-takeover (within scope) to produce verifiable evidence
+- Use certificate transparency both as an enumeration source and as issuance evidence for the claimed name
+- Where scope allows, issue a certificate for the claimed name to produce verifiable proof over TLS
 
-### OAuth and Trust Chains
+**Verification Gaps**
 
-- If the subdomain is whitelisted as an OAuth redirect/callback or in CSP/script-src, takeover elevates to account takeover or script injection
+- Prefer binding flows that accept the name before verification completes
+- Watch deletion events for the race window on the exact name
 
-### Verification Gaps
+**Scope Discipline**
 
-- Look for providers that accept domain binding prior to TXT verification
-- Race windows: re-claim resource names immediately after victim deletion
+- Confirm authorization before any claim step; the claim is the point where testing becomes takeover
 
-### Wildcards and Fallbacks
+## Bypass Techniques
 
-- Wildcard CNAMEs to providers may expose unbounded subdomains
-- Fallback origins: CDNs configured with multiple origins may expose unknown-domain responses
+**Verification Gaps**
+- Binding flows that accept the name before verification completes
+- Stale bindings that skip re-verification after the resource is deleted
+- Alternative resource types of the same provider that keep different verification states
 
-### Storage and Static
+**Race Windows**
+- Re-claim the exact name inside the window between deletion and re-verification
 
-- S3/GCS/Azure Blob static sites: bucket naming constraints dictate whether a bucket can match hostname
-- Website vs API endpoints differ in claimability and fingerprints
+**Wildcards and Fallbacks**
+- Wildcard records that expose unbounded labels under one endpoint
+- Fallback and multi-origin edge configurations that expose an unknown-name response
 
-### Serverless and Hosting
+**Record-Type Differences**
+- One record type may remain claimable while another stays verified; probe each independently
 
-- GitHub/GitLab Pages, Netlify, Vercel, Azure Static Web Apps: domain binding flows vary
-- Most require TXT now, but historical projects may not
+## Chaining Attacks
 
-### CDN and Edge
-
-- CloudFront/Fastly/Azure CDN/Akamai: alternate domain verification differs
-- Some products historically allowed alt-domain claims without proof
-
-### DNS Delegations
-
-- Child-zone NS delegations outrank parent records
-- Control of delegated NS yields full control of all hosts below that label
+- Takeover plus redirect-allowlist trust: an authorization flow sends codes or credentials to attacker-served content
+- Takeover plus session scope: the name carries a victim's session to attacker content
+- Takeover plus script-source trust: the name serves scripts into an origin that trusts it
+- Takeover plus edge caching: persist the response for other clients on shared capacity
+- Takeover plus mail records: messages addressed to the name become receivable, where the provider path allows
 
 ## Testing Methodology
 
-1. **Enumerate subdomains** - Aggregate CT logs, passive DNS, and org inventory
-2. **Resolve DNS** - All RR types: A/AAAA, CNAME, NS, MX, TXT; keep CNAME chains
-3. **HTTP/TLS probe** - Capture status, body, error text, Server headers, certificate SANs
-4. **Fingerprint providers** - Map known "unclaimed/missing resource" signatures
-5. **Attempt claim** (with authorization) - Create missing resource with exact required name
-6. **Validate control** - Serve minimal unique payload; confirm over HTTPS
+1. **Enumerate names** - Certificate transparency, passive DNS, asset lists, and infrastructure definitions
+2. **Resolve records** - Every record type, keeping canonical chains and terminal endpoints
+3. **Probe plain and TLS channels** - Status, body, error text, provider signatures, and certificate subjects
+4. **Fingerprint the binding** - Map the record chain and response to a binding type and provider signature family
+5. **Attempt the claim (authorized only)** - Create the exact-name resource, add the alternate domain, or register the expired domain
+6. **Validate control** - Serve a minimal unique proof over the name, and over TLS where the client path uses it
+
+## Variants
+
+- dangling-record-resource-claim - Claim dangling names through exact-name resource creation, including binding flows, verification gaps, race windows, and unclaimed-signature proof.
+- cdn-alternate-domain-binding - Bind a victim name as an alternate domain on attacker edge capacity, proven through edge differentials, certificate issuance, and cache-aware persistence.
+- ns-delegation-takeover - Seize orphaned delegations through expired-domain registration and authoritative hosting, proven with subzone-wide control.
 
 ## False Positives
 
-- "Unknown domain" pages that are not claimable due to enforced TXT/ownership checks
-- Provider-branded default pages for valid, owned resources (not a takeover)
-- Soft 404s from your own infrastructure or catch-all vhosts
+- Unknown-name pages that are not claimable because ownership verification is enforced before binding
+- Provider-branded default responses for a live, owned resource
+- Soft 404s and catch-all virtual hosts inside the owner's own infrastructure
+- A certificate mismatch caused by a shared or default certificate rather than an external binding
+- A delegation to nameservers that are alive but misconfigured by the owner
+- A claim attempt blocked at the verification step, which is enforcement rather than takeover
 
 ## Pro Tips
 
-1. Build a pipeline: enumerate (subfinder/amass) → resolve (dnsx) → probe (httpx) → fingerprint (httpx/custom) → verify claims
-2. Maintain a current fingerprint corpus; provider messages change frequently
-3. Prefer minimal PoCs: static "ownership proof" page and, where allowed, DV cert issuance
-4. Monitor CT for unexpected certs on your subdomains
-5. Eliminate dangling DNS in decommission workflows first
-6. For NS delegations, treat any expired nameserver domain as critical
-7. Use CAA to limit certificate issuance while you triage
+1. Combine certificate transparency, passive DNS, and the asset inventory; any one source alone misses decommissioned assets
+2. Maintain a fresh provider-signature corpus; provider messages change often
+3. Prefer minimal proofs: a unique static page and, where scope allows, certificate issuance
+4. Monitor certificate transparency for unexpected issuance on your names
+5. Fix the lifecycle, not the record: remove or re-verify at decommission time, on every provider path
+6. Treat any expired nameserver domain as critical; its delegation outranks everything below it
+7. Check both plain and TLS clients: the effect depends on which channel trusts the name
+8. Record the binding type behind each finding so the fix lands on the owning lifecycle step
 
 ## Summary
 
-Subdomain safety is lifecycle safety: if DNS points at anything, you must own and verify the thing on every provider and product path. Remove or verify-there is no safe middle.
+Name trust is lifecycle trust: whatever a record points at must be owned and verified on every provider path, at every record type, on the day anything changes. Remove or verify; there is no safe middle.
