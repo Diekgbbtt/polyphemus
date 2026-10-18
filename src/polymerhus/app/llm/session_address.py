@@ -168,15 +168,30 @@ class OrchestratorSession:
 
 
 @dataclass(frozen=True)
-class HuntingOrchestratorSession:
-    """The hunt-orchestrator's session: ONE actor per hunting run
-    (feat/async-actor-agents).
+class ThreatModellerSession:
+    """The threat modeller's session: ONE actor per hunting run (S1 4.4).
 
-    The hunt-orchestrator is the run-scoped parent of the hunting effort - the gate
-    reasoning and the re-match judge both run as turns of ONE actor on this thread, so
-    its checkpointed memory carries the pass's reasoning; `run_pipeline`'s recon
-    phase controllers are dispatched from this actor's client (`arun_orchestration`).
-    No per-direction discriminator: the actor stays active across the whole pass."""
+    The modeller is the run-scoped parent of the hunting effort and models one
+    L1 unit at a time on this thread, so its checkpointed memory carries the
+    run's reasoning across units. The role id is the renamed
+    `hunting_threat_modeller`; `HuntingOrchestratorSession` below is the
+    one-window legacy address of the same run-scoped pass."""
+
+    run_id: str
+    role_id: str = "hunting_threat_modeller"
+
+    @property
+    def thread_id(self) -> str:
+        return _compose(self.run_id, role_id=self.role_id)
+
+
+@dataclass(frozen=True)
+class HuntingOrchestratorSession:
+    """The LEGACY run-scoped session address (one-window alias, S1 4.1).
+
+    An interrupted run recorded before the rename resumes under this address and
+    its recorded `hunting_orchestrator` role; new runs use
+    `ThreatModellerSession`. The class retires with the role alias."""
 
     run_id: str
     role_id: str = "hunting_orchestrator"

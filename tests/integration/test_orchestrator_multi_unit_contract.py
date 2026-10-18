@@ -62,7 +62,6 @@ def _carry(candidate: DeliveredCandidate) -> EnvisionedDirection:
 
 def _tools(store: HuntStore) -> OrchestratorTools:
     return OrchestratorTools(
-        back_edge=None,
         store_reads=store,
         graph_view=ReadOnlyGraphView("project-1", read_fn=lambda cy, p: []),
     )

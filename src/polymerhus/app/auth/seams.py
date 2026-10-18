@@ -35,7 +35,7 @@ AUTHN_SKILL = "authn"
 
 def auth_capable_binding(
     role_id: str, *, store=None, skill_store=None, project_id: str | None = None,
-    with_write_skill: bool = False,
+    with_write_skill: bool = False, arm_exempt_surface: bool = False,
 ):
     """Wrap `skill_agent_binding(role_id)` with the auth capability.
 
@@ -45,7 +45,11 @@ def auth_capable_binding(
     capability - UNLESS `with_write_skill` is set: that arms the #223 gateway
     surface (`load_skill`, `write_skill`, `auth_store`, the `authn`-only skill
     context), the D223-5 write capability the orchestrator's outer
-    skill-judging loop needs. The flag is compositional on bound roles too
+    skill-judging loop needs. `arm_exempt_surface` (the threat modeller, S1 5.5)
+    arms the same shared surface WITHOUT `write_skill` for an exempt role whose
+    turn still needs the project skill and the auth store: the roster stays
+    honest (no catalogue skill bears) and the capability is declared by the site
+    that needs it. The flag is compositional on bound roles too
     (it appends `write_skill` there); no caller passes it today except the
     gateway. `store`/`skill_store` are the injectable seams (tests);
     `project_id` scopes the armed surface explicitly (default: the tool-owned
@@ -63,23 +67,25 @@ def auth_capable_binding(
 
     binding = skill_agent_binding(role_id, store=skill_store)
     if not binding.tools:
-        if not with_write_skill:
+        if not (with_write_skill or arm_exempt_surface):
             # An exempt role binds no skill surface: no auth capability either.
             return binding
-        # The gateway arming (D223-13): the roster exemption is lifted here,
-        # not in ROLE_SKILLS (no catalogue skill bears on this role, so the
-        # roster still declares it exempt). Composed from the same skill
-        # primitives every bound site uses - never reimplemented per site.
+        # The site-declared arming (D223-13 for the gateway; S1 5.5 for the
+        # threat modeller): the roster exemption is lifted here, not in
+        # ROLE_SKILLS (no catalogue skill bears on these roles, so the roster
+        # still declares them exempt). Composed from the same skill primitives
+        # every bound site uses - never reimplemented per site.
         if project_id is None:
             from polymerhus.app.config import config  # noqa: PLC0415 - lazy, no env at import
             project_id = config.PROJECT_ID
+        skills = [AUTHN_SKILL] if with_write_skill else []
         return SkillAgentBinding(
             role_id=role_id,
             middleware=[skill_index_middleware(store=skill_store)],
             tools=[*build_skill_tools(
-                project_id, with_write_skill=True, store=skill_store),
+                project_id, with_write_skill=with_write_skill, store=skill_store),
                 build_auth_store_tool(project_id=project_id, store=store)],
-            context={"skills": [AUTHN_SKILL], "project_id": project_id},
+            context={"skills": skills, "project_id": project_id},
         )
     context = dict(binding.context)
     context["skills"] = [*context.get("skills", ()), AUTHN_SKILL]

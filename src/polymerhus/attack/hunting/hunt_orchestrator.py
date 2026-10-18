@@ -60,7 +60,6 @@ import logging
 import os
 import re
 import threading
-import uuid
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, Literal, Sequence
 
@@ -77,11 +76,6 @@ from polymerhus.attack.hunting.hunt_store import (
 )
 from polymerhus.attack.hunting.orchestrator_graph import PhaseAbort
 from polymerhus.analysis.l1_types import elide_singleton
-from polymerhus.recon.control.targeted import (
-    AnalyserReconRequest,
-    ReconScope,
-    TargetedReconResult,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -91,8 +85,9 @@ logger = logging.getLogger(__name__)
 # `read_memory_notes` / `mint_hunt_config` / `record_note`) is REPLACED. No
 # back-edge-to-recon tool (the back_edge request to recon is out of the agent's
 # surface; operator ruling 2026-08-22 - the target-knowledge loop rides
-# `graph_view`, never a recon request) and no budget tool (G7: spending is the
-# runtime plane's and the pod's ownership).
+# `graph_view`, never a recon request), no `OrchestratorTools.back_edge` field
+# (removed, S1 9.1), and no budget tool (G7: spending is the runtime plane's and
+# the pod's ownership).
 TOOL_SURFACE = frozenset({
     "hunts_store", "notes", "graph_view",
 })
@@ -148,11 +143,6 @@ _ORCHESTRATOR_LOCK = threading.Lock()
 # per run and retargeting it keeps the captured seam current for every pass.
 # Reaped alongside the actor by the module's stop path.
 _SURFACE_STORES: dict[str, "SurfaceContextStore"] = {}
-
-# The default targeted job a park/resume back-edge runs (a re-witness of the
-# unit's surface).
-_DEFAULT_BACK_EDGE_JOB = "httpx_reprofile"
-
 
 # --- #280 Part 2: the consecutive-degradation circuit breaker ----------------
 #
@@ -623,11 +613,10 @@ class OrchestratorTools:
     #202), the read-only graph view (`graph_view` - the surface `graph_view`
     defers to for the projected context: the store tools only ever read service
     keys), and the run-local `phase_context` the note phase node sets so the
-    notes tool's response carries the next pair's frame (G1). `back_edge` is
-    retained for the runtime plane's dispatch ownership (G12) but is NOT part
-    of the model surface anymore."""
+    notes tool's response carries the next pair's frame (G1). The stale
+    `back_edge` dispatch field is REMOVED (S1 9.1): the back-edge request to
+    recon is out of the agent's surface and the runtime plane owns dispatch."""
 
-    back_edge: Callable[[AnalyserReconRequest, str, str], TargetedReconResult] | None = None
     store_reads: Any = None
     graph_view: ReadOnlyGraphView | None = None
     phase_context: PhaseContext = field(default_factory=PhaseContext)
@@ -1065,26 +1054,6 @@ def mint_hunt_config(
             prior_hunt_insights=list(prior_hunt_insights),
         ))
     return configs
-
-
-def build_back_edge_request(
-    unit_id: str,
-    fault_class: str,
-    *,
-    requester_id: str,
-    note: str,
-    job: str = _DEFAULT_BACK_EDGE_JOB,
-) -> AnalyserReconRequest:
-    """Build the park/resume back-edge request (IA-6/D9): the re-used
-    interface-B contract with `origin="hunting"`, fault-agnostic on the wire
-    (the fault joins via the correlation_id in the hunt store)."""
-    return AnalyserReconRequest(
-        job=job,
-        scope=ReconScope(unit_id=unit_id, note=note),
-        origin="hunting",
-        correlation_id=uuid.uuid4().hex,
-        requester_id=requester_id,
-    )
 
 
 async def _reap_orchestrator(run_id: str) -> None:

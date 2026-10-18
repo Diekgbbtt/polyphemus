@@ -937,7 +937,7 @@ class _FakeRoleManager:
     plane, so this fakes only the manager's role surface."""
 
     class _Handle:
-        agent_roles = ("orchestrator", "hunter", "pod")
+        agent_roles = ("threat_modeller", "hunter", "pod")
 
     def __init__(self, paused=()):
         self.paused = set(paused)
@@ -985,7 +985,7 @@ def test_run_bootstrap_registers_and_reaps_the_agent_submodules(monkeypatch):
     ))
 
     assert manager.registered == [
-        ("hunting", "rt-hunt-0001", "orchestrator"),
+        ("hunting", "rt-hunt-0001", "threat_modeller"),
         ("hunting", "rt-hunt-0001", "hunter"),
         ("hunting", "rt-hunt-0001", "pod"),
     ]
@@ -994,11 +994,12 @@ def test_run_bootstrap_registers_and_reaps_the_agent_submodules(monkeypatch):
 
 
 def test_orchestrator_pass_not_launched_when_its_role_is_stopped(monkeypatch):
-    """#317: with the orchestrator role `PAUSED`, the bootstrap does NOT launch
-    the pass (the surfer still runs, so pre-produced configs can dispatch)."""
+    """#317: with the modeller role `PAUSED` (the renamed `orchestrator` key),
+    the bootstrap does NOT launch the pass (the surfer still runs, so
+    pre-produced configs can dispatch)."""
     fake = _FakePg()
     _patch_pg(monkeypatch, fake)
-    manager = _FakeRoleManager(paused={"orchestrator"})
+    manager = _FakeRoleManager(paused={"threat_modeller"})
     monkeypatch.setattr(hunting_runtime, "_app_runtime", lambda: manager)
 
     launched: list[str] = []

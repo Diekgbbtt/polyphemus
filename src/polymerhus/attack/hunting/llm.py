@@ -207,6 +207,70 @@ def _gate_skill() -> str:
     return _GATE_SKILL
 
 
+# The threat modeller's role prompt (S1 8), memoized on first call (no
+# import-time I/O, CODING STANDARD section 6). A missing prompt file is a
+# defect: FAIL-CLOSED (raise), so the modeller never reasons without its method.
+_MODELLER_SKILL: str | None = None
+
+
+def _modeller_skill() -> str:
+    """The threat modeller's system prompt, read directly from this module's
+    `prompts/` dir. Memoized on first call; FAIL-CLOSED."""
+    global _MODELLER_SKILL
+    if _MODELLER_SKILL is None:
+        from pathlib import Path  # noqa: PLC0415
+
+        _MODELLER_SKILL = (
+            Path(__file__).resolve().parent / "prompts" / "threat-modeller.md"
+        ).read_text(encoding="utf-8")
+    return _MODELLER_SKILL
+
+
+def _compose_modeller_prompt(turn) -> str:
+    """Render one gate-state reasoning turn (S1 8): the current unit, the
+    current state, the section names that gate carries, the input data (the
+    persisted model, read fresh so an evicted context is re-queried - S1 6.2),
+    and the gate instruction. The next-state hints are NOT here: they ride the
+    gate write's tool response (`threat_modeller.GATE_HINTS`).
+
+    Every slot degrades independently: a model that cannot be read renders as
+    "(not written yet)", never as an empty claim."""
+    state = getattr(turn, "state", None)
+    state_value = getattr(state, "value", state) or "UNIT_TECHNICAL_SHARP"
+    sections = list(getattr(turn, "sections", ()) or ())
+    model = getattr(turn, "model", None)
+    lines = [
+        f"Unit under analysis: {getattr(turn, 'unit_id', '(unbound)')}",
+        f"Current workflow state: {state_value}",
+        f"Gate sections to write: {', '.join(sections)}",
+        "",
+        str(getattr(turn, "instruction", "") or ""),
+        "",
+        "The persisted model at this turn's start:",
+    ]
+    if not isinstance(model, dict):
+        lines.append("  (not written yet)")
+    else:
+        lines.append(f"  state: {model.get('state')}")
+        written = [
+            name for name in ("technical_sharpening", "trust_model", "assumptions",
+                              "vulnerabilities", "failure_modes", "loops")
+            if model.get(name)
+        ]
+        lines.append(f"  sections written: {', '.join(written) or '(none)'}")
+        if model.get("risk_profile"):
+            lines.append(f"  risk profile: {model['risk_profile']}")
+        if model.get("validation"):
+            lines.append(f"  completion validation: {model['validation']}")
+    lines += [
+        "",
+        "Write the gate with ONE `hunts_store` write carrying this state and its "
+        "sections. Then end the reasoning phase with ONE episodic note through "
+        "`notes`: the decision nodes and the rationales of the branches you took.",
+    ]
+    return "\n".join(lines)
+
+
 def _system_render(info) -> str:
     """Deterministic one-line render of a SystemInfo (an unpacked edge target
     or a D3 cooperating neighbour): the typed attributes (kind, discriminator,

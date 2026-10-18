@@ -912,14 +912,15 @@ async def start_hunting(
         try:
             orchestrator_id = orchestrator_session_id(hunting_run_id)
             surfer_id = surfer_session_id(hunting_run_id)
-            # #317: the orchestrator pass is gated on the orchestrator role
-            # state. A stopped orchestrator role does not launch the pass (the
-            # run still runs its surfer, so pre-produced configs can dispatch).
+            # #317: the modeller pass is gated on the modeller role state (the
+            # renamed `orchestrator` key). A stopped role does not launch the
+            # pass (the run still runs its surfer, so pre-produced configs can
+            # dispatch).
             # An orchestrator session REFUSED by admission is different: the
             # pre-change rule holds - the run fails and the surfer is NOT
             # started (a surfer with no orchestrator is never spun up).
             orchestrator_outcome = None
-            if _role_running("orchestrator"):
+            if _role_running("threat_modeller"):
                 orchestrator_outcome = control.start_session(
                     orchestrator_id, _orchestrator_pass())
                 if orchestrator_outcome is None:
@@ -930,7 +931,7 @@ async def start_hunting(
                     status = "failed"
             else:
                 logger.warning(
-                    "start_hunting: orchestrator role paused; pass for run %s "
+                    "start_hunting: modeller role paused; pass for run %s "
                     "not scheduled", hunting_run_id,
                 )
             if status is None:

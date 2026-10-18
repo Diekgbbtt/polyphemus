@@ -91,9 +91,8 @@ def _carry(candidate: DeliveredCandidate, *, carried: bool = True,
     )
 
 
-def _tools(store: HuntStore, *, back_edge=None, read_fn=None) -> OrchestratorTools:
+def _tools(store: HuntStore, *, read_fn=None) -> OrchestratorTools:
     return OrchestratorTools(
-        back_edge=back_edge,
         store_reads=store,
         graph_view=ReadOnlyGraphView("project-1", read_fn=read_fn or (lambda cy, p: [])),
     )

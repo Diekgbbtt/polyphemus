@@ -210,7 +210,9 @@ def test_derive_thread_role_maps_every_session_shape():
     assert derive_thread_role(f"hunting:{r}") == "infra"          # bootstrap
     assert derive_thread_role(r) == "infra"                       # bare legacy
     assert derive_thread_role(f"hunting:{r}:surfer") == "infra"
-    assert derive_thread_role(f"hunting:{r}:orchestrator") == "orchestrator"
+    # the renamed segment and its one-window legacy alias are the same role
+    assert derive_thread_role(f"hunting:{r}:threat-modeller") == "threat_modeller"
+    assert derive_thread_role(f"hunting:{r}:orchestrator") == "threat_modeller"
     assert derive_thread_role(f"hunting:{r}:hunt:{FAULT_KEY}") == "hunter"
     assert derive_thread_role(
         f"hunting:{r}:pod:{FAULT_KEY}:{SPEC_FILE}") == "pod"

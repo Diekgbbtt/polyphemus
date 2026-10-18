@@ -53,7 +53,7 @@ CLASS = "IDOR"
 FAULT_KEY = f"{UNIT}_{CWE}_{CLASS}"
 CONFIG_KEY = f"{UNIT}::{CWE}::{CLASS}"
 SPEC_FILE = "sqli_blind"
-ROLES = ("orchestrator", "hunter", "pod")
+ROLES = ("threat_modeller", "hunter", "pod")
 
 
 def _wait_until(pred, timeout=5.0):

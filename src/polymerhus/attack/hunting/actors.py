@@ -51,6 +51,8 @@ logger = logging.getLogger(__name__)
 
 # Message kinds the orchestrator/inbox handler routes on.
 _GATE_KIND = "gate"
+# The modeller's per-state reasoning turn kind.
+_MODELLER_TURN_KIND = "modeller_turn"
 _RATIFY_KIND = "ratify"
 _NOTE_KIND = "note"
 _AUTHOR_KIND = "author"
@@ -69,6 +71,9 @@ class _TurnActor:
 
     _base_kind = ""
     _role_id = ""
+    # The site-declared arming of an EXEMPT role's skill+auth surface (S1 5.5;
+    # a bound role gets its surface from the roster and ignores this).
+    _arm_exempt_surface = False
 
     def __init__(self, checkpointer=None, model_factory=None, observe: bool = True,
                  tools: Sequence = ()):
@@ -152,7 +157,8 @@ class _TurnActor:
             middleware = middleware + list(middleware_extra)
         from polymerhus.app.auth.seams import auth_capable_binding  # noqa: PLC0415
 
-        binding = auth_capable_binding(self._address.role_id)
+        binding = auth_capable_binding(
+            self._address.role_id, arm_exempt_surface=self._arm_exempt_surface)
         middleware = middleware + binding.middleware
         kwargs = {
             "checkpointer": self._checkpointer,
@@ -694,8 +700,7 @@ class HuntOrchestratorActor(_TurnActor):
         if self._compaction is not False:
             middleware_extra = [self._compaction]
         surface = ()
-        if (getattr(self.tools, "back_edge", None) is not None
-                or getattr(self.tools, "graph_view", None) is not None
+        if (getattr(self.tools, "graph_view", None) is not None
                 or getattr(self.tools, "store_reads", None) is not None):
             surface = build_orchestrator_tool_surface(
                 self.tools,
@@ -854,6 +859,126 @@ class HuntOrchestratorActor(_TurnActor):
         Fail-open to None (the pass then carries every candidate). Retained as
         the legacy alias of the hypothesise turn (the sync rollback lane)."""
         return await self.hypothesise(gate_input)
+
+    async def stop(self) -> None:
+        await self._stop()
+
+
+class ThreatModellerActor(_TurnActor):
+    """The threat modeller as a persistent MAILBOX actor (S1 4.4).
+
+    ONE actor per hunting run: the modeller pass constructs it (or an injected
+    `actor_factory` does) and it spawns a `run_session_agent` on the
+    `hunting_threat_modeller` session role under the run's
+    `ThreatModellerSession` thread the first time a turn is needed, so its
+    checkpointed memory carries the run's reasoning across units. `turn` posts
+    one reasoning turn per gate state and awaits the tool-driven turn; the gate
+    writes land through the bound `hunts_store` tool (the model is the sole
+    writer of the model document).
+
+    The surface is EXACTLY the modeller's (S1 5): `hunts_store`, `notes`, the
+    HTTP-history read pair, `exec`, and the web-vulnerability suite pair, plus
+    the role's read-only skill + auth binding (`load_skill`, `auth_store`). The
+    unit identity follows the pass's retargetable `ModellerUnit` cell, so one
+    run-scoped actor serves every unit without stranding its captured tools.
+
+    Fail-open: a dead/crashed actor maps to `None` for every call - the pass's
+    breaker counts it and the run pauses rather than fabricating a model.
+    `stop` posts the terminal message and reaps the task; safe when never
+    spawned."""
+
+    _role_id = "hunting_threat_modeller"
+    # The site-declared arming (S1 5.5): the roster declares the role exempt (no
+    # catalogue skill bears - the class material is the web-vulnerability suite),
+    # so the actor arms the read-only skill surface + `auth_store` here.
+    _arm_exempt_surface = True
+
+    def __init__(self, run_id: str, *, checkpointer=None, model_factory=None,
+                 observe: bool = True, compaction=None, tools=None,
+                 project_id: str | None = None):
+        super().__init__(checkpointer=checkpointer, model_factory=model_factory,
+                         observe=observe)
+        self._run_id = run_id
+        self._compaction = compaction  # #95 D9/H: None auto-wires, False disables
+        self.tools = tools
+        self.project_id = project_id
+
+    @property
+    def compaction_manager(self):
+        """The wired compaction middleware's manager (#95 D9), or None when
+        compaction is disabled or the actor has not taken its first turn."""
+        return getattr(self._compaction, "manager", None)
+
+    def _make_address(self):
+        from polymerhus.app.llm.session_address import ThreatModellerSession  # noqa: PLC0415
+        return ThreatModellerSession(run_id=self._run_id)
+
+    @property
+    def _extra_tags(self) -> list | None:
+        # Convergence join: the modeller's turns carry the run tag.
+        return [self._run_id]
+
+    @property
+    def _usage_scope(self) -> str | None:
+        return self.project_id
+
+    async def _ensure_started(self) -> None:
+        from polymerhus.attack.hunting.llm import _modeller_skill  # noqa: PLC0415
+        from polymerhus.attack.hunting.threat_modeller import (  # noqa: PLC0415
+            build_modeller_tool_surface,
+        )
+        if self._compaction is None:
+            from polymerhus.app.llm import compaction as C  # noqa: PLC0415
+            self._compaction = C.build_role_compaction_middleware(
+                "hunting_threat_modeller")
+        middleware_extra = None
+        if self._compaction is not False:
+            middleware_extra = [self._compaction]
+        surface: list = []
+        if self.tools is not None:
+            cell = getattr(self.tools, "unit_cell", None)
+            surface = list(build_modeller_tool_surface(
+                self.project_id or getattr(self.tools, "project_id", "") or "",
+                getattr(cell, "unit_id", "") if cell is not None else "",
+                self.tools,
+            ).values())
+        # No structured response format: the modeller's output IS its gate
+        # writes through the bound tools, never a parsed structured decision.
+        await super()._ensure_started(
+            tools=surface or None,
+            middleware_extra=middleware_extra,
+            system_prompt=_modeller_skill(),
+        )
+
+    def _on_message(self, message, last_turn):
+        # The static modeller prompt rides the thread's ONE system message (set
+        # at `_ensure_started`), so this returns ONLY the turn's HumanMessage.
+        if message.kind == _MODELLER_TURN_KIND:
+            payload = message.payload if isinstance(message.payload, dict) else {}
+            from polymerhus.attack.hunting.llm import (  # noqa: PLC0415
+                _compose_modeller_prompt,
+            )
+            from langchain_core.messages import HumanMessage  # noqa: PLC0415
+            return [HumanMessage(content=_compose_modeller_prompt(payload.get("turn")))]
+        if message.kind == "stop":
+            from polymerhus.app.llm.actor import STOP  # noqa: PLC0415
+            return STOP
+        return None
+
+    async def turn(self, turn_input) -> "object | None":
+        """Feed one gate-state turn to the actor and await it. The reply carries
+        no decision (the gate writes are the output); a None reply is the
+        no-decision signal the pass's breaker counts. Fail-open to None."""
+        if turn_input is None:
+            return None
+        try:
+            from polymerhus.app.llm.actor import AgentMessage  # noqa: PLC0415
+            return await self._post_and_await(
+                AgentMessage(kind=_MODELLER_TURN_KIND, payload={"turn": turn_input})
+            )
+        except Exception:  # noqa: BLE001 - the pass counts a no-decision
+            logger.warning("threat modeller actor turn failed", exc_info=True)
+            return None
 
     async def stop(self) -> None:
         await self._stop()

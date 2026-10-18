@@ -759,7 +759,7 @@ def test_graph_view_tool_rejects_write_shaped_requests():
         raise AssertionError("no read should happen on a rejected write")
 
     view = ReadOnlyGraphView("project-1", read_fn=spy_read)
-    tools = OrchestratorTools(back_edge=None, store_reads=None, graph_view=view)
+    tools = OrchestratorTools(store_reads=None, graph_view=view)
     surface = build_orchestrator_tool_surface(tools, run_id=RUN_ID,
                                               project_id="project-1")
     by_name = {t.name: t for t in surface}
@@ -776,7 +776,7 @@ def test_graph_view_tool_rejects_write_shaped_requests():
         return [{"u": "a"}]
 
     view2 = ReadOnlyGraphView("project-1", read_fn=read_ok)
-    tools2 = OrchestratorTools(back_edge=None, store_reads=None, graph_view=view2)
+    tools2 = OrchestratorTools(store_reads=None, graph_view=view2)
     surface2 = build_orchestrator_tool_surface(tools2, run_id=RUN_ID,
                                                project_id="project-1")
     out = {t.name: t for t in surface2}["graph_view"].invoke(

@@ -77,10 +77,17 @@ from polymerhus.app.llm.provider_failure import ProviderUnavailableError
 
 logger = logging.getLogger(__name__)
 
-# The surfer session's Q13-extension segment (ADR Q13 names orchestrator /
+# The surfer session's Q13-extension segment (ADR Q13 names the modeller /
 # hunter / pod; the surfer is the run-scoped session that uses the same
 # `hunting:<run_id>:<segment>` shape - the first free segment).
 SURFER_SESSION_SEGMENT = "surfer"
+
+# The modeller role the renamed session segments classify as (#317, S1 4.1).
+# `orchestrator` stays accepted as the one-window legacy segment so an
+# interrupted old run's live pass is gated by the same role handle.
+THREAT_MODELLER_ROLE = "threat_modeller"
+MODELLER_SESSION_SEGMENT = "threat-modeller"
+MODELLER_SESSION_SEGMENT_LEGACY = "orchestrator"
 
 # The produced->consumed rename is the at-least-once marker (Q3), so the surfer
 # ticks forever ONLY while work remains; the pause between laps gives freshly
@@ -112,7 +119,9 @@ def derive_thread_role(session_id: str) -> str:
     """The agent role a live session id belongs to (#317), derived from the
     segment after `hunting:<run_id>:`:
 
-    - `orchestrator` -> `orchestrator`
+    - `threat-modeller` -> `THREAT_MODELLER_ROLE` (the renamed modeller pass)
+    - `orchestrator` -> `THREAT_MODELLER_ROLE` (the one-window legacy segment:
+      an interrupted old run's live pass is the same role)
     - `hunt:...` -> `hunter`
     - `pod:...` -> `pod`
     - `surfer`, the outer run bootstrap (`hunting:<run_id>` / the bare run id),
@@ -122,8 +131,8 @@ def derive_thread_role(session_id: str) -> str:
     if len(parts) < 3:
         return "infra"
     segment = parts[2]
-    if segment == "orchestrator":
-        return "orchestrator"
+    if segment in (MODELLER_SESSION_SEGMENT, MODELLER_SESSION_SEGMENT_LEGACY):
+        return THREAT_MODELLER_ROLE
     if segment.startswith("hunt:"):
         return "hunter"
     if segment.startswith("pod:"):
@@ -144,7 +153,8 @@ def is_run_session_id(session_id: str, run_id: str) -> bool:
     enumerator of the run's live sessions. Matches every shape a session of the
     run is registered under - the outer bootstrap task (`hunting:<run_id>` and
     the bare `run_id` legacy forms) and every ADR Q13 segment
-    (`hunting:<run_id>:orchestrator|surfer|hunt:...|pod:...`)."""
+    (`hunting:<run_id>:threat-modeller|surfer|hunt:...|pod:...`, plus the
+    legacy `orchestrator` segment for one window)."""
     return (
         session_id == run_id
         or session_id == f"hunting:{run_id}"
@@ -811,6 +821,9 @@ __all__ = [
     "SurferReport",
     "SURFER_SESSION_SEGMENT",
     "build_run_dispatch",
+    "MODELLER_SESSION_SEGMENT",
+    "MODELLER_SESSION_SEGMENT_LEGACY",
+    "THREAT_MODELLER_ROLE",
     "derive_thread_role",
     "is_hunter_session_id",
     "is_pod_session_id",

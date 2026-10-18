@@ -56,7 +56,10 @@ _FANOUT_TIMEOUT = 30.0
 # agents of the module, each with its own lifecycle state and admission gate.
 # Only hunting is wired by #317; the primitive is general.
 _AGENT_ROLES_BY_MODULE: dict[str, tuple[str, ...]] = {
-    "hunting": ("orchestrator", "hunter", "pod"),
+    # The modeller role is the renamed `orchestrator` key (S1 4.1); the legacy
+    # session segment still CLASSIFIES as this role for one window
+    # (`hunting.surfer.derive_thread_role`).
+    "hunting": ("threat_modeller", "hunter", "pod"),
 }
 
 

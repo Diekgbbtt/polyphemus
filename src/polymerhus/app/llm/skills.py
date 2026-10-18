@@ -234,6 +234,12 @@ ROLE_SKILLS: dict[str, tuple[str, ...]] = {
     # The gate/ratify/match decisions run over candidate material; no knowledge
     # skill bears.
     "hunting_orchestrator": (),
+    # The threat modeller (S1 5.5): no catalogue skill bears on the job - its
+    # class material is the web-vulnerability SUITE, bound through the
+    # modeller's own `skill_list` / `skill_load` pair - so the roster declares it
+    # exempt and the actor arms the read-only skill surface + `auth_store`
+    # explicitly (the recon-orchestrator coupling, `app/auth/seams.py`).
+    "hunting_threat_modeller": (),
     # `crawler` is deliberately ABSENT, not forgotten: it is a tool-calling role
     # (`agent_mode == "session"`) whose loop is a manual `bind_tools` ReAct loop
     # (`recon/crawl/crawl_agentic.py`), not `create_agent`, so no
