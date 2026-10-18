@@ -129,7 +129,11 @@ async def default_runner_step_fn(spec: dict, messages: list, tool_calls: int) ->
                                           cap=hc.cap)
     from polymerhus.app.auth.seams import auth_capable_binding  # noqa: PLC0415
 
-    binding = auth_capable_binding(ctx.address.role_id)
+    # #236: the spec's artifact-declared skills union into the pod_runner
+    # baseline at the binding; the index middleware renders each resolved
+    # description into this turn's system prompt.
+    binding = auth_capable_binding(
+        ctx.address.role_id, task_skills=hc.task_skills)
     mw = list(pod_middleware()) + [harness_mw] + binding.middleware
     turn = await arun_session_turn(
         ctx.address.role_id, ctx.address, list(messages),
@@ -171,7 +175,10 @@ async def default_triager_fn(spec: dict, observation: RawObservation,
         delta = _dicts_to_lc(list(messages))
         from polymerhus.app.auth.seams import auth_capable_binding  # noqa: PLC0415
 
-        binding = auth_capable_binding(ctx.address.role_id)
+        # #236: the spec's artifact-declared skills union into the pod_triager
+        # baseline at the binding (the same ONE seam the runner uses).
+        binding = auth_capable_binding(
+            ctx.address.role_id, task_skills=hc.task_skills)
         result = stateful_turn(
             ctx.address.role_id, ctx.address, delta,
             checkpointer=ctx.checkpointer, schema=TriagerDecision,

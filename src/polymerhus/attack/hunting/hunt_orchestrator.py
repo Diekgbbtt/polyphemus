@@ -327,6 +327,15 @@ class HuntConfig(BaseModel):
     observed_defences: list[str] = Field(default_factory=list)
     preconditions: list[str] = Field(default_factory=list)
     prior_hunt_insights: list[dict] = Field(default_factory=list)
+    # The artifact-declared skill configuration (#236): the flat skill names the
+    # orchestrator decides the downstream hunter should carry for this hunt. The
+    # dispatch seam resolves each name through the skill store (project bundle
+    # first, then the shared catalogue), unions it with the role baseline
+    # (`ROLE_SKILLS`), and the L1 index middleware renders each resolved
+    # skill's frontmatter `description` into the hunter's system prompt. An
+    # unresolvable name is warned and skipped at the binding - the ONE policy -
+    # and the roster baseline is never displaced.
+    skills: list[str] = Field(default_factory=list)
 
 
 class DispatchResult(BaseModel):

@@ -240,6 +240,35 @@ def _variant_order(state: PodState) -> int:
     return 0
 
 
+def _spec_task_skills(state: PodState) -> tuple:
+    """The artifact-declared skill configuration of the CURRENT spec (#236): the
+    `skills` list the hunter authored on the D4 `TestImplementationSpec`, as a
+    stable tuple (the artifact is LLM-authored, so a malformed value - a bare
+    string, a non-list, non-string entries - degrades to `()` with a warning;
+    the spec's INIT gate is the loud rejection, and the skill binding must never
+    raise on the way to the session). Resolved from `state["spec"]`, the spec
+    the current stretch actually runs: a triager-minted variant carries its own
+    declaration, so the set changes only at the variant boundary, never between
+    the turns of one stretch."""
+    spec = state.get("spec")
+    raw = spec.get("skills") if isinstance(spec, dict) else None
+    if raw is None:
+        return ()
+    if not isinstance(raw, (list, tuple)):
+        logger.warning(
+            "pod: the spec's declared skills %r are not a list; ignored", raw)
+        return ()
+    out = []
+    for name in raw:
+        if not isinstance(name, str) or not name.strip():
+            logger.warning(
+                "pod: the spec declared a non-name %r in its skills; skipped",
+                name)
+            continue
+        out.append(name.strip())
+    return tuple(out)
+
+
 def _harness_ctx(state: PodState, *, exec_fn, memory_store,
                  model_factory, spec_id, graph_view_fn=None,
                  project_id=None, replay_fn=None) -> PodHarnessContext:
@@ -250,7 +279,10 @@ def _harness_ctx(state: PodState, *, exec_fn, memory_store,
     store is bound (a real persist path) - the contract tier with no store
     never persists, so no spec_id is demanded and the note tool degrades
     fail-open (O10). `graph_view_fn` is the read-only L0/L1 view seam (#197) the
-    shared `graph_view` tool rides (absent -> the tool's own fail-open error)."""
+    shared `graph_view` tool rides (absent -> the tool's own fail-open error).
+    `task_skills` is the CURRENT spec's artifact-declared skill configuration
+    (#236), rebuilt per node call (never a shared mutable context): the pod
+    roles' binding resolves it at the seam."""
     mem_key = _mem_key(state, spec_id, memory_store)
     try:
         from polymerhus.recon.domain.types import CaptureContext  # noqa: PLC0415
@@ -269,7 +301,7 @@ def _harness_ctx(state: PodState, *, exec_fn, memory_store,
         variant_ref=state.get("current_variant_ref", "v0"),
         model_factory=model_factory, cap=HUNT_POD_MAX_TOOL_CALLS,
         graph_view_fn=graph_view_fn, capture_context=capture_context,
-        replay_fn=replay_fn)
+        replay_fn=replay_fn, task_skills=_spec_task_skills(state))
 
 
 def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
