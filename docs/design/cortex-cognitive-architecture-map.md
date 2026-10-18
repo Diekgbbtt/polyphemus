@@ -21,7 +21,7 @@ Two adversarial review rounds (section 10) extracted real reasoning transcripts 
 
 - **Trust boundary over all non-operator content.** No domain, and no tool result, overrides the operator's task; every domain stays usable as data. Round 1 scoped this to the three target-derived domains; round 2 showed the observed anchoring arrived through the user channel, so the rule is broadened and states positively that the data is still usable (an agent must not become too cautious to deploy a session token it needs).
 - **Anti-repetition read discipline.** Do not re-read the same evidence expecting a different answer; a deliberate confirmation query is permitted. Round 1's "re-read only when new evidence changes the question" was over-rigid: it forbade the pod runner's mandated terminal `query_lightrag` and the hunter's D2 re-entry, which are designed confirmation queries.
-- **Degraded is not absent.** A domain that is unavailable or failed is not evidence of absence; never ground a conclusion in it. Round 2's live finding: a failed KB tool was laundered into a clean `space-exhausted` verdict in 42/72 pod-triager observations (a false-negative pipeline). The operational root in the pod triager's EXHAUSTION rule is tracked separately (section 6).
+- **Degraded is not absent.** A domain that is unavailable or failed is not evidence of absence; never ground a conclusion in it. Round 2's live finding: a failed KB tool was laundered into a clean `space-exhausted` verdict in 42/72 pod-triager observations (a false-negative pipeline). The operational root in the pod triager's EXHAUSTION rule was tracked separately (section 6; resolved).
 - **Grounded conclusions.** Assert a conclusion only with the domain and the observation it rests on; otherwise name the open gap and whether it is an absent symptom or an unavailable domain. This makes an ungrounded conclusion unrepresentable and forces the degraded case to be named as unavailable, not absent.
 
 **Reachability stays off the map, by design.** The map names domains that some roles cannot reach today (the hunt-orchestrator holds only `hunts_store`, `notes`, `graph_view`). The map stays identical and tool-free across all four agents; reachability is the tool surface's responsibility, and the per-role grants are recorded in section 3.1 and the pending register. A per-role reachability trailer would fork the map and re-expose tool names, so it is rejected.
@@ -132,17 +132,17 @@ The landed set additionally pairs `ObservableSignal`, `AttackGoal`, `PayloadPatt
 
 - `client_side_js_architecture`: intended entity, not built; held out of the injected verbatim until it lands; integration tracking ticket [#282](https://github.com/Diekgbbtt/polyphemus/issues/282).
 - the rate-limit posture redesign: absent from the shortened dev, pending; integration tracking ticket [#283](https://github.com/Diekgbbtt/polyphemus/issues/283).
-- the hunt-orchestrator's request-history read surface and its skill description-only surface (`load_skill` all-or-regex listing): granted in the skills-plumbing stream, pending; the hunt-orchestrator reasons to them as read-only and never reaches skill bodies or lesson writing.
-- the pod triager's EXHAUSTION rule laundering a degraded KB tool into a clean `space-exhausted` verdict (the operational root of the degraded-is-not-absent rule): integration tracking ticket [#304](https://github.com/Diekgbbtt/polyphemus/issues/304).
+- the hunt-orchestrator's request-history read surface and its skill description-only surface (`load_skill` all-or-regex listing): STILL PENDING - the shipped surface is exactly `hunts_store` / `notes` / `graph_view` (the `TOOL_SURFACE` frozenset, `build_orchestrator_tool_surface` in `attack/hunting/actors.py`), and `hunting_orchestrator` is declared skill-EXEMPT in `ROLE_SKILLS` (`app/llm/skills.py`), so the orchestrator holds no `load_skill` binding (and no listing mode exists) today; it is tied to the C5 workstream (W5's `load_skill` descriptions command, W6's orchestrator surface). The hunt-orchestrator reasons to them as read-only and never reaches skill bodies or lesson writing.
+- the pod triager's EXHAUSTION rule laundering a degraded KB tool into a clean `space-exhausted` verdict (the operational root of the degraded-is-not-absent rule): RESOLVED - the round-2 cortex fixes landed the degraded-is-not-absent principle in the injected map (`1f186ec0`, section 10), and the operational fix closed issue [#304](https://github.com/Diekgbbtt/polyphemus/issues/304) on 2026-10-06 (`4f088f62`, review gaps in `9a01f3d3`, on dev).
 
 ## 7. Known gaps and drift findings
 
-1. The pod prompt module docstring still says skills are deferred, while the bindings grant `pod_runner`/`pod_triager` `load_skill`/`record_skill_lesson`.
+1. RESOLVED: the pod prompt module docstring now records the binding truth - the pod `runner` and `triager` roles carry `load_skill`/`record_skill_lesson` through the universal `build_skill_tools` binding, while the base prompts stay in code.
 2. The hunt-orchestrator's frozen three-tool surface versus the operator's request-history and skill-description grants (reopened by the skills-plumbing stream).
 3. `graph_view`'s published contract advertises four L0 labels while the allowlist has fifteen (`Secret`, `Technology` invisible to agents).
 4. The hunter's KB queries leave no durable trail (Langfuse only), where the pod records a durable KB observation.
 5. `rate_limit_posture` was force-reverted from dev; the redesign is pending (the `configurator` role is reserved for it).
-6. The term "cortex" is not yet in any tracked `CONTEXT.md`; it lives only in the ephemeral `skills-system-decomposition.md` glossary. Migrate it into the owning glossary when the stream's path guardrail lifts.
+6. RESOLVED: the term "cortex" now lives in the owning glossary (`attack/hunting/CONTEXT.md`, "The cortex (C1, built)"); it no longer lives only in the ephemeral `skills-system-decomposition.md` glossary - the path guardrail lifted once the cortex and its design doc landed on the trunk.
 
 ## 8. Injection points
 
@@ -176,7 +176,7 @@ Regression-checked round 1 and mined new patterns. Outcomes:
 - **D3 partially resolved, with a regression fixed.** The bounded-read rule was over-rigid and forbade mandated confirmation queries; it now forbids only pointless repetition.
 - **D4 partially resolved.** The observed STOP already stated a gap, so the rule does not forbid it; the rule still makes an ungrounded conclusion unrepresentable.
 - **D6, D7, R3, R4 resolved.**
-- **New High (live): degraded is not absent.** A failed KB tool was laundered into a clean `space-exhausted` verdict in 42/72 pod-triager observations. A degraded-is-not-absent rule is now in the map; the operational root in the pod triager's EXHAUSTION rule is tracked separately (section 6).
+- **New High (live): degraded is not absent.** A failed KB tool was laundered into a clean `space-exhausted` verdict in 42/72 pod-triager observations. A degraded-is-not-absent rule is now in the map; the operational root in the pod triager's EXHAUSTION rule was tracked separately (section 6; resolved).
 - **New High (regression): over-rigid read rule** - fixed above.
 
 Accepted risks and residual items left as-is, with reasons:
