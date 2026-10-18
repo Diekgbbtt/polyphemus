@@ -311,6 +311,72 @@ def test_analyse_chunked_threads_no_surface_reader_into_the_assigner_body(monkey
     assert captured == {}, "no surface reader reaches the assigner body"
 
 
+def test_analyse_chunked_threads_the_auth_store_into_both_role_seams(monkeypatch):
+    """#364: the pass receives its auth-store handle the way recon receives
+    its own - ONE injected collaborator, threaded to BOTH proposer seams, so
+    each role's turn can bind the read-only auth view without any thread of
+    identity through the graph."""
+    from polymerhus.analysis import assigner, chunking, mechanism_typist, supervisor
+    from polymerhus.analysis.chunking import Chunk
+    from polymerhus.analysis.feed import AssetDelta, L0Chunk
+    from polymerhus.recon.domain.types import AssetDelta as ReconAssetDelta
+
+    monkeypatch.setenv("LLM_ANALYSER", "openai:gpt-4o-mini")
+    monkeypatch.setenv("API_KEY_OPENAI", "sk-test-not-used")
+    seen = {}
+
+    def spy_assigner(run_id, checkpointer, project_id=None, auth_store=None):
+        seen["assigner"] = auth_store
+        return lambda messages, **kw: None
+
+    def spy_typist(run_id, checkpointer, project_id=None, auth_store=None):
+        seen["mechanism_typist"] = auth_store
+        return lambda *a, **k: None
+
+    acost = Chunk(chunk_id="c0", assets=(ReconAssetDelta(
+        type="Endpoint", identity={"path": "/x", "baseurl": "https://a"}),))
+    monkeypatch.setattr(chunking, "chunks_for_job",
+                        lambda job, assets, observations=None, **kw: [acost])
+    monkeypatch.setattr(assigner, "stateful_invoke_fn", spy_assigner)
+    monkeypatch.setattr(mechanism_typist, "stateful_invoke_fn", spy_typist)
+
+    sentinel = object()
+    chunk = L0Chunk(project_id="p", run_id="run1",
+                    assets=[AssetDelta(type="Endpoint",
+                                       identity={"path": "/x", "baseurl": "https://a"})])
+    asyncio.run(supervisor.analyse_chunked(
+        chunk, auth_store=sentinel, observe=False,
+    ))
+    assert seen == {"assigner": sentinel, "mechanism_typist": sentinel}
+
+
+def test_run_analyser_chunked_forwards_the_auth_store(monkeypatch):
+    """The batch adapter (the pod seam / legacy callers) forwards the injected
+    handle to the one implementation, so a caller can wire it either way."""
+    from polymerhus.analysis import l0_stream, supervisor
+
+    monkeypatch.setenv("LLM_ANALYSER", "openai:gpt-4o-mini")
+    monkeypatch.setenv("API_KEY_OPENAI", "sk-test-not-used")
+    monkeypatch.setattr(l0_stream, "read_l0_assets", lambda project_id: [])
+    monkeypatch.setattr(l0_stream, "read_observations", lambda project_id: [])
+    seen = {}
+
+    async def spy_analyse_chunked(chunk, **kw):
+        seen.update(kw)
+
+        class _Result:
+            export = "EXPORT"
+
+        return _Result()
+
+    monkeypatch.setattr(supervisor, "analyse_chunked", spy_analyse_chunked)
+    sentinel = object()
+    out = supervisor.run_analyser_chunked(
+        "p", "run1", auth_store=sentinel, observe=False)
+    assert out == "EXPORT"
+    assert seen["auth_store"] is sentinel
+
+
 def test_analyse_chunked_connectivity_only_payload_schedules_no_dispatch():
     """T1 (plan 2026-10-15): a pushed payload of connectivity assets only (Domain /
     IP / Port / Service) builds NO chunk, so the pass enters no dispatch at all -

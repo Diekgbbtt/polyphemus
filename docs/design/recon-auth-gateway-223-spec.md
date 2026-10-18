@@ -103,7 +103,7 @@ The state machine implements exactly this transition table:
 ### Arming and roles
 
 - The orchestrator is **fully armed in one step** (D223-13): the roster exemption is lifted and `auth_store`, the project's `authn` skill, `load_skill`, `write_skill`, kali exec, and the Steel exec tool bind together through the native tool/middleware/context seams. The actor's response format moves from the retired routing schema to the gateway/loop outcome once the routing turns retire.
-- The job-specialised agents deliberately never authenticate and never take the binding (D223-5).
+- The job-specialised agents deliberately never authenticate and never take the binding (D223-5). D223-5 forbids the authenticate/write capability, not the READ of the store: since #364 the two analysis proposers (`assigner`, `mechanism_typist`) bind the read-only `auth_store` form (`with_readonly_auth_store`, no skill surface) so they can type a request shape against the recorded session material - `docs/design/analysis-auth-store-view-364-adr.md`.
 - The gateway attaches to the existing orchestrator role (`job_orchestrator`); no new role id is minted (D223-1 superseded in part). The global MODEL-infix-drop env-key rename stands, landed in #240 (D223-1).
 
 ### Retirements

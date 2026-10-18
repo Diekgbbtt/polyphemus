@@ -135,41 +135,73 @@ def _role_structured_schema(role_id: str) -> Any:
     return None
 
 
-def _surface_tools(role_id: str, project_id: str | None) -> tuple:
+def _auth_store_view(role_id: str, project_id: str, auth_store) -> tuple:
+    """The READ-ONLY auth-store view bound beside the surface tools (#364).
+
+    The recorded session material (the login-mechanism overview plus the account
+    records: account names, cookie and header names, token locations and
+    statuses) so a proposer can type a request SHAPE against what was actually
+    recorded instead of inferring it from responses. Bound through the ONE
+    auth-capability seam (`auth_capable_binding`, the `with_readonly_auth_store`
+    arming), never a per-site auth binding: the mode guarantees the view
+    carries no write command, no skill surface, and no authenticate capability
+    (D223-5). `auth_store` is the injectable handle (None resolves the
+    production store lazily inside the tool factory, exactly like the recon
+    binding). Fail-open: an unbuildable auth seam binds nothing, and the turn
+    always starts."""
+    try:
+        from polymerhus.app.auth.seams import auth_capable_binding
+
+        return tuple(auth_capable_binding(
+            role_id, store=auth_store, project_id=project_id,
+            with_readonly_auth_store=True).tools)
+    except Exception:  # noqa: BLE001 - fail-open: no auth view bound
+        logger.warning("proposer_turn: auth-store view unbuildable; binding none",
+                       exc_info=True)
+        return ()
+
+
+def _surface_tools(role_id: str, project_id: str | None, auth_store=None) -> tuple:
     """The adjacent-surface read/probe tools bound on a proposer turn.
 
     The mechanism-typist's turn binds the read-only `graph_view`, the
     HTTP-history pair, and the bounded `exec` term, so its ORIENT / VERIFY
     phases can witness a mechanism in the target's real response. The
-    assigner's turn binds ONLY the HTTP-history pair
+    assigner's turn binds the HTTP-history pair alone
     (`search_http_history` / `get_http_artifact`) - the `graph_view`
     binding is rolled back (the concentration failure it licensed), and
     the recorded-transaction read is the assigner's whole widening seam,
-    kept central. No other role binds surface tools. Fail-open: an
-    unbuildable surface, or no project scope, binds nothing (the session
-    always starts)."""
+    kept central. BOTH turns additionally bind the read-only auth-store view
+    (#364, `_auth_store_view`): the recorded session material a request shape
+    is typed against. A role outside that set binds no surface tools.
+    Fail-open: an unbuildable surface, an unbuildable auth seam, or no project
+    scope binds nothing (the session always starts)."""
     if role_id not in ("assigner", "mechanism_typist") or not project_id:
         return ()
+    # The auth view is built OUTSIDE the surface try/except and APPENDED (the
+    # `auth_capable_binding` convention): a surface failure must not take the
+    # auth view down with it (and vice versa) - each seam fails open on its own.
+    auth_view = _auth_store_view(role_id, project_id, auth_store)
     if role_id == "assigner":
         try:
             from polymerhus.analysis.graph_tools import build_http_history_tools
 
-            return build_http_history_tools(project_id)
+            return (*build_http_history_tools(project_id), *auth_view)
         except Exception:  # noqa: BLE001 - fail-open: no surface tools bound
             logger.warning("proposer_turn: assigner http-history unbuildable; binding none",
                            exc_info=True)
-            return ()
+            return auth_view
     try:
         from polymerhus.analysis.graph_tools import build_surface_tools
 
-        return build_surface_tools(
+        return (*build_surface_tools(
             role_id, project_id=project_id, with_http=True,
             with_exec=(role_id == "mechanism_typist"),
-        )
+        ), *auth_view)
     except Exception:  # noqa: BLE001 - fail-open: no surface tools bound
         logger.warning("proposer_turn: surface tools unbuildable; binding none",
                        exc_info=True)
-        return ()
+        return auth_view
 
 
 def _prose_tools(role_id: str, *, tools_bound: bool = False) -> tuple:
@@ -211,7 +243,8 @@ def _prose_tools(role_id: str, *, tools_bound: bool = False) -> tuple:
         return ()
 
 
-def session_invoke_fn(role_id: str, run_id: str, checkpointer, project_id: str | None = None):
+def session_invoke_fn(role_id: str, run_id: str, checkpointer, project_id: str | None = None,
+                      auth_store=None):
     """The stateful production seam: a callable `(messages, *, schema)` that runs
     one turn of `role_id` on its own per-run session, resuming from its checkpoint.
 
@@ -221,6 +254,10 @@ def session_invoke_fn(role_id: str, run_id: str, checkpointer, project_id: str |
     per-module `stateful_invoke_fn`s returned, so every proposer body and its
     contract tier are unchanged.
 
+    `auth_store` is the injectable auth-store handle the read-only auth view
+    binds (#364; None resolves the production store lazily inside the tool
+    factory, like the recon binding) - never a write or authenticate capability.
+
     Two cross-call invariants ride this ONE seam:
 
     - **Constant request shape**: a prose turn still binds the role's structured tool
@@ -228,7 +265,8 @@ def session_invoke_fn(role_id: str, run_id: str, checkpointer, project_id: str |
       extraction turns (the shape that defeated the provider prefix cache). The
       mechanism-typist turns additionally bind their surface read/probe tools
       (D-A2) on EVERY turn, the bounded `exec` included; the assigner binds the
-      HTTP-history pair on its (always structured) turn. The typist's reflection
+      HTTP-history pair on its (always structured) turn. Both roles also bind the
+      read-only auth-store view (#364) on every turn. The typist's reflection
       turn carries the same surface set as its structured turns, so neither set
       toggles.
     - **Per-chunk reset on one session**: the thread is always
@@ -269,7 +307,7 @@ def session_invoke_fn(role_id: str, run_id: str, checkpointer, project_id: str |
         # read, so the prose turn carries exactly the structured tool that turn's
         # `response_format` will produce. Only a non-empty set is forwarded, so a
         # role with no surface tools stays byte-identical to the pre-change requests.
-        surface = _surface_tools(role_id, project_id)
+        surface = _surface_tools(role_id, project_id, auth_store)
         tools = (surface if resolved_schema is not None
                  else surface + _prose_tools(role_id, tools_bound=bool(surface)))
         address = AnalysisSession(run_id, role_id)
