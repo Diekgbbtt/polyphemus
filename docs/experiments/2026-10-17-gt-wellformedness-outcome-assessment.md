@@ -140,6 +140,7 @@ Corrected per-unit scores:
 Reading: every produced Service now passes the spine 2/2 (`exposure` + `service_contract`), and every remaining deficit is a defect the D-classes name (M2 items, M4 edges).
 wj-004's remaining M3 miss is S2 alone (the `username` carrier), which no L0 node witnesses.
 These corrected numbers are the arm K comparison baseline.
+Arm K's outcome under the bridged instrument is in the results doc's arm K section (`analysisUnitFirst-vs-l0batchFirst-pipeline-comfyui-results.md`): comfyui 0.42, white-jotter 0.38, with the fixes live-verified and the regression diagnosed there.
 The corpus change set is reproduced in section 2.4.1 because the corpus is local-only.
 
 ### 2.4.1 The corpus spec changes (reproduced; the corpus is local-only)
@@ -172,7 +173,7 @@ Mappings recorded (arm J slug -> bootstrapped slug):
 
 | target | mapping |
 |---|---|
-| comfyui | `user-data-file` -> `editor-settings`; `image-upload` -> `asset-upload`; `image-viewing` -> `artefact-serving`; `manager-preferences` -> `extension-manager-configuration`; `model-download` -> `model-installation` |
+| comfyui | `user-data-file` -> `workflow-library` (its contract owns the profile-area documents "including the configuration artefacts the extension manager reads back" - the trial's independent diagnoser identified this unit, over the earlier `editor-settings` guess, which owns the `/settings` preference document); `image-upload` -> `asset-upload`; `image-viewing` -> `artefact-serving`; `manager-preferences` -> `extension-manager-configuration`; `model-download` -> `model-installation` |
 | white-jotter | `account-sign-in` -> `sign-in`; `article-publishing` -> `article-management`; `book-search` -> `library-catalog`; `book-cover-serving` -> `media-asset-serving`; `account-registration` -> `register` |
 
 The arm J formal/base numbers under the bridged instrument remain 0.48 / 0.45 (comfyui) and 0.66 / 0.49 (white-jotter, re-measured at the arm K close with the same spec set).
