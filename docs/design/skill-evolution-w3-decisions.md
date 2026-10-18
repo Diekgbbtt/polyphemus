@@ -1,6 +1,6 @@
 # Skill evolution (W3) - grilled decisions
 
-*Status: RATIFIED by the operator in the W3 grilling round 1 (2026-10-18). It resolves the four open adversarial rulings carried in `skill-evolution-232-decisions.md` ("Adversarial review - findings and open rulings"). Round 2 (the lesson-kind vocabulary, the corrections scope, the acceptance-gate wording) is still open; this document grows with it.*
+*Status: RATIFIED by the operator in the W3 grilling round 1 (2026-10-18), with round 2 (the lesson-kind vocabulary, the corrections scope, the acceptance-gate wording) closed the same day in D-W3-6..D-W3-8. The implementation landed on `feat/w3-evolver-gate` (15 commits), passed its single adversarial review round (CLEAR: 0 blockers, 0 majors, 11 minors), and absorbed the one fix pass; the post-review amendments are recorded inline below.*
 *Recorded under the `/grill-with-docs` procedure (see `/Users/diekgbbtt/.claude/skills/grill-with-docs/SKILL.md`): each decision states the ruling, the alternative(s) rejected, and the consequence.*
 *The normative implementation input for the W3 workstream is this document plus the 232 decisions it amends.*
 
@@ -33,12 +33,12 @@ If these technical requirements are not respected, the W3 pass must improve them
 
 **Rejected.** Log-only provenance as sufficient; overwrite-in-place as acceptable.
 
-**Consequence.** The W3 pass makes revisions retrievable and their provenance systematic, and fixes the version-format handling.
+**Consequence.** The W3 pass makes revisions retrievable and their provenance systematic, and fixes the version-format handling. The pass-record scaffold adds `skills/evolution` to the reserved skill names (`lessons` precedent); a skill literally named `evolution` is refused.
 
 ## D-W3-3 - The pass result's version field is the resolved version (resolves open ruling 3)
 
 **Ruling.** Option (a): the resolved version whenever the skill resolved.
-`published` carries the new version; `zero_skip`, `no_write`, and `degraded` carry the base version the pass read; only `skill_unknown` carries None, because no skill exists.
+`published` carries the new version; `zero_skip`, `no_write`, and `degraded` carry the base version the pass read; `skill_unknown` carries None, because no skill exists, and so does a failure that precedes the base version resolving (a store failure at inspect): no version resolved, so none is carried.
 One visible change to today's behavior: `zero_skip` stops returning None.
 
 **Rejected.** Option (b), None for every non-published outcome: rejected, it loses the one version the pass actually considered and forces a second rule.
@@ -48,6 +48,8 @@ One visible change to today's behavior: `zero_skip` stops returning None.
 **Ruling.** Two endpoints, per the app module's REST principles.
 The launch endpoint starts one pass and returns a reliable identifier.
 The status endpoint, given the identifier, returns the pass outcome or the update content with clear failure semantics (200 for a known pass, 404 for an unknown identifier, 503 for a refusal to start).
+
+**Delivered surface (2026-10-18, post-review record).** The launch returns 202 with the identifier; the status is a pure durable read of the pass record (200 known, 404 unknown; no runtime, no DB). 503 covers no control plane and an unwritable record; 400 a coded lesson refusal. The identifier is the per-`(project, skill)` slot name `skills:evolve:<pid>:<skill>`; a relaunch supersedes the slot's record, so the slot serves one pass at a time (concurrent launches are last-writer-wins; documented caveat). The status serves the pass record; the update content (a revision body) is served by the store (`SkillStore.revision_content`, ordinal-indexed); a REST content route is deferred until an operator needs it.
 
 **Rejected.** The wait-and-return single endpoint (option (a) in the grilling): rejected, waiting goes against the REST principles the app module adopts.
 Also superseded: the older 202 testing-decision line; the identifier was suggested as the internal worker thread id, with the launcher's schedule name (`skills:evolve:<pid>:<skill>`) as a stable alternative.
