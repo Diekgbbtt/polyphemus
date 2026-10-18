@@ -1,6 +1,9 @@
 """Pure parser: httpx `-json` stdout -> list[AssetDelta].
 
 Deterministic field-mapping only, tolerant of malformed JSONL lines.
+Each Endpoint mints under the result's own `method` (GET fallback for a line
+without one), so a per-method probe (`httpx -x <METHOD>`, #365) lands its
+status evidence on that method's Endpoint.
 """
 from urllib.parse import urlparse
 
@@ -63,6 +66,14 @@ def parse(stdout: str) -> list[AssetDelta]:
         final_url = _first(entry, "final_url", "url")
         scheme = entry.get("scheme")
         host = entry.get("host")
+        # #365: httpx always emits the probing method on every JSON result
+        # (GET unless `-x` named others), and the reprofile pass now probes
+        # write-hinted routes a second time with their own method. The
+        # Endpoint identity must carry THAT method or the write route's probe
+        # evidence lands on a GET node while its write node stays status-less.
+        # `url_to_deltas` upper-cases; the GET fallback keeps older lines
+        # (fixtures, any pre-`method` output) on the pre-#365 shape.
+        method = _first(entry, "method") or "GET"
 
         # F2 fix: normalize BaseURL/Endpoint.baseurl to scheme://netloc via
         # the shared helper (was the raw probe `url`, which is latently
@@ -78,7 +89,7 @@ def parse(stdout: str) -> list[AssetDelta]:
 
         url_deltas = url_to_deltas(
             url,
-            method="GET",
+            method=method,
             source="httpx",
             extra_endpoint_props={
                 "status_code": status_code,

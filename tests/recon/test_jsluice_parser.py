@@ -260,6 +260,61 @@ def test_two_distinct_real_secrets_get_distinct_hashes():
     assert len(hashes) == 2, "distinct secrets must not collide on value_hash"
 
 
+# --- #365: the write method jsluice names only in `type` (the CALL NAME) ------- #
+# jsluice sets `method` itself for its fetch / XMLHttpRequest.open /
+# $.get|$.post|$.ajax matchers only. Every other client-style call is matched by
+# the generic "other function calls with a URL-like argument" matcher, which
+# emits `{"method": "", "type": "<call name>"}` - e.g. white-jotter's
+# `this.$axios.post("/login")` -> `"type": "this.$axios.post"`. The parser is the
+# one place that turns a record into an Endpoint, so the call-name verb is
+# recovered HERE; the reprofile probe arbitrates the hint against the live route.
+
+def _endpoint_method(line: str) -> str:
+    out = parse(line)
+    return next(d for d in out if d.type == "Endpoint").identity["method"]
+
+
+def test_write_method_is_derived_from_the_axios_style_call_name():
+    assert _endpoint_method(
+        '{"url":"https://t/api/register","method":"","type":"this.$axios.post"}\n'
+    ) == "POST"
+    assert _endpoint_method(
+        '{"url":"https://t/api/orders/1","method":"","type":"axios.put"}\n'
+    ) == "PUT"
+    assert _endpoint_method(
+        '{"url":"https://t/api/orders/1","method":"","type":"api.patch"}\n'
+    ) == "PATCH"
+    assert _endpoint_method(
+        '{"url":"https://t/api/orders/1","method":"","type":"$http.delete"}\n'
+    ) == "DELETE"
+
+
+def test_read_style_call_names_keep_the_get_default():
+    # `router.push("/admin")` and a bare string literal carry no write verb: the
+    # pre-#365 GET default stands (an unhinted route must stay GET-shaped).
+    assert _endpoint_method(
+        '{"url":"https://t/admin","method":"","type":"router.push"}\n'
+    ) == "GET"
+    assert _endpoint_method(
+        '{"url":"https://t/admin","method":"","type":"stringLiteral"}\n'
+    ) == "GET"
+    assert _endpoint_method('{"url":"https://t/admin"}\n') == "GET"
+
+
+def test_an_explicit_method_always_wins_over_the_call_name():
+    # jsluice's own matchers name the method when they can (fetch init, $.post,
+    # XMLHttpRequest.open); that statement is never overridden by the call name.
+    assert _endpoint_method(
+        '{"url":"https://t/api/search","method":"POST","type":"$.get"}\n'
+    ) == "POST"
+
+
+def test_derived_method_is_normalized_to_upper_case():
+    assert _endpoint_method(
+        '{"url":"https://t/api/register","method":"","type":"this.$axios.Post"}\n'
+    ) == "POST"
+
+
 def test_jsluice_urls_emit_query_and_body_parameters():
     # Param discovery: jsluice `urls` mode already emits queryParams/bodyParams
     # arrays per discovered URL; the parser now turns them into Parameter deltas

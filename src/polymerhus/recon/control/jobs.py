@@ -15,6 +15,12 @@ from polymerhus.recon.config import KATANA_DEPTH
 
 DOMAIN = "Domain"  # pre-seeded root asset type (the project's target domain)
 
+# The httpx flag set every reprofile probe exec draws from: the all-GET exec in
+# the `httpx_reprofile` template below AND the per-method write execs
+# (`batching.build_reprofile_write_probes`). One literal for both so the two
+# probe shapes can never drift (#365).
+REPROFILE_PROBE_FLAGS = "-sc -title -server -td -fr -silent -json -irh"
+
 JOBS: dict[str, JobSpec] = {
     "subfinder": JobSpec(
         tool="subfinder",
@@ -121,12 +127,17 @@ JOBS: dict[str, JobSpec] = {
         # `extra["auth_context"]` exactly as the per-endpoint probe did - one auth
         # shape for the whole surface for now; per-endpoint auth shaping is the
         # authN-first-class forward work (operator, #208 grilling).
+        # #365: `{write_probes}` appends the per-method `httpx -x <METHOD>` execs
+        # for write-hinted routes (`batching.build_reprofile_write_probes`); it
+        # collapses to nothing on an all-GET probe set, so the GET-shaped command
+        # above stays byte-identical. DELETE stays mint-only (mutation-bounded).
         command_template=(
             "printf '' > /work/{session}/reprofile.json && "
             "printf '%s\\n' {endpoints} > /work/{session}/endpoints.txt && "
-            "httpx -l /work/{session}/endpoints.txt -sc -title -server -td -fr "
-            "-silent -json -irh {auth_flags} -o /work/{session}/reprofile.json "
-            ">/dev/null && cat /work/{session}/reprofile.json"
+            "httpx -l /work/{session}/endpoints.txt "
+            + REPROFILE_PROBE_FLAGS
+            + " {auth_flags} -o /work/{session}/reprofile.json "
+            ">/dev/null && cat /work/{session}/reprofile.json{write_probes}"
         ),
         produces=["BaseURL", "Endpoint", "Technology", "Certificate", "Header"],
         # #208 one-pod reprofile (D16 per-endpoint split, superseded dispatch):

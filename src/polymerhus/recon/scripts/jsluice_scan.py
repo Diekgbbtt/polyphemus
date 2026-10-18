@@ -211,7 +211,9 @@ def _chained_record(origin: str, prefix: str, rec: dict) -> dict | None:
     """Re-mint one jsluice `urls` record under a discovered runtime PATH prefix -
     the same path one base further out (`/login` -> `/api/login`). The ORIGINAL
     literal is never replaced (`/login` is also a real Vue route), so this is an
-    additive candidate the reprofile probe pass arbitrates. `None` when the
+    additive candidate the reprofile probe pass arbitrates. The record's
+    call-name `type` is carried when present (#365), so the twin's Endpoint
+    mints under the same write method as the original. `None` when the
     shared guards reject the literal, or when it already carries the prefix."""
     got = _chainable_target(origin, rec)
     if got is None:
@@ -228,6 +230,13 @@ def _chained_record(origin: str, prefix: str, rec: dict) -> dict | None:
         "chained_prefix": prefix,
         "chained_from": rec.get("url"),
     }
+    # #365: for every client that is not fetch/xhr/jQuery, jsluice names the
+    # verb only in `type` (the call name, e.g. `this.$axios.post`). The parser
+    # derives the method from it, so the hint must survive the re-mint - the
+    # chained `/api/login` is the node the write route actually needs. Only
+    # copied when present: a record without `type` keeps its exact shape.
+    if isinstance(rec.get("type"), str) and rec["type"]:
+        out["type"] = rec["type"]
     for key in ("queryParams", "bodyParams"):
         value = rec.get(key)
         if isinstance(value, list) and value:
@@ -258,6 +267,9 @@ def _foreign_chained_record(origin: str, foreign_base: str, rec: dict) -> dict |
         "chained_from": rec.get("url"),
         "base_url": base_origin,
     }
+    # Same call-name carry as `_chained_record` (#365).
+    if isinstance(rec.get("type"), str) and rec["type"]:
+        out["type"] = rec["type"]
     if base_origin and base_origin != origin:
         out["origin_scope"] = "external"
     for key in ("queryParams", "bodyParams"):

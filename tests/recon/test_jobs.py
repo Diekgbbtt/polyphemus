@@ -5,7 +5,13 @@ import re
 import pytest
 
 from polymerhus.recon.domain.parsers import PARSERS
-from polymerhus.recon.control.jobs import JOBS, PHASES, build_phase_plan, validate_job_subset
+from polymerhus.recon.control.jobs import (
+    JOBS,
+    PHASES,
+    REPROFILE_PROBE_FLAGS,
+    build_phase_plan,
+    validate_job_subset,
+)
 
 
 _DEPTH_RE = r"(-d )(\d+)( )"
@@ -411,8 +417,19 @@ def test_httpx_reprofile_consumes_endpoints_for_per_endpoint_profiling():
     assert "{endpoints}" in job.command_template
     assert "{session}" in job.command_template
     assert "{auth_flags}" in job.command_template
+    assert "{write_probes}" in job.command_template
     assert "{target}" not in job.command_template
     assert "httpx -l" in job.command_template
+
+
+def test_httpx_reprofile_shares_one_probe_flag_set_with_the_write_probes():
+    # #365: the all-GET exec (this template) and the per-method write execs
+    # (`batching.build_reprofile_write_probes`) must draw the SAME flag literal,
+    # or the two probe shapes drift and the GET probe silently changes shape.
+    job = JOBS["httpx_reprofile"]
+    assert REPROFILE_PROBE_FLAGS in job.command_template
+    for flag in ("-sc", "-title", "-server", "-td", "-fr", "-silent", "-json", "-irh"):
+        assert flag in REPROFILE_PROBE_FLAGS
 
 
 def test_httpx_reprofile_runs_after_jsluice_and_before_the_api_phases():

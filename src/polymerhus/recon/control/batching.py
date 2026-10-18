@@ -285,6 +285,84 @@ def build_batch_command(
     raise ValueError(f"no batch command builder registered for tool {job.tool!r}")
 
 
+# ------------------- #365 per-method write probe execs ----------------------- #
+# The reprofile pass is ONE pod running ONE all-GET httpx exec over the full
+# probe set (#208). A route whose discovery carried a write hint (the axios/JS
+# call-name verb the jsluice parser derives) additionally gets ONE `httpx
+# -x <METHOD>` exec per hinted method, APPENDED to the same pod command - every
+# URL still rides the GET exec exactly as before, and the live probe arbitrates
+# the hint. DELETE is deliberately absent from the matrix: it is minted from the
+# hint but never probed (no body guards a live DELETE, and the verb mutates).
+_WRITE_PROBE_METHODS = ("POST", "PUT", "PATCH")
+
+
+def probe_method_groups(assets: list[dict]) -> dict[str, list[str]]:
+    """Partition the reprofile probe set by hinted HTTP method (#365).
+
+    Returns `{method: [urls]}` for the non-empty write groups only, in the
+    fixed order POST, PUT, PATCH. GET-riding assets are omitted (they always
+    ride the all-GET exec), DELETE-hinted ones too (mutation-bounded). URLs are
+    deduped within each group, first-seen order; the same URL hinted under two
+    methods keeps one probe per method (each hint is a candidate to arbitrate).
+    """
+    groups: dict[str, list[str]] = {}
+    seen: set[tuple[str, str]] = set()
+    for asset in assets or []:
+        method = (asset.get("method") or "GET").upper()
+        if method not in _WRITE_PROBE_METHODS:
+            continue
+        url = endpoint_url(asset)
+        if url is None or (method, url) in seen:
+            continue
+        seen.add((method, url))
+        groups.setdefault(method, []).append(url)
+    return {m: groups[m] for m in _WRITE_PROBE_METHODS if m in groups}
+
+
+def build_reprofile_write_probes(
+    endpoints: list[dict], *, session_id: str = "", extra: dict | None = None
+) -> str:
+    """The per-method write-probe shell fragment for the reprofile pod (#365).
+
+    One `printf '' > out && printf '%s\\n' <urls> > list && httpx -l list
+    <REPROFILE_PROBE_FLAGS> -x <METHOD> {auth_flags} -o out >/dev/null && cat out`
+    exec per method group, joined with ` && ` and prefixed with ` && ` so it can
+    be appended to the template's `{write_probes}` slot (a `""` return then
+    keeps the all-GET command byte-identical). Mirrors the GET exec's two
+    load-bearing details: the empty `-o` seed (httpx may not create the file on
+    a zero-hit run, and the cat must still succeed) and stdout suppression (the
+    parser reads only the cat'd JSONL). `extra["auth_context"]` is serialized
+    exactly as `fill_template` does for the GET exec, so every probe of the
+    surface carries one auth shape (per-endpoint shaping is the authN forward
+    work). The `httpx` flag set comes from the shared `REPROFILE_PROBE_FLAGS`
+    literal, never a second copy.
+    """
+    groups = probe_method_groups(endpoints)
+    if not groups:
+        return ""
+
+    from polymerhus.recon.control.auth_feed import serialize_auth_flags
+    from polymerhus.recon.control.jobs import REPROFILE_PROBE_FLAGS
+
+    auth_flags = ""
+    if (extra or {}).get("auth_context"):
+        auth_flags = serialize_auth_flags(extra["auth_context"], "httpx")
+
+    execs: list[str] = []
+    for method, urls in groups.items():
+        stem = method.lower()
+        out_file = f"/work/{session_id}/reprofile_{stem}.json"
+        list_file = f"/work/{session_id}/write_{stem}.txt"
+        quoted = " ".join(shlex.quote(u) for u in urls)
+        execs.append(
+            f"printf '' > {out_file} && "
+            f"printf '%s\\n' {quoted} > {list_file} && "
+            f"httpx -l {list_file} {REPROFILE_PROBE_FLAGS} -x {method} "
+            f"{auth_flags} -o {out_file} >/dev/null && cat {out_file}"
+        )
+    return " && " + " && ".join(execs)
+
+
 # --------------- endpoint-profiling input-prep (D16 per-endpoint split) --------------- #
 # The reprofile pass consumes the Endpoint population and actively re-probes each
 # endpoint's own URL so it carries its OWN `profile` (not just the BaseURL root).
