@@ -4,6 +4,8 @@
 
 *Companion authority: `docs/design/skills-variant-boundary.md` - the variant boundary, which decides when a class decomposes into variants. This document does not restate it.*
 
+*Naming and placement authority: `docs/design/skills-taxonomy.md` - the suite root, the group levels, the flat-leaf loader identity, and the leaf naming convention. Ask that document where a skill lives and what it is named; ask this one what it contains and in which order.*
+
 ## 1. Where the ontology was documented before
 
 The ontology was not documented in one place.
