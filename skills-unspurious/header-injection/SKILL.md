@@ -1,181 +1,219 @@
 ---
 name: header-injection
 description: HTTP header injection testing covering CRLF / response splitting, cache poisoning, Host-header confusion, cookie fixation, and proxy / forwarding header smuggling
+metadata:
+  version: 1.0.0
 ---
 
 # HTTP Header Injection
 
-Header injection turns user input into protocol-level control: response splitting, cache poisoning, session fixation, authentication bypass, and request smuggling all trace back to a server-controlled header value that wasn't normalized. The bug usually lives in middle layers - frameworks that copy a request value into a response header, proxies that trust forwarded headers, caches keyed on something the attacker influences. Treat any user-controlled value that reaches a header as code-execution-equivalent until proven otherwise.
+Header injection turns user input into protocol-level control: response splitting, cache poisoning, session fixation, authentication bypass, and request smuggling all trace back to a server-controlled header value that was not normalized. The bug usually lives in middle layers - frameworks that copy a request value into a response header, proxies that trust forwarded headers, caches keyed on something the attacker influences. Treat any user-controlled value that reaches a header as code-execution-equivalent until proven otherwise.
 
 ## Attack Surface
 
 **Input shapes that reach headers**
-- Query/body/path values echoed into `Set-Cookie`, `Location`, `Content-Type`, `Content-Disposition`, `Link`, custom `X-*`
-- Request headers re-emitted into responses (Referer, User-Agent, X-Forwarded-*, custom correlation IDs)
-- Webhook / callback flows where the server constructs outbound requests using user-supplied URLs (Host, Referer)
-- Outbound email headers (To/From/Subject) populated from user input
+- Query, body, and path values echoed into response headers: cookie setters, location, content type and disposition, link, custom fields
+- Request headers re-emitted into responses (referer, client, correlation, and forwarding families)
+- Webhook and callback flows where the server constructs outbound requests using user-supplied URLs
+- Outbound message headers populated from user input
 
 **Code patterns that enable injection**
-- Direct concatenation of user input into header values without CR/LF stripping
-- Frameworks that accept header values as strings and serialize verbatim (no normalization)
-- Proxy chains trusting `X-Forwarded-*` / `Forwarded` / `X-Real-IP` set by an upstream that anyone can spoof
-- `X-HTTP-Method-Override` and similar method-shaping headers respected past auth layers
+- Direct concatenation of user input into header values without line-break stripping
+- Frameworks that accept header values as strings and serialize them verbatim (no normalization)
+- Proxy chains trusting forwarding headers set by an upstream that anyone can spoof
+- Method-shaping headers respected past the authorization layer
 
 **Transports and parser layers**
-- HTTP/1.0, HTTP/1.1, HTTP/2, HTTP/3 each parse framing differently
-- CDN / reverse proxy → application server (where each side may disagree on framing)
-- Chunked transfer encoding boundaries and multipart/form-data delimiters
+- Each HTTP version parses framing differently
+- Edge to application server, where the two sides may disagree on framing
+- Chunked transfer boundaries and multipart delimiters
 
 ## Reconnaissance
 
 ### Header Inventory
 
-- Enumerate every response header that varies with input - flip query / body / cookie values and diff `Set-Cookie`, `Location`, `Content-Type`, `Content-Disposition`, `ETag`, `Vary`, custom `X-*`
-- For each varying header, identify the source field (user-controlled vs. server-derived)
-- Look for request headers reflected into responses (Referer in error pages, User-Agent in correlation IDs, X-Forwarded-Host echoed back)
+- Enumerate every response header that varies with input: flip query, body, and cookie values and diff the cookie, location, content-type, disposition, validator, and cache-control fields
+- For each varying header, identify the source field (user-controlled vs server-derived)
+- Look for request headers reflected into responses, such as the referer echoed into error pages or a correlation identifier
 
-### CR/LF and Whitespace Variants
+### Line-Break and Whitespace Variants
 
-- Bare LF (`%0a`), bare CR (`%0d`), CRLF (`%0d%0a`)
-- Double encoding (`%250d%250a`) for WAFs that decode once
-- Overlong UTF-8 of CR/LF (`%c0%8d`, `%c0%8a`) - invalid per spec but accepted by some parsers
-- Unicode line/paragraph separators (`%e2%80%a8` U+2028, `%e2%80%a9` U+2029) - sometimes folded to LF by intermediaries
-- Tab (`%09`) - RFC 7230 allows tabs in field values, useful for sneaking past simple `\s+` filters
-- Null byte (`%00`) - can truncate the header value in some parsers
+- Bare line feed, bare carriage return, and the CRLF pair
+- Double encoding for filters that decode once
+- Overlong encodings of the line-break bytes, accepted by some parsers although invalid
+- Unicode line and paragraph separators, sometimes folded to a line feed by intermediaries
+- Tab and leading whitespace, which the syntax allows inside field values
+- Null byte, which truncates the value in some parsers
 
-### Parser and Server Fingerprinting
+### Parser and Layer Fingerprinting
 
-- `Server`, `Via`, `X-Powered-By`, `X-AspNet-Version`, `X-Served-By`, `CF-Ray`, `X-Amzn-RequestId` reveal the stack
-- `Vary`, `Age`, `X-Cache`, `CF-Cache-Status` reveal caching layer and key composition
-- Same payload over HTTP/1.1 vs HTTP/2 vs chunked - diff status, headers, body length to map parsing differences
-- Compare `Host` and `X-Forwarded-Host` precedence: send both with different values and observe which wins in redirects, links, log entries
+- Server, proxy, and platform banners reveal the stack
+- Cache-signal headers reveal the caching layer and its key composition
+- The same probe over HTTP/1.1, HTTP/2, and chunked framing: diff status, headers, and body length to map parsing differences
+- Compare the authority header against its forwarding aliases: send both with different values and observe which wins in redirects, links, and stored entries
+
+## Detection Channels
+
+- An injected second header field stored and served downstream as a real field, which binds the probe to parser trust.
+- A second response served to an unrelated clean request, which proves the injected framing left the attack session.
+- A header-set diff between the attack replay and a clean replay, which isolates the injected field from ambient variation.
+- Cache-signal values showing a stored entry behind a poisoned body, which confirms downstream persistence.
+- An attacker-influenced body served under a victim key on clean replay, which binds the probe to the key-versus-content split.
+- An emitted link destination carrying an attacker host, which proves the URL builder consumed the forgery.
+- Out-of-band arrival of a token-bearing link at attacker infrastructure, which confirms the emitted destination leaves the building.
+- An access decision flip with and without a forged forwarding alias.
+- A guarded handler reached through a safe method plus an override carrier while the direct method stays refused.
+- A guarded path served through a rewrite carrier while the direct guarded request stays refused.
+- Victim request data appended to another request, which binds the probe to leftover bytes across the boundary.
+- A response-queue anomaly, namely a response answering a request that was never sent.
+- A timing plus length diff between the paired replay and a clean sequential baseline.
+- A cookie-jar state change: widened scope, a persisted attacker cookie, or a shadowed session name.
+- A render behaviour change, namely a body rendered as script-capable content after a media-value replacement.
+- Navigation to a replaced destination inside the same response.
+
+## Adversarial Capabilities
+
+Header injection testing presupposes a knob that reaches a header, knowledge of the middle layers, and a second session to observe cross-user effects, and it consumes all three.
+- Supply input that reaches a response header, a request header, or an outbound message header.
+- Send probes that differ only in one header field so the winning value attributes cleanly.
+- Reach the target through the full chain, edge first, rather than direct to the application.
+- Hold a second session and a cache observation key so cross-user serving can be proven on clean replay.
+- Host or reference an external destination when the emitted link or the resolved authority leaves the building.
+- Read the stored entry behind the response, not only the current reply.
+
+## Trust Assumptions
+
+The class rests on one agreement: every value that reaches a header is normalized so that input stays a value, and every intermediary binds the message framing to the request that declared it.
+The agreement holds header values free of line breaks, holds the authority and forwarding families to values set by the layer that terminates the connection, holds the cache key to cover everything that shapes the body, and holds each hop to the same framing declaration.
+Sensitive position and session control leak when any clause fails: a value breaks out of its field, an upstream alias overrides a decision, or a cache stores a body under a key that another user also reaches.
+Each variant breaks one clause: the normalization clause, the authority clause, the cache-key clause, the framing clause, or the same-response semantics clause.
 
 ## Key Vulnerabilities
 
 ### CRLF Response Splitting and Smuggling
 
-Inject `\r\n\r\n` to terminate the current response and prepend a second attacker-controlled response. Cache or downstream proxy may key on the first response and serve the second to other users.
+Injecting a line-break pair terminates the current response and starts an attacker-controlled one. A cache or downstream proxy may key on the first response and serve the second to other users.
 
-```
-GET /redirect?to=foo%0d%0aSet-Cookie:%20admin=1%0d%0a%0d%0a<html>poisoned</html> HTTP/1.1
-```
-
-Request smuggling is the same primitive at the request layer: inject a header that causes the proxy and backend to disagree on message framing - most commonly conflicting `Content-Length` and `Transfer-Encoding`, or two `Content-Length` headers with different values. Backend reads one request, frontend reads a different one; the leftover bytes become a smuggled request prepended to the next victim's connection.
+Request smuggling is the same primitive at the request layer: inject a header that makes the proxy and the backend disagree on message framing, most commonly conflicting length and encoding declarations or two length fields with different values. The front-end reads one request and the backend another; the leftover bytes become a smuggled request prepended to the next connection.
 
 ### Cache Poisoning
 
-- **Unkeyed input → keyed response**: input that influences the response body but not the cache key (an `X-Forwarded-Host` echoed in a link, an unkeyed query parameter reflected in HTML)
-- **`Vary` manipulation**: inject a `Vary` header to over-fragment the cache (DoS-flavored) or under-fragment it (cross-user serving)
-- **`X-Forwarded-Proto` / `X-Forwarded-Host` poisoning**: backend uses these to build canonical URLs in the response; CDN caches the response with attacker-controlled links
-- **`Cache-Control` injection**: flip `private` to `public` (or vice versa) to change cache eligibility; inject `max-age=999999` for persistent poisoning, or `max-age=0` / `no-cache` to flush - `Age` is generated by the cache itself and isn't a freshness control, don't bother with it
-- **Web cache deception**: trick the cache into storing an authenticated response at a public-looking URL (`/account/profile.css`) by appending a cacheable extension
+- **Unkeyed input to keyed response**: input that influences the body but not the cache key, such as a forwarding alias echoed into a link or an unkeyed parameter reflected into markup
+- **Cache-control manipulation**: inject a freshness or eligibility value to flip an entry private or shared, or to extend its life
+- **Forwarding alias poisoning**: the backend builds canonical URLs from forwarded values, and the cache stores the response with attacker-controlled links
+- **Cache deception**: trick the cache into storing an authenticated response at a public-looking URL by appending a cacheable extension
 
-### Host Header Confusion
+### Authority Confusion
 
-Backends often trust `Host` (or `X-Forwarded-Host`) when constructing absolute URLs - password reset emails, OAuth `redirect_uri`, canonical link tags. Sending a forged Host produces a reset link pointing at attacker-controlled infrastructure that still carries the victim's reset token.
+Backends often trust the authority header or its forwarding alias when constructing absolute URLs: password reset messages, authorization callbacks, canonical links. A forged authority produces a message pointing at attacker infrastructure that still carries the victim's token.
 
-```
-POST /password-reset HTTP/1.1
-Host: attacker.tld
-```
+Also test precedence between the authority header and its aliases, bracketed and trailing-dot forms, and port confusion shapes.
 
-Also test: precedence between `Host` and `X-Forwarded-Host`, IPv6 bracketing (`Host: [::1]:80`), trailing dot (`Host: example.com.`), and port confusion (`Host: example.com:@attacker.tld`).
+### Cookie Manipulation
 
-### Cookie / Set-Cookie Manipulation
+- Widen the scope of an attacker-set cookie through a broader domain or path attribute
+- Relax the cross-site attribute so the cookie travels on cross-site requests
+- Set a long lifetime for persistence, or a negative lifetime to destroy the victim's session
+- Shadow a real session cookie by reusing its name, where precedence rules favor the later entry
+- Reflected cookie rendering: the injection point is the header and the sink is the page
 
-- Inject `Domain=.example.com` or `Path=/` to widen scope of an attacker-set cookie
-- Inject `SameSite=None; Secure` to allow cross-site inclusion
-- Inject `Max-Age=999999999` for persistence, or `Max-Age=-1` to nuke the victim's session
-- Inject a cookie with the same name as a real session cookie - precedence rules let a same-domain attacker shadow it (cookie tossing)
-- Reflected cookie XSS: if a cookie value is later rendered unescaped in HTML, the injection point is the header but the sink is the page
+### Forwarding Header Spoofing
 
-### Proxy and Forwarding Header Spoofing
+The forwarding family is informational: no protocol guarantee says who set it. Any application that trusts it past the boundary it controls is exploitable.
 
-The `X-Forwarded-*` family is informational - there is no protocol guarantee about who set them. Any application that trusts them past the boundary it controls is exploitable.
+- A loopback value in a client-address header bypasses IP allowlists or rate limits
+- A scheme value satisfying "secure transport only" checks while the connection stays unencrypted
+- An authority alias feeding the confusion variants above
+- Rewrite and override headers honored after the authorization check, the classic guarded-path bypass
+- Address families under several names: spray all of them, since each layer may read a different one
 
-- `X-Forwarded-For: 127.0.0.1` to bypass IP allowlists or rate limits keyed on client IP
-- `X-Forwarded-Proto: https` to satisfy "HTTPS-only" checks while still using HTTP
-- `X-Forwarded-Host: attacker.tld` for the Host-confusion variants above
-- `X-Real-IP`, `Client-IP`, `True-Client-IP`, `CF-Connecting-IP`, `Forwarded` (RFC 7239) - same primitive, different header names; spray all of them
-- `X-Original-URL` / `X-Rewrite-URL` (IIS, ASP.NET) - server-side URL rewriting after auth check, classic admin-panel auth bypass
+### Content-Type and Encoding Confusion
 
-### Content-Type / Encoding Confusion
+- Inject an HTML media type into an endpoint that returned structured data; browsers may sniff and render it
+- Inject a legacy charset to enable encoded-script rendering
+- Inject an inline disposition to switch a download into in-page rendering
+- Inject a content-encoding declaration without compressing; clients decode-fail and may reveal raw bytes in error paths
+- A missing sniffing-prevention header on some endpoints is what enables the sniffing attacks above; target the endpoints that lack it
 
-- Inject `Content-Type: text/html` into an endpoint that returned JSON; browsers may sniff and render → XSS
-- Inject `charset=utf-7` in `Content-Type` for legacy XSS via UTF-7-encoded payloads
-- Inject `Content-Disposition: inline` to switch a download into in-page rendering
-- Inject `Content-Encoding: gzip` without actually compressing - clients decode-fail and may reveal raw response bytes in error paths
-- *Absence* of `X-Content-Type-Options: nosniff` is what enables the sniffing attacks above; the header is a hardening control, not an attack surface - but if a server sets it inconsistently across endpoints, target the ones that don't
+### Script and Redirect Sinks in Headers
 
-### XSS via Response Headers
-
-- `Location: javascript:alert(1)` if redirect target is reflected unescaped (browsers usually block, but some legacy clients and Electron-style hosts don't)
-- `Location: data:text/html,<script>alert(1)</script>` - same caveat
-- `Refresh: 0; url=javascript:alert(1)` - the legacy `Refresh` header is a JavaScript-free meta-refresh equivalent
-- Reflected request header XSS: `Referer` echoed into a custom error page, `User-Agent` echoed into a debug header - combine CRLF injection with a body-injection sink
-
-### Open Redirect via Headers
-
-- `Location` is the obvious one
-- `Refresh: 0; url=https://attacker.tld` - bypasses some `Location`-only filters
-- `Link: <https://attacker.tld>; rel="canonical"` - usually informational but consumed by SEO tooling and some clients
-- `X-Accel-Redirect: /internal/file` (Nginx) - if user input reaches this, internal-only files become accessible
+- A location header whose target is reflected unescaped reaches legacy clients and embedded hosts
+- A refresh-style header carries the same navigation without script
+- Reflected request headers rendered into an error page or a debug field combine header injection with a body sink
+- A server-internal rewrite header makes internal-only files reachable when user input reaches it
 
 ### HTTP/2 Pseudo-Header and Frame Confusion
 
-- HTTP/2 splits headers into pseudo-headers (`:method`, `:path`, `:authority`, `:scheme`) and regular fields. Servers downgrading to HTTP/1.1 sometimes mishandle pseudo-header values, enabling smuggling across the H2 → H1 boundary.
-- HTTP/2 lowercases header names; an upstream H1 filter that's case-sensitive may miss a lowercase variant that the H2 backend then accepts.
-- HEADERS / CONTINUATION frame splitting: payload spans frames, intermediaries differ on whether they reassemble before applying filters.
+- HTTP/2 splits framing into pseudo-headers and regular fields; servers downgrading to HTTP/1.1 sometimes mishandle pseudo-header values, enabling smuggling across the boundary
+- HTTP/2 lowercases header names; an upstream filter that is case-sensitive may miss the lowercase variant
+- Header-block frame splitting: a payload spans frames and intermediaries differ on whether they reassemble before filtering
 
 ## Bypass Techniques
 
 **Encoding**
-- URL-encode (`%0d%0a`) and double-encode (`%250d%250a`) for WAFs that decode the wrong number of times
-- Mix encodings within one payload: `%0d%0A`, `%0D\n`, alternating case
-- Newline-equivalent Unicode: U+2028 / U+2029 (sometimes folded to LF), overlong UTF-8 of CR/LF
+- URL-encode and double-encode for filters that decode the wrong number of times
+- Mix encodings inside one probe: alternate case and mixed escape forms
+- Newline-equivalent Unicode and overlong encodings
 
 **Header normalization edges**
-- Leading / trailing whitespace and tabs in header names and values
-- Header folding (obs-fold per RFC 7230 - formally obsolete, but some parsers still accept continuation lines starting with whitespace)
-- Duplicate headers - RFC says join with `,`; in practice servers pick first, last, or differ from the proxy in front of them
+- Leading and trailing whitespace and tabs in field names and values
+- Field folding: continuation lines starting with whitespace, formally obsolete but still accepted by some parsers
+- Duplicate fields: the syntax says join, but servers pick the first, the last, or differ from the proxy in front of them
 
 **Method and method-override**
-- `X-HTTP-Method-Override: PUT` (and `X-Method-Override`, `X-HTTP-Method`) to reach state-changing handlers when the framework consults the override before applying method-based authorization
-- Effective from server-side or non-browser clients (curl, internal tooling, server-to-server proxies); from a browser the header is non-safelisted and triggers a CORS preflight, so it isn't a CSRF primitive on its own
+- Method-override headers reach state-changing handlers when the framework consults the override before method-based authorization
+- Effective from server-side and non-browser callers; from a browser the override header triggers a preflight, so it is not on its own a cross-site primitive
 
 **Header name games**
 - Case mangling for filters that key off exact casing
-- Null byte truncation in header name (`X-Forwarded-For\x00Evil`) on parsers that stop at NUL
+- Null-byte truncation inside the field name on parsers that stop at the null
+
+## Chaining Attacks
+
+- Header injection plus cache poisoning: the poisoned entry serves the injected body to every later requester
+- Header injection plus cross-site scripting: the injected field becomes a script sink once the body is rendered
+- Authority confusion plus recovery flows: the forged link carries a live token to attacker infrastructure
+- Forwarding spoof plus access control: the decision flips without touching credentials
+- Framing disagreement plus authentication bypass: the smuggled request skips the front-end check
 
 ## Testing Methodology
 
-1. **Inventory varying headers** - enumerate every response header whose value moves with input
-2. **Probe CR/LF normalization** - inject `%0d%0a` (and the encoding variants) into each varying header source; observe whether the second line lands as a real header
-3. **Test Host / X-Forwarded-Host** - submit a password-reset or any link-generating flow with attacker-controlled Host; confirm the link in the response or follow-up email
-4. **Probe forwarding headers** - spoof `X-Forwarded-For`, `X-Real-IP`, `True-Client-IP`, `CF-Connecting-IP` against IP-restricted endpoints (admin, rate-limited)
-5. **Test cache key / response content split** - find inputs that change the body but not the cache key; confirm a second request from a different session sees the poisoned response
-6. **Test method override** - `X-HTTP-Method-Override` paired with state-changing endpoints reachable via POST or GET
-7. **Test request smuggling pairs** - conflicting `Content-Length` and `Transfer-Encoding`, two `Content-Length` headers, malformed chunked encoding, against any frontend → backend pair
-8. **Cross-protocol** - replay payloads over HTTP/1.1 and HTTP/2; diff behavior
+1. **Inventory varying headers** - Enumerate every response header whose value moves with input; the step completes when each varying field carries its source
+2. **Probe normalization** - Inject line-break variants into each varying source; the step completes when each source carries a stripped or a landed verdict
+3. **Test the authority family** - Submit a link-generating flow with a forged authority and its aliases; the step completes when the emitted destination is recorded per alias
+4. **Probe forwarding headers** - Spoof the client-address and scheme families against restricted endpoints; the step completes when each decision carries a with-and-without verdict
+5. **Test cache key versus content** - Find inputs that change the body but not the key; the step completes when a clean second session observes the stored entry
+6. **Test override carriers** - Override headers paired with state-changing handlers; the step completes when the guarded path carries a reach-through verdict
+7. **Test framing pairs** - Conflicting length and encoding declarations, duplicate length fields, malformed chunked framing against the front-end to backend pair; the step completes when each pair carries a desync verdict
+8. **Cross-version replay** - Replay each interesting probe over both protocol versions; the step completes when the behaviour diff is recorded
+
+## Variants
+
+- header-crlf-splitting - Split responses when line-break payloads land as stored header fields, then bend downstream storage with injected framing.
+- header-cache-poisoning - Poison shared caches with unkeyed input that shapes cached bodies, covering fragmentation, eligibility, and deception sub-shapes.
+- header-host-forward-spoof - Spoof the authority and forwarding families to bend emitted links and access decisions, mapping each alias to its outcome.
+- header-method-override - Override the routed method or rewrite the path past authorization checks, proving the reroute lands before the check.
+- header-request-smuggling - Smuggle requests through framing disagreements between chained parsers, pairing length against encoding declarations.
+- header-response-value-confusion - Confuse same-response header semantics without line breaks, rewriting cookie attributes, media types, and redirect targets.
 
 ## False Positives
 
-- Headers that vary by input but are correctly keyed in the cache (intentional personalization, Vary set correctly)
-- `X-Forwarded-*` reflected back but only used for logging - not a security boundary, may not be exploitable
-- Browsers blocking `Location: javascript:` or `Location: data:` - capability exists in the protocol but most modern browsers refuse to navigate
-- CRLF appearing in response headers but stripped by an outer proxy before reaching any client or cache
-- Request smuggling indicators that turn out to be normal pipelining or keep-alive behavior
+- Headers that vary by input but are correctly keyed in the cache (intentional personalization, cache-key variation set correctly)
+- Forwarding values reflected back but used only for logging, which is not a security boundary
+- Client-side refusal to navigate to script or data destinations, which leaves the protocol capability without a live sink
+- Line breaks appearing in a response but stripped by an outer proxy before reaching any client or cache
+- Framing indicators that turn out to be ordinary pipelining or keep-alive behavior
 
 ## Pro Tips
 
-1. The fastest win is usually Host / `X-Forwarded-Host` in a password-reset or OAuth flow - try first, costs one request
-2. For cache poisoning, find the *unkeyed* input first (header that influences body but not cache key); the rest follows
-3. `X-HTTP-Method-Override` is high-yield against backends that route on it before checking method-based auth - most useful from server-side / non-browser callers (it triggers CORS preflight in a browser, so not a CSRF primitive)
-4. Smuggling lives at the boundary - identify the proxy → backend pair (CDN → origin, ingress → service) and target the framing disagreement
-5. `X-Original-URL` / `X-Rewrite-URL` against IIS / ASP.NET admin endpoints is still a high-yield bypass
-6. Before claiming a CRLF win, verify the second line landed as a real header in the cache or downstream consumer - many servers strip CRLF silently
-7. Outbound email flows are a separate but related surface - user input flowing into SMTP headers (To, Cc, Subject, Reply-To) is its own injection class with the same root cause
+1. The fastest win is usually a forged authority in a recovery or authorization flow; try it first, it costs one request
+2. For cache poisoning, find the unkeyed input first; the rest follows
+3. Override headers are high-yield against backends that route on them before checking method-based auth, most useful from server-side callers
+4. Smuggling lives at the boundary: identify the pair and target the framing disagreement
+5. Rewrite headers against guarded paths remain a high-yield bypass on stacks that honor them
+6. Before claiming a splitting win, verify the second field landed as a real field in the cache or downstream consumer
+7. Outbound message flows are a related surface with the same root cause: user input reaching message headers
 
 ## Summary
 
-Header injection is fundamentally a normalization failure: somewhere on the request → response path, user input reached a header value without CR/LF stripping or proper escaping. The impact tiers up from open redirect to cache poisoning to request smuggling depending on which downstream component trusts the resulting header. Audit every header whose value moves with input, and treat every `X-Forwarded-*` / Host trust as a security boundary that needs explicit justification.
+Header injection is fundamentally a normalization failure: somewhere on the request-to-response path, user input reached a header value without line-break stripping or proper escaping. The impact tiers up from redirection to cache poisoning to request smuggling depending on which downstream component trusts the resulting header. Audit every header whose value moves with input, and treat every authority or forwarding trust as a security boundary that needs explicit justification.

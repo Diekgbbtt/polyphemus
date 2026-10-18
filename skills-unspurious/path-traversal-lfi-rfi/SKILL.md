@@ -1,162 +1,176 @@
 ---
 name: path-traversal-lfi-rfi
 description: Path traversal and file inclusion testing for local/remote file access and code execution
+metadata:
+  version: 1.0.0
 ---
 
 # Path Traversal / LFI / RFI
 
-Improper file path handling and dynamic inclusion enable sensitive file disclosure, config/source leakage, SSRF pivots, and code execution. Treat all user-influenced paths, names, and schemes as untrusted; normalize and bind them to an allowlist or eliminate user control entirely.
+Improper file path handling and dynamic inclusion enable sensitive file disclosure, config and source leakage, SSRF pivots, and code execution. Treat all user-influenced paths, names, and schemes as untrusted; normalize and bind them to an allowlist or eliminate user control entirely.
 
 ## Attack Surface
 
 **Path Traversal**
-- Read files outside intended roots via `../`, encoding, normalization gaps
+- Read files outside intended roots via traversal shapes, encoding, and normalization gaps
 
 **Local File Inclusion (LFI)**
-- Include server-side files into interpreters/templates
+- Include server-side files into interpreters, handlers, and templates
 
 **Remote File Inclusion (RFI)**
-- Include remote resources (HTTP/FTP/wrappers) for code execution
+- Include remote resources through scheme handlers for code execution
 
 **Archive Extraction**
-- Zip Slip: write outside target directory upon unzip/untar
+- Archive entries that write outside the target directory on extract
 
 **Normalization Mismatches**
-- Server/proxy differences (nginx alias/root, upstream decoders)
-- OS-specific paths: Windows separators, device names, UNC, NT paths, alternate data streams
+- Decoder differences between front-end and application in normalization order
+- OS-specific path shapes: alternate separators, device names, UNC forms, alternate data streams
+
+**Sinks**
+- Download, export, preview, report, log, and template parameters that join user input into a path
+- Upload and conversion pipelines: image and document renderers, thumbnailers, office converters
+- Archive extract endpoints, import jobs, and background workers
+- Server-side template rendering with dynamic template selection
+- Reverse proxies and static file servers in front of application handlers
 
 ## Reconnaissance
 
 ### Surface Map
 
-- HTTP params: `file`, `path`, `template`, `include`, `page`, `view`, `download`, `export`, `report`, `log`, `dir`, `theme`, `lang`
-- Upload and conversion pipelines: image/PDF renderers, thumbnailers, office converters
-- Archive extract endpoints and background jobs; imports with ZIP/TAR/GZ/7z
-- Server-side template rendering (PHP/Smarty/Twig/Blade), email templates, CMS themes/plugins
-- Reverse proxies and static file servers (nginx, CDN) in front of app handlers
+- Parameter names: file, path, template, include, page, view, download, export, report, log, dir, theme, lang
+- Upload and conversion pipelines: renderers, thumbnailers, office converters
+- Archive extract endpoints and background jobs; imports of archive formats
+- Server-side template rendering with dynamic template names, themes, and plugins
+- Reverse proxies and static file servers in front of application handlers
 
 ### Capability Probes
 
-- Path traversal baseline: `../../etc/hosts` and `C:\Windows\win.ini`
-- Encodings: `%2e%2e%2f`, `%252e%252e%252f`, `..%2f`, `..%5c`, mixed UTF-8 (`%c0%2e`), Unicode dots and slashes
-- Normalization tests: `..../`, `..\\`, `././`, trailing dot/double dot segments; repeated decoding
-- Absolute path acceptance: `/etc/passwd`, `C:\Windows\System32\drivers\etc\hosts`
-- Server mismatch: `/static/..;/../etc/passwd` ("..;"), encoded slashes (`%2F`), double-decoding via upstream
+- Traversal baseline across separators: relative sequences against a canonical small file, plus platform-native path shapes for the target OS
+- Encodings: single and double URL encoding, mixed case, overlong UTF-8 and UTF-16 forms, Unicode dot and separator equivalents
+- Normalization tests: folded and repeated dot segments, trailing dot and trailing slash forms, repeated decoding
+- Absolute path acceptance: rooted paths supplied where a relative name is expected
+- Front-end versus backend mismatch probes: encoded separators and path parameters that survive the front-end
+
+### Proof Strategy
+
+- Prefer canonical small files as read proof and keep writes to synthetic archives or benign destinations
+- Record the exact input shape and the resulting path resolution for each probe so the effect is attributable
+- Where content is masked, calibrate against an in-root control request before drawing conclusions
 
 ## Detection Channels
 
-### Direct
+- Direct response disclosure where the body returns file content for a crafted traversal or inclusion shape.
+- Error echo where exception, inclusion, or extractor warnings expose canonicalized locations for a crafted shape.
+- Masked-content shift where length and entity-tag values change between in-root controls and traversal candidates.
+- Direct handler disclosure where a wrapper or filter shape returns transformed local content for a crafted include shape.
+- Outbound fetch receipt where a wrapper or hosted content shape triggers a fetch that confirms handler invocation.
+- Direct deterministic output where the response carries a hosted marker as evaluation evidence.
+- Outside-write evidence where post-extract listings reveal files beyond the destination for a crafted archive shape.
+- Follow-up read evidence where a subsequent read retrieves content from the outside location.
 
-- Response body discloses file content (text, binary, base64)
-- Error pages echo real paths
+## Adversarial Capabilities
 
-### Error-Based
+Path traversal and inclusion testing presupposes a file-operation carrier, knowledge of the target's path resolution, and a readable or writable location to prove the effect, and it consumes all three.
+- Reach a parameter whose input joins into path resolution, inclusion, or extract-destination logic.
+- Host content on a reachable origin when the scheme policy permits remote inclusion.
+- Craft archive and wrapper shapes accepted by the parsing pipeline.
+- Operate a listener that receives the outbound fetch which proves invocation.
+- Choose canonical small files as read proof to keep the effect minimal and unambiguous.
+- Re-read a location after an extract or write to attribute the outside effect.
 
-- Exception messages expose canonicalized paths or `include()` warnings with real filesystem locations
+## Trust Assumptions
 
-### OAST
-
-- RFI/LFI with wrappers that trigger outbound fetches (HTTP/DNS) to confirm inclusion/execution
-
-### Side Effects
-
-- Archive extraction writes files unexpectedly outside target
-- Verify with directory listings or follow-up reads
+The class rests on one agreement: a path, name, or scheme supplied by a user stays confined to the location the application intended and never selects executable content on its own.
+The agreement holds every input to a canonical path inside the intended root, holds each decoding hop to a single consistent decoding, holds inclusion targets to a constant application-chosen set, and holds archive entries to the extract destination.
+Sensitive files, write locations, and code execution leak when a user-influenced path escapes the root, a hop disagrees on normalization, or a scheme or entry selects content the application did not choose.
+Each variant breaks one clause: the confinement clause, the handler-selection clause, the scheme clause, or the extract-destination clause.
 
 ## Key Vulnerabilities
 
-### Path Traversal Bypasses
+### Traversal Read
 
-**Encodings**
-- Single/double URL-encoding, mixed case, overlong UTF-8, UTF-16, path normalization oddities
+- Joins of user input into filesystem reads allow out-of-root reads through relative sequences, encoded forms, and absolute paths
+- Masked responses still answer: diff length, entity tag, and status against in-root controls
+- Front-end and backend decoder disagreements open reads where the application-level filter alone passes
 
-**Mixed Separators**
-- `/` and `\\` on Windows; `//` and `\\\\` collapse differences across frameworks
+### Inclusion Handlers
 
-**Dot Tricks**
-- `....//` (double dot folding), trailing dots (Windows), trailing slashes, appended valid extension
+- Dynamic include or template resolution turns a user-influenced name into file selection
+- Wrapper schemes reach local content through filter-style transforms where the handler honours them
+- Poisonable local state (logs, sessions, temporary uploads, process caches) provides attacker-influenced content for inclusion
+- Inclusion errors and warnings name canonicalized locations, which confirms the resolution
 
-**Absolute Path Injection**
-- Bypass joins by supplying a rooted path
+### Remote Inclusion
 
-**Alias/Root Mismatch**
-- nginx alias without trailing slash with nested location allows `../` to escape
-- Try `/static/../etc/passwd` and ";" variants (`..;`)
+- Include sinks that accept scheme-qualified names fetch attacker-hosted content
+- The scheme policy decides reachability: remote wrappers are often disabled while alternate schemes remain
+- Outbound callbacks from the fetcher confirm invocation with the strongest evidence
+- Where remote inclusion is disabled, chain upload or poisoning paths into a local inclusion instead
 
-**Upstream vs Backend Decoding**
-- Proxies/CDNs decoding `%2f` differently; test double-decoding and encoded dots
+### Archive Extraction
 
-### LFI Wrappers and Techniques
+- Entries whose names carry relative traversal or absolute paths write outside the extract destination
+- Test across archive formats and confirm symlink handling and path canonicalization before the write
+- Outside writes reach served directories, configuration, and templates, so confirm the effect with a follow-up read
 
-**PHP Wrappers**
-- `php://filter/convert.base64-encode/resource=index.php` (read source)
-- `zip://archive.zip#file.txt`
-- `data://text/plain;base64`
-- `expect://` (if enabled)
+## Bypass Techniques
 
-**Log/Session Poisoning**
-- Inject PHP/templating payloads into access/error logs or session files then include them
+**Encoding**
+- Single and double URL encoding, mixed case, overlong UTF-8 and UTF-16 forms, Unicode dot and separator equivalents
+- Repeated decoding through front-end and backend hops
 
-**Upload Temp Names**
-- Include temporary upload files before relocation; race with scanners
+**Separator and Dot Tricks**
+- Mixed separators and separator collapse differences across frameworks
+- Folded dot segments, trailing dots and slashes, appended valid extensions
 
-**Proc and Caches**
-- `/proc/self/environ` and framework-specific caches for readable secrets
+**Path Shape**
+- Absolute path injection where the application joins a user value onto a base
+- Front-end alias and root mismatches with nested route prefixes
+- Path parameters and encoded separators that survive the front-end but change the backend's resolution
 
-**Legacy Tricks**
-- Null-byte (`%00`) truncation in older stacks; path length truncation
+**Disabled Primitives**
+- Where wrappers are disabled, substitute an alternate wrapper or scheme with the same reach
+- Where remote inclusion is blocked, poison local state and include it locally
 
-### Template Engines
+## Chaining Attacks
 
-- PHP include/require; Smarty/Twig/Blade with dynamic template names
-- Java/JSP/FreeMarker/Velocity; Node.js ejs/handlebars/pug engines
-- Seek dynamic template resolution from user input (theme/lang/template)
-
-### RFI Conditions
-
-**Requirements**
-- Remote includes (`allow_url_include`/`allow_url_fopen` in PHP)
-- Custom fetchers that eval/execute retrieved content
-- SSRF-to-exec bridges
-
-**Protocol Handlers**
-- http, https, ftp; language-specific stream handlers
-
-**Exploitation**
-- Host a minimal payload that proves code execution
-- Prefer OAST beacons or deterministic output over heavy shells
-- Chain with upload or log poisoning when remote includes are disabled
-
-### Archive Extraction (Zip Slip)
-
-- Files within archives containing `../` or absolute paths escape target extract directory
-- Test multiple formats: zip/tar/tgz/7z
-- Verify symlink handling and path canonicalization prior to write
-- Impact: overwrite config/templates or drop webshells into served directories
+- Traversal or inclusion to sensitive configuration, which yields further access
+- Inclusion and poisoning to code execution where the handler evaluates included content
+- Inclusion to internal fetches, which converts into SSRF surfaces
+- Archive outside writes to template or served-directory poisoning
 
 ## Testing Methodology
 
-1. **Inventory file operations** - Downloads, previews, templates, logs, exports/imports, report engines, uploads, archive extractors
-2. **Identify input joins** - Path joins (base + user), include/require/template loads, resource fetchers, archive extract destinations
-3. **Probe normalization** - Separators, encodings, double-decodes, case, trailing dots/slashes
-4. **Compare behaviors** - Web server vs application behavior
-5. **Escalate** - From disclosure (read) to influence (write/extract/include), then to execution (wrapper/engine chains)
+1. **Inventory file operations** - Downloads, previews, templates, logs, exports and imports, report engines, uploads, archive extractors
+2. **Identify input joins** - Path joins, include and template loads, resource fetchers, extract destinations
+3. **Probe normalization** - Separators, encodings, double decodes, case, trailing dots and slashes
+4. **Compare behaviors** - Front-end versus application resolution order
+5. **Escalate** - From disclosure to influence (write or extract), then to execution (wrapper and engine chains)
+6. **Confirm the effect** - Keep proof minimal: a canonical small file for reads, a follow-up read for writes
+
+## Variants
+
+- traversal-read - Read out-of-root files where file-operation carriers join input into filesystem reads, including masked responses adjudicated by length.
+- lfi-include-execution - Include local files into a handler through dynamic names, wrapper schemes, and poisonable local state.
+- rfi-remote-include - Fetch hosted content through remote-scheme inclusion, gated by scheme policy and proven by outbound callbacks.
+- archive-zipslip-write - Write outside extract destinations through crafted archive entries, confirmed by listings and follow-up reads.
 
 ## False Positives
 
-- In-app virtual paths that do not map to filesystem; content comes from safe stores (DB/object storage)
-- Canonicalized paths constrained to an allowlist/root after normalization
+- In-app virtual paths that do not map to the filesystem; content comes from safe stores
+- Canonicalized paths constrained to an allowlist or root after normalization
 - Wrappers disabled and includes using constant templates only
 - Archive extractors that sanitize paths and enforce destination directories
 
 ## Pro Tips
 
-1. Compare content-length/ETag when content is masked; read small canonical files (hosts) to avoid noise
-2. Test proxy/CDN and app separately; decoding/normalization order differs, especially for `%2f` and `%2e` encodings
-3. For LFI, prefer `php://filter` base64 probes over destructive payloads; enumerate readable logs and sessions
-4. Validate extraction code with synthetic archives; include symlinks and deep `../` chains
-5. Use minimal PoCs and hard evidence (hashes, paths). Avoid noisy DoS against filesystems
+1. Compare length and entity tag when content is masked; read canonical small files to avoid noise
+2. Test front-end and application separately; decoding and normalization order differs, especially for encoded separators and dots
+3. For local inclusion, prefer filter-style transforms over destructive payloads; enumerate readable logs and sessions
+4. Validate extraction code with synthetic archives; include symlinks and deep relative chains
+5. Keep proofs minimal and use hard evidence such as hashes and paths; avoid noisy filesystem abuse
 
 ## Summary
 
-Eliminate user-controlled paths where possible. Otherwise, resolve to canonical paths and enforce allowlists, forbid remote schemes, and lock down interpreters and extractors. Normalize consistently at the boundary closest to IO.
+Eliminate user-controlled paths where possible. Otherwise, resolve to canonical paths, enforce allowlists, forbid remote schemes, and lock down interpreters and extractors. Normalize consistently at the boundary closest to IO.

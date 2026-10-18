@@ -1,6 +1,8 @@
 ---
 name: csrf
 description: CSRF testing covering token bypass, SameSite cookies, CORS misconfigurations, and state-changing request abuse
+metadata:
+  version: 1.0.0
 ---
 
 # CSRF
@@ -41,53 +43,91 @@ Cross-site request forgery abuses ambient authority (cookies, HTTP auth) across 
 
 - Locate anti-CSRF tokens (hidden inputs, meta tags, custom headers)
 - Test removal, reuse across requests, reuse across sessions, binding to method/path
-- Verify server checks Origin and/or Referer on state changes
+- Verify the server checks Origin and/or Referer on state changes
 - Test null/missing and cross-origin values
 
 ### Method and Content-Types
 
 - Confirm whether GET, HEAD, or OPTIONS perform state changes
-- Try simple content-types to avoid preflight: `application/x-www-form-urlencoded`, `multipart/form-data`, `text/plain`
-- Probe parsers that auto-coerce `text/plain` or form-encoded bodies into JSON
+- Try simple content-types to avoid preflight: form-urlencoded, multipart, and plain text
+- Probe parsers that auto-coerce plain-text or form-encoded bodies into structured bodies
 
 ### CORS Profile
 
-- Identify `Access-Control-Allow-Origin` and `-Credentials`
+- Identify the allow-origin and allow-credentials response values
 - Overly permissive CORS is not a CSRF fix and can turn CSRF into data exfiltration
 - Test per-endpoint CORS differences; preflight vs simple request behavior can diverge
+
+## Detection Channels
+
+- Before-versus-after state comparison showing the intended effect without a proof of intent.
+- Missing-token acceptance showing the state change proceeds without the expected token.
+- Null-origin acceptance showing the state change proceeds from an empty-context delivery.
+- Per-endpoint encoding acceptance showing which simple encoding family succeeds per endpoint.
+- Storage-effect signal showing created plus modified plus deleted records after a delivery.
+- Confirmation-chain completion showing each chained navigation step executed in order.
+- Sending-scope observation showing the session cookie travels on the top-level navigation case.
+- Redirect-chain signal showing an authorization entry completed through navigation plus redirect following.
+- Coercion-applied signal showing the preflightless body executed with structured semantics.
+- Repeated-key plus collection-shape confusion signal showing the parser resolved the ambiguous shape into an action.
+- Override-acceptance signal showing the simple request executed as the stronger method.
+- Account-identity comparison showing the victim browser now sits in the attacker account.
+- Logout-clearing signal showing proof-of-intent state reset before planting.
+- Plant-acceptance signal showing the login flow accepted attacker-chosen credentials cross-origin.
+- Post-plant action attribution showing later victim actions land under the attacker account.
+- Handshake-acceptance signal showing the cross-site upgrade opened an authenticated channel.
+- Cookie-travel observation showing the session traveled on the upgrade request.
+- Origin-check outcome showing absent or permissive acceptance on the handshake path.
+- Over-socket action effect showing a subsequent socket message caused the intended state change.
+
+## Adversarial Capabilities
+
+CSRF testing presupposes a delivery surface the victim reaches, knowledge of the target action's shape, and a live victim session, and it consumes all three.
+- Serve attacker content from a reachable origin and induce the victim to load it.
+- Reconstruct a state-changing request exactly as the target endpoint accepts it, including encoding and method.
+- Hold a second browser profile with its own session to observe which account the effect lands in.
+- Read the durable effect of each attempt after the victim's browser returns.
+- Register attacker-held credentials when the flow under test is a login flow.
+
+## Trust Assumptions
+
+The class rests on one agreement: a request that changes state carries proof that the account owner intended it, and the browser's own scoping rules keep cross-site requests from carrying ambient authority.
+The agreement holds every state change to a non-replayable proof of intent, holds the session artifact to a scope that excludes cross-site delivery, holds the request parser to the shape the sender declared, and holds each transport to the same origin check as the browser channel.
+Sensitive position leaks when a request reaches a state change across origins with ambient authority and without proof of intent.
+Each variant breaks one clause: the proof-of-intent clause, the scoping clause, the parser-clause, the identity clause of a login flow, or the transport clause of the socket handshake.
 
 ## Key Vulnerabilities
 
 ### Navigation CSRF
 
-- Auto-submitting form to target origin; works when cookies are sent and no token/origin checks are enforced
-- Top-level GET navigation can trigger state if server misuses GET or links actions to GET callbacks
+- Auto-submitting form to the target origin; works when cookies are sent and no token or origin checks are enforced
+- Top-level GET navigation can trigger state if the server misuses GET or links actions to GET callbacks
 
 ### Simple Content-Type CSRF
 
-- `application/x-www-form-urlencoded` and `multipart/form-data` POSTs do not require preflight
-- `text/plain` form bodies can slip through validators and be parsed server-side
+- Form-urlencoded and multipart POSTs do not require preflight
+- Plain-text form bodies can slip through validators and be parsed server-side
 
-### JSON CSRF
+### Structured-Body CSRF
 
-- If server parses JSON from `text/plain` or form-encoded bodies, craft parameters to reconstruct JSON
-- Some frameworks accept JSON keys via form fields (e.g., `data[foo]=bar`) or treat duplicate keys leniently
+- If the server parses structured bodies from plain-text or form-encoded input, craft parameters that reconstruct the structure
+- Some frameworks accept structured keys via form fields or treat duplicate keys leniently
 
 ### Login/Logout CSRF
 
-- Force logout to clear CSRF tokens, then chain login CSRF to bind victim to attacker's account
-- Login CSRF: submit attacker credentials to victim's browser; later actions occur under attacker's account
+- Force logout to clear anti-forgery state, then chain login CSRF to bind the victim to the attacker's account
+- Login CSRF: submit attacker credentials to the victim's browser; later actions occur under the attacker's account
 
 ### OAuth/OIDC Flows
 
 - Abuse authorize/logout endpoints reachable via GET or form POST without origin checks
-- Exploit relaxed SameSite on top-level navigations
-- Open redirects or loose redirect_uri validation can chain with CSRF to force unintended authorizations
+- Exploit relaxed SameSite scope on top-level navigations
+- Open redirects or loose redirect validation can chain with CSRF to force unintended authorizations
 
 ### File and Action Endpoints
 
 - File upload/delete often lack token checks; forge multipart requests to modify storage
-- Admin actions exposed as simple POST links are frequently CSRFable
+- Admin actions exposed as simple POST links are frequently forgeable
 
 ### GraphQL CSRF
 
@@ -96,7 +136,7 @@ Cross-site request forgery abuses ambient authority (cookies, HTTP auth) across 
 
 ### WebSocket CSRF
 
-- Browsers send cookies on WebSocket handshake
+- Browsers send cookies on the WebSocket handshake
 - Enforce Origin checks server-side; without them, cross-site pages can open authenticated sockets and issue actions
 
 ## Bypass Techniques
@@ -109,31 +149,31 @@ Cross-site request forgery abuses ambient authority (cookies, HTTP auth) across 
 
 ### Origin/Referer Obfuscation
 
-- Sandbox/iframes can produce null Origin; some frameworks incorrectly accept null
-- `about:blank`/`data:` URLs alter Referer
-- Ensure server requires explicit Origin/Referer match
+- Sandboxed frames can produce a null origin; some frameworks incorrectly accept null
+- Blank-document and data-URL origins alter the referer value
+- Ensure the server requires an explicit origin or referer match
 
 ### Method Override
 
-- Backends honoring `_method` or `X-HTTP-Method-Override` may allow destructive actions through a simple POST
+- Backends honoring method-override fields or headers may allow destructive actions through a simple POST
 
 ### Token Weaknesses
 
 - Accepting missing/empty tokens
 - Tokens not tied to session, user, or path
-- Tokens reused indefinitely; tokens in GET
+- Tokens reused indefinitely; tokens carried in the URL
 - Double-submit cookie without Secure/HttpOnly, or with predictable token sources
 
 ### Content-Type Switching
 
-- Switch between form, multipart, and `text/plain` to reach different code paths
+- Switch between form, multipart, and plain text to reach different code paths
 - Use duplicate keys and array shapes to confuse parsers
 
 ### Header Manipulation
 
-- Strip Referer via meta refresh or navigate from `about:blank`
-- Test null Origin acceptance
-- Leverage misconfigured CORS to add custom headers that servers mistakenly treat as CSRF tokens
+- Strip the referer via meta refresh or navigation from a blank document
+- Test null-origin acceptance
+- Leverage misconfigured CORS to add custom headers that servers mistakenly treat as anti-forgery tokens
 
 ## Chaining Attacks
 
@@ -147,9 +187,18 @@ Cross-site request forgery abuses ambient authority (cookies, HTTP auth) across 
 2. **Note request details** - Method, content-type, whether reachable via simple requests
 3. **Assess session model** - Cookies with SameSite attrs, custom headers, tokens
 4. **Check defenses** - Anti-CSRF tokens and Origin/Referer enforcement
-5. **Attempt preflightless delivery** - Form POST, text/plain, multipart/form-data
+5. **Attempt preflightless delivery** - Form POST, plain text, multipart
 6. **Test navigation** - Top-level GET navigation
 7. **Cross-browser validation** - Behavior differs by SameSite and navigation context
+8. **Confirm the effect** - Snapshot the state before and after each delivery, and the step completes when every delivery carries an effect verdict
+
+## Variants
+
+- csrf-form-post - Deliver preflightless cross-site form POSTs that replay endpoint semantics, covering multipart and plain-text shapes per endpoint.
+- csrf-navigation-get - Chain top-level cross-site GET navigations that trigger state changes, including confirmation steps and staff GET tools.
+- csrf-parser-differential - Reconstruct rich request semantics inside preflightless encodings that coerce to structured bodies, including override markers.
+- csrf-login-fixation - Plant attacker-chosen credentials through cross-site login flows that permit fixation, then attribute later victim actions to the planted account.
+- csrf-websocket-handshake - Open authenticated cross-site socket handshakes that rely on origin checks alone, then issue over-socket actions.
 
 ## False Positives
 
@@ -159,10 +208,10 @@ Cross-site request forgery abuses ambient authority (cookies, HTTP auth) across 
 
 ## Pro Tips
 
-1. Prefer preflightless vectors (form-encoded, multipart, text/plain) and top-level GET if available
+1. Prefer preflightless vectors (form-encoded, multipart, plain text) and top-level GET if available
 2. Test login/logout, OAuth connect/disconnect, and account linking first
 3. Validate Origin/Referer behavior explicitly; do not assume frameworks enforce them
-4. Toggle SameSite and observe differences across navigation vs XHR
+4. Toggle SameSite and observe differences across navigation vs scripted requests
 5. For GraphQL, attempt GET queries or persisted queries that carry mutations
 6. Always try method overrides and parser differentials
 7. Combine with clickjacking when visual confirmations block CSRF

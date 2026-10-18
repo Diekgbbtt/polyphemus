@@ -1,125 +1,168 @@
 ---
 name: open-redirect
 description: Open redirect testing for phishing pivots, OAuth token theft, and allowlist bypass
+metadata:
+  version: 1.0.0
 ---
 
 # Open Redirect
 
-Open redirects enable phishing, OAuth/OIDC code and token theft, and allowlist bypass in server-side fetchers that follow redirects. Treat every redirect target as untrusted: canonicalize and enforce exact allowlists per scheme, host, and path.
+Open redirects enable phishing, credential theft in authorization flows, and allowlist bypass in server-side fetchers that follow redirects. Treat every redirect target as untrusted: canonicalize, then enforce exact allowlists per scheme, host, and path.
 
 ## Attack Surface
 
 **Server-Driven Redirects**
-- HTTP 3xx Location
+- Redirect responses whose location is built from a request value
 
 **Client-Driven Redirects**
-- `window.location`, meta refresh, SPA routers
+- Script-driven navigation, meta refresh, and client-side routers
 
-**OAuth/OIDC/SAML Flows**
-- `redirect_uri`, `post_logout_redirect_uri`, `RelayState`, `returnTo`/`continue`/`next`
+**Authorization Flows**
+- Registered callback destinations, post-logout destinations, relay state, and return-to parameters
 
 **Multi-Hop Chains**
-- Only first hop validated
+- Only the first hop validated, with a later hop free to leave the trusted set
 
 ## Reconnaissance
 
 ### Injection Points
 
-- Params: `redirect`, `url`, `next`, `return_to`, `returnUrl`, `continue`, `goto`, `target`, `callback`, `out`, `dest`, `back`, `to`, `r`, `u`
-- OAuth/OIDC/SAML: `redirect_uri`, `post_logout_redirect_uri`, `RelayState`, `state`
-- SPA: `router.push`/`replace`, `location.assign`/`href`, meta refresh, `window.open`
-- Headers: `Host`, `X-Forwarded-Host`/`Proto`, `Referer`; server-side Location echo
+- Query and body parameters whose names suggest a destination or a continuation
+- Authorization flows: callback destination, post-logout destination, relay state, continuation parameters
+- Client-side dispatch: router push and replace calls, location assignment, meta refresh, window opening
+- Headers: authority and forwarding families that shape absolute URLs built by the server
 
-### Parser Differentials
+### Validator Behaviour
 
-**Userinfo**
-- `https://trusted.com@evil.com` → validators parse host as trusted.com, browser navigates to evil.com
-- Variants: `trusted.com%40evil.com`, `a%40evil.com%40trusted.com`
+- Submit one obvious external destination and observe the verdict text, which reveals the validation family (exact match, prefix, pattern, or none)
+- Vary one component at a time (scheme, authority, port, path) to map which components the validator compares
+- Compare the validator verdict with the navigation outcome: the gap between the two is the attack surface
 
-**Backslash and Slashes**
-- `https://trusted.com\evil.com`, `https://trusted.com\@evil.com`, `///evil.com`, `/\evil.com`
+## Detection Channels
 
-**Whitespace and Control**
-- `http%09://evil.com`, `http%0A://evil.com`, `trusted.com%09evil.com`
+- The location header points to an external destination on the enforcing side.
+- The browser address bar reaches the external destination on the navigating side.
+- Validator verdict and real navigation outcome disagree for the same submitted value.
+- An issued credential arrives at the attacker-operated endpoint through the trusted redirector.
+- The location header on the relay hop points to the attacker endpoint while the first hop stays trusted.
+- The browser address bar traverses the trusted redirector before landing externally.
+- Fetcher egress reaches the internal target with retrievable response evidence.
+- A later-hop location header points to the internal target while the first hop stays allowlisted.
+- The chain trace shows the allowlisted redirector forwarding into the internal destination.
+- Timing and header signals confirm server-side retrieval of the internal target.
 
-**Fragment and Query**
-- `trusted.com#@evil.com`, `trusted.com?//@evil.com`, `?next=//evil.com#@trusted.com`
+## Adversarial Capabilities
 
-**Unicode and IDNA**
-- Punycode/IDN: `truѕted.com` (Cyrillic), `trusted.com。evil.com` (full-width dot), trailing dot
+Redirect testing presupposes a lever that reaches a destination value, an external endpoint to receive arrivals, and a navigation observation, and it consumes all three.
+- Supply destination values through every carrier the flow exposes, including encoded forms.
+- Operate an external endpoint that records arrivals and their referrer context.
+- Drive both sides: the server verdict and a real client navigation.
+- Hold an authorized flow position (a registered callback as attacker infrastructure) when the chain targets credential delivery.
+- Reach the server-side fetcher that follows redirects, where a fetch pivot is in scope.
 
-### Encoding Bypasses
+## Trust Assumptions
 
-- Double encoding: `%2f%2fevil.com`, `%252f%252fevil.com`
-- Mixed case and scheme smuggling: `hTtPs://evil.com`, `http:evil.com`
-- IP variants: decimal 2130706433, octal 0177.0.0.1, hex 0x7f.1, IPv6 `[::ffff:127.0.0.1]`
-- User-controlled path bases: `/out?url=/\evil.com`
+The class rests on one agreement: the destination the validator approves is the destination the client eventually reaches.
+The agreement holds both sides to one canonical parse, holds the approval to the whole destination rather than a fragment of it, holds every hop of a chain to the same check, and holds the approved destination's content to the trust the user grants it.
+Sensitive position leaks when the two sides disagree: the validator approves a trusted-looking value that the client resolves elsewhere, or a later hop leaves the approved set unseen.
+Each variant breaks one clause: the canonicalization clause, the whole-destination clause, the per-hop clause, or the credential-relay clause.
 
 ## Key Vulnerabilities
 
 ### Allowlist Evasion
 
-**Common Mistakes**
-- Substring/regex contains checks: allows `trusted.com.evil.com`
-- Wildcards: `*.trusted.com` also matches `attacker.trusted.com.evil.net`
-- Missing scheme pinning: `data:`, `javascript:`, `file:`, `gopher:` accepted
-- Case/IDN drift between validator and browser
+- Substring and contains-style checks that accept a trusted name appearing anywhere in the value
+- Wildcard acceptance that also matches a lookalike host ending outside the trusted domain
+- Missing scheme pinning, which admits script, data, and file schemes
+- Case and internationalized-name drift between the validator and the client
+- Prefix checks that accept a trusted domain plus an attacker-controlled suffix
 
-**Robust Validation**
-- Canonicalize with a single modern URL parser (WHATWG URL)
-- Compare exact scheme, hostname (post-IDNA), and an explicit allowlist with optional exact path prefixes
-- Require absolute HTTPS; reject protocol-relative `//` and unknown schemes
+### Authorization Flow Abuse
 
-### OAuth/OIDC/SAML
+- An open redirect on a trusted domain, used as the registered destination, intercepts issued credentials
+- Weak prefix and suffix validation on the callback destination
+- Path canonicalization gaps that resolve outside the registered prefix
+- Post-logout destinations validated less strictly than callback destinations
 
-**Redirect URI Abuse**
-- Using an open redirect on a trusted domain for redirect_uri enables code interception
-- Weak prefix/suffix checks: `https://trusted.com` → `https://trusted.com.evil.com`
-- Path traversal/canonicalization: `/oauth/../../@evil.com`
-- `post_logout_redirect_uri` often less strictly validated
+### Client-Side Dispatch
 
-### Client-Side Vectors
+- Script navigation built from a parameter, including router push and replace calls
+- Meta refresh targets built from input
+- Client-side routers that treat a supplied path as an external destination
 
-**JavaScript Redirects**
-- `location.href`/`assign`/`replace` using user input
-- Meta refresh `content=0;url=USER_INPUT`
-- SPA routers: `router.push(searchParams.get('next'))`
+### Absolute URL Construction
 
-### Reverse Proxies and Gateways
+- Authority and forwarding headers shaping absolute URLs the server emits
+- Edge link-checking and unfurling features that follow redirects and leak tokens when chained
 
-- Host/X-Forwarded-* may change absolute URL construction
-- CDNs that follow redirects for link checking can leak tokens when chained
+## Advanced Techniques
 
-### SSRF Chaining
+### Multi-Hop Chains
 
-- Server-side fetchers (web previewers, link unfurlers) follow 3xx
-- Combine with an open redirect on an allowlisted domain to pivot to internal targets (169.254.169.254, localhost)
+- Cross several distinct trusted subdomains and paths so no single hop leaves the approved set
+- Use a trusted redirector as the first hop, with the destination decided at the later hop
+- Vary the hop count to find where the check is applied
+
+### Fetch Pivot
+
+- Server-side fetchers (previewers, unfurlers, importers) follow redirects, so an allowlisted redirector pivots fetches to internal targets
+- Confirm the pivot with response evidence, timing, or an outbound callback
+
+### Destination Harvesting
+
+- Embedded subresources leak the destination or a credential through the referrer policy
+- Fragments and query strings survive the redirect and reach the attacker endpoint
+
+## Bypass Techniques
+
+- Userinfo-style values, where the validator reads one authority and the client navigates to another
+- Backslash and mixed-slash forms, resolved as separators by some clients
+- Control characters and whitespace inside the scheme or authority, stripped by one side and not the other
+- Fragment and query shapes that hide a second destination after the trusted name
+- Lookalike internationalized names and trailing-dot forms
+- Encoded and double-encoded separators, resolved after validation
+- Full-width dots and numeric address forms that the validator treats as untrusted-looking text
+- Scheme case variation and scheme-relative forms
+
+## Chaining Attacks
+
+- Open redirect plus an authorization flow: the issued credential is delivered to attacker infrastructure
+- Open redirect plus a server-side fetcher: the allowlisted redirector becomes a route to internal targets
+- Open redirect plus phishing: the trusted link carries the victim through a trusted origin before landing elsewhere
+- Open redirect plus a subresource embed: the destination or credential leaves through the referrer
 
 ## Testing Methodology
 
-1. **Inventory surfaces** - Login/logout, password reset, SSO/OAuth flows, payment gateways, email links
-2. **Build test matrix** - Scheme × host × path variants and encoding/unicode forms
-3. **Compare behaviors** - Server-side validation vs browser navigation results
-4. **Multi-hop testing** - Trusted-domain → redirector → external
-5. **Prove impact** - Credential phishing, OAuth code interception, internal egress
+1. **Inventory surfaces** - Login and logout, recovery, single sign-on flows, payment hand-offs, message links
+2. **Build the test matrix** - Scheme × authority × path variants, plus encoding and internationalized-name forms
+3. **Compare behaviours** - Server-side validation verdict against real browser navigation
+4. **Multi-hop testing** - Trusted origin, then redirector, then external destination
+5. **Prove impact** - Credential phishing, authorization credential interception, or internal egress
+6. **Confirm the clause** - Record which component the validator failed to compare, and the step completes when each accepted value carries the clause that admitted it
+
+## Variants
+
+- generic-redirect-parser-bypass - Evade destination allowlists through canonicalization gaps, proving browser navigation to external destinations and escaping multi-hop chains.
+- oauth-redirect-uri-relay - Relay issued credentials through a trusted redirector where callback destination registration is loose, capturing them at an attacker endpoint.
+- redirector-to-fetcher-pivot - Chain an allowlisted redirector into internal targets, confirming server-side egress and escalating the redirect into internal access.
 
 ## False Positives
 
 - Redirects constrained to relative same-origin paths with robust normalization
-- Exact pre-registered OAuth redirect_uri with strict verifier
-- Validators using a single canonical parser and comparing post-IDNA host and scheme
+- Exact pre-registered callback destinations with a strict verifier
+- Validators using one canonical parser and comparing the post-canonicalization host and scheme
 - User prompts that show the exact final destination before navigating
 
 ## Pro Tips
 
-1. Always compare server-side canonicalization to real browser navigation; differences reveal bypasses
-2. Try userinfo, protocol-relative, Unicode/IDN, and IP numeric variants early
-3. In OAuth, prioritize `post_logout_redirect_uri` and less-discussed flows; they're often looser
-4. Exercise multi-hop across distinct subdomains and paths
-5. For SSRF chaining, target services known to follow redirects
-6. Favor allowlists of exact origins plus optional path prefixes
-7. Keep a curated suite of redirect payloads per runtime (Java, Node, Python, Go)
+1. Always compare server-side canonicalization with real browser navigation; the difference is the bypass
+2. Try userinfo, protocol-relative, internationalized-name, and numeric address shapes early
+3. In authorization flows, prioritize the post-logout destination and the less-discussed flows; they are often looser
+4. Exercise multi-hop chains across distinct subdomains and paths
+5. For fetcher pivots, target services known to follow redirects
+6. Favor exact-origin allowlists with optional exact path prefixes, one canonical parser, and a hard requirement for absolute secure destinations
+7. Keep a curated matrix of destination shapes rather than isolated payloads, so coverage is visible
 
 ## Summary
 
-Redirection is safe only when the final destination is constrained after canonicalization. Enforce exact origins, verify per hop, and treat client-provided destinations as untrusted across every stack.
+Redirection is safe only when the final destination is constrained after canonicalization and on every hop. Enforce exact origins, verify each hop, and treat client-provided destinations as untrusted across every stack.
