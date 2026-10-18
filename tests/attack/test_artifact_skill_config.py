@@ -157,24 +157,66 @@ def test_ratified_config_skills_render_into_the_hunters_system_prompt(tmp_path):
 
 
 def test_the_hunters_system_prompt_is_stable_across_its_turns(tmp_path):
-    """The prompt-cache prefix (ADR A5): the index is byte-identical on every
-    turn of one hunt - the set is rebuilt per dispatch, never mutated."""
+    """The prompt-cache prefix (ADR A5): the index is byte-identical on EVERY
+    turn of one hunt - two real turns are driven here (a tool-calling turn and
+    the concluding turn), and the set is rebuilt per dispatch, never mutated."""
+    from langchain_core.messages import AIMessage
+
     from polymerhus.attack.hunting.hunting_agent import build_hunting_agent
 
     seen: list = []
+    # The counter lives in the factory closure: the harness builds a fresh model
+    # per turn, so an instance counter would restart the script every turn.
+    cursor = {"i": 0}
+    script = [
+        AIMessage(content="", tool_calls=[{
+            "name": "graph_view",
+            "args": {"cypher": "MATCH (u) RETURN u"},
+            "id": "c1",
+        }]),
+        AIMessage(content="hunt concluded"),
+    ]
+
+    class _Scripted(BaseChatModel):
+        def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+            seen.append(list(messages))
+            i = cursor["i"]
+            cursor["i"] = i + 1
+            return ChatResult(generations=[ChatGeneration(
+                message=script[min(i, len(script) - 1)])])
+
+        async def _agenerate(self, messages, stop=None, run_manager=None, **kwargs):
+            return self._generate(
+                messages,
+                stop=stop,
+                run_manager=run_manager.get_sync() if run_manager else None,
+                **kwargs,
+            )
+
+        @property
+        def _llm_type(self) -> str:
+            return "fake"
+
+        def bind_tools(self, tools, **kwargs):
+            return self
+
     dispatch = build_hunting_agent(
         run_id="run-1", project_id="proj-1",
         memory_store=HunterMemoryStore(tmp_path / "hunter"),
         hunt_store=HuntStore(tmp_path / "hunts"),
         checkpointer=InMemorySaver(),
-        model_factory=_recording_factory(seen),
+        model_factory=lambda role_id: _Scripted(),
         observe=False,
     )
 
     asyncio.run(dispatch(HuntConfig.model_validate(_config(skills=["csrf", "ssrf"]))))
 
+    assert len(seen) == 2, "the scripted tool-calling turn plus the concluding turn"
     systems = set(_system_messages(seen))
     assert len(systems) == 1, "one byte-stable system prompt across the hunt"
+    system = systems.pop()
+    assert f"- ssrf: {skill_meta('ssrf')['description']}" in system
+    assert f"- csrf: {skill_meta('csrf')['description']}" in system
 
 
 # --- the pod: a TestImplementationSpec names the runner's skills --------------
