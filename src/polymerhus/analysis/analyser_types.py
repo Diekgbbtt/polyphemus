@@ -25,6 +25,7 @@ from polymerhus.analysis.l1_types import (
     ServiceDelta,
     SystemDelta,
     SystemEdgeDelta,
+    SystemEvidenceDelta,
 )
 
 
@@ -37,11 +38,18 @@ class ServiceProposal(BaseModel):
 
 class SystemProposal(BaseModel):
     """A cross-cutting System the analyser judges to exist (L1D-4). `kind` must be
-    a known system kind (the curator rejects kinds outside `SYSTEM_KINDS`)."""
+    a known system kind (the curator rejects kinds outside `SYSTEM_KINDS`).
+
+    `evidence` carries the System's WITNESSES (ticket #354): the L0 nodes whose
+    observation grounds the claim, each addressed by the domain's own L0 reference
+    (`L0Ref`: label + the L0 node's identity keys). The sole-writer MATCHes each one
+    and MERGEs an `EVIDENCED_BY` edge; a witness the graph does not hold produces no
+    edge, and a claim with no witness stays an edgeless (but written) System."""
 
     kind: str
     discriminator: str = L1_SINGLETON
     props: dict = Field(default_factory=dict)
+    evidence: list[L0Ref] = Field(default_factory=list)
 
 
 class AggregatesProposal(BaseModel):
@@ -118,9 +126,13 @@ def proposals_to_deltas(
 
 
 def enrichment_proposals_to_deltas(batch: L1DeltaBatch, provenance: Provenance) -> dict:
-    """Map the FR-ENRICH proposals to their provenance-carrying deltas, keyed to
+    """Map the ADDITIVE proposals to their provenance-carrying deltas, keyed to
     match `l1_curator.enrich`'s kwargs. Provenance is system-supplied (the LLM
-    never sets it), exactly as `proposals_to_deltas` does for the core deltas."""
+    never sets it), exactly as `proposals_to_deltas` does for the core deltas.
+
+    Two categories: the typed `Service->System` edges (`system_edges`) and each
+    System's `EVIDENCED_BY` witnesses (`system_evidence`, ticket #354) - one delta
+    per witness, so a System with no witness maps to nothing and stays edgeless."""
     return {
         "system_edges": [
             SystemEdgeDelta(
@@ -129,5 +141,12 @@ def enrichment_proposals_to_deltas(batch: L1DeltaBatch, provenance: Provenance) 
                 order=e.order, provenance=provenance,
             )
             for e in batch.system_edges
+        ],
+        "system_evidence": [
+            SystemEvidenceDelta(
+                kind=s.kind, discriminator=s.discriminator, l0=w, provenance=provenance,
+            )
+            for s in batch.systems
+            for w in s.evidence
         ],
     }

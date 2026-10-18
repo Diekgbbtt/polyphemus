@@ -167,6 +167,49 @@ def test_contract_teaches_return_scalars_not_nodes():
     assert "properties(e) AS props" in GRAPH_VIEW_CONTRACT
 
 
+def test_contract_names_the_evidence_edge_and_the_witness_labels():
+    """#354 read side: the contract states the cross-layer edge a System's grounding
+    rides AND the labels a witness can be, so the typist can read a System's existing
+    witnesses (and never wonder whether the edge exists at all)."""
+    from polymerhus.analysis.l1_curator import EVIDENCE_L0_LABELS
+
+    assert "EVIDENCED_BY ((:L1System)-[:EVIDENCED_BY]->(:L0))" in GRAPH_VIEW_CONTRACT
+    assert ("witnesses are L0 nodes of these labels only: "
+            + ", ".join(EVIDENCE_L0_LABELS)) in GRAPH_VIEW_CONTRACT
+
+
+def test_schema_states_the_witness_identity_keys():
+    """A witness reference is only MATCHable if the identity keys are named: the
+    contract must state the same keys `l0_stream.L0_IDENTITY_KEYS` declares for the
+    witness labels (the Header pin above, extended to the family #354 added)."""
+    from polymerhus.analysis.l0_stream import L0_IDENTITY_KEYS
+
+    assert "Technology (name/version)" in GRAPH_VIEW_CONTRACT
+    assert "Certificate (subject_cn)" in GRAPH_VIEW_CONTRACT
+    assert L0_IDENTITY_KEYS["Technology"] == ("name", "version")
+    assert L0_IDENTITY_KEYS["Certificate"] == ("subject_cn",)
+
+
+def test_a_system_neighbours_query_reads_its_witnesses():
+    """The System -> L0 witness hop is a plain read through the tool: the EVIDENCED_BY
+    pattern passes the write-shape guard and returns the L0 rows it reaches."""
+    seen = {}
+
+    def read_fn(cypher, params):
+        seen["cypher"] = cypher
+        return [{"labels": ["Header"], "props": {"name": "sid", "value": "abc"}}]
+
+    tool = build_analysis_graph_view_tool("p1", read_fn=read_fn)
+    out = tool.invoke({
+        "cypher": "MATCH (sy:L1System {kind: $kind, project_id: $project_id})"
+                  "-[:EVIDENCED_BY]->(l0) "
+                  "RETURN labels(l0) AS labels, properties(l0) AS props LIMIT 25",
+        "params": {"kind": "IdentificationSystem"},
+    })
+    assert "-[:EVIDENCED_BY]->(l0)" in seen["cypher"]      # the guard let the read through
+    assert out == {"rows": [{"labels": ["Header"], "props": {"name": "sid", "value": "abc"}}]}
+
+
 def test_schema_states_the_endpoint_scoped_header_identity():
     """Operator ruling 2026-10-16: the graph_view schema must state the Header
     identity as {name, endpoint, baseurl} with value/direction as PROPS - the same

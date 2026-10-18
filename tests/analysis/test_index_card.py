@@ -80,6 +80,22 @@ def test_dfs_down_rejects_unsafe_rel():
         index_card.dfs_down("p", "s", "EXPOSED_VIA\n", read_fn=lambda cy, p: [])
 
 
+def test_system_card_edge_degree_surfaces_the_evidence_edges():
+    """#354 read side: the EVIDENCED_BY witnesses a System now carries land in its
+    card's edge-degree, so a BFS reader sees how strongly a mechanism is grounded -
+    without the card ever carrying the member nodes (DD-4)."""
+    row = {
+        "labels": ["L1TestableUnit", "L1System"],
+        "props": {"kind": "IdentificationSystem", "discriminator": "__singleton__", "project_id": "p"},
+        "rels": ["EVIDENCED_BY", "EVIDENCED_BY", "EVIDENCED_BY"],
+    }
+    card = index_card._card_from_row(row)
+    assert card["kind"] == "System"
+    assert card["edge_degree"] == {"EVIDENCED_BY": 3}
+    import json
+    assert "sid" not in json.dumps(card)  # the witness nodes themselves never ride the card
+
+
 def test_index_cards_maps_all_rows():
     def fake_read(cy, params):
         assert "MATCH (u:L1TestableUnit)" in cy

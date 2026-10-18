@@ -78,6 +78,23 @@ class L0Ref(BaseModel):
     identity: dict
 
 
+class SystemEvidenceDelta(BaseModel):
+    """One witness for a System (ticket #354): the `EVIDENCED_BY` cross-layer edge
+    from the System keyed `(kind, discriminator)` to the L0 node whose observation
+    grounds it.
+
+    The L0 target is MATCHed by its own key (L1D-2) and never created, so a witness
+    the graph does not hold degrades without an edge. Per the §4.3 envelope
+    asymmetry the edge carries provenance + timestamps ONLY - assignment is graded,
+    fingerprinting is not - so this delta deliberately carries no judgment envelope.
+    """
+
+    kind: str
+    discriminator: str = L1_SINGLETON
+    l0: L0Ref
+    provenance: Provenance
+
+
 class ServiceDelta(BaseModel):
     """A business-function `Service` (L1D-3/L1D-4). Keyed `(project_id,
     business_function_slug)` (L1D-12); `props` hold the NL label + typed spine

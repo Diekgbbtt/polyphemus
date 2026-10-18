@@ -54,6 +54,7 @@ from polymerhus.analysis.l1_types import (
     StripPropsOp,
     SystemDelta,
     SystemEdgeDelta,
+    SystemEvidenceDelta,
 )
 
 logger = logging.getLogger(__name__)
@@ -440,6 +441,99 @@ def write_aggregates(
     return written
 
 
+# --- the System EVIDENCED_BY writer (ticket #354) -------------------------------
+# The cross-layer evidence edge from a System to the L0 node whose observation
+# witnesses it. Sibling of `build_aggregates_cypher` on the other L1 unit type: the
+# L0 target is MATCHed (never MERGEd), so this writer can never mint an L0 node and
+# a witness the graph does not hold degrades to "no edge", never a crash and never a
+# fabricated node. Before #354 the ONLY producer of this edge was the reconcile
+# relabel remap (`_RELABEL_EDGE_REMAP` below); the mechanism-typist grounds every
+# System in evidence, so it is the primary writer now. See
+# `docs/design/system-evidenced-by-decisions.md`.
+
+# The L0 labels a System may be EVIDENCED_BY. Single source of truth: the surfaced
+# elements a mechanism fingerprint can be OBSERVED ON - the fingerprint family
+# (`Header` / `Technology` / `Certificate`), the concrete surfaced element
+# (`Endpoint`: the carrier of a recorded-transaction witness, since the HTTP history
+# is not materialised into L0, and of a client-side JS artefact) and the host-level
+# element (`BaseURL`). It deliberately EXCLUDES the connectivity types
+# (`Domain`/`Subdomain`/`IP`/`Port`/`Service`): the chunk FILTER drops them before any
+# proposer sees them, because they are how the target is REACHED, not surface.
+# `Parameter` and `Secret` are excluded too (a known-broken carrier and a value, not
+# a surfaced mechanism). Extending the set is a one-line data edit here.
+EVIDENCE_L0_LABELS: tuple[str, ...] = (
+    "Endpoint", "BaseURL", "Header", "Technology", "Certificate",
+)
+_KNOWN_EVIDENCE_LABELS = frozenset(EVIDENCE_L0_LABELS)
+
+# The cross-layer edge type, named once (the relabel remap below reuses it).
+_EVIDENCED_BY = "EVIDENCED_BY"
+
+
+def build_system_evidence_cypher(delta: SystemEvidenceDelta) -> tuple[str, dict]:
+    """Pure: MERGE one `(:L1System)-[:EVIDENCED_BY]->(:L0)` witness edge (ticket #354).
+
+    The System endpoint is MERGEd by identity `(project_id, kind, discriminator)`
+    (the evidence writer may run before its node's primary writer); the L0 target is
+    MATCHed on `delta.l0` and is NEVER created here. An absent L0 node therefore
+    makes the whole statement a no-op - no edge, no error.
+
+    The edge is idempotent (`MERGE` on the relationship), timestamped, and carries
+    provenance + timestamps only: per §4.3 of `docs/design/domain-model.md` the
+    judgment envelope is `AGGREGATES`-only by deliberate ontological commitment.
+
+    Raises ValueError on an unknown System kind, a witness label outside
+    `EVIDENCE_L0_LABELS`, or an unsafe/empty L0 label, identity map, or identity
+    key, or a null identity value (the Cypher-injection guard - labels and identity
+    KEYS are interpolated). An empty-string identity VALUE is legitimate L0 identity
+    (a Technology's `version` is written as ""), so only null is refused.
+    A blank discriminator is coerced to the `__singleton__` sentinel (never null)."""
+    if delta.kind not in _KNOWN_KINDS:
+        raise ValueError(f"Unknown system kind {delta.kind!r}; known: {sorted(_KNOWN_KINDS)}")
+    l0 = delta.l0
+    if l0.label not in _KNOWN_EVIDENCE_LABELS or not _SAFE_IDENT.match(l0.label or ""):
+        raise ValueError(
+            f"Unknown witness label {l0.label!r}; known: {sorted(_KNOWN_EVIDENCE_LABELS)}"
+        )
+    if not isinstance(l0.identity, dict) or not l0.identity:
+        raise ValueError("SystemEvidenceDelta requires a non-empty L0 identity map")
+    if not all(isinstance(k, str) and _SAFE_IDENT.match(k) for k in l0.identity):
+        raise ValueError(f"SystemEvidenceDelta L0 identity keys must be safe identifiers: {list(l0.identity)}")
+    for key, value in l0.identity.items():
+        # A NULL value can never MATCH (Cypher null property semantics); an EMPTY
+        # string is legitimate L0 identity (a Technology's `version` is written as
+        # "" by both parsers), so only null is rejected - mirroring
+        # `build_aggregates_cypher`'s value handling.
+        if value is None:
+            raise ValueError(f"SystemEvidenceDelta identity value for {key!r} must be non-null, got {value!r}")
+
+    discriminator = delta.discriminator
+    if not isinstance(discriminator, str) or not discriminator.strip():
+        discriminator = L1_SINGLETON
+
+    id_keys = sorted(l0.identity)
+    l0_clause = ", ".join(f"{k}: $l0_{k}" for k in id_keys)
+    params = {
+        "kind": delta.kind, "discriminator": discriminator,
+        "project_id": _PENDING_PROJECT_ID,
+    }
+    params.update(_prov_params(delta.provenance))
+    for k in id_keys:
+        params[f"l0_{k}"] = l0.identity[k]
+
+    cypher = "\n".join([
+        # MATCH (never MERGE) the L0 target: l1_curator must never create L0 nodes.
+        f"MATCH (l0:{l0.label} {{{l0_clause}, project_id: $project_id}})",
+        "MERGE (sy:L1TestableUnit:L1System {kind: $kind, discriminator: $discriminator, project_id: $project_id})",
+        "ON CREATE SET sy.prov_job = $prov_job, sy.first_seen = datetime()",
+        f"MERGE (sy)-[r:{_EVIDENCED_BY}]->(l0)",
+        "ON CREATE SET r.first_seen = datetime()",
+        "SET r.last_seen = datetime()",
+        "SET r.prov_job = $prov_job, r.prov_model = $prov_model, r.prov_prompt_id = $prov_prompt_id",
+    ])
+    return cypher, params
+
+
 # --- FR-ENRICH: (the DataItem/data-flow writers were removed with the data plane;
 #     see docs/design/drop-data-modeller.md) --------------------------------------
 
@@ -514,13 +608,20 @@ def enrich(
     project_id: str,
     *,
     system_edges: list[SystemEdgeDelta] | None = None,
+    system_evidence: list[SystemEvidenceDelta] | None = None,
     merge_fn=None,
 ) -> dict:
-    """Write a batch of enrichment deltas, fail-open. Returns per-category
-    counts."""
+    """Write a batch of additive deltas, fail-open. Returns per-category counts.
+
+    Two categories ride this seam because both are ADDITIVE detail a proposer emits
+    alongside its core deltas: the typed `Service->System` edges (FR-ENRICH) and the
+    cross-layer `EVIDENCED_BY` witnesses of a System (ticket #354). The core node
+    deltas stay with `l1_curate`; each category below is a MATCH-and-MERGE writer
+    with no node-identity consequences beyond the endpoints it MERGEs by key."""
     merge_fn = _resolve_merge_fn(merge_fn)
     return {
         "system_edges": _write_each(build_system_edge_cypher, system_edges or [], project_id, merge_fn, "enrich.system_edge"),
+        "system_evidence": _write_each(build_system_evidence_cypher, system_evidence or [], project_id, merge_fn, "enrich.system_evidence"),
     }
 
 
@@ -532,10 +633,10 @@ def enrich(
 # 0 apoc procedures), so re-pointing is explicit per-rel-type over a FIXED
 # allowlist rather than `apoc.refactor.mergeNodes`.
 
-# EVIDENCED_BY: a System's cross-layer evidence edge - the semantic a mis-typed
-# Service's AGGREGATES becomes when the unit is re-kinded to a System (§3 relabel
-# mapping). Interpolated, so it is a safe identifier by construction.
-_EVIDENCED_BY = "EVIDENCED_BY"
+# EVIDENCED_BY: the cross-layer evidence edge (written by
+# `build_system_evidence_cypher` above; ALSO the semantic a mis-typed Service's
+# AGGREGATES becomes when the unit is re-kinded to a System, §3 relabel mapping).
+# Defined once at the writer above; interpolated, so a safe identifier by construction.
 
 # The FIXED rel-type allowlist a merge re-points, both directions. Covers every
 # L1 edge type the sole-writer emits: the §6 System taxonomy (SYSTEM_EDGE_RELS)
