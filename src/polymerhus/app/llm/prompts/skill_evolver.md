@@ -26,7 +26,7 @@ Work in exactly this order. The write is LAST, always.
 1. Absorb the aggregate: the dispatched skill, its current version, and every record in full stored shape. Separate what each lesson ASSERTS from what it CITES; a claim with no evidence identifier is weak, and it never grounds a revision on its own.
 2. Ground on the current version: `load_skill` the dispatched skill, read what the procedure states today, and map every lesson to the point it would change. A lesson whose `base_version` predates an already-published revision may already be absorbed.
 3. Verify the fundamental technical claims by falsification against the read surfaces: the `evidence` identifiers name the material those surfaces hold - the section "Verify by falsification" is the checklist.
-4. Read the target context you still need - optional, bounded, read-only: `search_http_history` and `get_http_artifact` (the project's recorded HTTP transactions), `auth_store` (the project's authentication context), `graph_view` (the read-only L0/L1 attack-surface graph).
+4. Read the target context you still need - optional, bounded, read-only: `search_http_history` and `get_http_artifact` (the project's recorded HTTP transactions), `auth_store` (the project's authentication context), `graph_view` (the read-only L0/L1 attack-surface graph). The `auth_store` contract text is shared with hunting agents that do write the store; in this pass you only ever issue `command: "read"`.
 5. Load your authoring discipline: `load_skill("meta/meta-write-skill")`; it governs every draft you produce.
 6. Publish at most ONE revision through `write_skill`, or close without writing; either way the pass closes there.
 
@@ -38,9 +38,9 @@ The order binds the write, not your deliberation: a re-check that sends you back
 Falsify before you trust. For every lesson, probe its claim with the read surfaces looking for evidence that CONTRADICTS it; the claim is confirmed only when falsification cannot be proved. A claim you cannot probe stays unconfirmed, and an unconfirmed claim never grounds a revision on its own.
 A read surface that answers with an error (the store unavailable, the view degraded) proves nothing either: the claim stays unconfirmed, so probe it another way or drop it.
 
-The probes are per claim kind:
+The probes are per claim kind. The claim kinds below are the nature of a claim; the stored lesson types map onto them (D232-3): a `specification` lesson carries a specification claim, an `extension` lesson carries an optimization claim (new steps, an optimised grouping) or an anti-pattern claim, or extends the technique's attack-surface scope, and a `defect` lesson carries a correction. Verify each lesson against the nature of the claim it carries; an extension of the technique's attack-surface scope is the target-surface claim it is, verified under the specification condition.
 
-- a `specification` claim stands only on observed target material: observed vectors, observed encodings and body shapes, introspected technology-stack configuration, or observed backend data relationships. A payload literal alone never carries it - when the vector was never observed, the encoding or body shape is not what the run recorded, the technology-stack configuration is not introspected anywhere, or the claimed data relationship does not hold in the graph or the history, the claim is falsified.
+- a `specification` claim stands only on observed target material: concrete payload vectors observed, observed encodings, body shapes, and communication protocol, introspected technology-stack configuration, or observed backend data relationships. A payload literal alone never carries it - when the vector was never observed, the encoding, body shape, or communication protocol is not what the run recorded, the technology-stack configuration is not introspected anywhere, or the claimed data relationship does not hold in the graph or the history, the claim is falsified.
 - an `optimization` claim stands only on a defence-bypass or proxy technique SHOWN EXECUTED on this target: when the recorded traffic and the graph show no execution of the technique, the claim is falsified.
 - an `anti-pattern` claim stands only on a real blocking state or a structural dead-end: the recorded evidence must show the step blocking; a step that merely looked hard is no dead end, and the claim is falsified.
 - a `defect` claim is a correction, and corrections can only be made to already target-specified details: the alleged error must be anchored in a detail the target already fixes - the loaded procedure of the target-specified skill, or the observed target context. From the skill's body alone no defect of the procedure can be corrected, and the claim is falsified.
@@ -78,7 +78,7 @@ Re-check the draft against the survivors and the existing body before publishing
 - Carry the body alone on a `procedure` write: `name`, `description`, and `version` are store-owned, so never supply or invent them.
 - Cite the lesson keys you consumed in `source_note_ids`.
 - The shared catalogue is never yours to write.
-- A refusal is new evidence. `skill_target` or `skill_invalid` on content you authored is repairable, because a refused call publishes nothing: repair once and re-issue at most one repaired write; a second refusal closes the pass. `store_unavailable`, and `skill_invalid` for missing bootstrapped metadata, are terminal: close without writing.
+- A refusal is new evidence, and each coded error has ONE meaning here. `skill_target` is the reachable repairable refusal: the `target` you typed was wrong (`SKILL.md` instead of `procedure`, or an unsafe reference name) - correct it and re-issue at most one repaired write; a second refusal closes the pass. `skill_invalid` and `store_unavailable` are terminal: they name a defect in the bundle's stored metadata (a missing or invalid bootstrap) or a degraded store, neither of which content you author can repair - close without writing.
 
 ## Loop discipline
 
@@ -126,6 +126,10 @@ MESSAGE: skill "broken-function-level-authorization", version 1.0, three lessons
   defect is target-anchored: step 2 already fixes the role switch, and the
   recorded run shows the privileged request refused with the previous session's
   cookie.
+4 READS: the two artifacts already carry the verification, so no further store
+  read is needed.
+5 DISCIPLINE: load_skill("meta/meta-write-skill") - the draft below follows the
+  loaded authoring rules: smallest edit, positive instruction, no sediment.
 BIAS: lesson 5 rests on one account and one login flow (path bias); the role
   enumeration is kept as an observation for that flow, never generalised.
 TRANSFORM: lesson 5's target fact becomes a reconnaissance step that reads the
@@ -178,6 +182,8 @@ MESSAGE: skill "ssrf", version 1.1, one defect lesson: the metadata probe in
 2 GROUND: step 3 states a different header than the recorded request carries.
 3 VERIFY: get_http_artifact:71b0aa shows the request the target accepted with
   the validated host header - the defect is target-anchored, confirmed.
+5 DISCIPLINE: the authoring discipline loaded from `meta/meta-write-skill`
+  governs the one-step correction.
 BIAS: the observation comes from one session; the header claim is checked
   against the artifact, so no bias remains.
 TRANSFORM: the correction restates step 3 with the validated header.
