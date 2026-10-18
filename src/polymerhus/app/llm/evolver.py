@@ -18,11 +18,17 @@ The pass is the workflow the role prompt implements:
     produce  - one stateful turn on the per-`(project, skill)` thread, every
                selected record pasted in FULL (key, type, lesson, expected,
                evidence, base_version, agent, written_at) into one
-               `HumanMessage`
+               `HumanMessage`; the turn's surface is the role's bound tools,
+               the armed project-bound `write_skill`, and the READ-ONLY
+               target-context tools the workflow grounds on (D-W3-5:
+               `search_http_history`, `get_http_artifact`, `auth_store`,
+               `graph_view`)
     publish  - the AGENT calls its armed project-bound `write_skill`; the store
                re-validates structurally and bumps `metadata.version`
-    outcome  - `EvolutionOutcome` carries the decision, the version read back,
-               the consumed keys, and the thread id
+    outcome  - `EvolutionOutcome` carries the decision, the resolved version
+               (the new one when `published`, else the base version the pass
+               read - `None` only for `skill_unknown`, D-W3-3), the consumed
+               keys, and the thread id
 
 The controller is a per-hunting-run session (scheduled by the hunting bootstrap
 alongside the orchestrator pass and the surfer, cancelled with the run): per
@@ -40,6 +46,7 @@ import asyncio
 import dataclasses
 import functools
 import logging
+import threading
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -47,12 +54,19 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:  # pragma: no cover - typing only; the runtime import is lazy
     from langchain_core.messages import HumanMessage
 
+from polymerhus.app.data_root import (
+    DATA_ROOT,
+    project_dir,
+    validate_path_component,
+)
 from polymerhus.app.llm.session_address import ModuleScopedSession
 from polymerhus.app.llm.skills import (
     LessonInvalidError,
     LessonStore,
     SkillStore,
     SkillUnknownError,
+    StoreUnavailableError,
+    dump_text_atomic,
     skill_agent_binding,
 )
 
@@ -91,12 +105,196 @@ def evolver_thread_id(project_id: str, skill: str) -> str:
     ).thread_id
 
 
+# --- the durable per-pass record (D-W3-4) -------------------------------------
+#
+# The REST trigger is a launch + status pair, so one pass must stay addressable
+# AFTER the request that started it ended. The identifier is the launcher's
+# schedule name (`skills:evolve:<project_id>:<skill>`, D-W3-4's named stable
+# candidate), and the record is one YAML file per identifier under the
+# project's skills bucket:
+#
+#     <data_root>/<project_id>/skills/evolution/<pass_id>.yaml
+#
+# A relaunch for the same (project, skill) replaces the slot's record: the
+# identifier addresses the skill's pass slot, and the newest pass is what the
+# status endpoint reports. Writes are atomic under the per-project lock (the
+# skill store's discipline); reads are fail-open.
+
+EVOLUTION_PASSES_DIRNAME = "skills/evolution"
+
+_PASS_LOCKS: dict[str, threading.Lock] = {}
+_PASS_LOCKS_GUARD = threading.Lock()
+
+
+def evolution_pass_id(project_id: str, skill: str) -> str:
+    """The pass identifier: the launcher's schedule name
+    `skills:evolve:<project_id>:<skill>` (D-W3-4). Stable for the pass slot of
+    one `(project, skill)` and human-addressable, so the launch can hand it out
+    and the status endpoint can read the record back from it."""
+    return f"skills:evolve:{project_id}:{skill}"
+
+
+def _pass_lock(root: Path, project_id: str) -> threading.Lock:
+    """The per-(root, project) pass-record lock (the skill store's pattern)."""
+    key = f"{root}::{project_id}"
+    with _PASS_LOCKS_GUARD:
+        lock = _PASS_LOCKS.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            _PASS_LOCKS[key] = lock
+        return lock
+
+
+def _utc_now() -> str:
+    import datetime  # noqa: PLC0415 - stdlib, kept local like the store's stamps
+
+    return datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+
+class EvolutionPassStore:
+    """The durable per-pass record store behind the launch + status pair
+    (D-W3-4): `start` writes the running record a launch hands out,
+    `finish` stamps the outcome the launcher read back, and `get` is the
+    status endpoint's read. `discard` drops a running record whose launch was
+    refused, and only when it is still that same record (a stale discard never
+    removes a newer pass's record).
+
+    Rooted under the app-owned data root (default `DATA_ROOT`); the
+    explicit-root constructor is kept for the tests' temp stores. Import
+    performs no I/O."""
+
+    def __init__(self, root_dir: str | Path | None = None):
+        self._root = Path(root_dir) if root_dir is not None else DATA_ROOT
+
+    def _record_file(self, project_id: str, pass_id: str) -> Path:
+        """The record file for one pass identifier. Both components are
+        validated: an unsafe id (separators, traversal, control characters) is
+        refused, never escaped into a path. The `:` separators of the schedule
+        name are the one character a file name must not carry verbatim, so the
+        stem encodes them."""
+        validate_path_component(pass_id, "pass_id")
+        base = project_dir(project_id, EVOLUTION_PASSES_DIRNAME, root=self._root)
+        return base / f"{pass_id.replace(':', '_')}.yaml"
+
+    def _read(self, path: Path) -> dict | None:
+        """One record file's mapping; a missing, unreadable, or unparseable
+        file degrades to None with a warning (fail-open, the read doctrine)."""
+        import yaml  # noqa: PLC0415 - already a production dependency
+
+        try:
+            loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return None
+        except (OSError, yaml.YAMLError) as exc:
+            logger.warning("skill evolver: unreadable pass record %s: %s", path, exc)
+            return None
+        return loaded if isinstance(loaded, dict) else None
+
+    def _dump(self, path: Path, record: dict) -> None:
+        """Write one record through the skills domain's ONE atomic whole-file
+        write (`skills.dump_text_atomic`); a failed dump is a loud
+        `StoreUnavailableError`."""
+        import yaml  # noqa: PLC0415 - already a production dependency
+
+        dump_text_atomic(
+            path,
+            yaml.safe_dump(record, sort_keys=False, allow_unicode=True, width=4096),
+        )
+
+    def get(self, project_id: str, pass_id: str) -> dict | None:
+        """The recorded pass, or None: an unknown identifier, an unreadable
+        record, and an unsafe identifier all read as None (fail-open - the
+        status endpoint maps None to 404)."""
+        try:
+            path = self._record_file(project_id, pass_id)
+        except ValueError as exc:
+            logger.warning("skill evolver: unsafe pass id %r: %s", pass_id, exc)
+            return None
+        return self._read(path)
+
+    def start(self, project_id: str, skill: str, pass_id: str) -> dict:
+        """Persist the RUNNING record a launch hands out, replacing any record
+        the slot held (a relaunch supersedes the previous pass's record)."""
+        path = self._record_file(project_id, pass_id)
+        record = {
+            "pass_id": pass_id,
+            "project_id": project_id,
+            "skill": skill,
+            "status": "running",
+            "launched_at": _utc_now(),
+            "finished_at": None,
+            "outcome": None,
+        }
+        with _pass_lock(self._root, project_id):
+            self._dump(path, record)
+        logger.info(
+            "skill evolver: pass %s launched for %s/%s", pass_id, project_id, skill
+        )
+        return record
+
+    def finish(self, project_id: str, pass_id: str, outcome) -> dict:
+        """Stamp the finished record with the pass outcome, keeping the
+        launch stamp the record already carries."""
+        path = self._record_file(project_id, pass_id)
+        with _pass_lock(self._root, project_id):
+            record = self._read(path) or {}
+            record.update(
+                {
+                    "pass_id": pass_id,
+                    "project_id": project_id,
+                    "skill": record.get("skill") or "",
+                    "status": "finished",
+                    "launched_at": record.get("launched_at") or _utc_now(),
+                    "finished_at": _utc_now(),
+                    "outcome": outcome.to_dict() if outcome is not None else None,
+                }
+            )
+            self._dump(path, record)
+        logger.info(
+            "skill evolver: pass %s finished for %s (%s)",
+            pass_id,
+            project_id,
+            (record.get("outcome") or {}).get("decision", "unknown"),
+        )
+        return record
+
+    def discard(
+        self, project_id: str, pass_id: str, *, launched_at: str | None = None
+    ) -> None:
+        """Drop the slot's record on a refused launch. With `launched_at`
+        given, only a record still carrying that launch stamp is dropped, so a
+        refused launch never removes a newer pass's record."""
+        try:
+            path = self._record_file(project_id, pass_id)
+        except ValueError:
+            return
+        with _pass_lock(self._root, project_id):
+            record = self._read(path)
+            if record is None:
+                return
+            if launched_at is not None and record.get("launched_at") != launched_at:
+                return
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                pass
+            except OSError as exc:  # noqa: BLE001 - fail-open cleanup
+                logger.warning(
+                    "skill evolver: could not drop the refused pass record %s: %s",
+                    path,
+                    exc,
+                )
+
+
 @dataclasses.dataclass(frozen=True)
 class EvolutionOutcome:
     """One pass's outcome. `decision` is the closed vocabulary
-    `published | zero_skip | skill_unknown | no_write | degraded`; `version` is
-    the version read back after the turn (None when no skill resolved);
-    `consumed_keys` are the lesson keys this pass marked consumed."""
+    `published | zero_skip | skill_unknown | no_write | degraded`; `version`
+    is the RESOLVED version (D-W3-3): the new version a `published` pass read
+    back, the base version a `zero_skip` / `no_write` / `degraded` pass read,
+    and `None` only for `skill_unknown` and for a failure before any base
+    version resolved; `consumed_keys` are the lesson keys this pass marked
+    consumed."""
 
     decision: str
     skill: str
@@ -159,11 +357,58 @@ def _load_evolver_prompt() -> str:
     return text
 
 
+def build_evolver_read_tools(project_id: str) -> list:
+    """The pass's READ-ONLY target-context surface (D-W3-5): the hunting
+    module's `search_http_history` / `get_http_artifact`, the app auth store's
+    `auth_store`, and the shared read-only L0/L1 `graph_view`.
+
+    Each tool is the SAME single implementation its other bindings use, with
+    the production seam bound here: the Kali HTTP-history client, the
+    project-scoped `ReadOnlyGraphView` (which refuses write-shaped cypher), and
+    the auth store. The evolver never writes through any of them (D-W3-5): the
+    prompt carries the read-only discipline, `graph_view` refuses writes at the
+    tool, and the only write path on the pass's surface stays `write_skill`.
+
+    The hunting import resolves LAZILY inside the call (CODING_STANDARD
+    section 6): the evolver lives in the app layer, a store-only test must not
+    pay the hunting import, and the direction app -> attack already exists at
+    the REST launch seam.
+    """
+    from polymerhus.app.auth.tool import build_auth_store_tool  # noqa: PLC0415
+    from polymerhus.app.clients.kali_http_history import (  # noqa: PLC0415
+        default_http_get_fn,
+        default_http_search_fn,
+    )
+    from polymerhus.attack.hunting.graph_view_tool import (  # noqa: PLC0415
+        build_graph_view_tool,
+    )
+    from polymerhus.attack.hunting.hunt_orchestrator import (  # noqa: PLC0415
+        ReadOnlyGraphView,
+    )
+    from polymerhus.attack.hunting.hunter_tools import (  # noqa: PLC0415
+        HttpHistoryGetTool,
+        HttpHistorySearchTool,
+    )
+
+    return [
+        HttpHistorySearchTool(
+            http_search_fn=default_http_search_fn, project_id=project_id
+        ),
+        HttpHistoryGetTool(
+            http_get_fn=default_http_get_fn, project_id=project_id
+        ),
+        build_auth_store_tool(project_id=project_id),
+        build_graph_view_tool(ReadOnlyGraphView(project_id).read),
+    ]
+
+
 def _build_lessons_prompt(skill: str, version: str, records: list[dict]) -> "HumanMessage":
     """One HumanMessage carrying EVERY selected record in its FULL stored shape
     (D232-9: never the lesson prose alone, never a digest), rendered as YAML -
-    the same shape the shard holds - plus a header naming the skill, its
-    current version, and the instruction."""
+    the same shape the shard holds - grouped under the dispatched skill with
+    its current version, plus the instruction. The prose fields stay the
+    substance the model reads; the harness's own outcome vocabulary never
+    appears here (the result is read from the store, D-W3-1)."""
     from langchain_core.messages import HumanMessage  # noqa: PLC0415 - lazy, no import side effects
 
     import yaml  # noqa: PLC0415 - already a production dependency
@@ -175,11 +420,13 @@ def _build_lessons_prompt(skill: str, version: str, records: list[dict]) -> "Hum
     )
     body = yaml.safe_dump(records, sort_keys=False, allow_unicode=True)
     instruction = (
-        "\nDecide whether these lessons ground a revision of the procedure: "
-        "create a new skill, update the existing one, or write nothing "
-        "(zero-skip is the default when no objectively grounded change exists). "
-        "If you change the procedure, publish it with write_skill into the "
-        "project bundle and cite the consumed lesson keys in source_note_ids."
+        "\nVerify these lessons against the read surfaces before you trust them. "
+        "Decide whether the survivors ground a revision of the procedure: "
+        "create a new skill, update the existing one, or write nothing - "
+        "writing nothing is the default when no objectively grounded change "
+        "exists. If you change the procedure, publish it with write_skill into "
+        "the project bundle and cite the consumed lesson keys in "
+        "source_note_ids."
     )
     return HumanMessage(content=header + body + instruction)
 
@@ -227,6 +474,7 @@ async def arun_evolution_pass(
     lesson_store: LessonStore | None = None,
     model=None,
     turn_fn=None,
+    read_tools=None,
 ) -> EvolutionOutcome:
     """One bounded pass for one `(project, skill)` (D232-9). Never raises: every
     failure is a coded `EvolutionOutcome` decision."""
@@ -257,7 +505,9 @@ async def arun_evolution_pass(
             detail=f"store_unavailable: {exc}",
         )
     if not records:
-        return EvolutionOutcome("zero_skip", skill, thread_id=thread_id)
+        return EvolutionOutcome(
+            "zero_skip", skill, version=version, thread_id=thread_id
+        )
 
     # mark: the selected keys are consumed as they are loaded for pasting, so a
     # crash cannot re-paste them into a later pass (D232-2's accepted trade: a
@@ -271,7 +521,8 @@ async def arun_evolution_pass(
             detail=f"store_unavailable: {exc}",
         )
 
-    # produce: the role's bound surface plus the armed project write tool, the
+    # produce: the role's bound surface, the armed project write tool, and the
+    # read-only target-context tools the workflow grounds on (D-W3-5); the
     # prompt as the single HumanMessage, and the injectable turn seam.
     try:
         binding = skill_agent_binding(
@@ -281,6 +532,12 @@ async def arun_evolution_pass(
             store=skill_store,
             lesson_store=lesson_store,
         )
+        reads = (
+            read_tools
+            if read_tools is not None
+            else build_evolver_read_tools(project_id)
+        )
+        tools = list(binding.tools) + list(reads)
         system_prompt = _load_evolver_prompt()
         prompt = _build_lessons_prompt(skill, version, records)
     except Exception as exc:  # noqa: BLE001 - fail-open
@@ -295,7 +552,7 @@ async def arun_evolution_pass(
         await turn(
             thread_id,
             prompt,
-            tools=binding.tools,
+            tools=tools,
             middleware=binding.middleware,
             system_prompt=system_prompt,
             context=binding.context,
@@ -424,14 +681,18 @@ def append_posted_lessons(
 
 
 __all__ = [
+    "EVOLUTION_PASSES_DIRNAME",
     "EVOLUTION_RUN_PREFIX",
     "EVOLVER_ROLE_ID",
     "EVOLVER_SESSION_SEGMENT",
     "EvolutionOutcome",
+    "EvolutionPassStore",
     "append_posted_lessons",
     "arun_evolution_pass",
     "arun_evolver_controller",
+    "build_evolver_read_tools",
     "due_skills",
+    "evolution_pass_id",
     "evolver_session_id",
     "evolver_thread_id",
 ]

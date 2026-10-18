@@ -156,7 +156,7 @@ def test_a_skill_that_is_not_one_safe_component_is_refused(
     monkeypatch.setattr(skills, "_SKILLS_ROOT", _catalogue(tmp_path))
     store = _store(tmp_path)
 
-    for bad in ("../escape", "meta/authn", "lessons", ""):
+    for bad in ("../escape", "meta/authn", "lessons", "evolution", ""):
         with pytest.raises((LessonInvalidError, ValueError)):
             store.append("proj-1", skill=bad, type="defect", lesson="x")
 

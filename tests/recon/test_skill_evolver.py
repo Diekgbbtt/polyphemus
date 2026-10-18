@@ -153,7 +153,9 @@ def test_a_pass_without_lessons_zero_skips_and_never_calls_the_model(
 
     assert outcome.decision == "zero_skip"
     assert outcome.consumed_keys == ()
-    assert outcome.version is None
+    # D-W3-3: the resolved version whenever the skill resolved; `zero_skip`
+    # carries the base version the pass read.
+    assert outcome.version == "1.0"
     assert turn.calls == []
     assert (
         skill_store.meta(SKILL, project_id=PROJECT)["metadata"]["version"] == "1.0"
@@ -176,6 +178,9 @@ def test_a_pass_on_an_unresolvable_skill_is_skill_unknown_without_a_model_call(
 
     assert outcome.decision == "skill_unknown"
     assert outcome.consumed_keys == ()
+    # D-W3-3: only `skill_unknown` carries None - no skill resolved, so no
+    # version was ever read.
+    assert outcome.version is None
     assert turn.calls == []
 
 
@@ -227,12 +232,17 @@ def test_a_grounded_pass_publishes_and_marks_the_lessons_consumed(
     assert [r["key"] for r in lesson_store.read(PROJECT, skill=SKILL)] == [
         "skill:ssrf:1:consumed"
     ]
-    # The turn held the role's bound surface plus the armed project write tool.
+    # The turn held the role's bound surface, the armed project write tool, and
+    # the read-only target-context surface (D-W3-5).
     call = turn.calls[0]
     assert [t.name for t in call["tools"]] == [
         "load_skill",
         "record_skill_lesson",
         "write_skill",
+        "search_http_history",
+        "get_http_artifact",
+        "auth_store",
+        "graph_view",
     ]
     assert call["context"]["skills"] == ["meta/meta-write-skill"]
     assert call["context"]["project_id"] == PROJECT
@@ -333,6 +343,297 @@ def test_the_payload_carries_every_selected_record_in_full(
         "written_at",
     ):
         assert needle in content
+
+
+def test_the_outcome_version_is_the_resolved_version_per_decision(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """D-W3-3 pins the vocabulary: `published` carries the new version;
+    `zero_skip`, `no_write`, and `degraded` carry the base version the pass
+    read; only `skill_unknown` carries None."""
+    monkeypatch.setattr(skills, "_SKILLS_ROOT", _catalogue(tmp_path))
+    _project_bundle(tmp_path)
+    skill_store, lesson_store = _stores(tmp_path)
+    _seed_lesson(lesson_store)
+
+    degraded = asyncio.run(
+        arun_evolution_pass(
+            PROJECT, SKILL, skill_store=skill_store, lesson_store=lesson_store,
+            turn_fn=_FakeTurn(exc=RuntimeError("transport down")),
+        )
+    )
+    unknown = asyncio.run(
+        arun_evolution_pass(
+            PROJECT, "no-such-skill", skill_store=skill_store,
+            lesson_store=lesson_store, turn_fn=_FakeTurn(),
+        )
+    )
+    # The degraded pass consumed the first lesson; seed a fresh one for the
+    # no-write pass (a separate pass over a fresh selection).
+    _seed_lesson(lesson_store)
+    no_write = asyncio.run(
+        arun_evolution_pass(
+            PROJECT, SKILL, skill_store=skill_store, lesson_store=lesson_store,
+            turn_fn=_FakeTurn(),
+        )
+    )
+
+    assert degraded.decision == "degraded" and degraded.version == "1.0"
+    assert unknown.decision == "skill_unknown" and unknown.version is None
+    assert no_write.decision == "no_write" and no_write.version == "1.0"
+
+
+# --- the read-only target-context surface (D-W3-5) ----------------------------
+
+
+def test_the_read_surface_is_the_four_named_target_context_tools() -> None:
+    from polymerhus.app.auth.tool import AUTH_STORE_CONTRACT
+    from polymerhus.app.llm.evolver import build_evolver_read_tools
+    from polymerhus.attack.hunting.graph_view_tool import GRAPH_VIEW_CONTRACT
+    from polymerhus.attack.hunting.http_history_contract import (
+        GET_HTTP_ARTIFACT_DESCRIPTION,
+        SEARCH_HTTP_HISTORY_DESCRIPTION,
+    )
+
+    tools = build_evolver_read_tools(PROJECT)
+
+    assert [t.name for t in tools] == [
+        "search_http_history",
+        "get_http_artifact",
+        "auth_store",
+        "graph_view",
+    ]
+    # Each tool carries its single-sourced contract verbatim: the evolver reads
+    # the same contracts every other binding renders, never a re-spelling.
+    assert tools[0].description == SEARCH_HTTP_HISTORY_DESCRIPTION
+    assert tools[1].description == GET_HTTP_ARTIFACT_DESCRIPTION
+    assert tools[2].description == AUTH_STORE_CONTRACT
+    assert tools[3].description == GRAPH_VIEW_CONTRACT
+
+
+def test_the_graph_view_in_the_read_surface_refuses_write_shaped_cypher() -> None:
+    from polymerhus.app.llm.evolver import build_evolver_read_tools
+    from polymerhus.attack.hunting.hunt_orchestrator import ReadOnlyGraphViewError
+
+    graph = build_evolver_read_tools(PROJECT)[3]
+
+    with pytest.raises(ReadOnlyGraphViewError):
+        graph.invoke({"cypher": "MATCH (n) DETACH DELETE n"})
+
+
+def test_the_http_readers_are_bound_to_the_pass_project_and_the_recording_seam(
+    monkeypatch,
+) -> None:
+    import json
+
+    from polymerhus.app.clients import kali_http_history
+    from polymerhus.app.llm.evolver import build_evolver_read_tools
+
+    seen: list[tuple] = []
+    monkeypatch.setattr(
+        kali_http_history,
+        "default_http_search_fn",
+        lambda project_id, filters, cursor, limit, text: seen.append(
+            ("search", project_id)
+        ) or {"summaries": []},
+    )
+    monkeypatch.setattr(
+        kali_http_history,
+        "default_http_get_fn",
+        lambda project_id, artifact_id, include_body=False: seen.append(
+            ("get", project_id, artifact_id)
+        ) or {"artifact_id": artifact_id},
+    )
+
+    tools = build_evolver_read_tools(PROJECT)
+    assert json.loads(tools[0].invoke({"text": "login"})) == {"summaries": []}
+    assert json.loads(tools[1].invoke({"artifact_id": "http_A"})) == {
+        "artifact_id": "http_A"
+    }
+    assert seen == [("search", PROJECT), ("get", PROJECT, "http_A")]
+
+
+def test_the_pass_carries_an_injectable_read_surface_seam(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(skills, "_SKILLS_ROOT", _catalogue(tmp_path))
+    _project_bundle(tmp_path)
+    skill_store, lesson_store = _stores(tmp_path)
+    _seed_lesson(lesson_store)
+    turn = _FakeTurn()
+
+    class _FakeReadTool:
+        """Any tool-shaped object stands in for the read surface."""
+
+        name = "fake_read_tool"
+
+    asyncio.run(
+        arun_evolution_pass(
+            PROJECT, SKILL, skill_store=skill_store, lesson_store=lesson_store,
+            turn_fn=turn, read_tools=[_FakeReadTool()],
+        )
+    )
+
+    assert [t.name for t in turn.calls[0]["tools"]] == [
+        "load_skill",
+        "record_skill_lesson",
+        "write_skill",
+        "fake_read_tool",
+    ]
+
+
+# --- the prompt's ratified discipline (D-W3-1/5/6/8) ---------------------------
+
+
+def test_the_role_prompt_carries_the_w3_workflow_discipline() -> None:
+    """Pin the ratified prompt surgery at the text level: the write-at-the-end
+    order (D-W3-1), the read-only grounding over the NAMED read tools (D-W3-5),
+    the falsification checklist (D-W3-6), the corrections semantic (D-W3-7),
+    and the internal transform-or-reject (D-W3-8). The harness-side tree and
+    its vocabulary are gone."""
+    from polymerhus.app.llm.evolver import _load_evolver_prompt
+
+    prompt = _load_evolver_prompt()
+
+    for needle in (
+        "The write is LAST",
+        "search_http_history",
+        "get_http_artifact",
+        "auth_store",
+        "graph_view",
+        'command: "read"',
+        "corrections can only be made to already target-specified details",
+        "falsification cannot be proved",
+        "the stored lesson is never rewritten",
+    ):
+        assert needle in prompt, needle
+    for gone in (
+        "ARMED",
+        "SCAN",
+        "COOLDOWN",
+        "SETTLE",
+        "harness tracks",
+        "symbolic layer",
+        "zero_skip",
+    ):
+        assert gone not in prompt, gone
+
+
+# --- the durable pass record (D-W3-4) -----------------------------------------
+
+
+def test_the_pass_id_is_the_launcher_schedule_name() -> None:
+    from polymerhus.app.llm.evolver import evolution_pass_id
+
+    assert evolution_pass_id(PROJECT, SKILL) == f"skills:evolve:{PROJECT}:{SKILL}"
+
+
+def test_the_pass_record_round_trips_start_and_finish(tmp_path: Path) -> None:
+    from polymerhus.app.llm.evolver import (
+        EvolutionOutcome,
+        EvolutionPassStore,
+        evolution_pass_id,
+    )
+
+    store = EvolutionPassStore(root_dir=tmp_path / "data")
+    pass_id = evolution_pass_id(PROJECT, SKILL)
+
+    running = store.start(PROJECT, SKILL, pass_id)
+
+    assert running["pass_id"] == pass_id
+    assert running["project_id"] == PROJECT and running["skill"] == SKILL
+    assert running["status"] == "running"
+    assert running["launched_at"]
+    assert running["finished_at"] is None and running["outcome"] is None
+    assert store.get(PROJECT, pass_id) == running
+
+    outcome = EvolutionOutcome(
+        "published", SKILL, version="1.1",
+        consumed_keys=("skill:ssrf:1",), thread_id="t-1",
+    )
+    finished = store.finish(PROJECT, pass_id, outcome)
+
+    assert finished["status"] == "finished"
+    assert finished["finished_at"]
+    assert finished["launched_at"] == running["launched_at"]
+    assert finished["outcome"] == outcome.to_dict()
+    assert store.get(PROJECT, pass_id) == finished
+
+
+def test_the_pass_record_is_durable_under_the_projects_skills_bucket(
+    tmp_path: Path,
+) -> None:
+    from polymerhus.app.llm.evolver import (
+        EvolutionPassStore,
+        evolution_pass_id,
+    )
+
+    store = EvolutionPassStore(root_dir=tmp_path / "data")
+    store.start(PROJECT, SKILL, evolution_pass_id(PROJECT, SKILL))
+
+    files = sorted(
+        (tmp_path / "data" / PROJECT / "skills" / "evolution").glob("*.yaml")
+    )
+    assert [f.name for f in files] == ["skills_evolve_proj-1_ssrf.yaml"]
+    # A FRESH store instance reads the same record: no in-memory state.
+    assert EvolutionPassStore(root_dir=tmp_path / "data").get(
+        PROJECT, evolution_pass_id(PROJECT, SKILL)
+    )["status"] == "running"
+
+
+def test_an_unknown_or_unsafe_pass_id_reads_as_none(tmp_path: Path) -> None:
+    from polymerhus.app.llm.evolver import EvolutionPassStore
+
+    store = EvolutionPassStore(root_dir=tmp_path / "data")
+
+    assert store.get(PROJECT, "skills:evolve:proj-1:never") is None
+    assert store.get(PROJECT, "../escape") is None
+    assert store.get(PROJECT, "..") is None
+    assert store.get(PROJECT, "") is None
+
+
+def test_a_relaunch_replaces_the_slot_record(tmp_path: Path) -> None:
+    from polymerhus.app.llm.evolver import (
+        EvolutionOutcome,
+        EvolutionPassStore,
+        evolution_pass_id,
+    )
+
+    store = EvolutionPassStore(root_dir=tmp_path / "data")
+    pass_id = evolution_pass_id(PROJECT, SKILL)
+    store.start(PROJECT, SKILL, pass_id)
+    store.finish(
+        PROJECT, pass_id, EvolutionOutcome("no_write", SKILL, version="1.0")
+    )
+    assert store.get(PROJECT, pass_id)["outcome"]["decision"] == "no_write"
+
+    second = store.start(PROJECT, SKILL, pass_id)
+
+    # The identifier addresses the pass SLOT: the relaunch's running record
+    # replaces the finished one, outcome and finish stamp included.
+    assert store.get(PROJECT, pass_id) == second
+    assert second["status"] == "running"
+    assert second["outcome"] is None
+    assert second["finished_at"] is None
+
+
+def test_discard_drops_only_the_matching_running_record(tmp_path: Path) -> None:
+    from polymerhus.app.llm.evolver import (
+        EvolutionPassStore,
+        evolution_pass_id,
+    )
+
+    store = EvolutionPassStore(root_dir=tmp_path / "data")
+    pass_id = evolution_pass_id(PROJECT, SKILL)
+    launched = store.start(PROJECT, SKILL, pass_id)
+
+    store.discard(PROJECT, pass_id, launched_at="another-launch")
+    assert store.get(PROJECT, pass_id) == launched
+
+    store.discard(PROJECT, pass_id, launched_at=launched["launched_at"])
+    assert store.get(PROJECT, pass_id) is None
+    # Idempotent: discarding an absent record is a no-op, never a raise.
+    store.discard(PROJECT, pass_id)
 
 
 # --- posted lessons (the endpoint's injection surface, D232-10) ----------------

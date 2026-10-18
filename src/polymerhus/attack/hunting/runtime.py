@@ -182,7 +182,14 @@ def resume_pod_session(runtime, session_id: str) -> None:
     runtime.resume_session("hunting", session_id)
 
 
-def launch_evolution_pass(project_id: str, skill: str, *, pass_fn=None, name=None) -> Any:
+def launch_evolution_pass(
+    project_id: str,
+    skill: str,
+    *,
+    pass_fn=None,
+    name=None,
+    records=None,
+) -> Any:
     """The skill-evolution launcher seam (#232 D232-10): schedule ONE forced
     SkillEvolver pass onto the hunting loop UNDER the hunting module context,
     so the pass's per-`(project, skill)` thread resolves the hunting
@@ -192,14 +199,34 @@ def launch_evolution_pass(project_id: str, skill: str, *, pass_fn=None, name=Non
     Returns the runtime's schedule handle (a `concurrent.futures.Future` the
     API tier awaits for the outcome); admission refusals raise
     `ModuleAdmissionRefused` exactly like every other launch. `pass_fn` is the
-    injectable pass seam (tests); the default is `arun_evolution_pass`."""
-    from polymerhus.app.llm.evolver import arun_evolution_pass  # noqa: PLC0415
+    injectable pass seam (tests); the default is `arun_evolution_pass`.
 
-    resolved_name = name or f"skills:evolve:{project_id}:{skill}"
+    `records` is the durable pass-record store (D-W3-4) the REST launch tier
+    starts the record in: when given, this seam stamps the finished record with
+    the pass outcome, so the status endpoint can serve it after the request
+    ended. A raising pass is stamped `degraded` before the raise propagates.
+    The default (None) records nothing - the controller's passes are not
+    REST-addressable and pay nothing."""
+    from polymerhus.app.llm.evolver import (  # noqa: PLC0415
+        arun_evolution_pass,
+        evolution_pass_id,
+    )
+
+    resolved_name = name or evolution_pass_id(project_id, skill)
 
     async def _run():
         async with hunting_module_context():
-            return await (pass_fn or arun_evolution_pass)(project_id, skill)
+            try:
+                outcome = await (pass_fn or arun_evolution_pass)(project_id, skill)
+            except Exception as exc:  # noqa: BLE001 - the record still settles, then re-raise
+                if records is not None:
+                    _finish_record(
+                        records, project_id, resolved_name, _degraded_outcome(skill, exc)
+                    )
+                raise
+            if records is not None:
+                _finish_record(records, project_id, resolved_name, outcome)
+            return outcome
 
     coro = _run()
     try:
@@ -207,6 +234,27 @@ def launch_evolution_pass(project_id: str, skill: str, *, pass_fn=None, name=Non
     except Exception:  # noqa: BLE001 - close the unscheduled coroutine, re-raise
         coro.close()
         raise
+
+
+def _finish_record(records, project_id: str, pass_id: str, outcome) -> None:
+    """Stamp the durable pass record; a record failure is warned, never a
+    reason to lose the pass outcome the caller already holds (fail-open)."""
+    try:
+        records.finish(project_id, pass_id, outcome)
+    except Exception as exc:  # noqa: BLE001 - fail-open bookkeeping
+        logger.warning(
+            "hunting runtime: could not record the evolution pass %s: %s",
+            pass_id,
+            exc,
+        )
+
+
+def _degraded_outcome(skill: str, exc: Exception):
+    """The coded outcome a raising pass is recorded with (the pass's own
+    outcomes are coded; a raise here is the wiring/degrade edge)."""
+    from polymerhus.app.llm.evolver import EvolutionOutcome  # noqa: PLC0415
+
+    return EvolutionOutcome("degraded", skill, detail=f"turn failed: {exc}")
 
 
 async def launch_orchestrator(

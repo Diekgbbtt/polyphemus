@@ -784,7 +784,8 @@ def validate_skill(
 #     ├── SKILL.md
 #     ├── references/
 #     ├── scripts/
-#     └── assets/
+#     ├── assets/
+#     └── revisions/          (the revision manifest + per-revision snapshots)
 #
 # The store is the one authority that reads and writes bundle artifacts: the
 # `load_skill` reader resolves the per-project bundle first and the shared
@@ -802,6 +803,36 @@ def validate_skill(
 
 # A reference name is one safe file stem - no separators, no traversal.
 _REFERENCE_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+
+# The accepted version shapes (D-W3-2): `major`, `major.minor`, and the
+# ratified suite's `major.minor.patch` (a missing minor counts as 0 for the
+# bump, exactly as before; the patch is read and ignored).
+_VERSION_RE = re.compile(r"(\d+)(?:\.(\d+))?(?:\.(\d+))?")
+
+# The revision store (D-W3-2): every published write of a bundle appends one
+# record to `<bundle>/revisions/manifest.yaml` - the consumed note keys and the
+# old and new version, in a STORED structure, never a log line - and snapshots
+# the file it wrote at `<bundle>/revisions/<ordinal>.md`, so the previous
+# revision body stays retrievable. The lesson prose is NOT duplicated here: the
+# note keys address the lesson shard, which holds every record in full.
+_REVISIONS_DIRNAME = "revisions"
+_REVISION_MANIFEST = "manifest.yaml"
+_REVISION_KEYS = (
+    "ordinal",
+    "target",
+    "file",
+    "previous_version",
+    "version",
+    "source_note_ids",
+    "written_at",
+    "snapshot",
+)
+
+# The fixed sub-directories of the project `skills/` bucket the scaffold owns
+# (`lessons/` holds the lesson shards; `evolution/` holds the evolution-pass
+# records): the directory is not a bundle, so no project skill may take one of
+# these names (D232-1's `lessons` precedent, extended by W3's pass records).
+RESERVED_SKILL_NAMES = frozenset({"lessons", "evolution"})
 
 
 class SkillTargetError(ValueError):
@@ -863,15 +894,19 @@ def _frontmatter_violations(meta: dict, *, skill: str) -> list[str]:
 
 
 def _bump_version(version: str) -> str:
-    """The operator's monotonic version rule: `major.minor`, minor +1, one
-    decimal place. A missing minor part counts as 0."""
-    major, _, minor = str(version).partition(".")
-    try:
-        return f"{int(major)}.{int(minor or 0) + 1}"
-    except ValueError as exc:
+    """The operator's monotonic version rule (D-W3-2): `major.minor` or
+    `major.minor.patch` - the ratified suite's form - plus the historical bare
+    `major` (a missing minor counts as 0). Major is read, minor is bumped by
+    one, the patch is read and ignored, and the emitted version is always
+    `major.(minor+1)`. Any other shape refuses: a version is a dotted numeric
+    identity, never a longer tuple or a non-numeric part."""
+    match = _VERSION_RE.fullmatch(str(version).strip())
+    if match is None:
         raise SkillInvalidError(
-            f"skill_invalid: version {version!r} is not major.minor"
-        ) from exc
+            f"skill_invalid: version {version!r} is not major, major.minor, or "
+            "major.minor.patch"
+        )
+    return f"{int(match.group(1))}.{int(match.group(2) or 0) + 1}"
 
 
 def _dump_frontmatter(meta: dict) -> str:
@@ -883,11 +918,40 @@ def _dump_frontmatter(meta: dict) -> str:
     return f"---\n{body}---\n\n"
 
 
+def dump_text_atomic(path: Path, text: str) -> None:
+    """Write `text` atomically: dump to a temp file in the SAME directory, then
+    `os.replace` onto the target, so every file on disk is whole and a crash
+    mid-dump never leaves a partial target (the #220 auth-store
+    `_dump_yaml_atomic` discipline for prose).
+
+    The ONE atomic whole-file write of the skills domain: `SkillStore` and the
+    evolution pass-record store both go through it, so the discipline cannot
+    drift between stores. A failed dump is a loud `StoreUnavailableError`."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{uuid.uuid4().hex[:8]}.tmp")
+    try:
+        tmp.write_text(text, encoding="utf-8")
+        os.replace(tmp, path)
+    except OSError as exc:
+        raise StoreUnavailableError(
+            f"store_unavailable: cannot persist {path} ({exc})"
+        ) from exc
+    finally:
+        try:
+            tmp.unlink()
+        except FileNotFoundError:
+            pass
+
+
 class SkillStore:
     """The per-project skill-bundle store (#234): the one seam the loader and
-    the writer share. Rooted under the app-owned data root (default `DATA_ROOT`);
-    the explicit-root constructor is kept for the tests' temp stores (the
-    `hunt_store` / #220 auth-store precedent). Import performs no I/O."""
+    the writer share, and - since D-W3-2 - the owner of the bundle's revision
+    index (`revisions/manifest.yaml` plus one snapshot per published revision),
+    so every revision stays retrievable with its consumed note keys and its
+    old and new version. Rooted under the app-owned data root (default
+    `DATA_ROOT`); the explicit-root constructor is kept for the tests' temp
+    stores (the `hunt_store` / #220 auth-store precedent). Import performs no
+    I/O."""
 
     def __init__(self, root_dir: str | Path | None = None):
         """Rooted under `root_dir` (default: the app-owned `DATA_ROOT`)."""
@@ -901,6 +965,11 @@ class SkillStore:
 
     def _bundle_dir(self, project_id: str, skill: str) -> Path:
         validate_path_component(skill, "skill")
+        if skill in RESERVED_SKILL_NAMES:
+            raise SkillInvalidError(
+                f"skill_invalid: {skill!r} is a reserved skills/ directory "
+                "name, not a skill bundle"
+            )
         return self._project_skills_root(project_id) / skill
 
     def _target_file(
@@ -970,24 +1039,10 @@ class SkillStore:
 
     @staticmethod
     def _dump_text_atomic(path: Path, text: str) -> None:
-        """Write `text` atomically: dump to a temp file in the SAME directory,
-        then `os.replace` onto the target, so every file on disk is whole and
-        a crash mid-dump never leaves a partial target (the #220 auth-store
-        `_dump_yaml_atomic` discipline for prose)."""
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_name(f".{path.name}.{uuid.uuid4().hex[:8]}.tmp")
-        try:
-            tmp.write_text(text, encoding="utf-8")
-            os.replace(tmp, path)
-        except OSError as exc:
-            raise StoreUnavailableError(
-                f"store_unavailable: cannot persist {path} ({exc})"
-            ) from exc
-        finally:
-            try:
-                tmp.unlink()
-            except FileNotFoundError:
-                pass
+        """The store's atomic whole-file write; delegates to the ONE shared
+        implementation (`dump_text_atomic`), which the pass-record store reuses
+        so the temp-file-plus-replace discipline cannot drift between stores."""
+        dump_text_atomic(path, text)
 
     def _ensure_bundle(self, project_id: str, skill: str) -> Path:
         """Create the bundle on first use: the skill directory plus its
@@ -1014,7 +1069,9 @@ class SkillStore:
         except (OSError, ValueError):
             return None
 
-    def _compose_procedure(self, project_id: str, skill: str, body: str) -> str:
+    def _compose_procedure(
+        self, project_id: str, skill: str, body: str
+    ) -> tuple[str, str, str]:
         """Compose the store-owned SKILL.md for one `procedure` write.
 
         The metadata is never the caller's: it is the operator-bootstrapped
@@ -1023,6 +1080,9 @@ class SkillStore:
         store then bumps `metadata.version` one minor and appends the caller's
         body, so a skill with no bootstrapped metadata refuses rather than
         inventing any. Any frontmatter in `body` is dropped.
+
+        Returns `(composed_text, previous_version, new_version)` so the caller
+        can record the revision's provenance (D-W3-2).
         """
         meta = self._existing_frontmatter(project_id, skill) or skill_meta(skill)
         if not meta:
@@ -1034,12 +1094,161 @@ class SkillStore:
         violations = _frontmatter_violations(source, skill=skill)
         if violations:
             raise SkillInvalidError("skill_invalid: " + "; ".join(violations))
+        previous_version = source["metadata"]["version"]
+        version = _bump_version(previous_version)
         composed = {
             "name": skill,
             "description": source["description"],
-            "metadata": {"version": _bump_version(source["metadata"]["version"])},
+            "metadata": {"version": version},
         }
-        return _dump_frontmatter(composed) + _strip_frontmatter(body)
+        return (
+            _dump_frontmatter(composed) + _strip_frontmatter(body),
+            previous_version,
+            version,
+        )
+
+    def _bundle_version(self, project_id: str, skill: str) -> str:
+        """The bundle's current version through the same seam the loader uses
+        (project bundle first, catalogue second); `""` when none resolves. Used
+        by a reference write, whose revision record carries the unchanged
+        version; never a refusal - a reference write is not versioned."""
+        meta = self._existing_frontmatter(project_id, skill) or skill_meta(skill)
+        metadata = meta.get("metadata") if isinstance(meta, dict) else None
+        version = metadata.get("version") if isinstance(metadata, dict) else None
+        return version if isinstance(version, str) else ""
+
+    # -- the revision store (D-W3-2) -----------------------------------------
+
+    def _revisions_dir(self, project_id: str, skill: str) -> Path:
+        return self._bundle_dir(project_id, skill) / _REVISIONS_DIRNAME
+
+    def _manifest_file(self, project_id: str, skill: str) -> Path:
+        return self._revisions_dir(project_id, skill) / _REVISION_MANIFEST
+
+    def _read_manifest(self, project_id: str, skill: str) -> list[dict]:
+        """The recorded revisions in append order. A missing manifest is the
+        valid empty; a CORRUPT one raises `StoreUnavailableError` (the write
+        path must never silently drop the bundle's revision history) - the
+        public `revisions` degrades that to `[]` with a warning."""
+        path = self._manifest_file(project_id, skill)
+        try:
+            text = path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return []
+        except (OSError, ValueError) as exc:
+            raise StoreUnavailableError(
+                f"store_unavailable: cannot read revision manifest {path} ({exc})"
+            ) from exc
+        import yaml  # noqa: PLC0415 - already a production dependency
+
+        try:
+            loaded = yaml.safe_load(text)
+        except yaml.YAMLError as exc:
+            raise StoreUnavailableError(
+                f"store_unavailable: unreadable revision manifest {path} ({exc})"
+            ) from exc
+        if loaded is None:
+            return []
+        if not isinstance(loaded, list) or not all(
+            isinstance(record, dict) for record in loaded
+        ):
+            raise StoreUnavailableError(
+                f"store_unavailable: revision manifest {path} is not a record list"
+            )
+        return list(loaded)
+
+    def revisions(self, project_id: str, skill: str) -> list[dict]:
+        """Every recorded revision of the skill bundle, in ordinal order: the
+        consumed note keys (`source_note_ids`), the old and new version, the
+        written file, the timestamp, and the snapshot name. Fail-open: a
+        missing, unreadable, or corrupt manifest reads as `[]` with a warning -
+        a revision read never raises. The full lesson text is NOT here; the
+        keys address the lesson shard, which holds every record in full."""
+        try:
+            return self._read_manifest(project_id, skill)
+        except (StoreUnavailableError, ValueError, OSError) as exc:
+            logger.warning(
+                "skill store: unreadable revision manifest for %s/%s: %s",
+                project_id, skill, exc,
+            )
+            return []
+
+    def revision_content(
+        self, project_id: str, skill: str, ordinal: int
+    ) -> str | None:
+        """The stored body of one revision by its ordinal (`revisions/<ordinal>
+        .md`), or `None` when no such revision or snapshot is readable. This is
+        how the previous revision body stays retrievable after the live
+        `SKILL.md` was overwritten."""
+        record = next(
+            (
+                item
+                for item in self.revisions(project_id, skill)
+                if item.get("ordinal") == ordinal
+            ),
+            None,
+        )
+        if record is None:
+            return None
+        snapshot = record.get("snapshot")
+        if not isinstance(snapshot, str) or not snapshot:
+            return None
+        try:
+            validate_path_component(snapshot, "snapshot")
+            path = self._revisions_dir(project_id, skill) / snapshot
+            return path.read_text(encoding="utf-8")
+        except (OSError, ValueError):
+            return None
+
+    def _record_revision(
+        self,
+        project_id: str,
+        skill: str,
+        *,
+        target: str,
+        file_relative: str,
+        content: str,
+        previous_version: str,
+        version: str,
+        source_note_ids,
+        records: list[dict],
+    ) -> None:
+        """Append one revision to the bundle's manifest and snapshot the file
+        it wrote, under the caller's per-project lock. `records` is the
+        manifest already read by the caller (the read is the loud half: a
+        corrupt manifest refuses BEFORE anything is persisted). A snapshot or
+        manifest write failure raises `StoreUnavailableError` naming the
+        landed-but-unrecorded file - never a silent provenance loss."""
+        import datetime  # noqa: PLC0415 - stdlib, kept local like the yaml import
+
+        import yaml  # noqa: PLC0415 - already a production dependency
+
+        ordinal = len(records) + 1
+        snapshot = f"{ordinal:04d}.md"
+        record = {
+            "ordinal": ordinal,
+            "target": target,
+            "file": file_relative,
+            "previous_version": previous_version,
+            "version": version,
+            "source_note_ids": [str(item) for item in source_note_ids],
+            "written_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "snapshot": snapshot,
+        }
+        revisions_dir = self._revisions_dir(project_id, skill)
+        try:
+            self._dump_text_atomic(revisions_dir / snapshot, content)
+            self._dump_text_atomic(
+                revisions_dir / _REVISION_MANIFEST,
+                yaml.safe_dump(
+                    [*records, record], sort_keys=False, allow_unicode=True, width=4096
+                ),
+            )
+        except StoreUnavailableError as exc:
+            raise StoreUnavailableError(
+                f"{exc} (the revision landed in {file_relative} but its "
+                "provenance record did not)"
+            ) from exc
 
     def write(
         self,
@@ -1055,28 +1264,61 @@ class SkillStore:
         `references/<name>` for a reference file). `content` must be `str`;
         a `procedure` write carries the body alone (the store composes the
         frontmatter and bumps `metadata.version`), a `references/<name>` write
-        carries the whole file. `source_note_ids` is log-only provenance:
-        recorded on the write log line, never consulted. Refusals
-        (`SkillTargetError`, `SkillInvalidError`, `StoreUnavailableError`)
-        carry the coded signal the tool maps to an envelope. Every file write
-        is atomic under the per-project lock; a refused write persists nothing.
+        carries the whole file. `source_note_ids` is the revision's provenance
+        (D-W3-2): it is recorded in the bundle's revision manifest together
+        with the old and new version, and the written file is snapshotted, so
+        every published revision stays retrievable and indexable from the
+        skill's own bundle. Refusals (`SkillTargetError`, `SkillInvalidError`,
+        `StoreUnavailableError`) carry the coded signal the tool maps to an
+        envelope. Every file write is atomic under the per-project lock; a
+        refused write persists nothing (a corrupt revision manifest refuses
+        before the bundle file is touched).
         """
         if not isinstance(content, str):
             raise SkillInvalidError(
                 f"skill_invalid: {skill!r} content must be text"
             )
         file_path = self._target_file(project_id, skill, target)
-        if target == "procedure":
-            content = self._compose_procedure(project_id, skill, content)
         with _lock_for(f"{self._root}::{project_id}"):
+            # Compose and the manifest read happen INSIDE the lock: both read
+            # the bundle's current frontmatter, so composing outside it would
+            # let two concurrent rewrites record the same old version (the
+            # revision's provenance must be as truthful as the entry sequence).
+            # The manifest read is the loud, fail-loud half and happens BEFORE
+            # the bundle write: a corrupt revision index refuses the write
+            # instead of publishing a revision whose provenance cannot land.
+            records = self._read_manifest(project_id, skill)
+            if target == "procedure":
+                content, previous_version, version = self._compose_procedure(
+                    project_id, skill, content
+                )
+            else:
+                previous_version = version = self._bundle_version(project_id, skill)
             self._ensure_bundle(project_id, skill)
             self._dump_text_atomic(file_path, content)
+            self._record_revision(
+                project_id,
+                skill,
+                target=target,
+                file_relative=str(
+                    file_path.relative_to(self._bundle_dir(project_id, skill))
+                ),
+                content=content,
+                previous_version=previous_version,
+                version=version,
+                source_note_ids=source_note_ids,
+                records=records,
+            )
             logger.info(
-                "skill store: wrote %s target=%s project=%s source_notes=%s",
+                "skill store: wrote %s target=%s project=%s version=%s "
+                "previous_version=%s source_notes=%s revision=%d",
                 skill,
                 target,
                 project_id,
+                version,
+                previous_version,
                 list(source_note_ids),
+                len(records) + 1,
             )
 
 
@@ -1412,14 +1654,16 @@ class LessonStore:
     def _shard_file(self, project_id: str, skill: str) -> Path:
         """The shard for one skill, resolved through the one project resolver.
         `skill` must be ONE safe path component (no separators, no traversal)
-        and may not be the reserved `lessons` shard-directory name."""
+        and may not be a scaffold-owned `skills/` directory name (`lessons`,
+        `evolution`): those directories are not bundles, so no lesson can
+        concern them."""
         try:
             validate_path_component(skill, "skill")
         except ValueError as exc:
             raise LessonInvalidError(f"lesson_invalid: {exc}") from exc
-        if skill == _LESSONS_DIRNAME:
+        if skill in RESERVED_SKILL_NAMES:
             raise LessonInvalidError(
-                f"lesson_invalid: {skill!r} is the reserved lessons directory name"
+                f"lesson_invalid: {skill!r} is a reserved skills/ directory name"
             )
         base = project_dir(project_id, "skills", root=self._root)
         return base / _LESSONS_DIRNAME / f"{skill}.yaml"

@@ -707,3 +707,71 @@ def test_launch_evolution_pass_runs_under_the_hunting_module_context(monkeypatch
     # Inside the pass the module context resolved the hunting index, not the
     # shared fallback an un-contexted turn would get.
     assert seen["checkpointer"] is not outside
+
+
+def test_launch_evolution_pass_finishes_the_durable_pass_record(
+    tmp_path, monkeypatch
+):
+    """D-W3-4: the REST launch starts the record and the launcher stamps the
+    outcome into it, so the status endpoint can serve the outcome after the
+    request ended. Without a record store the launcher records nothing."""
+    from polymerhus.app.llm.evolver import (
+        EvolutionOutcome,
+        EvolutionPassStore,
+        evolution_pass_id,
+    )
+
+    store = EvolutionPassStore(root_dir=tmp_path / "data")
+    pass_id = evolution_pass_id("p1", "ssrf")
+    store.start("p1", "ssrf", pass_id)
+
+    async def fake_pass(project_id, skill, **kwargs):
+        return EvolutionOutcome(
+            "published", skill, version="1.1", consumed_keys=("skill:ssrf:1",)
+        )
+
+    class _Runtime:
+        def schedule(self, module, coro, *, name):
+            return asyncio.run(coro)
+
+    monkeypatch.setattr(hunting_runtime, "_require_runtime", lambda: _Runtime())
+
+    hunting_runtime.launch_evolution_pass(
+        "p1", "ssrf", pass_fn=fake_pass, records=store
+    )
+
+    record = store.get("p1", pass_id)
+    assert record["status"] == "finished"
+    assert record["finished_at"]
+    assert record["outcome"]["decision"] == "published"
+    assert record["outcome"]["version"] == "1.1"
+
+
+def test_a_raising_pass_is_recorded_degraded_then_re_raised(tmp_path, monkeypatch):
+    from polymerhus.app.llm.evolver import (
+        EvolutionPassStore,
+        evolution_pass_id,
+    )
+
+    store = EvolutionPassStore(root_dir=tmp_path / "data")
+    pass_id = evolution_pass_id("p1", "ssrf")
+    store.start("p1", "ssrf", pass_id)
+
+    async def broken_pass(project_id, skill, **kwargs):
+        raise RuntimeError("transport down")
+
+    class _Runtime:
+        def schedule(self, module, coro, *, name):
+            return asyncio.run(coro)
+
+    monkeypatch.setattr(hunting_runtime, "_require_runtime", lambda: _Runtime())
+
+    with pytest.raises(RuntimeError):
+        hunting_runtime.launch_evolution_pass(
+            "p1", "ssrf", pass_fn=broken_pass, records=store
+        )
+
+    record = store.get("p1", pass_id)
+    assert record["status"] == "finished"
+    assert record["outcome"]["decision"] == "degraded"
+    assert "transport down" in record["outcome"]["detail"]
