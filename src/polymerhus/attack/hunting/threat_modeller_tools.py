@@ -45,6 +45,24 @@ MODEL_SECTIONS: tuple[str, ...] = (
 )
 
 
+@dataclass
+class ToolSeamGaps:
+    """The RUN-scoped log of the modeller's DEGRADED live-tool calls (S1 5.7).
+
+    The `exec` probe and the HTTP-history read pair record here when their live
+    seam is unwired or fails (mirroring the web-vulnerability suite seam's
+    `record_gap`), and the pass folds the unit's slice into
+    `UnitOutcome.context_gaps` - so a run whose Kali seam is dead reports the
+    gap instead of a clean model built from the projection alone. The hunter's
+    tools carry no sink and are unaffected."""
+
+    gaps: list[str] = field(default_factory=list)
+
+    def record(self, detail: str) -> None:
+        self.gaps.append(detail)
+        logger.warning("threat modeller tool seam gap: %s", detail)
+
+
 # --- the `hunts_store` tool for the threat model (S1 5.1) ---------------------
 
 class ModellerHuntsStoreArgs(BaseModel):
@@ -608,6 +626,10 @@ class ModellerTools:
     context_provider: Callable[[str], dict] | None = None
     projection: Any = None
     surface_overview: Any = None
+    # The RUN-scoped log of the degraded live-tool calls (`exec`, the
+    # HTTP-history reads): the surface builder attaches it to those tools and
+    # the pass folds the unit's slice into the outcome's `context_gaps`.
+    seam_gaps: ToolSeamGaps | None = None
 
 
 def build_grounding_provider(project_id: str, *, read_fn=None):
@@ -653,6 +675,10 @@ def build_modeller_tool_surface(
         HttpHistorySearchTool,
     )
 
+    if tools.seam_gaps is None:
+        # ONE sink per tools instance (the suite seam's pattern), so the actor's
+        # captured surface records into the same log the pass reads
+        tools.seam_gaps = ToolSeamGaps()
     surface: list[BaseTool] = [
         ModellerHuntsStoreTool(
             store=tools.threat_store, project_id=project_id, unit_id=unit_id,
@@ -660,10 +686,11 @@ def build_modeller_tool_surface(
         build_modeller_notes_tool(tools.threat_store, project_id, unit_id,
                                   tools.unit_cell),
         HttpHistorySearchTool(http_search_fn=tools.http_search_fn,
-                              project_id=project_id),
+                              project_id=project_id,
+                              gap_sink=tools.seam_gaps),
         HttpHistoryGetTool(http_get_fn=tools.http_get_fn,
-                           project_id=project_id),
-        ExecTool(exec_fn=tools.exec_fn),
+                           project_id=project_id, gap_sink=tools.seam_gaps),
+        ExecTool(exec_fn=tools.exec_fn, gap_sink=tools.seam_gaps),
     ]
     if tools.suite_tools:
         surface.extend(tools.suite_tools)

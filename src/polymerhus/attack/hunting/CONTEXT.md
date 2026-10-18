@@ -4,7 +4,7 @@
 
 Hunting configures and dispatches; a test-executor pod executes. Only the former is in scope.
 
-**Design change in flight (2026-10-15).** The unit threat model design (`docs/design/unit-threat-model-workbench.md`) rewrites the hunt-orchestrator in place into the threat modeller; the runtime role key stays `orchestrator` until the hygiene rename. Terms marked `(2026-10-15, design)` below describe that design, not the built module.
+**Design change in flight (2026-10-15; the rewrite LANDED in T2a/T2b #375/#386).** The unit threat model design (`docs/design/unit-threat-model-workbench.md`) rewrote the hunt-orchestrator in place into the threat modeller; the runtime role key is `threat_modeller`. Terms marked `(2026-10-15, design)` below describe that design, not the built module.
 
 **New design terms (2026-10-18).** `WELL-FORMEDNESS` - the hunter pass that checks the spec set for no overlap and exhaustive coverage of the slice (the former AGGREGATE+CHECK). `phase_summary` - the note kind the hunter writes as a pass exit; the note name is `phase:<phase>`. `loop payload` - the per-dispatch rendering of one loop plus its unit context; it replaces the `HuntConfig` for the hunter. `unit threat model artifact` - the per-unit formal model document (one model per unit, ranked loops, evidences, confidence degrees). `pass sequence` - the hunter's eight-pass reasoning order (GROUNDING -> SLICE -> COLLECT -> DISCRIMINATE -> GENERATE -> WELL-FORMEDNESS -> VERIFY-CLAIMS -> COMPLETE); the retired `chain` name is not reused as an entity. `hunts_store` (per-role binding) - the modeller binds the threat-model store; the hunter binds the spec store.
 

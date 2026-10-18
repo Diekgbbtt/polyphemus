@@ -253,7 +253,7 @@ def _config_gaps(config: HuntConfig) -> list[str]:
     if not (sc.get("cards") or sc.get("kind")):
         gaps.append("surface context missing (no adapted index cards); grounding degraded")
     if not config.rationale:
-        gaps.append("orchestrator rationale missing; grounding degraded")
+        gaps.append("modeller rationale missing; grounding degraded")
     if not config.observed_defences:
         gaps.append("observed target defences missing; falsification grounding degraded")
     if not config.preconditions:

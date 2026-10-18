@@ -266,8 +266,20 @@ async def stop_hunting_for_provider_failure(
         )
 
     # Reap the run's modeller actor so it cannot hot-loop after the pause.
+    # BOUNDED by the same `drain_timeout` as the drain: the actor's task
+    # finishes only after its in-flight turn does, so an unbounded await would
+    # delay the resumable terminal behind a stalled probe/model turn. A
+    # timed-out reap cancels the actor's task (`_reap_modeller`'s finally), so
+    # no live turn outlives the pause.
     try:
-        await _reap_modeller(hunting_run_id)
+        await asyncio.wait_for(
+            _reap_modeller(hunting_run_id), timeout=drain_timeout)
+    except TimeoutError:
+        logger.warning(
+            "stop_hunting_for_provider_failure: actor reap for %s did not "
+            "settle within %ss; the actor task was cancelled (fail-open)",
+            hunting_run_id, drain_timeout,
+        )
     except Exception:  # noqa: BLE001 - teardown must never raise
         logger.warning(
             "stop_hunting_for_provider_failure: actor reap failed for %s "
@@ -428,6 +440,48 @@ def _default_modeller_tools(
     return tools
 
 
+def report_dispatch_gap(
+    project_id: str,
+    run_id: str,
+    outcomes,
+    *,
+    state,
+    hunt_store,
+    hunter_store,
+) -> str | None:
+    """Log and return the one-line reason a run that PRODUCED models dispatched
+    nothing, or None when there is no gap.
+
+    designed-not-built - T4 (#377): the per-loop dispatch (a threat-model loop
+    file -> a hunter session) has no production path yet, so a run whose
+    modeller completed models and whose produced families hold no dispatchable
+    item dispatches ZERO hunts. The line names that gap, so an operator never
+    reads the run's `complete` as "the modeller found nothing to hunt".
+
+    The two suppressors are the run's own facts: a hunter dispatch recorded on
+    the run state (`state.hunter_inboxes` - a config the mover admitted), and a
+    still-dispatchable produced item (`run_work_remaining`, the surfer's own
+    predicate). Either one means the gap did not bite."""
+    from polymerhus.attack.hunting.surfer import (  # noqa: PLC0415
+        run_work_remaining,
+    )
+
+    completed = [outcome for outcome in outcomes
+                 if getattr(outcome, "status", "") == "completed"]
+    if not completed or state.hunter_inboxes:
+        return None
+    if run_work_remaining(project_id, hunt_store=hunt_store,
+                          hunter_store=hunter_store):
+        return None
+    reason = (
+        f"{len(completed)} unit model(s) produced and NOTHING is dispatchable: "
+        "the per-loop dispatch (threat model -> hunter) is designed-not-built "
+        "and owned by T4 (#377), so this run dispatches zero hunts"
+    )
+    logger.warning("hunting run %s: %s", run_id, reason)
+    return reason
+
+
 async def _run_modeller_units(
     project_id: str,
     run_id: str,
@@ -497,11 +551,12 @@ async def launch_modeller(
     launches"): ONE modelling pass over the run's selected units and NOTHING
     else - no run-scoped surfer, no dispatch, no `hunting_runs` row. It is the
     same pass body the whole-pipeline bootstrap schedules: the selection's
-    distinct units are modelled to COMPLETED, and their produced loop files wait
-    in the per-project threat model store for a later run's surfer (or a
-    hunter-only launch) to dispatch. The control plane schedules THIS coroutine
-    under the ADR Q13 modeller session id
-    (`hunting:<run_id>:threat-modeller`), so the per-session verbs
+    distinct units are modelled to COMPLETED and their produced loop files land
+    in the per-project threat model store. designed-not-built - T4 (#377): no
+    production path translates a loop file into a dispatchable item yet, so the
+    launch (like the whole-pipeline run) produces models and dispatches nothing.
+    The control plane schedules THIS coroutine under the ADR Q13 modeller
+    session id (`hunting:<run_id>:threat-modeller`), so the per-session verbs
     (hold/resume/cancel, ADR Q13/Q17) address it like any modeller session.
 
     designed-for-removal - the launch surface's modeller-only vocabulary (the
@@ -763,11 +818,18 @@ async def start_hunting(
     the remaining idle hunters are settled, and ONLY then is `complete`
     persisted. The pass models the selected units ONE AT A TIME (the
     transitional distinct-unit order; T3 #376 replaces it with the intake
-    order), writing each unit's threat model through the store. `failed` persists when a session was not admitted or a
-    collaborator degrades. The run-scoped surfer dispatches one hunter per
-    ratified config and one pod per specified spec through the mover, and the
-    hunt sessions idle-loop over their inboxes (verdict handling stubbed,
-    ADR Q16) - the whole pipeline is observable through this coroutine.
+    order), writing each unit's threat model through the store. `failed`
+    persists when a session was not admitted or a collaborator degrades. The
+    run-scoped surfer dispatches one hunter per ratified config and one pod per
+    specified spec through the mover, and the hunt sessions idle-loop over their
+    inboxes (verdict handling stubbed, ADR Q16) - the whole pipeline is
+    observable through this coroutine.
+
+    designed-not-built - T4 (#377): the modeller's produced LOOP FILES are not
+    dispatchable yet (no path translates a loop into a hunt config), so a run
+    with no pre-produced config models its units and dispatches zero hunts.
+    `report_dispatch_gap` logs that state as one run-level line instead of
+    letting it pass as a silent `complete`.
 
     Fail-open: a collaborator failure (PG row, default tools, a session's
     admission, the run itself) degrades to a terminal status - this coroutine
@@ -945,16 +1007,21 @@ async def start_hunting(
             control=control,
         )
 
+        pass_outcomes: list = []
+
         async def _modeller_units_pass():
-            """The run's ONE pass session: select, order, and model the units
-            one at a time (see `_run_modeller_units`)."""
-            return await _run_modeller_units(
+            """The run's ONE pass session: select, order, and model the units one
+            at a time (see `_run_modeller_units`). The outcomes are kept for the
+            run terminal's dispatch-gap report (T4 #377)."""
+            outcomes = await _run_modeller_units(
                 project_id, hunting_run_id, tools=tools,
                 pass_fn=modeller_pass_fn or arun_modeller_pass,
                 pass_kwargs=dict(modeller_kwargs or {}),
                 candidates=candidates, fault_entries=fault_entries,
                 read_fn=read_fn, match_fn=match_fn, unit_ids_fn=unit_ids_fn,
             )
+            pass_outcomes.append(outcomes)
+            return outcomes
 
         async def _surfer_loop():
             return await run_surfer_loop(
@@ -968,7 +1035,6 @@ async def start_hunting(
             )
 
         status = None
-        terminal_stats: dict | None = None
 
         def _role_running(role: str) -> bool:
             """True when the run's agent sub-module for `role` is `RUNNING`
@@ -1035,6 +1101,15 @@ async def start_hunting(
                     post_settle(state)
                     await _wait_no_run_sessions(control, hunting_run_id,
                                                 tick_interval)
+                    # Say WHY a run that produced models dispatched nothing:
+                    # the pending-work read is blocking file I/O (the surfer's
+                    # own predicate), so offload it like every other read here.
+                    await asyncio.to_thread(
+                        report_dispatch_gap, project_id, hunting_run_id,
+                        [outcome for batch in pass_outcomes for outcome in batch],
+                        state=state, hunt_store=hunt_store,
+                        hunter_store=hunter_store,
+                    )
                     status = "complete"
         except asyncio.CancelledError:
             status = None  # external stop: stop_hunting stamps 'stopped'

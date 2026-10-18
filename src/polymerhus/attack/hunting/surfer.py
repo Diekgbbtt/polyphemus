@@ -288,7 +288,13 @@ def run_work_remaining(
 ) -> bool:
     """True when a DISPATCHABLE produced item remains: a produced hunt config
     that is `status == "ratified"` AND validates as a `HuntConfig`, or a produced
-    spec carrying `status == "specified"`. A hypothesised draft, a dropped config
+    spec carrying `status == "specified"`.
+
+    designed-not-built - T4 (#377): the produced families this reads are the
+    HUNT-CONFIG and SPEC families. The threat modeller's produced LOOP FILES
+    (the threat model store) are the intended per-loop dispatch input and are
+    NOT read here yet: until T4 adds the loop item and its validity predicate,
+    a run's models cannot make this predicate - or `coro_for` - return work. A hypothesised draft, a dropped config
     (G6 stays on disk, never dispatchable), a not-yet-specified spec, or a
     `ratified` config that fails validation (refused, not work) contributes
     NOTHING - those can never dispatch and must never hold the run's quiesce open.
@@ -446,6 +452,9 @@ def build_run_dispatch(
             return None
 
     def coro_for(item: ProducedItem) -> Any:
+        # designed-not-built - T4 (#377): a produced hunt config (today) or a
+        # produced test spec; the threat model store's per-loop files get their
+        # own item + dispatch branch there.
         if isinstance(item, HuntConfigItem):
             return _config_dispatch(item)
         if isinstance(item, TestSpecItem):

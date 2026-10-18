@@ -29,12 +29,11 @@ and its system prompt is read directly from this module's `prompts/` dir
 (`threat-modeller.md` via `_modeller_skill`), memoized on first call and
 FAIL-CLOSED on a missing file.
 
-This module imports no driver, but it is NOT env-free at import: it imports
-`hunt_orchestrator`, whose chain pulls `app.config`, which reads env at module
-scope (so importing `llm.py` requires the app env vars). The env-free home for
-the conciseness constant + appender re-exported below is `conciseness.py`.
-Everything that performs I/O (`invoke_role`, the message classes, and the skill
-read) still resolves lazily on call.
+This module imports no driver and no `app.config` chain: it is env-free at
+import (the planner's `hunt_orchestrator` import retired with the pass in T2b).
+The env-free home for the conciseness constant + appender re-exported below is
+`conciseness.py`; everything that performs I/O (`invoke_role`, the message
+classes, and the skill read) resolves lazily on call.
 """
 from __future__ import annotations
 
@@ -172,12 +171,9 @@ L1_ONTOLOGY_PRIMER = (
     "evidence, never evidence of absence."
 )
 
-# The gate role prompt, memoized on first call (no import-time I/O, CODING
-# STANDARD section 6). A missing prompt file is a defect: FAIL-CLOSED (raise),
-# so the orchestrator never reasons without its prompt.
-_GATE_SKILL: str | None = None
-
-
+# The threat modeller's role prompt, memoized on first call (no import-time
+# I/O, CODING STANDARD section 6). A missing prompt file is a defect:
+# FAIL-CLOSED (raise), so the modeller never reasons without its method.
 _MODELLER_SKILL: str | None = None
 
 

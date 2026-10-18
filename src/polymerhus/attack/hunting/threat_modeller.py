@@ -543,8 +543,11 @@ async def arun_modeller_pass(
     missing section for the completion checker to report.
 
     The pass returns after one turn per state at most. It never waits for
-    dispatch (S1 7.3) - the store's produced loop files are the handoff to the
-    run-scoped surfer.
+    dispatch (S1 7.3). designed-not-built - T4 (#377): the store's produced loop
+    files are INTENDED to be the dispatch handoff to the run-scoped surfer, but
+    no production path translates a loop file into a dispatchable item yet
+    (the surfer still reads the hunt-config family), so a modelled unit
+    currently dispatches nothing.
 
     ONE pass at a time per run: the pass mutates the shared `ModellerTools`
     (the run-scoped tracker, the store wrapper, the unit cell, the suite seam),
@@ -584,6 +587,8 @@ async def arun_modeller_pass(
     first_write = len(tracker.writes)
     first_trail = len(tracker.trail)
     first_gap = len(tools.suite.gaps) if tools.suite is not None else 0
+    first_seam_gap = (
+        len(tools.seam_gaps.gaps) if tools.seam_gaps is not None else 0)
     persisted = _read_model(tools, project_id, unit_id)
     tracker.seed(ModelState(persisted["state"])
                  if persisted and persisted.get("state") in set(ModelState)
@@ -638,7 +643,8 @@ async def arun_modeller_pass(
 
     return _finalise(project_id, unit_id, tools, tracker,
                      first_write=first_write, first_trail=first_trail,
-                     first_gap=first_gap, context_gaps=context_gaps)
+                     first_gap=first_gap, first_seam_gap=first_seam_gap,
+                     context_gaps=context_gaps)
 
 
 def _grounding_context(tools: ModellerTools, unit_id: str) -> tuple[dict, tuple[str, ...]]:
@@ -720,7 +726,7 @@ def _actor_degrade_cause(run_id: str) -> BaseException | None:
 
 def _finalise(project_id: str, unit_id: str, tools: ModellerTools,
               tracker: PassiveGateTracker, *, first_write: int = 0,
-              first_trail: int = 0, first_gap: int = 0,
+              first_trail: int = 0, first_gap: int = 0, first_seam_gap: int = 0,
               context_gaps: tuple[str, ...] = ()) -> UnitOutcome:
     """The completion validation call (S1 6.6) and the outcome.
 
@@ -741,7 +747,9 @@ def _finalise(project_id: str, unit_id: str, tools: ModellerTools,
         trail=list(tracker.trail[first_trail:]),
         suite_gaps=(list(tools.suite.gaps[first_gap:])
                     if tools.suite is not None else []),
-        context_gaps=list(context_gaps),
+        context_gaps=list(context_gaps) + (
+            list(tools.seam_gaps.gaps[first_seam_gap:])
+            if tools.seam_gaps is not None else []),
     )
     if model is None:
         outcome.reason = "no threat model was written for this unit"
@@ -827,14 +835,29 @@ def _resolve_actor(run_id: str, project_id: str, tools: ModellerTools,
     return actor
 
 
+def _cancel_actor_task(actor) -> bool:
+    """Cancel the actor's session task - the carrier of its in-flight turn.
+    True when a live task was cancelled; a settled or never-spawned actor
+    (and a non-actor fake) is a safe no-op."""
+    task = getattr(actor, "_task", None)
+    if task is None or task.done():
+        return False
+    task.cancel()
+    return True
+
+
 async def _reap_modeller(run_id: str) -> None:
     """The module's stop path for the per-run modeller actor: reap and drop the
     actor the registry holds for `run_id`, if any. Called by the runtime
-    teardown (never by a pass's `finally`).
+    teardown (never by a pass's `finally`) at the run stop, the run terminal,
+    and the #331 provider-failure pause - the run-scoped actor and its per-run
+    session thread never outlive the run.
 
-    The runtime teardown calls it at the run stop, the run terminal, and the
-    #331 provider-failure pause - the run-scoped actor and its per-run session
-    thread never outlive the run."""
+    The stop is UNBOUNDED here; a caller that needs a bound (the provider-failure
+    pause, whose resumable terminal must not wait on a stalled turn) wraps the
+    await in `asyncio.wait_for`. Cancelling this reap mid-stop still cancels the
+    actor's task (`finally`), so a stalled in-flight turn never outlives the
+    run."""
     with _MODELLER_LOCK:
         actor = _MODELLER_ACTORS.pop(run_id, None)
     if actor is not None:
@@ -843,6 +866,13 @@ async def _reap_modeller(run_id: str) -> None:
         except Exception:  # noqa: BLE001 - teardown must never raise
             logger.warning("threat modeller actor reap failed for %s", run_id,
                            exc_info=True)
+        finally:
+            # a cancelled (bounded) reap lands here too; a clean stop already
+            # settled the task, so this is the no-op in the normal path
+            if _cancel_actor_task(actor):
+                logger.warning(
+                    "threat modeller actor task for %s was still live at the "
+                    "reap boundary; cancelled", run_id)
 
 
 __all__ = [

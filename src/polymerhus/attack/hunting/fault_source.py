@@ -37,7 +37,7 @@ platform plays the FaultSource role when a launch supplies no candidate batch.
     marker). The llm witness half stays optional (spec 4.1): a
     deterministic-only witness is a valid delivered candidate.
   * `materialize_candidates` - the IMPURE wiring seam `start_hunting` /
-    `launch_orchestrator` call on an empty candidate batch: enumerate the
+    `launch_modeller` call on an empty candidate batch: enumerate the
     project's kind-qualified units (reusing the L1 inventory read, Systems
     kind-qualified `<kind>` for a singleton / `<kind>:<discriminator>` for a
     discriminated System - the internal `L1_SINGLETON` sentinel is elided,
@@ -123,7 +123,12 @@ class FaultEntry:
 
 @dataclass(frozen=True)
 class UnitOutcome:
-    """One (unit, fault) verdict at the entry (the evaluation log entry)."""
+    """One (unit, fault) verdict at the entry (the evaluation log entry).
+
+    Name collision with the modeller's run type (`threat_modeller.UnitOutcome`,
+    the per-unit modelling outcome): the two live in different modules and no
+    call site imports both. The selection-side name retires to
+    `SelectionOutcome` with the selection's retirement in T3 (#376)."""
 
     unit_id: str
     verdict: Literal["passed", "pruned-by-predicate", "pruned-by-tag"]
@@ -333,10 +338,11 @@ _PASS_WITNESS_MARKER = "deterministic-stage pass"
 
 @dataclass(frozen=True)
 class SelectionSummary:
-    """The selection-run report (#200, spec 4.1; surfaced via `trace_gate_step`
-    + a log line, the minimal observability ruling): what the production
-    selection step did, so an all-pruned empty launch is distinguishable from
-    "nothing supplied and nothing ran"."""
+    """The selection-run report (#200, spec 4.1; surfaced via the run
+    bootstrap's log line, the minimal observability ruling - the planner's
+    `trace_gate_step` step span retired with the pass in T2b #386): what the
+    production selection step did, so an all-pruned empty launch is
+    distinguishable from "nothing supplied and nothing ran"."""
 
     faults_evaluated: int = 0
     units_minted: int = 0
@@ -431,7 +437,7 @@ def materialize_candidates(
     unit_ids_fn=None,
 ) -> tuple[tuple["DeliveredCandidate", ...], SelectionSummary]:
     """The production selection seam (#200, spec 4.1): `start_hunting` /
-    `launch_orchestrator` call it on the launch's candidate batch. A non-empty
+    `launch_modeller` call it on the launch's candidate batch. A non-empty
     caller batch is the override - returned unchanged, never re-selected (the
     harness / integration / eval seams still drive selection externally). An
     empty batch triggers the platform's OWN FaultSource selection: enumerate

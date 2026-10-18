@@ -736,6 +736,19 @@ class KbQueryTool(BaseTool):
         return self._run(**kwargs)
 
 
+def _note_seam_gap(tool, detail: str) -> None:
+    """Record one degraded live-seam call on a tool's OPTIONAL gap sink (the
+    modeller's run-scoped log, S1 5.7). A tool with no sink - the hunter's - is
+    unchanged; recording never raises into the turn."""
+    sink = getattr(tool, "_gap_sink", None)
+    if sink is None:
+        return
+    try:
+        sink.record(detail)
+    except Exception:  # noqa: BLE001 - a report must never break a turn
+        pass
+
+
 class ExecTool(BaseTool):
     """The Kali-container exec tool (R2, spec 5): the back-edge replacement for
     cheap claim-verification probes inside VERIFY-CLAIMS. `EXEC_TIMEOUT_S` per
@@ -762,18 +775,25 @@ class ExecTool(BaseTool):
     )
     args_schema: type[BaseModel] = ExecArgs
 
-    def __init__(self, *, exec_fn: ExecFn | None = None, **kwargs):
+    def __init__(self, *, exec_fn: ExecFn | None = None, gap_sink=None,
+                 **kwargs):
         super().__init__(**kwargs)
         self._exec_fn = exec_fn
+        # The OPTIONAL seam-gap sink: the modeller hands its run-scoped log, so a
+        # dead probe seam reaches the run's report. The hunter passes none.
+        self._gap_sink = gap_sink
 
     def _run(self, **kwargs: Any) -> str:
         args = ExecArgs(**kwargs)
         if self._exec_fn is None:
+            _note_seam_gap(
+                self, "exec_unavailable: the Kali probe seam is not wired")
             return json.dumps({"ok": False, "error": "exec_unavailable",
                                "degraded": True, "command": args.command})
         try:
             result = self._exec_fn(args.command, args.timeout_s)
         except Exception as exc:  # noqa: BLE001 - fail-open, never into the turn
+            _note_seam_gap(self, f"exec_failed: {exc}")
             return json.dumps({"ok": False, "error": "exec_failed",
                                "detail": str(exc), "command": args.command})
         return json.dumps({
@@ -818,14 +838,19 @@ class HttpHistorySearchTool(BaseTool):
     description: str = SEARCH_HTTP_HISTORY_DESCRIPTION
     args_schema: type[BaseModel] = HttpHistorySearchArgs
 
-    def __init__(self, *, http_search_fn=None, project_id: str = "", **kwargs):
+    def __init__(self, *, http_search_fn=None, project_id: str = "",
+                 gap_sink=None, **kwargs):
         super().__init__(**kwargs)
         self._fn = http_search_fn
         self._project_id = project_id
+        self._gap_sink = gap_sink
 
     def _run(self, **kwargs: Any) -> str:
         args = HttpHistorySearchArgs(**kwargs)
         if self._fn is None:
+            _note_seam_gap(
+                self,
+                "http_history_unavailable: the history search seam is not wired")
             return json.dumps({"ok": False, "error": "http_history_unavailable", "degraded": True})
         try:
             result = self._fn(
@@ -836,6 +861,7 @@ class HttpHistorySearchTool(BaseTool):
                 args.text,
             )
         except Exception as exc:  # noqa: BLE001 - fail-open, never into the turn
+            _note_seam_gap(self, f"http_history_failed: {exc}")
             return json.dumps({"ok": False, "error": "http_history_failed", "detail": str(exc)})
         return json.dumps(result)
 
@@ -847,18 +873,24 @@ class HttpHistoryGetTool(BaseTool):
     description: str = GET_HTTP_ARTIFACT_DESCRIPTION
     args_schema: type[BaseModel] = HttpHistoryGetArgs
 
-    def __init__(self, *, http_get_fn=None, project_id: str = "", **kwargs):
+    def __init__(self, *, http_get_fn=None, project_id: str = "",
+                 gap_sink=None, **kwargs):
         super().__init__(**kwargs)
         self._fn = http_get_fn
         self._project_id = project_id
+        self._gap_sink = gap_sink
 
     def _run(self, **kwargs: Any) -> str:
         args = HttpHistoryGetArgs(**kwargs)
         if self._fn is None:
+            _note_seam_gap(
+                self,
+                "http_history_unavailable: the history get seam is not wired")
             return json.dumps({"ok": False, "error": "http_history_unavailable", "degraded": True})
         try:
             result = self._fn(self._project_id, args.artifact_id, False)
         except Exception as exc:  # noqa: BLE001 - fail-open, never into the turn
+            _note_seam_gap(self, f"http_history_failed: {exc}")
             return json.dumps({"ok": False, "error": "http_history_failed", "detail": str(exc)})
         return json.dumps(result)
 
