@@ -247,9 +247,10 @@ def _spec_task_skills(state: PodState) -> tuple:
     string, a non-list, non-string entries - degrades to `()` with a warning;
     the spec's INIT gate is the loud rejection, and the skill binding must never
     raise on the way to the session). Resolved from `state["spec"]`, the spec
-    the current stretch actually runs: a triager-minted variant carries its own
-    declaration, so the set changes only at the variant boundary, never between
-    the turns of one stretch."""
+    the current stretch actually runs: `mint_variant` carries the declaration
+    onto a triager-minted variant (the variant's own non-empty declaration
+    wins, otherwise it inherits the parent's), so the set changes only at the
+    variant boundary, never between the turns of one stretch."""
     spec = state.get("spec")
     raw = spec.get("skills") if isinstance(spec, dict) else None
     if raw is None:
@@ -608,7 +609,20 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
         decision = state["decision"]
         parent_ref = state.get("current_variant_ref", "v0")
         ref = f"v{len(log.variant_specs)}"
-        variant_spec = decision.get("variant_spec") or dict(state["spec"])
+        parent_spec = state["spec"] if isinstance(state.get("spec"), dict) else {}
+        variant_spec = decision.get("variant_spec") or dict(parent_spec)
+        if isinstance(variant_spec, dict) and not variant_spec.get("skills"):
+            # #236: the artifact-declared skills travel with the SPEC, never
+            # with the minting model's goodwill. A variant that declares its own
+            # non-empty `skills` wins; a variant that declares none (or an empty
+            # list) INHERITS the parent spec's declaration - so minting a
+            # variant can never silently drop the skill set the run was
+            # configured with. The binding's resolution, union, cap, and
+            # warn-and-skip policy then apply to the inherited list unchanged.
+            variant_spec = {
+                **variant_spec,
+                "skills": list(parent_spec.get("skills") or []),
+            }
         log.record_variant(VariantSpec(ref=ref, parent_ref=parent_ref,
                                        declined_attribute=decision.get("declined_attribute", ""),
                                        spec=variant_spec))

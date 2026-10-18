@@ -220,5 +220,6 @@ terminate with verdict unsuccessful, terminal_reason space-exhausted.
 # Output
 Either terminate (verdict + terminal_reason + clean + your interpretation note) \
 or mine a variant (its declined attribute, the derived variant spec, and \
-feedback to the Runner). Your interpretation note is read by a reviewer who \
+feedback to the Runner). A derived variant spec keeps the run's declared skills \
+unless it states its own. Your interpretation note is read by a reviewer who \
 never saw the raw output - write it for them."""
