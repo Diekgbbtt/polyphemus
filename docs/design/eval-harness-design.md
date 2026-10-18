@@ -6,6 +6,10 @@ The pipeline runs unchanged against a WebExploitBench target; the harness decide
 
 *Status: design (contract), NOT implementation.*
 
+**NOTE 2026-10-18.** Anything in this document that refers to hunt configs translates to the threat-model loop vocabulary: `HuntConfig` -> loop payload, `specified` -> `ratified`, hunt store -> threat model store, `hunt_id` -> loop dispatch id.
+See `docs/design/unit-threat-model-spec-impact-map.md`.
+The eval's hypothesis-verdict derivation via `derive_verdict` is disabled or replaced; the verdict-consumption workflow is out of scope.
+
 ---
 
 ## 1. Purpose and scope

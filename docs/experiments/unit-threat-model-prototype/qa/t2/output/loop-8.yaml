@@ -1,0 +1,137 @@
+loop_id: loop-8
+unit_id: "WebPresentation:custom-node-catalog::manager-shell"
+class: null
+class_skill: null
+slice:
+  source: trust_agreement
+  statement: "TA-7: the mode parameter is trusted to exist and to be a valid enum - the handler indexes it directly (request.rel_url.query['mode']) and non-'local' values flow into channel resolution. Absent or malformed input reaches unhandled exception paths and surfaces as a generic 500 (text/plain 'Server got itself in trouble'); the invariant 'invalid input yields a controlled error' (DTV-6) fails (A-7 -> F-7 -> V-8)."
+discrimination:
+  axes_used: [payload-vector, tech-misconfiguration, chaining-advanced]
+  boundary: "input shape of the mode parameter (absent, malformed value, parser-ambiguous shape) crossed with the route-scope of the same direct-indexing fault. No spec differs by a payload string."
+  narrow_broad_tradeoff: "Narrow on the parameter (mode) and deep on input shapes and route scope, because the fault is indexing without validation; a wider sweep over unrelated parameters would leave this loop's evidenced surface."
+specs:
+  - spec_id: loop-8-s1
+    label: "absent mode reaches the unhandled exception path"
+    sub_slice: "The absent-parameter shape: GET /customnode/getlist with no mode at all; owns the reproduction of the unhandled exception surfaced as a generic 500 where a controlled 4xx is the invariant's expectation."
+    class_skill_parametrisation:
+      skill: null
+      inputs:
+        parameter: "mode (mandatory; JS always sends it, so absence is outside the client's contract)"
+        handler_shape: "direct indexing with no presence check; unhandled exception mapped to a generic 500"
+        invariant: "DTV-6: invalid input yields a controlled error"
+        structural_basis: "observed reproduction (probes.log 21:33:24Z: 500 text/plain, 55B) plus upstream handler indexing"
+    concretisation:
+      protocol: http
+      target: "http://46.224.225.245:44177"
+      endpoint: "/customnode/getlist"
+      method: GET
+      observed_shape: "500 text/plain 55B 'Server got itself in trouble'"
+      expected_shape: "controlled rejection (4xx) or a documented default"
+    discrimination_axis: payload-vector
+    discrimination_note: "Nearest sibling loop-8-s2: both fail the same invariant, but this spec owns the absence shape (no parameter) and the exception surface itself; s2 owns value-domain shapes that may be silently misclassified instead of crashing. The input shape and the failure expression differ."
+    chaining_advanced_note: null
+    proxy_technique: "Issue the request without the parameter from any client; the handler indexes the missing key and the framework turns the unhandled exception into a generic 500 - no client-side contract is required to reach it."
+    verification_symptoms:
+      - "request without mode returns 500 with a generic framework body"
+      - "the failure is an unhandled exception, not a validated rejection (no field-specific message)"
+      - "the response carries no traceback (the error surface is generic; the invariant fails on status, not on leakage)"
+    payload_vector_space: {method: GET, path: /customnode/getlist, parameter: null, body: null, headers: "any; no precondition"}
+    assumptions: ["the 500 shape is stable across repeats (observed once at 21:33:24Z)", "the missing key is the exception source (upstream indexing evidence)"]
+    rationale: "A-7 excludes malformed requests instead of validating them; direct indexing converts the absence into an exception at the first use, so any principal can produce an error surface the handler was never designed to render - the exact inversion of the controlled-error invariant."
+    interpretation_guidance: "symptom-present = the mode-less request returns a 5xx generic error. symptom-absent = a controlled rejection (4xx with a normal error body) or a documented default mode serves content - both true negatives. A 500 caused by an unrelated outage is inconclusive: repeat against a control request that includes mode and compare."
+  - spec_id: loop-8-s2
+    label: "value-domain shapes crash or misclassify the datasource"
+    sub_slice: "The malformed-value shapes of mode (unknown value, empty value, case and whitespace variants): non-'local' values flow into channel resolution, so a bad value either raises the same unhandled path or silently resolves a datasource the caller did not intend; owns the value-domain half of the invariant failure."
+    class_skill_parametrisation:
+      skill: null
+      inputs:
+        value_domain: "cache|local|remote per IA-3; handler compares for 'local' and otherwise resolves the channel (TA-7)"
+        handler_shape: "no enum validation; unknown values fall through to channel resolution"
+        invariant: "DTV-6 controlled error for invalid input"
+        structural_basis: "TA-7 statement plus observed 500 on the absent-parameter sibling"
+    concretisation:
+      protocol: http
+      target: "http://46.224.225.245:44177"
+      endpoint: "/customnode/getlist?mode=<shape>"
+      method: GET
+      shapes: ["unknown token (e.g. zzz)", "empty value (mode=)", "case variant (CACHE)", "whitespace/padded value"]
+      observation: "response classification (5xx vs 200) and, on 200, which datasource content was served"
+    discrimination_axis: payload-vector
+    discrimination_note: "Nearest sibling loop-8-s1: both target the missing validation, but this spec owns value shapes that may be silently accepted (silent misclassification) rather than the absence shape that must fail; a silent 200 is the distinctive outcome here."
+    chaining_advanced_note: null
+    proxy_technique: "Send one malformed value per request; classify each response and, where content is served, identify the datasource by its content profile (local DB pack counts versus channel cache content) or by the blocking behaviour of a remote resolution."
+    verification_symptoms:
+      - "an unknown value either raises the generic 500 or serves a datasource without an error"
+      - "no response field reports the invalid value or normalises it"
+      - "behaviour diverges across shapes for the same parameter (some crash, some fall through)"
+    payload_vector_space: {method: GET, path: /customnode/getlist, parameter: "mode=<unknown|empty|case-variant|padded>", body: null, headers: "any"}
+    assumptions: ["the 'non-local goes to channel resolution' branch is the fall-through path (TA-7)", "datasource content profiles are distinguishable (local 3421 packs versus channel cache content)"]
+    rationale: "Without an enum check the handler's branch order decides the outcome: anything not equal to 'local' resolves a channel, so a malformed value can silently select a datasource rather than being rejected - the same missing validation expressed as misbehaviour instead of a crash."
+    interpretation_guidance: "symptom-present = some shapes 5xx and others serve content without any rejection. symptom-absent = every shape is rejected with a controlled 4xx or normalised to a documented default (true negatives). A 200 alone is not a finding: identify the served datasource, because serving a *different* source than the value names is the misclassification signal."
+  - spec_id: loop-8-s3
+    label: "parameter-shape ambiguity under the aiohttp query parser"
+    sub_slice: "Parser-ambiguous shapes of the same parameter on the concrete stack (aiohttp/3.14.3, Python/3.11): repeated keys, percent-encoded names, empty/plus forms and array-like spellings; owns what the direct indexing resolves when the query string admits more than one reading."
+    class_skill_parametrisation:
+      skill: null
+      inputs:
+        stack: "aiohttp/3.14.3 query MultiDict semantics under Python 3.11"
+        handler_shape: "request.rel_url.query['mode'] (single-key indexing on a multi-valued structure)"
+        structural_basis: "the handler's indexing is the only parse step; divergent parse readings therefore decide the outcome"
+    concretisation:
+      protocol: http
+      target: "http://46.224.225.245:44177"
+      endpoint: "/customnode/getlist?mode=<shape>"
+      method: GET
+      shapes: ["duplicate keys (?mode=local&mode=cache - which value wins)", "percent-encoded name (%6Dode=cache)", "empty plus-form (mode=+)", "array-like spelling (mode[]=cache)", "separator variants (; vs & if accepted)"]
+      observation: "which reading the handler acts on (served datasource or exception) per shape"
+    discrimination_axis: tech-misconfiguration
+    discrimination_note: "Nearest sibling loop-8-s2: both vary the value space, but this spec owns ambiguity in the parse itself - shapes whose meaning depends on aiohttp's query resolution - rather than values that are unambiguous to any parser. The technology artefact is the decoder, not the enum."
+    chaining_advanced_note: null
+    proxy_technique: "Send each ambiguous spelling once and classify the outcome against the unambiguous control request: a shape is a finding only when the resolved datasource or error differs from the reading a conservative parser would take."
+    verification_symptoms:
+      - "at least one ambiguous shape resolves to a datasource different from the apparent value (differential versus control)"
+      - "or an ambiguous shape reaches the same unhandled 500 despite a syntactically present value"
+      - "behaviour is attributable to the parser reading (instrumented or differential evidence), not to caching"
+    payload_vector_space: {method: GET, path: /customnode/getlist, parameter: "mode=<duplicate|encoded|empty|array-like>", body: null, headers: "any"}
+    assumptions: ["aiohttp resolves duplicate keys per MultiDict first-value semantics (version-specific; the differential test decides)", "no WAF or proxy rewrites the query string (none evidenced in front of the unit)"]
+    rationale: "With no validation layer, the parser's own reading is the contract: wherever the query string admits more than one interpretation, the handler's direct index silently enacts one of them, and any sibling component that parses differently would disagree about the requested datasource."
+    interpretation_guidance: "symptom-present = an ambiguous shape produces a datasource or failure different from its conservative reading. symptom-absent = every shape resolves to the same outcome as its unambiguous control (true negative: no exploitable ambiguity). A differing outcome that also differs on an unambiguous control is noise, not a parser differential."
+  - spec_id: loop-8-s4
+    label: "same direct-indexing pattern across the mode-indexed route map"
+    sub_slice: "Route-scope of the fault: the second mode-indexed route (GET /customnode/getmappings?mode=..., IA-4) instantiates the same unvalidated indexing; owns the scope claim that the finding is a pattern of the route map rather than one endpoint."
+    class_skill_parametrisation:
+      skill: null
+      inputs:
+        routes: ["/customnode/getlist (observed 500 on absence)", "/customnode/getmappings (mode-taking per IA-4, 1.55MB observed)"]
+        pattern: "direct indexing of mode with no presence/enum check"
+        structural_basis: "the fault statement is route-shaped (a code pattern), so scope is decided by the route map, not by one reproduction"
+    concretisation:
+      protocol: http
+      target: "http://46.224.225.245:44177"
+      endpoints: ["/customnode/getmappings (no mode)", "/customnode/getmappings?mode=<malformed>", "control: same requests with a valid mode"]
+      method: GET
+      observation: "per-route classification of absence/malformed outcomes against controls"
+    discrimination_axis: chaining-advanced
+    discrimination_note: "Nearest sibling loop-8-s1: same input shape (absence), but this spec owns the route-scope claim - the pattern's second instantiation - which decides how broadly the finding generalises; route scope, not input shape, is the varying variable."
+    chaining_advanced_note: "Structural: with no class skill for input-validation faults, the scope variant is reasoned from the unit's route map: the fault is a code pattern (index-without-validation), so its region is the set of routes that take the parameter. The chain is pattern -> route instances, audited one control pair per route."
+    proxy_technique: "Repeat the absent/malformed probes against the second mode-indexed route with its own valid-mode control; classify each route independently rather than generalising from the first reproduction."
+    verification_symptoms:
+      - "the second route's absence/malformed probes either reproduce the unhandled failure or are refused by its own logic"
+      - "the outcome is attributable per route (control request drives the route's valid path)"
+      - "no route in the observed map reports a controlled rejection for the malformed input"
+    payload_vector_space: {method: GET, path: "/customnode/getmappings", parameter: "mode absent or malformed", body: null, headers: "any"}
+    assumptions: ["getmappings shares the indexing pattern (IA-4 shows the mode parameter; the handler-sharing is inferred from the single manager codebase)", "out-of-unit routes taking mode (CF-6 queue endpoints) are out of this unit's scope"]
+    rationale: "The fault is a validation pattern rather than a single handler; the route map shows a second route taking mode, so scope must be decided per route. Leaving it untested would understate the finding's breadth or overstate it from a single reproduction."
+    interpretation_guidance: "symptom-present = the second route reproduces an unhandled or uncontrolled outcome for the same input shapes. symptom-absent = its logic refuses malformed input with a controlled error (true negative for that route, recorded per route). A shared-framework 404 for a wrong path is not the route under test; verify the route exists via its valid-mode control first."
+checks:
+  overlap:
+    status: none
+    notes: "s1 owns the absence shape, s2 the value shapes, s3 the parser-ambiguity shapes, s4 the route scope. Each varies a different variable and carries its own control; no spec differs from a sibling by a payload string."
+  coverage:
+    status: exhaustive
+    uncovered: []
+    notes: "Union covers the evidenced input surface of mode (absence, value domain, parse ambiguity) plus the route-scope of the pattern. Error-surface detail (traceback leakage) is not a sub-slice: the observed 500 is generic, and leakage belongs to the information-disclosure loop, not to the controlled-error invariant."
+  well_formedness_statement: "Four specs over disjoint sub-slices: absent parameter, malformed value, parser-ambiguous shape, and route scope. Overlap is absent - each spec varies one variable and holds the others with its own control. Coverage is exhaustive over TA-7's evidenced parameter surface (mode on the observed mode-indexed routes), with error-leakage named as another loop's territory."
+degradations:
+  - "No class skill matches: the suite has no input-validation/unhandled-exception class, so the fault taxonomy comes from the payload (TA-7/DTV-6) and the reasoning is structural."
+  - "The 500 reproduction is OBSERVED once; response stability across repeats and per-route handler sharing are named assumptions rather than asserted facts."

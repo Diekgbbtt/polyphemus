@@ -1,0 +1,108 @@
+loop_id: loop-5
+unit_id: "WebPresentation:custom-node-catalog::manager-shell"
+class: xss
+class_skill: xss
+slice:
+  source: trust_agreement
+  statement: "TA-5/DF-4: the manager notice path trusts third-party wiki HTML as safe to inject - the server fetches the GitHub wiki page with TLS verification disabled (verify_ssl=False) and returns the extracted body, and the client assigns it via innerHTML on every shell initialisation. External content enters the shell origin unvalidated, so both transport and authorship authenticity fail (A-5 -> F-5 -> V-4)."
+discrimination:
+  axes_used: [tech-misconfiguration, payload-vector, chaining-advanced]
+  boundary: "where the trust in the notice content fails: transport (TLS verification disabled), extraction framing (checked for presence, not inertness), authorship (wiki content composed by third parties). No payload-string variants."
+  narrow_broad_tradeoff: "Broad on failure site (all three ways the external content can be controlled) because each is independently sufficient, and deep on the sink interaction (every shell init, no operator interaction), rather than a payload catalogue for one carrier."
+specs:
+  - spec_id: loop-5-s1
+    label: "TLS-verification-disabled fetch accepts a substituted notice"
+    sub_slice: "The outbound notice fetch over https with verify_ssl=False (aiohttp TCPConnector, V3.37, Python/3.11): a network-position attacker on the egress path presents any certificate and substitutes the response; owns the transport-authenticity failure of the notice path."
+    class_skill_parametrisation:
+      skill: xss
+      inputs:
+        stack_fact: "upstream v3.37 /manager/notice: aiohttp TCPConnector(verify_ssl=False) fetch of https://github.com/ltdrdata/ltdrdata.github.io/wiki/News"
+        sink: "notice.innerHTML = data at shell initialisation (no sanitisation)"
+        control_point: "the TLS channel to the wiki host, or its resolution"
+        patterns_used: ["cross-context delivery via server-side fetch into client innerHTML", "sink classification: HTML node", "no-interaction execution check on every render path (shell init)"]
+    concretisation:
+      protocol: "https (server-side fetch) -> http back to the client shell"
+      endpoint: "GET /manager/notice (server), rendered by init_notice() at GET / shell load"
+      technology: "aiohttp/3.14.3 connector with verification disabled; GitHub wiki source page"
+      interaction: none; executes on every shell initialisation
+      sink: "notice element innerHTML"
+    discrimination_axis: tech-misconfiguration
+    discrimination_note: "Nearest sibling loop-5-s2/s3: all three deliver attacker HTML to the same sink; this spec owns the transport misconfiguration (certificate verification off) as the control point, while s2 covers framing and s3 covers authorship. The failing technology artefact differs per spec."
+    chaining_advanced_note: null
+    proxy_technique: "From the unit's egress path (or by manipulating resolution), answer the wiki fetch with attacker HTML and an untrusted certificate; verification being disabled, the fetch completes and the response becomes the notice HTML that the client injects on the next shell initialisation."
+    verification_symptoms:
+      - "the outbound fetch completes against a certificate the platform trust store does not vouch for (verification off)"
+      - "the substituted notice HTML renders in the shell DOM and its markup executes without operator interaction"
+      - "the injected content appears after a plain shell reload, with no other request in the path"
+    payload_vector_space: {method: GET, path: "/manager/notice (client) over the server's outbound HTTPS fetch", parameter: null, body: "substituted response body carrying markup", headers: "any certificate chain; response unchanged by the unit"}
+    assumptions: ["the unit's egress path is positionable or its name resolution manipulable (the payload's likelihood names an egress network position)", "the fetch still succeeds when the page is unavailable in some other way - not assumed; the substitution is the control"]
+    rationale: "With verification disabled the transport proves nothing about the sender; the server returns the fetched body essentially unmodified and the client injects it, so whoever controls the egress controls HTML in the shell origin on every init - the misconfiguration removes the only authenticity control on the path."
+    interpretation_guidance: "symptom-present = the substituted response is accepted and its markup renders/executes at the next shell init. symptom-absent = the fetch fails on an untrusted certificate (verification effectively on) or the markup renders inert. A fetch that fails because the host is unreachable is inconclusive, not absent; only acceptance of a non-vouched certificate decides."
+  - spec_id: loop-5-s2
+    label: "presence-only extraction lets injected framing through"
+    sub_slice: "The server-side extraction step: the route returns the page's markdown-body HTML, and T8 verifies only HTTP 200 plus presence of the markdown-body div; owns the framing failure - markup outside the extracted region, or that breaks the extraction boundary, survives while the presence check still passes."
+    class_skill_parametrisation:
+      skill: xss
+      inputs:
+        verification_claim: "T8 verified_conditions: HTTP 200 of the wiki page and presence of the markdown-body div"
+        transform_claim: "the extract takes the markdown-body HTML and returns it essentially unmodified"
+        control_point: "the structure of the upstream HTML around/inside the extracted region"
+        patterns_used: ["mutation/XSS framing reasoning (parser repair shapes)", "unclosed-markup dispatch from the filter-bypass section", "context classification of the retrieval render"]
+    concretisation:
+      protocol: "https (server fetch) -> client GET /manager/notice"
+      endpoint: "GET /manager/notice"
+      technology: "V3.37 notice handler; GitHub wiki HTML (div class markdown-body) as the source document"
+      interaction: none; every shell initialisation
+      sink: "notice innerHTML after extraction"
+    discrimination_axis: payload-vector
+    discrimination_note: "Nearest sibling loop-5-s1/s3: same sink, but this spec owns the framing vector - the attacker's markup rides the extraction boundary rather than the transport or the wiki's authored content; it tests what the presence check fails to enforce."
+    chaining_advanced_note: null
+    proxy_technique: "Supply upstream HTML where active markup sits outside the markdown-body region, or closes/opens container markup so the extraction drags it into the returned fragment; the presence check still sees its marker element and the client injects the returned HTML."
+    verification_symptoms:
+      - "the returned notice body carries markup that was not inside the source page's markdown-body region"
+      - "the presence check (200 plus marker element) still passes while the returned HTML carries the injection"
+      - "the injected markup renders in the shell DOM at initialisation"
+    payload_vector_space: {method: GET, path: "/manager/notice", parameter: null, body: "upstream HTML with framing shapes (content outside the region, unclosed containers)", headers: "none"}
+    assumptions: ["the extraction is structural or regex-based rather than inertness-checking, per the transform claim and the presence-only verified condition", "the attacker can shape the upstream HTML (via any of the other failure sites)"]
+    rationale: "T8 verifies only that the source page returned 200 with its marker present; nothing checks that the extracted fragment is inert, so any markup that the extraction carries or that repairs around the fragment boundary reaches the sink and the check cannot distinguish it."
+    interpretation_guidance: "symptom-present = the returned notice HTML contains markup beyond the expected transformed content while the presence check passes. symptom-absent = the handler strips or rejects anything outside the expected structure (the extraction holding). A failed fetch is inconclusive. Markup that renders but is neutralised by a policy is positive for framing, inconclusive for execution."
+  - spec_id: loop-5-s3
+    label: "authored wiki content persists and re-executes every init"
+    sub_slice: "The authorship failure: the notice content is composed by third parties on the wiki page, so any accepted edit (contributor, compromised account, or the page's own links) is fetched and injected; owns the persistence stance - written once at the source, retrieved and executed at every shell initialisation."
+    class_skill_parametrisation:
+      skill: xss
+      inputs:
+        write_entry: "the wiki page's body (external source), fetched server-side each time"
+        retrieval_view: "every shell initialisation (notice.innerHTML = data)"
+        evidence_rule: "no same-response reflection; the write is external and the retrieval repeats per init (stored two-phase mapping)"
+        patterns_used: ["two-phase write-then-retrieve mapping (stored variant)", "separate observations across phases", "retrieval-response reflection rule"]
+    concretisation:
+      protocol: "external wiki edit -> server fetch -> client render at GET /"
+      endpoint: "GET /manager/notice"
+      technology: "GitHub wiki page for the manager's news; content delivered unmodified"
+      interaction: none
+      sink: "notice innerHTML on every shell load"
+    discrimination_axis: chaining-advanced
+    discrimination_note: "Nearest sibling loop-5-s1/s2: those own transport and framing control points; this spec owns the authored-content stance - a one-time external write that re-executes at each retrieval without any further attacker action and without transport manipulation."
+    chaining_advanced_note: "Structural: the class skill's stored variant covers write-once/retrieve-many with an external write entry and a client sink; the variant here is the trust clause it exercises (content authenticity independent of transport), so the chain is carried structurally rather than through a new sink entity."
+    proxy_technique: "Get active markup into the fetched wiki content (accepted edit, account compromise, or a link the page already carries), then wait for any shell initialisation: the server fetches and returns it, the client assigns it via innerHTML, and no transport position is needed."
+    verification_symptoms:
+      - "the markup renders on a plain shell load with no transport interference in the path"
+      - "the same content re-executes on a second, later initialisation (write-once, retrieve-many)"
+      - "the returned notice body matches the source page's content verbatim (no sanitisation between source and sink)"
+    payload_vector_space: {method: GET, path: "/manager/notice", parameter: null, body: "upstream authored HTML", headers: "none"}
+    assumptions: ["the page's edit model admits third-party content into the fetched region (collaborators, compromise, or page-carried links)", "the transport authenticates the wiki in this variant's precondition (content arrived as sent), isolating the authorship claim"]
+    rationale: "The unit has no independent check of the notice content's author or safety; it is fetched and injected on a schedule the attacker does not control but also cannot break, so a single accepted external write yields code execution in the shell origin for every operator visiting the shell."
+    interpretation_guidance: "symptom-present = authored markup renders on a clean shell load with an authenticated fetch and re-renders on a later load. symptom-absent = authored content is filtered before injection or the fetch path returns a sanitised form (true negative). A render that only appears with transport interference belongs to loop-5-s1, not here; keep the two claims separated in the record."
+checks:
+  overlap:
+    status: none
+    notes: "s1 owns the transport control point, s2 the extraction framing, s3 the authored content. Each is independently sufficient and disjoint at the control point; no spec differs from a sibling by a payload string."
+  coverage:
+    status: exhaustive
+    uncovered: []
+    notes: "Union covers the three control points of the notice path (transport, extraction, authorship) at the single sink (init innerHTML). The client-side sink itself is shared and undifferentiated; no fourth region exists in the payload's notice flow. Version-footer composition is server-side text and opens no injection region."
+  well_formedness_statement: "Three specs over disjoint sub-slices of the notice trust failure: transport authenticity, extraction framing, authored content. Overlap is absent - each spec names a distinct control point and preconditions the others away where needed. Coverage is exhaustive over DF-4's notice flow from external source to shell DOM."
+degradations:
+  - "The extraction implementation is evidenced as 'markdown-body extraction' with a presence check; its exact parsing (structural vs regex) is not observed, so s2 names the structural assumption."
+  - "The wiki's write controls (who may author content) are external to the unit and not part of the payload; s3 names the authorship precondition rather than asserting an edit vector."

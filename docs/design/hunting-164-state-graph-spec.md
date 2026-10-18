@@ -1,6 +1,14 @@
 # Hunting spec: the state-graph hunter (tools + graph-encoded workflow)
 
-*Status: spec (contract), NOT implementation.* The build spec for ticket
+*Status: spec (contract), NOT implementation.*
+
+**Harness redesign 2026-10-18.** Section 14 supersedes the fault lifecycle, state channels, gate signals, hints, and assertions of sections 2.3, 2.4, 3, 5, 6, and 11.
+The old text is retained for history.
+Sections 2.1, 4, and 12 also retain the older contract for history and are not current.
+The redesigned machine tracks the eight-pass hunter sequence, not the fault lifecycle.
+The hunter agent is S3; the pod contract is S5; the impact map is `docs/design/unit-threat-model-spec-impact-map.md`.
+
+The build spec for ticket
 [#164](https://github.com/Diekgbbtt/polyphemus/issues/164), synthesised from the grilling session recorded in
 `docs/design/hunting-164-state-graph-adr.md` (the ADR is the authority on the 2026-08-23 dispositions; this document
 is the workbench output of the grill for the to-tickets / to-assertions / implement chain). The grilling closed all
@@ -322,3 +330,339 @@ is reviewed AFTER this refactor; the test-infra specification is deferred to the
 - `src/polymerhus/attack/hunting/hunting_agent.py`, `actors.py`, `hunt_store.py`, `orchestrator_graph.py`.
 - `src/polymerhus/app/llm/session.py`, `actor.py`, `compaction.py`, `capability.py`.
 - `skills/hunting/hunting-agent/SKILL.md`.
+
+## 14. Redesign 2026-10-18: the pass-chain tracker
+
+### 14.1 Problem statement
+
+The passive tracker is fault-centric.
+It tracks the status verbatims `{hypothesised, verified, dropped, specified}`.
+It moves faults between four semantic lists.
+It injects four fault-lifecycle hints.
+The redesigned hunter has no faults.
+It runs a pass sequence over one loop.
+Its phases mostly end without a status-bearing store write.
+A tracker that waits for a fault status would never leave the first pass.
+
+### 14.2 Solution
+
+The tracker is refactored onto the pass sequence with proxy-signal gates.
+The states are:
+
+```
+GROUNDING -> SLICE -> COLLECT -> DISCRIMINATE -> GENERATE
+  -> WELL-FORMEDNESS -> VERIFY-CLAIMS -> COMPLETE
+```
+
+A state's exit signal is the most accurate available proxy:
+
+- A store write where a real write exists.
+- An interposed phase-summary note where no accurate write or tool-call terminus exists.
+
+The machine stays passive.
+It never gates a tool call.
+It never rejects a transition.
+It records what the model signalled.
+
+### 14.3 User stories
+
+1. As the harness, I want to track the eight-pass sequence, so that the trajectory shows where the hunter is.
+2. As the harness, I want one exit signal per pass, so that a pass advance is unambiguous.
+3. As the harness, I want a phase-summary note for the passes without a store write, so that the exit is explicit.
+4. As the harness, I want the generator's spec-set write to be the exit, so that a real write advances the state.
+5. As the harness, I want the terminal promote-and-declass write to be the final exit, so that the spec lifecycle closes the chain.
+6. As the harness, I want to advance on a later pass's signal, so that a skipped note does not wedge the tracker.
+7. As the harness, I want an earlier pass's signal to stay in the trail, so that a re-entry never moves the state back.
+8. As the harness, I want inner-loop calls to stay in the trail, so that a loop does not fabricate transitions.
+9. As the harness, I want the grounding KB query to carry a retrieval-gap rider, so that the gap check survives without a transition.
+10. As the harness, I want one hint per transition, so that the next pass is prompted exactly when actionable.
+11. As the harness, I want the hints injected in the tool responses, so that the system prompt stays stable.
+12. As the harness, I want the phase-summary note rewritten on a re-iteration, so that the latest summary wins.
+13. As the harness, I want the note kind `phase_summary`, so that the phase notes are distinguishable from other notes.
+14. As the harness, I want the state channel to carry the pass, so that the graph and the prompt agree.
+15. As the harness, I want the spec set channel to carry the current specs, so that the trajectory shows the set.
+16. As the harness, I want the fault lists removed, so that no dead state remains.
+17. As the harness, I want the old hints removed, so that no prompt says "verified" or "specified".
+18. As the harness, I want the spec status vocabulary to be `{hypothesised, ratified, dropped}`, so that all artifacts agree.
+19. As the harness, I want no schema gate, so that the model is never blocked.
+20. As the harness, I want a pure detector and a pure advance, so that the state machine is unit-testable.
+21. As the harness, I want the graph to hold no model, so that the tracker stays passive.
+22. As the harness, I want a forward jump to record the skipped states, so that a jump is auditable.
+23. As the harness, I want a trail-only backward signal to be harmless, so that a re-entry is not an error.
+24. As the harness, I want the terminal state to end the hunt, so that the spec set is final.
+25. As a reviewer, I want the proxy-signal matrix, so that every gate's accuracy is justified.
+26. As a reviewer, I want the removed verdict surfaces gone, so that no code pretends to derive a verdict.
+27. As a reviewer, I want the old lifecycle assertions superseded, so that the tests pin the new chain.
+28. As a reviewer, I want the grounding note's exit to be the only grounding terminus, so that a variable-length exploration is trackable.
+29. As a reviewer, I want the collection note's exit to be the only collection terminus, so that the last query is not mistaken for a mid-sequence query.
+30. As a reviewer, I want the well-formedness iteration to stay in the same pass, so that the trajectory does not show inner-loop states.
+
+### 14.4 The proxy-signal matrix
+
+| # | State | Exit to | Proxy signal | Accuracy argument |
+|---|---|---|---|---|
+| 1 | `GROUNDING` | `SLICE` | Interposed `phase_summary` note `phase:grounding` | Grounding is read-only exploration: target surfaces, class skill, methodology KB, HTTP history, graph, notes. The query count varies and no write or tool call is a reliable terminus. The phase-end note is the only explicit terminus. The pass is an explore/exploit loop: explore inside, exploit is the exit, finalised by the note. |
+| 2 | `SLICE` | `COLLECT` | Interposed `phase_summary` note `phase:slice` | The failure-mode slice is prose reasoning. It ends in no spec and no store write. |
+| 3 | `COLLECT` | `DISCRIMINATE` | Interposed `phase_summary` note `phase:collect` | Collection is a variable-length run of methodology-KB and store queries. The last query is indistinguishable from a mid-sequence query. The phase-end note is the only accurate terminus. |
+| 4 | `DISCRIMINATE` | `GENERATE` | Interposed `phase_summary` note `phase:discriminate` | The discrimination analysis produces no artifact. The phase-end note is the explicit terminus. |
+| 5 | `GENERATE` | `WELL-FORMEDNESS` | `hunts_store` write: the whole `specs` list, all with `status=hypothesised` | One batched store write carries the whole set. The signal is unambiguous and cannot fire on the first spec of a multi-spec set. |
+| 6 | `WELL-FORMEDNESS` | `VERIFY-CLAIMS` | Interposed `phase_summary` note `phase:well_formedness` | The pass assesses the set in prose. The [D2] iteration does not move the tracked state. The confirmation note is the exit. The note records merges and drops; the terminal write applies the statuses. |
+| 7 | `VERIFY-CLAIMS` | `COMPLETE` | `hunts_store` write: the whole `specs` list with survivors `ratified` and unfeasible specs `dropped` | The terminal commit is a real store write. The probe iterations do not move the tracked state. |
+| 8 | `COMPLETE` | - | - | Terminal. The hunt ends on the final spec set. |
+
+`START -> GROUNDING` is implicit: the hunt begins ungrounded.
+
+### 14.5 Signal acceptance
+
+The machine advances only on the current state's declared exit signal.
+The acceptance rule is:
+
+- **Expected exit**: the signal belongs to the current state. Advance to the next state.
+- **Forward jump**: the signal belongs to a later state. Advance to that state's next state and record the skipped states in the trail as `skipped`.
+- **Backward signal**: the signal belongs to an earlier state. Append to the trail as `reentry` and never move the state back.
+- **No signal**: append nothing and stay.
+
+The rule is a pure function:
+
+```
+detect_signal(state, signal) -> SignalOutcome
+```
+
+where `SignalOutcome` is one of:
+
+- `advance(target)`
+- `forward_jump(target, skipped)`
+- `trail_only(reason)`
+- `none`
+
+`advance_state(state, outcome) -> (new_state, hint, trail_entry)`
+
+The hint is the constant for the exited state.
+The trail entry records the signal, the outcome, and the state move.
+
+### 14.6 Vocabulary
+
+The state literals are:
+
+```
+grounding | slice | collect | discriminate | generate
+| well_formedness | verify_claims | complete
+```
+
+The note names are:
+
+```
+phase:grounding | phase:slice | phase:collect | phase:discriminate | phase:well_formedness
+```
+
+The generate and verify-claims exits are store writes and need no note.
+
+The spec status values are exactly `{hypothesised, ratified, dropped}`.
+`verified` and `specified` are retired.
+A spec's terminal status is `ratified`.
+The declass of a verified-unfeasible spec is `dropped`.
+
+The hunt-config lifecycle is retired with `HuntConfig`; the only live hunting status vocabulary is the hunter spec set's `{hypothesised, ratified, dropped}`.
+
+### 14.7 Hints
+
+One hint exists per transition gate.
+The Q46a answer lists the six post-slice hints.
+The grounding exit also needs a hint because the table has one hint per transition.
+The seventh hint is an implementation choice recorded here; it does not change Q46a's six post-slice hints.
+The table below completes the mapping.
+
+| Exited state | Hint |
+|---|---|
+| `GROUNDING` | The grounding summary is persisted. Define the failure-mode slice the loop opens. |
+| `SLICE` | Write the slice note, then collect the discrimination-axis instances. |
+| `COLLECT` | Close the collection with the instances note, then discriminate. |
+| `DISCRIMINATE` | Persist the discrimination outcome, then generate the spec set. |
+| `GENERATE` | The specs are written as `hypothesised`. Run the well-formedness check over the slice; the check absorbs the class-exhaustiveness question in its new form. |
+| `WELL-FORMEDNESS` | Well-formedness is confirmed. Record the drops and merges, then verify the claims. |
+| `VERIFY-CLAIMS` | Promote the surviving specs, declass the unfeasible ones. |
+
+The table shape is `TRANSITION_HINTS: dict[HunterPass, str]`.
+The hint is selected by the exited state.
+The hint is injected in the signal's tool response.
+The hint is a constant, never the system prompt.
+
+The grounding retrieval-gap rider is separate:
+
+```
+GROUNDING_KB_HINT
+```
+
+It is injected on a `kb_query` call while the state is `GROUNDING`.
+It is not a transition.
+Its text is re-worded for the new chain: the retrieval is folded in; a closed gap proceeds to SLICE; an open gap records the residual uncertainty and proceeds on weaker grounding.
+`D3_HINT` is retired; the rider replaces it.
+
+### 14.8 Phase-summary notes
+
+The hunter's `notes` args `kind` gains `phase_summary`.
+The enum is the hunter's note-kind string in the shared notes tool.
+The hunt-store and pod note enums do not gain the kind.
+The modeller's `notes` tool does not accept it.
+The note name is `phase:<phase>`.
+The note is written through the hunter's existing `notes` tool.
+The note body states the pass's output and the decision rationale, within the conciseness cap.
+
+On a loop re-iteration, the same note is rewritten with `action=update`.
+The latest note wins.
+The note is episodic memory, not authoritative state.
+The spec store writes remain authoritative for the spec set.
+
+The note is not a schema gate.
+A missing note is not a tool rejection.
+The harness advances only when the note is observed.
+
+### 14.9 State channels and pure functions
+
+The pure state module owns:
+
+```
+HunterPass = Literal[
+  "grounding", "slice", "collect", "discriminate",
+  "generate", "well_formedness", "verify_claims", "complete",
+]
+
+SpecStatus = Literal["hypothesised", "ratified", "dropped"]
+
+SpecItem:
+  spec_id: str
+  status: SpecStatus
+  fault_keyword: str
+  strategy_keyword: str
+  spec_ref: str
+  verification_symptoms: list[str]
+  summary: str
+
+HuntState:
+  state: HunterPass
+  specs: list[SpecItem]
+  injected_constant: str | None
+  trail: Annotated[list[dict], operator.add]
+```
+
+The transient drive inputs are:
+
+```
+observed_signal: PhaseSignal | None
+```
+
+`PhaseSignal` is one of:
+
+```
+{kind: "phase_note", phase: HunterPass}
+{kind: "spec_set_write", statuses: list[SpecStatus]}
+{kind: "kb_query"}
+```
+
+The signal detector maps:
+
+- A `phase_summary` note whose name is `phase:<phase>` to `{kind: "phase_note", phase}`.
+- A `hunts_store` write carrying a `specs` list whose entries are all `hypothesised` to `{kind: "spec_set_write", statuses: ["hypothesised"]}`.
+- A `hunts_store` write carrying a `specs` list whose entries are all `ratified` or `dropped` to `{kind: "spec_set_write", statuses}`.
+- A `kb_query` call to `{kind: "kb_query"}`.
+
+The `kb_query` signal produces `GROUNDING_KB_HINT` only in `GROUNDING`; it never advances the state.
+
+The `specs` channel is last-write.
+The trailer is append-only.
+The old `phase` channel, the fault lists, `current_fault`, and the old status types are removed.
+
+### 14.10 Graph topology
+
+```
+START -> supervise
+supervise --signal pending--> detect
+supervise --state complete--> END
+detect --advance/forward_jump--> advance
+detect --trail_only/none--> supervise
+advance -> supervise
+supervise --no signal--> supervise  (stay; the turn carries no signal)
+```
+
+`supervise` is the sole entry.
+It routes to `detect` when a signal is pending.
+`detect` is a pure function of the signal and the current state.
+`advance` updates the state, injects the hint, records the trail, and consumes the signal.
+Every push returns to `supervise`.
+There is no fault push node and no per-fault list move.
+
+The graph holds no model.
+The graph is compiled in memory per hunt.
+The ReAct engine runs outside the graph, as before.
+
+### 14.11 Removal scope
+
+The refactor removes:
+
+- The four-value fault lifecycle and its detector and push functions.
+- The four fault push nodes.
+- The fault lists, `current_fault`, and the old phase channel.
+- `derive_verdict` (already marked STALE).
+- `SpecItem.experiment_ref`.
+- The old hint constants `D2_HINT`, `COMMIT_SPECIFICATION_HINT`, `NEXT_FAULT_HINT`, `NEXT_ITERATION_HINT`, and `D3_HINT`.
+- The dead verdict and pod-result residue the implementation enumerates.
+- The old lifecycle assertions.
+
+The pod dispatch path stays.
+The tool surface stays, with `skill_list` and `skill_load` added.
+
+### 14.12 Implementation decisions
+
+- The machine tracks the eight-pass sequence.
+- The exit signals are the matrix in 14.4.
+- The phase-summary notes carry the five note exits.
+- The store writes carry the two store exits.
+- The hint table is keyed by the exited state.
+- The grounding KB rider is separate.
+- The signal acceptance is expected, forward jump, backward trail-only, or none.
+- The state is monotonic.
+- The specs channel is last-write.
+- The trail is append-only.
+- The graph is passive and compiled in memory.
+- The old lifecycle is removed.
+
+The implementation follows the patterns recorded in `src/polymerhus/attack/hunting/CONTEXT.md`: the passive state-graph hunter with detection and pushes, the pure state module, the injected phase-transition verbatims, and the hunter memory store.
+The harness replicates the pattern and keeps the no-block invariant.
+
+### 14.13 Testing decisions
+
+Test the pure detector and the pure advance.
+Drive the graph with injected signals.
+Assert the state moves, the hints, the trail entries, the forward jump, the backward trail-only, and the loop discipline.
+
+Seams:
+
+- The signal detector: note, store write, KB query, absent signal.
+- The acceptance rule: expected, forward, backward, none.
+- The state advance: hint selection, trail entry, monotonic state.
+- The note contract: `phase_summary`, `phase:<phase>`, update-on-re-iteration.
+- The store contract: `hypothesised` set write, terminal `ratified`/`dropped` write.
+- The graph: the active path, the terminal END, the no-block invariant.
+- The removals: no fault push node, no `derive_verdict`, no `experiment_ref`, no old hint constant.
+
+Prior art:
+
+- The state-graph hunter tests.
+- The hunter state purity tests.
+- The notes and store contract tests.
+
+### 14.14 Out of scope
+
+- The hunter prompt prose (S3 and the prompt work phase).
+- The pod contract (S5).
+- The modeller and artifact (S1, S2).
+- The verdict-consumption graph.
+- The inner-loop state tracking; the machine stays in the looping pass.
+
+### 14.15 Further notes
+
+The workbench R8-2, Q44-Q47, and Q49-Q53 are the decision authority.
+The proxy-signal matrix is the accuracy justification.
+The note kind and name are the interposed persistence contract.
+The hint table is the loop driver contract.
+The prompt work phase finalises the hint wording.

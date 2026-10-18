@@ -1,0 +1,76 @@
+loop_id: loop-2
+unit_id: Service:model-download
+class: Local file inclusion / arbitrary local file read
+class_skill: path-traversal-lfi-rfi
+slice:
+  source: trust_agreement
+  statement: "TA4's local-file clause plus the gate filter F3: rejecting the shapes file:/// and FILE:// as typed is assumed to cover local-file access, but the filter matches narrow textual forms only while file://localhost reads execute (P36-P38). The loop opens the local-file read space keyed by the spelling of the file-scheme URL."
+discrimination:
+  axes_used: [chaining-advanced, payload-vector]
+  boundary: "the component of the file-scheme URL that escapes the two-literal denylist: an authority component the enumeration never listed (s1) versus spellings of the scheme token and separators that never equal either literal (s2); the read sink and fault stay fixed."
+  narrow_broad_tradeoff: "narrow on evasion geometry (two components, one comparison target each) and broad on the target-file space inside each spec; the read mechanism is already OBSERVED, so component coverage buys more than per-file depth."
+specs:
+- spec_id: loop-2-s1
+  label: "authority-form file read"
+  sub_slice: "file://<authority>/<path> URLs whose local-file semantics ride an authority component the denylist never enumerated; accepted anchor file://localhost (P36-P38). Owned region: local reads reached by an authority-bearing file URL, independent of which file is targeted."
+  class_skill_parametrisation:
+    skill: path-traversal-lfi-rfi
+    inputs: {sink: "worker fetch stage dispatching the file scheme to a local reader", anchor: "file://localhost/etc/passwd -> 839 B, /proc/self/environ -> 790 B written into the model tree", technique: "read-oracle discipline from traversal-read (paired controls, canonical small files, masked-content adjudication)", wrapper_read_entity: "ssrf/scheme-translated-command-execution, wrapper-aware file reads (loaded cross-reference)"}
+  concretisation:
+    protocol: "file scheme handled by the worker fetch; gate is a manager middleware on aiohttp"
+    endpoint: "POST /manager/queue/install_model (mirror /api/manager/queue/install_model) then GET /manager/queue/start; readback via IA11 listings"
+    parameter: url
+    method: "POST then GET"
+    body: '{"name": "x", "url": "file://localhost/etc/passwd", "filename": "t1-read.safetensors", "save_path": "checkpoints"}'
+    headers: {"Content-Type": "application/json"}
+  discrimination_axis: chaining-advanced
+  discrimination_note: "Nearest sibling is loop-2-s2: s2 varies the spelling of the rejected literals while s1 keeps the literal scheme token and adds an authority component that URL semantics allow; the gate compares raw strings, so an authority-bearing URL is categorically outside its comparison set. Different comparison target (component coverage vs token normalization), not a payload-string tweak."
+  chaining_advanced_note: "Structural clause split of F3: the matcher compares raw text against exactly two literals (file:/// and FILE:// per DF2/P26/P35), while URL syntax separates scheme, authority, and path; a local-file URL can encode its semantics in the authority while the raw text never equals either literal. The class skill lacks a scheme-dispatch entity (it owns path joins, not scheme handlers), so the reasoning is carried structurally; the authority forms come from URL syntax and the ssrf wrapper-read entity."
+  proxy_technique: "Lowercase .safetensors filename skips catalog membership; the file://<authority>/<path> URL passes the literal denylist and the worker fetch dispatches it to the local reader; the fetched bytes are written under the client-chosen save_path/filename and read back through /experiment/models listings, with the entry size as the read oracle."
+  verification_symptoms: ["a model-tree entry whose bytes equal the named local file (size anchor 839 B for /etc/passwd; 790 B for /proc/self/environ)", "a paired negative control (a non-existent local path read through the same authority form) yields no entry or a distinct fetch error, excluding volatile framing"]
+  payload_vector_space:
+    method: "POST install_model -> GET start; readback GET /experiment/models/<dir>"
+    path: "/manager/queue/install_model, /api/manager/queue/install_model, /manager/queue/start"
+    parameter: "url authority token: localhost, LOCALHOST, 127.0.0.1, [::1], userinfo forms; target path is the vector's payload"
+    body: "JSON install item, filename ending in lowercase .safetensors, save_path checkpoints"
+    headers: {"Content-Type": "application/json"}
+  assumptions: ["the filter's literal set is exactly {file:///, FILE://} (DF2) and it compares the raw URL text", "the worker fetch accepts the file scheme for authority-bearing URLs (P36-P38 OBSERVED for localhost)", "the model-tree listings remain readable as the oracle (IA11)"]
+  rationale: "If F3 is implemented (literal-string matching), the denylist cannot enumerate authority forms; local-file semantics live in the URL's authority component, which the enumeration never lists. P36-P38 already executed the localhost leg, so this sub-slice closes the authority family for coverage with direct read oracles."
+  interpretation_guidance: "Symptom-present = the written entry's content equals the named local file exactly (byte match or exact size with content compare), with the paired negative control excluded. Symptom-absent = every authority form receives 400/403 at enqueue, or 200-queued with a fetch-stage refusal and no entry while the control behaves identically: the denylist or fetch stage covers authority forms. One refused spelling is inconclusive for the family; a 200 enqueue alone is not a symptom - the read must land."
+- spec_id: loop-2-s2
+  label: "denylist-literal spelling evasion"
+  sub_slice: "Spellings of the rejected literals that never equal them as text: mixed-case scheme tokens, single/extra-slash forms, and encoded scheme or separator characters, where the gate's literal comparison and the fetcher's URL normalization disagree; owned region = spelling evasion of the denylist itself."
+  class_skill_parametrisation:
+    skill: path-traversal-lfi-rfi
+    inputs: {sink: "same worker fetch stage", technique: "encoding and normalization probing from the parent skill (single/double URL-encoding, mixed case, dot tricks)", anchor: "P26/P35 file:/// and FILE:// refused; P47 case sensitivity evidenced elsewhere in the gate"}
+  concretisation:
+    protocol: "file scheme spellings; gate = literal comparison in the V3.37 middleware"
+    endpoint: "POST /manager/queue/install_model (mirror /api/manager/queue/install_model) then GET /manager/queue/start"
+    parameter: url
+    method: "POST then GET"
+    body: '{"name": "x", "url": "FiLe:///etc/passwd", "filename": "t1-read.safetensors", "save_path": "checkpoints"}'
+    headers: {"Content-Type": "application/json"}
+  discrimination_axis: payload-vector
+  discrimination_note: "Owns spelling evasion of the exact rejected literals (case folding, slash count, percent-encoding) where the gate's raw comparison and the fetcher's normalization disagree; s1 instead adds a component the gate never anticipated. Disjoint spelling families with different refusal semantics per component."
+  chaining_advanced_note: null
+  proxy_technique: "Probe each spelling as its own candidate: mixed-case tokens (FiLe://, File://), slash-count forms (file:/path, file://path, file:////path), and percent-encoded scheme/colon/separator characters; for each, record the gate verdict and, when accepted, the drained fetch outcome. The encoding pass is the delivery proxy: meaning is preserved through the mutation while the compared text changes."
+  verification_symptoms: ["for an accepted spelling: a model-tree entry whose bytes equal the named file, proving the normalization differential reached the local reader", "for refused spellings: the exact status (400 vs 403) mapping the matcher's coverage, recorded as the negative result"]
+  payload_vector_space:
+    method: "POST install_model -> GET start"
+    path: "/manager/queue/install_model, /api/manager/queue/install_model, /manager/queue/start"
+    parameter: "url scheme token and separator spelling; target path fixed to a canonical file"
+    body: "JSON install item, filename ending in lowercase .safetensors"
+    headers: {"Content-Type": "application/json"}
+  assumptions: ["RFC 3986 treats scheme tokens case-insensitively; the gate's literals are case-specific (file:/// and FILE:// both enumerated suggests hand-written coverage)", "the fetcher resolves spellings through its URL parser and maps some to the file handler (unprobed on this target)"]
+  rationale: "F3's fault is the matcher's comparison discipline; a hand-enumerated literal set cannot chase normalization equivalence. If any equivalent spelling passes while preserving local-file meaning, the same read executes through a different escape geometry than s1, so the failure modes do not collapse."
+  interpretation_guidance: "Symptom-present = an accepted spelling whose drained fetch writes the named file (byte match) - the normalization gap is real for that spelling. Symptom-absent = every candidate is refused (400/403) or accepted-but-not-dispatched (no entry, fetch-stage error): the literal set or parser normalization covers the spellings; record the refusal map and close the region. A refusal is a clean negative for the spelling, not for s1's authority family."
+checks:
+  overlap:
+    status: none
+    notes: "s1 owns authority-bearing file URLs (component coverage gap); s2 owns spellings of the rejected literals (normalization gap). Disjoint spelling families, different comparison targets, and each spec's refusal map stays meaningful on its own."
+  coverage:
+    status: exhaustive
+    uncovered: []
+    notes: "The two components through which a file-scheme URL can escape the two-literal denylist are each owned once. Non-file local schemes and network schemes stay in the scheme region owned by loop-1; the /api mirror is a route variant inside both specs, not a separate region."
+  well_formedness_statement: "Two specs, disjoint evasion geometries over one fixed fault (F3) and one fixed read sink: s1 differs on the URL component that carries local-file meaning, s2 on the spelling of the compared literals; both carry distinct oracles (direct byte match per candidate) and neither is a payload-string variant of the other. Together they cover the file-scheme escape space the denylist opens."
+degradations: ["The class skill (path-traversal-lfi-rfi) owns path joins and includes, not scheme-dispatch filters; its read-oracle discipline was reused and the wrapper-read mechanics were grounded in the loaded ssrf scheme subtopic. Carried as structural harness deviation.", "The fetcher's URL-parser normalization for s2 spellings is unprobed; the spec declares the assumption and keeps refusal maps useful either way."]

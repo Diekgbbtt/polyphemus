@@ -5,6 +5,9 @@ Resolves [#67](https://github.com/Diekgbbtt/polyphemus/issues/67) (enhancement, 
 
 *Status: spec (decision record + contract), NOT implementation. This is the phase-2 map convention: one spec per graduated ticket. The cooperative-team execution logic of the pod beyond the scaffold is deferred (D67-01; decision record section 4); the closed-enum testing-pattern engine is deferred (D67-07; decision record section 4); the hunt-store persistence is owned by [#68](https://github.com/Diekgbbtt/polyphemus/issues/68); the control-plane dispatch graph by [#69](https://github.com/Diekgbbtt/polyphemus/issues/69); the orchestrator memory by [#70](https://github.com/Diekgbbtt/polyphemus/issues/70); the deterministic components by [#71](https://github.com/Diekgbbtt/polyphemus/issues/71). This spec owns the per-agent contracts only. Mined on 2026-08-03 per the operator's request: sections 10-14 add the end-to-end walkthrough, the domain-data contracts, the interface agreements with delivery semantics and failure handling, and the agent-attribute compliance against the #9 agent-spec precedent. A third grilling round (D67-11..D67-14, 2026-08-03) sharpened the KB-failure degradation, the worst-case vs failure-state distinction, the D-record ratification, and the inline back-edge semantics.*
 
+**PARTIALLY SUPERSEDED 2026-10-18.** Section 4 (hunt-orchestrator), section 5 (hunting-agent workflow), and section 7 (D4 structure) are superseded by `docs/design/hunting-67-threat-modeller-spec.md`, `docs/design/hunting-67-hunting-agent-spec.md` section 8, and `docs/design/hunting-67-test-executor-pod-spec.md` section 8.
+The inter-agent logic, the walkthroughs, and the failure-handling canon remain the reference where they do not contradict the new contracts.
+
 ## 0. Provenance and decision record
 
 - The decision record is `docs/design/hunting-67-per-agent-specs-decisions.md`, ratified through two direct grilling passes (2026-08-03).

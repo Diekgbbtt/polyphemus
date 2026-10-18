@@ -1,0 +1,48 @@
+# Metrics for trial t2-system-catalog-manager-shell
+# Wallclock measured with date +%s deltas (times file in the scratch dir).
+# note: state 3 and state 4 gates were logged in one command; their deltas were measured as one 223 s stretch.
+# note: state 4 wallclock is therefore reported as part of state 3; state 5 restarts the clock at the state 4 gate write.
+states:
+  UNIT_TECHNICAL_SHARP:
+    probes_run: 18
+    notes_written: 1
+    wallclock_s: 386
+    start_utc: "2026-10-15T21:31:56Z"
+    end_utc: "2026-10-15T21:38:22Z"
+  TRUST_MODELLED:
+    probes_run: 8
+    notes_written: 1
+    wallclock_s: 160
+    start_utc: "2026-10-15T21:38:47Z"
+    end_utc: "2026-10-15T21:41:27Z"
+  TRUST_ASSUMPTIONS_WRITTEN:
+    probes_run: 1
+    notes_written: 1
+    wallclock_s: 223
+    combined_with: VULNERABILITIES_WRITTEN
+    start_utc: "2026-10-15T21:41:42Z"
+    end_utc: "2026-10-15T21:45:25Z"
+  VULNERABILITIES_WRITTEN:
+    probes_run: 0
+    notes_written: 1
+    wallclock_s: null
+    note: "included in the TRUST_ASSUMPTIONS_WRITTEN 223 s stretch; gates logged in one batch"
+  COMPLETED:
+    probes_run: 0
+    notes_written: 1
+    wallclock_s: 68
+    start_utc: "2026-10-15T21:45:25Z"
+    end_utc: "2026-10-15T21:46:33Z"
+totals:
+  probes_run: 27
+  notes_written: 5
+  wallclock_s_measured: 837
+  probe_budget: 60
+  mutations:
+    total: 3
+    list:
+      - "GET /manager/channel_url_list?value=recent (state change)"
+      - "GET /manager/channel_url_list?value=default (restore of recorded prior value)"
+      - "GET /customnode/getlist?mode=remote (side effect: cache refresh from the configured channel)"
+  drops: 1
+  loops_kept: 9

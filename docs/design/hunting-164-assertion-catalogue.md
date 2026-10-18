@@ -1,5 +1,10 @@
 # Assertions - hunting-agent state-graph hunter (#164)
 
+**SUPERSEDED 2026-10-18 for the lifecycle and FSM assertions.**
+The new harness contract is `docs/design/hunting-164-state-graph-spec.md` section 14.
+The new assertions are defined at the to-assertions phase.
+The old catalogue remains as history.
+
 **Source:** `docs/design/hunting-164-state-graph-spec.md` (sections 2-6, 11) and
 `docs/design/hunting-164-state-graph-adr.md` (R4, GP4, GP6, GP8c, G1-G9).
 **Seams under assertion:** the per-project `HunterMemoryStore` store seam

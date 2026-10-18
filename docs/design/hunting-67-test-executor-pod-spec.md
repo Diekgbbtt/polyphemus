@@ -6,7 +6,14 @@ This document disambiguates the test-executor pod from the combined spec: everyt
 
 *Status: spec (contract), being re-specified by the #84 regrounding.
 Implementation decisions from the 2026-08-21 grilling live in `docs/design/hunting-84-regrounding-decisions.md` (D84-1..D84-25) and are authoritative over this document where they clash; this document is corrected so no clash remains.
-The regrounding reconciled the pod onto the shared session abstractions (`HuntSession`, `stateful_turn`, the #95 compaction middleware, async-native entry) and superseded the pre-regrounding scaffold's stateless seams and symbolic runner.*
+The regrounding reconciled the pod onto the shared session abstractions (`HuntSession`, `stateful_turn`, the #95 compaction middleware, async-native entry) and superseded the pre-regrounding scaffold's stateless seams and symbolic runner.
+
+**Pod contract redesign 2026-10-18.** Section 8 supersedes the D4 typed base, the testing-pattern clause, the empty-payload-vector outlier, and the variant-minting clauses.
+The old text is retained for history.
+Sections 1.7, 2, 4.1, and 6 also retain the older contract for history and are not current.
+The redesigned D4 surface carries `target_identity`, `verification_symptoms`, `assumptions`, `rationale`, and lineage only.
+The triager mints variants from a procedure diff, not from a declined spec attribute.
+The impact map is `docs/design/unit-threat-model-spec-impact-map.md`.
 
 ## 1. Identity
 
@@ -98,9 +105,9 @@ Langfuse is fail-open and never a gate (C12).
   the `validate_decision` binary guard, and the degradation then mis-records a confirmed symptom as
   `unsuccessful`.
 - The fixed caps (D67-09): `MAX_POD_ITERS = 3`, `EXEC_TIMEOUT_S = 300`, `HUNT_POD_MAX_TOOL_CALLS = 200`, `HUNT_POD_MAX_ITERS = 8`; all env-overridable, all pod-internal, never spec fields.
-- The testing pattern is an OPEN NL pattern inside the typed envelope (D67-07): the engine treats it as guidance over the generic loop.
+- **SUPERSEDED by 8.4 (2026-10-18).** The testing pattern is an OPEN NL pattern inside the typed envelope (D67-07): the engine treats it as guidance over the generic loop.
   The closed-enum pattern engine is deferred to [#81](https://github.com/Diekgbbtt/polyphemus/issues/81).
-- Variants (D67-08): a declined/refined attribute yields a derived variant spec instance, recorded with provenance; the exported evidence is the full experiment log (variant specs, raw observations, interpretations).
+- **SUPERSEDED by 8.6 (2026-10-18).** Variants (D67-08): a declined/refined attribute yields a derived variant spec instance, recorded with provenance; the exported evidence is the full experiment log (variant specs, raw observations, interpretations).
 - INIT validation is a hard gate: a spec failing the typed base schema or the environment contract is rejected and lands `unsuccessful` with the validation evidence in the trail.
 - An empty payload vector does NOT zero the loop: the Runner's first ReAct turn still issues the default probe once; if no probe can be derived at all, the loop lands `space-exhausted` with the (possibly empty) log (O12/C11).
 - Identical variant + payload executions are deduplicated: one execution, recorded once (O7/C10).
@@ -158,7 +165,7 @@ O8 - Unclassifiable output: treated as noise with the raw output preserved; the 
 O9 - Langfuse stub failure: the run completes unaffected (fail-open).
 O10 - Memory stub failure: the run completes unaffected.
 O11 - Variant count blow-up: bounded by the pod's internal caps (D67-09); the loop always lands a binary end.
-O12 - Empty payload vector: the Runner's first ReAct turn still probes once; if no probe is derivable, `space-exhausted` with the log.
+O12 - **SUPERSEDED by 8.5 (2026-10-18).** Empty payload vector: the Runner's first ReAct turn still probes once; if no probe is derivable, `space-exhausted` with the log.
 O13 - KB query failure (`query_lightrag` raising or empty): fail-open - the Runner degrades to the spec's own primitives. The empty/degraded bundle is RECORDED as a `KbObservation` (T3/#179) when a log is bound, marked `degraded=true` (#304). A degraded KB is UNAVAILABLE evidence: it can never license a clean `space-exhausted` (the graph downgrades to `no-symptom-evidence`/`clean=false`, #304) - only a real answer returning the same set as init confirms exhaustion (D84-16).
 O14 - A tool-call with wrong parameters: the tool REJECTS it with an error message + code (tool contract semantics, D84-22); the ReAct loop sees the rejection as a tool result and adjusts.
 
@@ -235,3 +242,279 @@ The cooperative-team execution logic beyond the scaffold (D67-01), the closed-en
 The merged spec's inter-agent logic (sections 10-14) governs the seams this document references.
 The plan-control tool / DAG workflow control-plane (#136) is recorded and deferred.
 The per-project memory store (#137/#140) is never imported into the pod - its patterns are replicated, its namespace is not (D84-20).
+
+## 8. Contract redesign 2026-10-18: the reduced D4 and the procedure-diff triager
+
+### 8.1 Problem statement
+
+The D4 surface carries `testing_pattern`, `payload_vector_space`, and `interpretation_guidance`.
+The testing pattern duplicates the class skill's procedural knowledge.
+The payload vector space pre-narrows the attack before the runner has grounded on the target.
+The interpretation guidance duplicates the rationale and the verification symptoms.
+The three fields make the spec heavier without adding execution semantics.
+
+The triager mints a variant by declining a spec attribute.
+That mechanism assumes the spec's attributes are the discrimination space.
+The redesigned hunter discriminates on the skills-ontology entities, not on spec attributes.
+A declined attribute no longer names a meaningful variant.
+
+### 8.2 Solution
+
+The D4 surface is reduced.
+The INIT gate ranges over the reduced base.
+The runner authors probes from the spec's rationale, symptoms, assumptions, and target identity.
+The triager mints a variant by diffing the skill's procedure against the executed procedure.
+The pod memory variant record keeps its shape.
+The `declined_attribute` storage field carries the variant basis.
+
+### 8.3 User stories
+
+1. As the hunter, I want the spec to carry only target identity, verification symptoms, assumptions, rationale, and lineage, so that the pod receives a simple execution contract.
+2. As the hunter, I want `verification_symptoms` to mean the concrete observable failure modes of the trust agreement, so that the pod's manifestation check follows the trust model.
+3. As the hunter, I want `assumptions` to carry the technical requirements the pod may falsify, so that the pod knows what to challenge.
+4. As the hunter, I want the rationale to stay vulnerability-level, so that I do not pre-narrow the pod's procedure.
+5. As the hunter, I want the payload vector space retired, so that the pod authors its probes from the evidence.
+6. As the hunter, I want the testing pattern retired, so that the class skill is the single procedural source.
+7. As the hunter, I want the interpretation guidance retired, so that the verification symptoms define symptom-absent.
+8. As the pod, I want the INIT gate to require only a base URL and a non-empty symptom list, so that a well-formed spec is never rejected for a retired field.
+9. As the pod, I want the gate to collect all violations in one rejection, so that the hunter can correct the spec in one pass.
+10. As the pod, I want the runner to author at least one probe from the reduced spec, so that an empty vector no longer lands a false absence.
+11. As the pod, I want a non-derivable probe to land `no-symptom-evidence` with `clean=false`, so that an authoring gap is not recorded as target absence.
+12. As the pod, I want the replay capability to stay available, so that a recorded baseline can still be executed when the hunter names it.
+13. As the triager, I want the skill procedure in my context, so that I can diff it against the executed procedure.
+14. As the triager, I want a fixed gap-class vocabulary, so that every variant basis is named consistently.
+15. As the triager, I want the first uncovered gap class to be the basis, so that the mining order is deterministic.
+16. As the triager, I want a failure-mode fallback, so that a fully covered procedure can still yield a variant.
+17. As the triager, I want runner-failure and runner-divergence triggers, so that a broken execution yields a recovery variant.
+18. As the triager, I want the experiment log in my context, so that I never mint a duplicate variant.
+19. As the triager, I want the terminal decision vocabulary unchanged, so that the binary verdict and the six terminal reasons stay stable.
+20. As an operator, I want the variant record shape unchanged, so that the pod memory and the parent reads do not migrate.
+21. As an operator, I want `declined_attribute` to carry the basis, so that the stored lineage names the real reason.
+22. As an operator, I want the seven procedure gaps named after the skill's procedure, so that the triager and the hunter use the same entities.
+23. As an operator, I want the skill procedure excerpt bounded, so that the pod context does not grow with the whole skill.
+24. As an operator, I want the pod to fall back to the failure-mode reasoning when the excerpt is absent, so that a missing provenance field degrades rather than blocks.
+25. As a reviewer, I want the INIT gate's mandatory set fixed, so that no implementation invents a third requirement.
+26. As a reviewer, I want the retired fields absent from every fixture and prompt, so that no stale `testing_pattern` path survives.
+27. As a reviewer, I want the variant basis persisted, so that a later audit can reconstruct why the variant was mined.
+28. As a runtime operator, I want the pod's binary terminal invariant unchanged, so that the parent's verdict derivation stays valid.
+
+### 8.4 The reduced D4 surface and the INIT gate
+
+The D4 surface is:
+
+```
+TargetIdentity:
+  url: str
+  unit_id: str
+
+TestImplementationSpec:
+  target_identity: TargetIdentity
+  verification_symptoms: list[str]
+  assumptions: list[str]
+  rationale: str
+  parent_spec_ref: str | None
+  provenance: dict
+```
+
+The semantics are:
+
+- `target_identity.url` is the base URL the pod probes.
+  The hunter authors it from the projected L0 surface and the unit context.
+- `target_identity.unit_id` is the kind-qualified L1 identity.
+  It is carried for provenance; it is not INIT-gated.
+- `verification_symptoms` are the concrete observable failure modes of the trust agreement over an interface or a state transition.
+  They stay the ground truth for whether the vulnerability has manifested.
+- `assumptions` are the technical requirements the pod may falsify.
+  They are not the modeller's trust assumptions.
+- `rationale` is the vulnerability-level rationale.
+  It carries no failure-mode detail and no narrowed vector.
+- `parent_spec_ref` is the variant lineage.
+- `provenance` carries `loop_id`, `unit_id`, `canonical_class`, `web_vulnerability_class`, `baseline_ref` (optional), and the bounded `skill_procedure`.
+
+The `skill_procedure` is typed:
+
+```
+SkillProcedure:
+  recon_action: str
+  bypass_technique: str
+  technology_grounding: str
+  pro_tips: str
+  advanced_technique: str
+  preliminary_chaining: str
+  interpretation_pitfalls: str
+```
+
+The hunter authors it from the loaded class skill; the total excerpt is bounded to 4000 characters.
+The seven fields map one-to-one to the seven procedure gap bases in 8.6.
+The pod triager reads the excerpt from the spec provenance.
+
+The retired fields are `testing_pattern`, `payload_vector_space`, and `interpretation_guidance`.
+
+The INIT gate's mandatory set is exactly:
+
+- `target_identity.url` is a non-empty string.
+- `verification_symptoms` contains at least one non-blank string.
+
+Every other field is optional.
+The gate collects all violations in one rejection.
+The rejection lands `unsuccessful` with the validation evidence in the trail and zero tool calls.
+The gate does not probe the URL.
+An unreachable URL lands `technical-infeasibility` at execution, not a rejection.
+
+The INIT gate keeps the hunter's responsibility for the base URL.
+A symbolic loader that would inject the configured target URL is rejected.
+It risks misleading the pod on targets that expose assets through multiple URLs.
+
+### 8.5 Runner probe authoring
+
+The runner authors a `ProbeChain` from:
+
+- The spec's rationale.
+- The verification symptoms.
+- The assumptions.
+- The target identity.
+- The target surface.
+- The methodology KB.
+
+The chain keeps its shape: ordered dependency steps plus exactly one core payload-carrying step.
+
+The `payload_vector_space` is retired.
+The runner's first ReAct turn still authors at least one probe.
+No probe is pre-authored by the hunter.
+
+The `ProbeStep.request_ref` and the pod's `replay` tool stay available.
+When `provenance.baseline_ref` is present, the runner may use `replay` with that artifact id.
+Otherwise the runner authors the requests from scratch.
+The D4 carries no structured payload vector; `baseline_ref` is a single optional artifact pointer.
+
+If no probe is derivable, the run lands `no-symptom-evidence` with `clean=false`.
+The authoring gap is impaired coverage, not target absence.
+The old `space-exhausted` on an empty vector is retired.
+
+### 8.6 Variant minting
+
+The triager's decision stays either terminal or variant.
+The terminal decision vocabulary is unchanged.
+
+On a variant decision, the decision carries:
+
+- `declined_attribute`: the variant basis.
+- `variant_spec`: the derived spec.
+- `feedback`: the runner-facing explanation.
+
+The `VariantSpec` storage record keeps its shape:
+
+```
+ref: str
+parent_ref: str | None
+declined_attribute: str
+spec: dict
+```
+
+`declined_attribute` carries the variant basis literal.
+
+The variant basis vocabulary is:
+
+| Basis | Meaning |
+|---|---|
+| `recon-action` | A different vulnerability-specific recon action was available and untried. |
+| `bypass-technique` | An untried bypass technique was in the skill procedure. |
+| `technology-grounding` | The target technology was insufficiently grounded; no sharp payloads or vectors were attempted for it. |
+| `pro-tips` | A pro tip in the skill procedure was not executed. |
+| `advanced-technique` | An advanced technique was not leveraged. |
+| `preliminary-chaining` | A preliminary vulnerability that could grant the required capability was not exploited. |
+| `interpretation-pitfall` | The interpretation failed in a common pitfall named by the skill. |
+| `failure-mode` | No procedure gap exists; an additional observable failure mode is plausible. |
+| `runner-failure` | The runner execution failed. |
+| `runner-divergence` | The execution diverged completely from the spec. |
+
+The first seven are procedure gaps.
+The `failure-mode` basis is the fallback.
+The last two are execution triggers.
+
+The minting algorithm is:
+
+1. Read the typed `SkillProcedure` from `spec.provenance["skill_procedure"]`.
+   The seven fields map to the seven procedure gap bases in table order.
+   When the excerpt is absent, record the gap and go to step 4.
+   A section is covered when the executed procedure in the D6 trail contains the action, technique, or check that the section names.
+   The triager judges coverage from the trail; the mapping is one-to-one.
+2. Read the executed procedure from the D6 trail: the variant specs, the probe chains, the raw observations, the interpretations, and the pod notes.
+3. Test the seven gap classes in the table order.
+   The first gap class that the executed procedure does not cover is the basis.
+   The variant changes the spec to cover it.
+4. If every gap class is covered, reason on the additional observable failure modes the spec's `verification_symptoms` and `assumptions` could yield.
+   If a new observable failure mode is plausible, mint a `failure-mode` variant.
+   The fallback uses only the material the pod holds; it does not read the modeller's failure-mode space.
+5. If the runner failed or diverged, mint `runner-failure` or `runner-divergence`.
+6. Never mint a duplicate of a basis and detail already present in the experiment log.
+   The triager reads the log before deciding.
+7. Record the variant with the basis in `declined_attribute`, the parent ref, and the derived spec.
+
+The triager's context carries the note, the filtered experiment log, the base spec, and the bounded skill procedure excerpt.
+The triager prompt's mining section is rewritten to the algorithm above.
+The terminal decision output is unchanged.
+
+The pod memory variant records keep their shape.
+The `declined_attribute` field's semantics change from a declined spec attribute to the variant basis.
+
+### 8.7 Implementation decisions
+
+- The D4 surface is the reduced shape in 8.4.
+- The INIT gate's mandatory set is exactly the URL and the symptom list.
+- The runner authors probes from the reduced spec.
+- The replay capability stays; the structured vector does not.
+- A non-derivable probe lands `no-symptom-evidence` with `clean=false`.
+- The variant basis vocabulary is the table in 8.6.
+- The triager reads the typed `SkillProcedure` from the spec provenance.
+- The baseline is `provenance.baseline_ref` when present.
+- The first uncovered gap class is the basis.
+- The `variants` concept stays pod-side: a variant is a combination of a subset of the skills-ontology entities.
+- The failure-mode fallback and the runner triggers are explicit.
+- The variant record shape is unchanged.
+- The triager prompt's mining section is rewritten.
+- The retired fields are removed from the model, the gate, the prompts, the fixtures, and the tests.
+
+The implementation follows the patterns recorded in `src/polymerhus/attack/hunting/CONTEXT.md`: the `validate_spec` INIT gate, the pod memory store's deterministic-key pattern, the `VariantSpec` record shape, the semantic `spec_id` (`spec_identifier`), and the triager's binary decision presentation.
+The pod replicates the pattern and keeps the binary terminal invariant.
+
+### 8.8 Testing decisions
+
+Test the INIT gate, the runner probe authoring, the variant minting, and the prompt contract.
+Drive the graph with a scripted triager decision and a scripted experiment log.
+Assert the persisted variant records and the terminal envelope.
+
+Seams:
+
+- The D4 schema: the reduced fields parse; the retired fields are rejected as unknown.
+- The INIT gate: URL missing, symptoms empty, both missing, the all-violations collection, the zero-tool-call rejection.
+- The runner: a first probe authored from the reduced spec; a non-derivable probe landing `no-symptom-evidence` with `clean=false`; a replay ref when the hunter names one.
+- The variant basis: each of the ten literals.
+- The procedure diff: the first uncovered class wins; the order is fixed.
+- The fallback: a fully covered procedure mints a `failure-mode` variant.
+- The execution triggers: runner failure and runner divergence.
+- The duplicate guard: a basis and detail already in the log is not re-minted.
+- The storage: the variant record shape; `declined_attribute` carries the basis.
+- The prompt: the mining algorithm and the ten bases.
+
+Prior art:
+
+- The pod graph and verification tests.
+- The pod memory variant tests.
+- The triager decision tests.
+
+### 8.9 Out of scope
+
+- The hunter workflow and the spec authoring (S3).
+- The harness FSM (S4).
+- The modeller and artifact (S1, S2).
+- The cooperative-team execution logic beyond the scaffold.
+- The closed-enum pattern engine (`#81`).
+- The fault-targeting tool registry (`#71`).
+
+### 8.10 Further notes
+
+The workbench R8-3 and Q48 are the decision authority.
+The reduced D4 surface is shared with S3 8.6.
+The variant basis is the only new decision object.
+The pod's binary terminal invariant, six-way termination, fixed caps, and experiment-log shape stay.

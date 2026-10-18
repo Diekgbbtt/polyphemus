@@ -7,6 +7,11 @@ Decisions cited as D67-n live in `docs/design/hunting-67-per-agent-specs-decisio
 
 *Status: spec (contract), NOT implementation.*
 
+**SUPERSEDED 2026-10-18.** The planner contract in this document is superseded in full by `docs/design/hunting-67-threat-modeller-spec.md`.
+The hunt-orchestrator is rewritten in place into the threat modeller.
+The candidate intake, the in-turn gate, the back-edge need, `HuntConfig` minting, and the materialisation are retired.
+The old text is retained for history.
+
 ## 1. Identity
 
 The hunt-orchestrator is the planner: a single agent instance per hunting run, peer of the phase-2 orchestrator, in the hunting bounded context.

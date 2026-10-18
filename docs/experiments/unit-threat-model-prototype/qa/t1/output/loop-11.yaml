@@ -1,0 +1,106 @@
+loop_id: loop-11
+unit_id: Service:model-download
+class: Information exposure of model inventory and fetched content
+class_skill: information-disclosure
+slice:
+  source: trust_agreement
+  statement: "A15/F15: the deployment assumes single-user locality so no authentication exists anywhere (P01 no login surface; P02/P09/P14 every route anonymous), and the model inventory - names, sizes, created/modified - plus the artifacts fetched into it are readable without any principal. The loop opens the anonymous-read space over model inventory and fetched content."
+discrimination:
+  axes_used: [payload-vector, chaining-advanced, tech-misconfiguration]
+  boundary: "what the anonymous read concludes: existence and metadata of the tree (s1), activity attribution from temporal deltas (s2), or artifact bytes through sibling stack surfaces (s3); fault fixed at F15."
+  narrow_broad_tradeoff: "broad on the three concluded-information classes and narrow inside each (one owning spec); the deployment is OBSERVED anonymous, so coverage means claiming each distinct information region exactly once."
+specs:
+- spec_id: loop-11-s1
+  label: "anonymous inventory enumeration"
+  sub_slice: "Unauthenticated reads of the inventory surfaces - /models (directory list) and /experiment/models/<dir> (per-file size/created/modified), mirror /api included - disclosing existence and metadata of every model-tree entry, attacker-planted or not (anchors P16/P17/P19/P41); region = inventory metadata disclosure to anonymous clients."
+  class_skill_parametrisation:
+    skill: information-disclosure
+    inputs: {channel: "directory listings and per-entry metadata", technique: "stored-artifact-disclosure fetch step (enumerate candidate listing surfaces, fetch, parse); native querying of live listing interfaces", anchors: "P16/P17 /models -> 200; P19/P41 /experiment/models -> 200 with sizes"}
+  concretisation:
+    protocol: http
+    technology: "ComfyUI-Manager V3.37 listing routes on aiohttp 3.14.3; no TLS, no login"
+    endpoint: "GET /models; GET /experiment/models/<dir> (mirror /api/...)"
+    parameter: "dir names from the directory list (checkpoints, custom_nodes, ...)"
+    method: GET
+    body: "none"
+    headers: "none; anonymity is the tested property"
+  discrimination_axis: payload-vector
+  discrimination_note: "Owns the single-response conclusion: this exists, with this size/timestamp. s2 owns the two-response conclusion (delta around an event); s3 owns content bytes on other surfaces. Same channel family, disjoint concluded information."
+  chaining_advanced_note: null
+  proxy_technique: "Enumerate directories via /models, then per-directory files via /experiment/models/<dir>; parse the JSON for names, sizes, and timestamps. Compare the directory set against the stack's known model families to scope which reconnaissance the anonymous reader obtains; direct model-tree file GETs return 404 (IA11) so metadata, not content, is claimed here."
+  verification_symptoms: ["200 JSON inventory to an unauthenticated client from a foreign origin, listing directory names including custom_nodes (P17) and per-file sizes/timestamps (P19/P41)", "entries created by other actors (seeded profile artifacts included) appear to the anonymous reader without any principal"]
+  payload_vector_space:
+    method: "GET"
+    path: "/models, /experiment/models/<dir>, /api/models, /api/experiment/models/<dir>"
+    parameter: "dir selection; no auth material of any kind"
+    body: null
+    headers: "none"
+  assumptions: ["the listing routes stay anonymous (P16/P17/P19/P41 OBSERVED)", "listing entries carry name, size, created, modified per IA11"]
+  rationale: "If F15 is implemented (no authentication surface), the model tree's inventory is world-readable: existence, provenance by name, and sizes of every artifact - including items planted by other attacks - are handed to any client. That is the first information region the loop names."
+  interpretation_guidance: "Symptom-present = anonymous 200 listings with per-entry metadata from a foreign origin. Symptom-absent = 401/403 or empty listings for anonymous requests: an access layer exists; record which route refused. A 200 without metadata fields is a partial answer (existence without size/timestamps) and is recorded as such."
+- spec_id: loop-11-s2
+  label: "change-detection attribution oracle"
+  sub_slice: "Repeated listing reads around an induced write (own install/drain or another actor's): created/modified fields and size deltas reveal that a fetch executed and the size of what it wrote, even with no content-read route (anchors: 29 B marker writes, 839/790 B reads visible in listings); region = temporal attribution through anonymous metadata."
+  class_skill_parametrisation:
+    skill: information-disclosure
+    inputs: {channel: "two-response comparison over the same listing (temporal pair)", technique: "differential-oracle-disclosure discipline: normalize both reads and conclude from the delta alone; existence/state signals from validators and metadata", anchors: "P19/P41 entries with sizes; P16 appearance after drain"}
+  concretisation:
+    protocol: http
+    technology: "same listing routes; a second anonymous read closes the pair"
+    endpoint: "GET /experiment/models/<dir> before and after an induced write (POST install_model + GET start)"
+    parameter: "dir selection; the inducing install uses a known-size marker body"
+    method: "GET, POST, GET, GET"
+    body: "marker install for the induced write; listing reads carry nothing"
+    headers: {"Content-Type": "application/json"} 
+  discrimination_axis: chaining-advanced
+  discrimination_note: "Owns the delta conclusion: which artifact appeared/changed and how large the fetched content was. s1 concludes from one response (existence/metadata); s2 needs the pair and concludes activity and size; the failing expectation is that listings stay a passive record rather than a confirmation oracle for other operations."
+  chaining_advanced_note: "Structural: the class skill's differential-oracle-disclosure owns compare-two-responses conclusions; here the pair is temporal over one surface rather than method/cache/channel pairs, so the procedure is carried structurally while the discipline (normalize, diff, conclude only from the delta) comes from the subtopic. The failing expectation is read from the payload's DF5 (written files become inventory entries readable by any client) plus the lack of any content route."
+  proxy_technique: "Snapshot the directory listing; induce a write with a known marker size through the install/drain flow; snapshot again; the appearance (name, size, created/modified) is the delta. Attribution stays exact by using a unique marker name and one write per cycle; sizes reveal the fetched body even when bytes stay unreadable."
+  verification_symptoms: ["a new entry with size equal to the marker body appears between the two anonymous reads, timestamped at the induced drain", "for reads induced through file:// (loop-2/5 mechanics): the entry size reveals the fetched artifact's size (839/790 B anchors), letting a third party confirm and size an exfiltration without content access"]
+  payload_vector_space:
+    method: "GET, POST, GET"
+    path: "/experiment/models/<dir>, /manager/queue/install_model, /manager/queue/start"
+    parameter: "dir selection; marker install attributes"
+    body: "listing reads carry nothing; the inducing install carries a known-size marker URL"
+    headers: {"Content-Type": "application/json"}
+  assumptions: ["the induced write is observable through the anonymous path used by the reader (DF5)", "created/modified fields have resolution adequate to attribute the event; unprobed, the marker name keeps attribution exact regardless"]
+  rationale: "If F15 is implemented, listings are an open channel for confirming other operations: any actor can detect that a fetch executed and how large its product was, because the write lands in the listed tree. That is a distinct information region from inventory enumeration - it turns metadata into a side-channel oracle."
+  interpretation_guidance: "Symptom-present = a new/changed entry (name, size, timestamp) appears across the anonymous pair exactly around the induced write, with size matching the fetched body. Symptom-absent = listings stay unchanged across the event or metadata is too coarse to attribute (then the oracle degrades to existence-only); record which. The delta conclusion must come from the pair; a single read cannot decide it."
+- spec_id: loop-11-s3
+  label: "content retrieval through sibling stack surfaces"
+  sub_slice: "Content read-back beyond the model-tree paths that 404: the deployment runs ComfyUI core v0.3.76 alongside the Manager, whose native file-serving and history surfaces are conventionally anonymous; region = whether artifact bytes become retrievable to an anonymous client when the manager paths refuse (IA11 direct GETs 404)."
+  class_skill_parametrisation:
+    skill: information-disclosure
+    inputs: {channel: "sibling application surfaces under one process", technique: "cross-channel mirroring and hardening differentials: inconsistent hardening between REST surfaces of the same application (class key-vulnerability 'cross-channel mirroring'); stored-artifact fetching applied to core routes", anchors: "deployment names ComfyUI core v0.3.76; manager routes mirrored under /api"}
+  concretisation:
+    protocol: http
+    technology: "ComfyUI core file-serving routes (view/history-style handlers) assumed present in v0.3.76; likely filename-parameter addressing into the model/output trees"
+    endpoint: "core route candidates (names confirmed at runtime); compare against model-tree paths that 404 (IA11)"
+    parameter: "filename-style parameters pointing at a planted marker entry"
+    method: GET
+    body: "none"
+    headers: "none; anonymity is the tested property"
+  discrimination_axis: tech-misconfiguration
+  discrimination_note: "Owns content bytes through distinct surfaces: s1/s2 conclude from metadata listings (existence, size, timing); s3 asks whether any sibling route returns the actual bytes, a different concluded information and a different stack component (core versus manager). Hardening held on one route says nothing about its sibling."
+  chaining_advanced_note: null
+  proxy_technique: "Plant marker entries with unique content through the install/drain flow, then probe the stack's sibling file-serving surfaces with filename-style parameters, capturing content-type, disposition, and body bytes. Any route returning the marker bytes to an anonymous client closes content read-back; a uniform 404/403 matrix closes it as negative."
+  verification_symptoms: ["a sibling route returns the planted marker bytes (content equals the entry) to an anonymous client, with serving headers captured (type/disposition)", "or the route matrix is uniformly refusing, recorded as the negative with each route and code"]
+  payload_vector_space:
+    method: "GET"
+    path: "core file-serving route candidates (runtime-confirmed names) with filename parameters addressing planted entries; contrast probe: direct model-tree GET paths -> 404 (IA11)"
+    parameter: "filename-style addressing of a planted marker"
+    body: null
+    headers: "none"
+  assumptions: ["ComfyUI core v0.3.76 ships sibling file-serving/history surfaces (deployment statement; route names confirmed at runtime)", "planted marker entries give unambiguous content matching"]
+  rationale: "If F15 is implemented, the anonymous posture is a property of the whole process, not of the manager routes only; hardening was observed on model-tree GET paths (404) but the stack's sibling surfaces are separate code whose gating is unverified. Content read-back through them is exactly the 'fetched content' half of the loop's exposure statement."
+  interpretation_guidance: "Symptom-present = any sibling route returns planted entry bytes to an anonymous client. Symptom-absent = every candidate route refuses (404/403/405) or returns no bytes: content read-back stays closed and the exposure remains metadata-only (s1/s2); record the full route matrix. Route names are candidates - an exhausted, refused matrix is the negative, not a missing route name."
+checks:
+  overlap:
+    status: none
+    notes: "s1 concludes existence/metadata from one response; s2 concludes activity/size from a temporal pair; s3 concludes content bytes on sibling surfaces. Same deployment-wide anonymity (the fixed fault) but disjoint concluded information, procedures, and surfaces; no read is re-tested between specs."
+  coverage:
+    status: exhaustive
+    uncovered: []
+    notes: "The loop's two named exposures - model inventory and fetched content - each carry owning specs (s1/s2 for inventory and its temporal facet, s3 for content). Queue-status internals (counters) are anonymously readable too but belong to loop-10's accounting region and are excluded by the slice statement, not left uncovered."
+  well_formedness_statement: "Three specs partition the anonymous-read space by concluded information: static inventory (s1), temporal attribution (s2), and content bytes via sibling surfaces (s3). Each has its own procedure and oracle; their union covers the exposure the loop names, bounded by the evidenced surfaces and declared runtime-confirmed candidates."
+degradations: ["Core-route candidate names are not in the payload (only the deployment stack name is); s3 carries them as runtime-confirmed assumptions with a refused-matrix negative.", "The class skill's panels/observability entities do not apply to this stack; the applied entities are listing fetch (stored-artifact-disclosure) and pair-diffing (differential-oracle-disclosure)."]

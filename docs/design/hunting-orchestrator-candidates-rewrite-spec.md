@@ -8,7 +8,12 @@ The current integrated ancestors are `docs/design/hunting-orchestrator-llm-artif
 LLM-local artifacts) and the #67 orchestrator + hunting-agent contracts
 (`docs/design/hunting-67-orchestrator-spec.md`, `docs/design/hunting-67-p-hunting-agent-spec.md`).
 
-*Status: spec (contract), NOT implementation.* This document is the operator-locked design for a near from-scratch
+*Status: spec (contract), NOT implementation.*
+
+**SUPERSEDED 2026-10-18 for the hunt-orchestrator.** The candidate-creation, projection, gate, and mint pipeline is retired with the threat modeller rewrite (`docs/design/hunting-67-threat-modeller-spec.md`).
+The typed applies-if predicate and the sound unit-projection remain as L1 substrate contracts.
+
+This document is the operator-locked design for a near from-scratch
 rewrite of the system that turns the `FaultSource` candidate set into dispatched `HuntConfig`s, driven by the five-stage
 pipeline (`grill-me -> to-spec -> to-tickets -> to-assertions -> implement -> code-review`). The grilling is complete;
 all sixteen decisions (Q1-Q16) plus the two operator corrections (the LLM-only Q16 gate and the tool split of

@@ -1,0 +1,194 @@
+{
+  "unit_id": "Service:model-download",
+  "counts": {
+    "interface_agreements": 7,
+    "trust_agreements": 6,
+    "transitions": 8,
+    "assumptions": 9,
+    "faults": 9,
+    "vulnerabilities": 13,
+    "loops": 9
+  },
+  "assumptions": [
+    {
+      "id": "A-1",
+      "statement": "Developer assumption: a posted model record is validated as a unit, so the fields the worker uses (url, filename, save_path) describe one artifact and its destination.",
+      "fault_id": "membership is checked per field over the union of catalog values instead of binding the record, so catalog values can be recombined freely (induced fault F-1).",
+      "fault_name": "",
+      "vulnerabilities": [],
+      "loops": []
+    },
+    {
+      "id": "A-2",
+      "statement": "Developer assumption: ui_id is the caller's job identity and can be trusted as the correlation key for status reporting.",
+      "fault_id": "an unvalidated, unbound client string is stored on the job record and echoed in broadcast status events (induced fault F-2).",
+      "fault_name": "",
+      "vulnerabilities": [],
+      "loops": []
+    },
+    {
+      "id": "A-3",
+      "statement": "Developer assumption: only the deployment's operator reaches the manager routes, so triggering downloads and advancing the queue need no principal gate.",
+      "fault_id": "no privilege layer exists on state-changing, egress-producing, filesystem-writing operations (induced fault F-3).",
+      "fault_name": "",
+      "vulnerabilities": [],
+      "loops": []
+    },
+    {
+      "id": "A-4",
+      "statement": "Developer assumption: the pending queue belongs to the caller that filled it and stays stable until that caller starts it.",
+      "fault_id": "the queue is a single global set with no ownership binding, so third-party resets and starts act on foreign work (induced fault F-4).",
+      "fault_name": "",
+      "vulnerabilities": [],
+      "loops": []
+    },
+    {
+      "id": "A-5",
+      "statement": "Developer assumption: queue transitions are atomic with respect to in-flight work; a reset cannot disturb a job the worker is already consuming.",
+      "fault_id": "pending/in-progress states are not distinguished for reset, and the in-flight guard is client-side only (induced fault F-5).",
+      "fault_name": "",
+      "vulnerabilities": [],
+      "loops": []
+    },
+    {
+      "id": "A-6",
+      "statement": "Developer assumption: the bytes fetched from the catalog url are the artifact the catalog intends; size is informational and integrity need not be verified.",
+      "fault_id": "no hash, signature or size enforcement gates the install (induced fault F-6).",
+      "fault_name": "",
+      "vulnerabilities": [],
+      "loops": []
+    },
+    {
+      "id": "A-7",
+      "statement": "Developer assumption: catalog-derived strings are inert when the manager shell renders them.",
+      "fault_id": "catalog fields are interpolated into the grid DOM with an unquoted attribute and no escaping (induced fault F-7).",
+      "fault_name": "",
+      "vulnerabilities": [],
+      "loops": []
+    },
+    {
+      "id": "A-8",
+      "statement": "Developer assumption: membership in the catalog value sets is sufficient proof that a save_path/filename is path-safe.",
+      "fault_id": "path safety is delegated entirely to catalog membership; no normalization or canonical check guards accepted values (induced fault F-8).",
+      "fault_name": "",
+      "vulnerabilities": [],
+      "loops": []
+    },
+    {
+      "id": "A-9",
+      "statement": "Developer assumption: malformed bodies cannot reach business logic (missing keys and wrong types are impossible through the shell).",
+      "fault_id": "unguarded field access and type use in the validation path raise unhandled exceptions (induced fault F-9).",
+      "fault_name": "",
+      "vulnerabilities": [],
+      "loops": []
+    }
+  ],
+  "boundaries": {
+    "interface_agreements": [
+      {
+        "id": "IA-1",
+        "statement": "A model install is requested by POSTing a full catalog record plus a caller-chosen ui_id; the receiving side admits the record to the global work queue after per-field membership checks against the served catalog."
+      },
+      {
+        "id": "IA-2",
+        "statement": "Queue advancement and queue clearing are unauthenticated GET requests; start begins processing of the pending set and reset removes pending jobs while retaining the completed history."
+      },
+      {
+        "id": "IA-3",
+        "statement": "Queue state is readable without authentication; the status endpoint returns global counts {total_count, done_count, in_progress_count, is_processing} and is mirrored under /api."
+      },
+      {
+        "id": "IA-4",
+        "statement": "The external model catalog is served as one JSON document of 564 records; the mode parameter is accepted but does not change the served list."
+      },
+      {
+        "id": "IA-5",
+        "statement": "The catalog channel selection is read and mutated through /manager/channel_url_list; mutation accepts only predefined channel names."
+      },
+      {
+        "id": "IA-6",
+        "statement": "The outbound fetch worker downloads the catalog record's url and writes the bytes under the record's save_path and filename inside the model directories."
+      },
+      {
+        "id": "IA-7",
+        "statement": "The manager shell renders catalog records; record fields are interpolated into the grid DOM by string concatenation."
+      }
+    ],
+    "trust_agreements": [
+      {
+        "id": "TA-1",
+        "statement": "The receiving side of IA-1 treats the posted record as a single catalog record: one legitimate artifact, one legitimate destination, submitted by an entitled caller."
+      },
+      {
+        "id": "TA-2",
+        "statement": "The receiving side of IA-2 treats queue advancement as the operator's decision over the operator's own pending work."
+      },
+      {
+        "id": "TA-3",
+        "statement": "The receiving side of IA-3/IA-4 treats queue counts and the catalog document as non-sensitive operational state of the deployment."
+      },
+      {
+        "id": "TA-4",
+        "statement": "The receiving side of IA-6 treats the remote origin as the authoritative publisher of the artifact named by the catalog record, and the resolved path as confined to the intended model directory."
+      },
+      {
+        "id": "TA-5",
+        "statement": "The receiving side of IA-5 treats the selected channel as the operator's intended catalog source."
+      },
+      {
+        "id": "TA-6",
+        "statement": "The receiving side of IA-7 (the manager shell) treats catalog-derived strings as inert text when rendering the model grid."
+      }
+    ],
+    "transitions": [
+      {
+        "id": "T-1",
+        "state_from": "S0",
+        "state_to": "S1",
+        "trigger": "POST /manager/queue/install_model (+/api mirror) with a membership-passing record"
+      },
+      {
+        "id": "T-2",
+        "state_from": "S0",
+        "state_to": "S0",
+        "trigger": "POST install_model with a non-membership record or malformed body"
+      },
+      {
+        "id": "T-3",
+        "state_from": "S1",
+        "state_to": "S2",
+        "trigger": "GET /manager/queue/start"
+      },
+      {
+        "id": "T-4",
+        "state_from": "S2",
+        "state_to": "S3",
+        "trigger": "worker completes a job (fetch + write)"
+      },
+      {
+        "id": "T-5",
+        "state_from": "S1",
+        "state_to": "S0",
+        "trigger": "GET /manager/queue/reset"
+      },
+      {
+        "id": "T-6",
+        "state_from": "S0",
+        "state_to": "S0",
+        "trigger": "GET /manager/queue/start with an empty pending set"
+      },
+      {
+        "id": "T-7",
+        "state_from": "S2",
+        "state_to": "S1",
+        "trigger": "POST install_model while is_processing is true"
+      },
+      {
+        "id": "T-8",
+        "state_from": "S2",
+        "state_to": "S0",
+        "trigger": "GET /manager/queue/reset while is_processing is true"
+      }
+    ]
+  }
+}

@@ -1,0 +1,501 @@
+# Prototype threat model - Service:article-publishing
+# Produced by the threat-modeller workflow (docs/design/unit-threat-model-workflow.md), prototype run 2026-10-15.
+# Evidence discipline: every claim is OBSERVED, INFERRED or ASSUMED; probe plans are tagged PROBE_PLAN and are never observations.
+# Unconfirmed prototype material. Written only inside the prototype output directory.
+
+identity:
+  unit_id: Service:article-publishing
+  model_id: Service:article-publishing
+  kind: Service
+  business_function_slug: article-publishing
+  service_contract: 'Saves a jotter article with its title, markdown source, rendered html, abstract, cover reference and date.'
+  exposure: authenticated
+  aggregated_endpoints: [GET /admin/content/editor at http://dj-viscon-workshop-1.vsos.ethz.ch]
+  edges: [EXPOSED_VIA WebPresentation:__singleton__]
+  status: prototype (not confirmed; confirmation semantics unresolved, workflow section 6)
+  produced_by: threat-modeller (prototype agent run, 2026-10-15)
+  source_dossier: docs/experiments/unit-threat-model-prototype/inputs/sample-unit-dossier.md
+
+technical_sharpening:
+  interface_agreements:
+    - id: IA-1
+      tag: OBSERVED
+      statement: 'Browser loads GET / over cleartext http:// and executes the served JS bundle with origin authority. Parties: browser and the nginx-served Vue SPA shell and bundle. The shell and bundle are the trusted program of the origin.'
+      citation: D2, D4
+    - id: IA-2
+      tag: ASSUMED
+      statement: 'The submission request carries the article fields (title, markdown source, rendered html, abstract, cover reference, date) to an /api namespace handler. Parties: SPA and the submission function. Path, verb and content-type are NOT evidenced; only GET /admin/content/editor is observed.'
+      citation: D1, D4, D5, PP-1
+    - id: IA-3
+      tag: INFERRED
+      statement: 'The handler persists one article record holding all submitted representations, both markdown source and rendered html, plus the cover reference and the date. Parties: submission function and the persistence store (mechanism NOT evidenced).'
+      citation: D1, D5
+    - id: IA-4
+      tag: OBSERVED
+      statement: 'article-publishing and article-removal are function-level guarded services. Parties: submission and removal functions, AuthorizationSystem, AuthenticationMechanism. The caller is resolved from the sign-in session or token; the server enforcement point is NOT evidenced.'
+      citation: D2, PP-2
+    - id: IA-5
+      tag: INFERRED
+      statement: 'The rendered html stored by this unit is served to readers by the public article-browsing unit. Parties: article-publishing storage and the article-browsing serve path. The stored and served representations are assumed identical.'
+      citation: D1, D3
+    - id: IA-6
+      tag: OBSERVED
+      statement: 'nginx routes requests and serves static content; the backend serves the API. Parties: nginx and the application backend. The origin sets no CSP, X-Content-Type-Options, X-Frame-Options or Referrer-Policy.'
+      citation: D2, D4
+    - id: IA-7
+      tag: INFERRED
+      statement: 'The cover reference is resolved to a stored asset at render or serve time. Parties: cover reference and the cover asset store. The store and resolution mechanism are NOT evidenced; a related guarded service book-cover-upload exists in the scaffold.'
+      citation: D1, D2, PP-6
+    - id: IA-8
+      tag: ASSUMED
+      statement: 'Sign-in returns session material that the browser attaches to later requests. Parties: browser and session or token material. The credential verification mechanism is NOT evidenced; both /login and /authentication routes exist, and /api ships in the SPA namespace.'
+      citation: D2, D4, D5, PP-1, PP-7
+  control_flows:
+    - id: CF-1
+      tag: INFERRED
+      statement: 'Editorial flow: load GET /admin/content/editor -> session resolution -> function gate article-publishing -> author composes title, markdown, abstract, date, cover -> submit -> server validation -> persist -> acknowledgement.'
+      citation: D1, D2
+    - id: CF-2
+      tag: OBSERVED
+      statement: 'Reader flow: article-browsing serves the paged list newest first and single articles by identifier; the reader view executes in the same SPA origin.'
+      citation: D3
+    - id: CF-3
+      tag: INFERRED
+      statement: 'Removal flow: authenticated action -> function gate article-removal -> article resolved by identifier -> record deleted.'
+      citation: D2
+    - id: CF-4
+      tag: ASSUMED
+      statement: 'Authorization flow: request -> session resolution -> role attribute lookup (sysadmin, contentmanager, visitor, test, seeded accounts) -> function gate. The binary authenticated exposure of the guarded services is OBSERVED; role-level discrimination at the function is NOT evidenced.'
+      citation: D2, PP-2
+    - id: CF-5
+      tag: INFERRED
+      statement: 'Cover flow: reference accepted with the submission -> asset resolved at render or serve time -> asset served inside the article view.'
+      citation: D1, D2
+    - id: CF-6
+      tag: ASSUMED
+      statement: 'Failure flow: parse, validation and persistence failures return error responses. Error shape, status codes and leakage are NOT evidenced.'
+      citation: D5, PP-8
+  data_flows:
+    - id: DF-1
+      tag: OBSERVED
+      statement: 'title: client -> submission request -> article record -> served list and detail views.'
+      citation: D1
+    - id: DF-2
+      tag: OBSERVED
+      statement: 'markdown source: client -> submission request -> article record (retained).'
+      citation: D1
+    - id: DF-3
+      tag: ASSUMED
+      statement: 'rendered html: producer UNKNOWN (client-side or server-side renderer) -> article record -> served to readers -> injected into the reader browser as markup (the html representation is only useful as markup).'
+      citation: D1, PP-4
+    - id: DF-4
+      tag: OBSERVED
+      statement: 'abstract: client -> submission request -> article record -> served list and detail views.'
+      citation: D1
+    - id: DF-5
+      tag: OBSERVED
+      statement: 'cover reference: client -> submission request -> article record -> asset resolution at serve time.'
+      citation: D1
+    - id: DF-6
+      tag: OBSERVED
+      statement: 'date: client -> submission request -> article record -> ordering and possibly visibility in the public listing (newest first).'
+      citation: D1, D3
+    - id: DF-7
+      tag: ASSUMED
+      statement: 'identity and role: credentials -> session material (cleartext channel) -> per-request identity context -> function gate decision.'
+      citation: D2, D4, PP-1, PP-7
+  probe_plans:
+    - {id: PP-1, tag: PROBE_PLAN, plan: 'Read the HTTP-history (HAR) records for GET /admin/content/editor and the /api calls under it: method, path pattern, content-type, body field names and response fields of the submission request; capture Set-Cookie attributes on sign-in.'}
+    - {id: PP-2, tag: PROBE_PLAN, plan: 'Authenticate two principals (one contentmanager, one visitor or test account). Replay the submission and removal actions with the low-privilege principal and compare status, body and persisted effect against the contentmanager control.'}
+    - {id: PP-3, tag: PROBE_PLAN, plan: 'Method matrix (GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD) on the submission path, plus X-HTTP-Method-Override and _method variants, with an authenticated low-privilege session.'}
+    - {id: PP-4, tag: PROBE_PLAN, plan: 'Submit a benign marker article whose markdown source and html representation differ detectably. Retrieve it through /jotter/article and compare the served html against a client-side rendering of the markdown to determine which side produces the stored html.'}
+    - {id: PP-5, tag: PROBE_PLAN, plan: 'Submit one benign extra attribute per attempt (author or owner field, status or visibility field, publishedAt-style field, id field) beside a legitimate save; read the record back to test attribute binding.'}
+    - {id: PP-6, tag: PROBE_PLAN, plan: 'Cover asset handling: submit each reference form, download the served cover, record Content-Type, Content-Disposition and X-Content-Type-Options, and test whether the asset at a reference can be replaced after acceptance.'}
+    - {id: PP-7, tag: PROBE_PLAN, plan: 'Transport and session: confirm whether any TLS listener or redirect exists, record HSTS, and record Secure, HttpOnly and SameSite attributes of session cookies.'}
+    - {id: PP-8, tag: PROBE_PLAN, plan: 'Error shape: malformed body, wrong content-type, oversized field; record status codes and whether stack traces, paths or component versions leak.'}
+    - {id: PP-9, tag: PROBE_PLAN, plan: 'OPTIONS on the submission path to enumerate allowed methods and any Allow header divergence from the SPA observed verbs.'}
+
+trust_model:
+  trust_agreements:
+    - id: TA-1
+      boundary: B1 network path between browser and origin
+      tag: OBSERVED
+      statement: 'Server trust direction: whoever presents a valid session credential is the principal. The channel grants integrity and confidentiality only if the transport protects it; all observed URLs are cleartext http://, so the trust agreement over B1 is technically unbacked.'
+      citation: D4
+    - id: TA-2
+      boundary: B2 browser and the submission field set (client is attacker-controlled)
+      tag: ASSUMED
+      statement: 'The server trusts the submitted field values. The load-bearing attribute is that rendered html is safe for an HTML document context; that attribute must be granted by the parser or sanitiser that produced the html. If the client produces the html, the attribute is granted by the untrusted side and the agreement fails at B2.'
+      citation: D1, PP-4
+    - id: TA-3
+      boundary: B3 authentication context and function-level gate
+      tag: ASSUMED
+      statement: 'Principal privilege attribute: the session role attribute is trusted to equal true entitlement and to be checked at the publication function. The role vocabulary is coarse and L0 evidence stops at the SPA route, so function-level discrimination is trusted rather than observed.'
+      citation: D2, PP-2
+    - id: TA-4
+      boundary: B4 principal and article object
+      tag: ASSUMED
+      statement: 'The article identifier is trusted to bind to authority: a caller who names an article is trusted to hold authority over it. The scaffold names article-removal as a guarded function but names no object-level guard.'
+      citation: D2
+    - id: TA-5
+      boundary: B5 editor client state and server state
+      tag: INFERRED
+      statement: 'The draft, published and date conditions are trusted to be transitions owned by the server. The FSM shows no evidenced review state between save and public serving, so whether any transition rule exists is trusted rather than observed.'
+      citation: D1, D3
+    - id: TA-6
+      boundary: B6 cover reference and cover asset store
+      tag: INFERRED
+      statement: 'A reference that passed validation at acceptance is trusted to keep naming the validated asset. Validation and resolution are likely different components, so the guarantee does not propagate by construction.'
+      citation: D1, D2, PP-6
+    - id: TA-7
+      boundary: B7 stored representation and reader browser
+      tag: OBSERVED
+      statement: 'The stored html is trusted to be safe for the reader HTML context. The origin sets no CSP and no X-Content-Type-Options, so no runtime policy backstops that trust; the only control is the correctness of the content and of encoding at the sink.'
+      citation: D2, D4
+    - id: TA-8
+      boundary: B8 response construction
+      tag: ASSUMED
+      statement: 'Responses are trusted to report honest outcomes: a partial or fallback persistence failure is trusted not to be reported as success. Error shape is NOT evidenced.'
+      citation: D5, PP-8
+  dynamic_state_trust:
+    stage_1_service_and_initial_state:
+      service_boundary: 'Publication function of the editorial unit, reachable after the SPA editor route GET /admin/content/editor, plus the removal function article-removal.'
+      initial_state: 'S0 - unauthenticated visitor; no article record under submission; no client draft.'
+      state_variables: [article.id, article.owner_identity, article.title, article.markdown, article.html, article.cover_ref, article.date, 'article.status (draft or published, INFERRED)', principal.role, principal.session_valid]
+      tag: INFERRED
+      citation: D1, D2
+    stage_2_efsm:
+      states:
+        - {S0: unauthenticated}
+        - {S1: 'authenticated principal, any role'}
+        - {S2: publication-authorised editorial context}
+        - {S3: 'editor open, draft held client-side only'}
+        - {S4: submission received and parsed}
+        - {S5: article record persisted}
+        - {S6: article publicly served by article-browsing}
+        - {S7: article removed}
+      transitions:
+        - {id: T1, from: S0, to: S1, action: 'sign-in credential submission (routes /login or /authentication observed)'}
+        - {id: T2, from: S1, to: S2, action: 'function gate article-publishing'}
+        - {id: T3, from: S2, to: S3, action: 'open GET /admin/content/editor (SPA route)'}
+        - {id: T4, from: S3, to: S4, action: 'submit article payload'}
+        - {id: T5, from: S4, to: S5, action: 'persist article record, id assigned'}
+        - {id: T6, from: S5, to: S6, action: 'article served by public reading flow'}
+        - {id: T7, from: S5, to: S5, action: 'article update by identifier'}
+        - {id: T8, from: S5, to: S7, action: 'article-removal by identifier'}
+        - {id: T9, from: S5, to: S5, action: 'cover asset replaced at the same reference'}
+        - {id: T10, from: S5, to: S6, action: 'publication window reached by the stored date (mechanism ASSUMED, PP-5, PP-6)'}
+        - {id: T11, from: S4, to: S5, action: 'second concurrent submission of the same draft'}
+      tag: INFERRED
+    stage_3_transition_characterisation:
+      - {id: T1, verified: 'credential verification (mechanism NOT evidenced)', trusted_only: 'transport integrity of the issued session material; session binding to the browser', tag: ASSUMED}
+      - {id: T2, verified: 'UNKNOWN (enforcement point not evidenced)', trusted_only: 'that session validity alone does not cross into S2', tag: ASSUMED}
+      - {id: T3, verified: 'client-side route presence only; the served shell is the same origin', trusted_only: 'that the server re-checks the function at T4 and T8', tag: INFERRED}
+      - {id: T4, verified: UNKNOWN, trusted_only: 'that the payload field set equals the form contract; that the html field is a safe rendering; that state fields describe rather than authorise', tag: ASSUMED}
+      - {id: T5, verified: UNKNOWN, trusted_only: 'which fields the server assigns (id, owner, status, date) versus accepts; uniqueness or idempotency of a repeated save', tag: ASSUMED}
+      - {id: T6, verified: 'none evidenced; article-browsing is public by contract', trusted_only: 'that serving is safe because storage was validated; that stored representation equals served representation', tag: 'OBSERVED for the public contract, ASSUMED for the equality'}
+      - {id: T7, verified: UNKNOWN, trusted_only: 'object binding of caller to article', tag: ASSUMED}
+      - {id: T8, verified: UNKNOWN, trusted_only: 'that the destructive action re-checks the actor and the object on every call', tag: ASSUMED}
+      - {id: T9, verified: 'type or size checks at acceptance (assumed to exist because a guarded upload service exists)', trusted_only: 'that the asset behind the reference is immutable and that serving re-validates', tag: INFERRED}
+      - {id: T10, verified: UNKNOWN, trusted_only: 'authority of the stored date over the visibility transition', tag: ASSUMED}
+      - {id: T11, verified: 'nothing evidenced; no uniqueness requirement is even stated for articles', trusted_only: 'last-write-wins is benign', tag: ASSUMED}
+    stage_4_transition_validity:
+      violations:
+        - {id: VT-1, kind: trust-transition agreement, statement: 'T4 and T5 cross from untrusted client input into trusted stored content without an evidenced validation of the exact html content that T6 serves. The transition that confers the trusted attribute has no evidenced guard.', maps_to_fault: F1}
+        - {id: VT-2, kind: state consistency, statement: 'T7 and T8 bind the object by the identifier carried in the request; the precondition caller authority over the object is trusted, not verified.', maps_to_fault: F4}
+        - {id: VT-3, kind: state invariant, statement: 'The FSM holds no review state between T5 (persisted) and T6 (publicly served), so any publication state or date attribute carried by the payload is authoritative by default; reviewed content before public serving is not established by the modelled states.', maps_to_fault: F5}
+        - {id: VT-4, kind: trust-transition agreement, statement: 'T9 separates the validation event from the use event: the asset is trusted because it was once validated, not because it is validated when resolved.', maps_to_fault: F6}
+        - {id: VT-5, kind: state consistency, statement: 'T2 crosses S1 to S2 on a role attribute resolved at request time; the decision source (server-side session state or client-supplied evidence) is unverified.', maps_to_fault: F3}
+        - {id: VT-6, kind: state consistency, statement: 'T11 shows no evidenced uniqueness or idempotency requirement, so two concurrent submissions of one intent may persist two records. Exploratory; no uniqueness invariant is stated.', maps_to_fault: F5}
+      unverified_assumptions_recorded: 'No attacker control is presumed at stage 4. The violations are recorded as unverified assumptions with their enabling fault references.'
+
+assumptions:
+  - id: A1
+    tag: ASSUMED
+    statement: 'The rendered html submitted with the article describes the same content as the markdown source and is safe HTML for the origin document context.'
+    fault: {id: F1, label: 'client-derived html accepted verbatim', description: 'The save path binds the client-computed html into the stored record and the serve path returns it without re-deriving it from the markdown source or sanitising it at storage or serving time.'}
+    induction: 'FROM the data contract, which saves both markdown source and rendered html, TO the fault: a server that rendered the html itself has no reason to trust a second client-supplied representation, so client-produced html is the more economical explanation of the redundant pair.'
+    rung: 'ASSUMED (premise OBSERVED, fault INFERRED)'
+    citations: [D1, TA-2, VT-1, PP-4]
+  - id: A2
+    tag: ASSUMED
+    status: 'retired - dropped with fault F2 at the COMPLETED gate'
+    statement: 'If the server renders markdown to html, the renderer output cannot carry active content.'
+    fault: {id: F2, label: 'renderer output assumed safe', description: 'The server renders markdown through a library or pipeline whose raw-HTML pass-through or sanitiser allowlist is treated as complete, and the emitted html reaches the reading sink without a runtime policy.'}
+    induction: 'FROM the observed absence of CSP and X-Content-Type-Options on the origin TO the fault: with no runtime backstop, the whole safety of the stored html would rest on the renderer output.'
+    rung: 'ASSUMED (premise OBSERVED)'
+    citations: [D4, TA-7, PP-4]
+  - id: A3
+    tag: ASSUMED
+    statement: 'The admin route separation in the SPA mirrors a function-level gate on the server for the publication function.'
+    fault: {id: F3, label: 'function gate enforced only at the UI or edge', description: 'The server checks only session validity on the submission function, or ties the check to the exact route and method pattern the SPA uses, instead of checking the contentmanager entitlement at the function.'}
+    induction: 'FROM the coarse role vocabulary and the fact that L0 evidence stops at the SPA route with no evidenced server-side check, TO the fault that the visible separation is the whole control.'
+    rung: ASSUMED
+    citations: [D2, D4, TA-3, VT-5, PP-2]
+  - id: A4
+    tag: ASSUMED
+    statement: 'A caller with a valid session who names an article identifier is authorised to edit or remove that article.'
+    fault: {id: F4, label: 'object-level binding inferred from session validity', description: 'The update and removal paths resolve the article by the submitted identifier and apply the mutation after the session and function checks, without binding the article to the calling principal.'}
+    induction: 'FROM the guarded-service scaffold, which names function-level guards (article-publishing, article-removal) and no object-level guard, TO the fault.'
+    rung: ASSUMED
+    citations: [D2, TA-4, VT-2, PP-2]
+  - id: A5
+    tag: ASSUMED
+    statement: 'The draft or published condition and the date carried by the editor describe server-owned transitions; no further transition rule needs enforcement.'
+    fault: {id: F5, label: 'state attributes persisted as data instead of gated transitions', description: 'The save path writes the publication state and the date from the submitted payload without enforcing transition rules such as review before public serving, non-forgeable dates, or single-use intent under concurrent saves.'}
+    induction: 'FROM the contract listing the date as a saved payload attribute and the FSM showing no review state between persistence and public serving, TO the fault.'
+    rung: ASSUMED
+    citations: [D1, TA-5, VT-3, VT-6, PP-5]
+  - id: A6
+    tag: INFERRED
+    statement: 'A cover reference that passed validation at acceptance keeps naming the validated asset.'
+    fault: {id: F6, label: 'validate-then-resolve gap on the cover reference', description: 'Type and size checks run when the reference is accepted; the serving path resolves the reference to the asset without re-checking the asset, and the asset can be replaced at the same reference.'}
+    induction: 'FROM the cover arriving as a reference rather than inline content, plus the guarded upload service for covers, TO the fault that validation and serving live in different components with no shared guarantee.'
+    rung: INFERRED
+    citations: [D1, D2, TA-6, VT-4, PP-6]
+  - id: A7
+    tag: ASSUMED
+    statement: 'A state-changing request that carries the session cookie was intended by the session holder.'
+    fault: {id: F7, label: 'ambient cookie used as proof of intent', description: 'The submission and removal functions accept the session cookie as both authentication and request intent: no anti-forgery token and no origin or referer check on the state change.'}
+    induction: 'FROM the cleartext http origin, the SPA delivery model and the unevidenced credential mechanism, TO the fault that the only request-bound proof is the ambient cookie.'
+    rung: 'ASSUMED (weaker if the mechanism is a header-carried bearer token; PP-1 and PP-7 decide)'
+    citations: [D2, D4, TA-1, PP-1, PP-7]
+  - id: A8
+    tag: 'OBSERVED (premise) / ASSUMED (fault)'
+    statement: 'The network path and the deployed account set are private.'
+    fault: {id: F8, label: 'session material treated as confidential over a cleartext channel with seeded accounts', description: 'The publishing flow operates over http only; session material and editorial content cross a channel any on-path observer reads, and the seeded or test accounts carried by the scaffold retain default or guessable credentials.'}
+    induction: 'FROM the observed all-cleartext URLs and the seeded-account vocabulary, TO the fault that confidentiality and account hygiene are assumed rather than enforced.'
+    rung: 'OBSERVED for the cleartext trait; ASSUMED for the seeded-credential strength'
+    citations: [D2, D4, TA-1, PP-2, PP-7]
+  - id: A9
+    tag: ASSUMED
+    statement: 'The submission can only set the fields the editor form offers.'
+    fault: {id: F9, label: 'unfiltered model binding', description: 'The save path binds the request object onto the article model without a field allowlist, so attributes outside the form contract (author or owner identity, publication status, identifiers, relation fields) are writable when supplied.'}
+    induction: 'FROM the contract enumerating a subset of the article attributes (title, markdown, html, abstract, cover, date), TO the fault that the model very likely holds more attributes than the contract names and binding is not field-scoped.'
+    rung: ASSUMED
+    citations: [D1, TA-2, PP-5]
+
+vulnerabilities:
+  - id: V1
+    skill_class: xss-stored
+    fault_ref: F1
+    characterisation: 'The stored html is authored by one principal and served to other principals, including anonymous readers of the public article-browsing surface and administrators opening the editor. The origin serves no CSP, no X-Content-Type-Options and no frame policy. Execution occurs in the victim browser at the origin of the WebPresentation system, with the victim session available to script, and can pivot into the publication and removal functions with the victim authority. Supporting skill: xss, whose stored and markdown contexts this variant owns.'
+    why_this_class: 'Canonical persisted write-then-retrieve shape: attacker-influenced markup crosses a storage boundary (article record) and executes at a later retrieval view (article page). The class covers the markdown context, and no CSP backstop exists to move the finding into the CSP-bypass family.'
+    citations: [D1, D2, D4, SK-xss-stored, SK-xss]
+  - id: V2
+    skill_class: xss
+    fault_ref: F2
+    characterisation: 'If the server renders markdown to html, the renderer and any sanitiser become the sole control on the stored representation. Sanitizer re-parsing divergence and raw-HTML pass-through would yield the same stored execution outcome as V1.'
+    why_this_class: 'The class owns sanitizer-output morphing and the markdown context; the stored variant owns the persistence aspect. Both are relevant because the render path is a server-side possibility.'
+    citations: [D1, D4, SK-xss, SK-xss-stored]
+  - id: V3
+    skill_class: ssti
+    fault_ref: F2
+    characterisation: 'If the server-side html production runs through a template engine rather than a pure markdown library, article fields would reach expression evaluation, giving server-side code execution from the publication surface.'
+    why_this_class: 'The class names markdown or WYSIWYG content rendered through a downstream templating layer as an input shape and distinguishes evaluation from reflection. Cited for comparison; the render path is unevidenced.'
+    citations: [D1, SK-ssti]
+  - id: V4
+    skill_class: broken-function-level-authorization
+    fault_ref: F3
+    characterisation: 'Any authenticated account (visitor, test, seeded) invokes the publication function if the SPA route separation or the coarse authenticated check is the whole control. The vertical action is reached from a lower-privilege principal, and the removal function has the same shape.'
+    why_this_class: 'Action-level authorization failure: the actor to action binding is missing or enforced at the wrong layer (UI or edge instead of the service that performs the action).'
+    citations: [D2, SK-bfla, PP-2]
+  - id: V5
+    skill_class: http-method-tampering
+    fault_ref: F3
+    characterisation: 'The publication path is exercised across verbs and override headers. Handlers bound to one method by the SPA may not carry the same authorization as the handler the SPA calls, and state-changing GET or override paths bypass checks bound to the documented verb.'
+    why_this_class: 'The class owns verb drift and method override against authorization controls, including checks tied to the route and method pattern.'
+    citations: [D4, SK-http-method-tampering, PP-3, PP-9]
+  - id: V6
+    skill_class: idor
+    fault_ref: F4
+    characterisation: 'Principal A (contentmanager) creates an article; principal B (visitor or another contentmanager) substitutes the article identifier on the update and removal paths with B credentials. Article identifiers are seeding-friendly because the public listing is paged and enumerable. Supporting skills: idor-direct-object-swap (one identifier, one verdict beside the owner control) and two-principal-authz (the owning cross-principal procedure).'
+    why_this_class: 'A single reference in a single request decides the verdict; the swap beside an owner control is exactly the direct-object-swap procedure.'
+    citations: [D1, D3, SK-idor, SK-idor-direct-object-swap, SK-two-principal-authz, PP-2]
+  - id: V7
+    skill_class: business-logic
+    fault_ref: F5
+    characterisation: 'The workflow can be driven off sequence: a save carrying a published state or a chosen date transitions the article toward public serving without the review step, and a repeated save replays a transition with altered parameters. The invariant at risk, reviewed content before public serving, is not established by the modelled state machine.'
+    why_this_class: 'The class owns state-machine abuse by skipping, reordering and replaying transitions, and treats client-authoritative statuses as a primary variant.'
+    citations: [D1, D3, SK-business-logic, PP-5]
+  - id: V8
+    skill_class: race-conditions
+    fault_ref: F5
+    characterisation: 'Two concurrent submissions of one intent can interleave in the read-modify-write window of the save path when no uniqueness or idempotency constraint is evidenced, producing duplicate article records or a lost update between the two representations.'
+    why_this_class: 'The class owns non-atomic multi-step operations and duplicate-effect races. Likelihood is low because no uniqueness invariant is stated; the entry records the candidate condition.'
+    citations: [D1, SK-race-conditions, PP-5]
+  - id: V9
+    skill_class: insecure-file-uploads
+    fault_ref: F6
+    characterisation: 'The cover asset is served from the origin without nosniff. An active-content file (SVG or html-shaped image) accepted as a cover executes inline on navigation to the article, and a benign-validated asset replaced at the same reference achieves the same outcome after validation.'
+    why_this_class: 'The class owns inline serving with active content types, missing nosniff on download, and validate-then-replace behaviour across the upload pipeline, matching the reference-then-resolve shape.'
+    citations: [D1, D2, D4, SK-insecure-file-uploads, PP-6]
+  - id: V10
+    skill_class: race-conditions
+    fault_ref: F6
+    characterisation: 'Check-to-use gap over the cover reference: the asset passes validation at acceptance and is replaced before the serving path resolves it, so the served asset is not the validated asset.'
+    why_this_class: 'The class owns TOCTOU windows between a validation phase and a consumption phase; the cover reference supplies the two phases in different components.'
+    citations: [D1, D2, SK-race-conditions, PP-6]
+  - id: V11
+    skill_class: csrf
+    fault_ref: F7
+    characterisation: 'A page opened by an authenticated editorial principal issues the publication or removal request under the ambient cookie session. The absence of CSP and X-Frame-Options removes the competing frame and script restrictions, so a clickjacked confirmation or a form-post state change both ride the victim session.'
+    why_this_class: 'The class owns preflightless state-change delivery and the cookie-versus-token distinction; ambient session plus missing origin check is the exact condition.'
+    citations: [D2, D4, SK-csrf, PP-1, PP-7]
+  - id: V12
+    skill_class: crypto-weakness
+    fault_ref: F8
+    characterisation: 'Session material and editorial content cross a cleartext channel. An on-path observer harvests the session value and acts as the editorial principal. If the session value is a generated token with low entropy or a client-visible claim set, forgery compounds the theft.'
+    why_this_class: 'The class owns insecure session management, predictability analysis of session tokens and cookie decoding, which is the analysis the captured material feeds.'
+    citations: [D2, D4, SK-crypto-weakness, PP-7]
+  - id: V13
+    skill_class: weak-credential-discovery
+    fault_ref: F8
+    characterisation: 'The scaffold carries test and seeded accounts alongside the real roles. Default or weak credentials for those accounts give an authenticated position, which chains into the publication function through V4.'
+    why_this_class: 'The class owns default-credential testing and post-authentication decoding of session material, which is the reachability question for the seeded accounts.'
+    citations: [D2, SK-weak-credential-discovery, PP-2]
+  - id: V14
+    skill_class: mass-assignment
+    fault_ref: F9
+    characterisation: 'Attributes outside the editor form contract bind onto the article record. Owner or author identity supplied with the save rewrites authorship; a status or date attribute forces a transition; a relation field links the article to a foreign parent object. Supporting skill: mass-assignment-nested-relation-write for the nested child that escapes caller scope. The observed registration flow, which binds submitted roles to the new account, shows the application family tolerates caller-supplied authority attributes elsewhere.'
+    why_this_class: 'The class owns unauthorized field binding on singleton create and update actions, including the nested relation write.'
+    citations: [D1, D2, SK-mass-assignment, SK-mass-assignment-nested-relation-write, PP-5]
+
+failure_modes:
+  - id: FM1
+    vulnerability_ref: V1
+    mode: 'A reader or administrator opens an article view. The stored html executes in the victim browser at the WebPresentation origin. Script reads session-identifying material available to the DOM and issues authenticated publication or removal requests with the victim authority; no CSP or frame policy intercepts it.'
+    feasibility: 'Technically feasible. The unit stores attacker-influenced html by contract (D1), the public reading flow serves it (IA-5), and the origin sets no runtime policy (D4). Precondition: one principal with publication authority, or any authenticated principal through FM2.'
+    decision: kept
+  - id: FM2
+    vulnerability_ref: V4
+    mode: 'An authenticated low-privilege principal (visitor, test, seeded) calls the publication function directly after the SPA route gate is bypassed or simply not reproduced. The article is persisted and then served by the public reading flow.'
+    feasibility: 'Feasible. The guarded-service property is only a scaffold statement (D2); the enforcement layer is unevidenced. PP-2 decides the actual status.'
+    decision: kept
+  - id: FM3
+    vulnerability_ref: V5
+    mode: 'A verb or override variant of the publication path reaches a handler without the function check and persists the article.'
+    feasibility: 'Plausible. nginx fronts the backend (D2) and the SPA concentrates traffic on one verb; method and path drift is the enabling condition. PP-3 and PP-9 decide.'
+    decision: kept
+  - id: FM4
+    vulnerability_ref: V6
+    mode: 'Principal B substitutes an article identifier created by principal A on the update path, or on the removal path and the article disappears from the public listing. The mutation persists under B.'
+    feasibility: 'Feasible. Article identifiers are seeding-friendly through the public listing (CF-2), and object binding is unevidenced (TA-4). Two-principal procedure required; PP-2 decides.'
+    decision: kept
+  - id: FM5
+    vulnerability_ref: V7
+    mode: 'The save carries a published state or a chosen date. The article appears in the public listing and, if the date gates visibility, at the chosen window, without the review step.'
+    feasibility: 'Conditionally feasible. The state variables and any review transition are unevidenced; the outcome depends on PP-5. The invariant is ASSUMED rather than observed, so the chain is recorded at medium likelihood.'
+    decision: kept
+  - id: FM6
+    vulnerability_ref: V8
+    mode: 'Two concurrent submissions of one draft both pass the existence check and persist two records, or interleave the two representations of one article.'
+    feasibility: 'Feasible in mechanism but weakly grounded: no uniqueness requirement is stated for articles anywhere in the dossier, so the invariant may not exist. Kept only as an exploratory low-likelihood chain.'
+    decision: kept
+  - id: FM7
+    vulnerability_ref: V9
+    mode: 'A cover asset with active content is served inline from the origin without nosniff; navigation to the article executes it in the reader browser. A post-validation replacement achieves execution after a benign asset passed the checks.'
+    feasibility: 'Conditionally feasible: requires an upload or replacement surface for the cover and inline serving. PP-6 decides; the missing nosniff trait is observed (D4).'
+    decision: kept
+  - id: FM8
+    vulnerability_ref: V10
+    mode: 'The asset behind an accepted cover reference is replaced before the serving path resolves it. Readers then receive content that never passed validation.'
+    feasibility: 'Conditionally feasible: requires replaceability at the same reference and a render-time resolution. The window is narrower than in FM7. PP-6 decides.'
+    decision: kept
+  - id: FM9
+    vulnerability_ref: V11
+    mode: 'A page controlled by an attacker causes the authenticated editorial principal browser to submit the state change. The article is published or removed under the victim authority.'
+    feasibility: 'Conditionally feasible: holds if the session is carrier-cookie based with no anti-forgery token or origin check. If the mechanism is a header-carried bearer token, the chain degrades to low value. PP-1 and PP-7 decide.'
+    decision: kept
+  - id: FM10
+    vulnerability_ref: V12
+    mode: 'An on-path observer on the cleartext channel reads the session material and the editorial payloads in transit, then replays the session against the origin with full editorial authority.'
+    feasibility: 'Technically feasible and grounded in observed traits: all URLs are cleartext (D4) and identity persists across visits (D2). PP-7 quantifies session attributes.'
+    decision: kept
+  - id: FM11
+    vulnerability_ref: V13
+    mode: 'A seeded or test account credential is guessed or default. The attacker holds an authenticated position and, through FM2, publication authority.'
+    feasibility: 'Conditionally feasible: the account names are observed vocabulary (D2); credential strength is not evidenced. Kept at low likelihood; PP-2 decides.'
+    decision: kept
+  - id: FM12
+    vulnerability_ref: V14
+    mode: 'A save carries an owner, status or date attribute outside the form contract. The persisted record shows the forged authorship or the forced publication state when read through the public and administrative views.'
+    feasibility: 'Feasible: the save path necessarily binds the six contract attributes and the binding style is unevidenced. PP-5 decides durability.'
+    decision: kept
+  - id: FM13
+    vulnerability_ref: V2
+    mode: 'Server-side rendering re-parses sanitised output into executable markup, or passes raw html through, and the stored result executes at the reading view.'
+    feasibility: 'Not technically feasible from this perspective: the sharpening evidences no server-side render step. The contract saves both markdown and html (D1), the SPA is the only evidenced html producer, and nginx serves a static shell (D2).'
+    decision: dropped
+    drop_reason: 'No evidenced server-side render or sanitisation step in the publication path; the evidence better fits client-side rendering. Re-entry: PP-4 shows a server render step at save or serve time. Dropped upstream fault F2; retired assumption A2.'
+  - id: FM14
+    vulnerability_ref: V3
+    mode: 'A template expression in an article field evaluates server-side and yields code execution on the host.'
+    feasibility: 'Not technically feasible from this perspective: no template engine is evidenced anywhere in the publication path; the stack is a static SPA plus an API (D2).'
+    decision: dropped
+    drop_reason: 'No evidenced templating layer in the publication path. Re-entry: PP-4 reveals that the render path is a template engine. Dropped with upstream fault F2.'
+
+ranked_chains:
+  - {rank: 1, chain: 'F1 -> V1 -> FM1', likelihood: high, note: 'Attacker-influenced content is the unit purpose; the storage-and-serve path is contractual, and the origin has no CSP or nosniff backstop.'}
+  - {rank: 2, chain: 'F8 -> V12 -> FM10', likelihood: high, note: 'Cleartext transport is an observed trait, so session capture needs no application defect beyond the deployment posture.'}
+  - {rank: 3, chain: 'F9 -> V14 -> FM12', likelihood: medium, note: 'Form-backing binds the contract attributes by necessity; extra-field binding is a low-cost probe away (PP-5).'}
+  - {rank: 4, chain: 'F3 -> V4 -> FM2', likelihood: medium, note: 'The only evidenced gate is a scaffold function name and an SPA route; the service-side check is unproven either way (PP-2).'}
+  - {rank: 5, chain: 'F5 -> V7 -> FM5', likelihood: medium, note: 'No review state exists in the modelled FSM; the publication state or date may be payload fields (PP-5).'}
+  - {rank: 6, chain: 'F4 -> V6 -> FM4', likelihood: medium, note: 'Identifiers are publicly enumerable and object binding is unevidenced; exact likelihood follows PP-2.'}
+  - {rank: 7, chain: 'F7 -> V11 -> FM9', likelihood: medium, note: 'Holds for a cookie session without token or origin checks; downgrades sharply for a header token (PP-1, PP-7).'}
+  - {rank: 8, chain: 'F6 -> V9 -> FM7', likelihood: medium, note: 'Missing nosniff is observed; inline serving of an active cover type is the unknown (PP-6).'}
+  - {rank: 9, chain: 'F6 -> V10 -> FM8', likelihood: low, note: 'Needs a replaceable asset at a stable reference plus a render-time resolution.'}
+  - {rank: 10, chain: 'F3 -> V5 -> FM3', likelihood: low, note: 'Verb drift is a real pattern but the stack may normalise method and path differences.'}
+  - {rank: 11, chain: 'F8 -> V13 -> FM11', likelihood: low, note: 'Seeded accounts exist as vocabulary; credential hygiene is unknown.'}
+  - {rank: 12, chain: 'F5 -> V8 -> FM6', likelihood: low, note: 'No stated uniqueness invariant; kept for completeness of the concurrency angle.'}
+
+open_questions:
+  - 'Confirmation semantics: which state a surfer may consume, and how status maps onto the five states (workflow section 6). This prototype stops at COMPLETED with no validation pass.'
+  - 'The store tool surface: the gate commands in the trace are illustrative. Whether hunts_store is that tool remains open.'
+  - 'Rung vocabulary: this run used OBSERVED, INFERRED and ASSUMED. The workflow leaves the vocabulary open.'
+  - 'Ranked-chain entity: this run ranked fault to vulnerability to failure-mode triples. The workflow leaves the direction and entity model open.'
+  - 'Skill binding: skill_list and skill_load were simulated by reading the suite folder; nested variant paths are not loadable until the loader stream lands.'
+  - 'Class versus variant citation: V1 cites variant xss-stored and class xss. Whether the store accepts variant names before the nested loader exists is open.'
+  - 'Dropped-assumption handling: A2 was retired in place rather than deleted, so the drop stays auditable. The workflow does not specify deletion versus retirement.'
+  - 'Probe plans as citations: PP identifiers are referenced from claims but carry no observation value. Whether the gate requires a separate probe-plan section or a unified citation index is open.'
+  - 'The submission path is entirely unevidenced at L0. If PP-1 shows a fundamentally different shape (for example a GraphQL endpoint), the interface agreements and some fault labels need re-derivation.'
+  - 'Role vocabulary anomaly: seeded accounts reads as an account class rather than an assignable role. The scaffold may conflate roles and accounts.'
+
+citations:
+  evidence:
+    - {id: D1, ref: 'docs/experiments/unit-threat-model-prototype/inputs/sample-unit-dossier.md section 1 (unit under analysis)'}
+    - {id: D2, ref: 'docs/experiments/unit-threat-model-prototype/inputs/sample-unit-dossier.md section 2 (connected technical systems)'}
+    - {id: D3, ref: 'docs/experiments/unit-threat-model-prototype/inputs/sample-unit-dossier.md section 3 (related service contracts)'}
+    - {id: D4, ref: 'docs/experiments/unit-threat-model-prototype/inputs/sample-unit-dossier.md section 4 (observed environment traits)'}
+    - {id: D5, ref: 'docs/experiments/unit-threat-model-prototype/inputs/sample-unit-dossier.md section 5 (evidence gaps)'}
+  method:
+    - {id: W1, ref: 'docs/design/unit-threat-model-workflow.md'}
+    - {id: W2, ref: 'docs/design/modelling-trust-boundaries-notes.md'}
+    - {id: W3, ref: 'docs/design/modelling-dynamic-states-trust-notes.md'}
+  skills:
+    - {id: SK-xss, ref: 'skills-unspurious/xss/SKILL.md'}
+    - {id: SK-xss-stored, ref: 'skills-unspurious/xss/xss-stored/SKILL.md'}
+    - {id: SK-ssti, ref: 'skills-unspurious/ssti/SKILL.md'}
+    - {id: SK-mass-assignment, ref: 'skills-unspurious/mass-assignment/SKILL.md'}
+    - {id: SK-mass-assignment-nested-relation-write, ref: 'skills-unspurious/mass-assignment/mass-assignment-nested-relation-write/SKILL.md'}
+    - {id: SK-idor, ref: 'skills-unspurious/idor/SKILL.md'}
+    - {id: SK-idor-direct-object-swap, ref: 'skills-unspurious/idor/idor-direct-object-swap/SKILL.md'}
+    - {id: SK-two-principal-authz, ref: 'skills-unspurious/two-principal-authz/SKILL.md'}
+    - {id: SK-bfla, ref: 'skills-unspurious/broken-function-level-authorization/SKILL.md'}
+    - {id: SK-http-method-tampering, ref: 'skills-unspurious/http-method-tampering/SKILL.md'}
+    - {id: SK-csrf, ref: 'skills-unspurious/csrf/SKILL.md'}
+    - {id: SK-business-logic, ref: 'skills-unspurious/business-logic/SKILL.md'}
+    - {id: SK-race-conditions, ref: 'skills-unspurious/race-conditions/SKILL.md'}
+    - {id: SK-insecure-file-uploads, ref: 'skills-unspurious/insecure-file-uploads/SKILL.md'}
+    - {id: SK-crypto-weakness, ref: 'skills-unspurious/crypto-weakness/SKILL.md'}
+    - {id: SK-weak-credential-discovery, ref: 'skills-unspurious/weak-credential-discovery/SKILL.md'}
+  probe_plans:
+    - {id: PP-1, tag: PROBE_PLAN, ref: 'HTTP-history read for the editor route and the submission request'}
+    - {id: PP-2, tag: PROBE_PLAN, ref: 'two-principal publication and removal probe'}
+    - {id: PP-3, tag: PROBE_PLAN, ref: 'method matrix probe'}
+    - {id: PP-4, tag: PROBE_PLAN, ref: 'html producer determination probe'}
+    - {id: PP-5, tag: PROBE_PLAN, ref: 'extra-attribute binding probe'}
+    - {id: PP-6, tag: PROBE_PLAN, ref: 'cover asset serving and replacement probe'}
+    - {id: PP-7, tag: PROBE_PLAN, ref: 'transport and session attribute probe'}
+    - {id: PP-8, tag: PROBE_PLAN, ref: 'error shape probe'}
+    - {id: PP-9, tag: PROBE_PLAN, ref: 'OPTIONS and Allow enumeration probe'}

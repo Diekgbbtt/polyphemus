@@ -1,0 +1,106 @@
+loop_id: loop-3
+unit_id: Service:model-download
+class: Unrestricted remote-content write into the model store (write-what-where under models)
+class_skill: insecure-file-uploads
+slice:
+  source: trust_agreement
+  statement: "TA5 + TA6: the worker trusts save_path and filename as harmless path components under the models root, and the write path trusts the fetched bytes to be model payload, storing them byte-for-byte under the client-chosen name. With F5 (no path validation) and no content inspection, the loop opens the write's three freedoms: where the bytes land, what the bytes are, and what consumes them."
+discrimination:
+  axes_used: [payload-vector, chaining-advanced, tech-misconfiguration]
+  boundary: "the dimension of the unrestricted write held fixed per spec: the path vector (s1), the content provenance (s2), the loader-consumer integration (s3); fault fixed at F5."
+  narrow_broad_tradeoff: "broad on the write's dimensions (all three freedoms covered once) and narrow on encodings per dimension; the loop is OBSERVED end-to-end, so the coverage question is whether each freedom of write-what-where has an owning spec."
+specs:
+- spec_id: loop-3-s1
+  label: "placement-path freedom"
+  sub_slice: "The path vector: save_path and filename relative components resolve the final path under models/ with no canonicalization, including dot-segment escapes (anchor: .. save_path -> artefact under models/etc, P29), directory creation, and targeting of existing artifact paths; owned region = which paths receive the fetched bytes."
+  class_skill_parametrisation:
+    skill: insecure-file-uploads
+    inputs: {sink: "worker write models/<save_path>/<filename>", techniques: "Filename and Path advanced section (trailing dots, collisions, path shaping); archive/placement vocabulary mapped to fetch-and-store", anchor: "P29 dotdot save_path -> 200, t1-tr-save under models/etc"}
+  concretisation:
+    protocol: http
+    technology: "ComfyUI-Manager V3.37 worker on aiohttp 3.14.3; POSIX filesystem under the models root"
+    endpoint: "POST /manager/queue/install_model then GET /manager/queue/start; readback via IA11 listings"
+    parameter: "save_path and filename path components"
+    method: "POST then GET"
+    body: '{"name": "x", "url": "http://<listener>/marker", "filename": "t1-leaf.safetensors", "save_path": ".."}'
+    headers: {"Content-Type": "application/json"}
+  discrimination_axis: payload-vector
+  discrimination_note: "Nearest sibling is loop-3-s2: s1 varies where the bytes land while holding the bytes constant (a marker body); s2 holds the path benign and varies what lands. The nearest outside-the-set sibling is loop-6, which owns deeper escape geometry and consumed-location placement for the same fault."
+  chaining_advanced_note: null
+  proxy_technique: "A .safetensors filename skips the catalog gate; save_path traversal components are concatenated into the destination path without canonicalization, so the marker body is written at the resolved location (new directory creation included); the listing routes locate where the artefact landed, and collision probes target an existing artifact name to observe replacement semantics."
+  verification_symptoms: ["the marker entry appears at the resolved escaped location (not under the intended subdirectory), anchored on models/etc for the .. form", "for collision probes: the pre-existing artifact's size/bytes change from the seeded value to the marker's"]
+  payload_vector_space:
+    method: "POST install_model -> GET start"
+    path: "/manager/queue/install_model, /api/manager/queue/install_model, /manager/queue/start"
+    parameter: "save_path traversal shapes (.., ../.., ....//, separator mixes, encoded dots, absolute-leading forms) and filename shapes carrying path meaning"
+    body: "JSON install item with a listener marker URL"
+    headers: {"Content-Type": "application/json"}
+  assumptions: ["the write joins the components then creates parents and opens the target for writing (IA7, P29)", "collision semantics replace existing bytes (open-for-write truncate); unprobed and declared", "listing routes reveal landing locations and sizes (IA11)"]
+  rationale: "If F5 is implemented, no canonicalization binds save_path under an intended subdirectory; the write-what-where freedom on the path axis materialises whenever the join resolves outside the intended region. P29 anchors the mechanism; the vector space enumerates the resolution shapes."
+  interpretation_guidance: "Symptom-present = the written entry appears at a path outside the intended subdirectory predicted by the traversal shape, or a seeded artifact's bytes change on a collision probe. Symptom-absent = the write canonicalizes into the intended subdirectory, is refused (400/403), or 200-queued with no entry anywhere: the join is bounded or the write path is guarded. A refused spelling is inconclusive for other escape shapes."
+- spec_id: loop-3-s2
+  label: "content-provenance freedom"
+  sub_slice: "The content dimension: any bytes fetched from the attacker (marker, malformed model, oversized blob) are stored byte-for-byte under a model extension with no inspection, so the artifact's name asserts a type its content never earned (anchor: 29 B arbitrary listener body listed as a model file, P13/P16/P19)."
+  class_skill_parametrisation:
+    skill: insecure-file-uploads
+    inputs: {sink: "byte-for-byte store of the fetched body (DF3)", techniques: "magic-bytes vs extension probes, polyglot shapes, content-type mismatch from the ingress-validation families", anchor: "29 B listener body stored as t1-not-in-catalog.safetensors"}
+  concretisation:
+    protocol: http
+    technology: "listener serves crafted bodies; worker stores them verbatim (DF3)"
+    endpoint: "POST /manager/queue/install_model then GET /manager/queue/start"
+    parameter: "fetched response body content (via url target)"
+    method: "POST then GET"
+    body: '{"name": "x", "url": "http://<listener>/<crafted-body>", "filename": "t1-content.safetensors", "save_path": "checkpoints"}'
+    headers: {"Content-Type": "application/json"}
+  discrimination_axis: chaining-advanced
+  discrimination_note: "Owns the second broken expectation of write-what-where: TA6 (content provenance) while s1 owns TA5 (path scope). Same sink, but the asserted property differs - path placement versus type/provenance - and the oracles differ: landing location versus exact byte identity of the stored body."
+  chaining_advanced_note: "Structural clause split of the write trust: TA5 governs where components resolve, TA6 governs what the bytes are and what consumers then trust the name to mean. The insecure-file-uploads skill assumes an upload endpoint and a validation pipeline; this unit has a fetch-and-store pipeline, so the mapping (ingress=gate, storage=write, serving/processing=load side) is carried structurally rather than by a skill entity."
+  proxy_technique: "Serve crafted bodies of increasing hostility (plain marker, truncated archives, pickle-shaped bytes under a .safetensors name, oversized blobs) and compare stored bytes to served bytes byte-for-byte; the .safetensors branch keeps the gate out of the content path entirely."
+  verification_symptoms: ["stored entry bytes equal the served body exactly for every crafted payload family (size and hash)", "no content-type, magic-byte, or format error surfaces anywhere in the install response or listing metadata"]
+  payload_vector_space:
+    method: "POST install_model -> GET start"
+    path: "/manager/queue/install_model, /manager/queue/start"
+    parameter: "url points at a listener variant per body family; filename picks the asserted type"
+    body: "listener bodies: plain marker, malformed/truncated model header, pickle-shaped bytes, large blob"
+    headers: {"Content-Type": "application/json"}
+  assumptions: ["the fetched body is stored verbatim (DF3 OBSERVED at 5/29/839/790 B)", "no content inspection occurs on the write path (TA6 statement)"]
+  rationale: "If F5 is implemented with no content typing, the artifact's asserted provenance is entirely client-chosen; content freedom is what makes the placement dangerous later, because consumers trust a model name over inspected content. The sub-slice is disjoint from placement: even a correctly parented write manifests this freedom."
+  interpretation_guidance: "Symptom-present = byte-for-byte equality between served and stored bodies across the crafted families, with no inspection error. Symptom-absent = stored bytes differ from served bytes, or the install fails on a content-shaped check: an inspection stage exists; record which family triggered it. Equality must be shown on at least one family that is not a plausible model payload."
+- spec_id: loop-3-s3
+  label: "loader-consumed placement"
+  sub_slice: "The consumer-integration dimension: the write lands inside the model tree directories the ComfyUI stack scans and under names the loader resolves, so the client-chosen artifact enters name-to-artifact resolution (custom_nodes appears among the listed model dirs, P17); owned region = write placement as loader supply, the load-side consequence the loop leaves inferred."
+  class_skill_parametrisation:
+    skill: insecure-file-uploads
+    inputs: {sink: "model tree scanned by the deployment stack", techniques: "server-evaluation placement and handler-mapping discovery mapped to loader search roots; serving-path inventory", anchor: "IA11 listings expose the directory inventory (checkpoints, custom_nodes ...)"}
+  concretisation:
+    protocol: http
+    technology: "ComfyUI core v0.3.76 loader scanning the models tree; Manager write path; custom_nodes among listed dirs (P17)"
+    endpoint: "POST /manager/queue/install_model then GET /manager/queue/start; enumeration via /models and /experiment/models/<dir>"
+    parameter: "save_path choosing a scanned directory; filename choosing a loader-recognized name"
+    method: "POST then GET"
+    body: '{"name": "x", "url": "http://<listener>/marker", "filename": "t1-loader-pick.safetensors", "save_path": "checkpoints"}'
+    headers: {"Content-Type": "application/json"}
+  discrimination_axis: tech-misconfiguration
+  discrimination_note: "Owns what consumes the write rather than where or what it is: s1 and s2 would also fire for inert storage; s3 asks whether the landing spot and name enter the loader's resolution space, which is the deployment-stack integration the loop's inferred load side rests on. Different observed variable: enumerability through loader-facing listings."
+  chaining_advanced_note: null
+  proxy_technique: "Write marker artifacts into each scanned directory family under names the stack recognizes for models; then enumerate through the same listing surfaces the stack presents models with (IA11), and confirm the artifact is resolved by its client-chosen name with matching size/mtime. The load (parse/import/execute) step stays inferred and is recorded as a chain assumption, not executed."
+  verification_symptoms: ["the marker artifact is enumerable through the model-facing listings as a first-class entry (name, size, mtime match), indistinguishable in shape from seeded artifacts", "the loader search-root inventory from /models (P17) and per-dir listings (IA11) accounts for the artifact's directory, so any model-selection workflow would resolve the client-chosen name"]
+  payload_vector_space:
+    method: "POST install_model -> GET start; enumeration GETs"
+    path: "/manager/queue/install_model, /manager/queue/start, /models, /experiment/models/<dir>"
+    parameter: "save_path in {checkpoints, other scanned dirs, custom_nodes}, filename with loader-recognized extensions"
+    body: "JSON install item with marker URL"
+    headers: {"Content-Type": "application/json"}
+  assumptions: ["the listed model directories correspond to the loader scan roots (IA11 derives them from the model tree)", "ComfyUI resolves artifacts by directory plus filename in model-selection workflows (deployment-stack semantics)", "actual parse/execute consequences of a load are out of this spec's oracle and recorded as chain-inferred"]
+  rationale: "If F5 is implemented, the write can land in any scanned directory with any name; the stack then treats the tree as its model catalogue. The failing expectation is the consumer's: it trusts tree contents to be curated. This sub-slice materialises whenever the first two freedoms exist and the tree is load-bearing."
+  interpretation_guidance: "Symptom-present = the artifact enumerates through the model-facing listing surfaces exactly like seeded artifacts, in a loader-scanned directory, under a loader-recognized name. Symptom-absent = the artifact stays outside every scanned directory or is not resolvable by its name through the stack's own surfaces: the write remains inert storage and the load-side chain is broken at placement. Enumerability alone does not show a load occurred; that step stays a declared chain assumption."
+checks:
+  overlap:
+    status: none
+    notes: "s1 owns the path vector (where), s2 the content provenance (what), s3 the consumer integration (resolved by what). No pair reduces to a payload-string variant: each holds the other dimensions benign and tests a different trust clause or stack integration, with different oracles (landing location / byte identity / loader-facing enumerability)."
+  coverage:
+    status: exhaustive
+    uncovered: []
+    notes: "All three freedoms of the unrestricted write (where / what / consumed by what) carry one owning spec. The load-side execution effect stays chain-inferred by the loop's own likelihood note and is recorded inside s3 rather than left as an uncovered region."
+  well_formedness_statement: "Three specs partition write-what-where by its dimensions under a fixed fault F5: placement paths, content provenance, and loader consumption. Each sub-slice is disjoint, each has a distinct oracle, and their union covers the write space the loop evidences; nothing beyond the demonstrated mechanism family is claimed."
+degradations: ["The insecure-file-uploads class skill assumes an upload ingress; this unit's ingress is a queued fetch-and-store, so the pipeline vocabulary was mapped structurally.", "Collision/overwrite semantics are assumed (truncating open) and declared inside s1; unprobed on the target.", "The load-side parse/execute step is inferred from the deployment stack and never executed in this mock; s3 covers placement only and says so."]

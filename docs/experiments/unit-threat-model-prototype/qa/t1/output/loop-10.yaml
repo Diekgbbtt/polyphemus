@@ -1,0 +1,106 @@
+loop_id: loop-10
+unit_id: Service:model-download
+class: Queue accounting corruption (completion-state lying)
+class_skill: business-logic
+slice:
+  source: dynamic_state_trust
+  statement: "TA8 + F8: the UI and operators trust the queue counters as authoritative execution truth, but counters diverge from the accepted and executed item sets - accept-phase undercount (P53), execution-phase undercount (P40 vs P58), and reset retention (P25). The loop opens the counter-divergence space across the transitions that write counters."
+discrimination:
+  axes_used: [chaining-advanced]
+  boundary: "which transition's accounting invariant is tested: append (accepted-set reconciliation, s1), drain (executed-set reconciliation, s2), reset (post-reset state semantics, s3); fault fixed at F8."
+  narrow_broad_tradeoff: "narrow on the three counter-writing transitions and broad on batch shapes inside each; the divergence is OBSERVED per transition, so one owning spec per transition covers the space without duplicating mechanisms."
+specs:
+- spec_id: loop-10-s1
+  label: "accept-phase undercount"
+  sub_slice: "Counters after enqueue diverge from the accepted set: two installs accepted with 200 report total_count 1 (P50/P51 -> P53), and duplicate ui_ids are accepted without reconciliation (P32/P34); region = acceptance reconciliation on ET1/ET2."
+  class_skill_parametrisation:
+    skill: business-logic
+    inputs: {transition: "ET1/ET2 append", invariant: "counters reflect the accepted item set exactly (V6)", oracle: "independent recomputation: the accepted set is tallied from the 200 responses (class recompute-don't-echo discipline)"}
+  concretisation:
+    protocol: http
+    technology: "ComfyUI-Manager V3.37 queue on aiohttp 3.14.3"
+    endpoint: "POST /manager/queue/install_model (N items) then GET /manager/queue/status"
+    parameter: "batch composition: distinct items, duplicate ui_ids, free-attribute items"
+    method: "POST then GET"
+    body: 'N JSON install items queued before any start; status read before start'
+    headers: {"Content-Type": "application/json"}
+  discrimination_axis: chaining-advanced
+  discrimination_note: "Owns the append transition: the accepted set versus total_count, before any execution. s2 owns the drain transition (executed set versus done_count); s3 owns reset semantics. Different transitions, invariants, and observation points; no shared counter claim."
+  chaining_advanced_note: "Structural transition split inside one fault: the class skill owns conservation and reconciliation oracles for ledgers (value-domain-manipulation recomputation discipline, monotonicity invariants), but the queue counters are not a ledger the skill models; the split rides on the payload's transition IDs (ET1/ET2 with side effect 'total_count may advance') and invariant V6. Carried structurally."
+  proxy_technique: "Enqueue a composed batch (distinct items plus a duplicate-ui_id pair) with each response's status recorded; read status before any start; compare the accepted-set tally against total_count. No execution is needed, so the variable is purely the append path."
+  verification_symptoms: ["total_count below the tally of 200-accepted installs for at least one batch composition", "duplicate ui_ids accepted with 200 without any counter reconciliation signal"]
+  payload_vector_space:
+    method: "POST install_model (batch) -> GET status"
+    path: "/manager/queue/install_model, /api/manager/queue/install_model, /manager/queue/status"
+    parameter: "batch size N; duplicate versus distinct ui_id values; item attribute variety"
+    body: "JSON install items with listener URLs"
+    headers: {"Content-Type": "application/json"}
+  assumptions: ["each accepted install is intended to appear in total_count (IA5/ET1 side effect)", "duplicate ui_ids have no intended reconciliation (ET2 guard_assumed uniqueness)"]
+  rationale: "If F8 is implemented, the accept path does not reconcile counters with accepted items: work the operator believes queued is invisible to status. The failure mode is acceptance blindness, and it is exercised before any worker activity, so it stands alone."
+  interpretation_guidance: "Symptom-present = the accepted tally strictly exceeds total_count for a controlled batch, or duplicates are accepted with no counter trace. Symptom-absent = total_count equals the accepted set for every composition: the append path reconciles; record which compositions held. Status echoing without the accepted-set comparison is not evidence either way."
+- spec_id: loop-10-s2
+  label: "execution-phase undercount"
+  sub_slice: "done_count diverges from executed work: done_count 2 after at least four oracle-observed fetches and three file reads (P40 vs P58/P37/P38/P28); region = execution reconciliation on ET3."
+  class_skill_parametrisation:
+    skill: business-logic
+    inputs: {transition: "ET3 drain", invariant: "counters reflect the executed item set exactly (V6)", oracle: "listener-tallied fetches and listing-tallied writes as the independent executed set (recompute from trusted sources, not the counter's echo)"}
+  concretisation:
+    protocol: http
+    technology: "worker draining to an attacker listener; model-tree listings for write counts"
+    endpoint: "POST install_model (batch) then GET /manager/queue/start then GET /manager/queue/status"
+    parameter: "batch size and item composition (safetensors and catalog-bound items, duplicates)"
+    method: "POST then GETs"
+    body: "JSON install items with distinct listener tokens"
+    headers: {"Content-Type": "application/json"}
+  discrimination_axis: chaining-advanced
+  discrimination_note: "Owns the drain transition: executed effects (listener hits, writes) versus done_count. s1 reads the counters before execution; s2 compares against an execution oracle; s3 owns what reset leaves behind. The independent executed-set construction is s2's own."
+  chaining_advanced_note: "Structural as in s1: the class's independent-recomputation discipline supplies the oracle pattern (count what actually happened, never the response echo), but the queue's execution semantics are not a class entity; the split rides on ET3's side effects ('fetches and writes per item; done_count advances') and V6."
+  proxy_technique: "Give every item a unique listener token; drain the batch; tally listener hits and listing entries as the executed set; compare with done_count and total_count. Extra fetches beyond the counter (the P40-vs-P58 shape) or skipped items both classify as divergence, attributed by token."
+  verification_symptoms: ["the executed tally (listener hits and/or written entries) exceeds done_count after a drained batch (the P40 anchor: done 2 against four fetches and three file reads)", "one more divergence shape: accepted items whose tokens never fetched while done_count still advanced (silent skip), attributed per token"]
+  payload_vector_space:
+    method: "POST install_model -> GET start -> GET status"
+    path: "/manager/queue/install_model, /manager/queue/start, /manager/queue/status"
+    parameter: "batch size; item mix (fetchable listener items, file:// reads, duplicates)"
+    body: "JSON install items with per-item tokens"
+    headers: {"Content-Type": "application/json"}
+  assumptions: ["listener hits and listing entries are trustworthy execution evidence (DF3/IA11)", "the worker processes serially (IA12); divergent tallies are not explainable by concurrency in this loop"]
+  rationale: "If F8 is implemented, worker execution events do not update counters to match reality: done_count under-reports (or skips items silently), so operators misjudge completion. The failure mode is execution blindness, exercised only after a drain."
+  interpretation_guidance: "Symptom-present = the executed tally and done_count disagree after a drained batch, reproducible per token. Symptom-absent = the tally equals done_count for every composition: the drain reconciles; record the batch shapes tested. A read of done_count alone cannot decide; the independent tally is the evidence."
+- spec_id: loop-10-s3
+  label: "reset retention and state indistinguishability"
+  sub_slice: "Reset retains done_count (P24/P25): drained-with-results (ES4) and reset-stale (ES5) are indistinguishable via status alone, so completed counts describe work no longer present; region = post-reset accounting semantics on ET4."
+  class_skill_parametrisation:
+    skill: business-logic
+    inputs: {transition: "ET4 reset", invariant: "a drained queue with an empty listing and done_count 0 is the only post-reset state (V3)", oracle: "state-distinguishability check: compare status plus queue-content observables across the two states"}
+  concretisation:
+    protocol: http
+    technology: "same queue; seeded drain creates the ES4 anchor"
+    endpoint: "POST install_model, GET start, GET reset, GET status"
+    parameter: "none beyond the orchestration (drain then reset)"
+    method: "POST then GETs"
+    body: "one marker install to create done_count > 0 before reset"
+    headers: {"Content-Type": "application/json"}
+  discrimination_axis: chaining-advanced
+  discrimination_note: "Owns reset semantics rather than append/drain divergence: after the same drained state, reset either clears or retains the accounting record. s1/s2 compare counters against happened-sets; s3 compares two states (ES4/ES5) that the contract says must be distinguishable, a different observable (indistinguishability)."
+  chaining_advanced_note: "Structural: the divider is a dynamic-state pair (ES4 versus ES5, defined distinct in the payload) whose guard_assumed expectation ('reset zeroes the queue and its counters') fails; the class skill lacks state-machine entities for reset semantics, so the pair comparison is carried structurally, with V3 fixing the invariant under test."
+  proxy_technique: "Drive the queue to drained-with-results (one drained item, done_count > 0), snapshot status; GET reset; snapshot status again; compare. If status cannot separate ES4 from ES5 (done_count retained, empty queue), the operator-facing record of completed work survives an operation meant to clear state."
+  verification_symptoms: ["after reset on a drained queue: done_count retained (>0) with an empty queue, i.e. ES5 (P24/P25 anchor)", "status alone cannot distinguish ES5 from ES4 without external queue-content knowledge: any reader trusting counters over-states completed work that no longer exists"]
+  payload_vector_space:
+    method: "POST install_model -> GET start -> GET status -> GET reset -> GET status"
+    path: "/manager/queue/install_model, /manager/queue/start, /manager/queue/reset, /manager/queue/status"
+    parameter: "orchestration only; optionally repeat with in-flight or queued items to probe reset-vs-drain interaction (kept to the sequential case here)"
+    body: "JSON install item with marker URL"
+    headers: {"Content-Type": "application/json"}
+  assumptions: ["reset is intended to clear queue state including counters (ET4 guard_assumed)", "status exposes total_count/done_count/is_processing (IA5)"]
+  rationale: "If F8 is implemented across the reset path, the operation that should erase the accounting record fails to: stale counts describe work no longer present, and two distinct states present identically. The failure mode is accounting persistence, separate from append/drain reconciliation."
+  interpretation_guidance: "Symptom-present = reset leaves done_count (or total_count) non-zero with an empty queue, and no status field separates the post-reset state from drained-with-results. Symptom-absent = reset zeroes counters, or status carries a state discriminator making ES5 distinguishable: record which. The retained number alone is the finding only when the intended semantics erase it."
+checks:
+  overlap:
+    status: none
+    notes: "The three specs own three transitions and three invariants (accept reconciliation, execute reconciliation, reset semantics) with different observables (pre-drain tally, post-drain execution oracle, state-pair comparison). No shared counter claim or batch shape is re-tested between them."
+  coverage:
+    status: exhaustive
+    uncovered: []
+    notes: "Every counter-writing transition the payload evidences (ET1/ET2 append, ET3 drain, ET4 reset) carries an owning spec; ET5 (stale counters compounding after reset) is a composition of s1 and s3 and rides inside their results rather than being a separate region."
+  well_formedness_statement: "Three specs partition F8 by the transition whose accounting invariant fails: append, drain, reset. Each carries its own oracle and observation point, and their union covers the counter-divergence space the payload evidences; composition effects (ET5) decompose into the owned specs."
+degradations: ["The class skill lacks queue/accounting entities; one-fault-three-transitions is a structural split from the payload's ET/V identifiers, not a skill-derived taxonomy.", "The implementer's intended counter semantics are read from the payload's side-effect statements (IA5, ET1-ET4); if the code intends coarser counters, every spec's interpretation guidance records the contract it holds the implementation to."]

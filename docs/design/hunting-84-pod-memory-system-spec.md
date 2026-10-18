@@ -8,6 +8,10 @@ operator corrections in this grilling round) and the memory-system pattern docum
 `ExperimentLog` plus `_seq`/`_ref` notes model for the per-project deterministic-key pattern, keeping the pod's
 memorization kernel (the note store semantics + the note tool) as-is.
 
+**NOTE 2026-10-18.** The variant record shape stays.
+The `declined_attribute` field now carries the variant basis from `docs/design/hunting-67-test-executor-pod-spec.md` section 8.6.
+The other records are unchanged.
+
 Lineage: the pod spec is `docs/design/hunting-67-test-executor-pod-spec.md`; the underlying decisions are
 `docs/design/hunting-84-regrounding-decisions.md`. The spec identifier is minted by the #164 hunter
 (`docs/design/hunting-164-state-graph-spec.md`, in the `hunting-164-state-graph` worktree).

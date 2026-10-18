@@ -2,6 +2,9 @@
 
 *Status: grilling closed and ratified by the operator (2026-08-04); this document is the implementation source for ticket #83. It is NOT a replacement for the contract: `docs/design/hunting-67-hunting-agent-spec.md` remains the per-agent contract (identity, workflow, happy paths, outliers, delivery semantics, assertion catalogue). This document carries what the contract does not: the ratified prompt verbatims, the decision-tree cognitive architecture, the Q3-amended verdict semantics, the implementation decisions, the testing decisions, and the deferred risks.*
 
+**PARTIALLY SUPERSEDED 2026-10-18.** The decision-tree cognitive architecture, the typed-surface workflow, and the verdict semantics are superseded by `docs/design/hunting-67-hunting-agent-spec.md` section 8.
+The document remains the record of the #83 implementation.
+
 Part of [#67](https://github.com/Diekgbbtt/polyphemus/issues/67) (per-agent specs), resolving #83 (workflow ticket, `blocked_by` #82, blocks #84).
 The parent, merged spec is `docs/design/hunting-67-per-agent-specs-spec.md`.
 Decisions cited as D67-n live in `docs/design/hunting-67-per-agent-specs-decisions.md`.

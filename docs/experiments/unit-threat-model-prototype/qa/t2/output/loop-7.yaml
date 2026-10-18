@@ -1,0 +1,107 @@
+loop_id: loop-7
+unit_id: "WebPresentation:custom-node-catalog::manager-shell"
+class: null
+class_skill: null
+slice:
+  source: dynamic_state_trust
+  statement: "T5/S6: cache entries are keyed by URL only, written on any successful fetch, served without a freshness or approval marker to the shell, and re-exposed on channel re-selection for a ~1-day creation-time TTL. The transition trust 'fetched content remains the content later rendered' and 'cache content is equivalent to the operator-approved channel content' fails: the rendered catalogue can be a stale, or never-approved, snapshot (A-9 -> F-9 -> V-7)."
+discrimination:
+  axes_used: [payload-vector, chaining-advanced]
+  boundary: "which cache-trust step the spec exercises: the serve path without revalidation (staleness), the write-to-retrieve binding (provenance/approval), and the revocation path (upstream correction not propagating). No payload-string variants."
+  narrow_broad_tradeoff: "Narrow and deep on the three trust steps of one cache mechanism, because the loop's class is the persistence itself; broadening to record payloads would duplicate the injection loops it amplifies."
+specs:
+  - spec_id: loop-7-s1
+    label: "cache serves a snapshot with no freshness signal"
+    sub_slice: "The staleness claim: mode=cache serves the persisted snapshot within the creation-time ~1-day TTL although the channel's current content differs, and the response carries no freshness marker the shell could act on; owns the serve path without revalidation."
+    class_skill_parametrisation:
+      skill: null
+      inputs:
+        vector: "mode parameter selects the datasource: cache = server-side cached snapshot; remote fetches the channel on every request (the control)"
+        ttl: "~1 day, creation-time (upstream get_data_with_cache); no revalidation evidenced"
+        evidence: "per-channel probes: 8487 default packs via cache; 1021 recent packs after a switch"
+        structural_basis: "state-machine steps S3->S6 (cache write) and S6->S4 (render from cache); trusted condition 'cache content equivalent to channel content'"
+    concretisation:
+      protocol: http
+      target: "http://46.224.225.245:44177"
+      endpoints: ["GET /customnode/getlist?mode=cache&skip_update=true", "GET /customnode/getlist?mode=remote&channel-resolution control", "direct fetch of {channel}/custom-node-list.json as the ground truth"]
+      technology: "V3.37 server-side per-URL cache file; aiohttp/3.14.3; creation-time TTL"
+      observation: "content differential between cache-served and source-current responses for the same channel"
+    discrimination_axis: payload-vector
+    discrimination_note: "Nearest sibling loop-7-s3: both observe cache-vs-source divergence, but this spec owns the freshness claim (a later source update not yet reflected) on the serve path; s3 owns the revocation claim (a corrected/removed record still served) as a lifetime question. Different claims, different evidence."
+    chaining_advanced_note: null
+    proxy_technique: "Update the channel content upstream, then request the catalogue with mode=cache inside the TTL: the server answers from the persisted snapshot without contacting the source, and the shell receives content older than the channel, with no marker distinguishing it."
+    verification_symptoms:
+      - "cache-served and source-current content differ for the same channel inside the TTL"
+      - "the cache response carries no freshness marker (no timestamp/etag the shell could use)"
+      - "the divergence reproduces on a second request without any new fetch occurring"
+    payload_vector_space: {method: GET, path: /customnode/getlist, parameter: "mode=cache (control: mode=remote)", body: null, headers: "none"}
+    assumptions: ["the TTL is creation-time as the upstream source indicates, not sliding", "the upstream channel update is observable independently (direct fetch or remote mode)"]
+    rationale: "T5 writes the snapshot on fetch success with no freshness binding and S6 serves it until expiry; the shell asks for 'cache' and receives whatever the file holds, so the displayed catalogue can lag the operator-approved source by up to a day while nothing in the exchange surfaces the lag."
+    interpretation_guidance: "symptom-present = inside the TTL, mode=cache returns content that differs from the channel's current content and no marker accompanies it. symptom-absent = the cache revalidates, or returns current content, or marks provenance (true negatives). If mode=remote fails or hangs (observed blocking behaviour), the control is inconclusive; use a direct channel fetch as the ground truth instead of calling the cache current."
+  - spec_id: loop-7-s2
+    label: "cache populated outside operator intent and re-exposed on selection"
+    sub_slice: "The provenance claim: entries are keyed by URL only and written on any successful fetch - including requests by another principal or fetches triggered as a side effect - so a later operator selection of that channel re-serves content the operator never approved or expected; owns the write-to-retrieve binding."
+    class_skill_parametrisation:
+      skill: null
+      inputs:
+        write_path: "T5: fresh-fetch result written to a per-URL cache file (preconditions: cache stale/absent, fetch succeeded; verified_conditions: none beyond fetch success)"
+        retrieval_path: "mode=cache read; re-selection re-exposes the per-channel entry (evidence: after switching to 'recent' and restoring, each channel's cache was served again)"
+        mutability: "config channel selection writable by any principal - fetches can be induced outside the operator's action"
+        structural_basis: "DTV-4: cache served without approval binding; S5->S2 resolutions change the source the operator's session will read"
+    concretisation:
+      protocol: http
+      target: "http://46.224.225.245:44177"
+      endpoints: ["GET /customnode/getlist?mode=cache&skip_update=true (operator retrieval)", "channel-selection writes and catalogue requests by a non-operator principal (write side)"]
+      technology: "V3.37 per-URL cache files; state machine S3->S6->S4"
+      observation: "existence and content of an entry whose fetch was not the operator's action, then its re-serving"
+    discrimination_axis: chaining-advanced
+    discrimination_note: "Nearest sibling loop-7-s1: same cache mechanism, but this spec owns the binding between who/why the entry was written and who later reads it; s1 owns time-based staleness. The failing trust clause (approval) and the evidence (fetch provenance) differ."
+    chaining_advanced_note: "Structural: the suite has no cache-poisoning class skill, so the chain is built from the payload's transitions: exercise the write step (a fetch induced outside the operator's action) and the retrieval step (the operator's selection) separately, then show no binding exists between them. The two-step separation mirrors the stored-style write-then-retrieve discipline used elsewhere in the suite."
+    proxy_technique: "Have any principal trigger a fetch for the target channel (a getlist request, or a selection flip followed by a request as a side effect); the entry persists keyed by URL. Then let the operator select that channel and request the catalogue: the cached content is served without any record of who caused the fetch or why."
+    verification_symptoms:
+      - "a cache entry exists for a channel whose fetch was not the operator's catalogue open"
+      - "the operator's later selection of that channel serves that entry without a fresh fetch"
+      - "no approval, principal or provenance marker accompanies the served content"
+    payload_vector_space: {method: GET, path: "/customnode/getlist (write by a non-operator principal) then the operator's mode=cache read", parameter: "mode=cache; channel selection value", body: null, headers: "none; no caller identity on the routes"}
+    assumptions: ["the cache is keyed only by the channel URL (upstream simple_hash keying; payload-evidenced at behaviour level)", "a fetch for a given channel can be induced without the operator's action (routes take any caller and the selection is globally writable)"]
+    rationale: "T5's only gate is fetch success; the entry is later found by URL, not by the action that created it. So the operator's retrieval can rest on content fetched for someone else's request or as a configuration side effect, and re-selection makes that content the visible catalogue - approval never binds to the entry."
+    interpretation_guidance: "symptom-present = an entry written outside the operator's action is later served to the operator's selection, with no provenance marker. symptom-absent = writes are bound to the requester or the entry is discarded without the same principal re-reading (true negatives). A fresh fetch on the operator's first read is inconclusive for provenance, not absent: only re-selection serving without a new fetch proves the binding gap."
+  - spec_id: loop-7-s3
+    label: "upstream correction does not propagate before TTL expiry"
+    sub_slice: "The revocation claim: once written, an entry survives a source-side correction - the record updated or withdrawn upstream - and stays renderable from cache until the ~1-day TTL expires; the route offers no client-side invalidation for the cached copy. Owns the lifetime of persisted content against the source of truth."
+    class_skill_parametrisation:
+      skill: null
+      inputs:
+        write_evidence: "cache content persists beyond the current render and beyond channel re-selection (T5 side_effect); per-channel caches re-served after selection changes"
+        control: "mode=remote fetches the channel URL on every request; skip_update affects update checks, not cache revalidation"
+        structural_basis: "S6 cache held under creation-time TTL; no invalidation transition exists in the state machine"
+    concretisation:
+      protocol: http
+      target: "http://46.224.225.245:44177"
+      endpoints: ["GET /customnode/getlist?mode=cache&skip_update=true", "direct fetch of {channel}/custom-node-list.json (corrected source)"]
+      technology: "V3.37 get_data_with_cache; per-URL file with creation-time TTL; no purge route observed"
+      observation: "presence of a specific record in cache-served output after it is removed/changed at the source"
+    discrimination_axis: chaining-advanced
+    discrimination_note: "Nearest sibling loop-7-s1: both show cache-vs-source divergence, but s1 owns ordinary update lag on the serve path; this spec owns the removal/correction case and the absent invalidation transition - the difference between 'not yet updated' and 'cannot be withdrawn'."
+    chaining_advanced_note: "Structural: with no cache-poisoning skill in the suite, the revocation claim is built from the payload's state machine by absence: S6 (CACHE_HELD) has no outgoing invalidation transition and T5 carries no freshness or purge condition. The structural reasoning is the transition audit itself, plus the source-side correction differential."
+    proxy_technique: "Write a record into the channel, let a fetch populate the cache, then correct the source (remove or replace the record); keep requesting mode=cache: the withdrawn record is still served for the remaining TTL, with no route to purge or revalidate the entry."
+    verification_symptoms:
+      - "a record absent from the corrected source is still present in cache-served output"
+      - "the survival persists across channel re-selection (the entry is re-exposed, not rebuilt)"
+      - "no request in the client's reach invalidates the cached copy before expiry"
+    payload_vector_space: {method: GET, path: "/customnode/getlist?mode=cache", parameter: "mode=cache; skip_update tested as a non-invalidator", body: null, headers: "none"}
+    assumptions: ["no purge or revalidation endpoint exists on the cache route (none evidenced in the route map)", "the corrected source is retrievable independently for the differential"]
+    rationale: "The state machine holds cache state until a creation-time TTL and offers no invalidation, so any persisted record - including one later found malicious - outlives its withdrawal at the source; the shell reads the cache route in normal use, making the stale record the operator's reality until expiry."
+    interpretation_guidance: "symptom-present = the withdrawn record renders from cache after the source no longer serves it, and no request invalidates it. symptom-absent = a purge/revalidate path exists or the cache refreshes on source change (true negatives). The differential must be against the corrected source, not against remote mode alone: a remote-mode failure is inconclusive, not evidence the cache is current."
+checks:
+  overlap:
+    status: none
+    notes: "s1 owns the serve path and staleness; s2 owns write provenance and re-exposure; s3 owns the revocation/lifetime question. Distinct trust steps, distinct evidence; no spec differs from a sibling by a payload string."
+  coverage:
+    status: exhaustive
+    uncovered: []
+    notes: "Union covers the cache mechanism's three trust steps (serve, write-to-retrieve binding, invalidation). Cache-key collision behaviour (simple_hash) is not a covered sub-slice: the payload evidences keying by URL but no collision behaviour, so it is out of the slice. The loop's amplifier role (extending the injection loops' persistence) rides inside s3's lifetime claim."
+  well_formedness_statement: "Three specs over disjoint sub-slices of one persistence mechanism: staleness on the serve path, provenance binding between write and retrieval, and revocation lifetime. Overlap is absent - each spec names a distinct trust step and a distinct differential. Coverage is exhaustive over the cache's trust steps as instantiated in T5/S6/DTV-4, with hash-collision behaviour named as outside the evidenced slice."
+degradations:
+  - "No class skill matches: the suite has no cache-poisoning class (header-injection covers HTTP-cache/CRLF territory, not this server-side content cache), so all three specs carry structural reasoning from the payload's transitions rather than a skill ontology."
+  - "The cache internals (key derivation, TTL mechanics) are payload-evidenced at behaviour level (upstream get_cache_path/simple_hash naming, creation-time TTL), so specs state behaviour-level claims and avoid asserting file mechanics."

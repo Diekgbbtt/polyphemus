@@ -1,0 +1,464 @@
+loop_id: loop-1
+unit:
+  id: Service:model-download
+  kind: Service
+  base_url: http://46.224.225.245:44177
+  deployment: 'ComfyUI core v0.3.76 + ComfyUI-Manager V3.37 on aiohttp (Server: Python/3.11 aiohttp/3.14.3); no TLS; no login; single seeded default
+    profile; manager routes are mirrored under /api.'
+technical_sharpening:
+  interface_agreements:
+  - id: IA1
+    statement: The client submits a model download as a JSON body to POST /manager/queue/install_model with keys name, url, filename, save_path
+      and an optional ui_id; the /api prefix serves the same handler.
+    rung: OBSERVED
+    evidences:
+    - 'P09: POST install_model with a non-catalog triple -> 200 (item accepted).'
+    - 'P13: POST install_model with unknown save_path and random .safetensors name -> 200.'
+    - 'P33: POST /api/manager/queue/install_model -> 200; the item was fetched and written (P41).'
+  - id: IA2
+    statement: For a filename without a .safetensors suffix the handler requires the (name, save_path, filename) triple to exist in the default-channel
+      model catalog and the url to equal a member of the catalog URL set exactly; a missing triple gives 400, a URL outside the set gives 403.
+    rung: OBSERVED
+    evidences:
+    - 'P11/P12: random non-safetensors triples -> 400 Invalid model install request is detected.'
+    - 'P22: catalog .pth triple with a swapped URL -> 403 security error.'
+    - 'P24: .pth triple with a DIFFERENT catalog entry URL -> 200 (URL set membership, not per-entry binding).'
+    - 'P48: catalog URL plus a query parameter -> 403 (exact string equality).'
+  - id: IA3
+    statement: A filename ending in lowercase .safetensors bypasses catalog membership; any host-bearing URL is accepted with 200, while an uppercase
+      .SAFETENSORS suffix is rejected with 400.
+    rung: OBSERVED
+    evidences:
+    - 'P09: non-whitelisted triple accepted; the item was fetched and written (P57, P16).'
+    - 'P13: unknown save_path plus random .safetensors name -> 200; file written (P19, size 29).'
+    - 'P30: ftp scheme with a .safetensors name -> 200.'
+    - 'P36/P37/P38: file://localhost URLs -> 200.'
+    - 'P47: uppercase .SAFETENSORS -> 400.'
+  - id: IA4
+    statement: 'Status codes form the contract: 200 queued, 400 invalid request, 403 security denial, 500 unhandled exception; GET on install_model
+      returns 404 and POST on status returns 405.'
+    rung: OBSERVED
+    evidences:
+    - 'P08: empty body -> 500; P46: malformed body -> 500.'
+    - 'P11: invalid triple -> 400; P22: security denial -> 403; P09: accepted -> 200.'
+    - 'P43: GET install_model -> 404; P42: POST status -> 405.'
+  - id: IA5
+    statement: Accepted items do not process spontaneously; only GET /manager/queue/start drains the queue; the status counters are total_count,
+      done_count, in_progress_count and is_processing.
+    rung: OBSERVED
+    evidences:
+    - 'P09 -> P10: item queued, total_count 1, is_processing false, no fetch yet.'
+    - 'P14/P15: start then status done_count 1; the file appeared (P16).'
+    - 'P06/P07: start on an empty queue -> 200 no-op.'
+  - id: IA6
+    statement: The worker, not the request handler, performs the outbound fetch; the fetch happens after the enqueue response and follows the
+      supplied URL scheme and authority.
+    rung: OBSERVED
+    evidences:
+    - 'P57: listener oracle recorded t1-2-not-whitelisted and t1-7-safetensors-unknown-dir fetches caused by P09 and P13.'
+    - 'P54: poison batch produced no oracle hit (no fetch at pickup).'
+    - 'P56: after recovery the t1-15-dead marker hit the oracle.'
+  - id: IA7
+    statement: The worker writes the fetched body to models/<save_path>/<filename>, creates missing directories, and concatenates the path components
+      without canonicalization (a .. save_path is accepted).
+    rung: OBSERVED
+    evidences:
+    - 'P13/P16/P19: unknown save_path plus random name produced checkpoints/t1-not-in-catalog.safetensors, size 29 equals the fetched listener
+      body.'
+    - 'P29: dotdot save_path -> 200; artefact t1-tr-save appeared under models/etc (recorded in trace.md).'
+    - 'P37/P38: file reads wrote 839 B (passwd) and 790 B (environ) into the model tree.'
+  - id: IA8
+    statement: A manager middleware enforces the model-install security policy ahead of the handler and answers 403 with the fixed message A security
+      error has occurred.
+    rung: OBSERVED
+    evidences:
+    - 'P22, P31, P48: 403 responses with the fixed security message on catalog-bound triples.'
+  - id: IA9
+    statement: The queue accepts a caller-supplied ui_id verbatim as arbitrary JSON; a dict value is accepted with 200 and processing then halts
+      before the fetch.
+    rung: OBSERVED
+    evidences:
+    - 'P50: poison item with ui_id {} -> 200.'
+    - 'P52/P53: start then status total_count 1, done_count 0; no fetch occurred (P54 oracle empty).'
+    - 'P55/P56: a second start processed the surviving item (hit t1-15-dead, done_count 1).'
+  - id: IA10
+    statement: GET /externalmodel/getlist?mode=default returns the catalog JSON with entries carrying name, type, base, save_path, description,
+      reference, filename and url; the same catalog feeds the install gate.
+    rung: OBSERVED
+    evidences:
+    - 'P04/P21: getlist -> 200 with the entry structure visible.'
+    - 'P22: the gate rejects a catalog filename whose url was swapped (the gate reads this catalog).'
+  - id: IA11
+    statement: 'Model inventory is exposed as JSON: /models lists directories, /experiment/models/<dir> lists files with size, created and modified;
+      direct file GET paths return 404.'
+    rung: OBSERVED
+    evidences:
+    - 'P16/P17: /models/checkpoints and /models -> 200 (custom_nodes appears among the model dirs).'
+    - 'P19/P41: /experiment/models/checkpoints -> 200 with per-file sizes.'
+    - 'P18/P20: direct file GET paths -> 404.'
+  - id: IA12
+    statement: The worker processes queued items serially; one start drains every item unless processing halts; several items can be enqueued
+      between starts.
+    rung: OBSERVED
+    evidences:
+    - 'P39/P40: batch of accepted items, one start, done_count advanced to 2.'
+    - 'P50/P51: two items enqueued; P53 shows one counted; the worker halted on the first.'
+    - 'P14/P15: single item drained by one start.'
+  control_flows:
+  - id: CF1
+    statement: POST body -> JSON decode -> key extraction; a body that does not decode raises and returns 500.
+    rung: OBSERVED
+    evidences:
+    - 'P08: empty body -> 500 Server got itself in trouble.'
+    - 'P46: malformed body -> 500.'
+  - id: CF2
+    statement: Extracted triple -> membership and URL policy gate -> 400/403 denial or queue append with 200.
+    rung: OBSERVED
+    evidences:
+    - 'P11/P12: 400; P22/P31/P48: 403; P09/P13/P24: 200.'
+  - id: CF3
+    statement: Accepted item -> queue insert -> counters update -> idle state until start.
+    rung: OBSERVED
+    evidences:
+    - 'P10: after one accept, total_count 1 with is_processing false.'
+    - 'P32/P34: two more accepts with the same ui_id, both 200.'
+    - 'P53: after a poison accept, counts show only one item.'
+  - id: CF4
+    statement: GET queue/start -> worker pops items serially -> fetch url -> write file -> done_count advances -> next item; an empty queue makes
+      start a no-op.
+    rung: OBSERVED
+    evidences:
+    - 'P14/P15: start drained the queued item and bumped done_count.'
+    - 'P06/P07: start on empty queue changed nothing.'
+    - 'P57/P58: oracle hits correspond to fetched items of the drained batches.'
+  - id: CF5
+    statement: Before each fetch the worker consumes ui_id in its progress bookkeeping; a non-string ui_id halts the worker and later items stay
+      queued until another start.
+    rung: OBSERVED
+    evidences:
+    - 'P52/P53/P54: start on the poison head produced no fetch and no counter advance.'
+    - 'P55/P56: the following item was processed by a later start.'
+  - id: CF6
+    statement: GET externalmodel/getlist -> the manager serves the selected channel catalog (fixed GitHub raw URLs) as JSON to the manager shell.
+    rung: OBSERVED
+    evidences:
+    - 'P04/P21: getlist -> 200 catalog JSON.'
+    - 'P44: channel list is fixed to raw.githubusercontent.com URLs with selected=default.'
+  - id: CF7
+    statement: GET /models and /experiment/models/<dir> -> filesystem stat of the model tree -> JSON inventory.
+    rung: OBSERVED
+    evidences:
+    - 'P17: directory names including custom_nodes.'
+    - 'P19/P41: file entries with sizes and timestamps.'
+  data_flows:
+  - id: DF1
+    statement: Request body attributes (name, url, filename, save_path, ui_id) flow untrusted from the client into the queue, the fetch sink and
+      the filesystem sink.
+    rung: OBSERVED
+    evidences:
+    - 'P09/P13/P29/P50: all attributes are client-supplied and accepted verbatim.'
+  - id: DF2
+    statement: 'The url string becomes the outbound request target as supplied: http, https, ftp and file://localhost reach the worker; file:///
+      and FILE:// are rejected at the gate.'
+    rung: OBSERVED
+    evidences:
+    - 'P28: loopback URL -> 200 and fetched (V3.37 content, 5 B written).'
+    - 'P30: ftp scheme -> 200.'
+    - 'P36/P37/P38: file://localhost reads -> 200.'
+    - 'P26/P35: file:/// and FILE:// -> 400.'
+  - id: DF3
+    statement: The fetched response body is stored byte-for-byte as a model file; observed sizes match the fetched bodies (5 B, 29 B, 839 B, 790
+      B).
+    rung: OBSERVED
+    evidences:
+    - 'P19/P41: /experiment/models/checkpoints lists t1-* files with sizes 29.'
+    - 'Note N4: loopback fetch wrote V3.37 (5 B); file reads wrote 839 B and 790 B.'
+  - id: DF4
+    statement: The save_path string becomes a directory component under the models root; a .. value resolves outside the intended subdirectory.
+    rung: OBSERVED
+    evidences:
+    - 'P29: dotdot save_path -> 200; artefact written under models/etc (trace.md).'
+  - id: DF5
+    statement: Written files become model inventory entries (name, size, timestamps) readable by any client of the listing routes.
+    rung: OBSERVED
+    evidences:
+    - 'P16/P19/P41: t1-* entries listed with sizes.'
+  - id: DF6
+    statement: Worker execution events update the queue counters that status readers consume; the counters undercount accepted and executed work.
+    rung: OBSERVED
+    evidences:
+    - 'P40: done_count 2 after a batch with at least four oracle-observed fetches (P58) and three file reads (P37/P38, P28).'
+    - 'P25: reset left total_count and done_count at 1 with an empty queue.'
+trust_model:
+  trust_agreements:
+  - id: TA1
+    statement: The handler trusts the JSON body to encode a legitimate install request; no principal, session or token is read, and any anonymous
+      client reaches the trust decision.
+    rung: OBSERVED
+    evidences:
+    - 'IA1/IA4 evidence; P09/P13: anonymous POSTs -> 200 with no credential of any kind.'
+  - id: TA2
+    statement: The gate trusts the validated catalog tuple and the queued tuple to be the same data; actually the catalogue lookup binds name,
+      save_path and filename while the url is only checked for set membership across catalog URLs.
+    rung: OBSERVED
+    evidences:
+    - 'P24: cross-entry catalog URL accepted -> 200; P22: non-catalog URL -> 403; P48: exact string equality is required (query parameter breaks
+      it).'
+  - id: TA3
+    statement: 'The gate trusts the filename suffix as the discriminator of scrutiny: lowercase .safetensors marks the item safe and skips catalog
+      membership; the payload behind the name is never inspected.'
+    rung: OBSERVED
+    evidences:
+    - 'P09/P13: random .safetensors triples accepted; P11/P12: non-safetensors equivalents rejected; P47: .SAFETENSORS rejected.'
+  - id: TA4
+    statement: The worker trusts the queued url to be a fetchable HTTP resource; the client is trusted not to aim the fetch at the internal network,
+      the loopback interface or local files.
+    rung: OBSERVED
+    evidences:
+    - 'P28: loopback fetch executed and written (5 B V3.37).'
+    - 'P36/P37/P38: file://localhost reads executed and written.'
+    - 'P30: ftp scheme accepted.'
+  - id: TA5
+    statement: The worker trusts save_path and filename to be harmless path components under the models root; no canonicalization check runs before
+      the write.
+    rung: OBSERVED
+    evidences:
+    - 'P29: dotdot save_path -> 200 and written outside the intended subdirectory (models/etc artefact).'
+  - id: TA6
+    statement: The write path trusts the fetched bytes to be a model payload; content is stored under the client-chosen name and every consumer
+      of the model tree then trusts that name.
+    rung: OBSERVED
+    evidences:
+    - 'P16/P19/P41: files of size 29 with arbitrary bytes appear as model files under names the client chose.'
+  - id: TA7
+    statement: The queue trusts ui_id to be a hashable string; it is consumed in the progress and bookkeeping path without type validation.
+    rung: OBSERVED
+    evidences:
+    - 'P50: ui_id {} accepted with 200; P53: worker halted at pickup; P55/P56: later start recovered the tail.'
+  - id: TA8
+    statement: The UI and operators trust the queue counters as authoritative execution truth; the reset path trusts done_count to mean completed
+      work.
+    rung: OBSERVED
+    evidences:
+    - 'P40: done_count 2 while at least four fetches and three file reads had executed (P58, P37/P38, P28).'
+    - 'P25/P26: after reset, done_count 1 with an empty queue.'
+  - id: TA9
+    statement: The manager trusts the fixed channel list (GitHub raw URLs, selected default) as the only catalog source; no runtime custom URL
+      channel was observed.
+    rung: OBSERVED
+    evidences:
+    - 'P44: /manager/channel_url_list -> 200 with raw.githubusercontent.com entries only, selected=default.'
+  - id: TA10
+    statement: The queue trusts state-changing operations (start, reset) to be deliberate; both are GET endpoints with no auth and no CSRF token,
+      so any HTTP participant can cross the idle-to-drained and drained-to-stale transitions.
+    rung: OBSERVED
+    evidences:
+    - 'P14: GET start drained the queue; P24: GET reset executed the reset and retained counters.'
+  dynamic_state_trust:
+    states:
+    - id: ES1
+      name: idle-empty
+      definition: Queue empty; counters 0/0/0; is_processing false.
+      rung: OBSERVED
+      evidences:
+      - 'P05: initial status 0/0/0.'
+      - 'P07: after a no-op start, still 0/0/0.'
+    - id: ES2
+      name: queued-idle
+      definition: At least one accepted item in the queue; worker not running; counters may already undercount the accepted set.
+      rung: OBSERVED
+      evidences:
+      - 'P10: total_count 1, is_processing false, no fetch yet.'
+      - 'P53: one item counted although two were accepted with 200 (P50/P51).'
+    - id: ES3
+      name: processing
+      definition: Worker draining the queue between start and completion; transient and never captured in flight (gap).
+      rung: INFERRED
+      evidences:
+      - 'P14->P15 and P39->P40: counters advance across the start call; intermediate states were not sampled.'
+    - id: ES4
+      name: drained-with-results
+      definition: Queue empty, counters retained (done_count > 0), written files visible in listings.
+      rung: OBSERVED
+      evidences:
+      - 'P15/P16: done_count 1 and the file listed.'
+      - 'P40: done_count 2 with the batch files listed (P41).'
+    - id: ES5
+      name: reset-stale
+      definition: After GET reset; old done_count retained, queue content unpreserved by the counters; indistinguishable from ES4 by status alone.
+      rung: OBSERVED
+      evidences:
+      - 'P24/P25: reset -> 200, then status still total 1 done 1.'
+    - id: ES6
+      name: stalled-after-poison
+      definition: Worker halted at a non-string ui_id; tail items remain queued; counters frozen; is_processing false.
+      rung: OBSERVED
+      evidences:
+      - 'P52/P53/P54: start produced no fetch and no counter advance.'
+    - id: ES7
+      name: recovered
+      definition: A later start processes the surviving tail after the poison head is consumed.
+      rung: OBSERVED
+      evidences:
+      - 'P55/P56: done_count 1 and the t1-15-dead marker hit the oracle.'
+    transitions:
+    - id: ET1
+      state_from: ES1
+      state_to: ES2
+      trigger: POST /manager/queue/install_model with a gate-passing triple.
+      guard_verified: Extension membership rule and catalog membership rule (IA2/IA3).
+      guard_assumed: The client is a legitimate operator.
+      side_effects: Queue append; total_count may advance.
+      rung: OBSERVED
+      evidences:
+      - 'P09->P10: accept then total_count 1.'
+    - id: ET2
+      state_from: ES2
+      state_to: ES2
+      trigger: Further accepted installs before a start.
+      guard_verified: Same as ET1.
+      guard_assumed: Each ui_id is unique.
+      side_effects: Append; duplicate ui_ids accepted (P32/P34).
+      rung: OBSERVED
+      evidences:
+      - 'P32/P33/P34: three accepts while queued.'
+    - id: ET3
+      state_from: ES2
+      state_to: ES4
+      trigger: GET /manager/queue/start.
+      guard_verified: None observed.
+      guard_assumed: The queue drains serially and cleanly to an empty state.
+      side_effects: Fetches and writes per item; done_count advances.
+      rung: OBSERVED
+      evidences:
+      - 'P14/P15: drain of one item; P39/P40: batch drain; P57/P58: oracle hits.'
+    - id: ET4
+      state_from: ES4
+      state_to: ES5
+      trigger: GET /manager/queue/reset.
+      guard_verified: None observed; no auth, GET-accessible.
+      guard_assumed: Reset zeroes the queue and its counters.
+      side_effects: Counters retained (trust bend).
+      rung: OBSERVED
+      evidences:
+      - 'P24/P25: reset left total_count 1 and done_count 1.'
+    - id: ET5
+      state_from: ES5
+      state_to: ES2
+      trigger: Install accepted on top of stale counters.
+      guard_verified: Gate as ET1.
+      guard_assumed: Counters restart from zero after reset.
+      side_effects: Adds to stale totals; undercount persists.
+      rung: OBSERVED
+      evidences:
+      - P27-P38 accepts after P24; P40 shows total 2 done 2.
+    - id: ET6
+      state_from: ES2
+      state_to: ES6
+      trigger: GET /manager/queue/start while the head item carries a non-string ui_id.
+      guard_verified: None; ui_id type never checked.
+      guard_assumed: Client-supplied ids are always strings.
+      side_effects: Worker halts; tail stays queued; no error surfaced to any client.
+      rung: OBSERVED
+      evidences:
+      - 'P52/P53: start with poison head produced no fetch (P54 oracle empty).'
+    - id: ET7
+      state_from: ES6
+      state_to: ES7
+      trigger: A further GET /manager/queue/start after the poison head is disposed.
+      guard_verified: None.
+      guard_assumed: A stalled queue needs no operator intervention beyond another start.
+      side_effects: Tail item processed; done_count advances.
+      rung: OBSERVED
+      evidences:
+      - 'P55/P56: recovery start processed t1-15-dead.'
+    - id: ET8
+      state_from: ES4
+      state_to: ES4
+      trigger: GET start on an empty queue.
+      guard_verified: None.
+      guard_assumed: Idempotent no-op.
+      side_effects: None observed.
+      rung: OBSERVED
+      evidences:
+      - 'P06/P07: start on empty queue changed nothing.'
+    violations:
+    - id: V1
+      transition_ref: ET1
+      invariant: Items enter the trusted queue only when their content provenance is validated against the catalog.
+      violation: A lowercase .safetensors name with any host-bearing URL skips catalog validation; the trusted queued state is entered on a filename
+        suffix alone.
+      rung: OBSERVED
+      evidences:
+      - 'P09/P13: non-catalog items queued; P57/P58: both fetched.'
+    - id: V2
+      transition_ref: ET3
+      invariant: The fetch target equals the artifact the gate validated.
+      violation: Only the url set membership is checked, so a validated triple can carry a different catalog URL; the used attribute is not the
+        validated attribute.
+      rung: OBSERVED
+      evidences:
+      - 'P24: cross-entry URL -> 200; P22: non-catalog URL -> 403.'
+    - id: V3
+      transition_ref: ET4
+      invariant: A drained queue with an empty queue listing and done_count 0 is the only post-reset state.
+      violation: Reset retains done_count, so completed counts describe work that no longer exists in the queue; ES4 and ES5 are indistinguishable
+        from the status API.
+      rung: OBSERVED
+      evidences:
+      - 'P24/P25: reset -> done_count 1 retained; P26 status read confirms.'
+    - id: V4
+      transition_ref: ET6
+      invariant: One accepted item cannot stop the serial worker globally.
+      violation: A single ui_id of a non-string type halts processing; later legitimate items are stuck in ES2-like starvation with frozen counters.
+      rung: OBSERVED
+      evidences:
+      - 'P50->P53: halt; P54: no fetch; P55/P56: recovery.'
+    - id: V5
+      transition_ref: ET4
+      invariant: Trusted state transitions are performed by deliberate, authenticated operations.
+      violation: start and reset are unauthenticated GETs; any HTTP participant crossing them changes the trusted state.
+      rung: OBSERVED
+      evidences:
+      - 'P14: GET start drained; P24: GET reset executed.'
+    - id: V6
+      transition_ref: ET3
+      invariant: Counters reflect the accepted and executed item sets exactly.
+      violation: 'Counters undercount: done_count 2 against at least four fetched items and three file reads; duplicate ui_ids accepted without
+        reconciliation.'
+      rung: OBSERVED
+      evidences:
+      - P40 vs P58; P32/P34 duplicates; P37/P38/P28 file reads.
+abduction_chain:
+  assumptions:
+  - id: A2
+    statement: Model URLs always point at public content hosts, so no destination filtering of the outbound fetch is needed.
+    induced_fault: F2
+    rung: OBSERVED
+    evidences:
+    - 'P28: loopback URL fetched and written; P57/P58: external listener fetches.'
+  fault:
+    id: F2
+    name: No egress allowlist on the outbound fetch
+    rung: OBSERVED
+    evidences:
+    - 'P28: loopback fetch executed; P57/P58: external listener fetches; P30: ftp accepted.'
+  vulnerability:
+    id: VUL1
+    fault_ref: F2
+    class: Server-side request forgery (SSRF)
+    suite_class: ssrf
+    rung: OBSERVED
+    evidences:
+    - 'P28: the target fetched its own loopback manager version and wrote 5 B into the model tree.'
+    - 'P57/P58: fetches of attacker-chosen listener URLs for t1-2, t1-7, t1-10, t1-12, t1-13, t1-14, t1-15.'
+    - 'P30: ftp scheme accepted at the gate (scheme coverage beyond HTTP).'
+likelihood: high
+likelihood_rationale: End-to-end SSRF observed with zero preconditions and no authentication; every pipeline stage is evidenced.
+confidence_degree: OBSERVED
+evidences:
+- 'P28: loopback URL fetched and written; P57/P58: external listener fetches.'
+- 'P28: loopback fetch executed; P57/P58: external listener fetches; P30: ftp accepted.'
+- 'P28: the target fetched its own loopback manager version and wrote 5 B into the model tree.'
+- 'P57/P58: fetches of attacker-chosen listener URLs for t1-2, t1-7, t1-10, t1-12, t1-13, t1-14, t1-15.'
+- 'P30: ftp scheme accepted at the gate (scheme coverage beyond HTTP).'

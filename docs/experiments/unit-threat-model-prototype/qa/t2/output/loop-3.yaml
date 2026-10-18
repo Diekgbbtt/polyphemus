@@ -1,0 +1,113 @@
+loop_id: loop-3
+unit_id: "WebPresentation:custom-node-catalog::manager-shell"
+class: xss
+class_skill: xss
+slice:
+  source: trust_agreement
+  statement: "TA-2/TA-3: the description string of a remote node-pack record is trusted as inert presentation text, but the server transform (sanitize_tag then convert_markdown_to_html) re-introduces anchor markup with an unvalidated href (F-2) and the shell parses the result as HTML at the render sink (F-1). Remote channel content crosses into the shell origin's markup context through the description pipeline (A-1 -> F-1 + F-2 -> V-1)."
+discrimination:
+  axes_used: [payload-vector, tech-misconfiguration, chaining-advanced]
+  boundary: "injection context of the description's converter-generated markup (URL value vs attribute value) crossed with the retrieval stance (live render vs persisted store-then-render); no spec differs by a payload string."
+  narrow_broad_tradeoff: "Narrow and deep on the converter's own output shapes (the only markup family that survives the escaped-angle regime), because the pipeline's restriction means a payload catalogue would collapse into one no-validation failure."
+specs:
+  - spec_id: loop-3-s1
+    label: "scheme injection through the converter-generated anchor href"
+    sub_slice: "The URL captured by the markdown pattern [a/(text)](url) and inserted into the generated anchor's href without validation; owns the URL-value context of the converter output, where the operator's click on the generated link executes the chosen scheme in the shell origin."
+    class_skill_parametrisation:
+      skill: xss
+      inputs:
+        pattern: "[a/(text)](url) -> <a href='url' target='blank'> (upstream v3.37)"
+        control_point: "url segment of the pattern inside the record's description"
+        scheme_validation: absent (URL inserted into href unvalidated)
+        activation: "operator click on the generated anchor (description column or flyover)"
+        patterns_used: ["context classification: URL/function-scheme context", "URL scheme allowlist reasoning from the context-encoding rules", "curated single payload per context rather than catalogue spraying"]
+    concretisation:
+      protocol: http
+      endpoint: "/customnode/getlist?mode=cache&skip_update=true"
+      technology: "ComfyUI-Manager V3.37 convert_markdown_to_html; anchor rendered by the TurboGrid description cell and by the flyover preview"
+      parameter: "record field description containing the markdown anchor pattern"
+      method: GET
+      sink: "generated <a> element inside the description cell; activation by click"
+    discrimination_axis: payload-vector
+    discrimination_note: "Nearest sibling loop-3-s2: both consume the converter's generated anchor, but this spec owns the URL-value context executed on navigation (scheme handler), while s2 owns the attribute-value context executed without navigation; payload shapes and execution modes differ, not wording."
+    chaining_advanced_note: null
+    proxy_technique: "Place the pattern with a script-capable scheme in the description URL segment; the converter emits it into href with no scheme check, and the operator's click on the rendered description link navigates by that scheme, evaluating in the shell origin."
+    verification_symptoms:
+      - "the rendered description contains the generated anchor with the attacker URL bound to href"
+      - "clicking the anchor executes script in the manager shell origin (sink invocation or DOM effect observable in the shell)"
+      - "no scheme allowlist rejects the URL at render time (the element renders active)"
+    payload_vector_space: {method: GET, path: /customnode/getlist, parameter: "mode=cache|remote; description carries [a/(text)](<scheme>:...)", body: null, headers: "content arrives through the channel JSON; no request-side payload"}
+    assumptions: ["the converter's URL segment accepts the scheme text without filtering (evidence: URL inserted into href unvalidated)", "the operator clicks a catalogue description link in normal use (likelihood note: href/hover payloads need operator interaction)"]
+    rationale: "F-2 hands the shell an anchor whose href the attacker chose; the sink parses it as markup and the browser activates the scheme on click, so the description string - community-contributed by design - becomes script execution in the privileged manager origin."
+    interpretation_guidance: "symptom-present = the generated anchor exists with the attacker URL and a click evaluates it in the shell origin. symptom-absent = the URL is stripped, rewritten to a safe scheme, or the anchor does not render (true negatives). A rendered anchor whose click is blocked by CSP is inconclusive for execution and positive for the sink reaching markup; record both claims separately."
+  - spec_id: loop-3-s2
+    label: "attribute breakout through the single-quoted href template"
+    sub_slice: "The converter's fixed anchor template emits href with a single-quoted attribute and no escaping of the URL, so a URL carrying a quote closes the attribute and appends attacker attributes to the generated element; owns the attribute-value context of the converter output and its hover/focus execution."
+    class_skill_parametrisation:
+      skill: xss
+      inputs:
+        template: "<a href='url' target='blank'> with the URL substituted raw"
+        breakout_character: "single quote (same quote closing the attribute), plus whitespace and a handler attribute"
+        activation: "handler event on the generated element (hover/focus class payloads; likelihood notes hover payloads)"
+        patterns_used: ["attribute-value context rule (encode quotes, keep attributes quoted)", "attr-quoted polyglot family from the parent skill", "unclosed/idiomatic shape discipline"]
+    concretisation:
+      protocol: http
+      endpoint: "/customnode/getlist?mode=cache&skip_update=true"
+      technology: "V3.37 regex converter building the anchor as a string; rendered by the description cell and flyover preview"
+      parameter: "record field description; the quote and attribute text ride inside the pattern's url segment"
+      method: GET
+      sink: "generated <a> element's attribute space; execution by the appended handler on hover"
+    discrimination_axis: tech-misconfiguration
+    discrimination_note: "Nearest sibling loop-3-s1: same generated element, but the injection enters by closing the quoted attribute rather than by the URL value; that is a template misconfiguration (single-quoted, unescaped insertion) with a no-navigation execution mode, so the two specs exercise different failure modes."
+    chaining_advanced_note: null
+    proxy_technique: "Place a quote-bearing URL in the pattern so the converter's fixed template appends attributes; the element renders with the attacker's handler attached, and hovering the description link invokes it in the shell origin."
+    verification_symptoms:
+      - "the generated anchor carries attributes absent from the record outside href and target"
+      - "the appended handler attribute is live on the element and fires on its event"
+      - "the injected attribute appears in the parsed element (instrumented DOM), not as visible text"
+    payload_vector_space: {method: GET, path: /customnode/getlist, parameter: "mode=cache|remote; description URL segment carries quote + attribute text", body: null, headers: "content arrives through the channel JSON"}
+    assumptions: ["the URL segment reaches the template without quote encoding (the template's single quotes are the only delimiter)", "the converter does not strip quotes or whitespace from the captured URL"]
+    rationale: "The template is a fixed string with a single-quoted href and no escaping; any quote in the URL escapes the attribute context, so the same description pipeline that resists raw tag injection still lets attacker attributes bind to a rendered element, which the browser then activates."
+    interpretation_guidance: "symptom-present = parsed attributes beyond the template's own appear on the generated anchor and the handler fires on hover/focus. symptom-absent = the URL is encoded so the quote stays inside the attribute value (template held) or the element is dropped (sanitizer held). If the attribute parses but no event fires under policy, record parsing positive and execution inconclusive."
+  - spec_id: loop-3-s3
+    label: "store-then-render: live markup retrieved at later views"
+    sub_slice: "The retrieval stance of the description injection: the record is written once into the channel data (and later served from the ~1-day catalogue cache, S6/T5) and the live markup renders at every later retrieval view - every shell session and catalogue open - with no same-response reflection; owns the persistence boundary and the second-view render claim."
+    class_skill_parametrisation:
+      skill: xss
+      inputs:
+        write_entry: "channel custom-node-list.json description string -> server cache -> getlist response"
+        retrieval_views: ["grid description cell at each catalogue open", "flyover preview"]
+        evidence_rule: "same-response reflection is non-evidence; require a second view render (xss-stored two-phase mapping)"
+        persistence: "per-URL server cache, ~1-day TTL (S6/T5); content persists beyond the current render"
+        patterns_used: ["two-phase write-then-retrieve mapping", "separate observations across phases", "retrieval-response reflection"]
+    concretisation:
+      protocol: http
+      endpoint: "/customnode/getlist?mode=cache&skip_update=true"
+      technology: "V3.37 server cache write on fresh fetch (T5); client render at shell open"
+      parameter: "record field description carrying a benign live-markup marker plus the chosen injection shape per sibling spec"
+      method: GET
+      sink: "second-view render of the persisted description (later shell session or later catalogue open)"
+    discrimination_axis: chaining-advanced
+    discrimination_note: "Nearest sibling loop-3-s1/s2: those own the injection shape executed in one view; this spec owns the persistence claim - the write response counts as non-evidence and the live markup is confirmed at a later retrieval view, which neither sibling tests."
+    chaining_advanced_note: "Structural: the class skill's stored variant owns persistence as its defining entity (write entry, retrieval view, evidence rule), but its sub-slice axes stop at formatting the pair; here the pair's persistence is the cache/T5 trust clause, so the variant is carried structurally as the retrieval-stance region rather than as a new sink entity."
+    proxy_technique: "Write the marker once through the channel JSON, let the fetch populate the server cache, then open the catalogue from a fresh shell session (or after the immediate response is discarded) and observe the marker render at retrieval; the cache serves it without a new fetch."
+    verification_symptoms:
+      - "the marker renders as live markup in a later view even though the write response is no longer in play"
+      - "the persisted response (cache-served getlist) still carries the marker string parsed by the client"
+      - "the same marker renders again on a second retrieval view (grid cell and flyover) without a new write"
+    payload_vector_space: {method: GET, path: "/customnode/getlist (write side: channel JSON; retrieval side: repeated GETs)", parameter: "mode=cache for the cache-served retrieval", body: null, headers: "none"}
+    assumptions: ["the cache TTL (~1 day, creation-time) is real as evidenced by the per-channel cache probes", "a benign live-markup marker (converter-generated element) suffices to evidence retrieval of live markup; execution shapes stay in the sibling specs"]
+    rationale: "TA-3's transform output is persisted by the cache before any retrieval, so the injection is stored by construction; the shell renders it at each later view, and any harm lands on later sessions rather than on the request that wrote it - the exact structure the stored variant's two-phase evidence rule protects against mis-reading."
+    interpretation_guidance: "symptom-present = live markup present in a second view's DOM with no write response in the path. symptom-absent = the later view shows the marker as inert text or the cache serves stripped content (true negative). A write-response echo of the marker is explicitly not evidence; only the retrieval view decides."
+checks:
+  overlap:
+    status: none
+    notes: "s1 owns the URL-value context, s2 the attribute-value context, s3 the persistence/retrieval stance. Contexts and claims are disjoint; s3 changes the observation protocol, not the payload."
+  coverage:
+    status: exhaustive
+    uncovered: []
+    notes: "Union covers the converter's only surviving markup shape (the generated anchor) in both of its injection contexts plus the stored retrieval stance. Inert converter output (BR, B, font family) opens no injection context and is not a spec. The raw-tag path is closed by sanitize_tag before this pipeline, so no sub-slice exists for it here."
+  well_formedness_statement: "Three specs over disjoint sub-slices: URL-value execution, attribute-value execution, and the persistence/retrieval stance of the same sink. Overlap is absent - s1/s2 differ by injection context and execution mode, s3 by the claim it tests; no payload-string variants. Coverage is exhaustive over the description pipeline's reachable markup contexts, with the inert generated markup and the closed raw-tag path named as non-regions."
+degradations:
+  - "The converter's regex details (capture permissiveness for quotes in the URL segment) are rendered as INFERRED in the payload (upstream source cross-check), so s2's breakout names it as an assumption."
+  - "The store for the write side is the channel then the server cache; the exact cache freshness semantics are payload-evidenced at TTL level only, so s3 keeps the claim at 'later retrieval view' rather than a time bound."
