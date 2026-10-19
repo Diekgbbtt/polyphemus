@@ -63,6 +63,7 @@ The parent names linked harvesting in one step and path guessing in another and 
 
 Read each fetched body according to its holder shape, because one parser cannot cover markup plus script plus structured artifact output.
 Match secret shapes in markup and scripts, decode encoded holders into candidate pairs, and parse structured artifact bodies into named credential fields.
+See `references/secret-pattern-catalog.md` for the ordered shape rows, and run `scripts/secret-scan.py` over fetched bodies for one record per match.
 Reconstruct source from a published source map and read an interface specification document for routes, because both are holders that name further secrets rather than secrets themselves.
 Fingerprint the algorithm and entropy shape of any token-shaped holder at this step and hand the sampling and re-derivation questions to `crypto-weakness` and `crypto-predictable-token`, because a token that is not a fixed secret is judged by predictability rather than by pattern shape.
 Record every match with its carrier plus its location so confirmation can replay the exact holder.

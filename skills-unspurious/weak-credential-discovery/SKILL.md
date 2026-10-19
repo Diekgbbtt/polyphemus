@@ -135,6 +135,7 @@ Each variant breaks one clause: the exposure clause, the default-credential clau
 - Validate a candidate against the issuing service's read-only identity endpoint before calling it usable: liveness plus the scope it grants is what turns a credential-shaped string into a finding
 - Weigh the detectability cost before each validation, and prefer the quietest validator that still answers
 - Keep the validation request read-only and shaped like ordinary traffic, because a loud validator converts a low-noise finding into a monitored one
+See `references/secret-validators.md` for the validator shape, the identity reads by issuer family, and the output record.
 
 **Post-Authentication Reading**
 - Decode every issued artifact after login and compare its claims with the identity the flow proved
