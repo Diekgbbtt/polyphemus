@@ -108,6 +108,12 @@ services:
       # Empty default keeps a clean clone working; the operator's .env
       # provides the real value. NEVER a real key in the repo.
       STEEL_API_KEY: ${STEEL_API_KEY:-}
+      # Steel endpoint (#390, D359-4): unset keeps the remote Steel cloud
+      # unchanged. Set to the self-hosted runtime in the CLI's canonical form
+      # (`http://<host>:<port>/v1`); the gateway then injects the global
+      # `--local` flag and the CLI reads this same value natively. No default,
+      # so a clean clone on the cloud path is unaffected.
+      STEEL_BROWSER_API_URL: ${STEEL_BROWSER_API_URL:-}
       # The #196 capture-plane environment (dev line).
       PYTHONPATH: /opt
       KALI_HTTP_HISTORY_ROOT: /data

@@ -341,3 +341,78 @@ def test_script_text_not_scanned_for_boundary(workroot, steel_stub):
     out = _steel_exec(script=script, script_lang="sh", session_id="s2")
     assert out["returncode"] == 0, out
     assert "done" in out["stdout"]
+
+
+# ---------------------------------------------------------------------------
+# Local-mode injection (#390, D359-4)
+#
+# `STEEL_BROWSER_API_URL` set means the self-hosted runtime. The CLI selects
+# local mode only through the global `--local` flag, so the gateway injects it
+# into a command-mode invocation. The CLI reads the value itself (its native
+# precedence step 2); the gateway never rewrites the URL.
+# ---------------------------------------------------------------------------
+
+
+def test_local_mode_injected_when_endpoint_set(workroot, steel_stub, monkeypatch):
+    monkeypatch.setenv("STEEL_BROWSER_API_URL", "http://192.33.91.87:3000/v1")
+    out = _steel_exec(command="steel browser cookies --json", session_id="s1")
+    assert out["returncode"] == 0, out
+    assert _calls(steel_stub)[-1] == "--local browser cookies --json"
+
+
+def test_no_injection_when_endpoint_unset(workroot, steel_stub, monkeypatch):
+    monkeypatch.delenv("STEEL_BROWSER_API_URL", raising=False)
+    out = _steel_exec(command="steel browser cookies --json", session_id="s1")
+    assert out["returncode"] == 0, out
+    assert _calls(steel_stub)[-1] == "browser cookies --json"
+
+
+def test_injection_skipped_when_command_already_chooses_mode_or_url(
+        workroot, steel_stub, monkeypatch):
+    monkeypatch.setenv("STEEL_BROWSER_API_URL", "http://192.33.91.87:3000/v1")
+    cases = [
+        ("steel --local browser cookies --json", "--local browser cookies --json"),
+        ("steel browser cookies --json --api-url http://192.33.91.87:3000/v1",
+         "browser cookies --json --api-url http://192.33.91.87:3000/v1"),
+    ]
+    for command, expected in cases:
+        out = _steel_exec(command=command, session_id="s1")
+        assert out["returncode"] == 0, out
+        assert _calls(steel_stub)[-1] == expected
+
+
+def test_injection_lands_after_the_steel_token_not_at_the_front(
+        workroot, steel_stub, monkeypatch):
+    # A command may carry a prefix (`cd /work/s1 && steel ...`). The flag is a
+    # global and must follow the binary token, never lead the whole line.
+    monkeypatch.setenv("STEEL_BROWSER_API_URL", "http://192.33.91.87:3000/v1")
+    out = _steel_exec(command="cd /tmp && steel browser cookies --json", session_id="s1")
+    assert out["returncode"] == 0, out
+    assert _calls(steel_stub)[-1] == "--local browser cookies --json"
+
+
+def test_script_mode_never_rewritten(workroot, steel_stub, monkeypatch):
+    # Script text is verbatim by contract (D13); the skill tells the caller to
+    # pass `--local` itself.
+    monkeypatch.setenv("STEEL_BROWSER_API_URL", "http://192.33.91.87:3000/v1")
+    script = "steel browser cookies --json\necho done\n"
+    out = _steel_exec(script=script, script_lang="sh", session_id="s2")
+    assert out["returncode"] == 0, out
+    assert "done" in out["stdout"]
+
+
+def test_gateway_env_name_matches_the_shared_resolver():
+    # One name, two readers: the gateway's own copy and the app resolver must
+    # never drift apart (#390, D359-4).
+    from polymerhus.app.steel_endpoint import ENV_VAR
+    assert m._STEEL_ENDPOINT_ENV == ENV_VAR
+
+
+def test_gateway_module_imports_no_polymerhus():
+    # The kali image does not carry the polymerhus package, so the gateway must
+    # read the variable name directly (C3).
+    import inspect
+    import kali.mcp_server as mm
+    src = inspect.getsource(mm)
+    assert "from polymerhus" not in src
+    assert "import polymerhus" not in src

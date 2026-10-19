@@ -38,6 +38,11 @@ _ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 
 _STEEL_TOKEN = re.compile(r"\bsteel\b")
 _STEEL_VERSION_PIN = "0.4.4"
+# The global mode flag the gateway injects when a self-hosted endpoint is
+# configured (#390, D359-4), and the flags a caller may already have used to
+# choose the mode or the URL (either one suppresses the injection).
+_STEEL_ENDPOINT_ENV = "STEEL_BROWSER_API_URL"
+_STEEL_MODE_FLAG = re.compile(r"(?<!\S)--(?:local|api-url)(?=$|[=\s])")
 _START_SHAPE = re.compile(r"\bbrowser\s+start\b")
 _SESSION_FLAG = re.compile(r"--session[= ]+(?:\"([^\"]+)\"|'([^']+)'|(\S+))")
 _STEEL_WAIT = re.compile(r"(?<!\S)--timeout[= ]+(\d+)")
@@ -387,6 +392,20 @@ def _run_script(script: str, script_lang: str, session_id: str, timeout_s: int) 
         f.write(script)
     return _run(f"{_SCRIPT_RUNNERS[script_lang]} {shlex.quote(f.name)}", session_id, timeout_s)
 
+def _local_mode(command: str) -> str:
+    # The CLI selects local mode only through the global `--local` flag, and it
+    # reads the endpoint URL itself (native precedence step 2). When the
+    # deployment names a self-hosted runtime, inject `--local` immediately
+    # after the leading `steel` token. A command that already carries `--local`
+    # or `--api-url` is left untouched, and the URL text is never rewritten
+    # (#390, D359-4). Script text is not passed here: scripts stay verbatim.
+    if not os.environ.get(_STEEL_ENDPOINT_ENV, "").strip():
+        return command
+    if _STEEL_MODE_FLAG.search(command):
+        return command
+    return _STEEL_TOKEN.sub("steel --local", command, count=1)
+
+
 def _steel_exec_sync(command: str = "", script: str = "", script_lang: str = "sh",
                      session_id: str = "steel", timeout_s: int = 600) -> dict:
     if bool(command) == bool(script):
@@ -409,7 +428,7 @@ def _steel_exec_sync(command: str = "", script: str = "", script_lang: str = "sh
         gap = _boundary_gap(command)
         if gap is not None:
             return _boundary_refused(gap)
-        return _run(command, session_id, timeout_s)
+        return _run(_local_mode(command), session_id, timeout_s)
     if script_lang not in _SCRIPT_RUNNERS:
         return _refused("unsupported-script-lang", f"want one of {sorted(_SCRIPT_RUNNERS)}")
     if not _steel_version_ok():

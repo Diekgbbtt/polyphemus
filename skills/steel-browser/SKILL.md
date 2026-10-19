@@ -1,19 +1,21 @@
 ---
 name: steel-browser
 description: >-
-  Operate a real Steel cloud browser through the `steel_exec` gateway: named
+  Operate a real Steel browser through the `steel_exec` gateway: named
   sessions, navigation, ref-based interaction, waiting, inline JS, cookie and
-  storage reads, one-shot scraping, bounded spidering, and profile mounts.
+  storage reads, one-shot scraping, bounded spidering, and profile mounts,
+  against the Steel cloud or a self-hosted local runtime.
   Use when a target needs JavaScript rendering, element-level interaction, a form
   or login flow driven end to end, session or token extraction, bot-gated
   navigation, or a live page read that plain HTTP cannot provide.
 metadata:
-  version: '1.8'
+  version: '1.9'
 ---
 
 # Steel browser operation
 
-Drive a real cloud browser through `steel_exec` - one `steel ...` command, or a whole `.sh`/`.py` script chaining several.
+Drive a real Steel browser through `steel_exec` - one `steel ...` command, or a whole `.sh`/`.py` script chaining several.
+The browser is the Steel cloud by default, or the self-hosted runtime when the deployment sets `STEEL_BROWSER_API_URL`.
 This skill carries operation mechanics, not a goal: no login procedure, no scraping recipe, only the framework any browser task composes.
 Reach for it when a target needs JavaScript to render, an element driven, or client-side browser state read.
 
@@ -24,6 +26,12 @@ Script text is not scanned, so a script owns its own timeout ordering, session-n
 A refusal is typed and nothing runs (`returncode` 2): `refused:ambiguous-input`, `refused:not-steel-command`, `refused:steel-version-mismatch`, `refused:timeout-ordering`, `refused:unsupported-script-lang`, `refused:session-taken`, `refused:variadic-boundary`.
 Fix the input and reissue; a refusal is not a transient to retry.
 On a bare CLI you hold the same guards yourself.
+
+**Local runtime.** When the deployment sets `STEEL_BROWSER_API_URL`, the browser runs on a self-hosted Steel runtime, not the cloud.
+In command mode the gateway injects the global `--local` flag for you, and the CLI reads the endpoint value itself, so a plain `steel ...` command needs no change.
+A command that already carries `--local` or `--api-url` is left untouched.
+Script text is never rewritten, so a script must pass `--local` itself, and so must a bare CLI (there the value is still read from the environment).
+When the value is unset, everything addresses the cloud exactly as before.
 
 ## The path: survey, open, mount, operate, close
 

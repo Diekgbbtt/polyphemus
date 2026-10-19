@@ -353,6 +353,13 @@ _Avoid_: the leading-options habit, a hand-maintained flag denylist, reordering 
 **Browser profiles**:
 Durable browser identity lives in Steel profiles owned by the #220 stream; this stream mounts them by NAME, read-only first, and logs in only when the mount does not yield the authenticated landing, so the warm identity is written back on the account's own profile (D237-15).
 _Avoid_: duplicating #220's profile vocabulary.
+
+**Steel endpoint** (`STEEL_BROWSER_API_URL`):
+The one deployment-level value that names the Steel runtime the browser capability addresses. Unset (the default) means the remote Steel cloud servers, unchanged. Set means a self-hosted runtime in the CLI's canonical form, `http://<host>:<port>/v1` (for example the local deployment on the operator's server), which the CLI reaches in `--local` mode and the SDK reaches through its `base_url`.
+It is a deployment fact, never a module constant: the CLI reads the name natively, a shared `app`-layer resolver returns it to any SDK consumer as the SDK-native origin (it removes one terminal `/v1`, because the Python SDK appends `/v1` itself), and `steel_exec` injects `--local` when it is set (D359-4).
+It exists so the same runtime serves internal (non-internet) targets, which the cloud pool cannot route to (D359-1, D359-7).
+_Avoid_: a recon-owned endpoint constant; a second name per consumer; reading absence as "local" (absence is remote).
+
 ## Invariants owned here
 
 **Fail-open**:
