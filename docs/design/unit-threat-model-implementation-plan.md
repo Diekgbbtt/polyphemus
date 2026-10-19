@@ -8,7 +8,7 @@
 - The implementation branch is `feat/unit-threat-model`.
 - The implementation worktree is a separate git worktree of the design branch.
 - Each ticket is one workflow issue, one implementation branch commit group, and one TDD loop.
-- A ticket is done only when its targeted tests pass, the spec review passes, and the code-quality review passes.
+- A ticket is done only when its targeted tests pass and the spec review passes.
 - The final PR targets `main`. Merging is a human action.
 - No implementation ticket starts before its blockers are closed.
 
@@ -516,13 +516,12 @@ After the implementer reports DONE:
    The reviewer reads the code and verifies nothing is missing and nothing is extra.
    A finding returns to the same implementer.
    Re-review until the spec review passes.
-2. Dispatch the code-quality reviewer with the base SHA, the head SHA, the ticket text, and the critical-thinking discipline.
-   The reviewer checks standards, tests, interfaces, file responsibility, and the critical adversarial questions.
-   A finding returns to the same implementer.
-   Re-review until the code-quality review approves.
-3. Mark the ticket complete and close the workflow issue with a comment that names the commit and the test evidence.
+2. Mark the ticket complete with a comment that names the commit and the test evidence.
 
-The final ticket gets a whole-branch code review before the PR.
+The code-quality review stage is cut by operator direction (2026-10-19).
+It is not part of the loop.
+The whole-branch review before the PR is also cut.
+Findings that the spec review cannot cover, such as stale docs after a retirement, are recorded on T10 (#383) and swept there.
 
 ## 8. Risks
 
@@ -539,8 +538,7 @@ The final ticket gets a whole-branch code review before the PR.
 
 - All ten tickets are closed.
 - The targeted unit, integration, and e2e suites pass.
-- The spec review and the code-quality review pass for every ticket.
-- The whole-branch review passes.
+- The spec review passes for every ticket.
 - The documentation sweep finds no live obsolete verbatim.
 - The PR body links the specification issue and the tickets.
 - The human reviewer merges the PR.
