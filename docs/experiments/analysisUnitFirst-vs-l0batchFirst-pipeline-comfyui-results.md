@@ -1183,6 +1183,17 @@ The two System units (wj-002, wj-004) remain the weakest (M3 1/5 and 2/5; M4 0/2
 
 **Recommendation:** the next iteration should attack the three measured levers before any further pipeline policy change - (1) the white-jotter recon-orchestrator context/cost explosion, (2) the service-to-System linking on the bootstrapped KB, (3) the recon coverage of the GT surfaces (and the #363 `/api` twin method gap).
 
+## Arm L - the #384/#385 fixes and the thinking baseline (white-jotter)
+
+Arm L is the direct response to the two arm K root causes, run as two white-jotter trials whose only changed variable is the declared thinking of the `assigner` and `mechanism_typist`.
+The full results document, with hypothesis, guardrails, segments and caveats, is `docs/experiments/2026-10-19-arm-l-384-385-fixes-and-thinking-trials.md`.
+Both trials ran `eval_sha` `7c7b5d1f`, `stack_fingerprint` `148279b4...`, the 4M white-jotter budget and the pinned `opencode-go:deepseek-v4.1-flash` model.
+
+- **#384 (deployment-neutral auth)**: the auth store now carries paths only; every read resolves the project's canonical origin (`settings.recon.target_seed`). The gateway authenticated and minted a real registration account; the orchestrator used 15 calls / 25,304 capped (trial 1) and 11 / 18,914 (trial 2), against arm K's runaway 852k-token thread with no verdict.
+- **#385 (structured-channel recovery)**: a schema-valid payload answered as message text gets one corrective re-ask naming the tool, and is accepted fail-open if the correction drifts again. M4 typed edges recovered to 12/17 (arm J formal level; arm K 1/17); the recovery fired five times, always on the recon triager, and never lost a payload.
+- **GT unit well-formedness**: trial 1 (`high`) **0.6968**, trial 2 (`max`) **0.7159**, against arm J formal 0.6603 and arm K 0.3810. The `max` gain is one spec's M3 fields; endpoint placement drops 62.3% -> 25.4% and witnessed Systems 14 -> 7 under `max`, so the effort change is directional only and is not adopted.
+- **Hunting**: trial 1 identified 3 of 7 GT vulnerabilities (2 access-control + 1 more) and spent the full 4M inside the Tier-0 schedule; all four misses are diagnosed `cap_hit` (Tier-1 validation faults never scheduled). Trial 2's hunting arm was cut at 87 minutes by a harness status-poll read timeout after the analysis had drained; it has no trial record and is not hunting-comparable.
+
 ## Cumulative per-target registry
 
 This table is the extension point.
@@ -1204,6 +1215,8 @@ Every future target run appends one row, so the criteria accumulate evidence acr
 | white-jotter | J formal | J + WS1-WS4 (baseurl chaining, endpoint-scoped headers, recall-biased gate, assigner L1 block), 4M cap, v4.1-flash | 54.8% | 7 | 82.8% (analysis drained; hunting stopped on spend) | 21/21 | 0/13 | 93.0% (measured, 0 omissions) | 2,941,414 | 1,090,443 | 4,031,857 (+31,857) | 17/53 = 32.1% | pass (1 validation + 2 read-only refusals, recovered) | 2026-10-16 | - |
 | comfyui | K | streamed + #369 #365 #354 #364 + the C5 node + the bootstrapped L1, 3M cap, v4.1-flash | 14.6% | 12 | 70.0% (analysis drained; hunting stopped on spend) | n/a (M1 6/6) | 0/8 | 89.3% whole-project (analysis 88.1%) | 2,507,494 | 552,119 | 3,059,613 (+52,929) | 19/32 = 59.4% | pass (0 dropped rounds; evidence writer live) | 2026-10-18 | 74 |
 | white-jotter | K | streamed + #369 #365 #354 #364 + the C5 node + the bootstrapped L1, 4M cap, v4.1-flash | 67.3% | 3 | 26.7% (analysis drained; hunting stopped on spend; all 7 GT vulns missed) | n/a (M1 7/7) | 0/13 | 77.2% whole-project (analysis 85.4%) | 3,632,314 | 381,156 | 4,013,470 (+7,070) | 13/27 = 48.1% | pass (0 dropped rounds; evidence writer live) | 2026-10-18 | 22 |
+| white-jotter | L high | streamed + #384 deployment-neutral auth + #385 structured-channel recovery, 4M cap, v4.1-flash, assigner+typist declared medium (wire high) | 62.3% | 3 | 93.3% (analysis drained; hunting stopped on spend) | n/a (M1 7/7) | 0/13 | 92.4% (whole-project) | 2,874,483 | 1,164,407 | 4,038,890 (+38,890) | 23/27 = 85.2% | pass (typist/assigner 0 drift; 2 triager text-channel recoveries accepted) | 2026-10-19 | 95 |
+| white-jotter | L max | same stack, assigner+typist declared max (wire max) | 25.4% | 3 | 93.3% (analysis drained; hunting cut by a harness read-timeout) | n/a (M1 7/7) | 0/13 | 92.6% (whole-project) | 3,135,769 | 1,034,783 | 4,170,552 (+170,552) | 16/27 = 59.3% | pass (0 drift; 3 triager recoveries accepted) | 2026-10-19 | 98 |
 
 The C5 and C6 columns are `-` for arms A, B, and C: the criteria were defined after those runs, and the caveat is that they are forward-only (see Statistical Methodology).
 
@@ -1214,6 +1227,8 @@ Arm G's C4 cells are unaudited for the same reason: its 0% typist reading is a g
 The four arm J rows' C4 cells come from the durable usage pull (`GET /projects/{pid}/usage`); the `trial.yaml` agent sums at the stop read 3,009,705 (J comfyui), 3,042,118 (J formal comfyui), 4,029,445 (J white-jotter) and 4,003,908 (J formal white-jotter), and late calls add +579 / +1,915 / +3,780 / +27,949 capped; `cache_detail_omitted` is 0 on every pull.
 The two arm K rows' C3 `service_recall` cells are `n/a` because the bootstrapped L1 replaced the arm J vocabulary (the GT units place via the alias bridge: M1 6/6 and 7/7); their `cached_share_total` cells are whole-project, and the analysis-only Goal 2 shares are 88.1% (comfyui) and 85.4% (white-jotter).
 The arm K late-call additions are +52,929 (comfyui) and +7,070 (white-jotter); `cache_detail_omitted` is 0 on both pulls.
+The two arm L rows' C4 cells are whole-project usage pulls at measurement time: trial 1's `trial.yaml` sum is 4,037,844 capped and the pull adds late calls (+1,046); trial 2 has no trial record (a harness read-timeout cut the hunting arm at 87 minutes, after the analysis had drained), so its pull includes the cut hunting arm.
+The arm L `L max` C1/C5 movements (placement 25.4%, witnessed Systems 7, grounded 59.3%) and the whole experiment's hypothesis, guardrails and caveats are in `docs/experiments/2026-10-19-arm-l-384-385-fixes-and-thinking-trials.md`.
 
 ## Segment Analysis - by ground-truth Service
 
