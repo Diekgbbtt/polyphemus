@@ -207,6 +207,7 @@ Before any probe, derive the verb, path pattern, and body field names from evide
 - idor-deferred-artifact-redemption - Redeem deferred artifacts to test retrieval-time caller binding, including job results, exports, and stored links.
 - idor-context-carrier-substitution - Substitute identity carriers to expose precedence, audience, and async context gaps where a header, token, or delivery overrides the caller.
 - idor-nested-expansion-binding - Expand nested and projected sub-resources to test per-hop caller binding inside an authorized parent.
+- idor-second-order-stored-reference - Plant a foreign reference in stored state, then trigger the later operation that resolves it without re-binding the caller.
 
 ## False Positives
 
