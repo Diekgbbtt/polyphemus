@@ -23,6 +23,7 @@ Varies only in which inclusion sink consumes the input and which execution oracl
 Inventory inclusion carriers that resolve dynamic names into interpreters, templates, and rendered views.
 Record each handler surface that interprets local content, including filter, archive-fragment, inline-data, and command-expectation shapes.
 Enumerate the transform stages a filter-style read sink exposes, and record which stages are chainable plus what each does to content length and framing.
+Record which wrapper families the policy enables, since each handler shape carries its own enablement precondition.
 Read the target plainly before poisoning or synthesising, so a failed chain is not confused with an unreadable source.
 Enumerate poisonable state such as appendable logs, session stores, and temporary staged content.
 Record template-name resolution that derives rendered names from carrier input.
