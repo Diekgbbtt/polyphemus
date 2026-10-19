@@ -29,6 +29,8 @@ Complete the survey when every read carrier has a recorded join shape and a reco
 Direct response disclosure where the body returns file content for a crafted traversal shape.
 Error echo where exception text exposes canonicalized locations for a crafted traversal shape.
 Masked-content shift where length and entity-tag values change between in-root controls and traversal candidates.
+Encoded-content disclosure where a filter-style read returns content that decodes to valid source, which proves the read even when the raw body is not plain text.
+Out-of-band callback receipt carrying a per-sink sub-tag, which confirms a blind read and attributes it to one sink.
 
 ## Adversarial Capabilities
 
@@ -59,6 +61,8 @@ Anchor proof on small canonical files that render quietly and compare cleanly ac
 Pair every traversal candidate with an in-root control from the same carrier to isolate the crossing signal.
 Adjudicate masked content by collecting length and entity-tag measurements across controls and candidates.
 Escalate confirmed reads toward adjacent names only after the read oracle completes on its canonical pair.
+Confirm blind reads with an out-of-band callback carrying a per-sink sub-tag, and corroborate a timing or length delta across three repeats before claiming the read.
+Decode wrapped reads before judging them, since a filter-style read may return encoded content rather than plain text.
 
 ## Bypass Techniques
 
@@ -91,6 +95,7 @@ Complete when every traversal candidate has a paired in-root control measurement
 Exclude virtual names that resolve into safe stores without touching the filesystem.
 Exclude canonicalized paths constrained to an allowlist root after normalization completes.
 Exclude masked responses whose length shifts trace to volatile framing rather than disclosed content.
+Exclude echoed input paths and lone status changes, which mark a reflection or a routing effect rather than a read.
 
 ## Pro Tips
 

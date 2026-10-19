@@ -50,6 +50,7 @@ That trust fails at the extraction-containment clause: archive entries extract o
 Traversal-entry shapes that ascend past the destination through relative segments, held as <entry-shape>.
 Rooted-entry shapes that discard the destination by supplying absolute names.
 Link shapes that redirect subsequent writes outside the destination through alias targets.
+Format-dependent link handling where one format stores links as first-class entries while another drops or sanitises them, so repeat the link test across every supported format before closing the link path.
 Canonicalization gaps where sanitization resolves before link expansion or after the write decision.
 The delta over the parent is extract-then-locate proof with synthetic archives and outside-write location, which the parent escalation step never names.
 
