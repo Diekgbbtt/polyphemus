@@ -14,7 +14,7 @@ The leading word is identity: every probe holds the token constant while varying
 ## Attack Surface
 
 Identity applies where a privileged action reads actor, role, or scope from any request input beyond the verified token claims.
-The hint may be a client-supplied identity header, an organization or project selector, or an edge-injected value the backend treats as authoritative.
+The hint may be a client-supplied identity header, a cookie-carried role or scope flag, a request-parameter role value, an organization or project selector, or an edge-injected value the backend treats as authoritative.
 The hint may also be no identity claim at all: navigation provenance, an origin or network-address hint, or a routing override that decides the verdict the way an identity source would.
 Pure routing selectors that scope without identifying stay inside the shared procedure as aspects; only selector-as-identity cases enter this variant, and where a routing override also changes the route the alternate-path sibling owns that delta.
 Concrete hint names and selector values are runtime knowledge-base facts and never define the attempt.
