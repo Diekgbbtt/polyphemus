@@ -779,6 +779,68 @@ def test_a_zero_loop_completed_model_is_consumed_without_a_dispatch(tmp_path):
     assert (root / "consumed" / unit_name / f"{unit_name}.yaml").exists()
 
 
+def test_read_produced_loops_returns_the_unit_and_its_produced_loop_files(tmp_path):
+    """S2 8.1/8.4 (T4, #377): the mover's dispatch inbox read - one entry per
+    produced, consumable unit carrying the derived on-disk identity and the
+    loop file records VERBATIM (an unreadable record is the mover's to refuse,
+    never the store's to hide)."""
+    store = ThreatModelStore(tmp_path)
+    _write_to_completed(store, loops=[_loop("high"), _loop("low")])
+    unit_name = "Service-catalogue-and-discovery"
+
+    entries = store.read_produced_loops(PROJECT)
+
+    assert [(e["unit_id"], e["unit_name"], e["run_id"]) for e in entries] == [
+        (UNIT, unit_name, RUN),
+    ]
+    assert [loop["loop_id"] for loop in entries[0]["loops"]] == ["loop-1", "loop-2"]
+    record = entries[0]["loops"][0]["record"]
+    assert record["dispatch_id"] == f"{unit_name}__loop-1"
+    assert record["likelihood"] == "high"
+    assert record["loop"]["id"] == "loop-1"
+
+
+def test_read_produced_loops_is_empty_for_a_consumed_or_unconsumable_model(tmp_path):
+    """The mover's inbox is the PRODUCED family only: a consumed (decided) unit
+    is not dispatched again, and a model below COMPLETED (or invalid) is never
+    dispatch input (S2 4.3, 5.7)."""
+    store = ThreatModelStore(tmp_path)
+    _write_to_completed(store)
+    store.consume_loop(PROJECT, UNIT, "loop-1")
+    assert store.read_produced_loops(PROJECT) == []
+
+    other = ThreatModelStore(tmp_path)
+    other.write_sections(
+        PROJECT, "Service:other", "UNIT_TECHNICAL_SHARP",
+        {"technical_sharpening": _sharpening()}, run_id=RUN,
+    )
+    assert other.read_produced_loops(PROJECT) == []
+
+
+def test_read_produced_loops_reports_a_zero_loop_produced_model(tmp_path):
+    """S2 8.4: a zero-loop produced COMPLETED valid model IS the mover's input -
+    it carries no loop file, so the entry proves the model is consumable, and
+    the mover consumes it without a dispatch."""
+    store = ThreatModelStore(tmp_path)
+    _write_zero_loop_completed(store)
+
+    entries = store.read_produced_loops(PROJECT)
+
+    assert len(entries) == 1
+    assert entries[0]["unit_id"] == UNIT
+    assert entries[0]["loops"] == []
+
+
+def test_read_produced_loops_does_not_read_an_abandoned_unit(tmp_path):
+    """S2 4.2/8.4: the mover ignores abandoned/ - a degraded unit's loop files
+    are never dispatched (the archive moved them out of produced/)."""
+    store = ThreatModelStore(tmp_path)
+    _write_to_completed(store)
+    store.archive_unit(PROJECT, UNIT, "degraded (fixture)")
+
+    assert store.read_produced_loops(PROJECT) == []
+
+
 def test_read_produced_units_reports_each_produced_model_and_its_run(tmp_path):
     """S2 9.3: the intake freeze reads the produced family itself - the unit id,
     the producing run, and the persisted state - so it can tell an in-flight

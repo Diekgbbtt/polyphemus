@@ -396,7 +396,7 @@ def test_C34_run_work_remaining_and_dispatch_agree_for_a_specified_spec(
     hunter = HunterMemoryStore(tmp_path / "hunter")
     _write_spec(hunter)
 
-    assert run_work_remaining(PROJECT, hunt_store=hunt, hunter_store=hunter) is True
+    assert run_work_remaining(PROJECT, RUN, hunt_store=hunt, hunter_store=hunter) is True
 
     coro_for = _real_coro_for(hunt, hunter)
     from polymerhus.attack.hunting.mover import TestSpecItem
@@ -417,7 +417,7 @@ def test_C34_run_work_remaining_and_dispatch_agree_for_a_specified_spec(
     # and the whole thing agrees end-to-end: it dispatches and moves (work gone)
     report, plane = _drive_running_tick(hunt, hunter)
     assert report.admitted == 1 and report.moved == 1
-    assert run_work_remaining(PROJECT, hunt_store=hunt, hunter_store=hunter) is False
+    assert run_work_remaining(PROJECT, RUN, hunt_store=hunt, hunter_store=hunter) is False
 
 
 # --- C35 -----------------------------------------------------------------------
@@ -433,7 +433,7 @@ def test_C35_hypothesised_and_dropped_configs_contribute_nothing(tmp_path):
     _write_spec(hunter, status="hypothesised")
 
     # nothing is real work: quiesce is NOT blocked by these leftovers
-    assert run_work_remaining(PROJECT, hunt_store=hunt, hunter_store=hunter) is False
+    assert run_work_remaining(PROJECT, RUN, hunt_store=hunt, hunter_store=hunter) is False
 
     # and none of them dispatches: every dispatch attempt is refused (coro None)
     report = run_delivery_tick(
@@ -441,7 +441,9 @@ def test_C35_hypothesised_and_dropped_configs_contribute_nothing(tmp_path):
         control=RecordingControlPlane(), coro_for=_real_coro_for(hunt, hunter),
     )
     assert report.admitted == 0 and report.moved == 0
-    assert report.refused == 3              # all three refused (None coro)
+    # the two configs are refused (None coro); the drafted spec is not even an
+    # ITEM - the produced read applies the same own-status gate
+    assert report.refused == 2
     # the leftovers stay on disk (G6), never consumed, never blocking quiesce
     assert len(hunt.read_produced_configs(PROJECT)) == 2
     assert hunter.produced_spec_files(PROJECT, FAULT_KEY) == [SPEC_FILE]

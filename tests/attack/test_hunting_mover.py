@@ -29,19 +29,169 @@ import pytest
 from polymerhus.attack.hunting.mover import (
     DeliveryPlan,
     DispatchFeedback,
-    HuntConfigItem,
     ProducedItem,
     TestSpecItem,
+    ThreatLoopItem,
     deduce_delivery,
     hunter_session_id,
     orchestrator_session_id,
     pod_session_id,
+    sequence_dispatch,
+    threat_loop_item,
 )
 
 
 def _item(message_id="m-1", session_id="s-1"):
     """One base produced item for the pure deduction tests."""
     return ProducedItem(message_id=message_id, session_id=session_id)
+
+
+UNIT = "Service:catalogue-and-discovery"
+UNIT_NAME = "Service-catalogue-and-discovery"
+RUN = "run-1"
+
+
+def _loop_record(*, unit_id=UNIT, loop_id="loop-1", likelihood="high",
+                 run_id=RUN, **overrides) -> dict:
+    """One loop file record exactly as the store writes it (S2 8.1)."""
+    unit_name = unit_id.replace(":", "-")
+    record = {
+        "loop_id": loop_id,
+        "unit_id": unit_id,
+        "unit_kind": "service",
+        "run_id": run_id,
+        "dispatch_id": f"{unit_name}__{loop_id}",
+        "likelihood": likelihood,
+        "loop": {
+            "id": loop_id,
+            "fault_ref": "fault-1",
+            "vulnerability_ref": "v-1",
+            "failure_mode_refs": ["fm-1"],
+            "canonical_class": "IDOR",
+            "web_vulnerability_class": "idor",
+            "likelihood": likelihood,
+            "likelihood_rationale": "the item id is caller-supplied",
+            "confidence": "INFERRED",
+            "evidences": [{"kind": "request", "ref": "GET /catalogue?id=2"}],
+        },
+        "created_at": "2026-10-19T00:00:00Z",
+    }
+    record.update(overrides)
+    return record
+
+
+def _loop_item(*, record=None, loop_id="loop-1", likelihood="high",
+               run_id=RUN, unit_id=UNIT, unit_name=UNIT_NAME) -> "ThreatLoopItem | None":
+    return threat_loop_item(
+        unit_id=unit_id, unit_name=unit_name, loop_id=loop_id,
+        record=_loop_record(unit_id=unit_id, loop_id=loop_id,
+                            likelihood=likelihood, run_id=run_id)
+        if record is None else record,
+        run_id=run_id,
+    )
+
+
+# --- the loop dispatch record and the validity predicate (T4, #377) -----------
+
+def test_a_produced_loop_file_becomes_one_dispatch_item():
+    """S2 8.1/8.4: ONE loop file dispatches ONE hunter. The item's message id IS
+    the loop file's dispatch id and its session id is the per-loop hunter id
+    (S3 8.9) - the loop record travels with the item for the payload."""
+    item = _loop_item()
+
+    assert item is not None
+    assert item.message_id == f"{UNIT_NAME}__loop-1"
+    assert item.session_id == f"hunting:{RUN}:hunt:{UNIT_NAME}__loop-1"
+    assert item.unit_id == UNIT
+    assert item.unit_name == UNIT_NAME
+    assert item.loop_id == "loop-1"
+    assert item.likelihood == "high"
+    assert item.record["loop"]["id"] == "loop-1"
+
+
+def test_a_loop_file_from_another_run_is_refused():
+    """S2 8.3: the sequencing is run-scoped - another run's loop file is left
+    untouched, never dispatched by this run."""
+    assert _loop_item(record=_loop_record(run_id="another-run")) is None
+    assert _loop_item(record=_loop_record(), run_id="another-run") is None
+
+
+@pytest.mark.parametrize("broken", [
+    pytest.param("not-a-mapping", id="record-not-a-mapping"),
+    pytest.param({**_loop_record(), "likelihood": "urgent"}, id="bad-likelihood"),
+    pytest.param({**_loop_record(), "likelihood": "none"}, id="none-has-no-file"),
+    pytest.param({**_loop_record(), "dispatch_id": ""}, id="missing-dispatch-id"),
+    pytest.param({**_loop_record(), "dispatch_id": f"{UNIT_NAME}__loop-2"},
+                 id="dispatch-id-disagrees-with-the-file"),
+    pytest.param({**_loop_record(), "unit_id": ""}, id="missing-unit-id"),
+    pytest.param({**_loop_record(), "unit_kind": "unknown"}, id="bad-unit-kind"),
+    pytest.param({**_loop_record(), "loop": None}, id="missing-loop-record"),
+    pytest.param({**_loop_record(), "loop": {"id": "loop-1"}},
+                 id="loop-record-without-its-refs"),
+])
+def test_a_malformed_loop_file_is_refused(broken):
+    """S2 8.4 (T4 AC): a malformed loop is refused - it is never dispatched and
+    never counted as dispatchable work, so it cannot wedge the quiesce."""
+    assert _loop_item(record=broken) is None
+
+
+def test_the_file_stem_must_be_the_loop_id_of_the_form():
+    """The store owns the `loop-<rank>` id (S2 10.2); a file whose stem is not
+    one (or disagrees with the record) is refused."""
+    assert _loop_item(loop_id="loop-2", record=_loop_record()) is None
+    assert _loop_item(
+        loop_id="not-a-loop", record=_loop_record(loop_id="not-a-loop")) is None
+    assert _loop_item(
+        loop_id="loop-1",
+        record=_loop_record(loop_id="loop-2",
+                            dispatch_id=f"{UNIT_NAME}__loop-2")) is None
+
+
+# --- the dispatch sequencing filter (S2 8.3, S1 7.6) --------------------------
+
+def test_higher_tier_loops_dispatch_and_low_loops_pause_behind_them():
+    high = _loop_item()
+    low = _loop_item(
+        loop_id="loop-2",
+        record=_loop_record(loop_id="loop-2", dispatch_id=f"{UNIT_NAME}__loop-2",
+                            likelihood="low"),
+    )
+
+    assert sequence_dispatch([low]) == (low,)
+    assert sequence_dispatch([high, low]) == (high,)
+    assert sequence_dispatch([low, high]) == (high,)
+
+
+def test_a_low_loop_pauses_while_a_higher_tier_session_is_live():
+    low = _loop_item(record=_loop_record(likelihood="low"))
+
+    assert sequence_dispatch([low], live_likelihoods={"d-1": "medium"}) == ()
+    assert sequence_dispatch([low], live_likelihoods={"d-1": "low"}) == (low,)
+    assert sequence_dispatch([low], live_likelihoods=()) == (low,)
+    assert sequence_dispatch([low], live_likelihoods={"d-1": "none"}) == (low,)
+
+
+def test_the_low_pause_is_per_tick_and_cross_unit():
+    """S2 8.3/S1 7.6: a low loop is released on the tick where no higher loop
+    file is produced (cross-unit: another unit's produced high loop holds it)."""
+    low = _loop_item(record=_loop_record(likelihood="low"))
+    other_high = threat_loop_item(
+        unit_id="Service:other", unit_name="Service-other", loop_id="loop-1",
+        record=_loop_record(
+            unit_id="Service:other", dispatch_id="Service-other__loop-1"),
+        run_id=RUN,
+    )
+
+    assert sequence_dispatch([low, other_high]) == (other_high,)
+    assert sequence_dispatch([low]) == (low,)
+
+
+def test_sequence_dispatch_leaves_the_spec_family_alone():
+    """The pod path stays (S3 8.7): the sequencing ranks LOOPS; a produced spec
+    is not held by a higher-ranked loop file."""
+    spec = TestSpecItem(message_id="k/f.yaml", session_id="s", fault_key="k",
+                        spec_file="f.yaml")
+    assert sequence_dispatch([spec]) == (spec,)
 
 
 # --- empty and never-dispatched ------------------------------------------------
@@ -156,10 +306,15 @@ def test_unknown_feedback_value_is_rejected():
 
 
 def test_family_items_mix_in_one_deduction():
-    cfg = HuntConfigItem(
-        message_id="Service:a::CWE-639::IDOR",
-        session_id="hunting:run-1:hunt:Service:a_CWE-639_IDOR",
-        config_key="Service:a::CWE-639::IDOR",
+    loop = ThreatLoopItem(
+        message_id="Service-a__loop-1",
+        session_id="hunting:run-1:hunt:Service-a__loop-1",
+        unit_id="Service:a",
+        unit_name="Service-a",
+        loop_id="loop-1",
+        dispatch_id="Service-a__loop-1",
+        likelihood="high",
+        record={},
     )
     spec = TestSpecItem(
         message_id="Service:a_CWE-639_IDOR/sqli_blind",
@@ -167,11 +322,11 @@ def test_family_items_mix_in_one_deduction():
         fault_key="Service:a_CWE-639_IDOR",
         spec_file="sqli_blind",
     )
-    plan = deduce_delivery([cfg, spec], feedback={
-        cfg.message_id: DispatchFeedback.ADMITTED,
+    plan = deduce_delivery([loop, spec], feedback={
+        loop.message_id: DispatchFeedback.ADMITTED,
         spec.message_id: DispatchFeedback.REFUSED,
     })
-    assert plan.to_move == (cfg,)
+    assert plan.to_move == (loop,)
     assert plan.to_retry == (spec,)
     assert plan.to_dispatch == ()
 
@@ -195,8 +350,8 @@ def test_orchestrator_session_id_is_the_adr_shape():
 
 
 def test_hunter_session_id_is_the_adr_shape():
-    assert hunter_session_id("r-9", "Service:a_CWE-639_IDOR") == \
-        "hunting:r-9:hunt:Service:a_CWE-639_IDOR"
+    assert hunter_session_id("r-9", "Service-a__loop-1") == \
+        "hunting:r-9:hunt:Service-a__loop-1"
 
 
 def test_pod_session_id_embeds_config_and_spec():

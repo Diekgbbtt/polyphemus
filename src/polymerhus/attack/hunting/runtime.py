@@ -64,8 +64,10 @@ import uuid
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 
+from collections.abc import Mapping
+
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable, Mapping, Sequence
+    from collections.abc import Awaitable, Callable, Sequence
     from typing import Any, Coroutine
 
     from polymerhus.app.llm.checkpoints import FlushResult
@@ -706,20 +708,23 @@ def report_dispatch_gap(
     outcomes,
     *,
     state,
+    threat_store=None,
     hunt_store,
     hunter_store,
 ) -> str | None:
     """Log and return the one-line reason a run that PRODUCED models dispatched
     nothing, or None when there is no gap.
 
-    designed-not-built - T4 (#377): the per-loop dispatch (a threat-model loop
-    file -> a hunter session) has no production path yet, so a run whose
-    modeller completed models and whose produced families hold no dispatchable
-    item dispatches ZERO hunts. The line names that gap, so an operator never
-    reads the run's `complete` as "the modeller found nothing to hunt".
+    designed-not-built -> T6 (#379): the per-loop dispatch (a produced loop file
+    -> a hunter session) is BUILT (T4 #377), so a produced model's loops
+    dispatch. The hunter HARNESS cannot consume the loop payload yet (its
+    config consumption is T6's rework), so a loop admitted through the
+    production hunter builder degrades instead of hunting. The line names that
+    state, so an operator never reads the run's `complete` as "the modeller
+    found nothing to hunt".
 
     The two suppressors are the run's own facts: a hunter dispatch recorded on
-    the run state (`state.hunter_inboxes` - a config the mover admitted), and a
+    the run state (`state.hunter_inboxes` - an item the mover admitted), and a
     still-dispatchable produced item (`run_work_remaining`, the surfer's own
     predicate). Either one means the gap did not bite.
 
@@ -736,8 +741,9 @@ def report_dispatch_gap(
     if not completed or state.hunter_inboxes:
         return None
     try:
-        pending = run_work_remaining(project_id, hunt_store=hunt_store,
-                                     hunter_store=hunter_store)
+        pending = run_work_remaining(
+            project_id, run_id, threat_store=threat_store,
+            hunt_store=hunt_store, hunter_store=hunter_store)
     except Exception as exc:  # noqa: BLE001 - a read failure is not a run failure
         logger.warning(
             "hunting run %s: the pending-work read degraded (%s); reporting the "
@@ -748,8 +754,9 @@ def report_dispatch_gap(
         return None
     reason = (
         f"{len(completed)} unit model(s) produced and NOTHING is dispatchable: "
-        "the per-loop dispatch (threat model -> hunter) is designed-not-built "
-        "and owned by T4 (#377), so this run dispatches zero hunts"
+        "the production hunter harness cannot consume the per-loop payload yet "
+        "(designed-not-built and owned by T6 #379), so this run dispatches zero "
+        "hunts"
     )
     logger.warning("hunting run %s: %s", run_id, reason)
     return reason
@@ -972,6 +979,18 @@ def _resolve_gate(control, gate_seam) -> object:
         return None
 
 
+class HunterPayloadNotBuiltError(RuntimeError):
+    """The production hunter seam was handed a loop payload it cannot consume
+    yet (T4 #377).
+
+    designed-not-built -> T6 (#379): the #164 harness's dispatch seam still
+    consumes the retired `HuntConfig` (its grounding render, its tool binding and
+    its spec-set store are T6's rework). The per-loop dispatch itself - the
+    payload, the session id, the admission move - is complete; until the harness
+    is reworked the session DEGRADES on this marker, loudly, instead of the
+    launcher fabricating a config from the payload."""
+
+
 def _default_hunter_builder(*, run_id, project_id, hunter_store, **kw):
     """The production hunt-session builder seam (T4): the #164 W5 harness
     (`build_actor_hunting_agent`'s dispatch) with the real memory store, the
@@ -979,7 +998,12 @@ def _default_hunter_builder(*, run_id, project_id, hunter_store, **kw):
     (the pod's `default_exec_fn`, reused verbatim), and the always-bound
     `query_lightrag` KB tool (binds inside; as of #197 the
     `HUNTING_LIGHTRAG_TOOL` gate is REMOVED). Returns `(dispatch_fn, registry)`;
-    the caller reaps the registry at the session's end."""
+    the caller reaps the registry at the session's end.
+
+    A loop PAYLOAD is refused with `HunterPayloadNotBuiltError` (the T6 marker
+    above): the harness still consumes a `HuntConfig`, so passing a payload
+    through would dispatch a hunt against the wrong shape. The retiring config
+    family passes its config object verbatim and runs as before."""
     from polymerhus.attack.hunting.hunt_orchestrator import ReadOnlyGraphView
     from polymerhus.attack.hunting.pod.tools import default_exec_fn
     from polymerhus.app.clients.kali_http_history import (  # noqa: PLC0415
@@ -987,7 +1011,7 @@ def _default_hunter_builder(*, run_id, project_id, hunter_store, **kw):
         default_http_search_fn,
     )
 
-    return build_production_hunting_agent(
+    dispatch_fn, registry = build_production_hunting_agent(
         run_id=run_id, project_id=project_id,
         memory_store=hunter_store,
         graph_view_fn=ReadOnlyGraphView(project_id).read,
@@ -995,6 +1019,17 @@ def _default_hunter_builder(*, run_id, project_id, hunter_store, **kw):
         http_search_fn=default_http_search_fn,
         http_get_fn=default_http_get_fn,
     )
+
+    async def _dispatch(payload):
+        if isinstance(payload, Mapping):
+            raise HunterPayloadNotBuiltError(
+                "the production hunter harness cannot consume the loop payload "
+                "yet (designed-not-built, T6 #379): its dispatch seam still "
+                "consumes the retired `HuntConfig`"
+            )
+        return await dispatch_fn(payload)
+
+    return _dispatch, registry
 
 
 async def _default_pod_builder(spec, *, run_id, project_id, memory_store, spec_id):
@@ -1237,6 +1272,7 @@ async def start_hunting(
             project_id=project_id,
             run_id=hunting_run_id,
             hunt_store=hunt_store,
+            threat_store=getattr(tools, "threat_store", None) or threat_store,
             hunter_store=hunter_store,
             pod_store=pod_store,
             state=state,
@@ -1301,6 +1337,7 @@ async def start_hunting(
             return await run_surfer_loop(
                 project_id, hunting_run_id,
                 hunt_store=hunt_store,
+                threat_store=getattr(tools, "threat_store", None) or threat_store,
                 hunter_store=hunter_store,
                 control=control,
                 coro_for=coro_for,
@@ -1381,7 +1418,9 @@ async def start_hunting(
                     await asyncio.to_thread(
                         report_dispatch_gap, project_id, hunting_run_id,
                         [outcome for batch in pass_outcomes for outcome in batch],
-                        state=state, hunt_store=hunt_store,
+                        state=state,
+                        threat_store=getattr(tools, "threat_store", None) or threat_store,
+                        hunt_store=hunt_store,
                         hunter_store=hunter_store,
                     )
                     status = "complete"

@@ -38,10 +38,15 @@ STALL_TIMEOUT = 0.05
 
 # --- 1: the run-level dispatch-gap warning ------------------------------------
 
-def test_a_completed_model_with_nothing_dispatchable_names_the_t4_gap(
+def test_a_completed_model_with_nothing_dispatchable_names_the_gap(
         tmp_path, monkeypatch, caplog):
     """A run that models its unit but dispatches nothing must not land
-    `complete` silently: one run-level warning names the T4 gap."""
+    `complete` silently: one run-level warning names the reason (the production
+    hunter harness cannot consume the per-loop payload yet - T6 #379).
+
+    The modeller here completes a ZERO-LOOP model (every vulnerability dropped),
+    so the mover consumes the model document without a dispatch (S2 8.4) and
+    nothing is ever admitted."""
     from tests.attack.test_hunting_modeller_wiring import (
         RUN as WIRING_RUN,
         _FakeControl,
@@ -50,17 +55,34 @@ def test_a_completed_model_with_nothing_dispatchable_names_the_t4_gap(
         _noop_pod_builder,
         _patch_pg,
     )
+    from tests.hunting_fixtures import modeller_gate_payloads
 
     fake = _FakePg()
     _patch_pg(monkeypatch, fake)
     hunt = HuntStore(tmp_path / "hunts")
     hunter = HunterMemoryStore(tmp_path / "hunter")
     models = ThreatModelStore(root_dir=tmp_path / "models")
+    payloads = modeller_gate_payloads()
+    from polymerhus.attack.hunting.threat_model import ModelState
+
+    vulnerable = payloads[ModelState.VULNERABILITIES_WRITTEN]["vulnerabilities"][0]
+    payloads[ModelState.VULNERABILITIES_WRITTEN] = {"vulnerabilities": [{
+        **vulnerable,
+        "dropped": True,
+        "drop_reason": "the lookup binds the id to the tenant; the mechanics are absent",
+        "drop_probe": "a second tenant's item id returning that item",
+    }]}
+    failed = payloads[ModelState.COMPLETED]["failure_modes"][0]
+    payloads[ModelState.COMPLETED] = {
+        "failure_modes": [{**failed, "dropped": True,
+                           "drop_reason": "the lookup binds the id to the tenant"}],
+        "loops": [],
+    }
 
     with caplog.at_level("WARNING", logger="polymerhus.attack.hunting.runtime"):
         hid = asyncio.run(hunting_runtime.start_hunting(
             PROJECT, intake_units=[intake_unit(UNIT)],
-            modeller_kwargs={"turn_fn": ScriptedModellerTurns()},
+            modeller_kwargs={"turn_fn": ScriptedModellerTurns(payloads=payloads)},
             graph_read_fn=lambda cypher, params: [],
             control=_FakeControl(),
             hunt_store=hunt, hunter_store=hunter, threat_store=models,
@@ -70,11 +92,13 @@ def test_a_completed_model_with_nothing_dispatchable_names_the_t4_gap(
 
     assert hid == WIRING_RUN
     assert fake.statuses[-1] == (WIRING_RUN, "complete")
+    # the zero-loop model was consumed without a dispatch (S2 8.4)
+    assert models.read_completed_units(PROJECT) == [UNIT]
     gap_lines = [record.message for record in caplog.records
-                 if "#377" in record.message]
+                 if "#379" in record.message]
     assert gap_lines, "the run must name the dispatch gap in one warning"
     line = gap_lines[-1]
-    assert "T4" in line
+    assert "T6" in line
     assert "dispatchable" in line and "zero" in line and "hunt" in line
 
 
@@ -115,8 +139,8 @@ def test_a_run_with_a_dispatchable_config_does_not_claim_a_dispatch_gap(
         ))
 
     assert not [record for record in caplog.records
-                if "#377" in record.message], \
-        "a dispatchable produced config must suppress the T4 gap warning"
+                if "#379" in record.message], \
+        "a dispatchable produced item must suppress the gap warning"
 
 
 # --- 2: the bounded actor reap ------------------------------------------------
@@ -246,11 +270,11 @@ def _exec_probing_turns(http: bool = False):
 
 # --- the run-level reason helper ---------------------------------------------
 
-def test_the_gap_reason_names_the_t4_ticket_and_is_absent_with_work(tmp_path):
-    """`run_work_remaining_gap_reason` is the ONE predicate behind the warning:
-    it names T4 (#377) when a completed model exists and nothing is
-    dispatchable, and returns None otherwise (a dispatchable config, no
-    completed model)."""
+def test_the_gap_reason_names_the_follow_up_ticket_and_is_absent_with_work(tmp_path):
+    """`report_dispatch_gap` is the ONE predicate behind the warning: it names
+    the follow-up ticket (T6 #379 - the production hunter's payload consumption)
+    when a completed model exists and nothing is dispatchable, and returns None
+    otherwise (a dispatchable item, no completed model)."""
     hunt = HuntStore(tmp_path / "hunts")
     hunter = HunterMemoryStore(tmp_path / "hunter")
 
@@ -261,7 +285,7 @@ def test_the_gap_reason_names_the_t4_ticket_and_is_absent_with_work(tmp_path):
         PROJECT, RUN, [UnitOutcome(unit_id=UNIT, status="completed")],
         state=empty, hunt_store=hunt, hunter_store=hunter)
     assert reason is not None
-    assert "T4" in reason and "#377" in reason
+    assert "T6" in reason and "#379" in reason
 
     # a degraded unit is not a produced model: no gap to report
     assert hunting_runtime.report_dispatch_gap(
@@ -382,6 +406,6 @@ def test_the_dispatch_gap_survives_a_transient_pending_work_read_failure(
             hunter_store=HunterMemoryStore(tmp_path / "hunter"),
         )
 
-    assert reason is not None and "#377" in reason
+    assert reason is not None and "#379" in reason
     assert any("pending-work read degraded" in record.message
                for record in caplog.records)

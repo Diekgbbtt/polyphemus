@@ -149,6 +149,13 @@ def loop_file_name(loop_id: str) -> str:
 _LOOP_ID_RE = re.compile(r"loop-\d+")
 
 
+def is_loop_id(value: Any) -> bool:
+    """True for a store-owned loop id (`loop-<rank>`, S2 10.2). The ONE form
+    check: the store's write keys and the mover's dispatch validity predicate
+    both read it, so a loop id cannot mean two things."""
+    return isinstance(value, str) and _LOOP_ID_RE.fullmatch(value) is not None
+
+
 def _loop_rank(stem: str) -> int:
     """The numeric rank of a `loop-<rank>` file stem; a non-numeric stem sorts
     first (it can never be a store-written loop file)."""
@@ -453,7 +460,7 @@ class ThreatModelStore(BoundedRecordStore):
         either side. The model document moves with its LAST loop file: when no
         produced loop file remains, a consumable model document is moved too.
         The move refuses to clobber an existing consumed file (fail-open)."""
-        if not isinstance(loop_id, str) or _LOOP_ID_RE.fullmatch(loop_id) is None:
+        if not is_loop_id(loop_id):
             raise ThreatModelIdentityError(
                 ["loop_id"],
                 f"threat model store: {loop_id!r} is not a loop id of the "
@@ -547,6 +554,50 @@ class ThreatModelStore(BoundedRecordStore):
                 if isinstance(unit_id, str) and unit_id:
                     found.add(unit_id)
             return sorted(found)
+
+    def read_produced_loops(self, project_id: str) -> list[dict]:
+        """The mover's dispatch inbox read (S2 8.1/8.4, T4 #377): one entry per
+        PRODUCED, consumable unit - `{unit_id, unit_name, run_id, loops}` - with
+        `loops` the unit's produced loop file records in rank order, each as
+        `{loop_id, record}` (the file stem plus the record verbatim, so the
+        mover's validity predicate can check the two agree).
+
+        The produced family only: a consumed unit is decided and never
+        re-dispatched, and a model below COMPLETED or invalid is never dispatch
+        input (S2 4.3, 5.7). A zero-loop consumable model IS an entry with no
+        loops - the mover consumes it without a dispatch. An unreadable loop
+        file is skipped (O4); a parseable but malformed record is returned
+        as-is, because refusing it is the mover's validity predicate, not the
+        store's read."""
+        with self._lock_for(project_id):
+            produced = self._family_dir(project_id, "produced")
+            if not produced.exists():
+                return []
+            entries: list[dict] = []
+            for directory in sorted(produced.iterdir()):
+                if not directory.is_dir():
+                    continue
+                raw = self._load_document(directory / f"{directory.name}.yaml")
+                if raw is None or not self._consumable(raw):
+                    continue
+                unit_id = raw.get("unit_id")
+                if not isinstance(unit_id, str) or not unit_id:
+                    continue
+                loops = [
+                    {"loop_id": loop_path.stem, "record": record}
+                    for loop_path in sorted(
+                        directory.glob("loop-*.yaml"),
+                        key=lambda item: _loop_rank(item.stem),
+                    )
+                    if (record := self._load_raw(loop_path)) is not None
+                ]
+                entries.append({
+                    "unit_id": unit_id,
+                    "unit_name": directory.name,
+                    "run_id": raw.get("run_id") if isinstance(raw.get("run_id"), str) else "",
+                    "loops": loops,
+                })
+            return entries
 
     def read_produced_units(self, project_id: str) -> list[dict]:
         """Every produced model's `{unit_id, run_id, state}` (S2 9.3).

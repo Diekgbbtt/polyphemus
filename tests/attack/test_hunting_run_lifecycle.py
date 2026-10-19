@@ -101,8 +101,10 @@ def _write_completed_model(models: ThreatModelStore, unit_id: str,
     assert models.read_model(PROJECT, unit_id)["state"] == ModelState.COMPLETED.value
 
 
-async def _noop_hunter_builder(*, run_id, project_id, hunter_store, **kw):
-    async def dispatch(config):
+def _noop_hunter_builder(*, run_id, project_id, hunter_store, **kw):
+    """The agent-seam hunter builder fake: it is a SYNCHRONOUS factory (the seam
+    is called, not awaited) returning an async dispatch - the real shape."""
+    async def dispatch(payload):
         return None
     return dispatch, None
 

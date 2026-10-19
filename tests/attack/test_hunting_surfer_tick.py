@@ -259,11 +259,11 @@ def test_run_work_remaining_agrees_with_the_dispatch_gate(stores):
     hunt, hunter = stores
     # a produced ratified config is dispatchable work
     _write_config(hunt)
-    assert run_work_remaining(PROJECT, hunt_store=hunt, hunter_store=hunter) is True
+    assert run_work_remaining(PROJECT, RUN, hunt_store=hunt, hunter_store=hunter) is True
     # a produced specified spec is dispatchable work (the never-agree case that
     # used to wedge: it counted as work but could not dispatch without a parent)
     _write_spec(hunter)
-    assert run_work_remaining(PROJECT, hunt_store=hunt, hunter_store=hunter) is True
+    assert run_work_remaining(PROJECT, RUN, hunt_store=hunt, hunter_store=hunter) is True
     # both dispatch (real builder) and move: the work is now gone
     control = RecordingControlPlane()
     report = run_delivery_tick(
@@ -271,7 +271,7 @@ def test_run_work_remaining_agrees_with_the_dispatch_gate(stores):
         control=control, coro_for=_real_coro_for(hunt, hunter),
     )
     assert report.admitted == 2 and report.moved == 2
-    assert run_work_remaining(PROJECT, hunt_store=hunt, hunter_store=hunter) is False
+    assert run_work_remaining(PROJECT, RUN, hunt_store=hunt, hunter_store=hunter) is False
     # and with nothing left and no live session, quiesce is REACHABLE - the
     # produced-spec wedge is gone
     assert asyncio.run(is_run_quiesced(
@@ -289,14 +289,16 @@ def test_undispatchable_statuses_are_not_work(stores):
     # a dropped config stays on disk (G6), never dispatchable
     _write_config(hunt, status="dropped", vulnerability_class="CSRF")
     _write_spec(hunter, status="hypothesised")
-    assert run_work_remaining(PROJECT, hunt_store=hunt, hunter_store=hunter) is False
+    assert run_work_remaining(PROJECT, RUN, hunt_store=hunt, hunter_store=hunter) is False
     control = RecordingControlPlane()
     report = run_delivery_tick(
         PROJECT, RUN, hunt_store=hunt, hunter_store=hunter,
         control=control, coro_for=_real_coro_for(hunt, hunter),
     )
-    assert report.dispatched == 3 and report.admitted == 0 and report.moved == 0
-    assert report.refused == 3               # the builder answered None for each
+    # the drafted spec is not even an ITEM - the produced read applies the same
+    # own-status gate - so only the two configs are attempted, and refused
+    assert report.dispatched == 2 and report.admitted == 0 and report.moved == 0
+    assert report.refused == 2               # the builder answered None for each
     assert len(hunt.read_produced_configs(PROJECT)) == 2   # stayed produced
     assert hunter.produced_spec_files(PROJECT, FAULT_KEY) == ["sqli_blind"]
 
@@ -319,7 +321,7 @@ def test_unratifiable_ratified_config_is_not_work_and_is_refused(stores):
     HuntStore._dump_yaml_atomic(
         path, {"unit_id": UNIT, "fault_class": CWE, "status": "ratified"})
 
-    assert run_work_remaining(PROJECT, hunt_store=hunt, hunter_store=hunter) is False
+    assert run_work_remaining(PROJECT, RUN, hunt_store=hunt, hunter_store=hunter) is False
     control = RecordingControlPlane()
     report = run_delivery_tick(
         PROJECT, RUN, hunt_store=hunt, hunter_store=hunter,
@@ -656,11 +658,10 @@ def test_hunter_idle_loop_threads_the_project_as_usage_scope(tmp_path, monkeypat
     monkeypatch.setattr(
         "polymerhus.app.auth.seams.auth_capable_binding", lambda *a, **k: binding)
 
-    config = types.SimpleNamespace(hunt_id="hunt-1")
-    config_key = "k1"
+    hunt_key = "Service-a__loop-1"
     state = RunDispatchState()
-    state.hunter_inboxes[config_key] = _A.AgentInbox()
+    state.hunter_inboxes[hunt_key] = _A.AgentInbox()
     asyncio.run(_run_hunter_idle(
-        project_id=PROJECT, run_id=RUN, config=config, config_key=config_key,
+        project_id=PROJECT, run_id=RUN, hunt_key=hunt_key,
         hunter_store=HunterMemoryStore(tmp_path / "hunter"), state=state))
     assert seen["usage_scope"] == PROJECT

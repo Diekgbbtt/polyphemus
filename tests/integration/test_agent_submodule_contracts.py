@@ -308,9 +308,9 @@ def test_C10_a_down_hunter_denies_hunter_dispatch(tmp_path):
     # still DISPATCHABLE work, so the quiesce predicate stays False and the run
     # can never reach `complete` (the E1 "run stays running" claim, without
     # Docker).
-    assert run_work_remaining("p", hunt_store=hunt, hunter_store=hunter) is True
+    assert run_work_remaining("p", "p-run", hunt_store=hunt, hunter_store=hunter) is True
     assert asyncio.run(is_run_quiesced(
-        "p", RUN, hunt_store=hunt, hunter_store=hunter,
+        "p", "p-run", hunt_store=hunt, hunter_store=hunter,
         control=control, state=RunDispatchState(),
     )) is False
 
