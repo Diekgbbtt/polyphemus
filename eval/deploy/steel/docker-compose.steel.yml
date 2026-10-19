@@ -1,0 +1,41 @@
+# The local Steel Browser API runtime (#359, T3).
+#
+# Deploy on the host that can reach the internal targets. The host is fixed;
+# the polymerhus stack is portable (D359-1). This file declares the API
+# container ALONE: no UI, no dashboard, no published 5173. The Chrome debug
+# port 9223 stays container-internal; remote clients ride the API WebSocket on
+# 3000.
+#
+#   STEEL_DOMAIN=192.33.91.87:3000 docker compose -f eval/deploy/steel/docker-compose.steel.yml up -d
+#
+# Then allowlist the API port with eval/deploy/steel/allowlist.sh (D359-3).
+#
+# Pin by INDEX digest (D359-2). Never replace the digest with a moving tag.
+name: polymerhus-steel
+
+services:
+  steel-api:
+    image: ghcr.io/steel-dev/steel-browser-api@sha256:eb8567bac2221d2856923184cf693a08df9a488680431ebded73cab63aa181eb
+    # DOMAIN is the externally reachable host:port. The API derives the
+    # session's `websocket_url` from it, so it must name a host the client can
+    # reach (D359-2). Required: a missing value fails the deploy loudly.
+    environment:
+      DOMAIN: ${STEEL_DOMAIN:?STEEL_DOMAIN is required - set <host>:<port>, for example 192.33.91.87:3000}
+    ports:
+      - "3000:3000"
+    # Durable browser state: profiles, snapshots, and session state (D359-2).
+    # A named volume survives `down` and container recreation; only an explicit
+    # `down -v` removes it.
+    volumes:
+      - steel-cache:/app/.cache
+    # The internal target's synthetic host (D359-6), mirroring the eval
+    # harness's kali alias. Both values default to an inert pair, so a deploy
+    # that forgets to set them cannot route anywhere real.
+    extra_hosts:
+      - "${STEEL_TARGET_HOST:-steel-target.invalid}:${STEEL_TARGET_IP:-127.0.0.1}"
+    # Chrome uses shared memory heavily; the default 64 MB crashes tabs.
+    shm_size: "2gb"
+    restart: unless-stopped
+
+volumes:
+  steel-cache:

@@ -111,8 +111,11 @@ pipeline is configured FOR THIS PROFILE:
 - **Host service scanning (naabu) is excluded**: the target is one app on one
   published port; scanning the host probes unrelated infrastructure (the
   reverse proxy, other containers) and produces off-scope noise.
-- **The browser crawl (steel_crawl) cannot run**: Steel is a CLOUD browser and
-  cannot reach a target exposed only on a private VM.
+- **The browser crawl (steel_crawl) needs a Steel runtime on the operator's
+  network**: the Steel cloud pool cannot reach a target exposed only on a
+  private VM. When `STEEL_BROWSER_API_URL` names the local runtime (section
+  2.14), the crawl runs against it; without that value it stays on the cloud
+  and cannot cover the target.
 - **Heavy content discovery (ffuf, kiterunner) is excluded**: OOM-prone on a
   small host, and the app's surface is small enough for katana to cover.
 
@@ -1003,6 +1006,118 @@ Example:
 ```
 EVAL_SURFER_COMMAND='opencode run --agent eval-surfer --dir <canonical-checkout> "Follow {prompt}. input={input}; destination={destination}. Write only {destination}."'
 ```
+
+### 2.14. The local Steel runtime (#359)
+
+The Steel browser capability reaches targets that the public internet cannot
+route to through a Steel runtime on the operator's own network.
+The runtime host is fixed (`dj-viscon-workshop-1`); the polymerhus stack stays
+portable, and mutual reachability is the invariant (D359-1).
+The declared artifact is `eval/deploy/steel/docker-compose.steel.yml`: the API
+container alone, pinned by index digest, with a durable `/app/.cache` volume.
+There is no UI container and no published 5173; the Chrome debug port 9223
+stays container-internal.
+
+#### Deploy
+
+Run on the Steel host, from the repo root:
+
+```
+export STEEL_DOMAIN=<host>:<port>          # for example 192.33.91.87:3000
+export STEEL_TARGET_HOST=<synthetic host>  # for example t-<short>.target
+export STEEL_TARGET_IP=<eval server IP>    # for example 46.224.225.245
+docker compose -f eval/deploy/steel/docker-compose.steel.yml up -d
+```
+
+`DOMAIN` is required and must be the host:port the clients can reach; the API
+derives each session's `websocket_url` from it.
+The target alias is optional and defaults to the inert pair
+`steel-target.invalid:127.0.0.1`, so an unconfigured deploy cannot route to a
+real host.
+
+#### Allowlist
+
+The API has no built-in authentication, and the host is internet-exposed.
+Restrict TCP 3000 at Docker's `DOCKER-USER` chain:
+
+```
+sudo eval/deploy/steel/allowlist.sh \
+  46.224.225.245 \
+  2a04:ee40:214a:f500:9ce6:f07f:fafd:4b6b
+```
+
+The script takes every allowed source as an argument, IPv4 and IPv6.
+It is idempotent: it flushes and rebuilds its own `POLYMERHUS-STEEL` chain and
+keeps one jump at the top of `DOCKER-USER`. A table with no source denies all
+TCP 3000 traffic (fail closed).
+`sudo eval/deploy/steel/allowlist.sh --remove` removes the rules and the chain.
+
+#### Point the stack at the runtime
+
+On the host that runs the polymerhus stack, set the one deployment value in the
+instance `.env` to the CLI's canonical form:
+
+```
+STEEL_BROWSER_API_URL=http://<host>:<port>/v1
+```
+
+Then recreate the affected services. The CLI reads the value natively and
+`steel_exec` injects `--local`; the SDK crawl provider passes the resolver's
+origin form (one terminal `/v1` removed) as `base_url`.
+Unset is the default and keeps the remote Steel cloud.
+
+Verify from the eval server:
+
+```
+curl -fsS http://<host>:3000/v1/sessions
+```
+
+A reachable API answers; a blocked source times out.
+
+#### Teardown
+
+```
+docker compose -f eval/deploy/steel/docker-compose.steel.yml down
+```
+
+`down` keeps the `steel-cache` volume and its browser state.
+Use `down -v` only when you intend to destroy profiles, snapshots, and session
+state.
+
+#### Moving the stack to another host
+
+1. Deploy the same compose file on the new host.
+2. Set `STEEL_DOMAIN` to the new `host:port`.
+3. Run the allowlist script there with the stack host's address and the admin
+   addresses.
+4. Update `STEEL_BROWSER_API_URL` on the polymerhus side, then recreate the
+   `kali` and `agent` services.
+5. Remove the old host's allowlist rules with `--remove` and tear it down.
+
+The runtime address is never a module constant, so no code change is needed.
+
+#### The #245 portability boundary
+
+These cloud capabilities do not travel to the local runtime:
+
+- Steel-managed residential proxies: not available; bring-your-own proxy only.
+- Dedicated IPs: not available; the egress is the Steel host's own address.
+- Managed CAPTCHA handling: not available (operator ruling, D237-15).
+- The Credentials API: not supported in Steel Local.
+- The Files API: not supported in Steel Local.
+- Concurrency: 1 (one session at a time).
+- Extensions load by build-time injection under `api/src/extensions/`, not by
+  API call.
+
+The internal-reachability case needs no public-egress proxy: the runtime
+egresses from the operator's network, which is the point.
+
+#### Destructive operations to avoid
+
+Never run `docker system prune -a` on the Steel host, and never remove the eval
+target images, the live volumes, or the polymerhus stack images.
+The `steel-cache` volume holds browser state that is not reproducible from the
+repository.
 
 ## 3. KB authoring
 
