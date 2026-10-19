@@ -72,9 +72,9 @@ SHAPES: list[tuple[str, str, str, str]] = [
     ("encoded-holder", "low", "encoded",
      r"\b[A-Za-z0-9+/]{60,}={0,2}\b"),
     ("high-entropy-literal", "low", "generic",
-     r"\b(?=[A-Za-z0-9+/=_\-]{32,}\b)"
-     r"(?=[A-Za-z0-9+/=_\-]*[a-z])(?=[A-Za-z0-9+/=_\-]*[A-Z])"
-     r"(?=[A-Za-z0-9+/=_\-]*[0-9])[A-Za-z0-9+/=_\-]{32,}\b"),
+     r"\b(?=[A-Za-z0-9]{32,}\b)"
+     r"(?=[A-Za-z0-9]*[a-z])(?=[A-Za-z0-9]*[A-Z])"
+     r"(?=[A-Za-z0-9]*[0-9])[A-Za-z0-9]{32,}\b"),
 ]
 
 COMPILED = [(name, sev, fam, re.compile(pattern)) for name, sev, fam, pattern in SHAPES]
@@ -102,7 +102,7 @@ def active_shapes(min_severity: str):
 def scan_text(text: str, source: str = "<stdin>", shapes=None):
     """Scan one text blob; yield one record per match, shapes in order."""
     for line_no, line in enumerate(text.splitlines(), start=1):
-        for name, severity, family, rx in shapes if shapes is not None else COMPILED:
+        for name, severity, family, rx in (shapes if shapes is not None else COMPILED):
             for match in rx.finditer(line):
                 yield {
                     "shape": name,
