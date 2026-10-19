@@ -144,7 +144,7 @@ The reviewer must ground its verdict on the **faithfulness and robustness of the
 ## 7. Skills bounded to their step
 
 When a class analysis reaches a step owned by another skill, it names that skill instead of restating it.
-Known cross-references: `two-principal-authz` for the BOLA/authorization principal step; `race-conditions` for the TOCTOU step; the future `defence-bypass` and `proxy-techniques` families (#278) for bypass/proxy steps; `graphql` for GraphQL-specific steps; `oauth`/`authentication-jwt` for token steps.
+Known cross-references: `two-principal-authz` for the BOLA/authorization principal step; `race-conditions` for the TOCTOU step; the `defence-bypass` and `proxy-techniques` families (#278) for bypass/proxy steps; `graphql` for GraphQL-specific steps; `oauth`/`authentication-jwt` for token steps.
 
 ## 8. Pitfalls (from four prior walkthroughs)
 

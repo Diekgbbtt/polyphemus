@@ -45,7 +45,7 @@ C4 passes for the baseline because the parent remainder needs no delta by defini
 C5 passes for delta because stored adds two-phase sequencing and DOM adds instrumentation without server reflection per `xss.md:168`.
 C5 passes for disjointness because the persistence-presence mutex at `xss.md:167` plus the server-reflection mutex for the non-persistent remainder leave no technique in two variants.
 C5 passes for stability because delivery lifecycle survives framework plus payload plus version plus runtime-asset changes per `xss.md:169`.
-C6 passes because defensive control at `xss.md:86` is kept as assessed aspect with bypass detail cross-referenced to the future defence-bypass family.
+C6 passes because defensive control at `xss.md:86` is kept as assessed aspect with bypass detail cross-referenced to the `defence-bypass` family.
 C6 passes because attack goal at `xss.md:87` is rejected since impact demonstration follows execution confirmation.
 C7 passes because H2 at `xss.md:124-126` is a genuine combined mutation-plus-template split that section 10 discards for secondary divergence without top-level partition.
 C7 passes because H4 at `xss.md:130-132` is a genuine refined delivery hypothesis that section 10 selects after the H1 branch 6a repair.

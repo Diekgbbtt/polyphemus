@@ -63,7 +63,7 @@ Common trust assumptions: response parser treats the value as framing, cache tre
 Invariant is misplaced header trust, what varies is the trusting consumer and its oracle.
 Testing methodology: the eight parent steps P1-P8 listed in section 6.
 Invariant is the inventory-to-cross-protocol spine, what varies is which consumer step bends per candidate procedure.
-Proxy techniques: none held as a standalone proxy family by this class, since smuggling and forwarding spoofing name their own boundary procedures and the future proxy-techniques family owns generic relay steps.
+Proxy techniques: none held as a standalone proxy family by this class, since smuggling and forwarding spoofing name their own boundary procedures and the `proxy-techniques` family owns generic relay steps.
 Defence bypass techniques: encoding layering, normalization edges, name games, and method-override delivery at lines 130-148.
 Invariant is defeating input normalization, what varies is only the encoding value used, hence an aspect.
 Techniques anti-patterns: claiming CRLF on silent server-side stripping, claiming smuggling on pipelining, claiming redirect on browser-blocked schemes, and probing Age as a freshness control.
