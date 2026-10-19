@@ -1043,6 +1043,7 @@ Restrict TCP 3000 at Docker's `DOCKER-USER` chain:
 ```
 sudo eval/deploy/steel/allowlist.sh \
   46.224.225.245 \
+  <admin IPv4> \
   2a04:ee40:214a:f500:9ce6:f07f:fafd:4b6b
 ```
 

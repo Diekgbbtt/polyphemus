@@ -7,6 +7,7 @@ Date: 2026-10-19. Host: `dj-viscon-workshop-1.vsos.ethz.ch` (192.33.91.87).
 - Artifact: `eval/deploy/steel/docker-compose.steel.yml` (copied to `~/polymerhus-steel` on the host).
 - Image: `ghcr.io/steel-dev/steel-browser-api@sha256:eb8567bac2221d2856923184cf693a08df9a488680431ebded73cab63aa181eb`.
 - Container: `polymerhus-steel-steel-api-1`, up, publishing `0.0.0.0:3000->3000/tcp` and `[::]:3000`; 9223 container-internal.
+- Running container image: `sha256:ebbab5fc2bdbab3870db69c54a99040eef757117bcd864a0efec14f6ed958da8`; image repo digest `ghcr.io/steel-dev/steel-browser-api@sha256:eb8567bac2221d2856923184cf693a08df9a488680431ebded73cab63aa181eb` (verified with `docker image inspect`).
 - `DOMAIN=192.33.91.87:3000`; the API reports `websocketUrl = ws://192.33.91.87:3000/`.
 - Volume `polymerhus-steel_steel-cache` mounted at `/app/.cache`.
 - Target alias: `STEEL_TARGET_HOST=t-1fc05262.target`, `STEEL_TARGET_IP=46.224.225.245`.
@@ -39,11 +40,20 @@ Rendered rules:
 -A POLYMERHUS-STEEL -s 213.55.240.40/32 -p tcp --dport 3000 -j ACCEPT
 -A POLYMERHUS-STEEL -p tcp --dport 3000 -j DROP
 ip6tables:
+-A DOCKER-USER -j POLYMERHUS-STEEL
 -A POLYMERHUS-STEEL -s 2a04:ee40:214a:f500:9ce6:f07f:fafd:4b6b/128 -p tcp --dport 3000 -j ACCEPT
 -A POLYMERHUS-STEEL -p tcp --dport 3000 -j DROP
 ```
 
-Eval server probe: `200`. The admin IPv4 is the operator's egress address; the admin IPv6 is the SSH source.
+Reachability from the allowed sources:
+
+```
+eval server (46.224.225.245) -> 200
+admin IPv4 (213.55.240.40)   -> 200
+admin IPv6 (2a04:ee40:...)   -> 200  (http://[2001:67c:10ec:49c3::45]:3000/v1/sessions)
+```
+
+The admin IPv4 is the operator's egress address; the admin IPv6 is the SSH source. The server publishes `[::]:3000` and answers on its global IPv6.
 
 ## Negative probe (E1)
 

@@ -22,7 +22,7 @@ PYTHONPATH=src .venv/bin/python -m pytest tests/e2e/test_steel_internal_reachabi
 ```
 
 ```
-1 passed, 1 warning in 5.19s
+1 passed, 1 warning in 6.00s
 ```
 
 ## Red - runtime stopped

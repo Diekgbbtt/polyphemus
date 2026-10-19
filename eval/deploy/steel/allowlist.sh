@@ -28,7 +28,7 @@ REMOVE=0
 SOURCES=()
 
 usage() {
-  sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 while [ "$#" -gt 0 ]; do
