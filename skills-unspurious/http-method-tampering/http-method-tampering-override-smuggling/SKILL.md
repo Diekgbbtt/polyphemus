@@ -55,12 +55,14 @@ Confirm execution by backend effect rather than by gate acceptance alone.
 Deliver each override carrier through the outer method with identical session material and fixed semantics.
 Compare the gate-authorized outcome against the executor-applied outcome for each carrier.
 Anchor each accepted carrier on execution proof showing the overridden verb ran.
+Send a request to an unguarded path with the guarded path carried in a path-rewrite carrier, and compare the gate verdict against the executed action, because the guard evaluated the original path; name `header-injection` at the carrier step rather than restating the header mechanics here.
 
 ## Bypass Techniques
 
 The defeated control is outer-method authorization at the front gate.
 The bypass keeps the outer method gate-visible while the executor applies the smuggled verb.
 Confirm the bypass by showing the overridden effect unattainable through the outer method alone.
+Path-normalisation shapes (case, dot segments, encoded separators, semicolon parameters, trailing characters) move the request onto an unguarded path pattern while the guard evaluated the original path.
 
 When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 

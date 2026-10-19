@@ -24,6 +24,7 @@ Cross-site request forgery abuses ambient authority (cookies, HTTP auth) across 
 ### Mobile/SPA
 
 - Deep links and embedded WebViews may auto-send cookies; trigger actions via crafted intents/links
+- An exported custom-scheme handler that performs a state change with ambient session authority reaches the endpoint from a crafted link, with no browser page and no cross-origin delivery
 - SPAs that rely solely on bearer tokens are less CSRF-prone, but hybrid apps mixing cookies and APIs can still be vulnerable
 
 ### Integrations
@@ -146,12 +147,14 @@ Each variant breaks one clause: the proof-of-intent clause, the scoping clause, 
 - Lax-by-default cookies are sent on top-level cross-site GET but not POST
 - Exploit GET state changes and GET-based confirmation steps
 - Legacy or nonstandard clients may ignore SameSite; validate across browsers/devices
+- A sibling host that shares the registrable site with the target makes the delivery same-site, so a lax-by-default cookie still travels; treat sibling ownership as a scoping input
 
 ### Origin/Referer Obfuscation
 
 - Sandboxed frames can produce a null origin; some frameworks incorrectly accept null
 - Blank-document and data-URL origins alter the referer value
 - Ensure the server requires an explicit origin or referer match
+- A naive string comparison on the origin or referrer value can be satisfied directly from a raw client, with no cross-origin page delivery; confirm the comparison shape before treating the check as enforced
 
 ### Method Override
 
@@ -163,6 +166,10 @@ Each variant breaks one clause: the proof-of-intent clause, the scoping clause, 
 - Tokens not tied to session, user, or path
 - Tokens reused indefinitely; tokens carried in the URL
 - Double-submit cookie without Secure/HttpOnly, or with predictable token sources
+- A presence-only antiforgery header whose value is identical for every caller and is not bound to the user or the role: any same-origin script can present it, and the value replays across privilege partitions
+- A double-submit token-cookie pairing falls where the token cookie can be planted through a response-header injection sink; name `header-injection` at the injection step rather than restating the line-break mechanics here
+- Hostile markup can clobber a named element or a trusted global the proof-of-intent logic reads, so the token value or the submission target resolves to an attacker-chosen value; name `proxy-techniques-dom-clobbering` at that step rather than restating the mechanism here
+- A style channel can read a token value out of the rendered page one character at a time where markup is injectable; name `proxy-techniques-css-injection` at the extraction step rather than restating the mechanism here
 
 ### Content-Type Switching
 
@@ -175,6 +182,7 @@ Each variant breaks one clause: the proof-of-intent clause, the scoping clause, 
 - Strip the referer via meta refresh or navigation from a blank document
 - Test null-origin acceptance
 - Leverage misconfigured CORS to add custom headers that servers mistakenly treat as anti-forgery tokens
+- A carve-out that excludes one path family, such as a socket hub or a long-polling path, from the proof-of-intent check leaves the excluded family reachable under the same session authority
 
 When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
@@ -183,6 +191,7 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 - CSRF + IDOR: force actions on other users' resources once references are known
 - CSRF + Clickjacking: guide user interactions to bypass UI confirmations
 - CSRF + OAuth mix-up: bind victim sessions to unintended clients
+- CSRF + subdomain takeover: a claimed sibling host plants a session cookie scoped to the parent domain, so the victim enters the application under an attacker-chosen session; name `subdomain-takeover` at the claim step rather than restating its procedure here
 
 ## Testing Methodology
 

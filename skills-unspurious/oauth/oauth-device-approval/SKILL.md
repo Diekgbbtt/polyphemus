@@ -62,6 +62,11 @@ Issue a code under the attacker session, then induce the victim to approve it th
 Treat attacker-session access following victim approval as the core finding.
 The parent exchange step never names victim-approval sequencing, so this variant owns the inducement procedure.
 
+### Consent-Grant Inducement
+
+Induce the victim to grant an attacker-registered application access to the account, which yields persistent tokens without any device code.
+Treat the grant surviving the victim session as the finding, and confirm the granted credential persists rather than expiring with the session.
+
 ## Advanced Techniques
 
 No advanced divergence rides here beyond polling plus inducement, because the approval channel is the whole surface.

@@ -51,6 +51,7 @@ This variant breaks the signature algorithm binding while the key source, the cl
 ## Advanced Techniques
 
 - Favor confusion shapes first where the verifier selects its verification routine from the presented algorithm identifier.
+- Recover the asymmetric public key from two captured tokens where no key endpoint is exposed, then run the confusion shape against the recovered key, so the acquisition step never depends on a published key source.
 - Vary the signature encoding shape where the verifier is strict on the algorithm but lax on canonical form.
 - Carry the recovered secret forward as a minting capability and re-derive authorization from each freshly minted token.
 - Test every acceptance path separately because verification strictness commonly differs between edge, service, worker, and alternate channel handlers.
@@ -58,7 +59,7 @@ This variant breaks the signature algorithm binding while the key source, the cl
 ## Bypass Techniques
 
 - Defeat algorithm pinning by presenting each neighboring algorithm shape and recording which one the verifier executes instead of rejects.
-- Defeat unsigned rejection by presenting the unsigned shape with the signature segment removed and the algorithm identifier declaring no signature.
+- Defeat unsigned rejection by presenting the unsigned shape with the signature segment removed and the algorithm identifier declaring no signature, including case-variant algorithm identifiers and signature-segment variants beside it.
 - Defeat strict verification by presenting encoding edge shapes such as unencoded payload forms and nested token orderings that mishandle the verification path.
 - Defeat secret strength by recovering the weak secret offline and then minting under the legitimate algorithm.
 

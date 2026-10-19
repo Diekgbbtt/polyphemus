@@ -71,6 +71,16 @@ Call redemption and token-status oracles with no secret, with client-only authen
 Treat informative answers under these shapes as oracle-authentication gaps.
 Scope over-request plus refresh reuse plus account-linking sequencing ride inside this variant as secondary divergences, confirmed through the same redemption verdicts rather than separate procedures.
 
+### Prerequisite-Completeness Gaps
+
+Issue a credential to an account that never completed a prerequisite step, such as an unverified address or an unaccepted invitation, and redeem it.
+Treat redemption on an incomplete account as a completeness gap and treat consistent refusal as a negative, because the binding the flow assumes is the account state, not the credential alone.
+
+### Registration-Metadata Fetch Gaps
+
+Supply a registration metadata field the server fetches at registration time, such as a logo, key-set, or sector identifier location, and observe the server-side fetch.
+Treat a fetch of an attacker-chosen location as a registration-step sink, and hand the egress finding to `ssrf` at the fetch step rather than restating its procedure here.
+
 ## Advanced Techniques
 
 Account linking rides here as a sequencing parameter rather than a separate variant.

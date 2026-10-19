@@ -76,6 +76,8 @@ Transport values for mobile dispatch ride inside this variant as a parameter, co
 Referrer harvesting rides here as an exfil channel rather than a separate variant.
 Mount the authorized destination as a subresource on an attacker page and harvest the credential where the ambient referrer policy carries it.
 Treat policy-dependent capture as confirmation of the same destination finding, not as a new probe kind.
+Browser-messaging delivery rides here as a second exfil channel: a flow that returns the credential into a parent-window message reaches a listener the destination check never examined, so read the listener's origin check before closing the destination finding.
+A response-carrier swap that moves the credential into a browser-readable carrier beside the registered destination rides here as the same delivery-channel value.
 
 ## Bypass Techniques
 
