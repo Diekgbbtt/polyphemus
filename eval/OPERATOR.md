@@ -1085,6 +1085,43 @@ docker compose -f eval/deploy/steel/docker-compose.steel.yml down
 Use `down -v` only when you intend to destroy profiles, snapshots, and session
 state.
 
+#### Process lifecycle (zombie reaping)
+
+The API runs Node as PID 1 and never reaps the Chromium children it reparents.
+Repeated launch/release cycles accumulate zombies (`chrome_crashpad`,
+`chromium`) that no signal clears.
+The compose file sets `init: true`, so Docker's init (tini) is PID 1, reaps
+every orphan, and forwards signals.
+Measured on the pinned image: 6 launch/release cycles left 108 zombies without
+`init` and 0 with it.
+
+Check the tier after a busy period:
+
+```
+docker exec polymerhus-steel-steel-api-1 sh -lc "ps -eo stat,comm | awk '\$1 ~ /Z/ {c++} END {print c+0}'"
+```
+
+A rising count means the container was started without `init` (recreate it from
+this compose file). It is never a reason to restart blindly: the zombies are a
+symptom of the missing init, not of the browser.
+
+#### State-preserving teardown
+
+Tearing a session down without losing its identity costs three calls, in order:
+
+1. Capture: `GET /v1/sessions/<id>/context` returns `{cookies, localStorage,
+   sessionStorage, indexedDB}` while the session is live.
+2. Store: write that JSON to a durable path (the `steel-cache` volume, or a
+   caller-owned file).
+3. Release: `POST /v1/sessions/<id>/release` ends the session and kills the
+   browser.
+
+Restore by passing the stored JSON as `sessionContext` on the next create
+(`POST /v1/sessions`), the same shape the capture returns.
+`src/polymerhus/app/steel_session_state.py` implements this sequence.
+The local API has no profile store, so the store is the caller's own file, and
+the restore rides the create call's `sessionContext` field.
+
 #### Moving the stack to another host
 
 1. Deploy the same compose file on the new host.

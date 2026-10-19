@@ -132,8 +132,20 @@ The requested `--session-timeout` now falls through to the daemon, which enforce
 The API still does not expire a session itself (upstream #350); a single-session local runtime accepts that residual until a stable release carries the server fix.
 The regression guard is `tests/e2e/test_steel_interactive_local.py`: it starts a named session, asserts a positive `remainingMs`, then navigates `about:blank` over the same daemon socket.
 
-## Side observation, not part of this fix
+## Process lifecycle: the zombie Chromium children (fixed here too)
 
 The API container held about 170 zombie Chromium processes (`ps` state `Z`, parent PID 1) after repeated session launches.
-Node runs as PID 1 and does not reap orphaned Chromium children.
-This is a resource-leak risk for a long-lived local runtime and is independent of the timeout failure.
+Node runs as PID 1 and does not reap orphaned Chromium children, so every launch/release cycle adds to the tier.
+
+The fix is Docker's init, the native control-plane feature:
+`init: true` in `docker-compose.steel.yml` runs `docker-init` (tini) as PID 1, which reaps every orphan.
+Measured on the pinned image, six create/release cycles each:
+
+```
+without init: 108 zombies after 6 cycles (chrome_crashpad, chromium)
+with --init:    0 zombies after 6 cycles
+```
+
+The teardown and state capability is fingerprinted in `docs/design/steel-session-lifecycle-395-decisions.md`:
+release is the teardown endpoint, and `GET /v1/sessions/<id>/context` plus the create call's `sessionContext` carry state across sessions.
+The client is `src/polymerhus/app/steel_session_state.py`; it captures, stores atomically, always releases, and restores.

@@ -88,3 +88,4 @@ The internal-reachability case needs no public-egress proxy: the runtime egresse
 - The interactive CLI path works against the local runtime (D359-10, #395).
   The local API still ignores a create-time timeout (upstream issue #350), so the daemon enforces `--session-timeout` and releases the session when it exits.
   One-shot `steel scrape` and the SDK path are unaffected.
+- The container sets `init: true` so tini reaps the Chromium children Node PID 1 cannot; a state-preserving teardown client captures `sessionContext` before release (`docs/design/steel-session-lifecycle-395-decisions.md`).

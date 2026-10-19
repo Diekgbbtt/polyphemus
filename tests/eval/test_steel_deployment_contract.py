@@ -52,6 +52,14 @@ def test_the_service_restarts_unless_stopped():
     assert _service()["restart"] == "unless-stopped"
 
 
+def test_the_container_runs_an_init_that_reaps_chromium_children():
+    # #395: Node runs as PID 1 and never reaps the reparented Chromium
+    # children, so launch/release cycles leak zombies. `init: true` runs
+    # Docker's tini as PID 1. Measured: 108 zombies without it, 0 with it,
+    # over six cycles.
+    assert _service()["init"] is True
+
+
 def test_the_cache_volume_is_durable_and_mounted():
     service = _service()
     mounts = [str(v) for v in service["volumes"]]

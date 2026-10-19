@@ -125,6 +125,15 @@ The pin is now `0.5.0-preview.6`, the first release with the fix.
 `--session-timeout` is enforced by the daemon; when the daemon exits it releases the session.
 The server still does not expire a session on its own (upstream #350); that residual is accepted for a single-session local runtime, and a stable release replaces the preview pin when upstream publishes one.
 
+## D359-11 - The runtime reaps Chromium and preserves state across teardown (#395)
+
+The API runs Node as PID 1 and does not reap the Chromium children it reparents, so launch/release cycles leaked zombies.
+The deployment sets `init: true`, so Docker's tini reaps every orphan (measured: 108 zombies after six cycles without it, 0 with it).
+Teardown is state-first: capture `GET /v1/sessions/<id>/context`, store it atomically, then `POST /v1/sessions/<id>/release`, which is also the endpoint that kills the browser.
+The client is `src/polymerhus/app/steel_session_state.py`, and it always releases, even when the capture fails.
+Restore feeds the stored JSON back through the create call's `sessionContext`.
+The full capability fingerprint and client design are in `docs/design/steel-session-lifecycle-395-decisions.md`.
+
 ## Open queue
 
 None - the grilling round is complete.

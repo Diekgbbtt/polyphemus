@@ -23,9 +23,12 @@ services:
       DOMAIN: ${STEEL_DOMAIN:?STEEL_DOMAIN is required - set <host>:<port>, for example 192.33.91.87:3000}
     ports:
       - "3000:3000"
-    # Durable browser state: profiles, snapshots, and session state (D359-2).
-    # A named volume survives `down` and container recreation; only an explicit
-    # `down -v` removes it.
+    # Durable application state (D359-2): the Puppeteer/Chromium cache and any
+    # artifacts a caller stores under /app/.cache. The browser's default
+    # user-data-dir is /tmp/steel-chrome, so a session's cookies and storage are
+    # carried explicitly through `sessionContext` (see OPERATOR.md), not by an
+    # implicit shared profile. A named volume survives `down` and container
+    # recreation; only an explicit `down -v` removes it.
     volumes:
       - steel-cache:/app/.cache
     # The internal target's synthetic host (D359-6), mirroring the eval
@@ -35,6 +38,13 @@ services:
       - "${STEEL_TARGET_HOST:-steel-target.invalid}:${STEEL_TARGET_IP:-127.0.0.1}"
     # Chrome uses shared memory heavily; the default 64 MB crashes tabs.
     shm_size: "2gb"
+    # Process lifecycle (#395). The API runs Node as PID 1 and does not reap
+    # the Chromium children it reparents; after repeated launch/release cycles
+    # the container accumulates zombies. Docker's init (tini) becomes PID 1,
+    # reaps every orphan, and forwards signals, so the tier stays bounded.
+    # Measured: 6 launch/release cycles left 108 zombies without init and 0
+    # with it.
+    init: true
     restart: unless-stopped
 
 volumes:
