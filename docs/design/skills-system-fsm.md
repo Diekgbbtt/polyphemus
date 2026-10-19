@@ -42,7 +42,7 @@ After each merge into the trunk: run `verify.sh`, update the completion ledger r
 
 ## Current pointers (2026-10-19)
 
-- Trunk: `feat/skills-system` (worktree `.claude/worktrees/feat-skills-system`); tip: `562c9f5b` (#388 close-out) plus the mount-replacement commit; contains W0 landing, W0/W1 completion, W2 cortex, W3, W4, W5, W6, W7 (165 suite skills), and the mount replacement.
+- Trunk: `feat/skills-system` (worktree `.claude/worktrees/feat-skills-system`); tip: `0e201194` (the mount replacement) after `562c9f5b` (#388 close-out), plus this record; contains W0 landing, W0/W1 completion, W2 cortex, W3, W4, W5, W6, W7 (165 suite skills), and the mount replacement.
 - S2: COMPLETE - all three residual items merged after their single review rounds (W2, W0, W1).
 - S3: COMPLETE - both rounds answered and recorded (`skill-evolution-w3-decisions.md`, D-W3-1..D-W3-8); merged `b42a19d9` after review CLEAR with the one fix pass absorbed.
 - S4: COMPLETE - the W4 mount seam merged after review CLEAR (`7ac935d6`).
@@ -50,5 +50,5 @@ After each merge into the trunk: run `verify.sh`, update the completion ledger r
 - S6: COMPLETE - merged `155b6ed9`; review CLEAR with one operator-ruled scope call; `verify.sh` reached ALL-CHECKS-PASS.
 - S7: COMPLETE - merged `e27beada`; review BLOCKED on two majors, both fixed once; the suite stands at 165 skills.
 - S8: IN PROGRESS - the trunk carries W0-W7 and `verify.sh` is ALL-CHECKS-PASS; the operator's finalization decisions are recorded; #388 (the layout normalisation) landed; the mount replacement (the suite into the live root) is COMPLETE (see below); next the documentation alignment, then the PR go.
-- Mount replacement: COMPLETE 2026-10-19 - the suite's 41 group directories (39 classes, 2 families; 165 skills) moved into `skills/`; the corpus's 30 flat vulnerability classes are superseded; `SkillCatalogue` over the live root is the DEFAULT resolution (explicit `catalogue=` still wins); the checks target the live-root groups; `skills/README.md` merged, `skills-unspurious/README.md` reduced to the records note; `verify.sh` ALL-CHECKS-PASS and the seam/catalogue/artifact-skill suites green.
+- Mount replacement: COMPLETE 2026-10-19 (`0e201194`) - the suite's 41 group directories (39 classes, 2 families; 165 skills) moved into `skills/`; the corpus's 30 flat vulnerability classes are superseded; `SkillCatalogue` over the live root is the DEFAULT resolution (explicit `catalogue=` still wins); the checks target the live-root groups; `skills/README.md` merged, `skills-unspurious/README.md` reduced to the records note; `verify.sh` ALL-CHECKS-PASS and the seam/catalogue/artifact-skill suites green.
 - Open operator gates: the quiescence-question answer (see the map); the final PR go.
