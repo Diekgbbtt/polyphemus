@@ -28,16 +28,19 @@
 | T7 | Hunter production prompt work phase | T6 | S3 8.5 |
 | T8 | Pod reduced D4, INIT gate, probe authoring | - | S5 8.1-8.5 |
 | T9 | Triager procedure-diff variant minting | T8 | S5 8.6 |
-| T10 | Documentation, hygiene, eval translation, fault-KB | T2a, T2b, T4a, T4b, T7, T9 | S1 9.5-9.6; impact map |
+| T10a | Code/test hygiene, role alias, fault-KB disposition | T2a, T2b, T4a, T4b, T7, T9 | S1 9.5-9.6; impact map |
+| T10b | Eval translation, e2e translation, final docs sweep | T10a | impact map; eval design |
 | T11 | **PROPOSED, not cut** - the run resume trigger: the operator verb and the orphaned-run disposition | T3 | S1 7.5; #331 ESCALATED item 2; impact map 3.5 |
 
 The frontier is T1, T5, and T8.
-The loop dispatches one implementer at a time, so the practical order is T1, T2a, T2b, T3, T4a, T4b, T5, T6, T7, T8, T9, T10.
+The loop dispatches one implementer at a time, so the practical order is T1, T2a, T2b, T3, T4a, T4b, T5, T6, T7, T8, T9, T10a, T10b.
 A different order is valid when the blockers are closed.
 The T2 split is recorded in the ticket tracker: #375 (T2a), #386 (T2b), and the folded T2c scope in #376, #377, and #379.
 The T4 split is recorded in the ticket tracker: #377 (T4a) and #387 (T4b).
+The T10 split is recorded in the ticket tracker: #383 (T10a) and #397 (T10b).
 The split happened because the original T2 could not complete in one implementation context. The T2a increment is additive; the production path changes only in T2b.
 The T4a increment changes the dispatch record; the config family retires in T4b.
+The T10a increment removes the aliases and the dead surface; the eval and the final docs sweep land in T10b.
 
 ## 3. Data dependency map
 
@@ -117,7 +120,7 @@ The hunter supplies the procedure excerpt.
 ### 4.4 Integration
 
 ```
-T4 + T7 + T9 -> T10 docs, eval translation, hygiene
+T4 + T7 + T9 -> T10a hygiene -> T10b docs, eval translation, final sweep
 ```
 
 T10 also closes the role-name aliases and the fault-KB disposition.
@@ -337,7 +340,7 @@ Update `CONTEXT.md` and `CONTEXT-MAP.md`.
   until T6's payload harness - they carry with a precise T6 skip. E1/E2/E3/E6/
   E7/E8 are re-pointed (the pod family and the whole-run guard stay live; the
   retired enqueue is a 410).
-- Eval translation (T10, #383): `eval/orchestrator/trial.py::place_premined`
+- Eval translation (T10b, #397): `eval/orchestrator/trial.py::place_premined`
   writes pre-mined hunt configs into `hunt_configs/produced/`, a family the
   mover no longer reads, and `eval/orchestrator/predicates.py` / `setup.py` carry
   the same `preloaded_hunting_artifacts.configs` shape. T10 translates those to
@@ -532,25 +535,49 @@ The triager prompt rewrite.
 - The triager prompt carries the algorithm.
 - Tests cover the graph and the prompt.
 
-### T10 - Documentation, hygiene, eval translation, fault-KB
+### T10a - Code and test hygiene, role alias, fault-KB disposition
+
+Delivered at `daff1b63`; the review is tracked on #383.
 
 **What to build.**
-The remaining document updates.
-The eval fixture and prompt translation.
 The role-alias removal.
+The conciseness directive.
+The T9 hazard resolutions.
 The fault-KB disposition.
-The stale-vocabulary sweep.
-The final docs link check.
+The dead-surface removal.
+The domain-model and evolution-paradigm update.
+The first documentation pass.
 
 **Acceptance criteria.**
+- The role alias is removed; new runs use `threat_modeller` and the `threat-modeller` session segment.
+- The conciseness directive says "spec `rationale`" across the three prompts and the drift test.
+- The T9 hazards are resolved or documented.
+- The fault-KB data and modules have a recorded disposition; the boot consumer is gone.
+- The dead surface is removed.
 - The domain model and the evolution paradigm carry the minimal update.
-- The store, memory, pod, wiring, eval, and old spec docs carry the supersession notes.
-- The eval artifacts use the loop vocabulary; the old verdict derivation is disabled or replaced.
-- The role alias is removed; new runs use the new names.
-- The fault-KB data and modules have a recorded disposition.
-- No live obsolete verbatim remains.
+- The first documentation pass carries the supersession notes.
 - The doc link check passes.
 - The targeted test suites pass.
+
+### T10b - Eval translation, e2e translation, final docs sweep
+
+Tracked on #397.
+
+**What to build.**
+The eval translation and the pre-mined config guard.
+The e2e fixture and driver translation.
+The integration hygiene.
+The remaining documentation sweep.
+The final no-live-obsolete-verbatim check.
+
+**Acceptance criteria.**
+- The eval artifacts use the loop and spec-set vocabulary; a pre-mined config cannot pass as a satisfied prerequisite.
+- The e2e fixtures and driver use the reduced D4.
+- The integration fixtures have no vacuous assertions and the E1 premise is true.
+- The remaining documentation carries the supersession notes.
+- No live obsolete verbatim remains.
+- The doc link check passes.
+- The targeted eval, e2e, and hunting suites pass.
 
 ## 6. TDD loop per ticket
 
@@ -584,7 +611,7 @@ After the implementer reports DONE:
 The code-quality review stage is cut by operator direction (2026-10-19).
 It is not part of the loop.
 The whole-branch review before the PR is also cut.
-Findings that the spec review cannot cover, such as stale docs after a retirement, are recorded on T10 (#383) and swept there.
+Findings that the spec review cannot cover, such as stale docs after a retirement, are recorded on T10a (#383) or T10b (#397) and swept there.
 
 ## 8. Risks
 
@@ -599,7 +626,7 @@ Findings that the spec review cannot cover, such as stale docs after a retiremen
 
 ## 9. Definition of done
 
-- All ten tickets are closed.
+- All twelve tickets are closed.
 - The targeted unit, integration, and e2e suites pass.
 - The spec review passes for every ticket.
 - The documentation sweep finds no live obsolete verbatim.
