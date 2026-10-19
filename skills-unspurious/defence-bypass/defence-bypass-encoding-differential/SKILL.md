@@ -57,6 +57,8 @@ Find the hop count at which the layered form reads as data on one side and as sy
 Layer one encoding step per attempt and stop at the step where the effect appears, since further layers usually only re-encode the value.
 Select the encoding depth against the checker's own depth: equal-level encoding, over-encoding one element, and padding with segments the checker decodes away all keep the checker's reading benign while the consumer's reading moves.
 The parent oracle step covers a single reading of the value and cannot describe two readings of one byte string, so this variant owns the decode-count procedure.
+See `references/encoding-layer-matrix.md` for the encode-depth and notation families behind the procedure.
+See `scripts/decode-count-probe.sh` for the layer-one-step-at-a-time probe with its depth guard.
 
 ### Folding and Normalisation Gaps
 

@@ -26,6 +26,7 @@ Throttle evasion baselines the accounting before spreading, because a limit that
 - Record whether the counter keys the identifier's literal spelling or the canonical value the backend resolves, because the gap between the two is a counted-dimension gap.
 - Probe each path to the effect separately, because enforcement often differs across paths.
 - Note whether the limit blocks or only slows, and whether a challenge replaces the refusal after the threshold.
+See `references/rate-limit-state-classifier.md` for the four limit states and the shadow-throttle seed test.
 
 ## Detection Channels
 

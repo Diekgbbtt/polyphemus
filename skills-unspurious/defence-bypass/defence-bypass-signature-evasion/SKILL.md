@@ -87,6 +87,8 @@ Bypass shapes slip past a matcher that is present, so each one is tried after th
 - Fragmenting a multi-part signature across request positions that the sink joins.
 - The ordered axis sweep: casing, single encoding, double encoding, escape sequences, entity forms, and overlong forms, because the cheapest axis that admits the shape is the finding.
 - A control-kind split: a rule-set gap is defined against a signature matcher, while a behavioural or anomaly detector calls for a baseline deviation rather than a new spelling.
+See `references/matcher-axis-matrix.md` for the axis list and the order the axes are swept in.
+See `scripts/axis-probe.sh` for the one-axis-per-attempt probe loop.
 
 ## Chaining Attacks
 

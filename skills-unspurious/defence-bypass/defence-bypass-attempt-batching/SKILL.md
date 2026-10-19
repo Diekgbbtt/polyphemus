@@ -57,6 +57,7 @@ The collapse is claimed only against the recorded refusal of the same effect sen
 - A repeated field under distinct names inside one operation envelope, so one request carries many attempts of one operation; name `graphql` at this step.
 - A batch envelope whose inner operations ride a multipart structure the inspecting layer does not parse.
 - A body carried on a read-only verb, where the backend still consumes the parameters the counter treats as one read.
+See `references/batching-carriers.md` for the carrier catalogue and the per-carrier acceptance check.
 
 ### Counting-Unit Gap
 

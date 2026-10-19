@@ -135,6 +135,7 @@ Sensitive effects leak when a clause fails, because the control then reports a v
 
 **Mechanism Order**
 - Order the attempts from the cheapest signal to the most specific: the control's fingerprint, then its decoding, then the protocol-level shape, then the parser quirk, then the rule-specific gap, because each step narrows the next one.
+See `references/control-bypass-evaluation-order.md` for the attempt order and the control-kind selection behind it.
 
 **One Variable Per Attempt**
 - Change one thing per attempt and record the control's verdict on both sides, so the admitting rule is attributable.

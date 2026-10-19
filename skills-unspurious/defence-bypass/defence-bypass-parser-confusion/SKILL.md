@@ -59,6 +59,7 @@ Send one member twice with two distinguishable values, because the gate often re
 Vary the ordering across attempts so each reader's precedence is established rather than assumed.
 Establish the precedence rule from the reader inventory: first-occurrence, last-occurrence, list-collecting, and joined forms are the four rules a reader can apply, and the response names the rule each reader follows.
 The parent craft step covers one value at one position and cannot describe two consumers of one member, so this variant owns the precedence procedure.
+See `references/parameter-precedence-matrix.md` for the four precedence rules and the probe that establishes each reader's rule.
 
 ### Representation and Framing Reading
 
@@ -66,6 +67,7 @@ Re-present the same effect under a second content type or framing declaration, b
 Obfuscate the framing declaration itself so a normalising front end re-derives the boundary differently: a separator or whitespace variant before the declaration's value, a folded continuation, a case variant, or a second declaration of the same framing, because the front end's normalisation decides which form it evaluates.
 Re-derive the request through the transit tier where one exists, since the emitted framing may no longer match the received one.
 Treat a representation the sink decodes differently from the control as the completed probe.
+See `references/framing-obfuscation-table.md` for the declaration variants and the reader pairs they target.
 
 ### Verb and Location Re-reading
 
