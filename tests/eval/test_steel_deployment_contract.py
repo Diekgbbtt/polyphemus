@@ -52,10 +52,6 @@ def test_the_service_restarts_unless_stopped():
     assert _service()["restart"] == "unless-stopped"
 
 
-def test_the_service_restarts_unless_stopped():
-    assert _service()["restart"] == "unless-stopped"
-
-
 def test_the_cache_volume_is_durable_and_mounted():
     service = _service()
     mounts = [str(v) for v in service["volumes"]]
