@@ -12,78 +12,78 @@ Treat every registration comparison as hostile until exact matching binds the is
 
 ## Attack Surface
 
-Applies when an OAuth flow exposes a registration URI field plus a logout continuation field plus relay state on the authorization path.
-Applies when a trusted redirector on an allowlisted domain can forward the issued code onward.
-Applies when an attacker-operated endpoint can receive the relayed code.
-Stays out of scope when the sink is a generic browser redirector or a server fetcher (those belong to the sibling variants).
+- **Applicability**: an OAuth flow exposes a registration URI field, a logout continuation field, and relay state on the authorization path.
+- **Trusted redirector**: a trusted redirector on an allowlisted domain can forward the issued code onward.
+- **Attacker endpoint**: an attacker-operated endpoint can receive the relayed code.
+- **Out-of-scope variants**: a generic browser redirector sink or a server fetcher belongs to the sibling variants.
 
 ## Reconnaissance
 
 ### Registration Probes
 
-List the registration URI field plus the logout continuation field plus relay and state fields on every authorization and logout surface.
-Probe prefix looseness where an attacker suffix nests under the trusted origin.
-Probe suffix looseness where wildcard scoping admits an unintended subdomain shape.
-Probe path traversal where canonicalization reshapes the registered path before comparison.
-Probe logout continuation fields separately because they are commonly validated less strictly.
-Complete when every field owns a looseness hypothesis with its matching rule named.
+- **Field inventory**: list the registration URI field, the logout continuation field, and the relay and state fields on every authorization and logout surface.
+- **Prefix looseness**: probe prefix looseness where an attacker suffix nests under the trusted origin.
+- **Suffix looseness**: probe suffix looseness where wildcard scoping admits an unintended subdomain shape.
+- **Path traversal**: probe path traversal where canonicalization reshapes the registered path before comparison.
+- **Logout continuation probes**: probe logout continuation fields separately because they are commonly validated less strictly.
+- **Completion condition**: complete when every field owns a looseness hypothesis with its matching rule named.
 
 ### Relay Assembly
 
-List trusted redirectors on allowlisted domains that can carry the issued code onward.
-Pair each loose registration with the redirector that forwards to the attacker endpoint.
-Complete when each registration gap has a paired relay path ending at an operated endpoint.
+- **Trusted redirector inventory**: list trusted redirectors on allowlisted domains that can carry the issued code onward.
+- **Registration-relay pairing**: pair each loose registration with the redirector that forwards to the attacker endpoint.
+- **Completion condition**: complete when each registration gap has a paired relay path ending at an operated endpoint.
 
 ## Detection Channels
 
-Issued code arrives at the attacker-operated endpoint through the trusted redirector.
-Location header on the relay hop points to the attacker endpoint while the first hop stays trusted.
-Browser address bar traverses the trusted redirector before landing externally.
+- **Code arrival**: the issued code arrives at the attacker-operated endpoint through the trusted redirector.
+- **Relay-hop location**: the location header on the relay hop points to the attacker endpoint while the first hop stays trusted.
+- **Address-bar traversal**: the browser address bar traverses the trusted redirector before landing externally.
 
 ## Adversarial Capabilities
 
-Supply registration and relay input through the authorization and logout fields.
-Operate a callback endpoint that captures relayed codes.
-Induce victim authorization so the identity provider issues the code to the registered path.
+- **Registration and relay input**: supply registration and relay input through the authorization and logout fields.
+- **Callback endpoint**: operate a callback endpoint that captures relayed codes.
+- **Victim authorization**: induce victim authorization so the identity provider issues the code to the registered path.
 
 ## Trust Assumptions
 
-The redirect feature assumes a destination supplied in the request is constrained to an intended set after canonical parsing, the enforcing parser agrees with the navigating consumer on scheme plus host plus path, every hop of a redirect chain re-verifies the destination, and the destination delivers the victim only to an intended party.
-The clause that fails here is registration binding: the verifier matches the submitted redirect URI loosely while the relay delivers the issued code through a trusted redirector to an attacker endpoint.
+- **The agreement**: a destination supplied in the request is constrained to an intended set after canonical parsing, the enforcing parser agrees with the navigating consumer on scheme, host, and path, every hop of a redirect chain re-verifies the destination, and the destination delivers the victim only to an intended party.
+- **The failing clause**: registration binding fails because the verifier matches the submitted redirect URI loosely while the relay delivers the issued code through a trusted redirector to an attacker endpoint.
 
 ## Key Vulnerabilities
 
 ### Redirect URI Abuse
 
-Trusted-domain relay fails because a loose registration admits an open redirector as the code destination.
-Prefix and suffix checks fail because nested-origin shapes satisfy the textual rule while resolving externally.
-Path traversal fails because canonicalization reshapes the registered path after the check.
-Logout continuation fails because its verifier enforces a weaker rule than the authorization path.
-Bind every issued code to one exactly pre-registered destination compared after full canonicalization.
-Verify scheme plus host plus path exactly and refuse prefix or suffix or substring rules.
-Apply the strict authorization rule to logout continuation fields without exception.
+- **Trusted-domain relay failure**: trusted-domain relay fails because a loose registration admits an open redirector as the code destination.
+- **Prefix and suffix check failure**: prefix and suffix checks fail because nested-origin shapes satisfy the textual rule while resolving externally.
+- **Path-traversal failure**: path traversal fails because canonicalization reshapes the registered path after the check.
+- **Logout continuation failure**: logout continuation fails because its verifier enforces a weaker rule than the authorization path.
+- **Exact binding**: bind every issued code to one exactly pre-registered destination compared after full canonicalization.
+- **Exact verification**: verify scheme, host, and path exactly and refuse prefix, suffix, or substring rules.
+- **Logout rule parity**: apply the strict authorization rule to logout continuation fields without exception.
 
 ## Advanced Techniques
 
-Construct the relay so the identity provider issues to the trusted redirector and the redirector forwards the code onward.
-Carry post-logout looseness as a first-class probe because logout verifiers commonly lag behind authorization verifiers.
-Shape traversal values that normalize across the registered path boundary after comparison.
+- **Relay construction**: construct the relay so the identity provider issues to the trusted redirector and the redirector forwards the code onward.
+- **Post-logout looseness**: carry post-logout looseness as a first-class probe because logout verifiers commonly lag behind authorization verifiers.
+- **Path-boundary traversal**: shape traversal values that normalize across the registered path boundary after comparison.
 
 ## Bypass Techniques
 
-Shape nested-origin values that satisfy prefix rules while resolving to an operated endpoint.
-Shape wildcard-scope values that nest an attacker shape under the trusted scope.
-Shape traversal values that escape the registered path after canonicalization.
-Shape encoded values that decode one extra time between verifier and navigating consumer.
-Shape logout continuation values that exploit the weaker logout rule with an otherwise rejected shape.
+- **Nested-origin values**: shape nested-origin values that satisfy prefix rules while resolving to an operated endpoint.
+- **Wildcard-scope values**: shape wildcard-scope values that nest an attacker shape under the trusted scope.
+- **Traversal values**: shape traversal values that escape the registered path after canonicalization.
+- **Encoded values**: shape encoded values that decode one extra time between verifier and navigating consumer.
+- **Logout continuation values**: shape logout continuation values that exploit the weaker logout rule with an otherwise rejected shape.
 
 When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 
-Relay the intercepted code into token exchange only by handing off to the OAuth token-step owner at the code-redemption step.
-Relay the code through multi-hop redirector chains where each hop preserves the code parameter.
-Pivot relayed access into server-side egress only by handing off to the fetcher-pivot sibling at the fetcher step.
+- **Token-exchange handoff**: relay the intercepted code into token exchange only by handing off to the OAuth token-step owner at the code-redemption step.
+- **Multi-hop relay**: relay the code through multi-hop redirector chains where each hop preserves the code parameter.
+- **Fetcher-pivot handoff**: pivot relayed access into server-side egress only by handing off to the fetcher-pivot sibling at the fetcher step.
 
 ## Testing Methodology
 
@@ -95,17 +95,17 @@ Pivot relayed access into server-side egress only by handing off to the fetcher-
 
 ## False Positives
 
-Exactly pre-registered destinations compared by a strict verifier after full canonicalization stop this variant.
-Single-parser registration checks that compare exact scheme plus host plus path stop this variant.
-Prompts that display the exact final code destination and wait for explicit confirmation stop this variant.
+- **Exact pre-registration**: exactly pre-registered destinations compared by a strict verifier after full canonicalization stop this variant.
+- **Single-parser checks**: single-parser registration checks that compare exact scheme, host, and path stop this variant.
+- **Destination prompts**: prompts that display the exact final code destination and wait for explicit confirmation stop this variant.
 
 ## Pro Tips
 
-1. Prioritize logout continuation fields first because their verifiers are commonly the loosest.
-2. Test traversal inside registered paths because canonicalization timing gaps hide there.
-3. Pair every registration gap with its relay redirector before claiming impact.
-4. Verify every relay hop because first-hop trust rarely survives forwarding.
-5. Keep the registration matrix per field so looseness coverage stays checkable.
+- **Logout continuation priority**: prioritize logout continuation fields first because their verifiers are commonly the loosest.
+- **Traversal inside paths**: test traversal inside registered paths because canonicalization timing gaps hide there.
+- **Registration-relay pairing**: pair every registration gap with its relay redirector before claiming impact.
+- **Per-hop verification**: verify every relay hop because first-hop trust rarely survives forwarding.
+- **Registration matrix**: keep the registration matrix per field so looseness coverage stays checkable.
 
 ## Summary
 
