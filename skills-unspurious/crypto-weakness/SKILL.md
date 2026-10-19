@@ -16,6 +16,7 @@ Weak cryptography in session management, token generation, or data storage leads
 - Keyed checksums: signed session blobs, signed state carriers, signed upload descriptors
 - Machine-issued values: API keys, device codes, one-time codes, anti-forgery tokens
 - At-rest material: stored digests, embedded keys, seeded secrets, static placeholders
+- **Encrypted at-rest material**: stored ciphertext blocks, encrypted cookies, and encrypted columns whose confidentiality rests on the cipher and its initialisation value
 
 ## Reconnaissance
 
@@ -49,6 +50,8 @@ Weak cryptography in session management, token generation, or data storage leads
 - Acceptance verdict on the fully extracted token confirming the recovered value.
 - Flat timing distribution across all prefixes signalling constant-time comparison.
 - Error-class stability showing timing differences are comparison-driven rather than transport-driven.
+- **Block-aligned repetition**: identical ciphertext segments at different plaintext positions, which show a mode that leaks plaintext structure.
+- **Initialisation reuse or drift**: one initialisation value across several samples, or one that advances with a counter or a timestamp, so equal plaintext prefixes produce equal ciphertext.
 
 ## Adversarial Capabilities
 
@@ -66,6 +69,7 @@ The class rests on one agreement: the value of the artifact is what authorizes i
 The agreement holds the artifact free of recoverable structure, holds its random space wide enough to defeat search, holds the verification secret unguessable, and holds the comparison free of side channels.
 Sensitive position leaks when any clause fails: the artifact can be re-derived, the key recovered offline, or the correct value extracted byte by byte.
 Each variant breaks one clause: the structure and randomness clause, the key clause, or the comparison clause.
+The agreement also covers encrypted at-rest material: the class tests that the cipher and its initialisation keep stored material confidential, and a weak mode or a reused or predictable initialisation value discloses plaintext structure without any key recovery.
 Recovery and session artifacts carry the same root because the same generator issues both.
 
 ## Key Vulnerabilities
@@ -88,6 +92,7 @@ Recovery and session artifacts carry the same root because the same generator is
 - Placeholder, dictionary, and product-derived secrets appear in default configurations and copied deployments
 - A key guess is verified locally against one captured signature before it is spent at the endpoint
 - Values derived from the domain, the product name, or the environment are tried alongside wordlists
+- **Key-source resolution**: where the verifier derives its key basis from artifact-carried input, the key basis is attacker-supplied rather than recovered; name the signing-key variant for the resolution step and the authentication-jwt skill for the token-header shapes
 
 ### Digest-of-Known-Input Derivation
 
@@ -98,6 +103,7 @@ Recovery and session artifacts carry the same root because the same generator is
 ### Token Forgery
 
 - Recover the signing clause once the secret or the checksum source is known, then mint claims the verifier trusts
+- **Claim-set targeting**: decode a genuine artifact to read the claim names that control identity, role, and tenant, then mint only those claims under the recovered or attacker-supplied key basis
 - Elevation targets: identity of another principal, role or privilege flags, extended lifetime, widened scope
 - Re-verify the forged artifact locally before replaying it, so a rejected replay attributes to binding rather than construction
 
@@ -106,6 +112,12 @@ Recovery and session artifacts carry the same root because the same generator is
 - Verification that compares values byte by byte without constant time leaks prefix correctness
 - The leak is amplified where tokens are long, comparison is repeated, and the endpoint tolerates many attempts
 - Timing work needs a calibrated baseline over known-invalid values and statistical separation over noise
+
+### Ciphertext Confidentiality
+
+- **Block-aligned leakage**: a mode that encrypts equal plaintext blocks to equal ciphertext blocks exposes structure and repetition in stored material without any key recovery
+- **Initialisation reuse**: a reused or predictable initialisation value makes equal plaintext prefixes produce equal ciphertext, so one sample answers for many
+- **Weak random source**: a non-cryptographic generator behind key or initialisation creation turns the value into a guessable one, so the search space for the secret step above collapses
 
 ## Advanced Techniques
 
@@ -125,6 +137,12 @@ Recovery and session artifacts carry the same root because the same generator is
 
 - Values issued under a retired key or a previous generator version stay valid inside an overlap window
 - Sampling across a rotation boundary shows whether the retirement is enforced at verification or only at issuance
+
+### Ciphertext Structure Analysis
+
+- **Sample comparison first**: compare ciphertext samples for repeated blocks and repeated initialisation values before attempting any key work
+- **Structure recovery**: recover plaintext structure from a mode that preserves block equality, and search the seed space where the initialisation value advances predictably
+- **Stop signal**: a mode that randomises every block under a unique unpredictable initialisation value closes this line rather than inviting more samples
 
 ## Bypass Techniques
 
@@ -155,10 +173,11 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 5. **Test key guesses** - Verify candidate secrets locally against a captured signature, then at the endpoint; the step completes when the secret is recovered or the candidate space is exhausted with each family recorded.
 6. **Forge and replay** - Mint the elevated claims and replay at the accepting endpoint; the step completes when acceptance or rejection is recorded with the receiving context.
 7. **Measure comparison** - Calibrate a baseline and iterate prefixes with repeated samples; the step completes when timing separation is proven or constant-time comparison is recorded.
+8. **Test ciphertext confidentiality** - Collect encrypted samples and compare them for repeated blocks and reused or predictable initialisation values; the step completes when each encrypted store carries a cipher and initialisation verdict.
 
 ## Variants
 
-- crypto-predictable-token - Predict recovery and session artifacts from embedded counters or digest-of-known-input structure, and confirm candidates at the accepting endpoint.
+- crypto-predictable-token - Predict recovery and session artifacts from embedded counters or digest-of-known-input structure, or enumerate a space small enough for the validity window, and confirm candidates at the accepting endpoint.
 - crypto-signing-key-forgery - Forge signed artifacts under a recovered key, or strip signature validation when an unchecked algorithm accepts keyless values.
 - crypto-timing-oracle - Extract the value through comparison timing when verification leaks prefix correctness, iterating prefixes against a calibrated baseline.
 
@@ -168,6 +187,7 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 - Artifacts that verify only under a full binding of identity plus audience plus lifetime, and expire quickly
 - Timing differences that vanish under repetition, or that match the endpoint's normal variance
 - Candidate derivations that fail acceptance at every endpoint, which marks a strong random source rather than a weak one
+- Encrypted material whose mode randomises every block under a unique unpredictable initialisation value, with no reuse across samples
 
 ## Pro Tips
 
@@ -178,7 +198,8 @@ When this section does not fulfil the knowledge gap, extend the reading with the
 5. Values shorter than the strong-randomness bound fall to brute force or tables
 6. Collect 5-10 samples per artifact and look for counters, timestamps, and shared prefixes inside them
 7. Mint elevated claims and confirm acceptance end to end; a local re-verification success is not yet a finding
+8. Run the whole forgery suite across every mode before manual chaining; one automated pass finds the weak mode faster than a hand-built chain
 
 ## Summary
 
-A token is only as strong as its unpredictability, its key, and its comparison. Weak generation, guessable keys, and leaky comparison each convert a held artifact into account takeover or privilege escalation.
+A token is only as strong as its unpredictability, its key, its comparison, and the confidentiality of the material it protects. Weak generation, guessable keys, leaky comparison, and weak at-rest encryption each convert a held artifact into account takeover or privilege escalation.
