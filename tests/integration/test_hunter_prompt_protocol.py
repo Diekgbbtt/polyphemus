@@ -56,7 +56,7 @@ def _spec(status, fault, strategy, *, symptom, assumption, rationale):
             "unit_id": UNIT_ID,
             "canonical_class": "IDOR",
             "web_vulnerability_class": "idor",
-            "baseline_ref": "GET /api/a",
+            "baseline_ref": "http_01J0000000000000000000000A",
             "skill_procedure": {
                 field: f"the class skill's {field} excerpt"
                 for field in SKILL_PROCEDURE_FIELDS

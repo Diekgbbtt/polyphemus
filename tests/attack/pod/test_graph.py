@@ -180,7 +180,10 @@ def test_the_baseline_ref_is_replayed_by_the_runner():
 
 def test_no_derivable_probe_lands_no_symptom_evidence_clean_false():
     """S5 8.5: an authoring gap is impaired coverage, not target absence - it
-    lands `no-symptom-evidence` with `clean=false`, never `space-exhausted`."""
+    lands `no-symptom-evidence` with `clean=false`, never `space-exhausted`.
+    The base d78d2593 would already pass THIS zero-observation case (its
+    `_clean_from_trail` is false with no observations); the discriminating
+    case is the later no-probe variant below."""
     steps = [RunnerStep(action="conclude", exhausted=True,
                         observation_note="no probe derivable from the spec")]
     env = _run(arun_pod(VALID_SPEC, exec_fn=_exec(_OK),
@@ -188,6 +191,37 @@ def test_no_derivable_probe_lands_no_symptom_evidence_clean_false():
                         trace_fn=_no_trace))
     assert env["verdict"] == "unsuccessful"
     assert env["evidence"]["terminal_reason"] == "no-symptom-evidence"
+    assert env["evidence"]["clean"] is False
+
+
+def test_a_later_variant_with_no_derivable_probe_is_not_a_clean_exhaustion():
+    """S5 8.5: a spec with no derivable probe lands `no-symptom-evidence` with
+    `clean=false`, never `space-exhausted`. The FIRST stretch records a clean
+    observation, then the critic mints a variant with no target identity; the
+    next stretch authors nothing. The base d78d2593's whole-run
+    `_clean_from_trail` would have called this a clean `space-exhausted`; the
+    current-stretch scope refuses it."""
+    variant_spec = {**VALID_SPEC, "target_identity": {}}
+    decisions = iter([
+        {"classification": "symptom-absent", "action": "variant",
+         "declined_attribute": "recon-action",
+         "variant_spec": variant_spec,
+         "feedback": "try without a target identity"},
+        {"classification": "symptom-absent", "action": "terminate",
+         "verdict": "unsuccessful", "terminal_reason": "space-exhausted",
+         "clean": True},
+    ])
+
+    def triager(spec, obs, messages, log):
+        return next(decisions)
+
+    env = _run(arun_pod({**VALID_SPEC, "verification_symptoms": ["reflects the marker"]},
+                        exec_fn=_exec(_ABSENT), runner_step_fn=symbolic_runner_step_fn,
+                        triager_fn=triager, trace_fn=_no_trace))
+    assert env["evidence"]["iterations"] == 2
+    assert env["evidence"]["raw_observations"]       # the first stretch did probe
+    assert env["evidence"]["terminal_reason"] == "no-symptom-evidence"
+    assert env["evidence"]["terminal_reason"] != "space-exhausted"
     assert env["evidence"]["clean"] is False
 
 

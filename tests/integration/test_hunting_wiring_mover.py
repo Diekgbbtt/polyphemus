@@ -55,7 +55,9 @@ import pytest
 
 from polymerhus.attack.hunting.hunter_memory import HunterMemoryStore
 from polymerhus.attack.hunting.mover import (
+    TestSpecItem,
     pod_session_id,
+    read_produced_inbox,
     run_delivery_tick,
 )
 from polymerhus.attack.hunting.threat_model_store import ThreatModelStore
@@ -557,3 +559,100 @@ def test_C38_live_parent_inbox_receives_pod_export_before_settle_single_record(
     # idle-loop verdict stub) must NOT double-record against the pod-completion note
     notes = hunter.read_notes(PROJECT, parent_key=DISPATCH_ID)
     assert len(notes) == 1
+
+
+# --- T8 spec review: the store body is projected onto the D4 -------------------
+
+_OK = "<html>market</html>\n__POD_HTTP_STATUS__:200\n__POD_HTTP_TIME__:0.05"
+
+
+def test_C39_the_real_store_body_reaches_the_real_init_gate_and_authors_a_probe(
+    tmp_path,
+):
+    """T8 spec review (S5 8.4): the hunter store persists `status`,
+    `fault_keyword`, and `strategy_keyword` beside the D4 body (S3 8.6), and the
+    mover + surfer pass that body on. The dispatch boundary projects the body
+    onto the D4, so the REAL store body passes the REAL INIT gate and the REAL
+    runner authors the probe; the store file keeps its metadata, and a retired
+    field still rejects at the schema/gate seam."""
+    from pydantic import ValidationError
+
+    from polymerhus.attack.hunting.pod import arun_pod
+    from polymerhus.attack.hunting.pod.agents import symbolic_runner_step_fn
+    from polymerhus.attack.hunting.pod.types import TestImplementationSpec
+    from polymerhus.attack.hunting.pod.verification import validate_spec
+    from polymerhus.recon.domain.types import ExecResult
+
+    threat = ThreatModelStore(tmp_path / "threat")
+    hunter = HunterMemoryStore(tmp_path / "hunter")
+    pod_store = PodMemoryStore(root_dir=tmp_path / "pod", project_id=PROJECT)
+    body = {
+        "status": "ratified",
+        "fault_keyword": SPEC_KEYWORD,
+        "strategy_keyword": STRATEGY,
+        "target_identity": {"url": "http://soupmarket.shop/",
+                            "unit_id": "service:web:soupmarket"},
+        "verification_symptoms": ["HTTP 200 with a non-empty body on GET /"],
+        "assumptions": ["network egress allowed"],
+        "rationale": "reachability",
+        "provenance": {"loop_id": "loop-1",
+                       "unit_id": "service:web:soupmarket",
+                       "canonical_class": CLASS,
+                       "web_vulnerability_class": "idor"},
+    }
+    hunter.write_specs(PROJECT, DISPATCH_ID, [body], side="produced")
+
+    inbox = read_produced_inbox(PROJECT, RUN, hunter_store=hunter)
+    items = [item for item in inbox.items if isinstance(item, TestSpecItem)]
+    assert len(items) == 1
+
+    # The store body on disk keeps the lifecycle + identity metadata.
+    persisted = hunter.read_spec(PROJECT, DISPATCH_ID, SPEC_FILE)
+    assert persisted["status"] == "ratified"
+    assert persisted["fault_keyword"] == SPEC_KEYWORD
+    assert persisted["strategy_keyword"] == STRATEGY
+
+    seen: dict = {}
+
+    def fake_exec(command, timeout_s):
+        seen.setdefault("calls", []).append(command)
+        return ExecResult(stdout=_OK, stderr="", returncode=0, duration_ms=1)
+
+    async def pod_builder(spec, *, run_id, project_id, memory_store, spec_id,
+                          **kw):
+        seen["spec"] = dict(spec)
+        return await arun_pod(
+            spec, exec_fn=fake_exec, runner_step_fn=symbolic_runner_step_fn,
+            triager_fn=None, trace_fn=lambda _run_id: [])
+
+    def hunter_builder(**_kwargs):  # never a hunter dispatch in this seed
+        raise AssertionError("no hunter dispatch expected")
+
+    coro_for = build_run_dispatch(
+        project_id=PROJECT, run_id=RUN, threat_store=threat,
+        hunter_store=hunter, pod_store=pod_store, state=RunDispatchState(),
+        gate=None, hunter_builder=hunter_builder, pod_builder=pod_builder,
+    )
+    envelope = asyncio.run(coro_for(items[0]))
+
+    # The INIT gate passed: the run is a real pod verdict, not a rejection.
+    assert envelope["verdict"] == "successful"
+    assert envelope["evidence"]["terminal_reason"] == "symptom-confirmed"
+    assert not envelope["evidence"].get("init_validation")
+
+    # The pod received the pure D4: the store metadata was projected away.
+    received = seen["spec"]
+    for metadata in ("status", "fault_keyword", "strategy_keyword"):
+        assert metadata not in received
+    assert validate_spec(received) == []
+
+    # The runner reached probe authoring: one authored curl of the target URL.
+    assert len(seen["calls"]) == 1
+    assert body["target_identity"]["url"] in seen["calls"][0]
+    assert envelope["evidence"]["raw_observations"]
+
+    # The projection does NOT hide a retired field: the gate/schema still reject.
+    retired = {**received, "testing_pattern": "blind-boolean"}
+    assert any("testing_pattern" in v for v in validate_spec(retired))
+    with pytest.raises(ValidationError):
+        TestImplementationSpec.model_validate(retired)

@@ -36,16 +36,21 @@ _MANDATORY_FIELDS = ("target_identity", "verification_symptoms")
 def _shape_violations(raw: dict) -> list[str]:
     """The D4 parse errors the gate reports (S5 8.4, S5 8.8): an unknown field
     (the retired three included) is rejected by name, and any other wrong-typed
-    optional field is reported. The two mandatory fields are skipped here - the
-    explicit checks below emit better messages for them; one field never lands
-    twice in the same rejection."""
+    field is reported.
+
+    Only a ROOT-level error under a mandatory field is skipped - the explicit
+    checks below emit a better message for a missing URL or an empty symptom
+    list. A NESTED error under them is kept: a mixed symptom list
+    (`["ok", 3]`) has a non-blank string and would otherwise pass the
+    emptiness check while failing the `list[str]` parse the gate is meant to
+    be."""
     try:
         TestImplementationSpec(**raw)
     except ValidationError as exc:
         out: list[str] = []
         for err in exc.errors():
             loc = tuple(err.get("loc") or ())
-            if loc and loc[0] in _MANDATORY_FIELDS:
+            if len(loc) == 1 and loc[0] in _MANDATORY_FIELDS:
                 continue
             name = ".".join(str(part) for part in loc) or "<spec>"
             if err.get("type") == "extra_forbidden":

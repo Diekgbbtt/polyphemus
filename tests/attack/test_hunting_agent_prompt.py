@@ -262,6 +262,15 @@ def test_the_prompt_carries_the_reduced_d4_spec_body():
     assert "It carries no failure-mode detail and no narrowed vector" in prompt
 
 
+def test_the_baseline_example_is_an_artifact_pointer_not_a_request_line():
+    """S5 8.5: `provenance.baseline_ref` is ONE optional artifact id, never a
+    request line. The worked example must teach the replay-compatible shape."""
+    prompt = _prompt()
+    assert '"baseline_ref": "http_' in prompt
+    assert '"baseline_ref": "GET ' not in prompt
+    assert "the payload's baseline evidence" in prompt
+
+
 def test_the_prompt_carries_the_phase_summary_note_exits():
     """S3 8.4/S4 14.8: five note exits named `phase:<state>` with kind
     `phase_summary`; a re-iteration updates the same note; the two store exits

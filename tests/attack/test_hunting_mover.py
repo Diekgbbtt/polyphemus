@@ -32,6 +32,7 @@ from polymerhus.attack.hunting.mover import (
     ProducedItem,
     TestSpecItem,
     ThreatLoopItem,
+    d4_spec_body,
     deduce_delivery,
     hunter_session_id,
     orchestrator_session_id,
@@ -372,3 +373,26 @@ def test_session_ids_reject_empty_segments():
         pod_session_id("r-1", "", "spec-1")
     with pytest.raises(ValueError):
         pod_session_id("r-1", "cfg-1", "")
+
+def test_d4_spec_body_drops_only_the_store_metadata():
+    """S5 8.4: the pod's INIT gate sees the D4, never the hunter store's
+    bookkeeping; a retired field is NOT projected away, so the gate stays the
+    authority on the retired names."""
+    body = {
+        "status": "ratified",
+        "fault_keyword": "sqli",
+        "strategy_keyword": "blind",
+        "target_identity": {"url": "http://target.example/"},
+        "verification_symptoms": ["reflects the marker"],
+        "assumptions": [],
+        "rationale": "r",
+        "parent_spec_ref": None,
+        "provenance": {"loop_id": "loop-1"},
+    }
+    projected = d4_spec_body(body)
+    assert projected == {
+        key: value for key, value in body.items()
+        if key not in ("status", "fault_keyword", "strategy_keyword")
+    }
+    assert "testing_pattern" in d4_spec_body({**body, "testing_pattern": "x"})
+    assert d4_spec_body(None) == {}

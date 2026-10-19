@@ -78,6 +78,16 @@ def test_blank_symptoms_only_is_a_violation():
     assert any("verification_symptoms" in v for v in validate_spec(spec))
 
 
+def test_a_mixed_symptom_list_is_a_violation():
+    # A list that carries a non-string entry cannot parse as the reduced D4
+    # (`list[str]`), so the gate rejects it too instead of passing a shape the
+    # model would fail on later.
+    spec = {**VALID_SPEC, "verification_symptoms": ["ok", 3]}
+    assert any("verification_symptoms" in v for v in validate_spec(spec))
+    with pytest.raises(ValidationError):
+        D4Spec.model_validate(spec)
+
+
 def test_one_non_blank_symptom_is_enough():
     spec = {**VALID_SPEC, "verification_symptoms": ["   ", "reflects the marker"]}
     assert validate_spec(spec) == []

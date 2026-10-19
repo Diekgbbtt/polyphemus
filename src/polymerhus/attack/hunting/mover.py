@@ -889,6 +889,28 @@ def produced_spec_body(
 # dispatch gate; S3 8.6/8.7's terminal `ratified` is the ratified-spec gate).
 SPEC_DISPATCH_STATUS = "ratified"
 
+# The hunter store's OWN metadata (S3 8.6/8.7): persisted beside the D4 body -
+# `status` is the lifecycle, the two keywords derive the file-name identity.
+# None of it is part of the pod contract, so the dispatch boundary drops it.
+STORE_SPEC_METADATA: tuple[str, ...] = (
+    "status", "fault_keyword", "strategy_keyword",
+)
+
+
+def d4_spec_body(spec: Mapping[str, Any]) -> dict:
+    """Project a stored hunter spec body onto the pod's D4 input (S5 8.4).
+
+    The pod's INIT gate ranges over the reduced D4 with `extra="forbid"`, so the
+    dispatch boundary removes ONLY the store metadata (`STORE_SPEC_METADATA`).
+    The D4 fields - and any retired field a stale writer left behind - still
+    reach the gate: a retired name keeps rejecting instead of being silently
+    projected away. Returns a shallow copy; the stored body on disk is
+    unchanged."""
+    if not isinstance(spec, Mapping):
+        return {}
+    return {key: value for key, value in spec.items()
+            if key not in STORE_SPEC_METADATA}
+
 
 def read_produced_inbox(
     project_id: str,

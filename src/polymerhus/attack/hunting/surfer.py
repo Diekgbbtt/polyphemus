@@ -76,6 +76,7 @@ from polymerhus.attack.hunting.hunter_payload import materialise_hunter_payload
 from polymerhus.attack.hunting.mover import (
     THREAT_MODELLER_SEGMENTS,
     SPEC_DISPATCH_STATUS,
+    d4_spec_body,
     loop_refusal_detail,
     produced_spec_body,
     ProducedItem,
@@ -759,11 +760,17 @@ async def run_pod_session(
     present, BEFORE the session settles, so the run-terminal `settle` message
     can never overtake it in the hunter's inbox. A missing inbox (the parent was
     consumed by an earlier run) is not an error - the durable record has already
-    landed, so nothing is dropped."""
+    landed, so nothing is dropped.
+
+    The stored spec body carries the hunter store's own metadata (`status`, the
+    two identity keywords; S3 8.6) beside the D4. The dispatch boundary projects
+    it onto the reduced D4 (`d4_spec_body`), so the pod's INIT gate sees the
+    spec contract and never the store's bookkeeping; a retired field still
+    reaches the gate and rejects (S5 8.4/8.8)."""
     async def _run() -> dict:
         try:
             return await pod_builder(
-                spec, run_id=run_id, project_id=project_id,
+                d4_spec_body(spec), run_id=run_id, project_id=project_id,
                 memory_store=pod_store, spec_id=spec_id,
             )
         except ProviderUnavailableError as exc:

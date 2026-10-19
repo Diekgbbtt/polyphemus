@@ -220,14 +220,17 @@ def seed_test_spec(project_id: str, *, hunt_key: str, fault_keyword: str,
     family; returns the spec file stem. `hunt_key` is the loop dispatch id.
 
     The seeded body MUST pass the pod's REAL INIT gate
-    (`verification.validate_spec`): a `specified` spec with an empty typed base
-    is rejected by the pod at INIT with ZERO tool calls and settles within
-    seconds - no live pod session is ever observable. The default carries a
-    minimal VALID testable surface (a target identity, one verification symptom,
-    a testing pattern), so a dispatched pod passes INIT and runs genuine ReAct
-    turns, keeping a REAL registered session live across the pause/resume/stop
-    observation windows (the per-session verbs act on a real in-flight session,
-    never a fabricated one)."""
+    (`verification.validate_spec`): a draft spec with an empty reduced D4 (no
+    target URL or no symptom) is rejected by the pod at INIT with ZERO tool
+    calls and settles within seconds - no live pod session is ever observable.
+    The default carries a minimal VALID reduced D4 (a target identity, one
+    verification symptom, assumptions, rationale), so a dispatched pod passes
+    INIT and runs genuine ReAct turns, keeping a REAL registered session live
+    across the pause/resume/stop observation windows (the per-session verbs act
+    on a real in-flight session, never a fabricated one). The store metadata the
+    body also carries (`status`, `fault_keyword`, `strategy_keyword`) is
+    projected away at the dispatch boundary (`mover.d4_spec_body`), so the pod
+    gate sees the pure D4 (S5 8.4)."""
     from polymerhus.attack.hunting.hunter_memory import HunterMemoryStore
     spec = {
         "status": status, "fault_keyword": fault_keyword,

@@ -171,6 +171,7 @@ Every spec in the set carries the same reduced surface at every status:
   It carries no failure-mode detail and no narrowed vector.
 - `parent_spec_ref`: the parent identity, only when the spec is derived from another.
 - `provenance`: `loop_id`, `unit_id`, `canonical_class`, `web_vulnerability_class`, and the optional `baseline_ref`, plus `skill_procedure`.
+  `baseline_ref` is ONE recorded artifact id (`http_...`) from the payload's baseline evidence, never a request line: the pod replays that artifact to keep its lineage.
 
 The `skill_procedure` is the typed seven-field excerpt from the loaded class skill: `recon_action`, `bypass_technique`, `technology_grounding`, `pro_tips`, `advanced_technique`, `preliminary_chaining`, `interpretation_pitfalls`.
 Each field carries the skill's text for that procedure section; keep the whole excerpt under 4000 characters.
@@ -235,7 +236,7 @@ The direct-download entry:
      authorisation input, so the tenant boundary is decided by the request.",
    "provenance": {"loop_id": "loop-1", "unit_id": "Service:reports:a",
      "canonical_class": "IDOR", "web_vulnerability_class": "idor",
-     "baseline_ref": "GET /reports/1/download",
+     "baseline_ref": "http_01J0000000000000000000000A",
      "skill_procedure": {"recon_action": "...", "bypass_technique": "...",
        "technology_grounding": "...", "pro_tips": "...",
        "advanced_technique": "...", "preliminary_chaining": "...",

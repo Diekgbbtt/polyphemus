@@ -696,10 +696,13 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
 
     def exhausted_terminal(state: PodState) -> dict:
         log: ExperimentLog = state["log"]
-        if not log.raw_observations:
-            # S5 8.5: no probe was derivable (the old empty-vector
+        if not state.get("stretch_obs", 0):
+            # S5 8.5: THIS stretch authored no probe (the old empty-vector
             # space-exhausted is retired). An authoring gap is impaired
             # coverage, not target absence - `no-symptom-evidence`, clean false.
+            # The scope is the current stretch, not the whole run: a prior
+            # stretch's clean observation cannot launder a later no-probe
+            # variant into `space-exhausted`.
             return _export(state, verdict="unsuccessful",
                            reason=NO_SYMPTOM_EVIDENCE, clean=False)
         clean = _clean_from_trail(log)
