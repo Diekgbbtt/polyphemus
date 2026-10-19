@@ -13,78 +13,78 @@ The goal is duplicate fulfillment plus duplicate credit that persists in the aut
 
 ## Attack Surface
 
-Idempotency applicability centers on workflows that accept a client-supplied dedup key alongside a state-changing operation.
-The surface holds create plus apply plus redeem plus transfer operations where exactly-once execution depends on the key rather than on an atomic commit guard.
-Keys scoped to path rather than principal, keys held only in volatile cache, and keys with short lifetimes that re-arm after eviction all widen the surface.
-Pure read-modify-write increments without any dedup layer ride in the parent core rather than here, because this variant owns only key-mediated dedup.
+- **Applicability**: idempotency applicability centers on workflows that accept a client-supplied dedup key alongside a state-changing operation.
+- **Surface composition**: the surface holds create plus apply plus redeem plus transfer operations where exactly-once execution depends on the key rather than on an atomic commit guard.
+- **Widening factors**: keys scoped to path rather than principal, keys held only in volatile cache, and keys with short lifetimes that re-arm after eviction all widen the surface.
+- **Out-of-scope variant**: pure read-modify-write increments without any dedup layer ride in the parent core rather than here, because this variant owns only key-mediated dedup.
 
 ## Reconnaissance
 
-Idempotency maps the key contract before racing, because blind reuse cannot distinguish scope failure from durability failure.
-Enumerate where the dedup check sits relative to the effect commit and note whether the check store is durable or cache-only.
-Probe scope by replaying a recorded finalize request with a foreign key and with a same-principal key separately, then compare which replay the server accepts.
-Record key lifetime plus binding breadth plus backing store, because a key honored from cache but absent from durable storage re-arms after eviction.
+- **Key-contract mapping**: idempotency maps the key contract before racing, because blind reuse cannot distinguish scope failure from durability failure.
+- **Check-placement enumeration**: enumerate where the dedup check sits relative to the effect commit and note whether the check store is durable or cache-only.
+- **Scope probe**: probe scope by replaying a recorded finalize request with a foreign key and with a same-principal key separately, then compare which replay the server accepts.
+- **Key-property recording**: record key lifetime plus binding breadth plus backing store, because a key honored from cache but absent from durable storage re-arms after eviction.
 
 ## Detection Channels
 
-Idempotency listens for dedup-shaped doubles, so only the entries below are live here.
-- Sequential request fails but parallel requests succeed with the same dedup key material.
-- Second effect commits while the response claims deduplication for one intent.
-- Foreign or replayed key still commits a second effect in the authoritative source.
-- Balance or entitlement delta persists across a fresh read after the dedup response claimed suppression.
+- **Channel scope**: idempotency listens for dedup-shaped doubles, so only the entries below are live here.
+- **Sequential-versus-parallel divergence**: sequential request fails but parallel requests succeed with the same dedup key material.
+- **Response-versus-effect split**: second effect commits while the response claims deduplication for one intent.
+- **Foreign-key acceptance**: foreign or replayed key still commits a second effect in the authoritative source.
+- **Persisting delta**: balance or entitlement delta persists across a fresh read after the dedup response claimed suppression.
 
 ## Adversarial Capabilities
 
-Idempotency presupposes parallel submission plus key reuse plus ledger readback, and it consumes all three.
-- Fire identical state-changing operations with shared dedup key material inside the same commit window.
-- Operate as a legitimate authenticated user entitled to perform the operation at least once.
-- Reuse keys across principals and paths to test scope binding breadth.
-- Replay recorded finalize requests through direct calls outside the scripted interface.
-- Read the authoritative source after the burst to separate durable doubles from suppressed responses.
+- **Prerequisites**: idempotency presupposes parallel submission plus key reuse plus ledger readback, and it consumes all three.
+- **Shared-key firing**: fire identical state-changing operations with shared dedup key material inside the same commit window.
+- **Legitimate operation access**: operate as a legitimate authenticated user entitled to perform the operation at least once.
+- **Cross-principal key reuse**: reuse keys across principals and paths to test scope binding breadth.
+- **Finalize replay**: replay recorded finalize requests through direct calls outside the scripted interface.
+- **Authoritative-source reads**: read the authoritative source after the burst to separate durable doubles from suppressed responses.
 
 ## Trust Assumptions
 
-The feature trusts that concurrent executions of one state-changing workflow interleave safely: checks precede effects atomically, dedup keys bind one intent to one effect durably, version guards validate on every path, and published state becomes visible before dependent actions proceed.
-Sensitive balance plus entitlement plus ledger state leaks only when an execution commits outside these clauses.
-This variant breaks the durable dedup clause because a reused key suppresses only the response while the effect commits again.
+- **The agreement**: the feature trusts that concurrent executions of one state-changing workflow interleave safely: checks precede effects atomically, dedup keys bind one intent to one effect durably, version guards validate on every path, and published state becomes visible before dependent actions proceed.
+- **The exposure**: sensitive balance plus entitlement plus ledger state leaks only when an execution commits outside these clauses.
+- **The failing clause**: this variant breaks the durable dedup clause because a reused key suppresses only the response while the effect commits again.
 
 ## Key Vulnerabilities
 
 ### Cross-Principal Key Scope Reuse
 
-Reuse one key across principals and paths with placeholder shape `<state-change-payload>` plus `<dedup-key>`, because scope failure is the first bent behavior the parent never describes.
-Treat acceptance of a foreign key as scope failure and treat acceptance of a same-principal replay after success as durability failure.
-The parent concurrent-requests step covers only identical-input firing and cannot describe cross-principal reuse, so this variant owns the scope procedure.
+- **Cross-principal reuse**: reuse one key across principals and paths with placeholder shape `<state-change-payload>` plus `<dedup-key>`, because scope failure is the first bent behavior the parent never describes.
+- **Acceptance adjudication**: treat acceptance of a foreign key as scope failure and treat acceptance of a same-principal replay after success as durability failure.
+- **Scope ownership**: the parent concurrent-requests step covers only identical-input firing and cannot describe cross-principal reuse, so this variant owns the scope procedure.
 
 ### Cache-Before-Commit Window Probing
 
-Strike before the dedup store is written by firing the burst inside the check-to-store gap, because the window between effect start and key persistence is the second bent behavior.
-Ramp tightness from loose pairs toward synchronized release until the second lane either dedups cleanly or commits through the gap.
-Treat a second commit that lands only under tight synchronization as window evidence rather than as scope evidence.
+- **Window strike**: strike before the dedup store is written by firing the burst inside the check-to-store gap, because the window between effect start and key persistence is the second bent behavior.
+- **Tightness ramp**: ramp tightness from loose pairs toward synchronized release until the second lane either dedups cleanly or commits through the gap.
+- **Window adjudication**: treat a second commit that lands only under tight synchronization as window evidence rather than as scope evidence.
 
 ### Response-Versus-Effect Dedup Forensics
 
-Confirm every suspected double in the authoritative ledger rather than in the response body, because application dedup can drop only the response while side effects still occur.
-Treat partial fulfilment as a double too: one lane can return an error while both effects commit, so read the ledger rather than the pair of responses.
-Re-read balances plus entitlements plus fulfillment records after a settling delay and require the double to persist.
-Treat doubles visible only in transient responses as inconclusive rather than positive.
+- **Ledger confirmation**: confirm every suspected double in the authoritative ledger rather than in the response body, because application dedup can drop only the response while side effects still occur.
+- **Partial-fulfilment reading**: treat partial fulfilment as a double too - one lane can return an error while both effects commit, so read the ledger rather than the pair of responses.
+- **Settled re-read**: re-read balances plus entitlements plus fulfillment records after a settling delay and require the double to persist.
+- **Transient-double adjudication**: treat doubles visible only in transient responses as inconclusive rather than positive.
 
 ## Bypass Techniques
 
-Bypass forms stay aspects inside this variant because no channel difference changes the dedup step itself.
-- Identity rotation across sessions widens the burst when per-entity throttles cap one principal.
-- Slow-backend provocation widens the check-to-store gap so the second lane lands before the key persists.
-- Name the proxy-techniques family at the channel-wrapping step rather than restating relay mechanics.
-- Name the defence-bypass family at the edge-versus-core gate step rather than restating gateway differentials.
+- **Bypass scope**: bypass forms stay aspects inside this variant because no channel difference changes the dedup step itself.
+- **Identity rotation**: identity rotation across sessions widens the burst when per-entity throttles cap one principal.
+- **Slow-backend provocation**: slow-backend provocation widens the check-to-store gap so the second lane lands before the key persists.
+- **Proxy-technique pointer**: name the proxy-techniques family at the channel-wrapping step rather than restating relay mechanics.
+- **Defence-bypass pointer**: name the defence-bypass family at the edge-versus-core gate step rather than restating gateway differentials.
 
 When this section does not fulfil the knowledge gap, extend the reading with the defence-bypass and proxy-techniques families.
 
 ## Chaining Attacks
 
-Idempotency chains forward into impact once the double is durable, because a suppressed response alone proves nothing.
-- Hand a durable double fulfillment to business-logic invariant checks to test double-refund summation above the captured amount.
-- Hand revealed workflow identifiers to identifier-substitution checks to replay keys against sibling resources.
-- Name the two-principal-authz skill at the authorization-principal step rather than restating its checks.
+- **Chain scope**: idempotency chains forward into impact once the double is durable, because a suppressed response alone proves nothing.
+- **Invariant-check handoff**: hand a durable double fulfillment to business-logic invariant checks to test double-refund summation above the captured amount.
+- **Identifier-substitution handoff**: hand revealed workflow identifiers to identifier-substitution checks to replay keys against sibling resources.
+- **Authorization-principal pointer**: name the two-principal-authz skill at the authorization-principal step rather than restating its checks.
 
 ## Testing Methodology
 
@@ -98,20 +98,20 @@ Idempotency races the key first and everything else confirms, because no later s
 
 ## False Positives
 
-Stop when the evidence shows dedup held, because a clean key store is not a finding.
-- Durable single effect with deduped responses and no second ledger write.
-- Policy-allowed duplicate issuance such as documented goodwill credits with matching ledger annotations.
-- Visual-only echoes without durable state change in the authoritative source.
-- Doubles that collapse after settling because a compensating job correctly reversed the second commit.
+- **Dedup-held stop**: stop when the evidence shows dedup held, because a clean key store is not a finding.
+- **Durable single effect**: durable single effect with deduped responses and no second ledger write.
+- **Policy-allowed issuance**: policy-allowed duplicate issuance such as documented goodwill credits with matching ledger annotations.
+- **Visual-only echoes**: visual-only echoes without durable state change in the authoritative source.
+- **Settling doubles**: doubles that collapse after settling because a compensating job correctly reversed the second commit.
 
 ## Pro Tips
 
-Idempotency rewards key discipline plus ledger discipline plus minimal bursts.
-1. Prefer the smallest burst that reaches the gap, then tighten timing only to map the window.
-2. Favor direct calls over scripted interface clicks so lane timing stays tight.
-3. Log every lane behind its key and timestamp so the double is attributable.
-4. Re-read the ledger after settling and report only persisting imbalances.
-5. Stop promoting transient echoes and record them as inconclusive rather than positive.
+- **Key discipline**: idempotency rewards key discipline plus ledger discipline plus minimal bursts.
+- **Minimal burst**: prefer the smallest burst that reaches the gap, then tighten timing only to map the window.
+- **Direct calls**: favor direct calls over scripted interface clicks so lane timing stays tight.
+- **Lane logging**: log every lane behind its key and timestamp so the double is attributable.
+- **Settled ledger re-read**: re-read the ledger after settling and report only persisting imbalances.
+- **Transient-echo discipline**: stop promoting transient echoes and record them as inconclusive rather than positive.
 
 ## Summary
 

@@ -104,11 +104,11 @@ Partial construction runs phase mapping first and the synchronised list last, be
 
 ## Pro Tips
 
-1. Prefer mapping the phase sequence first, because the window lives between two named phases rather than in raw timing.
-2. Favor distinct requests over repeated ones, since a repeated request never reaches a different phase.
-3. Keep one control member per list so the winning path stays attributable.
-4. Re-read the authoritative record after the window, because a mid-creation response alone proves nothing.
-5. Widen the window with slow dependencies only after the first list shows a partial effect.
+- **Phase mapping first**: prefer mapping the phase sequence first, because the window lives between two named phases rather than in raw timing.
+- **Distinct requests**: favor distinct requests over repeated ones, since a repeated request never reaches a different phase.
+- **One control member per list**: keep one control member per list so the winning path stays attributable.
+- **Settled re-read**: re-read the authoritative record after the window, because a mid-creation response alone proves nothing.
+- **Window widening**: widen the window with slow dependencies only after the first list shows a partial effect.
 
 ## Summary
 
