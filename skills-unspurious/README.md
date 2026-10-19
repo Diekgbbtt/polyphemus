@@ -47,9 +47,9 @@ The mount never repoints the live catalogue root `skills/`, which other streams 
 
 - The 30 kept level-1 skills (`two-principal-authz` included as the cross-cutting entry), de-spuriated per the Phase 2 checklist.
 - 101 variant skills across 28 decomposed classes, authored against the ontology and reviewed.
-- The two technique families, `defence-bypass` and `proxy-techniques` (C1 of #278): level-1 groups beside the classes, each a conformed parent plus six variant leaves, authored against the ontology and the variant boundary.
-  - `defence-bypass` - `defence-bypass-signature-evasion`, `defence-bypass-encoding-differential`, `defence-bypass-parser-confusion`, `defence-bypass-allowance-gap`, `defence-bypass-edge-origin-differential`, `defence-bypass-throttle-evasion`.
-  - `proxy-techniques` - `proxy-techniques-dns-rebinding`, `proxy-techniques-redirect-chain`, `proxy-techniques-url-parser-differential`, `proxy-techniques-channel-wrapping`, `proxy-techniques-cache-deception`, `proxy-techniques-relay-forwarding`.
+- The two technique families, `defence-bypass` and `proxy-techniques` (C1 of #278): level-1 groups beside the classes, each a conformed parent with its variant leaves, authored against the ontology and the variant boundary.
+  - `defence-bypass` - `defence-bypass-signature-evasion`, `defence-bypass-encoding-differential`, `defence-bypass-parser-confusion`, `defence-bypass-allowance-gap`, `defence-bypass-edge-origin-differential`, `defence-bypass-throttle-evasion`, `defence-bypass-attempt-batching` (D1b).
+  - `proxy-techniques` - `proxy-techniques-dns-rebinding`, `proxy-techniques-redirect-chain`, `proxy-techniques-url-parser-differential`, `proxy-techniques-channel-wrapping`, `proxy-techniques-cache-deception`, `proxy-techniques-relay-forwarding`, `proxy-techniques-dom-clobbering`, `proxy-techniques-client-side-path-traversal`, `proxy-techniques-css-injection` (D1b).
 - `INVENTORY.md` - the KEEP / DISCARD / BORDERLINE classification with a rationale per source directory.
 - `SCREAMING-REPORT.md` - the de-spuriation record: what was removed, adapted, extracted, and the arsenal gaps.
 - `_migration/high-value-targets/` - the extracted high-value-target material for the future threat-modeller migration.
@@ -65,7 +65,7 @@ The mount never repoints the live catalogue root `skills/`, which other streams 
 - Discarded: 18 (the tool skills and the technology skills) plus `cve-exploitation`.
 - Group trees: 46 flat duplicates dropped after folding their unique content.
 - Decomposed: 28 classes into 101 variants; `graphql` does not decompose and stands as one skill.
-- Families: 2 level-1 groups with 12 variant leaves between them (`defence-bypass` 6, `proxy-techniques` 6); each parent carries its `## Variants` line set equal to its own leaves (rule R9), and the 101 class children are counted apart from them.
+- Families: 2 level-1 groups with 16 variant leaves between them (`defence-bypass` 7, `proxy-techniques` 9); each parent carries its `## Variants` line set equal to its own leaves (rule R9), and the 101 class children are counted apart from them.
 
 ## Conventions
 
@@ -84,11 +84,12 @@ The mount never repoints the live catalogue root `skills/`, which other streams 
 - The 30 parents are conformed to the ontology sections (`## Adversarial Capabilities`, `## Trust Assumptions`) per the B2 ruling recorded in `docs/design/skills-taxonomy-decisions.md` (D-T7); each parent gains a `## Variants` section, and `graphql` keeps its full body without one (D-T8).
 - The nested loader (W4) is implemented: the suite mounts as an index over this directory under the logical root `web-vulnerability-testing/`, resolves flat leaves, reports leaf names only, refuses duplicate names, and keeps the root out of every reported name (rules R1-R4 and R8 in the taxonomy spec).
   The mount seam and its conformance tests are `SkillCatalogue` in `src/polymerhus/app/llm/skills.py` and `tests/recon/test_skill_catalogue.py`.
-- The taxonomy and naming spec is ratified as B1 (`docs/design/skills-taxonomy.md`, compiled from `docs/design/skills-taxonomy-decisions.md`); the `defence-bypass` and `proxy-techniques` families (#278) are authored per it (C1) with six leaves each, and the classes name them at their bypass and proxy steps (C2).
+- The taxonomy and naming spec is ratified as B1 (`docs/design/skills-taxonomy.md`, compiled from `docs/design/skills-taxonomy-decisions.md`); the `defence-bypass` and `proxy-techniques` families (#278) are authored per it (C1), and the D1b enrichment grew them to seven and nine leaves; the classes name them at their bypass and proxy steps (C2).
   The 70 leaves that do not yet carry their class prefix are normalisation debt (#372).
 - Suite enrichment from the local repositories runs as D1a-D1c.
   D1a is the two-round mining pass (`_migration/enrichment/d1a/`) and its operator rulings; D1b authors the accepted new skills and applies the enrichment union; D1c authors the accepted references.
 - D1b (W7) grows the suite past the ratified counts above: this pass contributes the level-1 classes `email-header-injection`, `mfa-bypass`, and `account-recovery` and the leaf `email-dns-takeover` under `subdomain-takeover`, and the other D1b slices contribute the remaining accepted classes and leaves.
+- D1b (W7), the family slice: contributes the level-1 classes `rate-limit-bypass`, `http-parameter-pollution`, and `cache-poisoning`, the family leaves `defence-bypass-attempt-batching`, `proxy-techniques-dom-clobbering`, `proxy-techniques-client-side-path-traversal`, and `proxy-techniques-css-injection`, and the enrichment union applied to the two families and the three classes.
   New skills are authored in the reference layout (bulleted elements with the signature in bold before the colon); ticket #388 normalises the pre-existing files later, layout and font style only.
   `_completion/verify.sh` check 8 pairs the ratified floor of 101 class children with a per-parent `## Variants` sweep, so the count stays truthful as the suite grows.
 - The injection and credential slice of D1b contributes the level-1 classes `ldap-injection` and `xpath-injection`, the leaf `sqli-second-order-injection` under `sql-injection`, and the leaf `xxe-local-dtd-error-exfiltration` under `xxe`, plus the enrichment union for `nosql-injection`, `prototype-pollution`, `sql-injection`, `ssti`, `xxe`, and `weak-credential-discovery`.

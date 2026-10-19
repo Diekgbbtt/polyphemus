@@ -137,6 +137,25 @@ else
   failed "every decomposing parent's ## Variants lines equal its child leaves (R9/R10)"
 fi
 
+# The two family leaves follow R5 (`<family>-<discriminator>`), so every leaf
+# authored after the C1 pass, the D1b leaves included, is covered by name as
+# well as by the parent sweep above.
+prefix_bad=""
+for fam in defence-bypass proxy-techniques; do
+  for leaf in $(find "skills-unspurious/$fam" -mindepth 2 -maxdepth 2 -name SKILL.md | sed 's|/SKILL.md$||; s|.*/||'); do
+    case "$leaf" in
+      "$fam"-*) ;;
+      *) prefix_bad="$prefix_bad $leaf" ;;
+    esac
+  done
+done
+if [ -z "$prefix_bad" ]; then
+  pass "every family leaf name starts with its family prefix (R5)"
+else
+  printf 'FAIL  every family leaf name starts with its family prefix (R5); offenders:%s\n' "$prefix_bad"
+  fail=1
+fi
+
 mismatch=0
 while IFS= read -r f; do
   dir=$(basename "$(dirname "$f")")
