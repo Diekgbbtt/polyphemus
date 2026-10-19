@@ -3,9 +3,15 @@
 Correct architecture (operator correction, SP4). The six `steel_*` MCP tools
 (`steel_crawl_start`/`navigate`/`frontier`/`eval`/`click`/`crawl_finish`)
 are provided by a Steel MCP tool provider instantiated **in-process** - they are
-NOT reached over a remote MCP HTTP host. steel.dev is the authenticated CLOUD
-BROWSER; the provider opens a steel.dev session and drives it with Playwright
-connected over CDP:
+NOT reached over a remote MCP HTTP host. The browser runtime is the steel.dev
+CLOUD BROWSER by default, or a self-hosted runtime when the deployment sets
+`STEEL_BROWSER_API_URL` (#390). The provider opens a session and drives it with
+Playwright connected over CDP at the session's own `websocket_url`:
+
+    ws://<runtime host>:<port>/
+
+When the SDK session omits `websocket_url`, the provider falls back to the
+cloud pattern:
 
     wss://connect.steel.dev?apiKey=<STEEL_API_KEY>&sessionId=<session id>
 
@@ -58,8 +64,10 @@ class SteelProviderUnavailable(RuntimeError):
 def steel_configured() -> bool:
     """True when the steel.dev credential is present.
 
-    No URL is involved: the provider is in-process and reaches steel.dev's
-    cloud browser over CDP using the API key alone.
+    The credential is independent of the runtime address: the provider is
+    in-process and reaches either the cloud or the self-hosted runtime over
+    CDP. The address is the shared `STEEL_BROWSER_API_URL` value, resolved by
+    the provider itself.
     """
     return bool(config.STEEL_API_KEY)
 
@@ -67,11 +75,11 @@ def steel_configured() -> bool:
 def _default_client_factory(auth_cookies=None, steel_profile=None):
     """Build the in-process Steel crawl-tool provider.
 
-    Returns a `steel_provider.SteelCrawlProvider`, which opens a steel.dev
-    cloud-browser session and connects Playwright over CDP
-    (``wss://connect.steel.dev?apiKey=<STEEL_API_KEY>&sessionId=<id>``) lazily,
-    only when `steel_crawl_start` is invoked - so constructing the provider
-    performs no network I/O.
+    Returns a `steel_provider.SteelCrawlProvider`, which opens a browser
+    session on the runtime named by `STEEL_BROWSER_API_URL` (the steel.dev
+    cloud when unset) and connects Playwright over CDP at the session's
+    `websocket_url`, lazily, only when `steel_crawl_start` is invoked - so
+    constructing the provider performs no network I/O.
 
     `auth_cookies` (a list of `{name, value, [domain], [path]}` dicts, the
     feed-projected persisted session cookies) is forwarded to the provider,

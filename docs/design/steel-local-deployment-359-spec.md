@@ -85,3 +85,6 @@ The internal-reachability case needs no public-egress proxy: the runtime egresse
 - The Steel CLI pin stays `0.4.4`; a bump is a skill-review event (D10, #221).
 - The deployment host is fixed; the polymerhus stack is portable, and mutual reachability is the invariant (D359-1).
 - The `steel_crawl` provider change is minimal on purpose; the rewrite may keep the SDK or move to the CLI, and the resolver serves either.
+- Known limitation (D359-10, #395): the pinned Steel CLI v0.4.4 cannot run its interactive session daemon against the local API image, because the API reports `timeout: 0` and the daemon treats that as expired.
+  One-shot `steel scrape` and the SDK path work; the seam is unaffected.
+  The interactive CLI path resumes when the upstream timeout fix ships.

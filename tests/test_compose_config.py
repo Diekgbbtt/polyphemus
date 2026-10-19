@@ -58,8 +58,12 @@ def test_agent_carries_the_optional_steel_endpoint():
     config = yaml.safe_load(r.stdout)
     agent_env = config["services"]["agent"]["environment"]
     kali_env = config["services"]["kali"]["environment"]
-    assert "STEEL_BROWSER_API_URL" in agent_env
+    assert agent_env["STEEL_BROWSER_API_URL"] == ""
     assert agent_env["STEEL_BROWSER_API_URL"] == kali_env["STEEL_BROWSER_API_URL"]
+    for name, service in config["services"].items():
+        if name in ("agent", "kali"):
+            continue
+        assert "STEEL_BROWSER_API_URL" not in (service.get("environment") or {})
 
 
 def test_dev_overlay_config_is_valid():

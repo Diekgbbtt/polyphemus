@@ -103,6 +103,15 @@ The declared artifact is `eval/deploy/steel/docker-compose.steel.yml`: the API i
 - The operator adds `STEEL_BROWSER_API_URL` to the eval instance `.env` once the value form is confirmed: `http://192.33.91.87:3000/v1`.
 - The current `STEEL_API_KEY` stays for the E4 cloud-path check.
 
+## D359-10 - The CLI interactive path waits on an upstream timeout fix (#395)
+
+The pinned Steel CLI (v0.4.4) cannot run its interactive session daemon against the local API image.
+The API's create response carries `timeout: 0`, because the local runtime is single-session and has no session-timeout concept.
+The CLI reads that as an already-expired session and shuts the daemon down on its first loop (`[daemon] Session timeout reached, shutting down`), so `browser start` and the actions that ride it answer `Connection reset by peer`.
+`steel scrape` does not use the daemon and works; the SDK path (`base_url` plus `session.websocket_url`) works; the address seam is unaffected.
+Tracked as #395; a CLI pin bump is a skill-review event (D10/#221).
+Until it lands, local-mode interactive browser coverage is reduced to one-shot reads and the SDK crawl path.
+
 ## Open queue
 
 None - the grilling round is complete.
