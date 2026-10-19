@@ -60,6 +60,8 @@ A value carried in a location the guard does not inspect is the same substitutio
 A batch envelope whose inner operations the guard does not parse is a carrier on its own, because the outer shape passes and the inner operations arrive unexamined.
 Keep the operation identical across carriers so the carrier is the only changed variable.
 The parent mechanism-selection step covers one carrier and cannot describe one operation through several, so this variant owns the carrier-substitution procedure.
+See `references/carrier-substitution-matrix.md` for the carrier family table and the parity check.
+See `references/tier-route-inventory.md` for the sibling-route and version inventory that reaches one operation.
 
 ### Guard Parity Gaps
 

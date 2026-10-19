@@ -59,6 +59,8 @@ Where the permit is an origin list, test the list's pattern rather than its inte
 Where the permit is a path list, test the path's spelling rather than its text: case, dot segments, encoded separators, parameter separators, and trailing characters all reach the protected path through a form the rule does not match.
 Prefer the route the policy itself admits, because it needs no second bypass behind it.
 The parent mechanism-selection step covers one control kind and cannot describe a capability reached through the permit's own allowance, so this variant owns the enumeration procedure.
+See `references/permit-enumeration-matrix.md` for the route inventory across permit kinds.
+See `references/cors-misconfiguration.md` for the cross-origin read permit and `references/csp-bypass.md` for the browser-confined script permit.
 
 ### Secret Permit Values
 
